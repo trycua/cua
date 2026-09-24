@@ -5,13 +5,15 @@ demo. Independent exact-SHA workflows run and certify the canonical Windows,
 Linux X11, and logged-in macOS Lume Driver harnesses without live-provider
 secrets. The protected workflows verify those run IDs and their machine-readable
 certification artifacts instead of rerunning the broad matrices. A protected
-job consumes an immutable review-candidate aggregate, runs the ignored visual-only test with
-the measured review Driver, and makes the API key available only to the bounded
-Jev chooser process. After decode and schema validation, each review bundle is
-encrypted separately and the artifact upload contains only the resulting
-authenticated ciphertext envelopes. Manual and reusable workflow invocations
-must also set the required boolean `run_live` acknowledgement to `true` before
-the source gate permits protected work.
+job consumes an immutable review-candidate aggregate, runs the ignored
+visual-only test with the measured review Driver, and drives every chooser
+decision through the deterministic mock chooser; no GitHub Actions workflow
+stores, references, or uses the TypeSafe credential. After decode and schema
+validation, each review bundle is encrypted separately and the artifact upload
+contains only the resulting authenticated ciphertext envelopes. Manual and
+reusable workflow invocations only need the exact reviewed SHAs, candidate
+identifiers, and canonical run IDs; no live-call acknowledgement exists because
+no external live provider call remains in Actions.
 
 The private candidate producer runs without an environment or production
 secrets on Linux, Windows, and `macos-26`, then returns both its Actions run ID
@@ -108,8 +110,8 @@ upload step.
 
 ### Resume private collection without rerunning the desktop test
 
-If an artifact transfer or a local reel render fails after a successful live
-run, cache the encrypted Actions artifact by its immutable ID. First verify
+If an artifact transfer or a local reel render fails after a successful
+candidate run, cache the encrypted Actions artifact by its immutable ID. First verify
 the run ID, workflow path, source SHA, artifact ID, and artifact name against
 the reviewed certification record. In a private, mode-0700 directory, run:
 
@@ -138,7 +140,7 @@ rendering. If the test failed, the artifact expired, or the candidate changed
 in a way that requires recertification, a cached download is not a substitute
 for a new run. Do not attach the cache, staged envelopes, or plaintext to a PR.
 
-Native macOS certification remains separate from the Windows/Linux live-provider
+Native macOS certification remains separate from the Windows/Linux candidate
 workflow. This proof runs directly in a logged-in, TCC-authorized Lume guest. A maintainer
 dispatches `.github/workflows/e2e-rust-macos.yml` in `lume` mode, whose exact-SHA gate runs
 `libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser` and
@@ -147,8 +149,12 @@ candidate workflow does not schedule macOS execution, and no GitHub Actions
 workflow represents the macOS gate. macOS recordings remain private on the
 maintainer-controlled Lume host and are collected for review outside GitHub
 Actions. The exact SHA, direct run ID, result, and evidence digest are recorded
-in the private review bundle and final PR audit. Windows and Linux continue to
-exercise the bounded live Jev chooser; the direct Lume matrix is the macOS
+in the private review bundle and final PR audit. Windows and Linux exercise the
+deterministic mock chooser in Actions; live TypeSafe validation runs only
+out-of-band, directly on a disposable Tahoe Lume guest whose guest-local
+Keychain supplies the credential to the bounded chooser process. That guest
+procedure is maintained privately, records only hashes and outcomes, and never
+publishes the key value or fleet details. The direct Lume matrix is the macOS
 platform acceptance gate.
 
 ## Derived reels

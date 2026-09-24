@@ -114,6 +114,7 @@ impl Tool for KeyboardProbe {
 fn candidate(window_id: u64) -> WindowTargetCandidate {
     WindowTargetCandidate {
         window_id,
+        transient_for: None,
         title: format!("Document {window_id}"),
         app_name: Some("Editor".into()),
         is_on_screen: true,

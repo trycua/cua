@@ -1567,11 +1567,28 @@ impl ToolRegistry {
             })
             .flatten();
 
+        // Desktop pixels read off a capped get_desktop_state image are mapped
+        // back to the uncapped capture before any platform interprets them.
+        crate::desktop_capture_scale::map_desktop_args(&mut args);
         let mut result = crate::recording::scope_dispatch_click_capture(
             pending_turn.as_ref(),
             tool.invoke(args.clone()),
         )
         .await;
+        match resolved_name {
+            "get_desktop_state" if result.is_error != Some(true) => {
+                crate::desktop_capture_scale::record_desktop_state(
+                    &args,
+                    result.structured_content.as_ref(),
+                );
+            }
+            "end_session" => {
+                if let Some(session) = args.get("_session_id").and_then(Value::as_str) {
+                    crate::desktop_capture_scale::forget_session(session);
+                }
+            }
+            _ => {}
+        }
         drop(lifecycle_dispatch);
         // The platform worker has exited, so another text operation for this
         // pid may now start even while result projection and evidence capture
@@ -2763,9 +2780,18 @@ fn publish_action_result(result: &mut ToolResult) -> Result<(), String> {
         .action_record
         .as_ref()
         .ok_or_else(|| "successful action omitted its internal execution record".to_owned())?;
-    let public = action
+    let mut public = action
         .public_result()
         .map_err(|error| format!("invalid internal execution record: {error:?}"))?;
+    // Some MCP clients (Claude Code among them) hand the model only
+    // `structuredContent` when it is present and drop the text blocks. The
+    // producer's text is the only place the resolved points, the element hit,
+    // popups, focus outcome and follow-up calls are spelled out, so the
+    // closed contract carries it as `summary`.
+    public.summary = result.content.iter().find_map(|content| match content {
+        Content::Text { text, .. } if !text.trim().is_empty() => Some(text.clone()),
+        _ => None,
+    });
     public
         .validate_invariants()
         .map_err(|error| format!("invalid public projection: {error}"))?;
@@ -2837,7 +2863,7 @@ mod runtime_isolation_tests {
     use crate::{
         authorization::PermissionMode,
         consent::{ConsentAction, ConsentRequest, ProtectedConsentProvider, ProviderDecision},
-        protocol::ToolResult,
+        protocol::{Content, ToolResult},
         session_authorization::{SessionAuthorizationRegistry, SessionModeCeiling},
     };
     use std::io::Write;
@@ -4604,10 +4630,17 @@ resources:
         let object = structured.as_object().expect("ActionResult is an object");
         assert_eq!(
             object.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["delivery", "effect", "route"]
+            ["delivery", "effect", "route", "summary"]
         );
         assert_eq!(structured["effect"], "unverifiable");
         assert_eq!(structured["delivery"]["mode"], "unknown");
+        // The producer's text travels inside the closed contract for clients
+        // that surface only structuredContent.
+        let text = result.content.iter().find_map(|content| match content {
+            Content::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        });
+        assert_eq!(structured["summary"].as_str(), text);
         assert!(matches!(
             structured["route"].as_str(),
             Some("accessibility" | "synthetic_events" | "global_input" | "dom" | "trusted_input")

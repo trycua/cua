@@ -52,9 +52,6 @@ def test_perception_product_cli_accepts_current_versions():
 @pytest.mark.parametrize("product", ["perception", "all"])
 def test_perception_versions_use_independent_authority(tmp_path: Path, product: str):
     copy_release_sources(tmp_path)
-    base = tmp_path / "libs/cua-driver/rust/crates/cua-perception"
-    (base / "VERSION").write_text("0.1.0\n")
-
     validate(tmp_path, product)
 
 
@@ -73,7 +70,7 @@ def test_perception_version_drift_fails(
 ):
     copy_release_sources(tmp_path)
     base = tmp_path / "libs/cua-driver/rust/crates/cua-perception"
-    (base / "VERSION").write_text("0.1.0\n")
+    current = (base / "VERSION").read_text().strip()
     if source == ".release-please-manifest.json":
         path = tmp_path / source
         manifest = json.loads(path.read_text())
@@ -83,7 +80,7 @@ def test_perception_version_drift_fails(
         path = tmp_path / "libs/cua-driver/rust/Cargo.lock"
         path.write_text(
             re.sub(
-                r'(\[\[package\]\]\nname = "cua-perception"\nversion = ")0\.1\.0("\n)',
+                rf'(\[\[package\]\]\nname = "cua-perception"\nversion = "){re.escape(current)}("\n)',
                 r"\g<1>9.9.9\2",
                 path.read_text(),
                 count=1,
@@ -91,7 +88,7 @@ def test_perception_version_drift_fails(
         )
     else:
         path = base / source
-        path.write_text(path.read_text().replace("0.1.0", "9.9.9", 1))
+        path.write_text(path.read_text().replace(current, "9.9.9", 1))
 
     with pytest.raises(VersionError, match=re.escape(expected)):
         validate(tmp_path, product)

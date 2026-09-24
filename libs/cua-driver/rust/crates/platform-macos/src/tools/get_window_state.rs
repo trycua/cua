@@ -20,6 +20,10 @@ impl GetWindowStateTool {
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+/// Slack past `timeout_ms` before the walk task is abandoned: one in-flight AX
+/// call may still be waiting on its messaging timeout.
+const AX_WALK_BACKSTOP_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "get_window_state".into(),
@@ -49,7 +53,7 @@ fn def() -> &'static ToolDef {
             the tree only — the cheap path when you're just re-indexing before an \
             element ax action.\n\n\
             The mirror image: pass `include_accessibility_tree:false` to SKIP the \
-            AX walk entirely (the expensive part, up to 20 s) and return just the \
+            AX walk entirely (the expensive part, bounded by timeout_ms) and return just the \
             screenshot plus window metadata — `window_bounds`, `screenshot_scale`, \
             `screenshot_width`/`screenshot_height`, `app_name`, and `window_title` \
             — the capture-only path for rendering a live window preview / \
@@ -93,7 +97,7 @@ fn def() -> &'static ToolDef {
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
                 "include_accessibility_tree": {
                     "type": "boolean",
-                    "description": "Default true — walk the AX tree and return `elements` + `tree_markdown` alongside the screenshot. Set false to SKIP the AX walk entirely (the expensive part, up to 20 s) and return just the screenshot plus window metadata (bounds, scale, app_name, window_title) — the capture-only path for rendering a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."
+                    "description": "Default true — walk the AX tree and return `elements` + `tree_markdown` alongside the screenshot. Set false to SKIP the AX walk entirely (the expensive part, bounded by timeout_ms) and return just the screenshot plus window metadata (bounds, scale, app_name, window_title) — the capture-only path for rendering a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."
                 },
                 "include_screenshot": {
                     "type": "boolean",
@@ -113,6 +117,7 @@ fn def() -> &'static ToolDef {
                     "minimum": 1,
                     "description": "Cap on the AX-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower this for deep menu/Electron trees."
                 },
+                "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
                 "max_dimension": {
                     "type": "integer",
                     "minimum": 1,
@@ -198,7 +203,7 @@ impl Tool for GetWindowStateTool {
         };
 
         // Issue #2237: pre-flight the requested window against WindowServer
-        // BEFORE the (up to 20 s) AX walk. An id that no window carries, or
+        // BEFORE the (timeout_ms-bounded) AX walk. An id that no window carries, or
         // that another process owns, used to fall through the scoped filter and
         // return the app's MENU BAR as a healthy snapshot of the requested
         // window — with a screenshot of the requested window beside it. macOS
@@ -306,35 +311,36 @@ impl Tool for GetWindowStateTool {
             .and_then(|v| v.as_u64())
             .map(|v| v.max(1) as usize)
             .unwrap_or(crate::ax::tree::DEFAULT_MAX_DEPTH);
+        let timeout_ms = cua_driver_core::tool_schema::resolve_timeout_ms(args.get("timeout_ms"));
 
         let (tree_result, prepared_snapshot) = if want_tree {
             let q = query.clone();
-            // Keep the product deadline below the public client's 25-second
-            // deadline so callers receive a structured driver error. The AX
-            // walker also applies a native per-element messaging timeout because
-            // dropping a spawn_blocking JoinHandle cannot cancel a blocked AX call.
+            // `timeout_ms` bounds the walk itself: it returns the partial tree
+            // when the budget runs out. The outer deadline is only a backstop
+            // for an AX call that ignores the per-element messaging timeout
+            // (dropping a spawn_blocking JoinHandle cannot cancel it).
             let walk_future = tokio::task::spawn_blocking(move || {
-                let tree = crate::ax::tree::walk_tree_bounded(
+                let tree = crate::ax::tree::walk_tree_budgeted(
                     pid,
                     Some(window_id),
                     q.as_deref(),
-                    max_elements,
                     max_depth,
+                    cua_driver_core::walk_budget::WalkBudget::new(timeout_ms, max_elements),
                 );
                 let payload = crate::ax::cache::CachedSnapshot::from_nodes(&tree.nodes);
                 (tree, payload)
             });
-            match tokio::time::timeout(std::time::Duration::from_secs(20), walk_future).await {
+            let backstop = std::time::Duration::from_millis(timeout_ms) + AX_WALK_BACKSTOP_GRACE;
+            match tokio::time::timeout(backstop, walk_future).await {
                 Ok(Ok((tree, payload))) => (Some(tree), Some(payload)),
                 Ok(Err(e)) => return ToolResult::error(format!("AX tree walk failed: {e}")),
                 Err(_elapsed) => {
                     return ToolResult::error(format!(
-                        "AX tree walk for pid={pid} timed out after 20 s. \
-                         The app (likely Arc, Electron, or Safari with many tabs) has a \
-                         pathologically large accessibility tree. \
-                         Workaround: re-call with a depth-limited scan \
-                         (max_elements / max_depth), then act by pixel (x,y) off \
-                         the screenshot if the tree stays unusable."
+                        "AX tree walk for pid={pid} did not return within {} s: an \
+                         accessibility call stopped answering past the {timeout_ms} ms \
+                         timeout_ms budget. Retry, or act by pixel (x,y) off a \
+                         screenshot-only get_window_state (include_accessibility_tree:false).",
+                        backstop.as_secs()
                     ));
                 }
             }
@@ -579,6 +585,18 @@ impl Tool for GetWindowStateTool {
             query.as_deref(),
             &tree_md,
         );
+        // Screenshot pixels of the delivered capture: window origin in screen
+        // points, delivered pixels per point (backing scale x downsizing).
+        let elements_json = match (screenshot_frame.as_ref(), screenshot_dims) {
+            (Some((bounds, _)), Some((width, _))) if bounds.width > 0.0 => {
+                cua_driver_core::element_frame::with_screenshot_frames(
+                    elements_json,
+                    (bounds.x, bounds.y),
+                    f64::from(width) / bounds.width,
+                )
+            }
+            _ => elements_json,
+        };
         let filtered_element_count = elements_json.len();
         // The structured array intentionally contains only actionable nodes,
         // and AX child reads can fail independently of the element/depth caps.
@@ -602,6 +620,9 @@ impl Tool for GetWindowStateTool {
         });
         if query.is_some() {
             structured["filtered_element_count"] = serde_json::json!(filtered_element_count);
+        }
+        if let Some(r) = tree_result.as_ref() {
+            r.walk.apply(&mut structured);
         }
         // Surface 6: an opaque snapshot identifier consumers can log
         // alongside the per-element tokens for debug correlation. Same value

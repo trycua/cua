@@ -884,6 +884,102 @@ class _UniffiFfiConverterTypeActionDelivery(_UniffiConverterRustBuffer):
         _UniffiFfiConverterTypeActionDeliveryMode.write(value.mode, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.delivered_count, buf)
 
+class _UniffiFfiConverterString:
+    @staticmethod
+    def check_lower(value):
+        if not isinstance(value, str):
+            raise TypeError("argument must be str, not {}".format(type(value).__name__))
+        return value
+
+    @staticmethod
+    def read(buf):
+        size = buf.read_i32()
+        if size < 0:
+            raise InternalError("Unexpected negative string length")
+        utf8_bytes = buf.read(size)
+        return utf8_bytes.decode("utf-8")
+
+    @staticmethod
+    def write(value, buf):
+        utf8_bytes = value.encode("utf-8")
+        buf.write_i32(len(utf8_bytes))
+        buf.write(utf8_bytes)
+
+    @staticmethod
+    def lift(buf):
+        with buf.consume_with_stream() as stream:
+            return stream.read(stream.remaining()).decode("utf-8")
+
+    @staticmethod
+    def lower(value):
+        with _UniffiRustBuffer.alloc_with_builder() as builder:
+            builder.write(value.encode("utf-8"))
+            return builder.finalize()
+
+class _UniffiFfiConverterOptionalString(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterString.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterString.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterString.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class ActionError:
+    """
+    Why a `refused` action sent no input, and what to do instead.
+"""
+    def __init__(self, *, code:str, hint:typing.Optional[str]):
+        self.code = code
+        self.hint = hint
+
+
+
+
+    def __str__(self):
+        return "ActionError(code={}, hint={})".format(self.code, self.hint)
+    def __eq__(self, other):
+        if self.code != other.code:
+            return False
+        if self.hint != other.hint:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeActionError(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ActionError(
+            code=_UniffiFfiConverterString.read(buf),
+            hint=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.code)
+        _UniffiFfiConverterOptionalString.check_lower(value.hint)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.code, buf)
+        _UniffiFfiConverterOptionalString.write(value.hint, buf)
+
 
 
 
@@ -1082,16 +1178,19 @@ class _UniffiFfiConverterTypeActionEvidenceKind(_UniffiConverterRustBuffer):
 
 @dataclass
 class ActionEvidence:
-    def __init__(self, *, kind:ActionEvidenceKind):
+    def __init__(self, *, kind:ActionEvidenceKind, detail:typing.Optional[str]):
         self.kind = kind
+        self.detail = detail
 
 
 
 
     def __str__(self):
-        return "ActionEvidence(kind={})".format(self.kind)
+        return "ActionEvidence(kind={}, detail={})".format(self.kind, self.detail)
     def __eq__(self, other):
         if self.kind != other.kind:
+            return False
+        if self.detail != other.detail:
             return False
         return True
 
@@ -1100,15 +1199,18 @@ class _UniffiFfiConverterTypeActionEvidence(_UniffiConverterRustBuffer):
     def read(buf):
         return ActionEvidence(
             kind=_UniffiFfiConverterTypeActionEvidenceKind.read(buf),
+            detail=_UniffiFfiConverterOptionalString.read(buf),
         )
 
     @staticmethod
     def check_lower(value):
         _UniffiFfiConverterTypeActionEvidenceKind.check_lower(value.kind)
+        _UniffiFfiConverterOptionalString.check_lower(value.detail)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterTypeActionEvidenceKind.write(value.kind, buf)
+        _UniffiFfiConverterOptionalString.write(value.detail, buf)
 
 
 
@@ -1344,20 +1446,47 @@ class _UniffiFfiConverterOptionalTypeActionEscalation(_UniffiConverterRustBuffer
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+class _UniffiFfiConverterOptionalTypeActionError(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeActionError.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeActionError.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeActionError.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class ActionResult:
-    def __init__(self, *, effect:ActionEffect, route:ActionRoute, delivery:typing.Optional[ActionDelivery], evidence:typing.Optional[typing.List[ActionEvidence]], escalation:typing.Optional[ActionEscalation]):
+    def __init__(self, *, effect:ActionEffect, route:ActionRoute, delivery:typing.Optional[ActionDelivery], evidence:typing.Optional[typing.List[ActionEvidence]], escalation:typing.Optional[ActionEscalation], summary:typing.Optional[str], error:typing.Optional[ActionError]):
         self.effect = effect
         self.route = route
         self.delivery = delivery
         self.evidence = evidence
         self.escalation = escalation
+        self.summary = summary
+        self.error = error
 
 
 
 
     def __str__(self):
-        return "ActionResult(effect={}, route={}, delivery={}, evidence={}, escalation={})".format(self.effect, self.route, self.delivery, self.evidence, self.escalation)
+        return "ActionResult(effect={}, route={}, delivery={}, evidence={}, escalation={}, summary={}, error={})".format(self.effect, self.route, self.delivery, self.evidence, self.escalation, self.summary, self.error)
     def __eq__(self, other):
         if self.effect != other.effect:
             return False
@@ -1368,6 +1497,10 @@ class ActionResult:
         if self.evidence != other.evidence:
             return False
         if self.escalation != other.escalation:
+            return False
+        if self.summary != other.summary:
+            return False
+        if self.error != other.error:
             return False
         return True
 
@@ -1380,6 +1513,8 @@ class _UniffiFfiConverterTypeActionResult(_UniffiConverterRustBuffer):
             delivery=_UniffiFfiConverterOptionalTypeActionDelivery.read(buf),
             evidence=_UniffiFfiConverterOptionalSequenceTypeActionEvidence.read(buf),
             escalation=_UniffiFfiConverterOptionalTypeActionEscalation.read(buf),
+            summary=_UniffiFfiConverterOptionalString.read(buf),
+            error=_UniffiFfiConverterOptionalTypeActionError.read(buf),
         )
 
     @staticmethod
@@ -1389,6 +1524,8 @@ class _UniffiFfiConverterTypeActionResult(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeActionDelivery.check_lower(value.delivery)
         _UniffiFfiConverterOptionalSequenceTypeActionEvidence.check_lower(value.evidence)
         _UniffiFfiConverterOptionalTypeActionEscalation.check_lower(value.escalation)
+        _UniffiFfiConverterOptionalString.check_lower(value.summary)
+        _UniffiFfiConverterOptionalTypeActionError.check_lower(value.error)
 
     @staticmethod
     def write(value, buf):
@@ -1397,38 +1534,8 @@ class _UniffiFfiConverterTypeActionResult(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeActionDelivery.write(value.delivery, buf)
         _UniffiFfiConverterOptionalSequenceTypeActionEvidence.write(value.evidence, buf)
         _UniffiFfiConverterOptionalTypeActionEscalation.write(value.escalation, buf)
-
-class _UniffiFfiConverterString:
-    @staticmethod
-    def check_lower(value):
-        if not isinstance(value, str):
-            raise TypeError("argument must be str, not {}".format(type(value).__name__))
-        return value
-
-    @staticmethod
-    def read(buf):
-        size = buf.read_i32()
-        if size < 0:
-            raise InternalError("Unexpected negative string length")
-        utf8_bytes = buf.read(size)
-        return utf8_bytes.decode("utf-8")
-
-    @staticmethod
-    def write(value, buf):
-        utf8_bytes = value.encode("utf-8")
-        buf.write_i32(len(utf8_bytes))
-        buf.write(utf8_bytes)
-
-    @staticmethod
-    def lift(buf):
-        with buf.consume_with_stream() as stream:
-            return stream.read(stream.remaining()).decode("utf-8")
-
-    @staticmethod
-    def lower(value):
-        with _UniffiRustBuffer.alloc_with_builder() as builder:
-            builder.write(value.encode("utf-8"))
-            return builder.finalize()
+        _UniffiFfiConverterOptionalString.write(value.summary, buf)
+        _UniffiFfiConverterOptionalTypeActionError.write(value.error, buf)
 
 class _UniffiFfiConverterBoolean:
     @classmethod
@@ -1450,31 +1557,6 @@ class _UniffiFfiConverterBoolean:
     @classmethod
     def write(cls, value, buf):
         buf.write_u8(value)
-
-class _UniffiFfiConverterOptionalString(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        if value is not None:
-            _UniffiFfiConverterString.check_lower(value)
-
-    @classmethod
-    def write(cls, value, buf):
-        if value is None:
-            buf.write_u8(0)
-            return
-
-        buf.write_u8(1)
-        _UniffiFfiConverterString.write(value, buf)
-
-    @classmethod
-    def read(cls, buf):
-        flag = buf.read_u8()
-        if flag == 0:
-            return None
-        elif flag == 1:
-            return _UniffiFfiConverterString.read(buf)
-        else:
-            raise InternalError("Unexpected flag byte for optional type")
 
 @dataclass
 class AppInfo:
@@ -3486,19 +3568,25 @@ class _UniffiFfiConverterTypeGetCursorPositionInput(_UniffiConverterRustBuffer):
 
 @dataclass
 class GetDesktopStateInput:
-    def __init__(self, *, session:typing.Optional[str], screenshot_out_file:typing.Optional[str]):
+    def __init__(self, *, session:typing.Optional[str], screenshot_out_file:typing.Optional[str], max_image_dimension:typing.Optional[int] = _DEFAULT):
         self.session = session
         self.screenshot_out_file = screenshot_out_file
+        if max_image_dimension is _DEFAULT:
+            self.max_image_dimension = None
+        else:
+            self.max_image_dimension = max_image_dimension
 
 
 
 
     def __str__(self):
-        return "GetDesktopStateInput(session={}, screenshot_out_file={})".format(self.session, self.screenshot_out_file)
+        return "GetDesktopStateInput(session={}, screenshot_out_file={}, max_image_dimension={})".format(self.session, self.screenshot_out_file, self.max_image_dimension)
     def __eq__(self, other):
         if self.session != other.session:
             return False
         if self.screenshot_out_file != other.screenshot_out_file:
+            return False
+        if self.max_image_dimension != other.max_image_dimension:
             return False
         return True
 
@@ -3508,17 +3596,20 @@ class _UniffiFfiConverterTypeGetDesktopStateInput(_UniffiConverterRustBuffer):
         return GetDesktopStateInput(
             session=_UniffiFfiConverterOptionalString.read(buf),
             screenshot_out_file=_UniffiFfiConverterOptionalString.read(buf),
+            max_image_dimension=_UniffiFfiConverterOptionalUInt32.read(buf),
         )
 
     @staticmethod
     def check_lower(value):
         _UniffiFfiConverterOptionalString.check_lower(value.session)
         _UniffiFfiConverterOptionalString.check_lower(value.screenshot_out_file)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_image_dimension)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterOptionalString.write(value.session, buf)
         _UniffiFfiConverterOptionalString.write(value.screenshot_out_file, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.max_image_dimension, buf)
 
 @dataclass
 class GetScreenSizeInput:
@@ -3612,7 +3703,7 @@ class _UniffiFfiConverterTypeGetSessionStateInput(_UniffiConverterRustBuffer):
 
 @dataclass
 class GetWindowStateInput:
-    def __init__(self, *, pid:int, window_id:int, session:typing.Optional[str], query:typing.Optional[str], include_accessibility_tree:typing.Optional[bool], include_screenshot:typing.Optional[bool], screenshot_out_file:typing.Optional[str], max_elements:typing.Optional[int], max_depth:typing.Optional[int], max_dimension:typing.Optional[int], max_image_dimension:typing.Optional[int]):
+    def __init__(self, *, pid:int, window_id:int, session:typing.Optional[str], query:typing.Optional[str], include_accessibility_tree:typing.Optional[bool], include_screenshot:typing.Optional[bool], screenshot_out_file:typing.Optional[str], max_elements:typing.Optional[int], max_depth:typing.Optional[int], max_dimension:typing.Optional[int], max_image_dimension:typing.Optional[int], timeout_ms:typing.Optional[int] = _DEFAULT):
         self.pid = pid
         self.window_id = window_id
         self.session = session
@@ -3624,12 +3715,16 @@ class GetWindowStateInput:
         self.max_depth = max_depth
         self.max_dimension = max_dimension
         self.max_image_dimension = max_image_dimension
+        if timeout_ms is _DEFAULT:
+            self.timeout_ms = None
+        else:
+            self.timeout_ms = timeout_ms
 
 
 
 
     def __str__(self):
-        return "GetWindowStateInput(pid={}, window_id={}, session={}, query={}, include_accessibility_tree={}, include_screenshot={}, screenshot_out_file={}, max_elements={}, max_depth={}, max_dimension={}, max_image_dimension={})".format(self.pid, self.window_id, self.session, self.query, self.include_accessibility_tree, self.include_screenshot, self.screenshot_out_file, self.max_elements, self.max_depth, self.max_dimension, self.max_image_dimension)
+        return "GetWindowStateInput(pid={}, window_id={}, session={}, query={}, include_accessibility_tree={}, include_screenshot={}, screenshot_out_file={}, max_elements={}, max_depth={}, max_dimension={}, max_image_dimension={}, timeout_ms={})".format(self.pid, self.window_id, self.session, self.query, self.include_accessibility_tree, self.include_screenshot, self.screenshot_out_file, self.max_elements, self.max_depth, self.max_dimension, self.max_image_dimension, self.timeout_ms)
     def __eq__(self, other):
         if self.pid != other.pid:
             return False
@@ -3653,6 +3748,8 @@ class GetWindowStateInput:
             return False
         if self.max_image_dimension != other.max_image_dimension:
             return False
+        if self.timeout_ms != other.timeout_ms:
+            return False
         return True
 
 class _UniffiFfiConverterTypeGetWindowStateInput(_UniffiConverterRustBuffer):
@@ -3670,6 +3767,7 @@ class _UniffiFfiConverterTypeGetWindowStateInput(_UniffiConverterRustBuffer):
             max_depth=_UniffiFfiConverterOptionalUInt32.read(buf),
             max_dimension=_UniffiFfiConverterOptionalUInt32.read(buf),
             max_image_dimension=_UniffiFfiConverterOptionalUInt32.read(buf),
+            timeout_ms=_UniffiFfiConverterOptionalUInt32.read(buf),
         )
 
     @staticmethod
@@ -3685,6 +3783,7 @@ class _UniffiFfiConverterTypeGetWindowStateInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_depth)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_dimension)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.max_image_dimension)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.timeout_ms)
 
     @staticmethod
     def write(value, buf):
@@ -3699,6 +3798,7 @@ class _UniffiFfiConverterTypeGetWindowStateInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt32.write(value.max_depth, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.max_dimension, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.max_image_dimension, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.timeout_ms, buf)
 
 @dataclass
 class HotkeyInput:
@@ -7840,6 +7940,7 @@ __all__ = [
     "VisualParseErrorCode",
     "Platform",
     "ActionDelivery",
+    "ActionError",
     "ActionEscalation",
     "ActionEvidence",
     "ActionResult",

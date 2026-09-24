@@ -460,6 +460,17 @@ pub struct GetDesktopStateInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub screenshot_out_file: Option<String>,
+    /// Optional long-edge cap for the returned PNG, in pixels. Omitted or 0
+    /// returns the full-size capture. When the cap downsizes the image,
+    /// desktop-scope x/y taken from it are mapped back automatically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "nonnegative_integer_schema")]
+    #[uniffi(default = None)]
+    pub max_image_dimension: Option<u32>,
+}
+
+fn nonnegative_integer_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "integer", "minimum": 0 })
 }
 
 impl ToolInput for GetDesktopStateInput {

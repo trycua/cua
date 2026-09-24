@@ -10,6 +10,7 @@ on:
       - "skills/jev-use/**"
       - ".github/workflows/ci-jev-use.yml"
       - ".github/workflows/authorized-live-jev-use.yml"
+      - ".github/workflows/authorized-live-jev-use-demo.yml"
   push:
     branches: [main]
     paths:
@@ -20,6 +21,7 @@ on:
       - "skills/jev-use/**"
       - ".github/workflows/ci-jev-use.yml"
       - ".github/workflows/authorized-live-jev-use.yml"
+      - ".github/workflows/authorized-live-jev-use-demo.yml"
   workflow_dispatch:
 
 permissions:
@@ -51,12 +53,8 @@ jobs:
       - name: Install locked Python dependencies
         run: uv sync --frozen
       - name: Run Python unit tests without credentials
-        env:
-          TYPESAFE_API_KEY: ""
         run: uv run python -m unittest discover -s python/tests -v
       - name: Verify bounded chooser CLI in mock mode
-        env:
-          TYPESAFE_API_KEY: ""
         run: uv run --frozen python verify_choice_cli.py
 
   unit-typescript:
@@ -73,8 +71,6 @@ jobs:
       - name: Install locked TypeScript dependencies
         run: npm ci --ignore-scripts
       - name: Run TypeScript unit tests
-        env:
-          TYPESAFE_API_KEY: ""
         run: npm test
       - name: Typecheck
         run: npm run typecheck
@@ -89,7 +85,6 @@ jobs:
       CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS: "1"
       CUA_E2E_BROWSER_NO_SANDBOX: "1"
       CUA_E2E_BROWSER_STDERR: "1"
-      TYPESAFE_API_KEY: ""
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:

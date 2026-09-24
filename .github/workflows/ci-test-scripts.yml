@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - ".github/scripts/**"
+      - ".github/workflows/**"
+      - ".github/actions/**"
       - "TESTING.md"
       - "libs/cua-driver/rust/README.md"
       - "libs/cua-driver/rust/**/Cargo.toml"

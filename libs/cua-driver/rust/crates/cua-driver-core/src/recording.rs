@@ -1783,7 +1783,7 @@ mod tests {
         setup_test_marker();
         set_element_bounds_fn(|pid, args, capture_point| {
             use crate::tool_args::ArgsExt;
-            let cache = crate::element_cache::current_runtime_cache::<
+            let cache = crate::snapshot_store::current_runtime_store::<
                 crate::snapshot_test_support::Payload,
             >()?;
             let target = cache

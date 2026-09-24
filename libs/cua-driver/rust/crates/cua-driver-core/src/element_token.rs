@@ -139,8 +139,8 @@ pub(crate) fn parse_element_args(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::element_cache::{
-        current_runtime_cache, register_runtime_cache, ElementCacheCore, SnapshotPayload,
+    use crate::snapshot_store::{
+        current_runtime_store, register_runtime_store, SnapshotPayload, SnapshotStore,
     };
     use crate::tool::with_runtime_scope;
     use std::sync::Arc;
@@ -155,14 +155,14 @@ mod tests {
             self.0.get(index).copied()
         }
     }
-    fn cache() -> ElementCacheCore<Payload> {
-        ElementCacheCore::new()
+    fn cache() -> SnapshotStore<Payload> {
+        SnapshotStore::new()
     }
-    fn publish(cache: &ElementCacheCore<Payload>, pid: i32, window: u64, count: usize) -> u32 {
+    fn publish(cache: &SnapshotStore<Payload>, pid: i32, window: u64, count: usize) -> u32 {
         cache.publish(pid, window, Payload((0..count).collect()))
     }
     fn resolve(
-        cache: &ElementCacheCore<Payload>,
+        cache: &SnapshotStore<Payload>,
         pid: i32,
         token: &str,
     ) -> Result<(u64, usize), String> {
@@ -292,16 +292,16 @@ mod tests {
         );
     }
     #[test]
-    fn runtime_cache_discovery_is_weak_and_shared_across_calls() {
+    fn runtime_store_discovery_is_weak_and_shared_across_calls() {
         with_runtime_scope("token-discovery-test".into(), || {
             let cache = Arc::new(cache());
-            register_runtime_cache(&cache);
+            register_runtime_store(&cache);
             assert!(Arc::ptr_eq(
                 &cache,
-                &current_runtime_cache::<Payload>().unwrap()
+                &current_runtime_store::<Payload>().unwrap()
             ));
             drop(cache);
-            assert!(current_runtime_cache::<Payload>().is_none());
+            assert!(current_runtime_store::<Payload>().is_none());
         });
     }
     #[test]

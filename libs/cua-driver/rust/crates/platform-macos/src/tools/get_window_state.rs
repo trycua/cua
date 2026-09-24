@@ -321,7 +321,7 @@ impl Tool for GetWindowStateTool {
                     max_elements,
                     max_depth,
                 );
-                let payload = crate::ax::cache::CachedSnapshot::from_nodes(&tree.nodes);
+                let payload = crate::ax::snapshot::AxSnapshot::from_nodes(&tree.nodes);
                 (tree, payload)
             });
             match tokio::time::timeout(std::time::Duration::from_secs(20), walk_future).await {
@@ -356,7 +356,7 @@ impl Tool for GetWindowStateTool {
         let scope_matched = window_scope.as_ref().is_none_or(|s| s.is_matched());
 
         if !scope_matched && !observation_only {
-            self.state.element_cache.remove(pid, u64::from(window_id));
+            self.state.snapshots.remove(pid, u64::from(window_id));
         }
 
         // Capture the screenshot and deliver it alongside the tree — the
@@ -528,12 +528,12 @@ impl Tool for GetWindowStateTool {
         let snapshot_payload = prepared_snapshot.or_else(|| {
             screenshot_resize_scale
                 .is_some()
-                .then(|| crate::ax::cache::CachedSnapshot::from_nodes(&[]))
+                .then(|| crate::ax::snapshot::AxSnapshot::from_nodes(&[]))
         });
         let snapshot_id = snapshot_payload
             .filter(|_| scope_matched && !observation_only)
             .and_then(|payload| {
-                self.state.element_cache.publish_for_session(
+                self.state.snapshots.publish_for_session(
                     pid,
                     u64::from(window_id),
                     payload,
@@ -746,7 +746,7 @@ impl Tool for GetWindowStateTool {
 /// clicked by `element_index`. Both refusals name the exact retry, matching the
 /// remedy-in-the-refusal shape the rest of the driver uses.
 ///
-/// The owner pid is REPORTED, not followed: `element_cache`, the element-token
+/// The owner pid is REPORTED, not followed: `snapshots`, the element-token
 /// registry and snapshot-owned screenshot transform are keyed on the caller-supplied pid, so
 /// walking under `owner_pid` while echoing the requested pid would hand back
 /// indices the caller replays against the wrong key. One retry with the named
@@ -1535,14 +1535,14 @@ mod tests {
 
     #[test]
     fn build_elements_array_with_token_emits_element_token_per_row() {
-        let cache = crate::ax::cache::ElementCache::new();
+        let cache = crate::ax::snapshot::Snapshots::new();
         let pid = 0x6abc_0001_i32;
         let nodes = vec![
             node(Some(0), "AXButton", Some("A"), 1, None, None, vec![]),
             node(Some(1), "AXButton", Some("B"), 1, None, None, vec![]),
             node(Some(2), "AXButton", Some("C"), 1, None, None, vec![]),
         ];
-        let sid = cache.publish(pid, 9, crate::ax::cache::CachedSnapshot::from_nodes(&nodes));
+        let sid = cache.publish(pid, 9, crate::ax::snapshot::AxSnapshot::from_nodes(&nodes));
         let entries = build_elements_array_with_token(&nodes, Some(sid));
         assert_eq!(entries.len(), 3);
         // Every entry must have BOTH fields (additive contract).

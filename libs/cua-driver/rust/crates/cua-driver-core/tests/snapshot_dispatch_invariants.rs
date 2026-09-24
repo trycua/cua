@@ -1,11 +1,11 @@
 use cua_driver_core::authorization::PermissionMode;
-use cua_driver_core::element_cache::{
-    register_runtime_cache, retire_runtime_scope, ElementCacheCore, SnapshotPayload,
-};
 use cua_driver_core::element_token::{token_for, ResolvedElement};
 use cua_driver_core::protocol::ToolResult;
 use cua_driver_core::session_authorization::{
     EffectiveAuthorizationContext, SessionAuthorizationRegistry, SessionModeCeiling,
+};
+use cua_driver_core::snapshot_store::{
+    register_runtime_store, retire_runtime_scope, SnapshotPayload, SnapshotStore,
 };
 use cua_driver_core::tool::{with_runtime_scope, Tool, ToolDef, ToolRegistry};
 use serde_json::{json, Value};
@@ -30,7 +30,7 @@ impl SnapshotPayload for Payload {
 }
 
 struct ProbeState {
-    cache: Arc<ElementCacheCore<Payload>>,
+    cache: Arc<SnapshotStore<Payload>>,
     capture_started: Notify,
     finish_capture: Notify,
     observed: Mutex<Vec<u64>>,
@@ -123,8 +123,8 @@ impl Fixture {
     fn new() -> Self {
         let context = context();
         let cache = with_runtime_scope(context.runtime_scope_key(), || {
-            let cache = Arc::new(ElementCacheCore::new());
-            register_runtime_cache(&cache);
+            let cache = Arc::new(SnapshotStore::new());
+            register_runtime_store(&cache);
             cache
         });
         let state = Arc::new(ProbeState {

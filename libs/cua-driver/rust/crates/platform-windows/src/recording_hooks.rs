@@ -10,13 +10,13 @@
 use std::sync::Arc;
 
 #[cfg(target_os = "windows")]
-use cua_driver_core::element_cache::{current_runtime_cache, register_runtime_cache};
+use cua_driver_core::snapshot_store::{current_runtime_store, register_runtime_store};
 
 #[cfg(target_os = "windows")]
-use crate::uia::cache::{CachedSnapshot, SnapshotKind};
+use crate::uia::snapshot::{SnapshotKind, UiaSnapshot};
 
 #[cfg(target_os = "windows")]
-use crate::uia::ElementCache;
+use crate::uia::Snapshots;
 
 use cua_driver_core::recording::ScreenshotCapture;
 
@@ -32,8 +32,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 #[cfg(target_os = "windows")]
-pub fn set_element_cache(cache: Arc<ElementCache>) {
-    register_runtime_cache(&cache);
+pub fn set_snapshots(cache: Arc<Snapshots>) {
+    register_runtime_store(&cache);
 }
 
 /// Resolve the window whose application evidence should be captured. Keep a
@@ -105,7 +105,7 @@ pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Ve
     } else {
         SnapshotKind::Uia
     };
-    let _native_payload = CachedSnapshot::from_nodes(&result.nodes, kind);
+    let _native_payload = UiaSnapshot::from_nodes(&result.nodes, kind);
     let element_count = result
         .nodes
         .iter()
@@ -126,7 +126,7 @@ pub fn element_window_local_xy(
     args: &serde_json::Value,
     capture_point: bool,
 ) -> Option<(u64, Option<(f64, f64)>)> {
-    let cache = current_runtime_cache::<CachedSnapshot>()?;
+    let cache = current_runtime_store::<UiaSnapshot>()?;
     let pid_u32 = u32::try_from(pid).ok()?;
     let resolved = cache
         .resolve_element_args(

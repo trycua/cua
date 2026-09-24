@@ -16,7 +16,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use crate::atspi::ElementCache;
+use crate::atspi::Snapshots;
 use cursor_overlay::CursorRegistry;
 
 fn window_target_candidates_for_pid(
@@ -90,12 +90,12 @@ pub fn load_driver_config() -> DriverConfig {
     cfg
 }
 
-use cua_driver_core::element_cache::{
+use cua_driver_core::snapshot_store::{
     SnapshotBoundZoomContext as ZoomContext, SnapshotBoundZoomRegistry as ZoomRegistry,
 };
 
 pub struct ToolState {
-    pub element_cache: Arc<ElementCache>,
+    pub snapshots: Arc<Snapshots>,
     pub cursor_registry: Arc<CursorRegistry>,
     pub zoom_registry: Arc<ZoomRegistry>,
     pub capture_service: Arc<cua_driver_core::capture_runtime::CaptureService>,
@@ -122,10 +122,10 @@ impl ToolState {
     fn new_with_capture_service(
         capture_service: Arc<cua_driver_core::capture_runtime::CaptureService>,
     ) -> Arc<Self> {
-        let element_cache = Arc::new(ElementCache::new());
-        cua_driver_core::element_cache::register_runtime_cache(&element_cache);
+        let snapshots = Arc::new(Snapshots::new());
+        cua_driver_core::snapshot_store::register_runtime_store(&snapshots);
         Arc::new(Self {
-            element_cache,
+            snapshots,
             cursor_registry: Arc::new(CursorRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
             capture_service,
@@ -141,7 +141,7 @@ impl ToolState {
         window_id: Option<u64>,
     ) -> Result<ZoomContext, ToolResult> {
         self.zoom_registry.resolve(
-            &self.element_cache,
+            &self.snapshots,
             pid as i32,
             window_id,
             args.get("_session_id").and_then(Value::as_str),
@@ -155,7 +155,7 @@ fn screenshot_scale(
     pid: u32,
     window_id: Option<u64>,
 ) -> Result<f64, ToolResult> {
-    state.element_cache.screenshot_scale_or_refusal(
+    state.snapshots.screenshot_scale_or_refusal(
         pid as i32,
         window_id,
         args.get("_session_id").and_then(Value::as_str),
@@ -902,14 +902,14 @@ impl Tool for GetWindowStateTool {
                         && crate::wayland::hyprland::is_session())
                         || tr.window_scoped;
                     if !observation_only && !target_scoped {
-                        state.element_cache.remove(pid as i32, xid);
+                        state.snapshots.remove(pid as i32, xid);
                     }
                     let snapshot_id = (!observation_only && target_scoped)
                         .then(|| {
-                            state.element_cache.publish_for_session(
+                            state.snapshots.publish_for_session(
                                 pid as i32,
                                 xid,
-                                crate::atspi::cache::CachedSnapshot::from_nodes(&tr.nodes),
+                                crate::atspi::snapshot::AtspiSnapshot::from_nodes(&tr.nodes),
                                 session_id.as_deref(),
                                 screenshot_scale,
                             )
@@ -1007,10 +1007,10 @@ impl Tool for GetWindowStateTool {
                 }
 
                 if !observation_only && !published_snapshot && screenshot_scale.is_some() {
-                    if let Some(snapshot_id) = state.element_cache.publish_for_session(
+                    if let Some(snapshot_id) = state.snapshots.publish_for_session(
                         pid as i32,
                         xid,
-                        crate::atspi::cache::CachedSnapshot::from_nodes(&[]),
+                        crate::atspi::snapshot::AtspiSnapshot::from_nodes(&[]),
                         session_id.as_deref(),
                         screenshot_scale,
                     ) {
@@ -2686,30 +2686,30 @@ fn zoom_schema_keeps_pid_optional_for_window_owned_lookup() {
     assert!(!required.iter().any(|field| field == "pid"));
     assert!(tool.def().input_schema["properties"].get("pid").is_some());
 
-    tool.state.element_cache.publish_for_session(
+    tool.state.snapshots.publish_for_session(
         42,
         7,
-        crate::atspi::cache::CachedSnapshot::from_nodes(&[]),
+        crate::atspi::snapshot::AtspiSnapshot::from_nodes(&[]),
         Some("zoom-optional-pid-linux"),
         Some(2.0),
     );
     let (pid, context) = tool
         .state
-        .element_cache
+        .snapshots
         .screenshot_context_for_zoom(None, 7, Some("zoom-optional-pid-linux"))
         .unwrap();
     assert_eq!(pid, 42);
     assert_eq!(context.window_id, 7);
-    tool.state.element_cache.publish_for_session(
+    tool.state.snapshots.publish_for_session(
         43,
         7,
-        crate::atspi::cache::CachedSnapshot::from_nodes(&[]),
+        crate::atspi::snapshot::AtspiSnapshot::from_nodes(&[]),
         Some("zoom-optional-pid-linux"),
         Some(1.0),
     );
     assert!(tool
         .state
-        .element_cache
+        .snapshots
         .screenshot_context_for_zoom(None, 7, Some("zoom-optional-pid-linux"))
         .is_err());
 }
@@ -2726,10 +2726,10 @@ fn coordinate_less_mouse_button_up_survives_snapshot_replacement() {
         x: 120.0,
         y: 80.0,
     };
-    state.element_cache.publish_for_session(
+    state.snapshots.publish_for_session(
         hold.pid as i32,
         hold.xid,
-        crate::atspi::cache::CachedSnapshot::from_nodes(&[]),
+        crate::atspi::snapshot::AtspiSnapshot::from_nodes(&[]),
         Some("press-owner"),
         Some(2.0),
     );
@@ -2739,10 +2739,10 @@ fn coordinate_less_mouse_button_up_survives_snapshot_replacement() {
         .unwrap()
         .insert(cursor_id.to_owned(), hold.clone());
 
-    state.element_cache.publish_for_session(
+    state.snapshots.publish_for_session(
         hold.pid as i32,
         hold.xid,
-        crate::atspi::cache::CachedSnapshot::from_nodes(&[]),
+        crate::atspi::snapshot::AtspiSnapshot::from_nodes(&[]),
         Some("replacement-owner"),
         Some(1.0),
     );
@@ -3937,7 +3937,7 @@ impl Tool for ClickTool {
         let capture_id_arg = args.opt_str("capture_id");
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match self.state.snapshots.resolve_element_args(
             pid as i32,
             element_index_arg,
             element_token_arg.as_deref(),
@@ -4627,7 +4627,7 @@ impl Tool for TypeTextTool {
         // Surface 6: resolve element_token / element_index for the
         // optional pre-typing focus glide below. The token also carries
         // the window_id when supplied so the caller can omit window_id.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match self.state.snapshots.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -5352,7 +5352,7 @@ impl Tool for PressKeyTool {
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match self.state.snapshots.resolve_element_args(
             pid as i32,
             element_index_arg,
             element_token_arg.as_deref(),
@@ -5728,7 +5728,7 @@ impl Tool for HotkeyTool {
         let pid = args.u64_or("pid", 0) as u32;
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|value| value as usize);
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match self.state.snapshots.resolve_element_args(
             pid as i32,
             element_index_arg,
             args.opt_str("element_token").as_deref(),
@@ -6076,7 +6076,7 @@ impl Tool for SetValueTool {
             Err(e) => return e,
         };
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match self.state.snapshots.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -6301,7 +6301,7 @@ impl Tool for ScrollTool {
         // element (X11 scroll buttons go to the window root), but the
         // token still needs to be accepted + validated so a stale
         // token surfaces an error instead of silently no-op'ing.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match self.state.snapshots.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -6775,7 +6775,7 @@ impl Tool for DoubleClickTool {
             .await;
         }
         // Surface 6: element_token / element_index precedence.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match self.state.snapshots.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -7014,7 +7014,7 @@ impl Tool for RightClickTool {
             .await;
         }
         // Surface 6: element_token / element_index precedence.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match self.state.snapshots.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -9594,7 +9594,7 @@ impl Tool for ZoomTool {
             },
         };
         let session_id = args.opt_str("_session_id");
-        let (pid, screenshot) = match self.state.element_cache.screenshot_context_for_zoom(
+        let (pid, screenshot) = match self.state.snapshots.screenshot_context_for_zoom(
             requested_pid,
             xid,
             session_id.as_deref(),
@@ -9642,7 +9642,7 @@ impl Tool for ZoomTool {
         match result {
             Ok(Ok(crop)) => {
                 if let Err(refusal) = state.zoom_registry.set_if_current(
-                    &state.element_cache,
+                    &state.snapshots,
                     pid,
                     session_id.as_deref(),
                     ZoomContext {
@@ -10356,7 +10356,7 @@ pub fn build_registry_with_provider(
                     .zoom_registry
                     .retire_session(session_id);
                 state_for_session_end
-                    .element_cache
+                    .snapshots
                     .retire_session_screenshots(session_id);
                 cursor_registry.remove(session_id);
                 crate::overlay::remove_cursor(session_id.to_owned());

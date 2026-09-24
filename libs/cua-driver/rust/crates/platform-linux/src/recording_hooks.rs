@@ -77,8 +77,8 @@ pub fn element_window_local_xy(
     capture_point: bool,
 ) -> Option<(u64, Option<(f64, f64)>)> {
     use cua_driver_core::tool_args::ArgsExt;
-    let cache = cua_driver_core::element_cache::current_runtime_cache::<
-        crate::atspi::cache::CachedSnapshot,
+    let cache = cua_driver_core::snapshot_store::current_runtime_store::<
+        crate::atspi::snapshot::AtspiSnapshot,
     >()?;
     let resolved = cache
         .resolve_element_args(

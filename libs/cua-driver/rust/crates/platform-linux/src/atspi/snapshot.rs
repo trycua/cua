@@ -1,12 +1,12 @@
 use super::{AtspiIdentity, AtspiNode};
-use cua_driver_core::element_cache::{ElementCacheCore, SnapshotPayload};
+use cua_driver_core::snapshot_store::{SnapshotPayload, SnapshotStore};
 use std::collections::HashMap;
 
-pub struct CachedSnapshot {
+pub struct AtspiSnapshot {
     elements: HashMap<usize, AtspiIdentity>,
 }
 
-impl CachedSnapshot {
+impl AtspiSnapshot {
     pub fn from_nodes(nodes: &[AtspiNode]) -> Self {
         let elements = nodes
             .iter()
@@ -16,7 +16,7 @@ impl CachedSnapshot {
     }
 }
 
-impl SnapshotPayload for CachedSnapshot {
+impl SnapshotPayload for AtspiSnapshot {
     type Element = AtspiIdentity;
     fn len(&self) -> usize {
         self.elements.len()
@@ -26,7 +26,7 @@ impl SnapshotPayload for CachedSnapshot {
     }
 }
 
-pub type ElementCache = ElementCacheCore<CachedSnapshot>;
+pub type Snapshots = SnapshotStore<AtspiSnapshot>;
 
 #[cfg(test)]
 mod tests {
@@ -59,8 +59,8 @@ mod tests {
 
     #[test]
     fn sparse_application_indices_are_members_not_dense_offsets_or_native_keys() {
-        let cache = ElementCache::new();
-        let id = cache.publish(42, 7, CachedSnapshot::from_nodes(&[node(11), node(7)]));
+        let cache = Snapshots::new();
+        let id = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[node(11), node(7)]));
         for index in [7, 11] {
             let resolved = cache
                 .resolve_element_args(42, None, Some(&token_for(id, index)), None, None, "click")
@@ -80,7 +80,7 @@ mod tests {
     fn duplicate_and_unindexed_nodes_do_not_create_members() {
         let mut unindexed = node(8);
         unindexed.element_index = None;
-        let payload = CachedSnapshot::from_nodes(&[node(11), unindexed, node(7), node(11)]);
+        let payload = AtspiSnapshot::from_nodes(&[node(11), unindexed, node(7), node(11)]);
         assert_eq!(payload.len(), 2);
         assert_eq!(payload.retain(7).unwrap().path, "/node/7");
         assert_eq!(payload.retain(11).unwrap().path, "/node/11");
@@ -90,11 +90,11 @@ mod tests {
 
     #[test]
     fn reordered_live_index_cannot_retarget_an_observed_control() {
-        let cache = ElementCache::new();
-        let observed = cache.publish(42, 7, CachedSnapshot::from_nodes(&[node(5)]));
+        let cache = Snapshots::new();
+        let observed = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[node(5)]));
         let mut replacement = node(5);
         replacement.identity.as_mut().unwrap().path = "/node/replacement".into();
-        let current = cache.publish(42, 7, CachedSnapshot::from_nodes(&[replacement]));
+        let current = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[replacement]));
 
         // The former observation is invalidated rather than resolving index 5
         // to the replacement. The current token retains the replacement's own
@@ -112,9 +112,9 @@ mod tests {
 
     #[test]
     fn replacement_retires_old_linux_membership() {
-        let cache = ElementCache::new();
-        let old = cache.publish(42, 7, CachedSnapshot::from_nodes(&[node(7), node(11)]));
-        let fresh = cache.publish(42, 7, CachedSnapshot::from_nodes(&[node(3)]));
+        let cache = Snapshots::new();
+        let old = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[node(7), node(11)]));
+        let fresh = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[node(3)]));
         for index in [7, 11] {
             let refusal = cache
                 .resolve_element_args(42, None, Some(&token_for(old, index)), None, None, "click")
@@ -149,10 +149,10 @@ mod tests {
 
     #[test]
     fn compositor_window_ids_do_not_alias_their_low_bits() {
-        let cache = ElementCache::new();
+        let cache = Snapshots::new();
         let window = (1_u64 << 40) | 7;
-        let low = cache.publish(42, 7, CachedSnapshot::from_nodes(&[node(7)]));
-        let high = cache.publish(42, window, CachedSnapshot::from_nodes(&[node(11)]));
+        let low = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[node(7)]));
+        let high = cache.publish(42, window, AtspiSnapshot::from_nodes(&[node(11)]));
         let target = cache
             .resolve_element_args(
                 42,
@@ -177,8 +177,8 @@ mod tests {
 
     #[test]
     fn empty_linux_snapshot_has_no_element_zero() {
-        let cache = ElementCache::new();
-        let id = cache.publish(42, 7, CachedSnapshot::from_nodes(&[]));
+        let cache = Snapshots::new();
+        let id = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[]));
         assert!(cache
             .resolve_element_args(42, None, Some(&token_for(id, 0)), None, None, "click")
             .is_err());

@@ -11,10 +11,10 @@
 
 use anyhow::Result;
 
-pub mod cache;
 pub mod native;
-pub use cache::ElementCache;
+pub mod snapshot;
 pub use native::{ensure_listener_active, resolve_observed_click_target, ObservedClickTarget};
+pub use snapshot::Snapshots;
 
 /// No input has been delivered; this control needs a real pointer click.
 #[derive(Debug)]

@@ -26,11 +26,11 @@ use windows::Win32::UI::Accessibility::{
     UIA_ToggleToggleStatePropertyId, UIA_ValuePatternId, UIA_ValueValuePropertyId,
 };
 
-pub mod cache;
 pub mod fg_bypass;
 pub mod scroll;
+pub mod snapshot;
 pub mod windows_enum;
-pub use cache::ElementCache;
+pub use snapshot::Snapshots;
 pub use windows_enum::enumerate_top_level_windows;
 
 /// Default cap; callers can override via [`walk_tree_bounded`].
@@ -66,7 +66,7 @@ pub struct UiaNode {
     /// Toggle/selection state when the element exposes one of those patterns.
     pub selected: Option<bool>,
     /// Raw COM pointer (IUIAutomationElement for UIA path, IAccessible for
-    /// MSAA path) as usize. Retained — `ElementCache` Drop releases it via
+    /// MSAA path) as usize. Retained — `Snapshots` Drop releases it via
     /// the `kind`-appropriate vtable.
     pub element_ptr: usize,
     /// Screen-coordinate center, captured at walk time to avoid later COM calls.

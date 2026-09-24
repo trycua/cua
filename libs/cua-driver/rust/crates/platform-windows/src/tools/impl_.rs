@@ -51,7 +51,7 @@ fn pin_overlay_above(key: &str, hwnd: u64) {
 /// window. MSAA-walked elements are skipped (no ScrollItemPattern) and keep the
 /// existing failure.
 fn resolve_onscreen_point_with_scroll(
-    admitted: &Option<crate::uia::cache::RetainedElement>,
+    admitted: &Option<crate::uia::snapshot::RetainedElement>,
     hwnd: u64,
     idx: usize,
     cx: i32,
@@ -329,7 +329,7 @@ use cua_driver_core::{
 use serde_json::{json, Value};
 use std::sync::{Arc, RwLock};
 
-use crate::uia::ElementCache;
+use crate::uia::Snapshots;
 use cursor_overlay::CursorRegistry;
 use windows::core::Interface as _;
 
@@ -547,12 +547,12 @@ pub fn load_driver_config() -> DriverConfig {
     cfg
 }
 
-use cua_driver_core::element_cache::{
+use cua_driver_core::snapshot_store::{
     SnapshotBoundZoomContext as ZoomContext, SnapshotBoundZoomRegistry as ZoomRegistry,
 };
 
 pub struct ToolState {
-    pub element_cache: Arc<ElementCache>,
+    pub snapshots: Arc<Snapshots>,
     pub cursor_registry: Arc<CursorRegistry>,
     pub zoom_registry: Arc<ZoomRegistry>,
     pub config: Arc<RwLock<DriverConfig>>,
@@ -564,7 +564,7 @@ impl ToolState {
         capture_service: Option<Arc<cua_driver_core::capture_runtime::CaptureService>>,
     ) -> Arc<Self> {
         Arc::new(Self {
-            element_cache: Arc::new(ElementCache::new()),
+            snapshots: Arc::new(Snapshots::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
             config: Arc::new(RwLock::new(load_driver_config())),
@@ -580,7 +580,7 @@ impl ToolState {
         window_id: Option<u64>,
     ) -> Result<ZoomContext, ToolResult> {
         self.zoom_registry.resolve(
-            &self.element_cache,
+            &self.snapshots,
             pid as i32,
             window_id,
             args.get("_session_id").and_then(Value::as_str),
@@ -594,7 +594,7 @@ fn screenshot_scale(
     pid: u32,
     window_id: Option<u64>,
 ) -> Result<f64, ToolResult> {
-    state.element_cache.screenshot_scale_or_refusal(
+    state.snapshots.screenshot_scale_or_refusal(
         pid as i32,
         window_id,
         args.get("_session_id").and_then(Value::as_str),
@@ -1441,11 +1441,11 @@ impl Tool for GetWindowStateTool {
             };
             let tree_result = tree_result.map(|tree| {
                 let kind = if tree.nodes.iter().any(|node| node.msaa_role.is_some()) {
-                    crate::uia::cache::SnapshotKind::Msaa
+                    crate::uia::snapshot::SnapshotKind::Msaa
                 } else {
-                    crate::uia::cache::SnapshotKind::Uia
+                    crate::uia::snapshot::SnapshotKind::Uia
                 };
-                let payload = crate::uia::cache::CachedSnapshot::from_nodes(&tree.nodes, kind);
+                let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(&tree.nodes, kind);
                 (tree, payload)
             });
             // Capture screenshot AND any error message so the response can
@@ -1540,7 +1540,7 @@ impl Tool for GetWindowStateTool {
 
                     let snapshot_id = (!observation_only)
                         .then(|| {
-                            state.element_cache.publish_for_session(
+                            state.snapshots.publish_for_session(
                                 pid as i32,
                                 hwnd,
                                 payload,
@@ -1622,11 +1622,11 @@ impl Tool for GetWindowStateTool {
                 }
 
                 if !observation_only && !published_snapshot && screenshot_scale.is_some() {
-                    let payload = crate::uia::cache::CachedSnapshot::from_nodes(
+                    let payload = crate::uia::snapshot::UiaSnapshot::from_nodes(
                         &[],
-                        crate::uia::cache::SnapshotKind::Uia,
+                        crate::uia::snapshot::SnapshotKind::Uia,
                     );
-                    if let Some(snapshot_id) = state.element_cache.publish_for_session(
+                    if let Some(snapshot_id) = state.snapshots.publish_for_session(
                         pid as i32,
                         hwnd,
                         payload,
@@ -3243,7 +3243,7 @@ impl Tool for ClickTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use crate::input::delivery::{DeliveryMode, EventKind};
-        use crate::uia::cache::SnapshotKind;
+        use crate::uia::snapshot::SnapshotKind;
         use cua_driver_core::tool_args::ArgsExt;
         let cursor_key = resolve_cursor_key(&args);
 
@@ -3375,7 +3375,7 @@ impl Tool for ClickTool {
         // Surface 6: element_token / element_index precedence resolution.
         // Windows uses u64 HWND but the token registry stores u32; truncate
         // through the same path get_window_state used when registering.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match self.state.snapshots.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -4596,7 +4596,7 @@ pub struct TypeTextTool {
 }
 
 fn wait_for_cached_element_keyboard_focus(
-    admitted: &Option<crate::uia::cache::RetainedElement>,
+    admitted: &Option<crate::uia::snapshot::RetainedElement>,
     timeout: std::time::Duration,
 ) -> bool {
     let deadline = std::time::Instant::now() + timeout;
@@ -4621,7 +4621,7 @@ fn wait_for_cached_element_keyboard_focus(
 /// bounded fallback. Both routes require `CurrentHasKeyboardFocus` read-back
 /// before any keyboard input is allowed to leave the driver.
 fn focus_cached_element_for_foreground(
-    admitted: &Option<crate::uia::cache::RetainedElement>,
+    admitted: &Option<crate::uia::snapshot::RetainedElement>,
     hwnd: u64,
     element_index: usize,
     click_point: Option<(i32, i32)>,
@@ -4765,7 +4765,7 @@ impl Tool for TypeTextTool {
         };
         let pid = raw_pid as u32;
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match self.state.snapshots.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -5353,7 +5353,7 @@ fn classify_value_write_readback(
 /// pattern. Mirrors the cache-retain + `mem::forget` discipline of the
 /// ValuePattern.SetValue path so the cached COM ref isn't released.
 fn read_cached_element_value(
-    admitted: &Option<crate::uia::cache::RetainedElement>,
+    admitted: &Option<crate::uia::snapshot::RetainedElement>,
 ) -> Option<String> {
     use windows::core::Interface;
     use windows::Win32::UI::Accessibility::{
@@ -5516,7 +5516,7 @@ impl Tool for PressKeyTool {
         };
         let pid = raw_pid as u32;
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match self.state.snapshots.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -5924,7 +5924,7 @@ impl Tool for HotkeyTool {
             Err(e) => return e,
         };
         let pid = raw_pid as u32;
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match self.state.snapshots.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|value| value as usize),
             args.opt_str("element_token").as_deref(),
@@ -6210,7 +6210,7 @@ impl Tool for SetValueTool {
             None => return ToolResult::error("Missing required string field value."),
         };
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match self.state.snapshots.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -6451,7 +6451,7 @@ impl Tool for ScrollTool {
         let direction_display = direction.clone();
         let by_display = by.clone();
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match self.state.snapshots.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -6812,7 +6812,7 @@ async fn chromium_click_short_circuit(
 /// `spawn_blocking`. Returns `Some(Ok)` on success, `Some(Err)` if Invoke
 /// failed, `None` if the element isn't cached or has no InvokePattern.
 fn winui3_uia_multi_invoke(
-    admitted: &Option<crate::uia::cache::RetainedElement>,
+    admitted: &Option<crate::uia::snapshot::RetainedElement>,
     hwnd: u64,
     count: usize,
 ) -> Option<anyhow::Result<()>> {
@@ -6871,7 +6871,7 @@ fn winui3_uia_multi_invoke(
 /// Returns `None` for non-WinUI3 targets (caller falls through to its normal
 /// routing).
 async fn winui3_background_gesture(
-    admitted: &Option<crate::uia::cache::RetainedElement>,
+    admitted: &Option<crate::uia::snapshot::RetainedElement>,
     pid: u32,
     hwnd: u64,
     idx: Option<usize>,
@@ -6972,7 +6972,7 @@ impl Tool for DoubleClickTool {
         let pid = raw_pid as u32;
         use cua_driver_core::tool_args::ArgsExt;
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match self.state.snapshots.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -7347,7 +7347,7 @@ impl Tool for RightClickTool {
         let pid = raw_pid as u32;
         use cua_driver_core::tool_args::ArgsExt;
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.element_cache.resolve_element_args(
+        let resolved = match self.state.snapshots.resolve_element_args(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
@@ -9134,7 +9134,7 @@ impl Tool for ZoomTool {
         // ratio so the crop lands on the intended region; the zoom context then
         // holds native-pixel values, which is what `from_zoom` clicks expect.
         let session_id = args.opt_str("_session_id");
-        let (pid, screenshot) = match self.state.element_cache.screenshot_context_for_zoom(
+        let (pid, screenshot) = match self.state.snapshots.screenshot_context_for_zoom(
             requested_pid,
             hwnd,
             session_id.as_deref(),
@@ -9159,7 +9159,7 @@ impl Tool for ZoomTool {
         match result {
             Ok(Ok(crop)) => {
                 if let Err(refusal) = state.zoom_registry.set_if_current(
-                    &state.element_cache,
+                    &state.snapshots,
                     pid,
                     session_id.as_deref(),
                     ZoomContext {
@@ -10332,7 +10332,7 @@ pub fn build_registry_with_provider(
     };
     // Share the element cache with the recording-hook layer so it can
     // resolve element_index → window-local screenshot coords for click.png.
-    crate::recording_hooks::set_element_cache(state.element_cache.clone());
+    crate::recording_hooks::set_snapshots(state.snapshots.clone());
 
     // Drop a session's owned cursor on `session_end` (explicit end_session, the
     // CLI `session end` verb, or the daemon idle-TTL sweep). The session id IS
@@ -10343,12 +10343,12 @@ pub fn build_registry_with_provider(
     // deregisters when that runtime's registry is dropped. Mirrors the macOS
     // `register_all` session_end hook (platform-macos/src/tools/mod.rs).
     let cursor_registry = state.cursor_registry.clone();
-    let element_cache = state.element_cache.clone();
+    let snapshots = state.snapshots.clone();
     let zoom_registry = state.zoom_registry.clone();
     let session_end_hook =
         cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
             zoom_registry.retire_session(session_id);
-            element_cache.retire_session_screenshots(session_id);
+            snapshots.retire_session_screenshots(session_id);
             cursor_registry.remove(session_id);
             crate::overlay::remove_cursor(session_id.to_owned());
         });
@@ -10882,7 +10882,7 @@ mod click_button_schema_tests {
 #[cfg(test)]
 mod snapshot_coordinate_tests {
     use super::{focus_by_pixel_click_args, ToolState, ZoomTool};
-    use crate::uia::cache::{CachedSnapshot, SnapshotKind};
+    use crate::uia::snapshot::{SnapshotKind, UiaSnapshot};
     use cua_driver_core::tool::Tool;
 
     #[test]
@@ -10894,30 +10894,30 @@ mod snapshot_coordinate_tests {
         assert!(!required.iter().any(|field| field == "pid"));
         assert!(tool.def().input_schema["properties"].get("pid").is_some());
 
-        tool.state.element_cache.publish_for_session(
+        tool.state.snapshots.publish_for_session(
             42,
             7,
-            CachedSnapshot::from_nodes(&[], SnapshotKind::Uia),
+            UiaSnapshot::from_nodes(&[], SnapshotKind::Uia),
             Some("zoom-optional-pid-windows"),
             Some(2.0),
         );
         let (pid, context) = tool
             .state
-            .element_cache
+            .snapshots
             .screenshot_context_for_zoom(None, 7, Some("zoom-optional-pid-windows"))
             .unwrap();
         assert_eq!(pid, 42);
         assert_eq!(context.window_id, 7);
-        tool.state.element_cache.publish_for_session(
+        tool.state.snapshots.publish_for_session(
             43,
             7,
-            CachedSnapshot::from_nodes(&[], SnapshotKind::Uia),
+            UiaSnapshot::from_nodes(&[], SnapshotKind::Uia),
             Some("zoom-optional-pid-windows"),
             Some(1.0),
         );
         assert!(tool
             .state
-            .element_cache
+            .snapshots
             .screenshot_context_for_zoom(None, 7, Some("zoom-optional-pid-windows"))
             .is_err());
     }

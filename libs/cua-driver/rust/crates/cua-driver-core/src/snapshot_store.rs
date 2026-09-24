@@ -20,7 +20,7 @@ struct Snapshot<S> {
     payload: S,
 }
 
-struct ElementCacheState<S> {
+struct SnapshotStoreState<S> {
     snapshots: HashMap<i32, Vec<Snapshot<S>>>,
     retired_screenshots: HashSet<(i32, u64)>,
     retired_screenshot_order: VecDeque<(i32, u64)>,
@@ -29,7 +29,7 @@ struct ElementCacheState<S> {
 
 const RETIRED_SCREENSHOT_CAPACITY: usize = 256;
 
-impl<S> Default for ElementCacheState<S> {
+impl<S> Default for SnapshotStoreState<S> {
     fn default() -> Self {
         Self {
             snapshots: HashMap::new(),
@@ -40,7 +40,7 @@ impl<S> Default for ElementCacheState<S> {
     }
 }
 
-impl<S> ElementCacheState<S> {
+impl<S> SnapshotStoreState<S> {
     fn retire_screenshot(&mut self, key: (i32, u64)) {
         if self.retired_screenshot_overflowed || self.retired_screenshots.contains(&key) {
             return;
@@ -119,7 +119,7 @@ impl SnapshotBoundZoomRegistry {
 
     pub fn set_if_current<S: SnapshotPayload>(
         &self,
-        cache: &ElementCacheCore<S>,
+        cache: &SnapshotStore<S>,
         pid: i32,
         session: Option<&str>,
         context: SnapshotBoundZoomContext,
@@ -140,7 +140,7 @@ impl SnapshotBoundZoomRegistry {
 
     pub fn resolve<S: SnapshotPayload>(
         &self,
-        cache: &ElementCacheCore<S>,
+        cache: &SnapshotStore<S>,
         pid: i32,
         window_id: Option<u64>,
         session: Option<&str>,
@@ -220,16 +220,16 @@ fn zoom_context_refusal(pid: i32, window_id: Option<u64>) -> ToolResult {
     }))
 }
 
-pub struct ElementCacheCore<S: SnapshotPayload> {
+pub struct SnapshotStore<S: SnapshotPayload> {
     runtime_scope: String,
-    inner: Mutex<ElementCacheState<S>>,
+    inner: Mutex<SnapshotStoreState<S>>,
 }
 
-impl<S: SnapshotPayload> ElementCacheCore<S> {
+impl<S: SnapshotPayload> SnapshotStore<S> {
     pub fn new() -> Self {
         Self {
             runtime_scope: current_runtime_scope(),
-            inner: Mutex::new(ElementCacheState::default()),
+            inner: Mutex::new(SnapshotStoreState::default()),
         }
     }
 
@@ -538,7 +538,7 @@ impl<S: SnapshotPayload> ElementCacheCore<S> {
             .and_then(|lane| lane.iter().find(|entry| entry.id == reference.snapshot_id));
         let Some(entry) = entry else {
             drop(inner);
-            let caches = runtime_caches()
+            let caches = runtime_stores()
                 .lock()
                 .unwrap()
                 .iter()
@@ -607,9 +607,9 @@ impl<S: SnapshotPayload> ElementCacheCore<S> {
     }
 }
 
-impl<S: SnapshotPayload> Drop for ElementCacheCore<S> {
+impl<S: SnapshotPayload> Drop for SnapshotStore<S> {
     fn drop(&mut self) {
-        let mut caches = runtime_caches().lock().unwrap();
+        let mut caches = runtime_stores().lock().unwrap();
         if caches
             .get(&self.runtime_scope)
             .is_some_and(|cache| std::ptr::addr_eq(cache.as_ptr(), self as *const Self))
@@ -622,18 +622,18 @@ impl<S: SnapshotPayload> Drop for ElementCacheCore<S> {
     }
 }
 
-impl<S: SnapshotPayload> Default for ElementCacheCore<S> {
+impl<S: SnapshotPayload> Default for SnapshotStore<S> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-trait RuntimeCache: Any + Send + Sync {
+trait RuntimeStore: Any + Send + Sync {
     fn contains(&self, pid: i32, snapshot_id: u32) -> bool;
     fn clear(&self) -> usize;
 }
 
-impl<S: SnapshotPayload> RuntimeCache for ElementCacheCore<S> {
+impl<S: SnapshotPayload> RuntimeStore for SnapshotStore<S> {
     fn contains(&self, pid: i32, snapshot_id: u32) -> bool {
         self.inner
             .lock()
@@ -648,24 +648,24 @@ impl<S: SnapshotPayload> RuntimeCache for ElementCacheCore<S> {
     }
 }
 
-fn runtime_caches() -> &'static Mutex<HashMap<String, Weak<dyn RuntimeCache>>> {
-    static CACHES: OnceLock<Mutex<HashMap<String, Weak<dyn RuntimeCache>>>> = OnceLock::new();
-    CACHES.get_or_init(|| Mutex::new(HashMap::new()))
+fn runtime_stores() -> &'static Mutex<HashMap<String, Weak<dyn RuntimeStore>>> {
+    static STORES: OnceLock<Mutex<HashMap<String, Weak<dyn RuntimeStore>>>> = OnceLock::new();
+    STORES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn current_runtime_scope() -> String {
     crate::tool::current_dispatch_runtime_scope().unwrap_or_else(|| "legacy".into())
 }
 
-pub fn register_runtime_cache<S: SnapshotPayload>(cache: &Arc<ElementCacheCore<S>>) {
-    let erased: Arc<dyn RuntimeCache> = cache.clone();
-    let mut caches = runtime_caches().lock().unwrap();
+pub fn register_runtime_store<S: SnapshotPayload>(cache: &Arc<SnapshotStore<S>>) {
+    let erased: Arc<dyn RuntimeStore> = cache.clone();
+    let mut caches = runtime_stores().lock().unwrap();
     caches.retain(|_, cache| cache.strong_count() > 0);
     caches.insert(cache.runtime_scope.clone(), Arc::downgrade(&erased));
 }
 
-pub fn current_runtime_cache<S: SnapshotPayload>() -> Option<Arc<ElementCacheCore<S>>> {
-    let cache = runtime_caches()
+pub fn current_runtime_store<S: SnapshotPayload>() -> Option<Arc<SnapshotStore<S>>> {
+    let cache = runtime_stores()
         .lock()
         .unwrap()
         .get(&current_runtime_scope())?
@@ -675,7 +675,7 @@ pub fn current_runtime_cache<S: SnapshotPayload>() -> Option<Arc<ElementCacheCor
 }
 
 pub fn retire_runtime_scope(runtime_scope: &str) -> usize {
-    let cache = runtime_caches()
+    let cache = runtime_stores()
         .lock()
         .unwrap()
         .remove(runtime_scope)
@@ -692,7 +692,7 @@ mod tests {
 
     #[test]
     fn publish_then_resolve_returns_projection() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         let id = cache.publish(42, 7, Payload(vec![10, 20, 30]));
         let result = cache
             .resolve_element_args(42, None, Some(&token_for(id, 2)), None, None, "click")
@@ -705,7 +705,7 @@ mod tests {
 
     #[test]
     fn miss_returns_refusal() {
-        let cache = ElementCacheCore::<Payload>::new();
+        let cache = SnapshotStore::<Payload>::new();
         assert!(cache
             .resolve_element_args(1, None, Some(&token_for(0, 0)), None, None, "click")
             .is_err());
@@ -713,7 +713,7 @@ mod tests {
 
     #[test]
     fn membership_matches_payload_length() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         let id = cache.publish(9, 99, Payload(vec![1, 2, 3, 4, 5]));
         for index in 0..5 {
             assert!(cache
@@ -727,7 +727,7 @@ mod tests {
 
     #[test]
     fn screenshot_coordinates_never_borrow_another_sessions_latest_transform() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(7.35));
         assert_eq!(
             cache.screenshot_scale(10, Some(20), Some("client-a")),
@@ -754,7 +754,7 @@ mod tests {
 
     #[test]
     fn screenshot_transforms_are_independent_across_windows() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(7.35));
         cache.publish_for_session(10, 21, Payload(vec![]), Some("client-b"), Some(2.0));
         assert_eq!(
@@ -769,7 +769,7 @@ mod tests {
 
     #[test]
     fn same_session_latest_snapshot_replaces_or_refuses_older_image_context() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(7.35));
         cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(1.0));
         assert_eq!(
@@ -788,7 +788,7 @@ mod tests {
 
     #[test]
     fn session_retirement_removes_only_snapshots_owned_by_that_session() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         cache.publish_for_session(10, 20, Payload(vec![]), Some("ending"), Some(7.35));
         cache.publish_for_session(10, 21, Payload(vec![]), Some("survivor"), Some(2.0));
         assert_eq!(cache.retire_session_screenshots("ending"), 1);
@@ -804,7 +804,7 @@ mod tests {
 
     #[test]
     fn retired_screenshot_refuses_cross_session_and_anonymous_replay_until_republished() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         cache.publish_for_session(10, 20, Payload(vec![]), Some("ending"), Some(7.35));
         assert_eq!(cache.retire_session_screenshots("ending"), 1);
 
@@ -841,7 +841,7 @@ mod tests {
 
     #[test]
     fn lru_eviction_retires_only_the_evicted_screenshot_key() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         for window_id in 0..LRU_CAP_PER_PID as u64 {
             cache.publish_for_session(10, window_id, Payload(vec![]), Some("client-a"), Some(2.0));
         }
@@ -871,7 +871,7 @@ mod tests {
 
     #[test]
     fn explicit_remove_retires_only_a_snapshot_that_existed() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(2.0));
         cache.remove(10, 20);
 
@@ -890,7 +890,7 @@ mod tests {
 
     #[test]
     fn capture_completing_after_session_end_is_not_published() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         let session = format!("snapshot-late-capture-{}", uuid::Uuid::new_v4());
         assert!(crate::session::fire_session_end(&session));
         assert_eq!(
@@ -905,7 +905,7 @@ mod tests {
 
     #[test]
     fn no_snapshot_keeps_legacy_native_pixel_fallback() {
-        let cache = ElementCacheCore::<Payload>::new();
+        let cache = SnapshotStore::<Payload>::new();
         assert_eq!(
             cache.screenshot_scale(10, Some(20), Some("client-a")),
             Ok(None)
@@ -914,7 +914,7 @@ mod tests {
 
     #[test]
     fn retired_screenshot_index_has_deterministic_fixed_capacity() {
-        let mut state = ElementCacheState::<Payload>::default();
+        let mut state = SnapshotStoreState::<Payload>::default();
         let expected = (0..RETIRED_SCREENSHOT_CAPACITY)
             .map(|index| (1000 + index as i32, 2000 + index as u64))
             .collect::<Vec<_>>();
@@ -944,7 +944,7 @@ mod tests {
         assert!(!state.retired_screenshots.contains(&(9999, 9999)));
     }
 
-    fn overflow_retired_screenshots(cache: &ElementCacheCore<Payload>) -> (i32, u64) {
+    fn overflow_retired_screenshots(cache: &SnapshotStore<Payload>) -> (i32, u64) {
         for index in 0..=RETIRED_SCREENSHOT_CAPACITY {
             cache.publish_for_session(
                 1000 + index as i32,
@@ -966,7 +966,7 @@ mod tests {
 
     #[test]
     fn retired_screenshot_overflow_refuses_unrecorded_and_unseen_replay() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         let overflow_key = overflow_retired_screenshots(&cache);
 
         let inner = cache.inner.lock().unwrap();
@@ -991,7 +991,7 @@ mod tests {
 
     #[test]
     fn fresh_snapshot_resolves_while_retirement_index_is_overflowed() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         let overflow_key = overflow_retired_screenshots(&cache);
 
         cache.publish_for_session(
@@ -1017,7 +1017,7 @@ mod tests {
 
     #[test]
     fn clear_resets_retired_screenshot_overflow() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         overflow_retired_screenshots(&cache);
         cache.clear();
 
@@ -1031,7 +1031,7 @@ mod tests {
 
     #[test]
     fn zoom_context_is_bound_to_snapshot_session_and_window() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         let zooms = SnapshotBoundZoomRegistry::new();
         let snapshot = cache
             .publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(7.35))
@@ -1079,7 +1079,7 @@ mod tests {
 
     #[test]
     fn window_only_screenshot_lookup_requires_one_current_owned_snapshot() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         let first = cache
             .publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(2.0))
             .unwrap();
@@ -1115,7 +1115,7 @@ mod tests {
 
     #[test]
     fn late_zoom_completion_cannot_replace_newer_valid_context() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         let zooms = SnapshotBoundZoomRegistry::new();
         let snapshot_a = cache
             .publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(2.0))
@@ -1160,7 +1160,7 @@ mod tests {
 
     #[test]
     fn newer_snapshot_retires_zoom_for_click_drag_and_held_pointer_coordinates() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         let zooms = SnapshotBoundZoomRegistry::new();
         let snapshot = cache
             .publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(7.35))
@@ -1202,7 +1202,7 @@ mod tests {
 
     #[test]
     fn zoom_context_retires_on_same_session_replacement_and_session_end() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         let zooms = SnapshotBoundZoomRegistry::new();
         let snapshot = cache
             .publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(7.35))
@@ -1257,7 +1257,7 @@ mod tests {
     }
 
     struct DropCounter {
-        owner: Weak<ElementCacheCore<DropCounter>>,
+        owner: Weak<SnapshotStore<DropCounter>>,
         drops: Arc<AtomicUsize>,
     }
     impl SnapshotPayload for DropCounter {
@@ -1283,7 +1283,7 @@ mod tests {
 
     #[test]
     fn screenshot_retirement_keeps_only_tombstone_not_payload() {
-        let cache = Arc::new(ElementCacheCore::new());
+        let cache = Arc::new(SnapshotStore::new());
         let drops = Arc::new(AtomicUsize::new(0));
         cache.publish_for_session(
             10,
@@ -1310,7 +1310,7 @@ mod tests {
 
     #[test]
     fn replacement_remove_and_clear_run_drop_outside_lock() {
-        let cache = Arc::new(ElementCacheCore::new());
+        let cache = Arc::new(SnapshotStore::new());
         let drops = Arc::new(AtomicUsize::new(0));
         let payload = || DropCounter {
             owner: Arc::downgrade(&cache),
@@ -1329,7 +1329,7 @@ mod tests {
 
     #[test]
     fn window_identity_preserves_high_bits_through_resolution_and_retirement() {
-        let cache = ElementCacheCore::new();
+        let cache = SnapshotStore::new();
         let low = 7;
         let high = (1_u64 << 32) | low;
         let first = cache.publish(42, low, Payload(vec![10]));
@@ -1370,10 +1370,10 @@ mod tests {
     #[test]
     fn bindings_sharing_a_scope_keep_independent_payload_ownership() {
         crate::tool::with_runtime_scope("snapshot-binding-ownership".into(), || {
-            let first = Arc::new(ElementCacheCore::new());
-            let second = Arc::new(ElementCacheCore::new());
-            register_runtime_cache(&first);
-            register_runtime_cache(&second);
+            let first = Arc::new(SnapshotStore::new());
+            let second = Arc::new(SnapshotStore::new());
+            register_runtime_store(&first);
+            register_runtime_store(&second);
             let first_id = first.publish(42, 7, Payload(vec![10]));
             let second_id = second.publish(42, 7, Payload(vec![20]));
             assert!(second
@@ -1395,7 +1395,7 @@ mod tests {
                 ResolvedElement::Element { element: 20, .. }
             ));
             assert!(Arc::ptr_eq(
-                &current_runtime_cache::<Payload>().unwrap(),
+                &current_runtime_store::<Payload>().unwrap(),
                 &second
             ));
             retire_runtime_scope("snapshot-binding-ownership");
@@ -1405,7 +1405,7 @@ mod tests {
     #[test]
     fn recording_discovery_does_not_extend_payload_lifetime() {
         crate::tool::with_runtime_scope("snapshot-weak-discovery".into(), || {
-            let cache = Arc::new(ElementCacheCore::new());
+            let cache = Arc::new(SnapshotStore::new());
             let drops = Arc::new(AtomicUsize::new(0));
             cache.publish(
                 42,
@@ -1415,13 +1415,13 @@ mod tests {
                     drops: drops.clone(),
                 },
             );
-            register_runtime_cache(&cache);
+            register_runtime_store(&cache);
             assert_eq!(Arc::strong_count(&cache), 1);
             drop(cache);
             assert_eq!(drops.load(Ordering::SeqCst), 1);
-            assert!(current_runtime_cache::<DropCounter>().is_none());
+            assert!(current_runtime_store::<DropCounter>().is_none());
             {
-                let caches = runtime_caches().lock().unwrap();
+                let caches = runtime_stores().lock().unwrap();
                 assert!(!caches.contains_key("snapshot-weak-discovery"));
                 if caches.is_empty() {
                     assert_eq!(caches.capacity(), 0);
@@ -1433,6 +1433,6 @@ mod tests {
 
     #[test]
     fn default_impl_matches_new() {
-        let _cache: ElementCacheCore<Payload> = ElementCacheCore::default();
+        let _cache: SnapshotStore<Payload> = SnapshotStore::default();
     }
 }

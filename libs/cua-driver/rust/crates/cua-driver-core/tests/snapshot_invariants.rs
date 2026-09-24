@@ -1,8 +1,8 @@
-use cua_driver_core::element_cache::{
-    register_runtime_cache, retire_runtime_scope, ElementCacheCore, SnapshotPayload,
-};
 use cua_driver_core::element_token::{
     format_token, ResolvedElement, LRU_CAP_PER_PID, STALE_TOKEN_ERROR,
+};
+use cua_driver_core::snapshot_store::{
+    register_runtime_store, retire_runtime_scope, SnapshotPayload, SnapshotStore,
 };
 use cua_driver_core::tool::with_runtime_scope;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -39,7 +39,7 @@ fn payload<T: Clone + Send + Sync + 'static>(elements: Vec<T>) -> Payload<T> {
 }
 
 fn resolve<T: Clone + Send + Sync + 'static>(
-    cache: &ElementCacheCore<Payload<T>>,
+    cache: &SnapshotStore<Payload<T>>,
     snapshot: u32,
     index: usize,
 ) -> Result<(u64, usize, T), String> {
@@ -71,7 +71,7 @@ fn resolve<T: Clone + Send + Sync + 'static>(
 
 #[test]
 fn empty_snapshot_has_no_resolvable_members() {
-    let cache = ElementCacheCore::new();
+    let cache = SnapshotStore::new();
     let snapshot = cache.publish(42, 7, payload(Vec::<usize>::new()));
     assert!(
         resolve(&cache, snapshot, 0).is_err(),
@@ -81,7 +81,7 @@ fn empty_snapshot_has_no_resolvable_members() {
 
 #[test]
 fn replacement_invalidates_every_old_member_and_admits_new_members() {
-    let cache = ElementCacheCore::new();
+    let cache = SnapshotStore::new();
     let first = cache.publish(42, 7, payload(vec![0, 1]));
     let second = cache.publish(42, 7, payload(vec![10, 11]));
     assert_ne!(first, second);
@@ -96,7 +96,7 @@ fn replacement_invalidates_every_old_member_and_admits_new_members() {
 
 #[test]
 fn resolving_does_not_change_publication_order_eviction() {
-    let cache = ElementCacheCore::new();
+    let cache = SnapshotStore::new();
     let first = cache.publish(42, 1, payload(vec![1]));
     for window in 2..=LRU_CAP_PER_PID as u64 {
         cache.publish(42, window, payload(vec![1]));
@@ -111,8 +111,8 @@ fn resolving_does_not_change_publication_order_eviction() {
 fn clearing_one_runtime_preserves_other_runtime_same_window() {
     let make = |scope: &str| {
         with_runtime_scope(scope.into(), || {
-            let cache = Arc::new(ElementCacheCore::new());
-            register_runtime_cache(&cache);
+            let cache = Arc::new(SnapshotStore::new());
+            register_runtime_store(&cache);
             let id = cache.publish(42, 7, payload(vec![1]));
             (cache, id)
         })
@@ -140,7 +140,7 @@ fn clearing_one_runtime_preserves_other_runtime_same_window() {
 
 #[test]
 fn token_resolution_cannot_be_retargeted_by_cache_replacement() {
-    let cache = ElementCacheCore::new();
+    let cache = SnapshotStore::new();
     let snapshot = cache.publish(42, 7, payload(vec!["original-target"]));
     let (resolved_tx, resolved_rx) = mpsc::channel();
     let (replaced_tx, replaced_rx) = mpsc::channel();
@@ -167,8 +167,8 @@ fn token_resolution_cannot_be_retargeted_by_cache_replacement() {
 fn runtime_retirement_releases_unadmitted_cache_payload() {
     let drops = Arc::new(AtomicUsize::new(0));
     let cache = with_runtime_scope("retirement-invariant".into(), || {
-        let cache = Arc::new(ElementCacheCore::new());
-        register_runtime_cache(&cache);
+        let cache = Arc::new(SnapshotStore::new());
+        register_runtime_store(&cache);
         cache.publish(
             42,
             7,
@@ -191,7 +191,7 @@ fn runtime_retirement_releases_unadmitted_cache_payload() {
 
 #[test]
 fn eviction_releases_unadmitted_cache_payload() {
-    let cache = ElementCacheCore::new();
+    let cache = SnapshotStore::new();
     let drops = Arc::new(AtomicUsize::new(0));
     for window in 0..=LRU_CAP_PER_PID as u64 {
         cache.publish(

@@ -38,8 +38,12 @@ class MockDecisionModel:
 
 
 def local_s1_model() -> S1DecisionModel:
-    base = Path(os.environ["S1_BASE_MODEL_PATH"]).expanduser()
-    adapter = Path(os.environ["S1_ADAPTER_PATH"]).expanduser()
+    base_value = os.environ["S1_BASE_MODEL_PATH"]
+    adapter_value = os.environ["S1_ADAPTER_PATH"]
+    if not base_value.strip() or not adapter_value.strip():
+        raise ValueError("S1_BASE_MODEL_PATH and S1_ADAPTER_PATH must be local directories")
+    base = Path(base_value).expanduser()
+    adapter = Path(adapter_value).expanduser()
     if not base.is_dir() or not adapter.is_dir():
         raise ValueError("S1_BASE_MODEL_PATH and S1_ADAPTER_PATH must be local directories")
     from cua_s1.four_b import FourBModel

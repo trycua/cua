@@ -91,7 +91,8 @@ TypeSafe request. The CLI currently exposes only the text adapter.
 ## Verification scope
 
 The focused fake-model tests cover the selection contract, reserved outcomes,
-malformed scores, the 26-option boundary, and TypeSafe request redaction. A
+malformed scores, the 26-option boundary, and absence of screenshot and action
+arguments in the TypeSafe request. A
 local pinned-weight S1 text inference selected the expected `submit-form`
 candidate from the synthetic fixture request. That is a runtime smoke, not
 evidence that S1 matches Jev's decision quality or that the S1 path has been

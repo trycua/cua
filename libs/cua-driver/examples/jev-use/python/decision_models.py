@@ -185,6 +185,9 @@ def visual_regions_as_text(request: DecisionRequest) -> str:
             f"{json.dumps(region['id'])}: {region['kind']} {label!r} at "
             f"({bounds['x']},{bounds['y']},{bounds['width']},{bounds['height']})"
         )
+    if request.history:
+        lines.append("Prior bounded decisions:")
+        lines.extend(json.dumps(item, ensure_ascii=False) for item in request.history)
     return "\n".join(lines)
 
 
@@ -209,8 +212,16 @@ class S1DecisionModel:
             self.screenshot_path is None or not self.screenshot_path.is_file()
         ):
             raise ValueError("multimodal S1 requires an existing local screenshot")
+        scorer_modality = getattr(self.scorer, "modality", self.modality)
+        if scorer_modality != self.modality:
+            raise ValueError("S1 scorer modality does not match the decision adapter")
         options = [
-            _S1Option(item["id"], "Decision", json.dumps(item["description"]), "select")
+            _S1Option(
+                item["id"],
+                "Decision",
+                json.dumps(item["description"], ensure_ascii=False)[1:-1],
+                "select",
+            )
             for item in request.candidates
         ]
         kwargs: dict[str, Any] = {

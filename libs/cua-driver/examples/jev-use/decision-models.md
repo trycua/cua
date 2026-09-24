@@ -54,6 +54,13 @@ To verify the expected fixture choice without printing the full response, run
 response schema, capture ID, complete candidate set, and selected ID. It does
 not dispatch a Driver action or prove live desktop behavior.
 
+The separate negative fixture has a `Save` observation but an action candidate
+that requires `Send`. To check a live provider's abstention without executing
+the candidate, run `uv run --frozen verify_decision_cli.py --model jev
+--fixture negative --expected-id abstain` in an authorized local environment.
+The mock intentionally chooses the first action candidate and is not an oracle
+for this negative case.
+
 The TypeSafe Jev path uses the example's official SDK and reads its credential
 from the local environment. Run it only with data you intend to send to that
 service. Do not put `TYPESAFE_API_KEY` in CI or GitHub Actions:

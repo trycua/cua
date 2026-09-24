@@ -13,10 +13,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", choices=("mock", "jev", "s1"), required=True)
     parser.add_argument("--expected-id", default="submit-form")
+    parser.add_argument("--fixture", choices=("positive", "negative"), default="positive")
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parent
-    request = json.loads((root / "fixtures/jev-choice-request-v1.json").read_text(encoding="utf-8"))
+    fixture_name = (
+        "jev-choice-request-v1.json"
+        if args.fixture == "positive"
+        else "jev-choice-negative-v1.json"
+    )
+    request = json.loads((root / "fixtures" / fixture_name).read_text(encoding="utf-8"))
     result = subprocess.run(
         [sys.executable, str(root / "python/choose_decision.py"), "--model", args.model],
         input=json.dumps(request),
@@ -39,7 +45,8 @@ def main() -> None:
         raise RuntimeError("decision model returned an unsupported response")
     if response["capture_id"] != request["capture_id"]:
         raise RuntimeError("decision model returned a different capture")
-    if (response["kind"], response["selected_id"]) != ("selected", args.expected_id):
+    expected_kind = args.expected_id if args.expected_id in {"reobserve", "abstain"} else "selected"
+    if (response["kind"], response["selected_id"]) != (expected_kind, args.expected_id):
         raise RuntimeError("decision model did not select the expected candidate")
     candidate_ids = {candidate["id"] for candidate in request["candidates"]}
     if set(response["probabilities"]) != candidate_ids:

@@ -3762,6 +3762,51 @@ fn browser_chrome_changed_pixel_center(
     })
 }
 
+/// Screen-point center of the pixels that changed in the top browser chrome of
+/// two captures of the same window. Window captures exclude other processes'
+/// windows, so a system notification banner over the toolbar cannot move the
+/// result the way it can in a desktop capture.
+fn window_chrome_changed_pixel_center(
+    before: &image::RgbaImage,
+    after: &image::RgbaImage,
+    bounds: (f64, f64, f64, f64),
+) -> Option<(f64, f64)> {
+    assert_eq!(before.dimensions(), after.dimensions());
+    let scale_x = f64::from(before.width()) / bounds.2;
+    let scale_y = f64::from(before.height()) / bounds.3;
+    // Browser permission indicators live in the top chrome, as in
+    // `browser_chrome_changed_pixel_center`.
+    let bottom = (bounds.3.min(120.0) * scale_y)
+        .round()
+        .min(f64::from(before.height())) as u32;
+    let mut changed = 0_u64;
+    let mut x_sum = 0_u64;
+    let mut y_sum = 0_u64;
+    for y in 0..bottom {
+        for x in 0..before.width() {
+            let before = before.get_pixel(x, y);
+            let after = after.get_pixel(x, y);
+            if before
+                .0
+                .iter()
+                .zip(after.0.iter())
+                .take(3)
+                .any(|(before, after)| before.abs_diff(*after) >= 32)
+            {
+                changed += 1;
+                x_sum += u64::from(x);
+                y_sum += u64::from(y);
+            }
+        }
+    }
+    (changed > 0).then(|| {
+        (
+            bounds.0 + (x_sum as f64 / changed as f64) / scale_x,
+            bounds.1 + (y_sum as f64 / changed as f64) / scale_y,
+        )
+    })
+}
+
 fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
     let scenario = format!(
         "{}-{}-standalone-browser-owned-permission",
@@ -3959,19 +4004,37 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
         // Edge can collapse the notification request to a quiet indicator in
         // browser chrome. Expand the region that actually changed, then assess
         // the resulting browser-owned surface with the same pixel oracle.
-        if cfg!(target_os = "windows")
-            && spec.name == "edge"
+        // macOS locates the indicator in the window capture and gates on its
+        // change count: a system notification banner can cover the toolbar in
+        // the desktop capture.
+        let quiet_indicator = if spec.name != "edge" {
+            None
+        } else if cfg!(target_os = "windows")
             && initial_desktop_changed_pixels < minimum_prompt_pixels
         {
             let full_desktop_before = load_capture(&desktop_before_path);
             let full_desktop_after = load_capture(&desktop_after_path);
-            let (x, y) = browser_chrome_changed_pixel_center(
+            Some(browser_chrome_changed_pixel_center(
                 &full_desktop_before,
                 &full_desktop_after,
                 &desktop,
                 bounds,
-            )
-            .expect("quiet permission indicator did not produce a changed browser chrome region");
+            ))
+        } else if cfg!(target_os = "macos")
+            && changed_pixel_count(&window_before, &window_after) < minimum_prompt_pixels
+        {
+            Some(window_chrome_changed_pixel_center(
+                &window_before,
+                &window_after,
+                bounds,
+            ))
+        } else {
+            None
+        };
+        if let Some(indicator) = quiet_indicator {
+            let (x, y) = indicator.expect(
+                "quiet permission indicator did not produce a changed browser chrome region",
+            );
             quiet_prompt_indicator = Some((x, y));
             let expanded = fixture.driver.call(
                 "click",

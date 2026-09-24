@@ -3,10 +3,11 @@
 //! Uses _NET_CLIENT_LIST_STACKING to get the list of top-level windows,
 //! then reads WM_NAME/_NET_WM_NAME, _NET_WM_PID, and geometry per window.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
+use x11rb::xcb_ffi::XCBConnection;
 
 #[derive(Debug, Clone)]
 pub struct WindowInfo {
@@ -40,7 +41,10 @@ pub fn window_belongs_to_pid(xid: u64, pid: u32) -> bool {
     let Ok(xid) = u32::try_from(xid) else {
         return false;
     };
-    let Ok((conn, _)) = RustConnection::connect(None) else {
+    if let Ok((conn, _)) = RustConnection::connect(None) {
+        return window_owner_matches(get_window_pid(&conn, xid).ok().flatten(), pid);
+    }
+    let Ok((conn, _)) = XCBConnection::connect(None) else {
         return false;
     };
     window_owner_matches(get_window_pid(&conn, xid).ok().flatten(), pid)
@@ -51,27 +55,53 @@ fn window_owner_matches(owner: Option<u32>, requested_pid: u32) -> bool {
 }
 
 fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
-    let (conn, screen_num) = RustConnection::connect(None)?;
+    match RustConnection::connect(None) {
+        Ok((conn, screen_num)) => enumerate_windows(&conn, screen_num, filter_pid),
+        Err(rust_err) => match XCBConnection::connect(None) {
+            Ok((conn, screen_num)) => enumerate_windows(&conn, screen_num, filter_pid),
+            Err(xcb_err) => Err(x11_connect_error(rust_err, xcb_err)),
+        },
+    }
+}
+
+fn x11_connect_error(
+    rust_err: impl std::fmt::Display,
+    xcb_err: impl std::fmt::Display,
+) -> anyhow::Error {
+    anyhow!(
+        "X11 connect failed (DISPLAY={:?}, XAUTHORITY={:?}): rust-connection: {}; libxcb: {}",
+        std::env::var("DISPLAY").ok(),
+        std::env::var("XAUTHORITY").ok(),
+        rust_err,
+        xcb_err,
+    )
+}
+
+fn enumerate_windows<C: Connection>(
+    conn: &C,
+    screen_num: usize,
+    filter_pid: Option<u32>,
+) -> Result<Vec<WindowInfo>> {
     let screen = &conn.setup().roots[screen_num];
     let root = screen.root;
 
     // Get _NET_CLIENT_LIST_STACKING (or fallback to _NET_CLIENT_LIST).
-    let windows = get_window_list(&conn, root)?;
+    let windows = get_window_list(conn, root)?;
 
     let mut result = Vec::new();
     for (z_index, xid) in windows.into_iter().enumerate() {
-        let pid = get_window_pid(&conn, xid).ok().flatten();
+        let pid = get_window_pid(conn, xid).ok().flatten();
         if let Some(fp) = filter_pid {
             if pid != Some(fp) {
                 continue;
             }
         }
 
-        let title = get_window_title(&conn, xid).unwrap_or_default();
+        let title = get_window_title(conn, xid).unwrap_or_default();
         if title.trim().is_empty() {
             continue;
         }
-        let app_name = get_window_class(&conn, xid)
+        let app_name = get_window_class(conn, xid)
             .map(|(instance, class)| if class.is_empty() { instance } else { class })
             .unwrap_or_default();
         let is_on_screen = conn
@@ -113,7 +143,7 @@ fn z_index_from_bottom_to_top(position: usize) -> usize {
     position
 }
 
-fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec<Window>> {
+fn get_window_list<C: Connection>(conn: &C, root: Window) -> Result<Vec<Window>> {
     let atom_names = ["_NET_CLIENT_LIST_STACKING", "_NET_CLIENT_LIST"];
     for name in &atom_names {
         if let Ok(atom) = get_atom(conn, name) {
@@ -157,7 +187,7 @@ fn fallback_window_is_listable(map_state: MapState) -> bool {
     map_state == MapState::VIEWABLE
 }
 
-fn get_atom(conn: &RustConnection, name: &str) -> Result<Atom> {
+fn get_atom<C: Connection>(conn: &C, name: &str) -> Result<Atom> {
     Ok(conn.intern_atom(false, name.as_bytes())?.reply()?.atom)
 }
 
@@ -241,7 +271,7 @@ fn moveresize_window_flags() -> u32 {
     STATIC_GRAVITY | X_PRESENT | Y_PRESENT | WIDTH_PRESENT | HEIGHT_PRESENT
 }
 
-fn get_window_pid(conn: &RustConnection, window: Window) -> Result<Option<u32>> {
+fn get_window_pid<C: Connection>(conn: &C, window: Window) -> Result<Option<u32>> {
     let atom = get_atom(conn, "_NET_WM_PID")?;
     let reply = conn
         .get_property(false, window, atom, AtomEnum::CARDINAL, 0, 1)?
@@ -249,7 +279,7 @@ fn get_window_pid(conn: &RustConnection, window: Window) -> Result<Option<u32>> 
     Ok(reply.value32().and_then(|mut i| i.next()))
 }
 
-fn get_window_title(conn: &RustConnection, window: Window) -> Result<String> {
+fn get_window_title<C: Connection>(conn: &C, window: Window) -> Result<String> {
     // Try _NET_WM_NAME (UTF-8) first.
     if let Ok(atom) = get_atom(conn, "_NET_WM_NAME") {
         if let Ok(utf8_atom) = get_atom(conn, "UTF8_STRING") {
@@ -281,11 +311,14 @@ fn get_window_title(conn: &RustConnection, window: Window) -> Result<String> {
 /// Returns `None` when no X connection is available, the window has no
 /// WM_CLASS atom set, or the property could not be read.
 pub fn wm_class_for_window(xid: u64) -> Option<(String, String)> {
-    let (conn, _) = RustConnection::connect(None).ok()?;
+    if let Ok((conn, _)) = RustConnection::connect(None) {
+        return get_window_class(&conn, xid as u32);
+    }
+    let (conn, _) = XCBConnection::connect(None).ok()?;
     get_window_class(&conn, xid as u32)
 }
 
-fn get_window_class(conn: &RustConnection, xid: Window) -> Option<(String, String)> {
+fn get_window_class<C: Connection>(conn: &C, xid: Window) -> Option<(String, String)> {
     let reply = conn
         .get_property(
             false,

@@ -54,6 +54,7 @@ pkgs.rustPlatform.buildRustPackage {
     libxi
     libxtst
     libxext
+    libxcb
     pipewire
     libei
   ];

@@ -6,6 +6,15 @@
 
 * **cua-driver:** deliver X11 key-down before the tap delay and finish background keyboard delivery before closing the input connection.
 
+## [0.28.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.28.3...cua-driver-rs-v0.28.4) (2026-09-24)
+
+
+### Bug Fixes
+
+* **cua-driver:** complete 0.28.3 changelog attribution ([d484c01](https://github.com/trycua/cua/commit/d484c0184a2fd4f2f1b1c213844634d61c22d7b0))
+* **cua-driver:** complete release changelog attribution ([5188f8d](https://github.com/trycua/cua/commit/5188f8d35be8be0f8d21d56cf5c1d781e3b6acb7))
+* **cua-driver:** finalize release attribution control ([c37a9c6](https://github.com/trycua/cua/commit/c37a9c64975b57b3e090c9679e65e45d9ecd196d))
+
 ## [0.28.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.28.2...cua-driver-rs-v0.28.3) (2026-09-24)
 
 

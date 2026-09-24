@@ -1,0 +1,262 @@
+name: "CI: jev-use"
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/examples/jev-use/**"
+      - "libs/cua-driver/docs/jev-use-validation.md"
+      - "docs/content/docs/how-to-guides/driver/jev-use.mdx"
+      - "docs/content/docs/how-to-guides/driver/meta.json"
+      - "skills/jev-use/**"
+      - ".github/workflows/ci-jev-use.yml"
+      - ".github/workflows/authorized-live-jev-use.yml"
+      - ".github/workflows/authorized-live-jev-use-demo.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-driver/examples/jev-use/**"
+      - "libs/cua-driver/docs/jev-use-validation.md"
+      - "docs/content/docs/how-to-guides/driver/jev-use.mdx"
+      - "docs/content/docs/how-to-guides/driver/meta.json"
+      - "skills/jev-use/**"
+      - ".github/workflows/ci-jev-use.yml"
+      - ".github/workflows/authorized-live-jev-use.yml"
+      - ".github/workflows/authorized-live-jev-use-demo.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-jev-use-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: libs/cua-driver/examples/jev-use
+
+jobs:
+  unit-python:
+    name: Python unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.15"
+          enable-cache: true
+          cache-dependency-glob: libs/cua-driver/examples/jev-use/uv.lock
+      - name: Install locked Python dependencies
+        run: uv sync --frozen
+      - name: Run Python unit tests without credentials
+        run: uv run python -m unittest discover -s python/tests -v
+      - name: Verify bounded chooser CLI in mock mode
+        run: uv run --frozen python verify_choice_cli.py
+      - name: Verify closed-candidate decision CLI in mock mode
+        run: uv run --frozen python verify_decision_cli.py --model mock
+
+  unit-typescript:
+    name: TypeScript unit and typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/examples/jev-use/package-lock.json
+      - name: Install locked TypeScript dependencies
+        run: npm ci --ignore-scripts
+      - name: Run TypeScript unit tests
+        run: npm test
+      - name: Typecheck
+        run: npm run typecheck
+
+  mock-e2e-linux:
+    name: Linux mock E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CUA_DRIVER_BIN: ${{ github.workspace }}/libs/cua-driver/rust/target/release/cua-driver
+      CUA_DRIVER_PERMISSION_MODE: unrestricted
+      CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS: "1"
+      CUA_E2E_BROWSER_NO_SANDBOX: "1"
+      CUA_E2E_BROWSER_STDERR: "1"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.15"
+          enable-cache: true
+          cache-dependency-glob: libs/cua-driver/examples/jev-use/uv.lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/examples/jev-use/package-lock.json
+      - name: Install Linux desktop dependencies
+        working-directory: ${{ github.workspace }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb dbus-x11 at-spi2-core openbox picom clang pkg-config \
+            libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev libei-dev \
+            libx11-dev libxi-dev libxtst-dev libxext-dev libssl-dev \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+          chromium_source="$(readlink -f "$(command -v chromium)")"
+          "$chromium_source" --version
+          test ! -e /usr/lib/chromium-browser
+          sudo install -d -o root -g root -m 0755 /usr/lib/chromium-browser
+          sudo cp -a "$(dirname "$chromium_source")/." /usr/lib/chromium-browser/
+          chromium_wrapper="$(dirname "$chromium_source")/chrome-wrapper"
+          test -f "$chromium_wrapper" && test -x "$chromium_wrapper"
+          sudo install -o root -g root -m 0755 \
+            "$chromium_wrapper" /usr/lib/chromium-browser/chromium-browser.real
+          bootstrap_wrapper="$RUNNER_TEMP/chromium-browser"
+          cat > "$bootstrap_wrapper" <<'SH'
+          #!/bin/bash
+          set -euo pipefail
+          args=("$@")
+          for index in "${!args[@]}"; do
+            if [[ "${args[$index]}" == about:blank ]]; then
+              args[$index]='data:text/html,<title>Cua%20Driver</title>'
+            fi
+          done
+          exec /usr/lib/chromium-browser/chromium-browser.real "${args[@]}"
+          SH
+          sudo install -o root -g root -m 0755 \
+            "$bootstrap_wrapper" /usr/lib/chromium-browser/chromium-browser
+          sudo chown -R root:root /usr/lib/chromium-browser
+          sudo chmod -R go-w /usr/lib/chromium-browser
+
+          # Match Driver's canonical-path and full ancestor trust checks.
+          candidate=/usr/lib/chromium-browser/chromium-browser
+          test -f "$candidate" && test -x "$candidate"
+          test "$(readlink -f "$candidate")" = "$candidate"
+          path="$candidate"
+          while true; do
+            test ! -L "$path"
+            test "$(stat -c %u "$path")" -eq 0
+            test -z "$(find "$path" -maxdepth 0 -perm /022 -print -quit)"
+            test "$path" = / && break
+            path="$(dirname "$path")"
+          done
+          "$candidate" --version
+          smoke_profile="$RUNNER_TEMP/chromium-smoke-profile"
+          xvfb-run -a bash -s -- "$candidate" "$smoke_profile" <<'SH'
+          set -euo pipefail
+          candidate="$1"
+          profile="$2"
+          "$candidate" --no-sandbox --remote-debugging-port=0 \
+            --user-data-dir="$profile" --no-first-run \
+            --no-default-browser-check about:blank &
+          browser_pid=$!
+          cleanup() {
+            kill -KILL "$browser_pid" 2>/dev/null || true
+            wait "$browser_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          for _ in $(seq 1 100); do
+            if test -s "$profile/DevToolsActivePort"; then
+              port="$(head -n 1 "$profile/DevToolsActivePort")"
+              if curl -fsS "http://127.0.0.1:$port/json/list" | python3 -c \
+                'import json, sys; assert any(tab.get("title") == "Cua Driver" for tab in json.load(sys.stdin))'; then
+                exit 0
+              fi
+            fi
+            kill -0 "$browser_pid" 2>/dev/null || exit 1
+            sleep 0.1
+          done
+          exit 1
+          SH
+      - name: Build the exact candidate Driver
+        working-directory: ${{ github.workspace }}
+        run: cargo build --locked --release -p cua-driver --features portal-input --manifest-path libs/cua-driver/rust/Cargo.toml
+      - name: Install locked example dependencies
+        run: |
+          uv sync --frozen
+          npm ci --ignore-scripts
+      - name: Record candidate and verify advertised tools
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "Candidate SHA: $(git rev-parse HEAD)"
+          "$CUA_DRIVER_BIN" --version
+          tools="$($CUA_DRIVER_BIN list-tools)"
+          for name in browser_prepare list_windows get_browser_state browser_navigate browser_type browser_click; do
+            grep -Fq "$name" <<< "$tools"
+          done
+      - name: Run both mock agents through MCP on X11
+        working-directory: ${{ github.workspace }}
+        run: |
+          proof="$RUNNER_TEMP/jev-use-mock-proof"
+          session_script="$RUNNER_TEMP/jev-use-x11-session.sh"
+          cat > "$session_script" <<'SH'
+          set -euo pipefail
+          proof="$1"
+          driver_bin="$CUA_DRIVER_BIN"
+          driver_wrapper="$RUNNER_TEMP/jev-use-driver-with-x11"
+          {
+            echo '#!/bin/bash'
+            printf 'export DISPLAY=%q\n' "$DISPLAY"
+            printf 'export XAUTHORITY=%q\n' "${XAUTHORITY:-}"
+            printf 'export DBUS_SESSION_BUS_ADDRESS=%q\n' "$DBUS_SESSION_BUS_ADDRESS"
+            echo 'export CUA_DRIVER_PERMISSION_MODE=unrestricted'
+            echo 'export CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS=1'
+            echo 'export CUA_E2E_BROWSER_NO_SANDBOX=1'
+            echo 'export CUA_E2E_BROWSER_STDERR=1'
+            printf 'exec %q "$@"\n' "$driver_bin"
+          } > "$driver_wrapper"
+          chmod 0700 "$driver_wrapper"
+          export CUA_DRIVER_BIN="$driver_wrapper"
+          openbox >/tmp/jev-use-openbox.log 2>&1 &
+          picom --backend xrender --config /dev/null >/tmp/jev-use-picom.log 2>&1 &
+          sleep 2
+          cd libs/cua-driver/examples/jev-use
+          uv run python verify_mcp_tools.py
+          uv run --frozen python verify_setup.py --typescript --output-dir "$proof"
+          SH
+          # This focused recipe E2E reuses the repository's supported X11
+          # stack and restores display variables omitted by MCP stdio defaults.
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            dbus-run-session -- bash "$session_script" "$proof"
+      - name: Audit redacted E2E evidence
+        run: |
+          uv run python - "$RUNNER_TEMP/jev-use-mock-proof" <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          summary = json.loads((root / "summary.json").read_text())
+          assert summary["complete"] is True
+          assert summary["live_requested"] is False
+          assert summary["typescript_requested"] is True
+          assert len(summary["checks"]) == 2
+          assert {(item["language"], item["provider"], item["outcome"]) for item in summary["checks"]} == {
+              ("python", "mock", "verified"), ("typescript", "mock", "verified")
+          }
+          assert all(item["observed"] == {"submitted": "jev-guide-mock"} for item in summary["checks"])
+          forbidden = ("typesafe_api_key", "authorization", "environment", "image_base64", "screenshot")
+          for path in root.iterdir():
+              if path.name == "summary.json" or path.suffix == ".jsonl":
+                  text = path.read_text().lower()
+                  assert not any(value in text for value in forbidden), path
+          PY
+      - name: Upload redacted action evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: jev-use-linux-mock
+          path: |
+            ${{ runner.temp }}/jev-use-mock-proof/summary.json
+            ${{ runner.temp }}/jev-use-mock-proof/*.jsonl
+          if-no-files-found: error
+          retention-days: 14

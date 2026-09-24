@@ -1,0 +1,272 @@
+---
+title: 'Use jev-use with Cua Driver'
+description: 'Try the jev-use public preview: TypeSafe Jev chooses bounded actions and Cua Driver fills and submits a browser form.'
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+`jev-use` is a public-preview recipe for bounded computer use. In this example,
+[TypeSafe Jev](https://typesafe.ai/) chooses between action IDs supplied by the
+application, and Cua Driver performs the selected action in the browser.
+
+You'll run a Python agent that enters a sample value into a local form and
+clicks **Submit**. The example opens a separate browser profile, checks that the
+form received the value, and stops its test server when finished.
+
+## Before you start
+
+You need a logged-in graphical desktop and:
+
+- [Cua Driver](/how-to-guides/driver/install), version 0.23.2 or later.
+- A supported Chromium-based browser, listed in your platform's setup below.
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) and Git. uv will
+  install the Python version needed by the example.
+
+You'll also need an API key from the [TypeSafe console](https://console.typesafe.ai/)
+to use Jev. You can run the connection check without a key.
+
+After installation, open a new terminal on the computer Cua Driver controls.
+Use your platform's setup below, then follow the shared steps in that terminal.
+Commands outside the platform tabs work in both POSIX shells and PowerShell.
+The example prefers browser DOM evidence. It also recognizes the public
+`parse_visual_regions` contract when the installed Driver advertises that MCP
+tool and the capture-bound `click.capture_id` input. The agent obtains the
+capture from `get_window_state` and sends its exact ID with the visual click;
+it never falls back to unbound coordinates. The optional path is not required
+for this form. See
+[Capture and delivery modalities](/concepts/capture-and-delivery-modalities) for
+the observation modes Cua Driver supports.
+
+## 1. Check Cua Driver
+
+<Tabs items={['macOS', 'Windows', 'Linux']}>
+  <Tab value="macOS">
+
+Install [Google Chrome](https://www.google.com/chrome/) in `/Applications` and
+keep the desktop unlocked. Point the example to the installed Driver app:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+export CUA_DRIVER_BIN="/Applications/CuaDriver.app/Contents/MacOS/cua-driver"
+"$CUA_DRIVER_BIN" --version
+"$CUA_DRIVER_BIN" status
+"$CUA_DRIVER_BIN" permissions status --json
+```
+
+The daemon should be running, with `accessibility` and `screen_recording` both
+`true`. Complete the [permission setup](/how-to-guides/driver/install#grant-tcc-permissions-macos-only)
+if either grant is missing.
+
+  </Tab>
+  <Tab value="Windows">
+
+Use a normal, non-administrator PowerShell terminal in your logged-in desktop
+session. Install Google Chrome or Microsoft Edge as a system application.
+Run Driver without elevation too: automatic browser discovery requires an
+installation the running account's token cannot modify.
+
+```powershell
+cua-driver --version
+cua-driver status
+cua-driver doctor
+```
+
+The daemon must run in the interactive desktop session, not a background
+service session. If it is not running, follow the
+[Windows installation steps](/how-to-guides/driver/install).
+
+  </Tab>
+  <Tab value="Linux">
+
+Start with an X11 desktop session, using a non-root account and a system package
+of Google Chrome or Chromium. A browser downloaded into a user-writable cache
+is not a substitute for the trusted system installation.
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+cua-driver --version
+cua-driver status
+cua-driver doctor
+```
+
+Start Driver from the same graphical session using the
+[Linux daemon instructions](/how-to-guides/driver/install#start-the-daemon-on-linux).
+Check the report for display and accessibility-bus problems before continuing.
+For native Wayland, follow the
+[compositor-specific setup and limits](/reference/cua-driver/platform-support#linux-window-systems).
+
+  </Tab>
+</Tabs>
+
+## 2. Download the example
+
+These commands use the canonical `main` branch. Start in a directory where
+`cua-jev-use` does not already exist:
+
+```bash
+git clone --depth 1 https://github.com/trycua/cua.git cua-jev-use
+cd cua-jev-use
+cd libs/cua-driver/examples/jev-use
+uv sync --frozen --python 3.12
+```
+
+This installs the TypeSafe SDK and the MCP client that connects the agent to
+Cua Driver. The example code is included; you do not need to write an adapter.
+
+## 3. Check the browser connection
+
+Run the example with fixed choices instead of calling Jev:
+
+```bash
+uv run --frozen python verify_setup.py --output-dir runs/connection-check
+```
+
+An isolated browser opens a local test page, enters a value, and submits the form. A
+successful run ends with:
+
+```json
+{"event": "setup_complete", "checks": 1, "fixture_closed": true}
+```
+
+This confirms that Cua Driver can operate the browser. It does not call
+TypeSafe or require an API key. The repository's credential-free unit checks
+also validate the optional visual adapter against checked-in
+`cua.visual_regions_v1` fixtures, without running a perception model.
+
+## 4. Run with Jev
+
+Run the live example:
+
+```bash
+uv run --frozen python verify_setup.py --live --output-dir runs/jev-example
+```
+
+At an interactive terminal, the command asks for your TypeSafe API key without
+showing or saving it. If `TYPESAFE_API_KEY` is already set in the process
+environment, it uses that instead. Do not put the key in a command argument,
+source file, or chat message.
+
+The command runs the connection check again, then lets Jev choose the actions.
+The external adapter sends the test page's state and one bounded choice question
+to TypeSafe. If a visual parse is available, the compact observation includes
+its typed regions and exact `capture_id`, without screenshot bytes or extension
+internals. The adapter rejects an answer outside the supplied candidate IDs.
+Live calls use your account's API billing. Your personal browser profile is not
+used.
+
+Success ends with:
+
+```json
+{"event": "setup_complete", "checks": 2, "fixture_closed": true}
+```
+
+Inspect the result:
+
+```bash
+uv run --frozen python -m json.tool runs/jev-example/summary.json
+```
+
+Look for `"complete": true` and a check with `"provider": "live"` and
+`"observed": {"submitted": "jev-guide-live"}`. That value comes from the test
+server after the browser submits the form, not from the model's prediction.
+The run's action logs are saved alongside the summary.
+
+Use a different output directory for another run; existing results are not
+overwritten. The example closes its test server automatically and leaves your
+shared Cua Driver service running.
+
+## Use the TypeScript version
+
+The same example includes a TypeScript agent. Install Node.js 22 or later and
+npm, then install the dependencies from the example directory:
+
+<Tabs items={['macOS / Linux', 'Windows']}>
+  <Tab value="macOS / Linux">
+
+```bash
+export npm_config_cache="$PWD/.venv/npm-cache"
+npm ci
+```
+
+  </Tab>
+  <Tab value="Windows">
+
+```powershell
+$env:npm_config_cache = "$PWD/.venv/npm-cache"
+npm.cmd ci
+```
+
+  </Tab>
+</Tabs>
+
+Run both agents with the same command on every platform:
+
+```bash
+uv run --frozen python verify_setup.py --live --typescript --output-dir runs/both-languages
+```
+
+This runs the connection and live checks for both languages. Success reports
+`"checks": 4`; the results are in `runs/both-languages/summary.json`.
+
+## Call only the bounded chooser
+
+If your application already owns the Driver loop, call the external chooser as
+a single-request process. It reads one versioned JSON request from stdin and
+writes one allowlisted response to stdout:
+
+```bash
+uv run python/choose_action.py --mock < fixtures/jev-choice-request-v1.json
+uv run python/choose_action.py < fixtures/jev-choice-request-v1.json
+```
+
+The live command lets the TypeSafe SDK read `TYPESAFE_API_KEY`. The request may
+contain only the goal, `capture_id`, compact typed regions, bounded history, and
+candidate IDs with descriptions, including `reobserve` and `abstain`. It cannot
+contain Driver tool names or arguments, screenshot bytes, or environment data.
+The chooser selects an ID; your application must still resolve the original
+action, execute it through Driver, reobserve, and verify the postcondition.
+
+## Running from an AI agent
+
+Give the agent this guide and supply `TYPESAFE_API_KEY` through its execution
+environment. The person operating the computer must approve any OS permissions
+and keep the graphical session available.
+
+If shell calls do not share state, the agent must repeat the working directory
+and `PATH`/`CUA_DRIVER_BIN` exports. Keep each `verify_setup.py` invocation in one
+shell call until it finishes. The command manages the test server itself.
+
+## Troubleshooting
+
+| Problem | What to check |
+| --- | --- |
+| Driver not running or permissions missing | Follow the [Driver setup guide](/how-to-guides/driver/install). |
+| Browser cannot launch | Check the browser installation and desktop-session requirements in your platform tab. On Windows, avoid an elevated Driver process. |
+| `browser_prepare` requires a `pid` | Update an older Driver installation before using this example. |
+| `uv` not found | Finish the uv installation and open a new terminal with its installation directory on `PATH`. |
+| API authentication or quota error | Check your TypeSafe key and account access. The connection check can pass even when live access fails. |
+| Output directory already exists | Choose another `--output-dir` to keep the previous result. |
+| Run fails or reports `"complete": false` | Read the action log before retrying. Failure does not prove that nothing happened; an action may already have landed. |
+
+## Adapt the example
+
+To automate a different task, change three parts of the agent:
+
+| Part | Purpose | Python source |
+| --- | --- | --- |
+| Candidates | Define the actions Jev can choose and their arguments. | `python/core.py` |
+| Goal and observations | Tell Jev what to accomplish and what the page currently shows. | `python/jev_adapter.py` |
+| Completion check | Confirm that the application reached the intended result. | `python/run.py` |
+
+The form example offers only the next valid action plus reserved `reobserve`
+and `abstain` choices. Visual candidates are accepted only from a unique,
+well-formed region tied to the current immutable capture and dispatched through
+Driver's capture-bound `click` contract. Stale, malformed, ambiguous, or
+capture-refused results fail closed. Typing continues to require the semantic
+editable reference. Completion still comes from the test server's independent
+state endpoint, not from semantic or visual observation.
+For a new task, define its allowed actions and success check before connecting
+Jev. See the [TypeSafe SDK documentation](https://docs.typesafe.ai/sdk/python)
+for constructing choice questions and the
+[Cua Driver browser guide](/concepts/browser-targeting-and-background-delivery)
+for targeting other pages.

@@ -15,6 +15,8 @@ from release_attribution import (
     _change_contributors,
     build_manifest,
     changelog_references_change,
+    find_previous_tag,
+    is_perception_only_diff,
     linked_issue_numbers,
     login_from_email,
     merge_contributors,
@@ -115,6 +117,22 @@ def test_release_tracked_changes_require_a_releasing_title_or_explicit_opt_out()
         "style(cua-driver): apply deterministic formatting",
         require_release=True,
         allow_non_release=True,
+    )
+
+
+def test_perception_diff_scope_includes_crate_and_release_controls():
+    assert is_perception_only_diff(
+        [
+            "libs/cua-driver/rust/crates/cua-perception/VERSION",
+            "libs/cua-driver/rust/crates/cua-perception/CHANGELOG.md",
+            ".github/releases/cua-perception/artifact-manifest.schema.json",
+        ]
+    )
+    assert not is_perception_only_diff(
+        [
+            "libs/cua-driver/rust/crates/cua-perception/VERSION",
+            ".github/releases/components.json",
+        ]
     )
 
 
@@ -665,3 +683,123 @@ def test_pr_3266_squash_coauthor_resolves_through_verified_identity_override():
         {"login": "0xjohnnydev", "role": "author", "external": True},
         {"login": "0xjohnnydev", "role": "coauthor", "external": True},
     ]
+
+
+def _commit(root: Path, path: str, content: str, subject: str) -> str:
+    target = root / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+    git(root, "add", ".")
+    git(root, "commit", "-m", subject)
+    return git(root, "rev-parse", "HEAD")
+
+
+def test_previous_tag_ignores_a_higher_abandoned_version_tag(tmp_path: Path):
+    git(tmp_path, "init")
+    git(tmp_path, "config", "user.name", "Release Test")
+    git(tmp_path, "config", "user.email", "release@example.com")
+    _commit(tmp_path, "seed.txt", "seed\n", "chore: seed fixture")
+    for tag in ("cua-driver-rs-v0.9.9", "cua-driver-rs-v0.10.0", "cua-driver-rs-v0.11.0"):
+        git(tmp_path, "tag", tag)
+
+    assert find_previous_tag(tmp_path, "cua-driver-rs-v0.10.1", "cua-driver-rs-v") == (
+        "cua-driver-rs-v0.10.0"
+    )
+    assert find_previous_tag(tmp_path, "cua-driver-rs-v0.11.0", "cua-driver-rs-v") == (
+        "cua-driver-rs-v0.10.0"
+    )
+    assert find_previous_tag(tmp_path, "cua-driver-rs-v0.9.9", "cua-driver-rs-v") is None
+
+
+class LabeledPullsGitHub:
+    """Resolve each commit to one internal pull request with the given labels."""
+
+    def __init__(self, pulls_by_sha: dict[str, tuple[int, list[str]]]) -> None:
+        self.pulls_by_sha = pulls_by_sha
+        self.by_number = {number: labels for number, labels in pulls_by_sha.values()}
+
+    def pulls_for_commit(self, repository: str, commit_sha: str):
+        number, _ = self.pulls_by_sha[commit_sha]
+        return [{"number": number, "merge_commit_sha": commit_sha, "merged_at": "now"}]
+
+    def pull(self, repository: str, number: int):
+        return {
+            "number": number,
+            "user": {"login": "maintainer"},
+            "author_association": "MEMBER",
+            "body": "",
+            "labels": [{"name": label} for label in self.by_number[number]],
+        }
+
+
+def test_no_release_metadata_only_pulls_are_not_required_changelog_entries(tmp_path: Path):
+    git(tmp_path, "init")
+    git(tmp_path, "config", "user.name", "Release Test")
+    git(tmp_path, "config", "user.email", "release@example.com")
+    changelog = "libs/cua-driver/rust/CHANGELOG.md"
+    version = "libs/cua-driver/rust/VERSION"
+    _commit(tmp_path, version, "0.8.1\n", "chore: seed fixture")
+    git(tmp_path, "tag", "cua-driver-rs-v0.8.1")
+    product = _commit(
+        tmp_path, "libs/cua-driver/rust/driver.txt", "fixed\n", "fix(driver): keep focus"
+    )
+    metadata = _commit(
+        tmp_path,
+        changelog,
+        "## [0.8.2] (2026-07-16)\n\n* **driver:** keep focus (#12)\n",
+        "fix(cua-driver): release 0.8.2 metadata",
+    )
+    _commit(tmp_path, version, "0.8.2\n", "fix(cua-driver): align release version")
+    unlabeled = git(tmp_path, "rev-parse", "HEAD")
+    config = {
+        "bots": [],
+        "coauthorOverrides": {},
+        "ignoredCoauthorEmails": [],
+        "identityOverrides": {},
+        "internalHandles": ["maintainer"],
+        "optOutHandles": [],
+    }
+
+    def manifest(pulls: dict[str, tuple[int, list[str]]], metadata_paths=(changelog, version)):
+        return build_manifest(
+            repo_root=tmp_path,
+            repository="trycua/cua",
+            product="cua-driver-rs",
+            display_name="Cua Driver",
+            version="0.8.2",
+            tag="cua-driver-rs-v0.8.2",
+            previous_tag="cua-driver-rs-v0.8.1",
+            release_ref="HEAD",
+            expected_sha=unlabeled,
+            paths=("libs/cua-driver",),
+            changelog_path=tmp_path / changelog,
+            attribution_config=config,
+            github=LabeledPullsGitHub(pulls),
+            release_metadata_paths=metadata_paths,
+        )
+
+    # An unlabeled metadata pull request remains a required releasing entry.
+    with pytest.raises(ReleaseError, match=r"missing pull requests: \[13, 14\]"):
+        manifest({product: (12, []), metadata: (13, []), unlabeled: (14, [])})
+
+    # Without declared metadata paths the label alone never removes attribution.
+    with pytest.raises(ReleaseError, match=r"missing pull requests: \[13, 14\]"):
+        manifest(
+            {product: (12, []), metadata: (13, ["no-release"]), unlabeled: (14, ["no-release"])},
+            metadata_paths=(),
+        )
+
+    result = manifest(
+        {product: (12, []), metadata: (13, ["no-release"]), unlabeled: (14, ["no-release"])}
+    )
+    assert [change["pr"] for change in result["changes"]] == [12]
+
+    # A no-release label cannot hide a product diff from attribution.
+    result = manifest(
+        {
+            product: (12, ["no-release"]),
+            metadata: (13, ["no-release"]),
+            unlabeled: (14, ["no-release"]),
+        }
+    )
+    assert [change["pr"] for change in result["changes"]] == [12]

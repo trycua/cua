@@ -1,0 +1,55 @@
+{
+  "schema": "cua.visual_regions_v1",
+  "capture": {
+    "capture_id": "capture-submit",
+    "source": {
+      "kind": "window",
+      "pid": 7,
+      "window_id": 9
+    },
+    "screenshot": {
+      "reference": "png-sha256:submit-fixture",
+      "width": 800,
+      "height": 600,
+      "mime_type": "image/png"
+    },
+    "action_coordinate_space": {
+      "kind": "scaled_top_left",
+      "action_origin_x": 100.0,
+      "action_origin_y": 200.0,
+      "action_units_per_pixel_x": 0.5,
+      "action_units_per_pixel_y": 2.0
+    },
+    "captured_at": "2026-09-17T12:00:00Z"
+  },
+  "parser": {
+    "extension_id": "fixture-parser",
+    "extension_version": "1.0.0",
+    "model_id": "fixture-model",
+    "model_version": "1",
+    "runtime": "fixture"
+  },
+  "regions": [
+    {
+      "id": "submit-text",
+      "kind": "text",
+      "bounds": {
+        "x": 300,
+        "y": 240,
+        "width": 100,
+        "height": 40
+      },
+      "text": "Submit",
+      "confidence": 0.96,
+      "interactive": true,
+      "reading_order": 1
+    }
+  ],
+  "warnings": [],
+  "timing": {
+    "duration_ms": 12,
+    "preprocess_ms": 2,
+    "inference_ms": 8
+  },
+  "request_id": "fixture-submit-1"
+}

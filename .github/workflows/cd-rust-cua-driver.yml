@@ -127,8 +127,20 @@ jobs:
             --sha "$SHA" \
             --path libs/cua-driver \
             --exclude-path libs/cua-driver/docs \
+            --exclude-path libs/cua-driver/examples \
             --exclude-path libs/cua-driver/python \
             --exclude-path libs/cua-driver/tests \
+            --exclude-path libs/cua-driver/rust/crates/cua-perception \
+            --exclude-path libs/cua-driver/experiments/cua-perception-inference \
+            --exclude-companion-path libs/cua-driver/rust/Cargo.toml \
+            --exclude-companion-path libs/cua-driver/rust/Cargo.lock \
+            --release-metadata-path libs/cua-driver/rust/CHANGELOG.md \
+            --release-metadata-path libs/cua-driver/rust/VERSION \
+            --release-metadata-path libs/cua-driver/rust/Cargo.toml \
+            --release-metadata-path libs/cua-driver/rust/Cargo.lock \
+            --release-metadata-path libs/cua-driver/rust/Skills/cua-driver/SKILL.md \
+            --release-metadata-path libs/cua-driver/typescript/package.json \
+            --release-metadata-path libs/cua-driver/typescript/package-lock.json \
             --changelog libs/cua-driver/rust/CHANGELOG.md \
             --output "$RUNNER_TEMP/cua-driver-release-manifest.json"
 
@@ -253,7 +265,7 @@ jobs:
           cp "target/${TARGET}/release/cua_driver_node_runtime.node" "release/${STAGE}/"
           cp include/cua_driver_abi.h "release/${STAGE}/"
           cp -R ../wayland-helper "release/${STAGE}/wayland-helper"
-          cp ../../LICENSE.md "release/${STAGE}/LICENSE" 2>/dev/null || true
+          cp ../../../LICENSE.md "release/${STAGE}/LICENSE"
           (cd release && tar -czf "${STAGE}.tar.gz" "${STAGE}")
           # Bare runtime tarball: CLI plus the UniFFI library consumed by the
           # Python and Node imported-SDK packages.
@@ -431,7 +443,7 @@ jobs:
           Copy-Item "target/$target/release/cua_driver_sdk.dll" "release/$stage/"
           Copy-Item "target/$target/release/cua_driver_node_runtime.node" "release/$stage/"
           Copy-Item "include/cua_driver_abi.h" "release/$stage/"
-          if (Test-Path "../../LICENSE.md") { Copy-Item "../../LICENSE.md" "release/$stage/LICENSE" }
+          Copy-Item "../../../LICENSE.md" "release/$stage/LICENSE" -ErrorAction Stop
           # Zip the directory itself (no trailing /*) so the archive contains
           # the top-level "$stage" wrapper dir — install.ps1 walks into
           # extracted/cua-driver-rs-<v>-<arch>/cua-driver.exe to find the
@@ -901,7 +913,7 @@ jobs:
             # attribution (issue #1525). Tarball callers that want only
             # the bare binary can grab the *-binary.tar.gz below.
             cp -R release/CuaDriver.app "release/${STAGE}/CuaDriver.app"
-            cp ../../LICENSE.md "release/${STAGE}/LICENSE" 2>/dev/null || true
+            cp ../../../LICENSE.md "release/${STAGE}/LICENSE"
             (cd release && tar -czf "${STAGE}.tar.gz" "${STAGE}")
           done
           # Bare runtime tarball: universal CLI plus universal UniFFI library.
@@ -1235,7 +1247,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p release-metadata
-          python3 .github/scripts/release_attribution.py collect \
+          python3 release-control/.github/scripts/release_attribution.py collect \
+            --repo-root "$GITHUB_WORKSPACE" \
             --repository "${{ github.repository }}" \
             --product cua-driver-rs \
             --display-name "Cua Driver" \
@@ -1245,15 +1258,27 @@ jobs:
             --sha "${{ steps.version.outputs.sha }}" \
             --path libs/cua-driver \
             --exclude-path libs/cua-driver/docs \
+            --exclude-path libs/cua-driver/examples \
             --exclude-path libs/cua-driver/python \
             --exclude-path libs/cua-driver/tests \
+            --exclude-path libs/cua-driver/rust/crates/cua-perception \
+            --exclude-path libs/cua-driver/experiments/cua-perception-inference \
+            --exclude-companion-path libs/cua-driver/rust/Cargo.toml \
+            --exclude-companion-path libs/cua-driver/rust/Cargo.lock \
+            --release-metadata-path libs/cua-driver/rust/CHANGELOG.md \
+            --release-metadata-path libs/cua-driver/rust/VERSION \
+            --release-metadata-path libs/cua-driver/rust/Cargo.toml \
+            --release-metadata-path libs/cua-driver/rust/Cargo.lock \
+            --release-metadata-path libs/cua-driver/rust/Skills/cua-driver/SKILL.md \
+            --release-metadata-path libs/cua-driver/typescript/package.json \
+            --release-metadata-path libs/cua-driver/typescript/package-lock.json \
             --changelog libs/cua-driver/rust/CHANGELOG.md \
             --asset-dir release-upload \
             --output release-metadata/release-manifest.json
 
       - name: Render release body and announcement draft
         run: |
-          python3 .github/scripts/release_attribution.py render \
+          python3 release-control/.github/scripts/release_attribution.py render \
             --manifest release-metadata/release-manifest.json \
             --body release-metadata/release-body.md \
             --social release-metadata/release-social.txt \

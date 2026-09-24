@@ -332,6 +332,15 @@ pub fn window_info_by_id(window_id: u32) -> Option<WindowInfo> {
         .find(|w| w.window_id == window_id)
 }
 
+/// Whether `window_id` is on the current Space of its display. `None` when
+/// WindowServer does not know the window or Space membership is unreadable.
+pub fn window_on_current_space_by_id(window_id: u32) -> Option<bool> {
+    all_windows()
+        .into_iter()
+        .find(|w| w.window_id == window_id)?
+        .on_current_space
+}
+
 /// Look up a window's bounds by its CGWindowID.
 ///
 /// Returns `None` if the window is not currently known to WindowServer

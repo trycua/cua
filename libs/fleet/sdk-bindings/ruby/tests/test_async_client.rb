@@ -36,7 +36,7 @@ def token_expected
 end
 
 def service_expected(body, response)
-  Expected.new('POST', "#{BASE}/api/svc/default/offline-sandbox-mcp/mcp", [['authorization', 'Bearer offline-token']], body, 202, response)
+  Expected.new('POST', "#{BASE}/api/svc/default/offline-sandbox-mcp/mcp", [['X-Cua-Fleet-Claim', 'default'], ['authorization', 'Bearer offline-token']], body, 202, response)
 end
 
 def lifecycle_queue

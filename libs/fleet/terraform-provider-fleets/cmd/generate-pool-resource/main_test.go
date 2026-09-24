@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"go/format"
 	"os"
 	"os/exec"
 	"strings"
@@ -21,10 +22,10 @@ func TestValidateMappingRejectsInvalidMapping(t *testing.T) {
 		scenario   string
 		wantStderr string
 	}{
-		{name: "unsupported value type", scenario: "unsupported_value_type", wantStderr: `field "name" has unsupported value_type "bool"`},
+		{name: "unsupported value type", scenario: "unsupported_value_type", wantStderr: `field "name" has unsupported value_type "float"`},
 		{name: "unsupported mode", scenario: "unsupported_mode", wantStderr: `field "name" has unsupported mode "write_only"`},
 		{name: "requires replace on non-string", scenario: "requires_replace_int64", wantStderr: `field "replicas" sets requires_replace with value_type "int64"`},
-		{name: "unsupported collection", scenario: "unsupported_collection", wantStderr: `block "service" has unsupported collection "list"`},
+		{name: "unsupported collection", scenario: "unsupported_collection", wantStderr: `block "service" has unsupported collection "map"`},
 		{name: "duplicate top-level name", scenario: "duplicate_top_level_name", wantStderr: `duplicate top-level Terraform name "name"`},
 		{name: "duplicate top-level Go name", scenario: "duplicate_top_level_go_name", wantStderr: `duplicate top-level Go name "Name"`},
 		{name: "duplicate block name", scenario: "duplicate_block_name", wantStderr: `duplicate top-level Terraform name "service"`},
@@ -37,6 +38,8 @@ func TestValidateMappingRejectsInvalidMapping(t *testing.T) {
 		{name: "unknown block CR", scenario: "unknown_block_cr", wantStderr: `"service" maps to unsupported cr "sandbox"`},
 		{name: "nested CR", scenario: "nested_cr", wantStderr: `field "name" in block "service" must not set cr`},
 		{name: "path in the other CR", scenario: "path_in_other_cr", wantStderr: `spec.vmTemplate.services is not an object`},
+		{name: "wrong list element type", scenario: "wrong_list_element_type", wantStderr: `field command maps to CRD element type "integer", expected "string"`},
+		{name: "wrong map element type", scenario: "wrong_map_element_type", wantStderr: `field env maps to CRD element type "", expected "string"`},
 	}
 
 	for _, test := range tests {
@@ -58,6 +61,43 @@ func TestRenderIsDeterministic(t *testing.T) {
 	second := render(schemas, config)
 	if !bytes.Equal(first, second) {
 		t.Fatal("render() produced different output for identical input")
+	}
+}
+
+func TestRenderCollectionAndBoolTypes(t *testing.T) {
+	schemas, config := validationFixture("valid")
+	config.Attributes = append(config.Attributes,
+		field{Name: "command", GoName: "Command", ValueType: "string_list", Mode: "optional", CR: templateCR, CRDPath: "spec.vmTemplate.command"},
+		field{Name: "env", GoName: "Env", ValueType: "string_map", Mode: "optional", CR: templateCR, CRDPath: "spec.vmTemplate.env"},
+		field{Name: "claim_secrets", GoName: "ClaimSecrets", ValueType: "bool", Mode: "optional", CR: templateCR, CRDPath: "spec.vmTemplate.claimSecrets"},
+		field{Name: "ports", GoName: "Ports", ValueType: "int64_list", Mode: "optional", CR: templateCR, CRDPath: "spec.vmTemplate.ports"},
+	)
+	config.Blocks[0].Collection = "list"
+	validateMapping(schemas, config)
+	output, err := format.Source(render(schemas, config))
+	if err != nil {
+		t.Fatalf("generated source does not parse: %v", err)
+	}
+	// gofmt aligns struct fields and map keys; compare with single spaces.
+	generated := strings.Join(strings.Fields(string(output)), " ")
+	for _, want := range []string{
+		"Command types.List `tfsdk:\"command\"`",
+		"Env types.Map `tfsdk:\"env\"`",
+		"ClaimSecrets types.Bool `tfsdk:\"claim_secrets\"`",
+		"Services types.List `tfsdk:\"service\"`",
+		`"command": schema.ListAttribute{Optional: true, ElementType: types.StringType}`,
+		`"env": schema.MapAttribute{Optional: true, ElementType: types.StringType}`,
+		`"claim_secrets": schema.BoolAttribute{Optional: true}`,
+		`"ports": schema.ListAttribute{Optional: true, ElementType: types.Int64Type, Validators: []validator.List{listvalidator.ValueInt64sAre(int64validator.Between(1, 65535))}}`,
+		`"service": schema.ListNestedBlock{NestedObject: schema.NestedBlockObject{`,
+		`"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"`,
+	} {
+		if !strings.Contains(generated, want) {
+			t.Errorf("generated source is missing %s\n%s", want, output)
+		}
+	}
+	if strings.Contains(generated, "jsontypes") {
+		t.Error("generated source imports jsontypes without using it")
 	}
 }
 
@@ -107,6 +147,10 @@ func validationFixture(scenario string) (crdSchemas, mapping) {
 					"vmTemplate": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
+							"command":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+							"env":          map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+							"claimSecrets": map[string]any{"type": "boolean"},
+							"ports":        map[string]any{"type": "array", "items": map[string]any{"type": "integer", "minimum": 1.0, "maximum": 65535.0}},
 							"services": map[string]any{
 								"type": "array",
 								"items": map[string]any{
@@ -139,13 +183,13 @@ func validationFixture(scenario string) (crdSchemas, mapping) {
 	switch scenario {
 	case "valid":
 	case "unsupported_value_type":
-		config.Attributes[0].ValueType = "bool"
+		config.Attributes[0].ValueType = "float"
 	case "unsupported_mode":
 		config.Attributes[0].Mode = "write_only"
 	case "requires_replace_int64":
 		config.Attributes[1].RequiresReplace = true
 	case "unsupported_collection":
-		config.Blocks[0].Collection = "list"
+		config.Blocks[0].Collection = "map"
 	case "duplicate_top_level_name":
 		config.Blocks[0].Name = "name"
 	case "duplicate_top_level_go_name":
@@ -171,12 +215,22 @@ func validationFixture(scenario string) (crdSchemas, mapping) {
 		config.Blocks[0].CR = "sandbox"
 	case "nested_cr":
 		config.Blocks[0].Fields[0].CR = templateCR
+	case "wrong_list_element_type":
+		config.Attributes = append(config.Attributes, field{Name: "command", GoName: "Command", ValueType: "string_list", Mode: "optional", CR: templateCR, CRDPath: "spec.vmTemplate.command"})
+		vmTemplateProperties(template)["command"].(map[string]any)["items"] = map[string]any{"type": "integer"}
+	case "wrong_map_element_type":
+		config.Attributes = append(config.Attributes, field{Name: "env", GoName: "Env", ValueType: "string_map", Mode: "optional", CR: templateCR, CRDPath: "spec.vmTemplate.env"})
+		delete(vmTemplateProperties(template)["env"].(map[string]any), "additionalProperties")
 	case "path_in_other_cr":
 		config.Blocks[0].CR = warmPoolCR
 	default:
 		panic("unknown validation scenario: " + scenario)
 	}
 	return schemas, config
+}
+
+func vmTemplateProperties(root map[string]any) map[string]any {
+	return root["properties"].(map[string]any)["spec"].(map[string]any)["properties"].(map[string]any)["vmTemplate"].(map[string]any)["properties"].(map[string]any)
 }
 
 func warmPoolSpec(root map[string]any) map[string]any {

@@ -4,6 +4,8 @@ use url::Url;
 const POOL_COLLECTION_PREFIX: &str = "api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/";
 const CLAIM_COLLECTION_PREFIX: &str = "api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/";
 const CLAIM_COLLECTION_SUFFIX: &str = "/osgymsandboxclaims";
+const SECRET_COLLECTION_PREFIX: &str = "api/k8s/api/v1/namespaces/";
+const SECRET_COLLECTION_SUFFIX: &str = "/secrets";
 const POOL_COLLECTION_SUFFIX: &str = "/osgymsandboxwarmpools";
 const TEMPLATE_COLLECTION_SUFFIX: &str = "/osgymsandboxtemplates";
 const NAMESPACE_COLLECTION: &str = "api/namespaces";
@@ -12,6 +14,8 @@ const NAMESPACE_PREFIX: &str = "api/namespaces/";
 const SERVICE_COLLECTION_PREFIX: &str = "api/svc/";
 const SIGNED_SERVICE_URL_COLLECTION_PREFIX: &str = "api/signed-service-urls/";
 const USER_KEY_COLLECTION: &str = "api/user-keys";
+const IMAGE_RESOLVE: &str = "api/images/resolve";
+const MAX_IMAGE_REFERENCE_BYTES: usize = 1024;
 
 pub fn pool_collection(base: &Url, namespace: &str) -> Result<Url, SdkError> {
     validate_dns_label_for("namespace", namespace)?;
@@ -70,6 +74,51 @@ pub fn image_item(base: &Url, namespace: &str, name: &str) -> Result<Url, SdkErr
         base,
         format!("api/k8s/apis/images.cua.ai/v1alpha1/namespaces/{namespace}/images/{name}"),
     )
+}
+
+/// Core Secrets collection in a pool namespace. The gateway only admits
+/// creating `cua-registry-*` dockerconfigjson Secrets here.
+pub fn registry_secret_collection(base: &Url, namespace: &str) -> Result<Url, SdkError> {
+    validate_dns_label_for("namespace", namespace)?;
+    route(
+        base,
+        format!("{SECRET_COLLECTION_PREFIX}{namespace}{SECRET_COLLECTION_SUFFIX}"),
+    )
+}
+
+/// One tenant registry pull Secret (`cua-registry-<dns-label>`).
+pub fn registry_secret_item(base: &Url, namespace: &str, name: &str) -> Result<Url, SdkError> {
+    validate_dns_label_for("namespace", namespace)?;
+    crate::registry_secrets::validate_registry_secret_name(name)?;
+    route(
+        base,
+        format!("{SECRET_COLLECTION_PREFIX}{namespace}{SECRET_COLLECTION_SUFFIX}/{name}"),
+    )
+}
+
+/// `GET /api/images/resolve?ref=<ref>[&runtime=<runtime>]`.
+pub fn image_resolve(base: &Url, reference: &str, runtime: Option<&str>) -> Result<Url, SdkError> {
+    if reference.is_empty()
+        || reference.len() > MAX_IMAGE_REFERENCE_BYTES
+        || reference
+            .bytes()
+            .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
+    {
+        return Err(SdkError::Configuration {
+            reason: "image reference must be a non-empty registry ref without whitespace".into(),
+        });
+    }
+    let mut url = route(base, IMAGE_RESOLVE.into())?;
+    url.query_pairs_mut().append_pair("ref", reference);
+    if let Some(runtime) = runtime {
+        if !matches!(runtime, "kubevirt" | "gvisor" | "macos") {
+            return Err(SdkError::Configuration {
+                reason: "runtime must be kubevirt, gvisor or macos".into(),
+            });
+        }
+        url.query_pairs_mut().append_pair("runtime", runtime);
+    }
+    Ok(url)
 }
 
 pub fn image_uploads_presign(base: &Url) -> Result<Url, SdkError> {
@@ -257,6 +306,39 @@ pub fn claim_item(base: &Url, namespace: &str, name: &str) -> Result<Url, SdkErr
     )
 }
 
+/// Core Secrets collection in a pool namespace. The gateway only admits
+/// creating Opaque `cua-claim-*` Secrets here.
+pub fn claim_secret_collection(base: &Url, namespace: &str) -> Result<Url, SdkError> {
+    validate_dns_label_for("namespace", namespace)?;
+    route(
+        base,
+        format!("{SECRET_COLLECTION_PREFIX}{namespace}{SECRET_COLLECTION_SUFFIX}"),
+    )
+}
+
+/// One claim-scoped Secret. Secret names are DNS subdomains, but claim secret
+/// names are `cua-claim-<claim>`, which is always a DNS label plus a prefix.
+pub fn claim_secret_item(base: &Url, namespace: &str, name: &str) -> Result<Url, SdkError> {
+    validate_dns_label_for("namespace", namespace)?;
+    validate_claim_secret_name(name)?;
+    route(
+        base,
+        format!("{SECRET_COLLECTION_PREFIX}{namespace}{SECRET_COLLECTION_SUFFIX}/{name}"),
+    )
+}
+
+pub(crate) fn validate_claim_secret_name(name: &str) -> Result<(), SdkError> {
+    let rest = name
+        .strip_prefix(cyclops_sdk_schema::CLAIM_SECRET_NAME_PREFIX)
+        .ok_or_else(|| SdkError::Configuration {
+            reason: format!(
+                "claim secret name must start with {}",
+                cyclops_sdk_schema::CLAIM_SECRET_NAME_PREFIX
+            ),
+        })?;
+    validate_dns_label_for("claim secret name", rest)
+}
+
 pub fn service_url(
     base: &Url,
     namespace: &str,
@@ -272,6 +354,32 @@ pub fn service_url(
         format!("{SERVICE_COLLECTION_PREFIX}{namespace}/{service_name}{path}"),
     )?;
     url.set_query(query);
+    Ok(url)
+}
+
+/// The `service_url` route with its scheme swapped to the WebSocket
+/// equivalent (`http` -> `ws`, `https` -> `wss`) so a native client can open
+/// its own socket through the gateway's `/api/svc` proxy.
+pub fn service_websocket_url(
+    base: &Url,
+    namespace: &str,
+    service_name: &str,
+    path: &str,
+) -> Result<Url, SdkError> {
+    let mut url = service_url(base, namespace, service_name, path)?;
+    let scheme = match url.scheme() {
+        "http" => "ws",
+        "https" => "wss",
+        other => {
+            return Err(SdkError::Configuration {
+                reason: format!("base_url scheme {other:?} has no WebSocket equivalent"),
+            });
+        }
+    };
+    url.set_scheme(scheme)
+        .map_err(|()| SdkError::Configuration {
+            reason: format!("could not derive a {scheme} URL from the base_url"),
+        })?;
     Ok(url)
 }
 
@@ -370,10 +478,11 @@ fn hex_value(byte: u8) -> Option<u8> {
 mod tests {
     use super::{
         claim_collection, claim_item, image_collection, image_item, image_uploads_presign,
-        namespace_collection, namespace_item, pool_collection, pool_item,
-        signed_service_url_collection, signed_service_url_item, signed_service_url_list,
-        template_collection, template_item,
+        namespace_collection, namespace_item, pool_collection, pool_item, service_url,
+        service_websocket_url, signed_service_url_collection, signed_service_url_item,
+        signed_service_url_list, template_collection, template_item,
     };
+    use crate::SdkError;
     use url::Url;
 
     #[test]
@@ -541,5 +650,81 @@ mod tests {
             namespace_item(&base, "example-pool").unwrap().as_str(),
             "https://gateway.example/cyclops/api/namespaces/example-pool"
         );
+    }
+
+    #[test]
+    fn websocket_url_swaps_https_to_wss_and_keeps_path_and_query() {
+        let base = Url::parse("https://cyclops.example:8443/").unwrap();
+
+        assert_eq!(
+            service_websocket_url(
+                &base,
+                "example-pool",
+                "sandbox-1-vnc",
+                "/websockify?token=abc"
+            )
+            .unwrap()
+            .as_str(),
+            "wss://cyclops.example:8443/api/svc/example-pool/sandbox-1-vnc/websockify?token=abc"
+        );
+    }
+
+    #[test]
+    fn websocket_url_swaps_http_to_ws() {
+        let base = Url::parse("http://localhost:8080/").unwrap();
+
+        assert_eq!(
+            service_websocket_url(&base, "example-pool", "sandbox-1-vnc", "/websockify")
+                .unwrap()
+                .as_str(),
+            "ws://localhost:8080/api/svc/example-pool/sandbox-1-vnc/websockify"
+        );
+    }
+
+    #[test]
+    fn websocket_url_preserves_base_path_prefix() {
+        let base = Url::parse("https://gateway.example/cyclops/").unwrap();
+
+        assert_eq!(
+            service_websocket_url(&base, "example-pool", "sandbox-1-vnc", "/websockify")
+                .unwrap()
+                .as_str(),
+            "wss://gateway.example/cyclops/api/svc/example-pool/sandbox-1-vnc/websockify"
+        );
+    }
+
+    #[test]
+    fn service_paths_reject_traversal_control_chars_and_bad_shapes() {
+        let base = Url::parse("https://cyclops.example/").unwrap();
+
+        for path in [
+            "",
+            "websockify",
+            "//websockify",
+            "/../secrets",
+            "/a/../b",
+            "/%2e%2e/secrets",
+            "/%252e%252e/secrets",
+            "/with\u{7}bell",
+            "/with%00null",
+            "/frag#ment",
+            "/back\\slash",
+            "/ok?query=%0acontrol",
+        ] {
+            assert!(
+                matches!(
+                    service_url(&base, "example-pool", "sandbox-1-vnc", path),
+                    Err(SdkError::InvalidServicePath { .. })
+                ),
+                "expected {path:?} to be rejected"
+            );
+            assert!(
+                matches!(
+                    service_websocket_url(&base, "example-pool", "sandbox-1-vnc", path),
+                    Err(SdkError::InvalidServicePath { .. })
+                ),
+                "expected websocket {path:?} to be rejected"
+            );
+        }
     }
 }

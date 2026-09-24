@@ -292,6 +292,34 @@ fn allocate_loopback_port() -> u16 {
     listener.local_addr().expect("read fixture port").port()
 }
 
+fn accessibility_readiness_timeout(host_name: &str) -> Duration {
+    if matches!(host_name, "electron" | "tauri") {
+        Duration::from_secs(30)
+    } else {
+        Duration::from_secs(10)
+    }
+}
+
+#[test]
+fn electron_and_tauri_receive_extended_accessibility_readiness_budget() {
+    assert_eq!(
+        accessibility_readiness_timeout("electron"),
+        Duration::from_secs(30)
+    );
+    assert_eq!(
+        accessibility_readiness_timeout("tauri"),
+        Duration::from_secs(30)
+    );
+    assert_eq!(
+        accessibility_readiness_timeout("webview2"),
+        Duration::from_secs(10)
+    );
+    assert_eq!(
+        accessibility_readiness_timeout("wkwebview"),
+        Duration::from_secs(10)
+    );
+}
+
 fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evidence) -> Fixture {
     if !spec.path.exists() {
         panic!(
@@ -371,17 +399,10 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
                         name: spec.name,
                         journal,
                     };
-                    // A freshly provisioned platform webview can need more than
-                    // the generic fixture budget to start its renderer and
-                    // expose the remote accessibility subtree (observed for
-                    // cold Windows WebView2 and macOS WKWebView helpers). Keep
-                    // the extension Tauri-specific and bounded; every other
-                    // harness still fails fast.
-                    let ax_timeout = if spec.name == "tauri" {
-                        Duration::from_secs(30)
-                    } else {
-                        Duration::from_secs(10)
-                    };
+                    // Electron and Tauri can need more than the generic fixture
+                    // budget to start their renderer and expose the remote
+                    // accessibility subtree on a cold host.
+                    let ax_timeout = accessibility_readiness_timeout(spec.name);
                     let ax_deadline = Instant::now() + ax_timeout;
                     let mut last_tree = String::new();
                     while Instant::now() < ax_deadline {
@@ -854,8 +875,10 @@ fn sdk_window_input(fixture: &Fixture) -> GetWindowStateInput {
         include_screenshot: Some(false),
         screenshot_out_file: None,
         max_elements: None,
+        timeout_ms: None,
         max_depth: None,
         max_dimension: None,
+        max_image_dimension: None,
     }
 }
 
@@ -1636,6 +1659,9 @@ fn shared_case_with_native_hyprland(
         }
     } else if cfg!(target_os = "macos") && delivery_kind == Delivery::Background {
         match (spec.name, action, targeting) {
+            ("electron", "type_text" | "type_submit" | "editor_save", Targeting::Ax) => {
+                vec![RefusalCode::BackgroundUnavailable]
+            }
             ("electron", "scroll", _) | (_, "drag", Targeting::Px) => {
                 vec![RefusalCode::BackgroundUnavailable]
             }

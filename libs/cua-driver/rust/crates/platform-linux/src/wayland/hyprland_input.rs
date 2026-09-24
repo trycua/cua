@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 
 const TIMEOUT: Duration = Duration::from_secs(3);
 const CANCELLATION_POLL: Duration = Duration::from_millis(25);
+const TEXT_ACTION_GAP: Duration = Duration::from_millis(25);
 const MAX_PACKET: usize = 2048;
 const MAX_LANES: usize = 2;
 const MAX_STALE_GEOMETRY_RETRIES: usize = 1;
@@ -1200,14 +1201,23 @@ fn execute_text_actions(
     mut dispatch: impl FnMut(Action) -> Result<Value>,
 ) -> Result<Value> {
     let mut delivered = 0u32;
-    for action in actions {
+    let action_count = actions.len();
+    for (index, action) in actions.into_iter().enumerate() {
         match dispatch(action) {
             Ok(mut reply) if reply["ok"] == false => {
                 reply["effect"] = json!(if delivered > 0 { "partial" } else { "none" });
                 reply["delivery"] = json!({"mode":route.mode(),"delivered_count":delivered});
                 return Ok(reply);
             }
-            Ok(_) => delivered += 1,
+            Ok(_) => {
+                delivered += 1;
+                // The compositor acknowledgement is not a client-processing
+                // fence. Give the target event loop a bounded turn before the
+                // next character so native GTK clients do not drop a burst.
+                if index + 1 < action_count {
+                    std::thread::sleep(TEXT_ACTION_GAP);
+                }
+            }
             Err(error) => {
                 if let Some(unknown) = error.downcast_ref::<DispatchUnknown>() {
                     return Err(unknown_dispatch(
@@ -1424,6 +1434,19 @@ mod tests {
             assert_eq!(result["delivery"]["mode"], route.mode());
             assert_eq!(result["delivery"]["delivered_count"], 3);
         }
+    }
+
+    #[test]
+    fn text_dispatch_paces_acknowledged_keys() {
+        let started = Instant::now();
+        let result = execute_text_actions(
+            text_actions("abc").unwrap(),
+            DeliveryRoute::Background,
+            |_| Ok(json!({"ok":true})),
+        )
+        .unwrap();
+        assert_eq!(result["delivery"]["delivered_count"], 3);
+        assert!(started.elapsed() >= TEXT_ACTION_GAP + TEXT_ACTION_GAP);
     }
 
     #[test]

@@ -4,6 +4,28 @@ const { join } = require('node:path');
 const { test } = require('node:test');
 const { runInNewContext } = require('node:vm');
 
+test('pixel-addressed controls stay within the first three grid rows', () => {
+  const html = readFileSync(join(__dirname, 'index.html'), 'utf8');
+  assert.match(html, /grid-template-columns:\s*repeat\(3,/);
+
+  const gridStart = html.indexOf('<main class="harness-grid">');
+  assert.notEqual(gridStart, -1, 'shared fixture grid exists');
+  for (const id of [
+    'txt-input',
+    'keyboard-input',
+    'drag-source',
+    'drop-target',
+    'scroll-tall',
+    'click-target',
+    'btn-open-child-window',
+  ]) {
+    const control = html.indexOf(`id="${id}"`, gridStart);
+    assert.notEqual(control, -1, `${id} exists in the shared fixture grid`);
+    const fieldsetCount = (html.slice(gridStart, control).match(/<fieldset>/g) || []).length;
+    assert.ok(fieldsetCount <= 9, `${id} moved below the third grid row`);
+  }
+});
+
 test('journal samples live scroll geometry without an event or DOM mutation', () => {
   const html = readFileSync(join(__dirname, 'index.html'), 'utf8');
   const source = html.match(/\(function startFixtureJournal\(\) \{[\s\S]*?\n  \}\)\(\);/);

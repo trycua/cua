@@ -146,5 +146,5 @@ desktop state outside the repo-local fixtures:
   foreground sentinel when needed and opts pure Wayland runs into the native
   backend. Non-macOS runs prove that standard mode refuses existing-profile
   attachment before running the authorized success rows with a disposable
-  unrestricted daemon. macOS Lume maintainers can add the success rows to the
-  VM acceptance run with `run-all.sh --standalone-browser`.
+  unrestricted daemon. The macOS Lume `run-all.sh` acceptance run always
+  includes the success rows.

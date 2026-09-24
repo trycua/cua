@@ -76,6 +76,11 @@ pub struct RenderStateCore {
     pub theme_fallback: Option<String>,
     /// User-controlled visibility.
     pub visible: bool,
+    /// The pinned target window is on another workspace (macOS Space), so the
+    /// cursor must not paint over the user's current workspace at that
+    /// window's coordinates. Platform adapters set it when handling
+    /// `PinAbove`; `false` when membership is unknown.
+    pub pinned_target_off_workspace: bool,
     /// Idle-hide: elapsed seconds since last activity.
     pub idle_secs: f64,
     /// Idle-hide fade: 1.0 = fully visible, 0.0 = fully hidden.
@@ -138,6 +143,7 @@ impl RenderStateCore {
             idle_secs: 0.0,
             idle_alpha: 1.0,
             pinned_wid: None,
+            pinned_target_off_workspace: false,
             session_label: None,
             session_badge_secs: SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS,
             session_badge_hovered: false,
@@ -810,7 +816,11 @@ pub fn paint_cursor(
     focus_rect: Option<FocusRect>,
     backing_scale: f32,
 ) {
-    if !core.visible || core.pos.0 < -100.0 || core.idle_alpha < 0.004 {
+    if !core.visible
+        || core.pinned_target_off_workspace
+        || core.pos.0 < -100.0
+        || core.idle_alpha < 0.004
+    {
         return;
     }
 
@@ -1290,6 +1300,22 @@ mod backing_scale_tests {
         let mut pm = tiny_skia::Pixmap::new(pm_size, pm_size).unwrap();
         paint_cursor(&mut pm, &core, 0.0, 0.0, None, backing_scale);
         pm
+    }
+
+    #[test]
+    fn cursor_pinned_to_an_off_workspace_window_paints_nothing() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.pos = (32.0, 32.0);
+        core.idle_alpha = 1.0;
+        core.visible = true;
+        core.pinned_target_off_workspace = true;
+        let mut pm = tiny_skia::Pixmap::new(64, 64).unwrap();
+        paint_cursor(&mut pm, &core, 0.0, 0.0, None, 1.0);
+        assert_eq!(visible_pixel_count(&pm), 0);
+
+        core.pinned_target_off_workspace = false;
+        paint_cursor(&mut pm, &core, 0.0, 0.0, None, 1.0);
+        assert!(visible_pixel_count(&pm) > 0);
     }
 
     /// The compiled artifact contains vector geometry. Skia must rasterize it

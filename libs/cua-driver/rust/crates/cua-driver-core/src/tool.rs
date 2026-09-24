@@ -348,6 +348,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
             "screen.capture",
             "screen.capture.window",
         ],
+        "parse_visual_regions" => &["screen.perception.visual_regions"],
 
         // ── apps / windows ───────────────────────────────────────────
         "launch_app" => &["app.launch"],
@@ -384,6 +385,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "get_recording_state" => &["recording.state"],
         "replay_trajectory" => &["recording.replay"],
         "install_ffmpeg" => &["recording.install_dependency"],
+        "install_extension" => &["extension.install"],
 
         // ── cross-platform page ──────────────────────────────────────
         "page" => &["page.action"],
@@ -634,6 +636,7 @@ pub struct ToolRegistry {
     cursor_outcome_readers: Vec<crate::session::CursorOutcomeReaderRegistration>,
     _recording_state_readers: Vec<crate::session::RecordingStateReaderRegistration>,
     runtime_cleanups: Vec<RuntimeCleanup>,
+    capture_service: Arc<crate::capture_runtime::CaptureService>,
     /// Runtime-owned protected-consent broker shared by every resource
     /// adapter. Keeping it at the canonical dispatch boundary prevents
     /// browser, desktop, and file adapters from growing independent provider
@@ -653,6 +656,7 @@ impl ToolRegistry {
     pub fn new_with_protected_consent_provider(
         provider: Option<Arc<dyn crate::consent::ProtectedConsentProvider>>,
     ) -> Self {
+        let capture_service = Arc::new(crate::capture_runtime::CaptureService::default());
         let approval_broker = Arc::new(crate::consent::ApprovalBroker::new(provider));
         let protected_resource_grants = Arc::new(crate::consent::ProtectedResourceGrants::new(
             approval_broker.clone(),
@@ -661,10 +665,14 @@ impl ToolRegistry {
             Arc::new(crate::consent::ProtectedResourceOwnershipStore::default());
         let weak_grants = Arc::downgrade(&protected_resource_grants);
         let weak_ownership = Arc::downgrade(&protected_resource_ownership);
+        let weak_captures = Arc::downgrade(&capture_service);
         let session_end_hook =
             crate::session::register_scoped_session_end_hook(move |session_id| {
                 if let Some(ownership) = weak_ownership.upgrade() {
                     ownership.remove_session(session_id);
+                }
+                if let Some(captures) = weak_captures.upgrade() {
+                    captures.retire_session_id(session_id);
                 }
                 let Some(grants) = weak_grants.upgrade() else {
                     return;
@@ -701,6 +709,7 @@ impl ToolRegistry {
             cursor_outcome_readers: Vec::new(),
             _recording_state_readers: vec![recording_state_reader],
             runtime_cleanups: Vec::new(),
+            capture_service,
             approval_broker,
             protected_resource_grants,
             protected_resource_ownership,
@@ -714,6 +723,11 @@ impl ToolRegistry {
     /// trusted runtime.
     pub fn approval_broker(&self) -> Arc<crate::consent::ApprovalBroker> {
         self.approval_broker.clone()
+    }
+
+    /// Return the immutable-capture service owned by this runtime registry.
+    pub fn capture_service(&self) -> Arc<crate::capture_runtime::CaptureService> {
+        self.capture_service.clone()
     }
 
     pub fn protected_resource_grants(&self) -> Arc<crate::consent::ProtectedResourceGrants> {
@@ -859,6 +873,29 @@ impl ToolRegistry {
         self.register(Box::new(ListSessionsTool));
         self.register(Box::new(GetSessionStateTool));
         self.register(Box::new(EndSessionTool));
+    }
+
+    pub fn register_perception_tool(&mut self, client: crate::perception_client::PerceptionClient) {
+        let captures = self.capture_service();
+        let resolve_binding = Arc::new(move |args: &Value| {
+            captures.binding_from_args(args).map_err(|error| {
+                crate::perception_client::error(
+                    cua_driver_contract::VisualParseErrorCode::CaptureGenerationMismatch,
+                    "capture session binding is unavailable",
+                    false,
+                    Some(error.to_string()),
+                )
+            })
+        });
+        self.register_perception_tool_with_binding_resolver(client, resolve_binding);
+    }
+
+    pub fn register_perception_tool_with_binding_resolver(
+        &mut self,
+        client: crate::perception_client::PerceptionClient,
+        resolve_binding: crate::perception_tools::CaptureBindingResolver,
+    ) {
+        crate::perception_tools::register_perception_tool(self, client, resolve_binding);
     }
 
     /// Wire up the replay tool's weak self-reference.
@@ -1073,6 +1110,9 @@ impl ToolRegistry {
         normalize_delivery_mode_args(tool.def(), &mut args);
         if let Err(result) = crate::action_target::normalize_action_target(resolved_name, &mut args)
         {
+            return result;
+        }
+        if let Err(result) = crate::action_target::enforce_delivery_target(resolved_name, &args) {
             return result;
         }
 
@@ -1527,11 +1567,28 @@ impl ToolRegistry {
             })
             .flatten();
 
+        // Desktop pixels read off a capped get_desktop_state image are mapped
+        // back to the uncapped capture before any platform interprets them.
+        crate::desktop_capture_scale::map_desktop_args(&mut args);
         let mut result = crate::recording::scope_dispatch_click_capture(
             pending_turn.as_ref(),
             tool.invoke(args.clone()),
         )
         .await;
+        match resolved_name {
+            "get_desktop_state" if result.is_error != Some(true) => {
+                crate::desktop_capture_scale::record_desktop_state(
+                    &args,
+                    result.structured_content.as_ref(),
+                );
+            }
+            "end_session" => {
+                if let Some(session) = args.get("_session_id").and_then(Value::as_str) {
+                    crate::desktop_capture_scale::forget_session(session);
+                }
+            }
+            _ => {}
+        }
         drop(lifecycle_dispatch);
         // The platform worker has exited, so another text operation for this
         // pid may now start even while result projection and evidence capture
@@ -2137,6 +2194,15 @@ impl ToolRegistry {
                 }),
                 "Allow Cua to install ffmpeg using the detected system package manager".to_owned(),
             ),
+            "install_extension" if args.get("confirm").and_then(Value::as_bool) == Some(true) => (
+                serde_json::json!({
+                    "kind": "extension_install",
+                    "extension": "perception",
+                    "direction": "local_catalog_to_driver",
+                }),
+                "Allow Cua to install the reviewed perception extension into the Driver home"
+                    .to_owned(),
+            ),
             _ => {
                 return Err(protected_scope_refusal(
                     "the file-transfer operation has no reviewed exact scope",
@@ -2714,9 +2780,18 @@ fn publish_action_result(result: &mut ToolResult) -> Result<(), String> {
         .action_record
         .as_ref()
         .ok_or_else(|| "successful action omitted its internal execution record".to_owned())?;
-    let public = action
+    let mut public = action
         .public_result()
         .map_err(|error| format!("invalid internal execution record: {error:?}"))?;
+    // Some MCP clients (Claude Code among them) hand the model only
+    // `structuredContent` when it is present and drop the text blocks. The
+    // producer's text is the only place the resolved points, the element hit,
+    // popups, focus outcome and follow-up calls are spelled out, so the
+    // closed contract carries it as `summary`.
+    public.summary = result.content.iter().find_map(|content| match content {
+        Content::Text { text, .. } if !text.trim().is_empty() => Some(text.clone()),
+        _ => None,
+    });
     public
         .validate_invariants()
         .map_err(|error| format!("invalid public projection: {error}"))?;
@@ -2788,7 +2863,7 @@ mod runtime_isolation_tests {
     use crate::{
         authorization::PermissionMode,
         consent::{ConsentAction, ConsentRequest, ProtectedConsentProvider, ProviderDecision},
-        protocol::ToolResult,
+        protocol::{Content, ToolResult},
         session_authorization::{SessionAuthorizationRegistry, SessionModeCeiling},
     };
     use std::io::Write;
@@ -3777,6 +3852,68 @@ resources:
     }
 
     #[tokio::test]
+    async fn desktop_background_click_refuses_before_platform_invocation() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let last_args = Arc::new(Mutex::new(None));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ArgumentProbe {
+            hits: hits.clone(),
+            last_args,
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "delivery_mode": crate::tool_schema::delivery_mode_schema()
+                    }
+                }),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+
+        for args in [
+            serde_json::json!({
+                "target": {"kind": "desktop", "display_id": "primary"},
+                "delivery_mode": "background",
+                "x": 10,
+                "y": 20
+            }),
+            serde_json::json!({
+                "scope": "desktop",
+                "dispatch": "background",
+                "x": 10,
+                "y": 20
+            }),
+        ] {
+            let result = registry
+                .invoke_with_context("click", args, standard_context())
+                .await;
+            assert_eq!(result.is_error, Some(true));
+            assert_eq!(
+                result.structured_content,
+                Some(serde_json::json!({
+                    "code": "background_unavailable",
+                    "effect": "refused",
+                    "suggestion": "Retry this action with delivery_mode:\"foreground\".",
+                    "escalation": {
+                        "recommended": "foreground",
+                        "reason": cua_driver_contract::ClickInput::DESKTOP_BACKGROUND_MESSAGE,
+                    },
+                }))
+            );
+            assert_eq!(
+                hits.load(Ordering::SeqCst),
+                0,
+                "refusal must occur before the platform tool is invoked"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn standard_file_transfer_is_promptless_and_still_canonicalizes_paths() {
         let files = tempfile::tempdir().unwrap();
         let first = files.path().join("first.txt");
@@ -4493,10 +4630,17 @@ resources:
         let object = structured.as_object().expect("ActionResult is an object");
         assert_eq!(
             object.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["delivery", "effect", "route"]
+            ["delivery", "effect", "route", "summary"]
         );
         assert_eq!(structured["effect"], "unverifiable");
         assert_eq!(structured["delivery"]["mode"], "unknown");
+        // The producer's text travels inside the closed contract for clients
+        // that surface only structuredContent.
+        let text = result.content.iter().find_map(|content| match content {
+            Content::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        });
+        assert_eq!(structured["summary"].as_str(), text);
         assert!(matches!(
             structured["route"].as_str(),
             Some("accessibility" | "synthetic_events" | "global_input" | "dom" | "trusted_input")
@@ -5097,6 +5241,7 @@ mod capability_tests {
         "get_recording_state",
         "replay_trajectory",
         "install_ffmpeg",
+        "install_extension",
         // misc
         "page",
         "check_for_update",
@@ -5113,6 +5258,7 @@ mod capability_tests {
         "browser_pointer",
         "history_status",
         "history_query",
+        "parse_visual_regions",
     ];
 
     /// All capability tokens in the canonical vocabulary. Any token
@@ -5139,8 +5285,10 @@ mod capability_tests {
         "screen.capture",
         "screen.capture.window",
         "screen.capture.region",
+        "screen.capture.registry.read",
         "screen.dimensions",
         "screen.cursor.position",
+        "screen.perception.visual_regions",
         // accessibility
         "accessibility.tree",
         "accessibility.tree.structured",
@@ -5184,6 +5332,8 @@ mod capability_tests {
         "recording.state",
         "recording.replay",
         "recording.install_dependency",
+        "extension.install",
+        "visual.regions.parse",
         // page
         "page.action",
         // browser-tool v1

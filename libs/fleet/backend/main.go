@@ -195,6 +195,8 @@ func setupRouter(c handlers.Handlers) http.Handler {
 
 	r.Handle("POST /api/image-uploads/presign",
 		withAuthenticatedMiddlewares("/api/image-uploads/presign", c.PresignImageUploads))
+	r.Handle("GET /api/images/resolve",
+		withAuthenticatedMiddlewares("/api/images/resolve", c.ResolveImage))
 
 	// Stripe-hosted billing. Browser routes require the normal SPA JWT; the
 	// webhook uses Stripe signature verification as its authentication boundary.

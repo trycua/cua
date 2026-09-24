@@ -705,198 +705,236 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
-    external fun uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_func_pool_display_status(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_func_removed_pool_display_status(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_signed_service_urls(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_revoke_signed_service_url(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_httpclient_execute(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_build(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_namespace(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_build(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_expires_in_seconds(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_label(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_sandbox(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_service(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_build(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_name(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_namespace(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_spec(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_build(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_name(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_scope(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_base_url(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_build(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_interval_ms(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_limit(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_interval_ms(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_body(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_build(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_max_response_bytes(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_timeout_secs(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_url(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_templatebuilder_api_version(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_templatebuilder_build(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_templatebuilder_kind(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_templatebuilder_metadata(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_method_templatebuilder_spec(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_browser_with_access_token(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_and_native_http_client(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_constructor_createclaimrequestbuilder_new(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_constructor_createsignedserviceurlrequestbuilder_new(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_constructor_createuserapikeyrequestbuilder_new(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_constructor_cyclopstokenproviderconfigurationbuilder_new(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_constructor_httprequestbuilder_new(
-    ): Short
-    external fun uniffi_cyclops_sdk_checksum_constructor_templatebuilder_new(
-    ): Short
-    external fun ffi_cyclops_sdk_uniffi_contract_version(
-    ): Int
+    external fun uniffi_cyclops_sdk_checksum_func_claim_env_token_key(
+): Short
+external fun uniffi_cyclops_sdk_checksum_func_fleet_label_key(
+): Short
+external fun uniffi_cyclops_sdk_checksum_func_registry_secret_name_prefix(
+): Short
+external fun uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status(
+): Short
+external fun uniffi_cyclops_sdk_checksum_func_pool_display_status(
+): Short
+external fun uniffi_cyclops_sdk_checksum_func_removed_pool_display_status(
+): Short
+external fun uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status(
+): Short
+external fun uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_access_token(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_fleet_claims(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_fleet_claims(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_upload_image_file(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_registry_secret(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_registry_secret(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_resolve_image(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_websocket_url(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_signed_service_urls(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_revoke_signed_service_url(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_build(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_name(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_namespace(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_password(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_registry(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_username(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_httpclient_execute(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_labels(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_build(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_namespace(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_build(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_expires_in_seconds(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_label(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_sandbox(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_service(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_build(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_name(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_namespace(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_spec(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_build(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_name(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_scope(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_base_url(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_build(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_interval_ms(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_limit(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_interval_ms(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_body(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_build(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_max_response_bytes(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_timeout_secs(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_httprequestbuilder_url(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_templatebuilder_api_version(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_templatebuilder_build(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_templatebuilder_kind(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_templatebuilder_metadata(
+): Short
+external fun uniffi_cyclops_sdk_checksum_method_templatebuilder_spec(
+): Short
+external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect(
+): Short
+external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_browser_with_access_token(
+): Short
+external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token(
+): Short
+external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_and_native_http_client(
+): Short
+external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider(
+): Short
+external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client(
+): Short
+external fun uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client(
+): Short
+external fun uniffi_cyclops_sdk_checksum_constructor_createregistrysecretrequestbuilder_new(
+): Short
+external fun uniffi_cyclops_sdk_checksum_constructor_createclaimrequestbuilder_new(
+): Short
+external fun uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new(
+): Short
+external fun uniffi_cyclops_sdk_checksum_constructor_createsignedserviceurlrequestbuilder_new(
+): Short
+external fun uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new(
+): Short
+external fun uniffi_cyclops_sdk_checksum_constructor_createuserapikeyrequestbuilder_new(
+): Short
+external fun uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new(
+): Short
+external fun uniffi_cyclops_sdk_checksum_constructor_cyclopstokenproviderconfigurationbuilder_new(
+): Short
+external fun uniffi_cyclops_sdk_checksum_constructor_httprequestbuilder_new(
+): Short
+external fun uniffi_cyclops_sdk_checksum_constructor_templatebuilder_new(
+): Short
+external fun ffi_cyclops_sdk_uniffi_contract_version(
+): Int
 
 
 }
@@ -946,6 +984,12 @@ external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(`ptr`: Long,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_access_token(`ptr`: Long,`forceRefresh`: Byte,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_fleet_claims(`ptr`: Long,`fleetId`: RustBuffer.ByValue,`requests`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_fleet_claims(`ptr`: Long,`namespace`: RustBuffer.ByValue,`fleetId`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(`ptr`: Long,`request`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_upload_image_file(`ptr`: Long,`namespace`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,`contents`: RustBuffer.ByValue,
@@ -978,7 +1022,15 @@ external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool(`ptr`: Lo
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool(`ptr`: Long,`pool`: RustBuffer.ByValue,
 ): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_registry_secret(`ptr`: Long,`request`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_registry_secret(`ptr`: Long,`namespace`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_resolve_image(`ptr`: Long,`reference`: RustBuffer.ByValue,`runtime`: RustBuffer.ByValue,
+): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(`ptr`: Long,`sandbox`: RustBuffer.ByValue,`service`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,`request`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_service_websocket_url(`ptr`: Long,`sandbox`: RustBuffer.ByValue,`service`: RustBuffer.ByValue,`path`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_signed_service_url(`ptr`: Long,`request`: RustBuffer.ByValue,
 ): Long
@@ -1004,6 +1056,24 @@ external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_user_api_key(`ptr
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys(`ptr`: Long,
 ): Long
+external fun uniffi_cyclops_sdk_fn_clone_createregistrysecretrequestbuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_free_createregistrysecretrequestbuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Unit
+external fun uniffi_cyclops_sdk_fn_constructor_createregistrysecretrequestbuilder_new(uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_build(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_name(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_namespace(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_password(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_registry(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_username(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
 external fun uniffi_cyclops_sdk_fn_clone_accesstokenprovider(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_fn_free_accesstokenprovider(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
@@ -1028,9 +1098,13 @@ external fun uniffi_cyclops_sdk_fn_constructor_createclaimrequestbuilder_new(uni
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_build(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_labels(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
 external fun uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_name(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_spec(`ptr`: Long,`value`: RustBufferClaimSpec.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
@@ -1148,6 +1222,12 @@ external fun uniffi_cyclops_sdk_fn_method_templatebuilder_metadata(`ptr`: Long,`
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_templatebuilder_spec(`ptr`: Long,`value`: RustBufferOSGymSandboxTemplateSpec.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
+external fun uniffi_cyclops_sdk_fn_func_claim_env_token_key(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_fn_func_fleet_label_key(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
+external fun uniffi_cyclops_sdk_fn_func_registry_secret_name_prefix(uniffi_out_err: UniffiRustCallStatus,
+): RustBuffer.ByValue
 external fun uniffi_cyclops_sdk_fn_func_healthy_pool_display_status(uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun uniffi_cyclops_sdk_fn_func_pool_display_status(`pool`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
@@ -1277,6 +1357,15 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_cyclops_sdk_checksum_func_claim_env_token_key() != 8887.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_func_fleet_label_key() != 5219.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_func_registry_secret_name_prefix() != 63379.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status() != 3094.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1295,7 +1384,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim() != 23330.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 20460.toShort()) {
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() != 52233.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim() != 17760.toShort()) {
@@ -1308,6 +1397,15 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_access_token() != 4889.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_fleet_claims() != 11135.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_fleet_claims() != 14544.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads() != 53280.toShort()) {
@@ -1358,7 +1456,19 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool() != 17695.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_registry_secret() != 5524.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_registry_secret() != 778.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_resolve_image() != 1395.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() != 46699.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_websocket_url() != 47537.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url() != 17810.toShort()) {
@@ -1397,6 +1507,24 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys() != 5949.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_build() != 37137.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_name() != 24925.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_namespace() != 5201.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_password() != 1991.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_registry() != 58635.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_username() != 20465.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() != 1180.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1406,10 +1534,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build() != 10518.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_labels() != 9576.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name() != 19762.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool() != 7405.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_secret_files() != 54115.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec() != 28263.toShort()) {
@@ -1533,6 +1667,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client() != 49301.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_constructor_createregistrysecretrequestbuilder_new() != 33724.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_constructor_createclaimrequestbuilder_new() != 10967.toShort()) {
@@ -2483,9 +2620,13 @@ public interface CreateClaimRequestBuilderInterface {
 
     fun `build`(): CreateClaimRequest
 
+    fun `labels`(`value`: Map<kotlin.String, kotlin.String>): CreateClaimRequestBuilder
+
     fun `name`(`value`: kotlin.String): CreateClaimRequestBuilder
 
     fun `pool`(`value`: Pool): CreateClaimRequestBuilder
+
+    fun `secretFiles`(`value`: Map<kotlin.String, kotlin.String>): CreateClaimRequestBuilder
 
     fun `spec`(`value`: ClaimSpec): CreateClaimRequestBuilder
 
@@ -2610,6 +2751,19 @@ open class CreateClaimRequestBuilder: Disposable, AutoCloseable, CreateClaimRequ
     }
 
 
+    override fun `labels`(`value`: Map<kotlin.String, kotlin.String>): CreateClaimRequestBuilder {
+            return FfiConverterTypeCreateClaimRequestBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_labels(
+        it,
+        FfiConverterMapStringString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
     override fun `name`(`value`: kotlin.String): CreateClaimRequestBuilder {
             return FfiConverterTypeCreateClaimRequestBuilder.lift(
     callWithHandle {
@@ -2630,6 +2784,19 @@ open class CreateClaimRequestBuilder: Disposable, AutoCloseable, CreateClaimRequ
     UniffiLib.uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool(
         it,
         FfiConverterTypePool.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `secretFiles`(`value`: Map<kotlin.String, kotlin.String>): CreateClaimRequestBuilder {
+            return FfiConverterTypeCreateClaimRequestBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_secret_files(
+        it,
+        FfiConverterMapStringString.lower(`value`),_status)
 }
     }
     )
@@ -2972,6 +3139,340 @@ public object FfiConverterTypeCreatePoolRequestBuilder: FfiConverter<CreatePoolR
     override fun allocationSize(value: CreatePoolRequestBuilder) = 8UL
 
     override fun write(value: CreatePoolRequestBuilder, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+public interface CreateRegistrySecretRequestBuilderInterface {
+
+    fun `build`(): CreateRegistrySecretRequest
+
+    fun `name`(`value`: kotlin.String): CreateRegistrySecretRequestBuilder
+
+    fun `namespace`(`value`: kotlin.String): CreateRegistrySecretRequestBuilder
+
+    fun `password`(`value`: kotlin.String): CreateRegistrySecretRequestBuilder
+
+    fun `registry`(`value`: kotlin.String): CreateRegistrySecretRequestBuilder
+
+    fun `username`(`value`: kotlin.String): CreateRegistrySecretRequestBuilder
+
+    companion object
+}
+
+open class CreateRegistrySecretRequestBuilder: Disposable, AutoCloseable, CreateRegistrySecretRequestBuilderInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+    constructor() :
+        this(UniffiWithHandle,
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_constructor_createregistrysecretrequestbuilder_new(
+
+        _status)
+}
+    )
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_cyclops_sdk_fn_free_createregistrysecretrequestbuilder(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_cyclops_sdk_fn_clone_createregistrysecretrequestbuilder(handle, status)
+        }
+    }
+
+
+    @Throws(SdkBuildException::class)override fun `build`(): CreateRegistrySecretRequest {
+            return FfiConverterTypeCreateRegistrySecretRequest.lift(
+    callWithHandle {
+    uniffiRustCallWithError(SdkBuildException) { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_build(
+        it,
+        _status)
+}
+    }
+    )
+    }
+
+
+    override fun `name`(`value`: kotlin.String): CreateRegistrySecretRequestBuilder {
+            return FfiConverterTypeCreateRegistrySecretRequestBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_name(
+        it,
+        FfiConverterString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `namespace`(`value`: kotlin.String): CreateRegistrySecretRequestBuilder {
+            return FfiConverterTypeCreateRegistrySecretRequestBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_namespace(
+        it,
+        FfiConverterString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `password`(`value`: kotlin.String): CreateRegistrySecretRequestBuilder {
+            return FfiConverterTypeCreateRegistrySecretRequestBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_password(
+        it,
+        FfiConverterString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `registry`(`value`: kotlin.String): CreateRegistrySecretRequestBuilder {
+            return FfiConverterTypeCreateRegistrySecretRequestBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_registry(
+        it,
+        FfiConverterString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `username`(`value`: kotlin.String): CreateRegistrySecretRequestBuilder {
+            return FfiConverterTypeCreateRegistrySecretRequestBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_username(
+        it,
+        FfiConverterString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+
+
+
+
+
+
+
+    /**
+     * @suppress
+     */
+    companion object
+
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeCreateRegistrySecretRequestBuilder: FfiConverter<CreateRegistrySecretRequestBuilder, Long> {
+    override fun lower(value: CreateRegistrySecretRequestBuilder): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): CreateRegistrySecretRequestBuilder {
+        return CreateRegistrySecretRequestBuilder(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): CreateRegistrySecretRequestBuilder {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: CreateRegistrySecretRequestBuilder) = 8UL
+
+    override fun write(value: CreateRegistrySecretRequestBuilder, buf: ByteBuffer) {
         buf.putLong(lower(value))
     }
 }
@@ -3988,6 +4489,11 @@ public interface CyclopsClientInterface {
 
     suspend fun `createClaim`(`request`: CreateClaimRequest): Claim
 
+    /**
+     * Delete the claim and, when it references a claim-scoped Secret
+     * (`secret_files`), that Secret too. The pool-operator also owner-refs
+     * the Secret to the claim, so garbage collection is the backstop.
+     */
     suspend fun `deleteClaim`(`claim`: Claim)
 
     suspend fun `getClaim`(`claim`: Claim): Claim
@@ -4005,6 +4511,33 @@ public interface CyclopsClientInterface {
     suspend fun `renewClaim`(`claim`: Claim, `shutdownTime`: kotlin.String): Claim
 
     suspend fun `waitClaim`(`claim`: Claim): Sandbox
+
+    /**
+     * The bearer this client would send on its next authenticated request,
+     * for callers that open their own connection to the gateway (for example
+     * a native WebSocket). `force_refresh` bypasses any cached token; a
+     * static access token is returned as-is. The value is a raw token — the
+     * caller attaches it as `authorization: Bearer <token>`.
+     */
+    suspend fun `accessToken`(`forceRefresh`: kotlin.Boolean): kotlin.String
+
+    /**
+     * Fan out `create_claim` calls across the requested warm pools, tagging
+     * every claim with `cua.ai/fleet=<fleet_id>` so the group can be listed
+     * back later. Duplicate pool entries are aggregated before any network
+     * call. Claims are created sequentially; if one creation fails the error
+     * is returned immediately and claims already created keep their fleet
+     * label, so `list_fleet_claims` still finds them for retry or cleanup.
+     */
+    suspend fun `createFleetClaims`(`fleetId`: kotlin.String, `requests`: List<FleetPoolRequest>): FleetClaims
+
+    /**
+     * The fleet's claims within one namespace: enumerate the namespace's
+     * claims and keep those labeled `cua.ai/fleet=<fleet_id>`. A fleet that
+     * spans several pools spans that many namespaces (one pool per
+     * namespace), so call this once per member pool.
+     */
+    suspend fun `listFleetClaims`(`namespace`: kotlin.String, `fleetId`: kotlin.String): FleetClaims
 
     suspend fun `presignImageUploads`(`request`: ImageUploadRequest): ImageUploadResponse
 
@@ -4043,7 +4576,32 @@ public interface CyclopsClientInterface {
 
     suspend fun `updatePool`(`pool`: Pool): Pool
 
+    /**
+     * Create (or replace) a `cua-registry-*` dockerconfigjson pull Secret.
+     * On a name conflict the old Secret is deleted and the new one created,
+     * since the gateway admits no Secret update.
+     */
+    suspend fun `createRegistrySecret`(`request`: CreateRegistrySecretRequest): RegistrySecret
+
+    suspend fun `deleteRegistrySecret`(`namespace`: kotlin.String, `name`: kotlin.String)
+
+    /**
+     * Pin a public registry ref to a digest server-side. `runtime` (`gvisor`,
+     * `kubevirt`, `macos`) selects the variant for canonical cua images:
+     * `kubevirt` maps `ghcr.io/trycua/linux:24.04` to its `-disk` sibling.
+     */
+    suspend fun `resolveImage`(`reference`: kotlin.String, `runtime`: kotlin.String?): ResolvedImage
+
     suspend fun `serviceRequest`(`sandbox`: Sandbox, `service`: kotlin.String, `path`: kotlin.String, `request`: HttpRequest): HttpResponse
+
+    /**
+     * Where a native client opens its own WebSocket to a sandbox service:
+     * the gateway's `/api/svc` proxy forwards the HTTP upgrade, so the
+     * returned `ws(s)://` URL plus the returned bearer header are all a
+     * Rust or Swift caller needs to dial the socket directly.
+     * `service_request` stays the path for unary requests.
+     */
+    suspend fun `serviceWebsocketUrl`(`sandbox`: Sandbox, `service`: kotlin.String, `path`: kotlin.String): ServiceStreamTarget
 
     suspend fun `createSignedServiceUrl`(`request`: CreateSignedServiceUrlRequest): SignedServiceUrl
 
@@ -4190,6 +4748,11 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
     }
 
 
+    /**
+     * Delete the claim and, when it references a claim-scoped Secret
+     * (`secret_files`), that Secret too. The pool-operator also owner-refs
+     * the Secret to the claim, so garbage collection is the backstop.
+     */
     @Throws(SdkException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `deleteClaim`(`claim`: Claim) {
@@ -4298,6 +4861,90 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
         { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeSandbox.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * The bearer this client would send on its next authenticated request,
+     * for callers that open their own connection to the gateway (for example
+     * a native WebSocket). `force_refresh` bypasses any cached token; a
+     * static access token is returned as-is. The value is a raw token — the
+     * caller attaches it as `authorization: Bearer <token>`.
+     */
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `accessToken`(`forceRefresh`: kotlin.Boolean) : kotlin.String {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_access_token(
+                uniffiHandle,
+                FfiConverterBoolean.lower(`forceRefresh`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterString.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Fan out `create_claim` calls across the requested warm pools, tagging
+     * every claim with `cua.ai/fleet=<fleet_id>` so the group can be listed
+     * back later. Duplicate pool entries are aggregated before any network
+     * call. Claims are created sequentially; if one creation fails the error
+     * is returned immediately and claims already created keep their fleet
+     * label, so `list_fleet_claims` still finds them for retry or cleanup.
+     */
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `createFleetClaims`(`fleetId`: kotlin.String, `requests`: List<FleetPoolRequest>) : FleetClaims {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_fleet_claims(
+                uniffiHandle,
+                FfiConverterString.lower(`fleetId`),FfiConverterSequenceTypeFleetPoolRequest.lower(`requests`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeFleetClaims.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * The fleet's claims within one namespace: enumerate the namespace's
+     * claims and keep those labeled `cua.ai/fleet=<fleet_id>`. A fleet that
+     * spans several pools spans that many namespaces (one pool per
+     * namespace), so call this once per member pool.
+     */
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `listFleetClaims`(`namespace`: kotlin.String, `fleetId`: kotlin.String) : FleetClaims {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_fleet_claims(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),FfiConverterString.lower(`fleetId`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeFleetClaims.lift(it) },
         // Error FFI converter
         SdkException.ErrorHandler,
     )
@@ -4648,6 +5295,80 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
     }
 
 
+    /**
+     * Create (or replace) a `cua-registry-*` dockerconfigjson pull Secret.
+     * On a name conflict the old Secret is deleted and the new one created,
+     * since the gateway admits no Secret update.
+     */
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `createRegistrySecret`(`request`: CreateRegistrySecretRequest) : RegistrySecret {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_registry_secret(
+                uniffiHandle,
+                FfiConverterTypeCreateRegistrySecretRequest.lower(`request`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeRegistrySecret.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deleteRegistrySecret`(`namespace`: kotlin.String, `name`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_registry_secret(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Pin a public registry ref to a digest server-side. `runtime` (`gvisor`,
+     * `kubevirt`, `macos`) selects the variant for canonical cua images:
+     * `kubevirt` maps `ghcr.io/trycua/linux:24.04` to its `-disk` sibling.
+     */
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `resolveImage`(`reference`: kotlin.String, `runtime`: kotlin.String?) : ResolvedImage {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_resolve_image(
+                uniffiHandle,
+                FfiConverterString.lower(`reference`),FfiConverterOptionalString.lower(`runtime`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeResolvedImage.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
     @Throws(SdkException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun `serviceRequest`(`sandbox`: Sandbox, `service`: kotlin.String, `path`: kotlin.String, `request`: HttpRequest) : HttpResponse {
@@ -4663,6 +5384,34 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
         { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeHttpResponse.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    /**
+     * Where a native client opens its own WebSocket to a sandbox service:
+     * the gateway's `/api/svc` proxy forwards the HTTP upgrade, so the
+     * returned `ws(s)://` URL plus the returned bearer header are all a
+     * Rust or Swift caller needs to dial the socket directly.
+     * `service_request` stays the path for unary requests.
+     */
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `serviceWebsocketUrl`(`sandbox`: Sandbox, `service`: kotlin.String, `path`: kotlin.String) : ServiceStreamTarget {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_service_websocket_url(
+                uniffiHandle,
+                FfiConverterTypeSandbox.lower(`sandbox`),FfiConverterString.lower(`service`),FfiConverterString.lower(`path`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeServiceStreamTarget.lift(it) },
         // Error FFI converter
         SdkException.ErrorHandler,
     )
@@ -6704,6 +7453,24 @@ data class CreateClaimRequest (
      * `claim-<petname>` so concurrent leases and retries cannot collide.
      */
     var `name`: kotlin.String? = null
+    ,
+    /**
+     * Labels stamped onto the created claim's metadata verbatim. Grouping
+     * helpers (for example fleet fan-out) rely on this to tag related claims
+     * so they can be listed back by label within a namespace.
+     */
+    var `labels`: Map<kotlin.String, kotlin.String>? = null
+    ,
+    /**
+     * Files delivered into the bound sandbox under `/run/cua/<key>` (mode
+     * 0600) once the claim binds, without restarting it. The key
+     * `claim_env_token_key()` (`env-token`) carries the cua-env-driver token.
+     * The client stores them in a claim-scoped `cua-claim-<claim>` Secret
+     * that the claim references by `spec.secretRef`; `delete_claim` removes
+     * it. The pool's template must set `vmTemplate.claimSecrets`. Values are
+     * never serialized with the request nor printed by `Debug`.
+     */
+    var `secretFiles`: Map<kotlin.String, kotlin.String>? = null
 
 ){
 
@@ -6723,19 +7490,25 @@ public object FfiConverterTypeCreateClaimRequest: FfiConverterRustBuffer<CreateC
             FfiConverterTypePool.read(buf),
             FfiConverterOptionalTypeClaimSpec.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterOptionalMapStringString.read(buf),
+            FfiConverterOptionalMapStringString.read(buf),
         )
     }
 
     override fun allocationSize(value: CreateClaimRequest) = (
             FfiConverterTypePool.allocationSize(value.`pool`) +
             FfiConverterOptionalTypeClaimSpec.allocationSize(value.`spec`) +
-            FfiConverterOptionalString.allocationSize(value.`name`)
+            FfiConverterOptionalString.allocationSize(value.`name`) +
+            FfiConverterOptionalMapStringString.allocationSize(value.`labels`) +
+            FfiConverterOptionalMapStringString.allocationSize(value.`secretFiles`)
     )
 
     override fun write(value: CreateClaimRequest, buf: ByteBuffer) {
             FfiConverterTypePool.write(value.`pool`, buf)
             FfiConverterOptionalTypeClaimSpec.write(value.`spec`, buf)
             FfiConverterOptionalString.write(value.`name`, buf)
+            FfiConverterOptionalMapStringString.write(value.`labels`, buf)
+            FfiConverterOptionalMapStringString.write(value.`secretFiles`, buf)
     }
 }
 
@@ -6774,6 +7547,76 @@ public object FfiConverterTypeCreatePoolRequest: FfiConverterRustBuffer<CreatePo
     override fun write(value: CreatePoolRequest, buf: ByteBuffer) {
             FfiConverterString.write(value.`namespace`, buf)
             FfiConverterTypeOSGymSandboxWarmPoolSpec.write(value.`spec`, buf)
+    }
+}
+
+
+
+/**
+ * Credentials for one registry, stored as a `cua-registry-*` pull Secret.
+ */
+data class CreateRegistrySecretRequest (
+    /**
+     * Pool namespace the Secret is created in. It must already exist (the
+     * pool's namespace, created by `create_pool`, or by `create_namespace`).
+     */
+    var `namespace`: kotlin.String
+    ,
+    /**
+     * Full Secret name, `cua-registry-<dns-label>`.
+     */
+    var `name`: kotlin.String
+    ,
+    /**
+     * Registry host the credentials are for, as image refs spell it, e.g.
+     * `ghcr.io`, `registry.example.com:5000` or `docker.io`.
+     */
+    var `registry`: kotlin.String
+    ,
+    var `username`: kotlin.String
+    ,
+    /**
+     * Password or access token. Never serialized by `Debug`.
+     */
+    var `password`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeCreateRegistrySecretRequest: FfiConverterRustBuffer<CreateRegistrySecretRequest> {
+    override fun read(buf: ByteBuffer): CreateRegistrySecretRequest {
+        return CreateRegistrySecretRequest(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: CreateRegistrySecretRequest) = (
+            FfiConverterString.allocationSize(value.`namespace`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`registry`) +
+            FfiConverterString.allocationSize(value.`username`) +
+            FfiConverterString.allocationSize(value.`password`)
+    )
+
+    override fun write(value: CreateRegistrySecretRequest, buf: ByteBuffer) {
+            FfiConverterString.write(value.`namespace`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`registry`, buf)
+            FfiConverterString.write(value.`username`, buf)
+            FfiConverterString.write(value.`password`, buf)
     }
 }
 
@@ -7033,6 +7876,89 @@ public object FfiConverterTypeCyclopsTokenProviderConfiguration: FfiConverterRus
             FfiConverterUInt.write(value.`poolPollLimit`, buf)
             FfiConverterULong.write(value.`claimPollIntervalMs`, buf)
             FfiConverterUInt.write(value.`claimPollLimit`, buf)
+    }
+}
+
+
+
+/**
+ * A fleet's identity plus the claims currently known to belong to it.
+ */
+data class FleetClaims (
+    var `fleetId`: kotlin.String
+    ,
+    var `claims`: List<Claim>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFleetClaims: FfiConverterRustBuffer<FleetClaims> {
+    override fun read(buf: ByteBuffer): FleetClaims {
+        return FleetClaims(
+            FfiConverterString.read(buf),
+            FfiConverterSequenceTypeClaim.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FleetClaims) = (
+            FfiConverterString.allocationSize(value.`fleetId`) +
+            FfiConverterSequenceTypeClaim.allocationSize(value.`claims`)
+    )
+
+    override fun write(value: FleetClaims, buf: ByteBuffer) {
+            FfiConverterString.write(value.`fleetId`, buf)
+            FfiConverterSequenceTypeClaim.write(value.`claims`, buf)
+    }
+}
+
+
+
+/**
+ * One pool's share of a fleet: claim `replicas` sandboxes from the warm pool
+ * named `pool`. On this platform the pool name is also its namespace.
+ */
+data class FleetPoolRequest (
+    var `pool`: kotlin.String
+    ,
+    var `replicas`: kotlin.UInt
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFleetPoolRequest: FfiConverterRustBuffer<FleetPoolRequest> {
+    override fun read(buf: ByteBuffer): FleetPoolRequest {
+        return FleetPoolRequest(
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FleetPoolRequest) = (
+            FfiConverterString.allocationSize(value.`pool`) +
+            FfiConverterUInt.allocationSize(value.`replicas`)
+    )
+
+    override fun write(value: FleetPoolRequest, buf: ByteBuffer) {
+            FfiConverterString.write(value.`pool`, buf)
+            FfiConverterUInt.write(value.`replicas`, buf)
     }
 }
 
@@ -7597,6 +8523,135 @@ public object FfiConverterTypePresignedPut: FfiConverterRustBuffer<PresignedPut>
 
 
 
+/**
+ * A created registry pull Secret. Carries no credential: Secrets are
+ * write-only through the gateway.
+ */
+data class RegistrySecret (
+    var `namespace`: kotlin.String
+    ,
+    var `name`: kotlin.String
+    ,
+    var `registry`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeRegistrySecret: FfiConverterRustBuffer<RegistrySecret> {
+    override fun read(buf: ByteBuffer): RegistrySecret {
+        return RegistrySecret(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: RegistrySecret) = (
+            FfiConverterString.allocationSize(value.`namespace`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`registry`)
+    )
+
+    override fun write(value: RegistrySecret, buf: ByteBuffer) {
+            FfiConverterString.write(value.`namespace`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`registry`, buf)
+    }
+}
+
+
+
+/**
+ * A registry ref pinned by the gateway (`GET /api/images/resolve`).
+ */
+data class ResolvedImage (
+    /**
+     * The ref as requested.
+     */
+    var `reference`: kotlin.String
+    ,
+    /**
+     * The ref actually resolved: for a canonical image and runtime
+     * `kubevirt` this is the containerDisk sibling (`…:24.04-disk`).
+     */
+    var `resolvedRef`: kotlin.String
+    ,
+    /**
+     * `repo@sha256:…` of the manifest (or index) to run.
+     */
+    var `pinnedRef`: kotlin.String
+    ,
+    var `digest`: kotlin.String
+    ,
+    /**
+     * `rootfs` (docker/gVisor), `containerdisk` (KubeVirt) or `unknown`.
+     */
+    var `variant`: kotlin.String
+    ,
+    /**
+     * The linux/amd64 child manifest digest when the ref is an index.
+     */
+    var `platformDigest`: kotlin.String?
+    ,
+    var `mediaType`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeResolvedImage: FfiConverterRustBuffer<ResolvedImage> {
+    override fun read(buf: ByteBuffer): ResolvedImage {
+        return ResolvedImage(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ResolvedImage) = (
+            FfiConverterString.allocationSize(value.`reference`) +
+            FfiConverterString.allocationSize(value.`resolvedRef`) +
+            FfiConverterString.allocationSize(value.`pinnedRef`) +
+            FfiConverterString.allocationSize(value.`digest`) +
+            FfiConverterString.allocationSize(value.`variant`) +
+            FfiConverterOptionalString.allocationSize(value.`platformDigest`) +
+            FfiConverterString.allocationSize(value.`mediaType`)
+    )
+
+    override fun write(value: ResolvedImage, buf: ByteBuffer) {
+            FfiConverterString.write(value.`reference`, buf)
+            FfiConverterString.write(value.`resolvedRef`, buf)
+            FfiConverterString.write(value.`pinnedRef`, buf)
+            FfiConverterString.write(value.`digest`, buf)
+            FfiConverterString.write(value.`variant`, buf)
+            FfiConverterOptionalString.write(value.`platformDigest`, buf)
+            FfiConverterString.write(value.`mediaType`, buf)
+    }
+}
+
+
+
 data class ResourceMetadata (
     var `namespace`: kotlin.String
     ,
@@ -7688,6 +8743,56 @@ public object FfiConverterTypeSandbox: FfiConverterRustBuffer<Sandbox> {
             FfiConverterString.write(value.`claim`, buf)
             FfiConverterString.write(value.`name`, buf)
             FfiConverterSequenceString.write(value.`services`, buf)
+    }
+}
+
+
+
+/**
+ * Where a native client opens its own WebSocket to a sandbox service through
+ * the gateway's `/api/svc` proxy. `url` is the `ws(s)://` endpoint;
+ * `auth_header_name`/`auth_header_value` carry the bearer the socket's HTTP
+ * upgrade request must send. Deliberately not serde-serializable: the value
+ * holds a live credential and must not be logged or persisted.
+ */
+data class ServiceStreamTarget (
+    var `url`: kotlin.String
+    ,
+    var `authHeaderName`: kotlin.String
+    ,
+    var `authHeaderValue`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeServiceStreamTarget: FfiConverterRustBuffer<ServiceStreamTarget> {
+    override fun read(buf: ByteBuffer): ServiceStreamTarget {
+        return ServiceStreamTarget(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ServiceStreamTarget) = (
+            FfiConverterString.allocationSize(value.`url`) +
+            FfiConverterString.allocationSize(value.`authHeaderName`) +
+            FfiConverterString.allocationSize(value.`authHeaderValue`)
+    )
+
+    override fun write(value: ServiceStreamTarget, buf: ByteBuffer) {
+            FfiConverterString.write(value.`url`, buf)
+            FfiConverterString.write(value.`authHeaderName`, buf)
+            FfiConverterString.write(value.`authHeaderValue`, buf)
     }
 }
 
@@ -8769,6 +9874,34 @@ public object FfiConverterSequenceTypeClaim: FfiConverterRustBuffer<List<Claim>>
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypeFleetPoolRequest: FfiConverterRustBuffer<List<FleetPoolRequest>> {
+    override fun read(buf: ByteBuffer): List<FleetPoolRequest> {
+        val len = buf.getInt()
+        return List<FleetPoolRequest>(len) {
+            FfiConverterTypeFleetPoolRequest.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<FleetPoolRequest>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeFleetPoolRequest.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<FleetPoolRequest>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeFleetPoolRequest.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeHttpHeader: FfiConverterRustBuffer<List<HttpHeader>> {
     override fun read(buf: ByteBuffer): List<HttpHeader> {
         val len = buf.getInt()
@@ -9043,6 +10176,47 @@ public object FfiConverterMapStringString: FfiConverterRustBuffer<Map<kotlin.Str
 
 
 
+
+
+        /**
+         * The `secret_files` key (and in-guest file name, `/run/cua/env-token`)
+         * that carries the cua-env-driver token for a claimed sandbox.
+         */ fun `claimEnvTokenKey`(): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_func_claim_env_token_key(
+
+        _status)
+}
+    )
+    }
+
+
+        /**
+         * The label key a fleet's claims share, for callers that filter or clean up
+         * with raw Kubernetes tooling instead of `list_fleet_claims`.
+         */ fun `fleetLabelKey`(): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_func_fleet_label_key(
+
+        _status)
+}
+    )
+    }
+
+
+        /**
+         * The name prefix every tenant registry pull Secret must carry.
+         */ fun `registrySecretNamePrefix`(): kotlin.String {
+            return FfiConverterString.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_fn_func_registry_secret_name_prefix(
+
+        _status)
+}
+    )
+    }
 
  fun `healthyPoolDisplayStatus`(): PoolDisplayStatus {
             return FfiConverterTypePoolDisplayStatus.lift(

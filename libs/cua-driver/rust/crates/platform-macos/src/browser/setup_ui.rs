@@ -1747,6 +1747,7 @@ mod tests {
             tree_markdown: String::new(),
             nodes,
             truncated: false,
+            walk: cua_driver_core::walk_budget::WalkBudget::nodes_only(0).outcome(),
             window_scope: Some(crate::ax::WindowScope::Matched),
         }
     }
@@ -1875,6 +1876,10 @@ mod tests {
             tree_markdown: String::new(),
             nodes: Vec::new(),
             truncated: true,
+            walk: cua_driver_core::walk_budget::WalkOutcome::timed_out(
+                1000,
+                std::time::Duration::from_millis(1000),
+            ),
             window_scope: Some(crate::ax::WindowScope::Matched),
         };
         assert!(

@@ -490,9 +490,13 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build() != 5682:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds() != 56677:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas() != 50438:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref() != 7198:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_policy() != 53364:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created() != 44516:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -518,13 +522,19 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new() != 27302:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_args() != 38529:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build() != 17867:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_claim_secrets() != 62567:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command() != 20371:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image() != 49021:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores() != 25645:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_env() != 48368:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware() != 33926:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -541,6 +551,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc() != 27280:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes() != 40623:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_process_mode() != 49070:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime() != 63375:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -923,6 +935,12 @@ _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_b
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_uint32,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas.argtypes = (
     ctypes.c_uint64,
     ctypes.c_uint32,
@@ -935,6 +953,12 @@ _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_s
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_policy.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_policy.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created.argtypes = (
     ctypes.c_uint64,
     ctypes.c_uint32,
@@ -997,11 +1021,23 @@ _UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new.argtyp
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_args.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_args.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_claim_secrets.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_int8,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_claim_secrets.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1020,6 +1056,12 @@ _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores.argty
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_env.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_env.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1068,6 +1110,12 @@ _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes.argtypes
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_process_mode.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_process_mode.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1140,12 +1188,18 @@ _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbui
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_policy.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_policy.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created.restype = ctypes.c_uint16
@@ -1182,9 +1236,15 @@ _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_n
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_args.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_args.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_claim_secrets.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_claim_secrets.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command.restype = ctypes.c_uint16
@@ -1194,6 +1254,9 @@ _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_env.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_env.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware.restype = ctypes.c_uint16
@@ -1218,6 +1281,9 @@ _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc.rest
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_process_mode.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_process_mode.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime.restype = ctypes.c_uint16
@@ -1400,6 +1466,40 @@ class _UniffiFfiConverterTypeClaimLifecycle(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalBoolean.write(value.auto_renew, buf)
 
 @dataclass
+class ClaimSecretRef:
+    """
+    Reference to a claim-scoped Secret delivered into the bound sandbox. See
+    [`CLAIM_SECRET_NAME_PREFIX`].
+"""
+    def __init__(self, *, name:str):
+        self.name = name
+
+
+
+
+    def __str__(self):
+        return "ClaimSecretRef(name={})".format(self.name)
+    def __eq__(self, other):
+        if self.name != other.name:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeClaimSecretRef(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ClaimSecretRef(
+            name=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.name)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.name, buf)
+
+@dataclass
 class SandboxTemplateRef:
     def __init__(self, *, name:str):
         self.name = name
@@ -1492,9 +1592,34 @@ class _UniffiFfiConverterOptionalTypeClaimLifecycle(_UniffiConverterRustBuffer):
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+class _UniffiFfiConverterOptionalTypeClaimSecretRef(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeClaimSecretRef.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeClaimSecretRef.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeClaimSecretRef.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class ClaimSpec:
-    def __init__(self, *, sandbox_template_ref:SandboxTemplateRef, warmpool:typing.Optional[str], bind_deadline:typing.Optional[int], lifecycle:typing.Optional[ClaimLifecycle], ttl_seconds_after_created:typing.Optional[int] = _DEFAULT):
+    def __init__(self, *, sandbox_template_ref:SandboxTemplateRef, warmpool:typing.Optional[str], bind_deadline:typing.Optional[int], lifecycle:typing.Optional[ClaimLifecycle], ttl_seconds_after_created:typing.Optional[int] = _DEFAULT, secret_ref:typing.Optional[ClaimSecretRef] = _DEFAULT):
         self.sandbox_template_ref = sandbox_template_ref
         self.warmpool = warmpool
         self.bind_deadline = bind_deadline
@@ -1503,12 +1628,16 @@ class ClaimSpec:
             self.ttl_seconds_after_created = None
         else:
             self.ttl_seconds_after_created = ttl_seconds_after_created
+        if secret_ref is _DEFAULT:
+            self.secret_ref = None
+        else:
+            self.secret_ref = secret_ref
 
 
 
 
     def __str__(self):
-        return "ClaimSpec(sandbox_template_ref={}, warmpool={}, bind_deadline={}, lifecycle={}, ttl_seconds_after_created={})".format(self.sandbox_template_ref, self.warmpool, self.bind_deadline, self.lifecycle, self.ttl_seconds_after_created)
+        return "ClaimSpec(sandbox_template_ref={}, warmpool={}, bind_deadline={}, lifecycle={}, ttl_seconds_after_created={}, secret_ref={})".format(self.sandbox_template_ref, self.warmpool, self.bind_deadline, self.lifecycle, self.ttl_seconds_after_created, self.secret_ref)
     def __eq__(self, other):
         if self.sandbox_template_ref != other.sandbox_template_ref:
             return False
@@ -1519,6 +1648,8 @@ class ClaimSpec:
         if self.lifecycle != other.lifecycle:
             return False
         if self.ttl_seconds_after_created != other.ttl_seconds_after_created:
+            return False
+        if self.secret_ref != other.secret_ref:
             return False
         return True
 
@@ -1531,6 +1662,7 @@ class _UniffiFfiConverterTypeClaimSpec(_UniffiConverterRustBuffer):
             bind_deadline=_UniffiFfiConverterOptionalUInt32.read(buf),
             lifecycle=_UniffiFfiConverterOptionalTypeClaimLifecycle.read(buf),
             ttl_seconds_after_created=_UniffiFfiConverterOptionalUInt32.read(buf),
+            secret_ref=_UniffiFfiConverterOptionalTypeClaimSecretRef.read(buf),
         )
 
     @staticmethod
@@ -1540,6 +1672,7 @@ class _UniffiFfiConverterTypeClaimSpec(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt32.check_lower(value.bind_deadline)
         _UniffiFfiConverterOptionalTypeClaimLifecycle.check_lower(value.lifecycle)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.ttl_seconds_after_created)
+        _UniffiFfiConverterOptionalTypeClaimSecretRef.check_lower(value.secret_ref)
 
     @staticmethod
     def write(value, buf):
@@ -1548,6 +1681,7 @@ class _UniffiFfiConverterTypeClaimSpec(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt32.write(value.bind_deadline, buf)
         _UniffiFfiConverterOptionalTypeClaimLifecycle.write(value.lifecycle, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.ttl_seconds_after_created, buf)
+        _UniffiFfiConverterOptionalTypeClaimSecretRef.write(value.secret_ref, buf)
 
 @dataclass
 class OsGymSandboxClaimCondition:
@@ -2476,9 +2610,86 @@ class _UniffiFfiConverterOptionalTypeOidcConfig(_UniffiConverterRustBuffer):
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+
+
+
+
+
+class ProcessMode(enum.Enum):
+    """
+    How `vmTemplate.command`/`args`/`env` reach the sandbox
+    (`vmTemplate.processMode`). Absent means `Legacy`.
+"""
+
+    LEGACY = 0
+    """
+    What templates did before processMode existed: pod runtimes run
+    command/args/env; KubeVirt ignores command and refuses args/env.
+"""
+
+    RUN = 1
+    """
+    Every runtime runs command/args/env. Pod runtimes set them on the
+    sandbox container; KubeVirt renders them into the sandbox's cloud-init.
+"""
+
+
+
+class _UniffiFfiConverterTypeProcessMode(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return ProcessMode.LEGACY
+        if variant == 2:
+            return ProcessMode.RUN
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == ProcessMode.LEGACY:
+            return
+        if value == ProcessMode.RUN:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == ProcessMode.LEGACY:
+            buf.write_i32(1)
+        if value == ProcessMode.RUN:
+            buf.write_i32(2)
+
+
+
+class _UniffiFfiConverterOptionalTypeProcessMode(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeProcessMode.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeProcessMode.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeProcessMode.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class VmTemplate:
-    def __init__(self, *, container_disk_image:str, command:typing.Optional[typing.List[str]], runtime:typing.Optional[RuntimeKind], runtime_class_name:typing.Optional[str], node_selector:typing.Optional[dict[str, str]], tolerations:typing.Optional[typing.List[PreservedJson]], image_pull_policy:typing.Optional[ImagePullPolicy], image_pull_secret:typing.Optional[str], cpu_cores:typing.Optional[int], memory:typing.Optional[str], firmware:typing.Optional[Firmware], nested_virtualization:typing.Optional[bool], probes:typing.Optional[PreservedJson], services:typing.Optional[typing.List[SandboxService]], oidc:typing.Optional[OidcConfig]):
+    def __init__(self, *, container_disk_image:str, command:typing.Optional[typing.List[str]], runtime:typing.Optional[RuntimeKind], runtime_class_name:typing.Optional[str], node_selector:typing.Optional[dict[str, str]], tolerations:typing.Optional[typing.List[PreservedJson]], image_pull_policy:typing.Optional[ImagePullPolicy], image_pull_secret:typing.Optional[str], cpu_cores:typing.Optional[int], memory:typing.Optional[str], firmware:typing.Optional[Firmware], nested_virtualization:typing.Optional[bool], probes:typing.Optional[PreservedJson], services:typing.Optional[typing.List[SandboxService]], oidc:typing.Optional[OidcConfig], claim_secrets:typing.Optional[bool] = _DEFAULT, args:typing.Optional[typing.List[str]] = _DEFAULT, env:typing.Optional[dict[str, str]] = _DEFAULT, process_mode:typing.Optional[ProcessMode] = _DEFAULT):
         self.container_disk_image = container_disk_image
         self.command = command
         self.runtime = runtime
@@ -2494,12 +2705,28 @@ class VmTemplate:
         self.probes = probes
         self.services = services
         self.oidc = oidc
+        if claim_secrets is _DEFAULT:
+            self.claim_secrets = None
+        else:
+            self.claim_secrets = claim_secrets
+        if args is _DEFAULT:
+            self.args = None
+        else:
+            self.args = args
+        if env is _DEFAULT:
+            self.env = None
+        else:
+            self.env = env
+        if process_mode is _DEFAULT:
+            self.process_mode = None
+        else:
+            self.process_mode = process_mode
 
 
 
 
     def __str__(self):
-        return "VmTemplate(container_disk_image={}, command={}, runtime={}, runtime_class_name={}, node_selector={}, tolerations={}, image_pull_policy={}, image_pull_secret={}, cpu_cores={}, memory={}, firmware={}, nested_virtualization={}, probes={}, services={}, oidc={})".format(self.container_disk_image, self.command, self.runtime, self.runtime_class_name, self.node_selector, self.tolerations, self.image_pull_policy, self.image_pull_secret, self.cpu_cores, self.memory, self.firmware, self.nested_virtualization, self.probes, self.services, self.oidc)
+        return "VmTemplate(container_disk_image={}, command={}, runtime={}, runtime_class_name={}, node_selector={}, tolerations={}, image_pull_policy={}, image_pull_secret={}, cpu_cores={}, memory={}, firmware={}, nested_virtualization={}, probes={}, services={}, oidc={}, claim_secrets={}, args={}, env={}, process_mode={})".format(self.container_disk_image, self.command, self.runtime, self.runtime_class_name, self.node_selector, self.tolerations, self.image_pull_policy, self.image_pull_secret, self.cpu_cores, self.memory, self.firmware, self.nested_virtualization, self.probes, self.services, self.oidc, self.claim_secrets, self.args, self.env, self.process_mode)
     def __eq__(self, other):
         if self.container_disk_image != other.container_disk_image:
             return False
@@ -2531,6 +2758,14 @@ class VmTemplate:
             return False
         if self.oidc != other.oidc:
             return False
+        if self.claim_secrets != other.claim_secrets:
+            return False
+        if self.args != other.args:
+            return False
+        if self.env != other.env:
+            return False
+        if self.process_mode != other.process_mode:
+            return False
         return True
 
 class _UniffiFfiConverterTypeVmTemplate(_UniffiConverterRustBuffer):
@@ -2552,6 +2787,10 @@ class _UniffiFfiConverterTypeVmTemplate(_UniffiConverterRustBuffer):
             probes=_UniffiFfiConverterOptionalTypePreservedJson.read(buf),
             services=_UniffiFfiConverterOptionalSequenceTypeSandboxService.read(buf),
             oidc=_UniffiFfiConverterOptionalTypeOidcConfig.read(buf),
+            claim_secrets=_UniffiFfiConverterOptionalBoolean.read(buf),
+            args=_UniffiFfiConverterOptionalSequenceString.read(buf),
+            env=_UniffiFfiConverterOptionalMapStringString.read(buf),
+            process_mode=_UniffiFfiConverterOptionalTypeProcessMode.read(buf),
         )
 
     @staticmethod
@@ -2571,6 +2810,10 @@ class _UniffiFfiConverterTypeVmTemplate(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypePreservedJson.check_lower(value.probes)
         _UniffiFfiConverterOptionalSequenceTypeSandboxService.check_lower(value.services)
         _UniffiFfiConverterOptionalTypeOidcConfig.check_lower(value.oidc)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.claim_secrets)
+        _UniffiFfiConverterOptionalSequenceString.check_lower(value.args)
+        _UniffiFfiConverterOptionalMapStringString.check_lower(value.env)
+        _UniffiFfiConverterOptionalTypeProcessMode.check_lower(value.process_mode)
 
     @staticmethod
     def write(value, buf):
@@ -2589,6 +2832,10 @@ class _UniffiFfiConverterTypeVmTemplate(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypePreservedJson.write(value.probes, buf)
         _UniffiFfiConverterOptionalSequenceTypeSandboxService.write(value.services, buf)
         _UniffiFfiConverterOptionalTypeOidcConfig.write(value.oidc, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.claim_secrets, buf)
+        _UniffiFfiConverterOptionalSequenceString.write(value.args, buf)
+        _UniffiFfiConverterOptionalMapStringString.write(value.env, buf)
+        _UniffiFfiConverterOptionalTypeProcessMode.write(value.process_mode, buf)
 
 @dataclass
 class OsGymSandboxSpec:
@@ -2789,9 +3036,85 @@ class _UniffiFfiConverterOptionalTypeWarmPoolAutoscaling(_UniffiConverterRustBuf
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+
+
+
+
+
+class WarmPoolTtlPolicy(enum.Enum):
+    """
+    What the pool-operator deletes when a warm pool's creation TTL
+    (`ttlSecondsAfterCreated`) or idle TTL (`idleTtlSeconds`) expires.
+"""
+
+    RETAIN = 0
+    """
+    Delete only the warm pool. Its claims and namespace stay.
+"""
+
+    CASCADE = 1
+    """
+    Also delete the pool's dead unbound claims (TTL passed, older than
+    max(900s, bindDeadline)). Bound claims, the namespace and volumes stay.
+"""
+
+
+
+class _UniffiFfiConverterTypeWarmPoolTtlPolicy(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return WarmPoolTtlPolicy.RETAIN
+        if variant == 2:
+            return WarmPoolTtlPolicy.CASCADE
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == WarmPoolTtlPolicy.RETAIN:
+            return
+        if value == WarmPoolTtlPolicy.CASCADE:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == WarmPoolTtlPolicy.RETAIN:
+            buf.write_i32(1)
+        if value == WarmPoolTtlPolicy.CASCADE:
+            buf.write_i32(2)
+
+
+
+class _UniffiFfiConverterOptionalTypeWarmPoolTtlPolicy(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeWarmPoolTtlPolicy.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeWarmPoolTtlPolicy.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeWarmPoolTtlPolicy.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class OsGymSandboxWarmPoolSpec:
-    def __init__(self, *, replicas:int, sandbox_template_ref:SandboxTemplateRef, autoscaling:typing.Optional[WarmPoolAutoscaling], ttl_seconds_after_created:typing.Optional[int] = _DEFAULT):
+    def __init__(self, *, replicas:int, sandbox_template_ref:SandboxTemplateRef, autoscaling:typing.Optional[WarmPoolAutoscaling], ttl_seconds_after_created:typing.Optional[int] = _DEFAULT, idle_ttl_seconds:typing.Optional[int] = _DEFAULT, ttl_policy:typing.Optional[WarmPoolTtlPolicy] = _DEFAULT):
         self.replicas = replicas
         self.sandbox_template_ref = sandbox_template_ref
         self.autoscaling = autoscaling
@@ -2799,12 +3122,20 @@ class OsGymSandboxWarmPoolSpec:
             self.ttl_seconds_after_created = None
         else:
             self.ttl_seconds_after_created = ttl_seconds_after_created
+        if idle_ttl_seconds is _DEFAULT:
+            self.idle_ttl_seconds = None
+        else:
+            self.idle_ttl_seconds = idle_ttl_seconds
+        if ttl_policy is _DEFAULT:
+            self.ttl_policy = None
+        else:
+            self.ttl_policy = ttl_policy
 
 
 
 
     def __str__(self):
-        return "OsGymSandboxWarmPoolSpec(replicas={}, sandbox_template_ref={}, autoscaling={}, ttl_seconds_after_created={})".format(self.replicas, self.sandbox_template_ref, self.autoscaling, self.ttl_seconds_after_created)
+        return "OsGymSandboxWarmPoolSpec(replicas={}, sandbox_template_ref={}, autoscaling={}, ttl_seconds_after_created={}, idle_ttl_seconds={}, ttl_policy={})".format(self.replicas, self.sandbox_template_ref, self.autoscaling, self.ttl_seconds_after_created, self.idle_ttl_seconds, self.ttl_policy)
     def __eq__(self, other):
         if self.replicas != other.replicas:
             return False
@@ -2813,6 +3144,10 @@ class OsGymSandboxWarmPoolSpec:
         if self.autoscaling != other.autoscaling:
             return False
         if self.ttl_seconds_after_created != other.ttl_seconds_after_created:
+            return False
+        if self.idle_ttl_seconds != other.idle_ttl_seconds:
+            return False
+        if self.ttl_policy != other.ttl_policy:
             return False
         return True
 
@@ -2824,6 +3159,8 @@ class _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec(_UniffiConverterRustBuffer
             sandbox_template_ref=_UniffiFfiConverterTypeSandboxTemplateRef.read(buf),
             autoscaling=_UniffiFfiConverterOptionalTypeWarmPoolAutoscaling.read(buf),
             ttl_seconds_after_created=_UniffiFfiConverterOptionalUInt32.read(buf),
+            idle_ttl_seconds=_UniffiFfiConverterOptionalUInt32.read(buf),
+            ttl_policy=_UniffiFfiConverterOptionalTypeWarmPoolTtlPolicy.read(buf),
         )
 
     @staticmethod
@@ -2832,6 +3169,8 @@ class _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec(_UniffiConverterRustBuffer
         _UniffiFfiConverterTypeSandboxTemplateRef.check_lower(value.sandbox_template_ref)
         _UniffiFfiConverterOptionalTypeWarmPoolAutoscaling.check_lower(value.autoscaling)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.ttl_seconds_after_created)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.idle_ttl_seconds)
+        _UniffiFfiConverterOptionalTypeWarmPoolTtlPolicy.check_lower(value.ttl_policy)
 
     @staticmethod
     def write(value, buf):
@@ -2839,25 +3178,39 @@ class _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec(_UniffiConverterRustBuffer
         _UniffiFfiConverterTypeSandboxTemplateRef.write(value.sandbox_template_ref, buf)
         _UniffiFfiConverterOptionalTypeWarmPoolAutoscaling.write(value.autoscaling, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.ttl_seconds_after_created, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.idle_ttl_seconds, buf)
+        _UniffiFfiConverterOptionalTypeWarmPoolTtlPolicy.write(value.ttl_policy, buf)
 
 @dataclass
 class OsGymSandboxWarmPoolStatus:
-    def __init__(self, *, replicas:typing.Optional[int], ready_replicas:typing.Optional[int], selector:typing.Optional[str]):
+    def __init__(self, *, replicas:typing.Optional[int], ready_replicas:typing.Optional[int], selector:typing.Optional[str], last_claimed_at:typing.Optional[str] = _DEFAULT, last_activity_time:typing.Optional[str] = _DEFAULT):
         self.replicas = replicas
         self.ready_replicas = ready_replicas
         self.selector = selector
+        if last_claimed_at is _DEFAULT:
+            self.last_claimed_at = None
+        else:
+            self.last_claimed_at = last_claimed_at
+        if last_activity_time is _DEFAULT:
+            self.last_activity_time = None
+        else:
+            self.last_activity_time = last_activity_time
 
 
 
 
     def __str__(self):
-        return "OsGymSandboxWarmPoolStatus(replicas={}, ready_replicas={}, selector={})".format(self.replicas, self.ready_replicas, self.selector)
+        return "OsGymSandboxWarmPoolStatus(replicas={}, ready_replicas={}, selector={}, last_claimed_at={}, last_activity_time={})".format(self.replicas, self.ready_replicas, self.selector, self.last_claimed_at, self.last_activity_time)
     def __eq__(self, other):
         if self.replicas != other.replicas:
             return False
         if self.ready_replicas != other.ready_replicas:
             return False
         if self.selector != other.selector:
+            return False
+        if self.last_claimed_at != other.last_claimed_at:
+            return False
+        if self.last_activity_time != other.last_activity_time:
             return False
         return True
 
@@ -2868,6 +3221,8 @@ class _UniffiFfiConverterTypeOSGymSandboxWarmPoolStatus(_UniffiConverterRustBuff
             replicas=_UniffiFfiConverterOptionalUInt32.read(buf),
             ready_replicas=_UniffiFfiConverterOptionalUInt32.read(buf),
             selector=_UniffiFfiConverterOptionalString.read(buf),
+            last_claimed_at=_UniffiFfiConverterOptionalString.read(buf),
+            last_activity_time=_UniffiFfiConverterOptionalString.read(buf),
         )
 
     @staticmethod
@@ -2875,12 +3230,16 @@ class _UniffiFfiConverterTypeOSGymSandboxWarmPoolStatus(_UniffiConverterRustBuff
         _UniffiFfiConverterOptionalUInt32.check_lower(value.replicas)
         _UniffiFfiConverterOptionalUInt32.check_lower(value.ready_replicas)
         _UniffiFfiConverterOptionalString.check_lower(value.selector)
+        _UniffiFfiConverterOptionalString.check_lower(value.last_claimed_at)
+        _UniffiFfiConverterOptionalString.check_lower(value.last_activity_time)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterOptionalUInt32.write(value.replicas, buf)
         _UniffiFfiConverterOptionalUInt32.write(value.ready_replicas, buf)
         _UniffiFfiConverterOptionalString.write(value.selector, buf)
+        _UniffiFfiConverterOptionalString.write(value.last_claimed_at, buf)
+        _UniffiFfiConverterOptionalString.write(value.last_activity_time, buf)
 
 
 
@@ -3097,9 +3456,13 @@ class OsGymSandboxWarmPoolSpecBuilderProtocol(typing.Protocol):
         raise NotImplementedError
     def build(self, ) -> OsGymSandboxWarmPoolSpec:
         raise NotImplementedError
+    def idle_ttl_seconds(self, value: int) -> OsGymSandboxWarmPoolSpecBuilder:
+        raise NotImplementedError
     def replicas(self, value: int) -> OsGymSandboxWarmPoolSpecBuilder:
         raise NotImplementedError
     def sandbox_template_ref(self, value: SandboxTemplateRef) -> OsGymSandboxWarmPoolSpecBuilder:
+        raise NotImplementedError
+    def ttl_policy(self, value: WarmPoolTtlPolicy) -> OsGymSandboxWarmPoolSpecBuilder:
         raise NotImplementedError
     def ttl_seconds_after_created(self, value: int) -> OsGymSandboxWarmPoolSpecBuilder:
         raise NotImplementedError
@@ -3163,6 +3526,21 @@ class OsGymSandboxWarmPoolSpecBuilder(OsGymSandboxWarmPoolSpecBuilderProtocol):
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
+    def idle_ttl_seconds(self, value: int) -> OsGymSandboxWarmPoolSpecBuilder:
+
+        _UniffiFfiConverterUInt32.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterUInt32.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_idle_ttl_seconds,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
     def replicas(self, value: int) -> OsGymSandboxWarmPoolSpecBuilder:
 
         _UniffiFfiConverterUInt32.check_lower(value)
@@ -3190,6 +3568,21 @@ class OsGymSandboxWarmPoolSpecBuilder(OsGymSandboxWarmPoolSpecBuilderProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def ttl_policy(self, value: WarmPoolTtlPolicy) -> OsGymSandboxWarmPoolSpecBuilder:
+
+        _UniffiFfiConverterTypeWarmPoolTtlPolicy.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeWarmPoolTtlPolicy.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_policy,
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
@@ -3469,13 +3862,19 @@ class _UniffiFfiConverterTypeSandboxTemplateRefBuilder:
 
 class VmTemplateBuilderProtocol(typing.Protocol):
 
+    def args(self, value: typing.List[str]) -> VmTemplateBuilder:
+        raise NotImplementedError
     def build(self, ) -> VmTemplate:
+        raise NotImplementedError
+    def claim_secrets(self, value: bool) -> VmTemplateBuilder:
         raise NotImplementedError
     def command(self, value: typing.List[str]) -> VmTemplateBuilder:
         raise NotImplementedError
     def container_disk_image(self, value: str) -> VmTemplateBuilder:
         raise NotImplementedError
     def cpu_cores(self, value: int) -> VmTemplateBuilder:
+        raise NotImplementedError
+    def env(self, value: dict[str, str]) -> VmTemplateBuilder:
         raise NotImplementedError
     def firmware(self, value: Firmware) -> VmTemplateBuilder:
         raise NotImplementedError
@@ -3492,6 +3891,8 @@ class VmTemplateBuilderProtocol(typing.Protocol):
     def oidc(self, value: OidcConfig) -> VmTemplateBuilder:
         raise NotImplementedError
     def probes(self, value: PreservedJson) -> VmTemplateBuilder:
+        raise NotImplementedError
+    def process_mode(self, value: ProcessMode) -> VmTemplateBuilder:
         raise NotImplementedError
     def runtime(self, value: RuntimeKind) -> VmTemplateBuilder:
         raise NotImplementedError
@@ -3534,6 +3935,21 @@ class VmTemplateBuilder(VmTemplateBuilderProtocol):
         inst = cls.__new__(cls)
         inst._handle = handle
         return inst
+    def args(self, value: typing.List[str]) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterSequenceString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterSequenceString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_args,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
     def build(self, ) -> VmTemplate:
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -3543,6 +3959,21 @@ class VmTemplateBuilder(VmTemplateBuilderProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def claim_secrets(self, value: bool) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterBoolean.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterBoolean.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_claim_secrets,
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
@@ -3588,6 +4019,21 @@ class VmTemplateBuilder(VmTemplateBuilderProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def env(self, value: dict[str, str]) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterMapStringString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterMapStringString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_env,
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
@@ -3708,6 +4154,21 @@ class VmTemplateBuilder(VmTemplateBuilderProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def process_mode(self, value: ProcessMode) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterTypeProcessMode.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeProcessMode.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_process_mode,
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
@@ -3951,9 +4412,12 @@ __all__ = [
     "ImagePullPolicy",
     "Firmware",
     "ServiceProtocol",
+    "ProcessMode",
+    "WarmPoolTtlPolicy",
     "JsonValueError",
     "SchemaBuildError",
     "ClaimLifecycle",
+    "ClaimSecretRef",
     "SandboxTemplateRef",
     "ClaimSpec",
     "OsGymSandboxClaimCondition",

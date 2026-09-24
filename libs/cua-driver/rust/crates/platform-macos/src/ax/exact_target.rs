@@ -13,8 +13,8 @@ use cua_driver_core::background_input::{
 };
 
 use super::bindings::{
-    ax_get_window_id, copy_ax_windows, copy_bool_attr, copy_element_attr, copy_string_attr,
-    focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
+    ax_get_window_id, copy_ax_windows_including, copy_bool_attr, copy_element_attr,
+    copy_string_attr, focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
 };
 use crate::windows::{all_windows, resolve_window_owner, WindowOwner};
 
@@ -97,11 +97,12 @@ struct AxWindowRecord {
     minimized: Option<bool>,
 }
 
-/// Map the application's fresh `AXWindows` through `_AXUIElementGetWindow`.
-/// Windows whose id the SPI cannot resolve are omitted: an unmappable window
-/// can never satisfy an exact-target requirement.
-unsafe fn ax_window_records(app: AXUIElementRef) -> Vec<AxWindowRecord> {
-    copy_ax_windows(app)
+/// Map the application's fresh `AXWindows` — plus the requested window when it
+/// is on another Space — through `_AXUIElementGetWindow`. Windows whose id the
+/// SPI cannot resolve are omitted: an unmappable window can never satisfy an
+/// exact-target requirement.
+unsafe fn ax_window_records(app: AXUIElementRef, pid: i32, window_id: u32) -> Vec<AxWindowRecord> {
+    copy_ax_windows_including(app, pid, window_id)
         .into_iter()
         .filter_map(|window| {
             let record = ax_get_window_id(window).map(|window_id| AxWindowRecord {
@@ -173,7 +174,7 @@ pub fn gather_background_facts(
             // Electron/Chromium apps may need per-process-lifetime enablement
             // before their AX windows and subtrees are materialized.
             super::enablement::ensure_chromium_ax_enabled(pid, app);
-            let records = ax_window_records(app);
+            let records = ax_window_records(app, pid, window_id);
             let app_hidden = copy_bool_attr(app, "AXHidden");
             let element = element_ptr.map(|ptr| match element_window_id(ptr as AXUIElementRef) {
                 Some(id) if id == window_id => ElementAncestry::ProvenDescendant,

@@ -721,6 +721,80 @@ test_core_writes_denied if {
 	not route_allow with input as spa_request("POST", "api/v1/namespaces/ns-a/persistentvolumeclaims")
 }
 
+# Claim secrets: create on the collection (the body's cua-claim-* name is
+# checked by tenant_secret_admission.rego) and delete by a cua-claim-* name.
+# Nothing else on Secrets is reachable, including reading back a claim secret.
+test_claim_secret_create_and_delete_allowed if {
+	route_allow with input as spa_request("POST", "api/v1/namespaces/ns-a/secrets")
+	route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/cua-claim-claim-a")
+
+	user_key := object.union(
+		spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/cua-claim-claim-a"),
+		{"user": {"sub": "user-1", "azp": "ukey-abc", "namespace": "", "email": ""}},
+	)
+	route_allow with input as user_key
+}
+
+test_claim_secret_surface_is_write_only_and_prefix_bound if {
+	not route_allow with input as spa_request("GET", "api/v1/namespaces/ns-a/secrets/cua-claim-claim-a")
+	not route_allow with input as spa_request("PUT", "api/v1/namespaces/ns-a/secrets/cua-claim-claim-a")
+	not route_allow with input as spa_request("PATCH", "api/v1/namespaces/ns-a/secrets/cua-claim-claim-a")
+	not route_allow with input as spa_request("POST", "api/v1/namespaces/ns-a/secrets/cua-claim-claim-a")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/ecr-credentials")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/osgym-claim-secrets-sandbox-1")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/cua-claim-")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/cua-claim-x/extra")
+	not route_allow with input as spa_request("GET", "api/v1/watch/namespaces/ns-a/secrets")
+	not route_allow with input as spa_request("POST", "api/v1/secrets")
+}
+
+test_github_oidc_cannot_write_claim_secrets if {
+	request := object.union(
+		spa_request("POST", "api/v1/namespaces/ns-a/secrets"),
+		{"user": {"sub": "repo:org/repo", "azp": "github", "principal_type": "github_oidc", "allowed_namespaces": ["ns-a"]}},
+	)
+	not route_allow with input as request
+}
+
+# Registry pull secrets: create on the collection (the body's cua-registry-*
+# name and dockerconfigjson type are checked by tenant_secret_admission.rego)
+# and delete by a cua-registry-* name. Nothing else on Secrets is reachable,
+# including reading back a registry secret.
+test_registry_secret_create_and_delete_allowed if {
+	route_allow with input as spa_request("POST", "api/v1/namespaces/ns-a/secrets")
+	route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/cua-registry-ghcr")
+
+	user_key := object.union(
+		spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/cua-registry-ghcr"),
+		{"user": {"sub": "user-1", "azp": "ukey-abc", "namespace": "", "email": ""}},
+	)
+	route_allow with input as user_key
+}
+
+test_registry_secret_surface_is_write_only_and_prefix_bound if {
+	not route_allow with input as spa_request("GET", "api/v1/namespaces/ns-a/secrets/cua-registry-ghcr")
+	not route_allow with input as spa_request("GET", "api/v1/namespaces/ns-a/secrets")
+	not route_allow with input as spa_request("PUT", "api/v1/namespaces/ns-a/secrets/cua-registry-ghcr")
+	not route_allow with input as spa_request("PATCH", "api/v1/namespaces/ns-a/secrets/cua-registry-ghcr")
+	not route_allow with input as spa_request("POST", "api/v1/namespaces/ns-a/secrets/cua-registry-ghcr")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/ecr-credentials")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/workload-oidc")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/cua-registry-")
+	not route_allow with input as spa_request("DELETE", "api/v1/namespaces/ns-a/secrets/cua-registry-x/extra")
+	not route_allow with input as spa_request("GET", "api/v1/watch/namespaces/ns-a/secrets")
+	not route_allow with input as spa_request("POST", "api/v1/secrets")
+}
+
+test_github_oidc_cannot_write_registry_secrets if {
+	request := object.union(
+		spa_request("POST", "api/v1/namespaces/ns-a/secrets"),
+		{"user": {"sub": "repo:org/repo", "azp": "github", "principal_type": "github_oidc", "allowed_namespaces": ["ns-a"]}},
+	)
+	not route_allow with input as request
+}
+
 # Sandbox reads are customer-facing, but sandbox writes and unknown verbs stay
 # outside the allowlist.
 test_unenumerated_resource_and_verb_denied if {

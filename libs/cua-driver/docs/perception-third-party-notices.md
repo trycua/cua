@@ -9,6 +9,45 @@ artifact.
 The default Cua Driver remains a separate MIT-licensed component and does not
 include the extension, model weights, or ONNX Runtime library.
 
+## Before you install, redistribute, or host the extension
+
+This section summarizes known precautions. It is not legal advice. Consult
+your own counsel before redistributing the extension or offering it as part of
+a service.
+
+- **The Driver license does not cover the extension.** Cua Driver stays MIT
+  licensed with or without the extension, because it talks to the extension
+  worker as a separate process over a protocol. The extension artifact has its
+  own licenses, and its OmniParser detector is AGPL-3.0-only. Cua does not
+  relicense that detector and does not describe it as MIT.
+- **The extension is opt-in.** A default Driver installation never installs the
+  extension or downloads model weights. If your organization does not accept
+  AGPL-licensed components, do not install the extension. Driver keeps working
+  and `parse_visual_regions` returns `not_installed`.
+- **Private use is unrestricted.** Running the extension on your own machines
+  does not trigger the AGPL's source-distribution obligations.
+- **Redistribution carries the AGPL obligations.** If you copy the extension
+  artifact to anyone else, include the AGPL-3.0 license text, the notices, the
+  model and source ledgers, the SBOM, and the corresponding source, including
+  the pinned source model and the conversion/export material listed below.
+- **Hosted services can trigger the network-use clause.** The shipped ONNX file
+  is a converted, and therefore modified, version of the upstream model. If
+  users interact with that model remotely through your service, AGPL-3.0
+  section 13 can require you to offer those users its corresponding source.
+  This applies to any product that embeds Cua Driver with the extension enabled.
+- **The corresponding source has an upstream limit.** Cua provides the pinned
+  upstream checkpoint, the conversion recipe, and the export script. The
+  upstream model repository does not publish training data or training code,
+  and Cua cannot supply them.
+- **The upstream origin is an Ultralytics YOLO model.** The OmniParser icon
+  detector is a fine-tuned YOLO model, and its AGPL-3.0 terms come from
+  Ultralytics. Ultralytics sells separate commercial licenses. Cua cannot grant
+  any right beyond the AGPL-3.0 terms, so you need your own agreement with the
+  rights holders if you need different terms.
+- **No warranty.** The extension and its model artifacts are provided without
+  warranty, as their licenses state. Detection output can be wrong. Do not use
+  it as the sole basis for irreversible actions.
+
 ## OmniParser icon detector
 
 - Origin: `microsoft/OmniParser-v2.0` model repository.

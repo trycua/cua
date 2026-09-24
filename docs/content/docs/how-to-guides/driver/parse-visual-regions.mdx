@@ -16,6 +16,17 @@ turns one retained screenshot into model-neutral regions.
   page does not identify an artifact URL or claim that a stable release is available.
 </Callout>
 
+<Callout type="warning" title="License precautions">
+  The extension is not MIT licensed. Its OmniParser icon detector is AGPL-3.0-only, and Cua does
+  not relicense it. Installing the extension does not change Cua Driver's MIT license. However,
+  redistributing the extension, or offering it to users over a network (for example, inside a
+  hosted product), can require you to provide the AGPL corresponding source. If your organization
+  does not accept AGPL components, skip the extension: Driver keeps working, and
+  `parse_visual_regions` returns `not_installed`. This is not legal advice. See the [third-party
+  notices and
+  precautions](https://github.com/trycua/cua/blob/main/libs/cua-driver/docs/perception-third-party-notices.md#before-you-install-redistribute-or-host-the-extension).
+</Callout>
+
 ## Before you start
 
 Install Cua Driver and confirm that the exact build advertises both the
@@ -36,7 +47,7 @@ than applying the Driver license to them. Publication remains blocked while the
 OmniParser ledger says `license-review-required`; distribution and remote
 service require the applicable notices, corresponding source and conversion
 material, and AGPL network source path. See the repository's [perception
-third-party notices](https://github.com/trycua/cua/blob/18259fc2ee5d37a133edd91f762057daf9d9f791/libs/cua-driver/docs/perception-third-party-notices.md).
+third-party notices](https://github.com/trycua/cua/blob/main/libs/cua-driver/docs/perception-third-party-notices.md).
 Installing the preview does not add Python, and neither Driver nor the extension
 requires a Jev credential.
 

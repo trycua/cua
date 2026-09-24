@@ -37,7 +37,7 @@ These objects are argument fragments for tools advertising `target`, not standal
 
 `get_window_state({pid, window_id})` requests the accessibility tree and a grounding screenshot by default. Check what actually came back: permission, backing-store, or surface-identity failures can leave usable tree data without an image. `screenshot_error` and `screenshot_frame_valid:false` are not empty-tree signals.
 
-Prefer `structuredContent.elements` in MCP (the CLI prints structured fields directly) over parsing `tree_markdown`. Rows may contain `element_token`, role, label, value, actions, parent, depth, enabled/selected state, and frame. Missing fields are unknown.
+Prefer `structuredContent.elements` in MCP (the CLI prints structured fields directly) over parsing `tree_markdown`. Rows may contain `element_token`, role, label, value, actions, parent, depth, enabled/selected state, `frame` (screen coordinates, the space of `scope:"desktop"` actions), and `screenshot_frame` (pixels of the screenshot in the same response, the space of window-local pointer `x`/`y`). Missing fields are unknown.
 
 - Use `query` to project matching rows plus ancestors without renumbering their indices.
 - Use `max_elements` / `max_depth` to bound the walk, and compare returned/total counts. Truncation does not prove absence.

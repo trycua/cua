@@ -102,6 +102,7 @@ pub struct GetWindowStateInput {
     /// partial tree flagged `truncated` rather than failing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "timeout_ms_schema")]
+    #[uniffi(default = None)]
     pub timeout_ms: Option<u32>,
 }
 

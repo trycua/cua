@@ -73,7 +73,7 @@ Optional `max_elements` / `max_depth` bound the AT-SPI walk to mitigate context-
 
 TIME BUDGET: `timeout_ms` (default 1000) bounds the whole AT-SPI walk. Large apps (LibreOffice, GIMP, file managers) can exceed it; the call then returns the PARTIAL tree with `truncated: true`, `truncation_reason`, `nodes_visited`/`nodes_pending` and `elements_complete: false`. Every element listed is real and clickable; elements after the cut are simply missing. Retry with a larger `timeout_ms` (e.g. 5000) or narrow with `query`/`max_depth` when the element you need is absent.
 
-SCREENSHOT SCALE: the screenshot is delivered at or below 1.15 megapixels (long edge &lt;= max_image_dimension, 1568 by default), because larger images are downsized before a model reads them and its pixel coordinates would then be uniformly short. Element `frame`s and x/y for the pointer tools are pixels of the delivered screenshot; `frame_scale` &lt; 1 reports the downsizing. An explicit per-call `max_image_dimension` (0 = native) replaces this cap.
+SCREENSHOT SCALE: the screenshot is delivered at or below 1.15 megapixels (long edge &lt;= max_image_dimension, 1568 by default), because larger images are downsized before a model reads them and its pixel coordinates would then be uniformly short. Element `screenshot_frame`s and x/y for the pointer tools are pixels of the delivered screenshot (`frame` stays in screen coordinates, as on every platform); `frame_scale` &lt; 1 reports the downsizing. An explicit per-call `max_image_dimension` (0 = native) replaces this cap.
 
 POPUP MENUS: a context menu / popover / combo list is an override-redirect window that list_windows never shows. A click or right_click that opened one names it in its result (`popup: {window_id, bounds, title}`); pass that window_id here to walk the popup's own AT-SPI toplevel so its menu items get element indices (then click them by element_index). Omitting window_id while a popup of this pid is open walks that popup.
 
@@ -111,6 +111,7 @@ Capture the full display in the desktop action coordinate frame. Use the returne
 
 **Arguments:**
 
+- `max_image_dimension` (integer, optional): Optional long-edge cap for the returned PNG, in pixels (aspect ratio preserved). Omitted or 0 returns the full-size capture. When the cap downsizes the image, the response reports `screenshot_original_width/height`, and x/y read off it for this session's later scope:"desktop" actions (or passed with its `capture_id`) are mapped back to the full-size frame automatically. range: 0–unbounded
 - `screenshot_out_file` (string, optional): Write PNG here instead of base64.
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 

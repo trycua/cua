@@ -37,16 +37,17 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "get_desktop_state".into(),
-        description: "Capture the full display in true screen pixels with no downscale. \
-            Use its native-size PNG as the coordinate source for actions whose target is \
-            {kind:\"desktop\",display_id:\"primary\"}. Returns the true screen size and \
-            backing scale factor. Vision-only: no AX tree walk."
+        description: "Capture the full display in true screen pixels, full size unless \
+            `max_image_dimension` caps it. Use its PNG as the coordinate source for actions \
+            whose target is {kind:\"desktop\",display_id:\"primary\"}. Returns the true \
+            screen size and backing scale factor. Vision-only: no AX tree walk."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "screenshot_out_file": { "type": "string", "description": "Write PNG here instead of base64." }
+                "screenshot_out_file": { "type": "string", "description": "Write PNG here instead of base64." },
+                "max_image_dimension": cua_driver_core::tool_schema::desktop_max_image_dimension_schema()
             },
             "additionalProperties": false
         }),
@@ -69,6 +70,7 @@ impl Tool for GetDesktopStateTool {
             Ok(input) => input,
             Err(result) => return result,
         };
+        let max_image_dimension = input.max_image_dimension.filter(|cap| *cap > 0);
         let screenshot_out_file = input.screenshot_out_file.map(|s| {
             // Expand ~ prefix (mirrors get_window_state).
             if let Some(relative) = s.strip_prefix("~/") {
@@ -89,20 +91,29 @@ impl Tool for GetDesktopStateTool {
         // blocking screencapture subprocess off the async runtime.
         let out_file = screenshot_out_file.clone();
         let res = tokio::task::spawn_blocking(
-            move || -> anyhow::Result<(Vec<u8>, Option<String>, u32, u32)> {
+            move || -> anyhow::Result<(Vec<u8>, Option<String>, u32, u32, (u32, u32))> {
                 let png = crate::capture::screenshot_display_bytes()?;
+                let full = crate::capture::png_dimensions(&png)?;
+                // Opt-in cap; later desktop-scope pixels from the capped
+                // image are mapped back at dispatch and by its capture_id.
+                let png = match max_image_dimension {
+                    Some(cap) if full.0.max(full.1) > cap => {
+                        crate::capture::resize_png_if_needed(&png, cap)?
+                    }
+                    _ => png,
+                };
                 let (w, h) = crate::capture::png_dimensions(&png)?;
                 if let Some(ref path) = out_file {
                     std::fs::write(path, &png)?;
-                    Ok((png, Some(path.clone()), w, h))
+                    Ok((png, Some(path.clone()), w, h, full))
                 } else {
-                    Ok((png, None, w, h))
+                    Ok((png, None, w, h, full))
                 }
             },
         )
         .await;
 
-        let (png, file_path, screenshot_width, screenshot_height) = match res {
+        let (png, file_path, screenshot_width, screenshot_height, full_size) = match res {
             Ok(Ok(v)) => v,
             Ok(Err(e)) => return ToolResult::error(format!("Desktop screenshot failed: {e}")),
             Err(e) => return ToolResult::error(format!("Desktop screenshot task error: {e}")),
@@ -148,6 +159,10 @@ impl Tool for GetDesktopStateTool {
             "screenshot_mime_type": "image/png",
             "capture_id": capture_id,
         });
+        if full_size != (screenshot_width, screenshot_height) {
+            structured["screenshot_original_width"] = serde_json::json!(full_size.0);
+            structured["screenshot_original_height"] = serde_json::json!(full_size.1);
+        }
         if let Some(ref fp) = file_path {
             structured["screenshot_file_path"] = serde_json::json!(fp);
         }

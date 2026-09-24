@@ -1567,11 +1567,28 @@ impl ToolRegistry {
             })
             .flatten();
 
+        // Desktop pixels read off a capped get_desktop_state image are mapped
+        // back to the uncapped capture before any platform interprets them.
+        crate::desktop_capture_scale::map_desktop_args(&mut args);
         let mut result = crate::recording::scope_dispatch_click_capture(
             pending_turn.as_ref(),
             tool.invoke(args.clone()),
         )
         .await;
+        match resolved_name {
+            "get_desktop_state" if result.is_error != Some(true) => {
+                crate::desktop_capture_scale::record_desktop_state(
+                    &args,
+                    result.structured_content.as_ref(),
+                );
+            }
+            "end_session" => {
+                if let Some(session) = args.get("_session_id").and_then(Value::as_str) {
+                    crate::desktop_capture_scale::forget_session(session);
+                }
+            }
+            _ => {}
+        }
         drop(lifecycle_dispatch);
         // The platform worker has exited, so another text operation for this
         // pid may now start even while result projection and evidence capture

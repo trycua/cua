@@ -585,6 +585,18 @@ impl Tool for GetWindowStateTool {
             query.as_deref(),
             &tree_md,
         );
+        // Screenshot pixels of the delivered capture: window origin in screen
+        // points, delivered pixels per point (backing scale x downsizing).
+        let elements_json = match (screenshot_frame.as_ref(), screenshot_dims) {
+            (Some((bounds, _)), Some((width, _))) if bounds.width > 0.0 => {
+                cua_driver_core::element_frame::with_screenshot_frames(
+                    elements_json,
+                    (bounds.x, bounds.y),
+                    f64::from(width) / bounds.width,
+                )
+            }
+            _ => elements_json,
+        };
         let filtered_element_count = elements_json.len();
         // The structured array intentionally contains only actionable nodes,
         // and AX child reads can fail independently of the element/depth caps.

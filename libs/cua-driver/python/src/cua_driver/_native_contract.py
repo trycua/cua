@@ -3568,19 +3568,25 @@ class _UniffiFfiConverterTypeGetCursorPositionInput(_UniffiConverterRustBuffer):
 
 @dataclass
 class GetDesktopStateInput:
-    def __init__(self, *, session:typing.Optional[str], screenshot_out_file:typing.Optional[str]):
+    def __init__(self, *, session:typing.Optional[str], screenshot_out_file:typing.Optional[str], max_image_dimension:typing.Optional[int] = _DEFAULT):
         self.session = session
         self.screenshot_out_file = screenshot_out_file
+        if max_image_dimension is _DEFAULT:
+            self.max_image_dimension = None
+        else:
+            self.max_image_dimension = max_image_dimension
 
 
 
 
     def __str__(self):
-        return "GetDesktopStateInput(session={}, screenshot_out_file={})".format(self.session, self.screenshot_out_file)
+        return "GetDesktopStateInput(session={}, screenshot_out_file={}, max_image_dimension={})".format(self.session, self.screenshot_out_file, self.max_image_dimension)
     def __eq__(self, other):
         if self.session != other.session:
             return False
         if self.screenshot_out_file != other.screenshot_out_file:
+            return False
+        if self.max_image_dimension != other.max_image_dimension:
             return False
         return True
 
@@ -3590,17 +3596,20 @@ class _UniffiFfiConverterTypeGetDesktopStateInput(_UniffiConverterRustBuffer):
         return GetDesktopStateInput(
             session=_UniffiFfiConverterOptionalString.read(buf),
             screenshot_out_file=_UniffiFfiConverterOptionalString.read(buf),
+            max_image_dimension=_UniffiFfiConverterOptionalUInt32.read(buf),
         )
 
     @staticmethod
     def check_lower(value):
         _UniffiFfiConverterOptionalString.check_lower(value.session)
         _UniffiFfiConverterOptionalString.check_lower(value.screenshot_out_file)
+        _UniffiFfiConverterOptionalUInt32.check_lower(value.max_image_dimension)
 
     @staticmethod
     def write(value, buf):
         _UniffiFfiConverterOptionalString.write(value.session, buf)
         _UniffiFfiConverterOptionalString.write(value.screenshot_out_file, buf)
+        _UniffiFfiConverterOptionalUInt32.write(value.max_image_dimension, buf)
 
 @dataclass
 class GetScreenSizeInput:
@@ -3694,7 +3703,7 @@ class _UniffiFfiConverterTypeGetSessionStateInput(_UniffiConverterRustBuffer):
 
 @dataclass
 class GetWindowStateInput:
-    def __init__(self, *, pid:int, window_id:int, session:typing.Optional[str], query:typing.Optional[str], include_accessibility_tree:typing.Optional[bool], include_screenshot:typing.Optional[bool], screenshot_out_file:typing.Optional[str], max_elements:typing.Optional[int], max_depth:typing.Optional[int], max_dimension:typing.Optional[int], max_image_dimension:typing.Optional[int], timeout_ms:typing.Optional[int]):
+    def __init__(self, *, pid:int, window_id:int, session:typing.Optional[str], query:typing.Optional[str], include_accessibility_tree:typing.Optional[bool], include_screenshot:typing.Optional[bool], screenshot_out_file:typing.Optional[str], max_elements:typing.Optional[int], max_depth:typing.Optional[int], max_dimension:typing.Optional[int], max_image_dimension:typing.Optional[int], timeout_ms:typing.Optional[int] = _DEFAULT):
         self.pid = pid
         self.window_id = window_id
         self.session = session
@@ -3706,7 +3715,10 @@ class GetWindowStateInput:
         self.max_depth = max_depth
         self.max_dimension = max_dimension
         self.max_image_dimension = max_image_dimension
-        self.timeout_ms = timeout_ms
+        if timeout_ms is _DEFAULT:
+            self.timeout_ms = None
+        else:
+            self.timeout_ms = timeout_ms
 
 
 

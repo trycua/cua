@@ -107,10 +107,11 @@ For the full AX subtree of a single window (with interactive element indices you
 
 ### `get_desktop_state`
 
-Capture the full display in true screen pixels with no downscale. Use its native-size PNG as the coordinate source for actions whose target is &#123;kind:"desktop",display_id:"primary"&#125;. Returns the true screen size and backing scale factor. Vision-only: no AX tree walk.
+Capture the full display in true screen pixels, full size unless `max_image_dimension` caps it. Use its PNG as the coordinate source for actions whose target is &#123;kind:"desktop",display_id:"primary"&#125;. Returns the true screen size and backing scale factor. Vision-only: no AX tree walk.
 
 **Arguments:**
 
+- `max_image_dimension` (integer, optional): Optional long-edge cap for the returned PNG, in pixels (aspect ratio preserved). Omitted or 0 returns the full-size capture. When the cap downsizes the image, the response reports `screenshot_original_width/height`, and x/y read off it for this session's later scope:"desktop" actions (or passed with its `capture_id`) are mapped back to the full-size frame automatically. range: 0–unbounded
 - `screenshot_out_file` (string, optional): Write PNG here instead of base64.
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 

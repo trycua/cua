@@ -1604,6 +1604,20 @@ impl Tool for GetWindowStateTool {
                         query.as_deref(),
                         &tr.tree_markdown,
                     );
+                    // Screenshot pixels: the capture's top-left is the DWM
+                    // bitmap origin (the inverse of the pixel tools'
+                    // `bitmap_to_screen`), downsized by delivered/native.
+                    let elements = match screenshot_opt.as_ref() {
+                        Some((_, _, w, _, native_w, _, _)) if *native_w > 0 => {
+                            let (ox, oy) = bitmap_to_screen(hwnd, 0, 0);
+                            cua_driver_core::element_frame::with_screenshot_frames(
+                                elements,
+                                (f64::from(ox), f64::from(oy)),
+                                f64::from(*w) / f64::from(*native_w),
+                            )
+                        }
+                        _ => elements,
+                    };
                     structured["total_element_count"] = json!(count);
                     structured["returned_element_count"] = json!(elements.len());
                     structured["elements"] = json!(elements);
@@ -8145,15 +8159,16 @@ impl Tool for GetDesktopStateTool {
     fn def(&self) -> &ToolDef {
         GDS_DEF.get_or_init(|| ToolDef {
             name: "get_desktop_state".into(),
-            description: "Capture the full display in true screen pixels with no downscale. \
-                Use its native-size PNG as the coordinate source for actions whose target is \
-                {kind:\"desktop\",display_id:\"primary\"}. Returns the true screen size. \
-                Vision-only: no UIA tree walk.".into(),
+            description: "Capture the full display in true screen pixels, full size unless \
+                `max_image_dimension` caps it. Use its PNG as the coordinate source for actions \
+                whose target is {kind:\"desktop\",display_id:\"primary\"}. Returns the true \
+                screen size. Vision-only: no UIA tree walk.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                    "screenshot_out_file": { "type": "string", "description": "Write PNG here instead of base64." }
+                    "screenshot_out_file": { "type": "string", "description": "Write PNG here instead of base64." },
+                    "max_image_dimension": cua_driver_core::tool_schema::desktop_max_image_dimension_schema()
                 },
                 "additionalProperties": false
             }),
@@ -8169,6 +8184,7 @@ impl Tool for GetDesktopStateTool {
             Err(error) => return error,
         };
         let screenshot_out_file = input.screenshot_out_file;
+        let max_image_dimension = input.max_image_dimension.filter(|cap| *cap > 0);
 
         // True screen geometry in physical pixels (same space as the capture).
         let (screen_width, screen_height) = physical_screen_size();
@@ -8177,21 +8193,30 @@ impl Tool for GetDesktopStateTool {
         // blocking GDI capture off the async runtime.
         let out_file = screenshot_out_file.clone();
         let res = tokio::task::spawn_blocking(
-            move || -> anyhow::Result<(Option<String>, Option<String>, u32, u32, Vec<u8>)> {
+            move || -> anyhow::Result<(Option<String>, Option<String>, u32, u32, Vec<u8>, (u32, u32))> {
                 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
                 let png = crate::capture::screenshot_display_bytes()?;
+                let full = crate::capture::png_dimensions_pub(&png)?;
+                // Opt-in cap; later desktop-scope pixels from the capped
+                // image are mapped back at dispatch and by its capture_id.
+                let png = match max_image_dimension {
+                    Some(cap) if full.0.max(full.1) > cap => {
+                        crate::capture::resize_png_if_needed(&png, cap)?
+                    }
+                    _ => png,
+                };
                 let (w, h) = crate::capture::png_dimensions_pub(&png)?;
                 if let Some(ref path) = out_file {
                     std::fs::write(path, &png)?;
-                    Ok((None, Some(path.clone()), w, h, png))
+                    Ok((None, Some(path.clone()), w, h, png, full))
                 } else {
-                    Ok((Some(BASE64.encode(&png)), None, w, h, png))
+                    Ok((Some(BASE64.encode(&png)), None, w, h, png, full))
                 }
             },
         )
         .await;
 
-        let (b64_opt, file_path, screenshot_width, screenshot_height, png) = match res {
+        let (b64_opt, file_path, screenshot_width, screenshot_height, png, full_size) = match res {
             Ok(Ok(v)) => v,
             Ok(Err(e)) => return ToolResult::error(format!("Desktop screenshot failed: {e}")),
             Err(e) => return ToolResult::error(format!("Desktop screenshot task error: {e}")),
@@ -8220,12 +8245,16 @@ impl Tool for GetDesktopStateTool {
             },
             "screenshot_mime_type": "image/png",
         });
+        if full_size != (screenshot_width, screenshot_height) {
+            structured["screenshot_original_width"] = json!(full_size.0);
+            structured["screenshot_original_height"] = json!(full_size.1);
+        }
         if let Some(bridge) = &self.state.capture_bridge {
             let geometry = match crate::capture_admission::CaptureGeometry::new(
                 screenshot_width,
                 screenshot_height,
-                screenshot_width,
-                screenshot_height,
+                full_size.0,
+                full_size.1,
             ) {
                 Ok(geometry) => geometry,
                 Err(error) => {

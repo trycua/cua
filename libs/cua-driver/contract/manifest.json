@@ -1219,6 +1219,11 @@
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "max_image_dimension": {
+            "description": "Optional long-edge cap for the returned PNG, in pixels. Omitted or 0\nreturns the full-size capture. When the cap downsizes the image,\ndesktop-scope x/y taken from it are mapped back automatically.",
+            "minimum": 0,
+            "type": "integer"
+          },
           "screenshot_out_file": {
             "description": "Write the PNG here instead of returning base64.",
             "type": "string"

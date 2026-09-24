@@ -45,20 +45,11 @@ fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
     window_target_candidates_for_pid(crate::wayland::list_windows_dispatch(Some(pid)), pid)
 }
 
-/// Topmost on-screen window of `pid` covering a desktop-frame point
-/// (get_desktop_state screenshot pixels, scaled back to the screen).
-fn desktop_point_window_resolver(
-    state: Arc<ToolState>,
-) -> cua_driver_core::window_target::DesktopPointWindowResolver {
-    Arc::new(move |pid, x, y, session_key| {
+/// Topmost on-screen window of `pid` covering a desktop-frame point.
+fn desktop_point_window_resolver() -> cua_driver_core::window_target::DesktopPointWindowResolver {
+    Arc::new(move |pid, x, y| {
         let pid = u32::try_from(pid).ok()?;
-        let (sx, sy) = state.desktop_to_screen(session_key, x, y);
-        topmost_window_at(
-            &crate::wayland::list_windows_dispatch(Some(pid)),
-            pid,
-            sx,
-            sy,
-        )
+        topmost_window_at(&crate::wayland::list_windows_dispatch(Some(pid)), pid, x, y)
     })
 }
 
@@ -295,49 +286,9 @@ pub struct ToolState {
     pub capture_service: Arc<cua_driver_core::capture_runtime::CaptureService>,
     pub mouse_hold: std::sync::Mutex<std::collections::HashMap<String, MouseHoldState>>,
     pub config: Arc<RwLock<DriverConfig>>,
-    /// `screen px / screenshot px` of the last `get_desktop_state` capture,
-    /// per session key (see `resolve_cursor_key` / `resolve_session_key`).
-    /// Desktop-frame coordinates are *screenshot* pixels by contract; when the
-    /// capture was downsized for the model this maps them back to the screen.
-    ///
-    /// Keyed per session (not process-global) because two concurrent
-    /// sessions can observe different-sized captures at overlapping times;
-    /// a single shared scale would let one session's `get_desktop_state`
-    /// silently corrupt another session's in-flight pointer math.
-    pub desktop_scale: std::sync::Mutex<std::collections::HashMap<String, f64>>,
 }
 
-/// Widest `get_desktop_state` screenshot handed to the model. Vision models
-/// downsize larger images internally (Claude: ~1568 px) and then report
-/// coordinates in the downsized space, so a 1920-wide capture made every
-/// pixel action land ~20 % short. 1280 matches the OSWorld reference agent.
-const DESKTOP_SCREENSHOT_MAX_DIM: u32 = 1280;
-
-impl ToolState {
-    /// Map desktop-frame (screenshot) pixels to real screen pixels, using the
-    /// scale recorded by `session_key`'s last `get_desktop_state` capture.
-    /// A session with no recorded capture yet (or the legacy anonymous
-    /// caller) falls back to 1.0 (no scaling), matching prior behavior.
-    pub fn desktop_to_screen(&self, session_key: &str, x: f64, y: f64) -> (f64, f64) {
-        let scale = self
-            .desktop_scale
-            .lock()
-            .unwrap()
-            .get(session_key)
-            .copied()
-            .unwrap_or(1.0);
-        (x * scale, y * scale)
-    }
-
-    /// Record `session_key`'s desktop screenshot scale from a fresh
-    /// `get_desktop_state` capture.
-    pub fn set_desktop_scale(&self, session_key: &str, scale: f64) {
-        self.desktop_scale
-            .lock()
-            .unwrap()
-            .insert(session_key.to_owned(), scale);
-    }
-}
+impl ToolState {}
 
 #[derive(Clone, Debug)]
 pub struct MouseHoldState {
@@ -366,7 +317,6 @@ impl ToolState {
             zoom_registry: Arc::new(ZoomRegistry::new()),
             capture_service,
             mouse_hold: std::sync::Mutex::new(Default::default()),
-            desktop_scale: std::sync::Mutex::new(Default::default()),
             config: Arc::new(RwLock::new(load_driver_config())),
         })
     }
@@ -898,71 +848,6 @@ mod megapixel_cap_tests {
 
 /// Build a single structured element entry for `get_window_state`.
 /// Returns `None` when the node has no `element_index` (non-actionable rows).
-/// Window-local frame of a screen-space element rectangle: subtract the X11
-/// window's root-relative origin. `None` origin (native Wayland, or an
-/// unresolvable window) leaves the rectangle unchanged.
-fn window_local_frame(
-    (x, y, w, h): (i32, i32, u32, u32),
-    origin: Option<(i32, i32)>,
-) -> (i32, i32, u32, u32) {
-    match origin {
-        Some((ox, oy)) => (x - ox, y - oy, w, h),
-        None => (x, y, w, h),
-    }
-}
-
-/// A window-local frame in the pixels of a screenshot downsized by `scale`
-/// (< 1.0); unchanged when the screenshot was delivered at full size.
-fn scale_frame((x, y, w, h): (i32, i32, u32, u32), scale: Option<f64>) -> (i32, i32, u32, u32) {
-    match scale {
-        Some(s) => (
-            (x as f64 * s).round() as i32,
-            (y as f64 * s).round() as i32,
-            (w as f64 * s).round() as u32,
-            (h as f64 * s).round() as u32,
-        ),
-        None => (x, y, w, h),
-    }
-}
-
-#[cfg(test)]
-mod frame_math_tests {
-    use super::window_local_frame;
-
-    #[test]
-    fn frame_is_screen_rect_minus_window_origin() {
-        // gnome-text-editor text view on the OSWorld image: AT-SPI screen
-        // extents (70,110,848,433), X11 window at (44,40) → local (26,70).
-        assert_eq!(
-            window_local_frame((70, 110, 848, 433), Some((44, 40))),
-            (26, 70, 848, 433)
-        );
-        // GIMP status-bar button at screen (76,1045) in a window at (70,64):
-        // local (6,981), inside the 1016 px tall window.
-        assert_eq!(
-            window_local_frame((76, 1045, 43, 32), Some((70, 64))),
-            (6, 981, 43, 32)
-        );
-    }
-
-    #[test]
-    fn frame_unchanged_without_an_origin() {
-        assert_eq!(window_local_frame((5, 6, 7, 8), None), (5, 6, 7, 8));
-    }
-
-    #[test]
-    fn desktop_frame_round_trips_through_the_same_origin() {
-        // A desktop-frame click at the element's screen centre must land on
-        // the same window-local pixel the published frame describes.
-        let origin = (44, 40);
-        let (lx, ly, w, h) = window_local_frame((70, 110, 848, 433), Some(origin));
-        let (cx, cy) = (lx + w as i32 / 2, ly + h as i32 / 2);
-        let desktop = (cx + origin.0, cy + origin.1);
-        assert_eq!((desktop.0 - origin.0, desktop.1 - origin.1), (cx, cy));
-        assert_eq!(desktop, (70 + 424, 110 + 216));
-    }
-}
-
 fn build_element_entry(
     n: &crate::atspi::AtspiNode,
     snapshot_id: Option<u32>,
@@ -1057,18 +942,21 @@ fn popup_item_role(role: &str) -> bool {
 /// found.
 fn popup_menu_elements(
     elements: Vec<serde_json::Value>,
+    (origin_x, origin_y): (i32, i32),
     width: u32,
     height: u32,
 ) -> Vec<serde_json::Value> {
+    // `frame` is in screen coordinates; compare it with the popup's screen
+    // rectangle.
     let frame_inside = |entry: &serde_json::Value| {
         let frame = &entry["frame"];
+        let x = frame["x"].as_i64().unwrap_or(i64::MIN) - i64::from(origin_x);
+        let y = frame["y"].as_i64().unwrap_or(i64::MIN) - i64::from(origin_y);
         frame.is_object()
-            && frame["x"].as_i64().unwrap_or(-1) >= -2
-            && frame["y"].as_i64().unwrap_or(-1) >= -2
-            && frame["x"].as_i64().unwrap_or(0) + frame["w"].as_i64().unwrap_or(0)
-                <= width as i64 + 2
-            && frame["y"].as_i64().unwrap_or(0) + frame["h"].as_i64().unwrap_or(0)
-                <= height as i64 + 2
+            && x >= -2
+            && y >= -2
+            && x + frame["w"].as_i64().unwrap_or(0) <= width as i64 + 2
+            && y + frame["h"].as_i64().unwrap_or(0) <= height as i64 + 2
     };
     let role_of =
         |entry: &serde_json::Value| entry["role"].as_str().unwrap_or("").to_ascii_lowercase();
@@ -1357,8 +1245,9 @@ impl Tool for GetWindowStateTool {
                 SCREENSHOT SCALE: the screenshot is delivered at or below 1.15 megapixels \
                 (long edge <= max_image_dimension, 1568 by default), because larger images \
                 are downsized before a model reads them and its pixel coordinates would then \
-                be uniformly short. Element `frame`s and x/y for the pointer tools are pixels \
-                of the delivered screenshot; `frame_scale` < 1 reports the downsizing. An \
+                be uniformly short. Element `screenshot_frame`s and x/y for the pointer tools \
+                are pixels of the delivered screenshot (`frame` stays in screen coordinates, \
+                as on every platform); `frame_scale` < 1 reports the downsizing. An \
                 explicit per-call `max_image_dimension` (0 = native) replaces this cap.\n\n\
                 POPUP MENUS: a context menu / popover / combo list is an \
                 override-redirect window that list_windows never shows. A click or \
@@ -1787,34 +1676,23 @@ impl Tool for GetWindowStateTool {
                     use std::collections::HashMap;
                     // The walk produces screen extents (what the element
                     // cache and hit-tests compare against). The published
-                    // `frame` is in the same frame as the screenshot and the
-                    // pointer tools' x/y: window-local pixels of the X11
-                    // window (its root-relative origin subtracted), the same
-                    // origin `window_bounds` and `coordinate_frame:"desktop"`
-                    // translation use.
-                    // A popup (override-redirect) window is not in the WM's
-                    // client list; when its origin cannot be read, the popup's
-                    // own screen rectangle is the origin — otherwise frames
-                    // would stay in screen pixels and the "inside the popup"
-                    // filter below would keep the main window's menubar.
+                    // `frame` is the element's screen rectangle, as on macOS and
+                    // Windows; `screenshot_frame` (added below) is the same
+                    // rectangle in pixels of the screenshot in this response,
+                    // the space of the pointer tools' window-local x/y. The
+                    // window-local origin is the X11 window's root-relative
+                    // origin, the one `window_bounds` and
+                    // `coordinate_frame:"desktop"` translation use. A popup
+                    // (override-redirect) window is not in the WM's client
+                    // list; when its origin cannot be read, the popup's own
+                    // screen rectangle is the origin.
                     let local_origin = (!crate::wayland::is_wayland())
                         .then(|| crate::atspi::native::x11_window_origin(xid))
                         .flatten()
                         .or_else(|| popup_meta.as_ref().map(|popup| (popup.x, popup.y)));
-                    // Frames are pixels of THE DELIVERED screenshot: when the
-                    // capture was downsized, the frames shrink with it, so a
-                    // frame centre passed back as x/y (scaled up by the same
-                    // ratio) lands on the element.
-                    let shot_scale = shot_opt
-                        .as_ref()
-                        .and_then(|(_, _, w, _, orig_w, _)| orig_w.map(|ow| *w as f64 / ow as f64))
-                        .filter(|scale| *scale > 0.0 && *scale < 1.0);
                     let bounds_by_idx: HashMap<usize, (i32, i32, u32, u32)> = bounds
                         .into_iter()
-                        .map(|(i, x, y, w, h)| {
-                            let frame = window_local_frame((x, y, w, h), local_origin);
-                            (i, scale_frame(frame, shot_scale))
-                        })
+                        .map(|(i, x, y, w, h)| (i, (x, y, w, h)))
                         .collect();
                     let elements: Vec<serde_json::Value> = tr
                         .nodes
@@ -1833,14 +1711,30 @@ impl Tool for GetWindowStateTool {
                         &tr.tree_markdown,
                     );
                     let elements = framed_elements_first(elements);
+                    // Screenshot pixels: the capture is the window's own X11
+                    // drawable (screen pixels), downsized by delivered/native.
+                    let elements = match (local_origin, shot_opt.as_ref()) {
+                        (Some((ox, oy)), Some((_, _, w, _, orig_w, _))) => {
+                            let scale = orig_w.map_or(1.0, |ow| *w as f64 / ow as f64);
+                            cua_driver_core::element_frame::with_screenshot_frames(
+                                elements,
+                                (f64::from(ox), f64::from(oy)),
+                                scale,
+                            )
+                        }
+                        _ => elements,
+                    };
                     // A popup that has no AT-SPI frame of its own (LibreOffice
                     // VCL menus live under the menubar's `menu` node): return
                     // the open menu's items, the ones drawn inside the popup,
                     // instead of the whole application.
                     let elements = match (&popup_meta, tr.window_scoped) {
-                        (Some(popup), false) => {
-                            popup_menu_elements(elements, popup.width, popup.height)
-                        }
+                        (Some(popup), false) => popup_menu_elements(
+                            elements,
+                            (popup.x, popup.y),
+                            popup.width,
+                            popup.height,
+                        ),
                         _ => elements,
                     };
                     structured["total_element_count"] = json!(count);
@@ -6758,9 +6652,7 @@ impl Tool for ClickTool {
                     Err(error) => return capture_admission_error(error),
                 }
             } else {
-                // Pixels of the (possibly downsized) get_desktop_state image.
-                self.state
-                    .desktop_to_screen(&resolve_cursor_key(&args), input.x, input.y)
+                (input.x, input.y)
             };
             let sx = action_x.round() as i32;
             let sy = action_y.round() as i32;
@@ -7295,9 +7187,7 @@ impl Tool for ClickTool {
             }
         }
         if desktop_frame {
-            let __dsk = resolve_cursor_key(&args);
-            let (dx, dy) = self.state.desktop_to_screen(&__dsk, x, y);
-            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, dx, dy)).await {
+            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y)).await {
                 Ok(Ok((lx, ly))) => {
                     x = lx;
                     y = ly;
@@ -9923,8 +9813,7 @@ impl Tool for ScrollTool {
                 Err(result) => return result,
             };
             let direction = input.direction.as_str().to_owned();
-            // Pixels of the (possibly downsized) get_desktop_state image.
-            let (x, y) = self.state.desktop_to_screen(&cursor_id, input.x, input.y);
+            let (x, y) = (input.x, input.y);
             let x = x.round() as i32;
             let y = y.round() as i32;
             let amount = input.amount.unwrap_or(3).clamp(1, 50) as usize;
@@ -10053,8 +9942,6 @@ impl Tool for ScrollTool {
             (Some(x), Some(y)) if desktop_frame_requested(&args) => {
                 // Desktop-frame pixels (from get_desktop_state) against a named
                 // window: map into the window-local frame the pipeline expects.
-                let __dsk = resolve_cursor_key(&args);
-                let (x, y) = self.state.desktop_to_screen(&__dsk, x, y);
                 match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y)).await
                 {
                     Ok(Ok(local)) => Some(local),
@@ -10628,9 +10515,7 @@ impl Tool for DoubleClickTool {
             y *= ratio;
         }
         if desktop_frame {
-            let __dsk = resolve_cursor_key(&args);
-            let (dx, dy) = self.state.desktop_to_screen(&__dsk, x, y);
-            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, dx, dy)).await {
+            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y)).await {
                 Ok(Ok((lx, ly))) => {
                     x = lx;
                     y = ly;
@@ -10919,9 +10804,7 @@ impl Tool for RightClickTool {
             y *= ratio;
         }
         if desktop_frame {
-            let __dsk = resolve_cursor_key(&args);
-            let (dx, dy) = self.state.desktop_to_screen(&__dsk, x, y);
-            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, dx, dy)).await {
+            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y)).await {
                 Ok(Ok((lx, ly))) => {
                     x = lx;
                     y = ly;
@@ -11076,13 +10959,8 @@ impl Tool for DragTool {
                 Ok(input) => input,
                 Err(result) => return result,
             };
-            // Pixels of the (possibly downsized) get_desktop_state image.
-            let (from_x, from_y) =
-                self.state
-                    .desktop_to_screen(&cursor_id, input.from_x, input.from_y);
-            let (to_x, to_y) = self
-                .state
-                .desktop_to_screen(&cursor_id, input.to_x, input.to_y);
+            let (from_x, from_y) = (input.from_x, input.from_y);
+            let (to_x, to_y) = (input.to_x, input.to_y);
             let button = parse_mouse_button(input.button.unwrap_or(ClickButton::Left).as_str());
             let duration_ms = input.duration_ms.unwrap_or(500).min(10_000);
             let steps = input.steps.unwrap_or(20).clamp(1, 200) as usize;
@@ -11224,13 +11102,10 @@ impl Tool for DragTool {
             }
         }
         if desktop_frame {
-            let __dsk = resolve_cursor_key(&args);
-            let (dfx, dfy) = self.state.desktop_to_screen(&__dsk, from_x, from_y);
-            let (dtx, dty) = self.state.desktop_to_screen(&__dsk, to_x, to_y);
             let mapped = tokio::task::spawn_blocking(move || {
                 Ok::<_, anyhow::Error>((
-                    desktop_to_window_local(xid, dfx, dfy)?,
-                    desktop_to_window_local(xid, dtx, dty)?,
+                    desktop_to_window_local(xid, from_x, from_y)?,
+                    desktop_to_window_local(xid, to_x, to_y)?,
                 ))
             })
             .await;
@@ -11800,9 +11675,7 @@ impl Tool for MouseButtonDownTool {
             y *= ratio;
         }
         if desktop_frame {
-            let __dsk = resolve_cursor_key(&args);
-            let (dx, dy) = self.state.desktop_to_screen(&__dsk, x, y);
-            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, dx, dy)).await {
+            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y)).await {
                 Ok(Ok((lx, ly))) => {
                     x = lx;
                     y = ly;
@@ -12172,8 +12045,7 @@ impl Tool for MouseButtonUpTool {
             }
         };
         if desktop_frame {
-            let (dx, dy) = self.state.desktop_to_screen(&cursor_id, x, y);
-            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, dx, dy)).await {
+            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y)).await {
                 Ok(Ok((lx, ly))) => {
                     x = lx;
                     y = ly;
@@ -12725,20 +12597,21 @@ impl Tool for GetDesktopStateTool {
                 {kind:\"desktop\",display_id:\"primary\"}. No AT-SPI walk.".into(),
             input_schema: json!({"type":"object","properties":{
                 "session":{"type":"string","description":"For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session."},
-                "screenshot_out_file":{"type":"string","description":"Write PNG here instead of base64."}
+                "screenshot_out_file":{"type":"string","description":"Write PNG here instead of base64."},
+                "max_image_dimension": cua_driver_core::tool_schema::desktop_max_image_dimension_schema()
             },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: false, open_world: false,
         })
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {
-        let scale_key = resolve_cursor_key(&args);
         let capture_args = args.clone();
         let input = match parse_typed_input::<GetDesktopStateInput>("get_desktop_state", args) {
             Ok(input) => input,
             Err(result) => return result,
         };
         let out_file = input.screenshot_out_file;
+        let max_image_dimension = input.max_image_dimension;
         let capture_service = self.state.capture_service.clone();
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
@@ -12763,17 +12636,16 @@ impl Tool for GetDesktopStateTool {
             };
             let (png, shot_w, shot_h, scale_factor) =
                 normalize_desktop_capture_for_action_frame(native_png, screen_w, screen_h)?;
-            // Hand the model a screenshot it will not silently downsize; the
-            // desktop action frame IS this screenshot's pixel grid, and the
-            // pointer tools scale it back to the screen (ToolState::desktop_scale).
-            let (png, shot_w, shot_h) = if shot_w > DESKTOP_SCREENSHOT_MAX_DIM
-                || shot_h > DESKTOP_SCREENSHOT_MAX_DIM
-            {
-                let png = crate::capture::resize_png_if_needed(&png, DESKTOP_SCREENSHOT_MAX_DIM)?;
-                let (w, h) = crate::capture::png_dimensions_pub(&png)?;
-                (png, w, h)
-            } else {
-                (png, shot_w, shot_h)
+            // Opt-in long-edge cap: the full-size capture is the desktop
+            // action frame; a capped image is mapped back at dispatch
+            // (cua_driver_core::desktop_capture_scale) and by its capture_id.
+            let (png, shot_w, shot_h) = match max_image_dimension.filter(|cap| *cap > 0) {
+                Some(cap) if shot_w.max(shot_h) > cap => {
+                    let png = crate::capture::resize_png_if_needed(&png, cap)?;
+                    let (w, h) = crate::capture::png_dimensions_pub(&png)?;
+                    (png, w, h)
+                }
+                _ => (png, shot_w, shot_h),
             };
             // Optional: write PNG to disk instead of returning base64.
             let written = if let Some(path) = out_file.as_deref() {
@@ -12831,7 +12703,6 @@ impl Tool for GetDesktopStateTool {
                 } else {
                     1.0
                 };
-                self.state.set_desktop_scale(&scale_key, frame_scale);
                 let mut content = Vec::new();
                 let mut structured = json!({
                     "platform": "linux",
@@ -12846,13 +12717,19 @@ impl Tool for GetDesktopStateTool {
                     "windows": windows.iter().map(window_record_json).collect::<Vec<_>>(),
                     "capture_id": capture_id,
                 });
+                if (frame_scale - 1.0).abs() > 0.001 {
+                    // Capped: the uncapped capture is the action frame.
+                    structured["screenshot_original_width"] = json!(screen_w);
+                    structured["screenshot_original_height"] = json!(screen_h);
+                }
                 if let Some(b64) = b64_opt {
                     content.push(cua_driver_core::protocol::Content::image_png(b64));
                 }
                 let window_lines = desktop_window_lines(&windows, frame_scale);
                 let frame_note = if (frame_scale - 1.0).abs() > 0.001 {
                     format!(
-                        "; x/y for scope:\"desktop\" actions are pixels of THIS screenshot                          (scaled ×{frame_scale:.2} to the screen automatically)"
+                        "; x/y for scope:\"desktop\" actions are pixels of THIS screenshot \
+                         (mapped ×{frame_scale:.2} back to the screen automatically)"
                     )
                 } else {
                     String::new()
@@ -13020,8 +12897,7 @@ impl Tool for MoveCursorTool {
                 Ok(input) => input,
                 Err(result) => return result,
             };
-            let __dsk = resolve_cursor_key(&args);
-            let (x, y) = self.state.desktop_to_screen(&__dsk, input.x, input.y);
+            let (x, y) = (input.x, input.y);
             let xi = x.round() as i32;
             let yi = y.round() as i32;
             let wayland = crate::wayland::wayland_input_enabled();
@@ -14590,7 +14466,7 @@ pub fn build_registry_with_provider(
     r.register(Box::new(KillAppTool));
     let pid_window_candidates: PidWindowGuardParts = (
         Arc::new(pid_window_target_candidates),
-        desktop_point_window_resolver(state.clone()),
+        desktop_point_window_resolver(),
         pid_fallback_window_resolver(),
         snapshot_window_resolver(state.clone()),
     );
@@ -15040,49 +14916,6 @@ mod background_budget_tests {
         // A downsized desktop screenshot reports window rects in ITS pixels.
         let scaled = desktop_window_lines(&windows, 1.5);
         assert!(scaled.contains("1280x702 at (0,18)"), "{scaled}");
-        let state = ToolState::new();
-        state.set_desktop_scale("default", 1.5);
-        assert_eq!(
-            state.desktop_to_screen("default", 281.0, 57.0),
-            (421.5, 85.5)
-        );
-    }
-
-    /// Two concurrent sessions observing different-sized desktops must not
-    /// cross-contaminate: `desktop_scale` is keyed per session, not a single
-    /// process-global value shared by every caller regardless of `session`.
-    #[test]
-    fn desktop_scale_is_isolated_per_session() {
-        let state = ToolState::new();
-        // Session "a" captured a 1280-wide screenshot of a 1920-wide screen
-        // (scale 1.5). Session "b" captured a 1280-wide screenshot of a
-        // 2560-wide screen (scale 2.0).
-        state.set_desktop_scale("session-a", 1.5);
-        state.set_desktop_scale("session-b", 2.0);
-
-        assert_eq!(
-            state.desktop_to_screen("session-a", 100.0, 100.0),
-            (150.0, 150.0)
-        );
-        assert_eq!(
-            state.desktop_to_screen("session-b", 100.0, 100.0),
-            (200.0, 200.0)
-        );
-
-        // Re-reading session "a" after session "b" observed and updated its
-        // own scale must still return session "a"'s own factor, not
-        // session "b"'s (the process-global bug this test guards against).
-        assert_eq!(
-            state.desktop_to_screen("session-a", 100.0, 100.0),
-            (150.0, 150.0)
-        );
-
-        // A session that has never called get_desktop_state falls back to
-        // 1.0 (no scaling) rather than inheriting another session's scale.
-        assert_eq!(
-            state.desktop_to_screen("session-c", 100.0, 100.0),
-            (100.0, 100.0)
-        );
     }
 }
 
@@ -15187,13 +15020,13 @@ mod visibility_tests {
             json!({"element_index": 3, "role": "menu item", "label": "elsewhere", "frame": {"x": 400, "y": 30, "w": 180, "h": 22}}),
             json!({"element_index": 4, "role": "menu", "label": "Format"}),
         ];
-        let kept: Vec<u64> = popup_menu_elements(elements.clone(), 200, 400)
+        let kept: Vec<u64> = popup_menu_elements(elements.clone(), (0, 0), 200, 400)
             .iter()
             .map(|e| e["element_index"].as_u64().unwrap())
             .collect();
         assert_eq!(kept, vec![2]);
         assert_eq!(
-            popup_menu_elements(elements[..1].to_vec(), 200, 400).len(),
+            popup_menu_elements(elements[..1].to_vec(), (0, 0), 200, 400).len(),
             1
         );
     }
@@ -15209,7 +15042,7 @@ mod visibility_tests {
             json!({"element_index": 9, "role": "list item", "label": "user", "parent_index": 7, "frame": {"x": 2, "y": 26, "w": 190, "h": 22}}),
             json!({"element_index": 12, "role": "push button", "label": "Open", "frame": {"x": 20, "y": 20, "w": 60, "h": 20}}),
         ];
-        let kept: Vec<u64> = popup_menu_elements(elements, 200, 120)
+        let kept: Vec<u64> = popup_menu_elements(elements, (0, 0), 200, 120)
             .iter()
             .map(|e| e["element_index"].as_u64().unwrap())
             .collect();
@@ -15224,7 +15057,7 @@ mod visibility_tests {
             json!({"element_index": 9, "role": "tree item", "label": "user", "frame": {"x": 2, "y": 26, "w": 190, "h": 22}}),
             json!({"element_index": 12, "role": "push button", "label": "Open", "frame": {"x": 20, "y": 20, "w": 60, "h": 20}}),
         ];
-        let kept: Vec<u64> = popup_menu_elements(elements, 200, 120)
+        let kept: Vec<u64> = popup_menu_elements(elements, (0, 0), 200, 120)
             .iter()
             .map(|e| e["element_index"].as_u64().unwrap())
             .collect();

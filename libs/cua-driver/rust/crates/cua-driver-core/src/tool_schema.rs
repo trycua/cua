@@ -148,6 +148,21 @@ pub fn timeout_ms_schema() -> Value {
     })
 }
 
+/// Shared `get_desktop_state.max_image_dimension`: an opt-in long-edge cap
+/// whose downsizing is mapped back for later desktop-scope actions
+/// (`crate::desktop_capture_scale`) and by the capture's `capture_id`.
+pub fn desktop_max_image_dimension_schema() -> Value {
+    json!({
+        "type": "integer",
+        "minimum": 0,
+        "description": "Optional long-edge cap for the returned PNG, in pixels (aspect ratio \
+            preserved). Omitted or 0 returns the full-size capture. When the cap downsizes \
+            the image, the response reports `screenshot_original_width/height`, and x/y read \
+            off it for this session's later scope:\"desktop\" actions (or passed with its \
+            `capture_id`) are mapped back to the full-size frame automatically."
+    })
+}
+
 /// Clamp a caller-supplied `timeout_ms` to the shared bounds, or apply the
 /// default when absent / not an integer.
 pub fn resolve_timeout_ms(value: Option<&Value>) -> u64 {

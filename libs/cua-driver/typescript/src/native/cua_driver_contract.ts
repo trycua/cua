@@ -2273,7 +2273,13 @@ export type GetDesktopStateInput = {
     /**
      * Write the PNG here instead of returning base64.
      */
-    screenshotOutFile?: string
+    screenshotOutFile?: string,
+    /**
+     * Optional long-edge cap for the returned PNG, in pixels. Omitted or 0
+     * returns the full-size capture. When the cap downsizes the image,
+     * desktop-scope x/y taken from it are mapped back automatically.
+     */
+    maxImageDimension?: number
 }
 
 /**
@@ -2281,6 +2287,7 @@ export type GetDesktopStateInput = {
  */
 export const GetDesktopStateInput = (() => {
     const defaults = () => ({
+        maxImageDimension: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<GetDesktopStateInput, ReturnType<typeof defaults>>(defaults);
@@ -2298,16 +2305,19 @@ const FfiConverterTypeGetDesktopStateInput = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 session: FfiConverterOptionalString.read(from),
-                screenshotOutFile: FfiConverterOptionalString.read(from)
+                screenshotOutFile: FfiConverterOptionalString.read(from),
+                maxImageDimension: FfiConverterOptionalUInt32.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterOptionalString.write(value.session, into);
             FfiConverterOptionalString.write(value.screenshotOutFile, into);
+            FfiConverterOptionalUInt32.write(value.maxImageDimension, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalString.allocationSize(value.session) +
-             FfiConverterOptionalString.allocationSize(value.screenshotOutFile);
+             FfiConverterOptionalString.allocationSize(value.screenshotOutFile) +
+             FfiConverterOptionalUInt32.allocationSize(value.maxImageDimension);
 
         }
     };
@@ -2472,6 +2482,7 @@ export type GetWindowStateInput = {
  */
 export const GetWindowStateInput = (() => {
     const defaults = () => ({
+        timeoutMs: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<GetWindowStateInput, ReturnType<typeof defaults>>(defaults);

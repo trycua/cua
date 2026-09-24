@@ -213,11 +213,24 @@ sudo -n -v >/dev/null 2>&1 \
 if [[ "${LANE}" == browser ]]; then
   # A missing or unsigned vendor browser must fail the lane; it never shrinks
   # the certified product set.
+  mkdir -p "${BOOTSTRAP_DIR}"
+  : > "${BOOTSTRAP_DIR}/standalone-browser-finderinfo-removed.txt"
   for browser_entry in "${STANDALONE_BROWSER_APPS[@]}"; do
     IFS='|' read -r browser_app browser_identifier browser_team <<< "${browser_entry}"
     browser_executable="${browser_app}/Contents/MacOS/$(basename "${browser_app}" .app)"
     [[ -x "${browser_executable}" ]] \
       || fail "missing hosted standalone browser: ${browser_app}"
+    # The hosted image provisions Edge with a stray com.apple.FinderInfo xattr
+    # on a framework directory. Extended attributes are not signed content, and
+    # strict verification (like the driver's own attestation) rejects that
+    # Finder detritus. Remove only that attribute, record each path, and still
+    # require the full strict vendor requirement below.
+    while IFS= read -r -d '' finderinfo_path; do
+      printf '%s\n' "${finderinfo_path}" \
+        >> "${BOOTSTRAP_DIR}/standalone-browser-finderinfo-removed.txt"
+      run_bounded 20 sudo -n /usr/bin/xattr -d com.apple.FinderInfo "${finderinfo_path}" \
+        || fail "could not remove Finder detritus from ${finderinfo_path}"
+    done < <(find "${browser_app}" -xattrname com.apple.FinderInfo -print0)
     browser_requirement="=anchor apple generic and certificate leaf[subject.OU] = \"${browser_team}\" and identifier \"${browser_identifier}\""
     if ! browser_verify_output="$(codesign --verify --strict -vvvv \
         --test-requirement "${browser_requirement}" "${browser_executable}" 2>&1)"; then

@@ -225,6 +225,13 @@ def test_hosted_macos_browser_lane_mirrors_the_lume_standalone_browser_matrix() 
     assert "missing hosted standalone browser" in runner
     assert "hosted standalone browser signature is not valid" in runner
     assert "standalone-browsers.txt" in runner
+    # Only Finder detritus is normalized; the vendor requirement still decides.
+    assert "-xattrname com.apple.FinderInfo" in runner
+    assert "xattr -d com.apple.FinderInfo" in runner
+    assert "xattr -c" not in runner
+    assert runner.index("xattr -d com.apple.FinderInfo") < runner.index(
+        '--test-requirement "${browser_requirement}"'
+    )
     assert 'CUA_E2E_BROWSER_PRODUCTS="${STANDALONE_BROWSER_PRODUCTS}"' in runner
     assert 'CUA_TEST_DRIVER_BIN="${CARGO_TARGET_DIR}/release/cua-driver"' in runner
     assert "artifacts/cua-driver/macos-standalone-browser" in runner

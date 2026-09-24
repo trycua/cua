@@ -268,8 +268,10 @@ verifies the daemon-attributed permission result, and delegates to
 `run-rust-standalone-browser-e2e.sh` against the same unrestricted installed
 daemon for the image's Google Chrome and Microsoft Edge, writing evidence to
 `artifacts/cua-driver/macos-standalone-browser/` like the Lume gate. It fails
-before bootstrap when either vendor-signed browser is missing and never shrinks
-the product set. The `certify` job requires every lane. GitHub's image-level approval covers the hosted runner
+before bootstrap when either browser is missing or fails the driver's vendor
+code-signing requirement, and it never shrinks the product set. The image's Edge
+carries a stray `com.apple.FinderInfo` attribute that strict verification
+rejects; the lane removes only that unsigned attribute and records each path. The `certify` job requires every lane. GitHub's image-level approval covers the hosted runner
 agent, while the bundled driver is its own responsible ScreenCaptureKit client
 and would otherwise show the private-window-picker reminder over the headed
 test. The lane uploads bootstrap, structured result, log, and video evidence

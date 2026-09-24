@@ -21,6 +21,7 @@
 * **cua-driver:** correlate Chromium profile window titles ([#4030](https://github.com/trycua/cua/issues/4030)) ([210efbc](https://github.com/trycua/cua/commit/210efbceb46bf1acb0f66985a098262445d91e93)), closes [#4029](https://github.com/trycua/cua/issues/4029)
 * **cua-driver:** complete release metadata and contributor attribution ([#4077](https://github.com/trycua/cua/pull/4077)).
 * **cua-driver:** complete the 0.28.3 changelog attribution ([#4078](https://github.com/trycua/cua/pull/4078)).
+* **cua-driver:** finalize release attribution control ([#4080](https://github.com/trycua/cua/pull/4080)).
 * **cua-driver:** expose referenced MCP skill resources ([#4028](https://github.com/trycua/cua/issues/4028)) ([4eb8ab5](https://github.com/trycua/cua/commit/4eb8ab51e71b241316136805fe6191b7e2914e35))
 * **cua-driver:** hint foreground escalation on unavailable UIA clicks ([#3888](https://github.com/trycua/cua/issues/3888)) ([2f52f65](https://github.com/trycua/cua/commit/2f52f65acee92bebff6c0c4ca0877aacb9fa5b6b))
 * **cua-driver:** make skill workflows match runtime contracts ([#3719](https://github.com/trycua/cua/issues/3719)) ([6863ab6](https://github.com/trycua/cua/commit/6863ab6f11649f362d8c34401e19a46fe2a39a35))

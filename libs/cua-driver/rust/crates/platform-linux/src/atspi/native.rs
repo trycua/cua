@@ -3715,23 +3715,24 @@ pub fn perform_action_at_point_in(
 }
 
 /// The frame origin to re-base an at-point query on: the top-level's screen
-/// origin for a toolkit whose `Window` coordinates start at the WM frame
-/// (VCL), `None` for GTK. GTK measures `Window` coordinates from its client
-/// window but reports the top-level's screen extents including server-side
-/// decorations (Openbox, XFCE), so adding that inset would hit-test a title
-/// bar too low; under client-side decorations (GNOME) the inset is zero anyway.
+/// origin for VCL (LibreOffice), whose `Window` coordinates start at the WM
+/// frame, and `None` for every other toolkit. GTK and Chromium measure
+/// `Window` coordinates from their client window but report the top-level's
+/// screen extents including server-side decorations (Openbox, XFCE), so
+/// adding that inset would hit-test a title bar too low; under client-side
+/// decorations (GNOME) the inset is zero anyway.
 async fn decoration_frame_origin(
     conn: &AccessibilityConnection,
     app: &AccessibleProxy<'_>,
     frame: &RawObjectRef,
 ) -> Option<(i32, i32)> {
-    if toolkit_measures_from_client(app).await {
+    if !toolkit_measures_from_frame(app).await {
         return None;
     }
     frame_screen_origin(conn, frame).await
 }
 
-async fn toolkit_measures_from_client(app: &AccessibleProxy<'_>) -> bool {
+async fn toolkit_measures_from_frame(app: &AccessibleProxy<'_>) -> bool {
     let Some(Ok(proxies)) = call(app.proxies()).await else {
         return false;
     };
@@ -3741,16 +3742,13 @@ async fn toolkit_measures_from_client(app: &AccessibleProxy<'_>) -> bool {
     let Some(Ok(name)) = call(application.toolkit_name()).await else {
         return false;
     };
-    is_client_coordinate_toolkit(&name)
+    is_frame_coordinate_toolkit(&name)
 }
 
-/// GTK 3/4 (`GTK`) and GTK 2 (`GAIL`) measure `Window` coordinates from the
-/// client window.
-fn is_client_coordinate_toolkit(toolkit_name: &str) -> bool {
-    matches!(
-        toolkit_name.trim().to_ascii_lowercase().as_str(),
-        "gtk" | "gail"
-    )
+/// VCL (LibreOffice) measures `Window` coordinates from the WM frame, title
+/// bar included; the other toolkits measure from the client window.
+fn is_frame_coordinate_toolkit(toolkit_name: &str) -> bool {
+    toolkit_name.trim().eq_ignore_ascii_case("vcl")
 }
 
 /// Screen origin of an application top-level as the toolkit reports it
@@ -3801,11 +3799,11 @@ mod at_point_coords_tests {
     use super::at_point_toolkit_coords;
 
     #[test]
-    fn gtk_and_gail_measure_from_the_client_window() {
-        assert!(super::is_client_coordinate_toolkit("GTK"));
-        assert!(super::is_client_coordinate_toolkit("GAIL"));
-        assert!(!super::is_client_coordinate_toolkit("VCL"));
-        assert!(!super::is_client_coordinate_toolkit("Qt"));
+    fn only_vcl_measures_from_the_wm_frame() {
+        assert!(super::is_frame_coordinate_toolkit("VCL"));
+        assert!(!super::is_frame_coordinate_toolkit("GTK"));
+        assert!(!super::is_frame_coordinate_toolkit("GAIL"));
+        assert!(!super::is_frame_coordinate_toolkit("Chromium"));
     }
 
     #[test]

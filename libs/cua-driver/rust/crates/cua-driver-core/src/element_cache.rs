@@ -506,6 +506,19 @@ impl<S: SnapshotPayload> ElementCacheCore<S> {
         count
     }
 
+    /// The window a published snapshot describes, so a pid-only action that
+    /// names a `snapshot_id` (a popup's or a dialog's) is routed to that
+    /// window instead of the pid's default window.
+    pub fn window_for_snapshot(&self, pid: i32, snapshot_id: u32) -> Option<u64> {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .snapshots
+            .get(&pid)?
+            .iter()
+            .find(|entry| entry.id == snapshot_id)
+            .map(|entry| entry.window_id)
+    }
+
     pub fn resolve_element_args(
         &self,
         pid: i32,

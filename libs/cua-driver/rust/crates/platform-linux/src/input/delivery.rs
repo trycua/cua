@@ -37,7 +37,7 @@ pub enum DeliveryMode {
     /// Inject without activating the target (X11 XTEST/MPX; Wayland libei-to-focus).
     #[default]
     Background,
-    /// Activate the target, inject, restore prior active window.
+    /// Activate the target, confirm focus, inject real input, leave it active.
     Foreground,
 }
 
@@ -146,8 +146,8 @@ pub fn background_unavailable_error(
     let detail = reason.detail();
     cua_driver_core::protocol::ToolResult::error(format!(
         "Background delivery is not available: {detail}. Retry this action with \
-         delivery_mode:\"foreground\"; Cua Driver will activate the target for \
-         the action and restore the previous foreground afterward."
+         delivery_mode:\"foreground\"; Cua Driver will activate the target window, \
+         confirm it holds the input focus, and deliver real input to it."
     ))
     .with_structured(serde_json::json!({
         "code": reason.code(),

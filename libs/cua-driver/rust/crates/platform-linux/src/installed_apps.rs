@@ -25,6 +25,34 @@ pub struct InstalledApp {
     /// RFC3339 timestamp from the `.desktop` file's filesystem mtime, or
     /// `None` if the metadata could not be read.
     pub last_used: Option<String>,
+    /// `StartupWMClass=`: the WM_CLASS the entry's windows carry when it
+    /// differs from the launcher (`libreoffice --calc` → `libreoffice-calc`).
+    pub startup_wm_class: Option<String>,
+}
+
+impl InstalledApp {
+    /// Whether a top-level window with this WM_CLASS belongs to the app.
+    ///
+    /// Mirrors the shell's own window-to-app matching: `StartupWMClass`
+    /// first, then the desktop file id (`org.gnome.Nautilus`), its last
+    /// segment (`Nautilus`), and the launcher basename (`gnome-terminal`).
+    pub fn owns_window_class(&self, wm_class: &str) -> bool {
+        if wm_class.is_empty() {
+            return false;
+        }
+        let id_stem = self.bundle_id.rsplit('.').next().unwrap_or(&self.bundle_id);
+        let exec = self
+            .launch_path
+            .split_whitespace()
+            .next()
+            .and_then(|token| token.rsplit('/').next())
+            .unwrap_or("");
+        self.startup_wm_class
+            .as_deref()
+            .into_iter()
+            .chain([self.bundle_id.as_str(), id_stem, exec])
+            .any(|key| !key.is_empty() && key.eq_ignore_ascii_case(wm_class))
+    }
 }
 
 /// Return every visible application installed on the system.
@@ -154,6 +182,7 @@ fn parse_desktop_file(path: &Path, bundle_id: &str) -> Option<InstalledApp> {
         bundle_id,
         launch_path,
         last_used,
+        startup_wm_class: string_key(&entry, "StartupWMClass").filter(|class| !class.is_empty()),
     })
 }
 
@@ -312,6 +341,29 @@ Exec=/opt/demo/bin/demo %U
         assert_eq!(parsed.launch_path, "/opt/demo/bin/demo");
         assert_eq!(parsed.bundle_id, "demo-app");
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn owns_window_class_by_startup_wm_class_id_or_launcher() {
+        let entry = |bundle_id: &str, launch_path: &str, wm_class: Option<&str>| InstalledApp {
+            name: "x".into(),
+            bundle_id: bundle_id.into(),
+            launch_path: launch_path.into(),
+            last_used: None,
+            startup_wm_class: wm_class.map(str::to_owned),
+        };
+        let calc = entry("libreoffice-calc", "libreoffice", Some("libreoffice-calc"));
+        assert!(calc.owns_window_class("libreoffice-calc"));
+        assert!(!calc.owns_window_class("libreoffice-writer"));
+        assert!(!calc.owns_window_class(""));
+        let chrome = entry("google-chrome", "chrome-stable", Some("Google-chrome"));
+        assert!(chrome.owns_window_class("google-chrome"));
+        let files = entry("org.gnome.Nautilus", "nautilus --new-window", None);
+        assert!(files.owns_window_class("Org.gnome.Nautilus"));
+        assert!(files.owns_window_class("nautilus"));
+        let terminal = entry("org.gnome.Terminal", "gnome-terminal", None);
+        assert!(terminal.owns_window_class("Gnome-terminal"));
+        assert!(!terminal.owns_window_class("Terminal-server"));
     }
 
     #[test]

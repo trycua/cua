@@ -211,6 +211,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -247,6 +268,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -275,6 +302,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -614,6 +647,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -650,6 +704,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -678,6 +738,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1153,6 +1219,11 @@
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "max_image_dimension": {
+            "description": "Optional long-edge cap for the returned PNG, in pixels. Omitted or 0\nreturns the full-size capture. When the cap downsizes the image,\ndesktop-scope x/y taken from it are mapped back automatically.",
+            "minimum": 0,
+            "type": "integer"
+          },
           "screenshot_out_file": {
             "description": "Write the PNG here instead of returning base64.",
             "type": "string"
@@ -1537,6 +1608,12 @@
           },
           "session": {
             "type": "string"
+          },
+          "timeout_ms": {
+            "description": "Wall-clock budget for the accessibility walk in milliseconds\n(default 1000 on every platform). A walk that runs out returns a\npartial tree flagged `truncated` rather than failing.",
+            "maximum": 120000,
+            "minimum": 100,
+            "type": "integer"
           },
           "window_id": {
             "minimum": 1,
@@ -2000,6 +2077,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -2036,6 +2134,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -2064,6 +2168,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2171,6 +2281,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -2207,6 +2338,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -2235,6 +2372,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2774,6 +2917,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -2810,6 +2974,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -2838,6 +3008,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3494,6 +3670,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -3530,6 +3727,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -3558,6 +3761,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3731,6 +3940,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -3767,6 +3997,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -3795,6 +4031,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -4215,6 +4457,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -4251,6 +4514,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -4279,6 +4548,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -4568,6 +4843,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -4604,6 +4900,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -4632,6 +4934,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [

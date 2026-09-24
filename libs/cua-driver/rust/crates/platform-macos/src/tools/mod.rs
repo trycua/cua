@@ -288,40 +288,15 @@ pub(crate) async fn acquire_background_mutation(pid: i32) -> BackgroundMutationL
     }
 }
 
-/// Finish the post-action observation window. Embedded interactive clients
-/// that already observe the target continuously may opt out through the
-/// private registry argument to avoid adding a one-second acknowledgement
-/// delay to every input event. Regular MCP callers retain the full observer.
+/// Finish the post-action observation window and release the wildcard
+/// focus-steal lease. The observation bound is a daemon-launch setting
+/// (`CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS` / `CUA_DRIVER_WINDOW_CHANGE_POLL_MS`),
+/// never a per-call argument: every ingress strips `_`-prefixed arguments, so
+/// a tool call cannot shorten focus protection for itself.
 pub(crate) async fn finish_window_observation(
     snapshot: crate::window_change_detector::Snapshot,
-    args: &serde_json::Value,
 ) -> crate::window_change_detector::Changes {
-    if args
-        .get("_skip_window_change_detection")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
-    {
-        drop(snapshot);
-        crate::window_change_detector::Changes::no_change()
-    } else {
-        snapshot.detect_async().await
-    }
-}
-
-#[cfg(test)]
-mod interactive_observation_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn embedded_interactive_input_can_finish_without_polling() {
-        let snapshot = crate::window_change_detector::WindowChangeDetector::snapshot(None);
-        let changes = finish_window_observation(
-            snapshot,
-            &serde_json::json!({"_skip_window_change_detection": true}),
-        )
-        .await;
-        assert!(!changes.needs_restore());
-    }
+    snapshot.detect_async().await
 }
 
 /// px-focus for the keyboard family (type_text / press_key / hotkey): focus the

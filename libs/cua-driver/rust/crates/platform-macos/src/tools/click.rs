@@ -746,7 +746,7 @@ impl Tool for ClickTool {
             .await;
 
             // Drop the wildcard lease + detect window/foreground side-effects.
-            let changes = super::finish_window_observation(snapshot, &args).await;
+            let changes = super::finish_window_observation(snapshot).await;
 
             match result {
                 Ok(Ok((
@@ -1260,7 +1260,7 @@ impl Tool for ClickTool {
                 }
             }
 
-            let changes = super::finish_window_observation(snapshot, &args).await;
+            let changes = super::finish_window_observation(snapshot).await;
 
             let button_label = match button_str.as_str() {
                 "right" => "right-click",

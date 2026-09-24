@@ -550,6 +550,81 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
     defocus_ok && focus_ok
 }
 
+/// Reverse [`activate_without_raise`] once a background click is delivered:
+/// defocus `target_wid` and hand key focus back to `previous_pid`'s key window.
+///
+/// The no-raise recipe posts a defocus record to the user's front process.
+/// That process stays frontmost as far as NSWorkspace reports, but its key
+/// window stops receiving keyboard input until the user clicks it again, so
+/// the activation-based restore never fires. Returns `true` when both posts
+/// succeeded.
+pub fn restore_focus_after_without_raise(
+    previous_pid: pid_t,
+    target_pid: pid_t,
+    target_wid: u32,
+) -> bool {
+    let Some(post_fn) = post_event_record_to_fn() else {
+        return false;
+    };
+    let Some(previous_wid) = key_window_of_pid(previous_pid) else {
+        return false;
+    };
+    let mut previous_psn = [0u8; 8];
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(previous_wid, previous_pid, &mut previous_psn)
+        || !get_process_psn_for_window(target_wid, target_pid, &mut target_psn)
+    {
+        return false;
+    }
+
+    let mut buf = focus_record(target_wid);
+    buf[0x8A] = 0x02;
+    let defocus_ok = unsafe { post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
+
+    let mut buf = focus_record(previous_wid);
+    buf[0x8A] = 0x01;
+    let focus_ok = unsafe { post_fn(previous_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
+
+    defocus_ok && focus_ok
+}
+
+/// The 248-byte focus/defocus event record with `wid` stamped little-endian at
+/// bytes 0x3c–0x3f. The caller sets the direction byte at 0x8a.
+fn focus_record(wid: u32) -> [u8; 0xF8] {
+    let mut buf = [0u8; 0xF8];
+    buf[0x04] = 0xF8;
+    buf[0x08] = 0x0D;
+    buf[0x3C..0x40].copy_from_slice(&wid.to_le_bytes());
+    buf
+}
+
+/// The CGWindowID of `pid`'s key window: its `AXFocusedWindow`, else its
+/// frontmost on-screen layer-0 window.
+fn key_window_of_pid(pid: pid_t) -> Option<u32> {
+    use crate::ax::bindings::{ax_get_window_id, copy_element_attr, AXUIElementCreateApplication};
+    let focused = unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            None
+        } else {
+            let window = copy_element_attr(app, "AXFocusedWindow");
+            core_foundation::base::CFRelease(app as _);
+            window.and_then(|window| {
+                let wid = ax_get_window_id(window);
+                core_foundation::base::CFRelease(window as _);
+                wid
+            })
+        }
+    };
+    focused.or_else(|| {
+        crate::windows::visible_windows()
+            .into_iter()
+            .filter(|w| w.pid == pid && w.layer == 0 && w.is_on_screen)
+            .max_by_key(|w| w.z_index)
+            .map(|w| w.window_id)
+    })
+}
+
 // ── NSMenu shortcut activation ────────────────────────────────────────────────
 
 /// Gets the PSN for the process that owns `window_id`.

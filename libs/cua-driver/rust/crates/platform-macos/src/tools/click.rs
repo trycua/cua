@@ -976,6 +976,27 @@ impl Tool for ClickTool {
                 None
             };
 
+            // Pin the overlay above the target window BEFORE animating so
+            // the cursor is already sandwiched correctly while it glides in.
+            // Both PX deliveries below (AX hit-test and routed events) share
+            // this glide, so the cursor shows whichever one lands the click.
+            if let Some(wid) = window_id {
+                crate::cursor::overlay::send_command(
+                    cursor_key.clone(),
+                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
+                );
+            }
+            // Animate the visual cursor to the click point and wait for it to
+            // arrive — mirrors Swift's `AgentCursor.shared.animateAndWait(to:)`.
+            crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
+            // Keep the registry in sync with the overlay (see AX path above).
+            self.state
+                .cursor_registry
+                .update_position(&cursor_key, screen_x, screen_y);
+            self.state
+                .cursor_registry
+                .note_press(&cursor_key, screen_x, screen_y);
+
             // A background PX action can still use an accessibility delivery
             // backend after resolving the requested screen point. This keeps
             // targeting (PX) orthogonal to delivery (AX) and avoids making a
@@ -1014,6 +1035,13 @@ impl Tool for ClickTool {
                 .await;
                 match ax_result {
                     Ok(Ok(true)) => {
+                        crate::cursor::overlay::send_command(
+                            cursor_key.clone(),
+                            cursor_overlay::OverlayCommand::ClickPulse {
+                                x: screen_x,
+                                y: screen_y,
+                            },
+                        );
                         let label = if focus_only { "focused" } else { "pressed" };
                         return ToolResult::text(format!(
                             "✅ PX hit-test {label} the background element via AX."
@@ -1047,25 +1075,6 @@ impl Tool for ClickTool {
             // background, matching the existing contract and result label.
             let fg = delivery_mode.is_foreground() && window_id.is_some();
             let activation_policy = pixel_activation_policy(&button_str, fg, window_id.is_some());
-
-            // Pin the overlay above the target window BEFORE animating so
-            // the cursor is already sandwiched correctly while it glides in.
-            if let Some(wid) = window_id {
-                crate::cursor::overlay::send_command(
-                    cursor_key.clone(),
-                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-                );
-            }
-            // Animate the visual cursor to the click point and wait for it to
-            // arrive — mirrors Swift's `AgentCursor.shared.animateAndWait(to:)`.
-            crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
-            // Keep the registry in sync with the overlay (see AX path above).
-            self.state
-                .cursor_registry
-                .update_position(&cursor_key, screen_x, screen_y);
-            self.state
-                .cursor_registry
-                .note_press(&cursor_key, screen_x, screen_y);
 
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
             // A pixel click can land on a "Sign In" button that opens a sheet
@@ -1234,6 +1243,20 @@ impl Tool for ClickTool {
                     apps::frontmost_pid(),
                 ) {
                     let _ = apps::activate_pid(previous_pid);
+                } else if let (Some(previous_pid), Some(wid)) = (prior_front, window_id) {
+                    // The prior app is still frontmost, but the no-raise
+                    // recipe posted it a defocus record: hand its key window
+                    // focus back so the user's typing keeps landing there.
+                    if focus_without_raise && apps::frontmost_pid() == Some(previous_pid) {
+                        let _ = tokio::task::spawn_blocking(move || {
+                            crate::input::skylight::restore_focus_after_without_raise(
+                                previous_pid,
+                                pid,
+                                wid,
+                            )
+                        })
+                        .await;
+                    }
                 }
             }
 

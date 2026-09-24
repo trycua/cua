@@ -116,7 +116,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: [shared, native, capture]
+        lane: [shared, native, capture, browser]
     env:
       CUA_E2E_SOURCE_SHA: ${{ inputs.source_sha }}
       CUA_E2E_WORKFLOW_SHA: ${{ github.sha }}
@@ -217,6 +217,8 @@ jobs:
               github: {run_id: $run_id, run_attempt: $run_attempt,
                 workflow_ref: $workflow_ref, workflow_sha: $workflow_sha},
               jobs: {probe: $probe, matrix: $matrix},
+              lanes: ["shared", "native", "capture", "browser"],
+              standalone_browser: true,
               passed: ($probe == "success" and $matrix == "success")}' \
             | tee certification.json
           jq -e '.passed == true' certification.json >/dev/null

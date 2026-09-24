@@ -245,7 +245,12 @@ pub fn walk_tree_budgeted(
         // AXChildren omits windows when the app isn't frontmost (AppKit limitation).
         // AXWindows returns the window list regardless of activation state.
         let from_children = copy_children(app_elem);
-        let from_windows = copy_ax_windows(app_elem);
+        // A requested window on another Space is absent from AXWindows; the
+        // `_including` variant recovers it by exact CGWindowID.
+        let from_windows = match window_id {
+            Some(wid) => copy_ax_windows_including(app_elem, pid, wid),
+            None => copy_ax_windows(app_elem),
+        };
 
         let mut top_level = from_children;
         for w in from_windows {

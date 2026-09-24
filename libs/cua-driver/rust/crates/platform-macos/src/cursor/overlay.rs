@@ -546,6 +546,16 @@ impl RenderState {
                 self.focus_rect = rect;
                 self.focus_rect_t = 0.0; // reset fade to fully visible
             }
+            OverlayCommand::PinAbove(wid) => {
+                // The overlay window joins every Space, so a target on another
+                // Space would otherwise animate over the user's current one at
+                // that window's coordinates. Unknown membership keeps painting.
+                self.core.pinned_target_off_workspace = u32::try_from(wid)
+                    .ok()
+                    .and_then(crate::windows::window_on_current_space_by_id)
+                    == Some(false);
+                let _ = self.core.apply_command_base(cmd, true, true);
+            }
             other => {
                 let _ = self.core.apply_command_base(other, true, true);
             }

@@ -30,12 +30,14 @@ def test_hosted_macos_probe_is_manual_exact_sha_and_least_privilege() -> None:
     assert "github.run_id }}-${{ github.run_attempt" in workflow
     assert "CUA_MACOS_HOSTED_PROBE_DIR: ${{ runner.temp" not in workflow
     assert 'echo "CUA_MACOS_HOSTED_PROBE_DIR=${artifact_dir}" >> "${GITHUB_ENV}"' in workflow
-    assert "matrix:\n        lane: [shared, native, capture]" in workflow
+    assert "matrix:\n        lane: [shared, native, capture, browser]" in workflow
     assert "fail-fast: false" in workflow
     assert "needs: probe" in workflow
     assert "scripts/ci/macos/run-hosted-rust-e2e.sh" in workflow
     assert "path: artifacts/cua-driver" in workflow
     assert "needs: [probe, matrix]" in workflow
+    assert 'lanes: ["shared", "native", "capture", "browser"]' in workflow
+    assert "standalone_browser: true" in workflow
     assert "cua-driver/macos-hosted-certification@v1" in workflow
     assert "workflow_ref: $workflow_ref" in workflow
     assert "workflow_sha: $workflow_sha" in workflow
@@ -202,3 +204,43 @@ def test_hosted_macos_runner_is_strict_and_uses_the_canonical_matrix() -> None:
     assert "cleanup-status.txt" in runner
     assert "permissions grant" not in runner
     assert "cleanup-targets.txt" in runner
+
+
+def test_hosted_macos_browser_lane_mirrors_the_lume_standalone_browser_matrix() -> None:
+    runner = read("scripts/ci/macos/run-hosted-rust-e2e.sh")
+    lume = read("libs/cua-driver/tests/runners/macos-lume/run-all.sh")
+    matrix_runner = read("scripts/ci/macos/run-rust-e2e.sh")
+
+    assert "shared|native|capture|browser) ;;" in runner
+    # The repo-local matrix runner keeps its own partitions; only the hosted
+    # wrapper routes the browser lane to the standalone browser suite.
+    assert "shared|native|capture|all) ;;" in matrix_runner
+    assert 'STANDALONE_BROWSER_PRODUCTS="chrome,edge"' in runner
+    assert '"/Applications/Google Chrome.app|com.google.Chrome|EQHXZ8M8AV"' in runner
+    assert '"/Applications/Microsoft Edge.app|com.microsoft.edgemac|UBF8T346G9"' in runner
+    assert "--test-requirement \"${browser_requirement}\"" in runner
+    platform = read("libs/cua-driver/rust/crates/platform-macos/src/browser/platform.rs")
+    for identity in ('"com.google.Chrome"', '"EQHXZ8M8AV"', '"com.microsoft.edgemac"', '"UBF8T346G9"'):
+        assert identity in platform
+    assert "missing hosted standalone browser" in runner
+    assert "hosted standalone browser signature is not valid" in runner
+    assert "standalone-browsers.txt" in runner
+    # Only Finder detritus is normalized; the vendor requirement still decides.
+    assert "-xattrname com.apple.FinderInfo" in runner
+    assert "xattr -d com.apple.FinderInfo" in runner
+    assert "xattr -c" not in runner
+    assert runner.index("xattr -d com.apple.FinderInfo") < runner.index(
+        '--test-requirement "${browser_requirement}"'
+    )
+    assert 'CUA_E2E_BROWSER_PRODUCTS="${STANDALONE_BROWSER_PRODUCTS}"' in runner
+    assert 'CUA_TEST_DRIVER_BIN="${CARGO_TARGET_DIR}/release/cua-driver"' in runner
+    assert "artifacts/cua-driver/macos-standalone-browser" in runner
+    assert "artifacts/cua-driver/macos-standalone-browser" in lume
+    assert 'CUA_E2E_ARTIFACT_DIR="${BROWSER_ARTIFACT_DIR}"' in runner
+    assert "scripts/ci/run-rust-standalone-browser-e2e.sh" in runner
+    assert "scripts/ci/run-rust-standalone-browser-e2e.sh" in lume
+    # The browser rows run only after the same bootstrap and daemon checks.
+    dispatch = runner.index('bash "${REPO_ROOT}/scripts/ci/run-rust-standalone-browser-e2e.sh"')
+    assert runner.index('.source.attribution == "driver-daemon"') < dispatch
+    assert runner.index("WATCHDOG_PID=$!") < dispatch
+    assert "never shrinks" in runner

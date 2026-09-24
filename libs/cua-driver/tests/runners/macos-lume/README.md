@@ -387,13 +387,9 @@ cd ~/cua
 libs/cua-driver/tests/runners/macos-lume/run-all.sh
 ```
 
-When Chrome or Edge is installed in the disposable worker, include the optional
-standalone browser-tool matrix in the same exact-source run:
-
-```bash
-cd ~/cua
-libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser
-```
+Every complete run also executes the standalone installed-browser matrix after
+the repo-local harness matrix, so the worker must have Chrome and Edge
+installed.
 
 After a successful run, `artifacts/cua-driver/macos/direct-result.json` records
 the exact source SHA and run ID. Preserve the private artifacts and register
@@ -414,10 +410,10 @@ Also pass the one-line base64 value of `direct-result.json`. The protected
 GitHub-hosted job validates and records the result; it does not rerun the guest
 or require a self-hosted runner.
 
-This adds the declared adversarial installed-browser rows and writes their
-separate typed results and MP4 evidence under
+The standalone browser matrix runs the declared adversarial installed-browser
+rows and writes their separate typed results and MP4 evidence under
 `artifacts/cua-driver/macos-standalone-browser/`. Missing external browsers are
-a hard failure for this option; they never shrink the reported matrix. On a
+a hard failure; they never shrink the reported matrix. On a
 repeat run, the entrypoint preserves the previous standalone-browser evidence
 in a temporary archive before creating a fresh artifact directory. The
 entrypoint temporarily restarts the disposable worker daemon in unrestricted
@@ -427,7 +423,7 @@ standard autostart daemon even when a browser row fails.
 On macOS Tahoe, first-use Chrome can present a native local-network discovery
 prompt over `chrome://inspect/#remote-debugging`. The standalone-browser lane
 uses loopback DevTools and does not need LAN discovery. Before freezing a seed
-that will run this optional lane, complete Chrome's welcome screen without
+that will run this lane, complete Chrome's welcome screen without
 signing in and leave the default-browser and usage-reporting choices disabled.
 Launch Chrome on that exact page in the VM display, choose **Don't Allow**, quit
 Chrome, then relaunch the page and require that the prompt does not return. Do
@@ -544,7 +540,7 @@ Pull evidence before deleting the worker, even after a failed run:
 REMOTE_ARTIFACT_DIR=artifacts/cua-driver/macos \
   libs/cua-driver/scripts/sync-vm-worktree.sh pull-artifacts \
   "lume@${VM_IP}" '~/cua'
-# Also retrieve this directory when --standalone-browser was used.
+# Standalone browser evidence.
 REMOTE_ARTIFACT_DIR=artifacts/cua-driver/macos-standalone-browser \
   libs/cua-driver/scripts/sync-vm-worktree.sh pull-artifacts \
   "lume@${VM_IP}" '~/cua'

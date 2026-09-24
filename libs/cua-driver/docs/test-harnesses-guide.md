@@ -41,9 +41,9 @@ Windows and Linux use the repository's GitHub-hosted workflows when their
 strict environment preflights pass. Windows Azure RDP runs are optional
 environment-parity replays or a fallback when the hosted preflight cannot prove
 a required capability. macOS uses the logged-in Lume maintainer wrapper.
-For browser-facing changes or browser-use release certification, also run the
-standalone Chrome/Edge matrix: the macOS wrapper accepts
-`--standalone-browser`, while the Windows and Linux workflow is
+The macOS wrapper always runs the standalone Chrome/Edge matrix after the
+repo-local matrix. For browser-facing changes or browser-use release
+certification on Windows and Linux, also run
 `.github/workflows/e2e-rust-standalone-browsers.yml`.
 
 Historical `*-plan.md`, `*-journal.md`, and release evidence documents record
@@ -285,12 +285,14 @@ Canonical runner: `libs/cua-driver/tests/runners/macos-lume/run-all.sh`
 
 Canonical Actions wrapper: manually dispatch
 `.github/workflows/e2e-rust-macos.yml` in `lume` mode at the exact source SHA. It runs the
-logged-in Lume wrapper with `--standalone-browser` and emits the certification
+logged-in Lume wrapper, including its standalone browser matrix, and emits the certification
 artifact consumed by protected evidence workflows.
 
 Supplemental hosted runner: manually dispatch
 `.github/workflows/e2e-rust-macos.yml` with an exact 40-character source SHA.
-Its probe must pass before independent shared, native, and capture jobs run.
+Its probe must pass before independent shared, native, capture, and browser
+jobs run. The browser job runs the standalone installed Chrome/Edge matrix that
+the Lume gate runs after its repo-local matrix.
 
 | Runner area               | Rust test                              | Real harness or app                     |
 | ------------------------- | -------------------------------------- | --------------------------------------- |
@@ -302,6 +304,7 @@ Its probe must pass before independent shared, native, and capture jobs run.
 | Installed app AX delivery | `installed_app_textedit_macos_test.rs` | TextEdit                                |
 | Capture contract          | `capture_contract_test.rs`             | Installed driver and macOS capture APIs |
 | Desktop scope             | `desktop_scope_macos_test.rs`          | macOS window and desktop scope          |
+| Standalone browsers       | `standalone_browser_behavior_test.rs`  | Installed Google Chrome and Edge        |
 
 The WKWebView host runs the same typed shared-web catalog as Electron and
 Tauri. Calculator and TextEdit add typed supporting rows for built-in app
@@ -316,7 +319,9 @@ It requires the GitHub-hosted Aqua session and SIP-off VirtualMac environment,
 creates a temporary code-signing Keychain, installs a certificate-signed local
 app, seeds only Accessibility and Screen Capture for that app's exact csreq, and
 verifies that permission status is attributed to the driver daemon before any
-test begins. The temporary certificate trust is removed during job cleanup.
+test begins. The browser lane additionally requires the image's vendor-signed
+Google Chrome and Microsoft Edge and fails closed when either is missing. The
+temporary certificate trust is removed during job cleanup.
 Hosted results remain supplemental until the image and signing
 identity provide the same release-parity guarantees as the maintained Lume
 seed.

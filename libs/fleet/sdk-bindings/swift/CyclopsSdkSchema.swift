@@ -1255,6 +1255,8 @@ public func FfiConverterTypeSandboxTemplateRefBuilder_lower(_ value: SandboxTemp
 
 public protocol VmTemplateBuilderProtocol: AnyObject, Sendable {
 
+    func args(value: [String])  -> VmTemplateBuilder
+
     func build() throws  -> VmTemplate
 
     func claimSecrets(value: Bool)  -> VmTemplateBuilder
@@ -1264,6 +1266,8 @@ public protocol VmTemplateBuilderProtocol: AnyObject, Sendable {
     func containerDiskImage(value: String)  -> VmTemplateBuilder
 
     func cpuCores(value: UInt32)  -> VmTemplateBuilder
+
+    func env(value: [String: String])  -> VmTemplateBuilder
 
     func firmware(value: Firmware)  -> VmTemplateBuilder
 
@@ -1280,6 +1284,8 @@ public protocol VmTemplateBuilderProtocol: AnyObject, Sendable {
     func oidc(value: OidcConfig)  -> VmTemplateBuilder
 
     func probes(value: PreservedJson)  -> VmTemplateBuilder
+
+    func processMode(value: ProcessMode)  -> VmTemplateBuilder
 
     func runtime(value: RuntimeKind)  -> VmTemplateBuilder
 
@@ -1350,6 +1356,15 @@ public convenience init() {
 
 
 
+open func args(value: [String]) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_args(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(value),$0
+    )
+})
+}
+
 open func build()throws  -> VmTemplate  {
     return try  FfiConverterTypeVmTemplate_lift(try rustCallWithError(FfiConverterTypeSchemaBuildError_lift) {
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build(
@@ -1390,6 +1405,15 @@ open func cpuCores(value: UInt32) -> VmTemplateBuilder  {
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores(
             self.uniffiCloneHandle(),
         FfiConverterUInt32.lower(value),$0
+    )
+})
+}
+
+open func env(value: [String: String]) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_env(
+            self.uniffiCloneHandle(),
+        FfiConverterDictionaryStringString.lower(value),$0
     )
 })
 }
@@ -1462,6 +1486,15 @@ open func probes(value: PreservedJson) -> VmTemplateBuilder  {
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes(
             self.uniffiCloneHandle(),
         FfiConverterTypePreservedJson_lower(value),$0
+    )
+})
+}
+
+open func processMode(value: ProcessMode) -> VmTemplateBuilder  {
+    return try!  FfiConverterTypeVmTemplateBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_process_mode(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeProcessMode_lower(value),$0
     )
 })
 }
@@ -2571,10 +2604,13 @@ public struct VmTemplate {
     public var services: [SandboxService]?
     public var oidc: OidcConfig?
     public var claimSecrets: Bool?
+    public var args: [String]?
+    public var env: [String: String]?
+    public var processMode: ProcessMode?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(containerDiskImage: String, command: [String]?, runtime: RuntimeKind?, runtimeClassName: String?, nodeSelector: [String: String]?, tolerations: [PreservedJson]?, imagePullPolicy: ImagePullPolicy?, imagePullSecret: String?, cpuCores: UInt32?, memory: String?, firmware: Firmware?, nestedVirtualization: Bool?, probes: PreservedJson?, services: [SandboxService]?, oidc: OidcConfig?, claimSecrets: Bool? = nil) {
+    public init(containerDiskImage: String, command: [String]?, runtime: RuntimeKind?, runtimeClassName: String?, nodeSelector: [String: String]?, tolerations: [PreservedJson]?, imagePullPolicy: ImagePullPolicy?, imagePullSecret: String?, cpuCores: UInt32?, memory: String?, firmware: Firmware?, nestedVirtualization: Bool?, probes: PreservedJson?, services: [SandboxService]?, oidc: OidcConfig?, claimSecrets: Bool? = nil, args: [String]? = nil, env: [String: String]? = nil, processMode: ProcessMode? = nil) {
         self.containerDiskImage = containerDiskImage
         self.command = command
         self.runtime = runtime
@@ -2591,6 +2627,9 @@ public struct VmTemplate {
         self.services = services
         self.oidc = oidc
         self.claimSecrets = claimSecrets
+        self.args = args
+        self.env = env
+        self.processMode = processMode
     }
 
 
@@ -2624,7 +2663,10 @@ public struct FfiConverterTypeVmTemplate: FfiConverterRustBuffer {
                 probes: FfiConverterOptionTypePreservedJson.read(from: &buf),
                 services: FfiConverterOptionSequenceTypeSandboxService.read(from: &buf),
                 oidc: FfiConverterOptionTypeOidcConfig.read(from: &buf),
-                claimSecrets: FfiConverterOptionBool.read(from: &buf)
+                claimSecrets: FfiConverterOptionBool.read(from: &buf),
+                args: FfiConverterOptionSequenceString.read(from: &buf),
+                env: FfiConverterOptionDictionaryStringString.read(from: &buf),
+                processMode: FfiConverterOptionTypeProcessMode.read(from: &buf)
         )
     }
 
@@ -2645,6 +2687,9 @@ public struct FfiConverterTypeVmTemplate: FfiConverterRustBuffer {
         FfiConverterOptionSequenceTypeSandboxService.write(value.services, into: &buf)
         FfiConverterOptionTypeOidcConfig.write(value.oidc, into: &buf)
         FfiConverterOptionBool.write(value.claimSecrets, into: &buf)
+        FfiConverterOptionSequenceString.write(value.args, into: &buf)
+        FfiConverterOptionDictionaryStringString.write(value.env, into: &buf)
+        FfiConverterOptionTypeProcessMode.write(value.processMode, into: &buf)
     }
 }
 
@@ -2935,6 +2980,85 @@ public func FfiConverterTypeJsonValueError_lift(_ buf: RustBuffer) throws -> Jso
 public func FfiConverterTypeJsonValueError_lower(_ value: JsonValueError) -> RustBuffer {
     return FfiConverterTypeJsonValueError.lower(value)
 }
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * How `vmTemplate.command`/`args`/`env` reach the sandbox
+ * (`vmTemplate.processMode`). Absent means `Legacy`.
+ */
+
+public enum ProcessMode: Equatable, Hashable {
+
+    /**
+     * What templates did before processMode existed: pod runtimes run
+     * command/args/env; KubeVirt ignores command and refuses args/env.
+     */
+    case legacy
+    /**
+     * Every runtime runs command/args/env. Pod runtimes set them on the
+     * sandbox container; KubeVirt renders them into the sandbox's cloud-init.
+     */
+    case run
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ProcessMode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeProcessMode: FfiConverterRustBuffer {
+    typealias SwiftType = ProcessMode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProcessMode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .legacy
+
+        case 2: return .run
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ProcessMode, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .legacy:
+            writeInt(&buf, Int32(1))
+
+
+        case .run:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProcessMode_lift(_ buf: RustBuffer) throws -> ProcessMode {
+    return try FfiConverterTypeProcessMode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProcessMode_lower(_ value: ProcessMode) -> RustBuffer {
+    return FfiConverterTypeProcessMode.lower(value)
+}
+
 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
@@ -3498,6 +3622,30 @@ fileprivate struct FfiConverterOptionTypeImagePullPolicy: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeProcessMode: FfiConverterRustBuffer {
+    typealias SwiftType = ProcessMode?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeProcessMode.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeProcessMode.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeRuntimeKind: FfiConverterRustBuffer {
     typealias SwiftType = RuntimeKind?
 
@@ -3846,6 +3994,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name() != 1803) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_args() != 38529) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build() != 17867) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3859,6 +4010,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores() != 25645) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_env() != 48368) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware() != 33926) {
@@ -3883,6 +4037,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes() != 40623) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_process_mode() != 49070) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime() != 63375) {

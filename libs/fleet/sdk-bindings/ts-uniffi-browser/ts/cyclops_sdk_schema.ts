@@ -742,6 +742,47 @@ const FfiConverterTypeOidcConfig = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * How `vmTemplate.command`/`args`/`env` reach the sandbox
+ * (`vmTemplate.processMode`). Absent means `Legacy`.
+ */
+export enum ProcessMode {
+    /**
+     * What templates did before processMode existed: pod runtimes run
+     * command/args/env; KubeVirt ignores command and refuses args/env.
+     */
+    Legacy,
+    /**
+     * Every runtime runs command/args/env. Pod runtimes set them on the
+     * sandbox container; KubeVirt renders them into the sandbox's cloud-init.
+     */
+    Run
+}
+
+const FfiConverterTypeProcessMode = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ProcessMode;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ProcessMode.Legacy;
+                case 2: return ProcessMode.Run;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ProcessMode.Legacy: return ordinalConverter.write(1, into);
+                case ProcessMode.Run: return ordinalConverter.write(2, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
 export type VmTemplate = {
     containerDiskImage: string,
     command?: Array<string>,
@@ -758,7 +799,10 @@ export type VmTemplate = {
     probes?: PreservedJsonLike,
     services?: Array<SandboxService>,
     oidc?: OidcConfig,
-    claimSecrets?: boolean
+    claimSecrets?: boolean,
+    args?: Array<string>,
+    env?: Map<string, string>,
+    processMode?: ProcessMode
 }
 
 /**
@@ -766,7 +810,10 @@ export type VmTemplate = {
  */
 export const VmTemplate = (() => {
     const defaults = () => ({
-        claimSecrets: undefined
+        claimSecrets: undefined,
+        args: undefined,
+        env: undefined,
+        processMode: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<VmTemplate, ReturnType<typeof defaults>>(defaults);
@@ -798,7 +845,10 @@ const FfiConverterTypeVmTemplate = (() => {
                 probes: FfiConverterOptionalTypePreservedJson.read(from),
                 services: FfiConverterOptionalSequenceTypeSandboxService.read(from),
                 oidc: FfiConverterOptionalTypeOidcConfig.read(from),
-                claimSecrets: FfiConverterOptionalBoolean.read(from)
+                claimSecrets: FfiConverterOptionalBoolean.read(from),
+                args: FfiConverterOptionalSequenceString.read(from),
+                env: FfiConverterOptionalMapStringString.read(from),
+                processMode: FfiConverterOptionalTypeProcessMode.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -818,6 +868,9 @@ const FfiConverterTypeVmTemplate = (() => {
             FfiConverterOptionalSequenceTypeSandboxService.write(value.services, into);
             FfiConverterOptionalTypeOidcConfig.write(value.oidc, into);
             FfiConverterOptionalBoolean.write(value.claimSecrets, into);
+            FfiConverterOptionalSequenceString.write(value.args, into);
+            FfiConverterOptionalMapStringString.write(value.env, into);
+            FfiConverterOptionalTypeProcessMode.write(value.processMode, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.containerDiskImage) +
@@ -835,7 +888,10 @@ const FfiConverterTypeVmTemplate = (() => {
              FfiConverterOptionalTypePreservedJson.allocationSize(value.probes) +
              FfiConverterOptionalSequenceTypeSandboxService.allocationSize(value.services) +
              FfiConverterOptionalTypeOidcConfig.allocationSize(value.oidc) +
-             FfiConverterOptionalBoolean.allocationSize(value.claimSecrets);
+             FfiConverterOptionalBoolean.allocationSize(value.claimSecrets) +
+             FfiConverterOptionalSequenceString.allocationSize(value.args) +
+             FfiConverterOptionalMapStringString.allocationSize(value.env) +
+             FfiConverterOptionalTypeProcessMode.allocationSize(value.processMode);
 
         }
     };
@@ -2058,11 +2114,13 @@ const FfiConverterTypeSandboxTemplateRefBuilder = new FfiConverterObject(uniffiT
 
 export interface VmTemplateBuilderLike {
 
+    args(value: Array<string>): VmTemplateBuilderLike;
     build() /*throws*/: VmTemplate;
     claimSecrets(value: boolean): VmTemplateBuilderLike;
     command(value: Array<string>): VmTemplateBuilderLike;
     containerDiskImage(value: string): VmTemplateBuilderLike;
     cpuCores(value: number): VmTemplateBuilderLike;
+    env(value: Map<string, string>): VmTemplateBuilderLike;
     firmware(value: Firmware): VmTemplateBuilderLike;
     imagePullPolicy(value: ImagePullPolicy): VmTemplateBuilderLike;
     imagePullSecret(value: string): VmTemplateBuilderLike;
@@ -2071,6 +2129,7 @@ export interface VmTemplateBuilderLike {
     nodeSelector(value: Map<string, string>): VmTemplateBuilderLike;
     oidc(value: OidcConfig): VmTemplateBuilderLike;
     probes(value: PreservedJsonLike): VmTemplateBuilderLike;
+    processMode(value: ProcessMode): VmTemplateBuilderLike;
     runtime(value: RuntimeKind): VmTemplateBuilderLike;
     runtimeClassName(value: string): VmTemplateBuilderLike;
     services(value: Array<SandboxService>): VmTemplateBuilderLike;
@@ -2103,6 +2162,18 @@ export class VmTemplateBuilder extends UniffiAbstractObject implements VmTemplat
 
 
 
+
+    args(value: Array<string>): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_args(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterSequenceString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
 
     build(): VmTemplate /*throws*/ {
     return ((__rb: Uint8Array) => {
@@ -2164,6 +2235,18 @@ export class VmTemplateBuilder extends UniffiAbstractObject implements VmTemplat
                 return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores(
                 uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
         FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    env(value: Map<string, string>): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_env(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterMapStringString.lower(value, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -2260,6 +2343,18 @@ export class VmTemplateBuilder extends UniffiAbstractObject implements VmTemplat
                 return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes(
                 uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
         FfiConverterTypePreservedJson.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    processMode(value: ProcessMode): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_process_mode(
+                uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypeProcessMode.lower(value, nativeModule().rustbuffer_alloc),
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -2629,6 +2724,9 @@ const FfiConverterOptionalSequenceTypeSandboxService = new FfiConverterOptional(
 // FfiConverter for OidcConfig | undefined
 const FfiConverterOptionalTypeOidcConfig = new FfiConverterOptional(FfiConverterTypeOidcConfig);
 
+// FfiConverter for ProcessMode | undefined
+const FfiConverterOptionalTypeProcessMode = new FfiConverterOptional(FfiConverterTypeProcessMode);
+
 // FfiConverter for WarmPoolAutoscaling | undefined
 const FfiConverterOptionalTypeWarmPoolAutoscaling = new FfiConverterOptional(FfiConverterTypeWarmPoolAutoscaling);
 
@@ -2720,6 +2818,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new() !== 27302) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new");
     }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_args() !== 38529) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_args");
+    }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build() !== 17867) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build");
     }
@@ -2734,6 +2835,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores() !== 25645) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_env() !== 48368) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_env");
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware() !== 33926) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware");
@@ -2758,6 +2862,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes() !== 40623) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_process_mode() !== 49070) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_process_mode");
     }
     if (nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime() !== 63375) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime");
@@ -2810,6 +2917,7 @@ export default Object.freeze({
     FfiConverterTypeOSGymSandboxWarmPoolStatus,
     FfiConverterTypeOidcConfig,
     FfiConverterTypePreservedJson,
+    FfiConverterTypeProcessMode,
     FfiConverterTypeRuntimeKind,
     FfiConverterTypeSandboxService,
     FfiConverterTypeSandboxServiceBuilder,

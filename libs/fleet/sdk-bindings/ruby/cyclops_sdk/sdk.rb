@@ -235,6 +235,29 @@ private_constant :UniffiHandleMap
     end
   end
 
+  # The Record type CreateRegistrySecretRequest.
+
+  def self.check_lower_TypeCreateRegistrySecretRequest(v)
+
+
+
+
+
+  end
+
+  def self.alloc_from_TypeCreateRegistrySecretRequest(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeCreateRegistrySecretRequest(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeCreateRegistrySecretRequest
+    consumeWithStream do |stream|
+      return stream.readTypeCreateRegistrySecretRequest
+    end
+  end
+
   # The Record type CreateSignedServiceUrlRequest.
 
   def self.check_lower_TypeCreateSignedServiceUrlRequest(v)
@@ -640,6 +663,52 @@ private_constant :UniffiHandleMap
   def consumeIntoTypePresignedPut
     consumeWithStream do |stream|
       return stream.readTypePresignedPut
+    end
+  end
+
+  # The Record type RegistrySecret.
+
+  def self.check_lower_TypeRegistrySecret(v)
+
+
+
+  end
+
+  def self.alloc_from_TypeRegistrySecret(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeRegistrySecret(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeRegistrySecret
+    consumeWithStream do |stream|
+      return stream.readTypeRegistrySecret
+    end
+  end
+
+  # The Record type ResolvedImage.
+
+  def self.check_lower_TypeResolvedImage(v)
+
+
+
+
+
+    RustBuffer.check_lower_Optionalstring(v.platform_digest)
+
+  end
+
+  def self.alloc_from_TypeResolvedImage(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeResolvedImage(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeResolvedImage
+    consumeWithStream do |stream|
+      return stream.readTypeResolvedImage
     end
   end
 
@@ -1351,6 +1420,13 @@ class RustBufferStream
     return CreatePoolRequestBuilder.uniffi_allocate(handle)
   end
 
+  # The Object type CreateRegistrySecretRequestBuilder.
+
+  def readTypeCreateRegistrySecretRequestBuilder
+    handle = unpack_from 8, 'Q>'
+    return CreateRegistrySecretRequestBuilder.uniffi_allocate(handle)
+  end
+
   # The Object type CreateSignedServiceUrlRequestBuilder.
 
   def readTypeCreateSignedServiceUrlRequestBuilder
@@ -1444,6 +1520,18 @@ class RustBufferStream
     CreatePoolRequest.new(
       namespace: readString,
       spec: readTypeOSGymSandboxWarmPoolSpec
+    )
+  end
+
+  # The Record type CreateRegistrySecretRequest.
+
+  def readTypeCreateRegistrySecretRequest
+    CreateRegistrySecretRequest.new(
+      namespace: readString,
+      name: readString,
+      registry: readString,
+      username: readString,
+      password: readString
     )
   end
 
@@ -1643,6 +1731,30 @@ class RustBufferStream
       method: readString,
       url: readString,
       headers: readMapStringString
+    )
+  end
+
+  # The Record type RegistrySecret.
+
+  def readTypeRegistrySecret
+    RegistrySecret.new(
+      namespace: readString,
+      name: readString,
+      registry: readString
+    )
+  end
+
+  # The Record type ResolvedImage.
+
+  def readTypeResolvedImage
+    ResolvedImage.new(
+      reference: readString,
+      resolved_ref: readString,
+      pinned_ref: readString,
+      digest: readString,
+      variant: readString,
+      platform_digest: readOptionalstring,
+      media_type: readString
     )
   end
 
@@ -2297,6 +2409,13 @@ class RustBufferBuilder
     pack_into(8, 'Q>', handle)
   end
 
+  # The Object type CreateRegistrySecretRequestBuilder.
+
+  def write_TypeCreateRegistrySecretRequestBuilder(obj)
+    handle = CreateRegistrySecretRequestBuilder.uniffi_lower obj
+    pack_into(8, 'Q>', handle)
+  end
+
   # The Object type CreateSignedServiceUrlRequestBuilder.
 
   def write_TypeCreateSignedServiceUrlRequestBuilder(obj)
@@ -2385,6 +2504,16 @@ class RustBufferBuilder
   def write_TypeCreatePoolRequest(v)
     self.write_String(v.namespace)
     self.write_TypeOSGymSandboxWarmPoolSpec(v.spec)
+  end
+
+  # The Record type CreateRegistrySecretRequest.
+
+  def write_TypeCreateRegistrySecretRequest(v)
+    self.write_String(v.namespace)
+    self.write_String(v.name)
+    self.write_String(v.registry)
+    self.write_String(v.username)
+    self.write_String(v.password)
   end
 
   # The Record type CreateSignedServiceUrlRequest.
@@ -2546,6 +2675,26 @@ class RustBufferBuilder
     self.write_String(v.method)
     self.write_String(v.url)
     self.write_MapStringString(v.headers)
+  end
+
+  # The Record type RegistrySecret.
+
+  def write_TypeRegistrySecret(v)
+    self.write_String(v.namespace)
+    self.write_String(v.name)
+    self.write_String(v.registry)
+  end
+
+  # The Record type ResolvedImage.
+
+  def write_TypeResolvedImage(v)
+    self.write_String(v.reference)
+    self.write_String(v.resolved_ref)
+    self.write_String(v.pinned_ref)
+    self.write_String(v.digest)
+    self.write_String(v.variant)
+    self.write_Optionalstring(v.platform_digest)
+    self.write_String(v.media_type)
   end
 
   # The Record type ResourceMetadata.
@@ -3432,6 +3581,15 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_create_registry_secret,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_registry_secret,
+    [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_resolve_image,
+    [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request,
     [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
@@ -3473,6 +3631,33 @@ module UniFFILib
     :uint64
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys,
     [:uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_clone_createregistrysecretrequestbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_free_createregistrysecretrequestbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :void
+  attach_function :uniffi_cyclops_sdk_fn_constructor_createregistrysecretrequestbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_build,
+    [:uint64, RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_name,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_namespace,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_password,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_registry,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_username,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
   attach_function :uniffi_cyclops_sdk_fn_clone_accesstokenprovider,
     [:uint64, RustCallStatus.by_ref],
@@ -3730,6 +3915,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_func_fleet_label_key,
     [RustCallStatus.by_ref],
     RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_fn_func_registry_secret_name_prefix,
+    [RustCallStatus.by_ref],
+    RustBuffer.by_value
   attach_function :uniffi_cyclops_sdk_fn_func_healthy_pool_display_status,
     [RustCallStatus.by_ref],
     RustBuffer.by_value
@@ -3761,6 +3949,9 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_func_fleet_label_key,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_func_registry_secret_name_prefix,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status,
@@ -3853,6 +4044,15 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool,
     [RustCallStatus.by_ref],
     :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_registry_secret,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_registry_secret,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_resolve_image,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request,
     [RustCallStatus.by_ref],
     :uint16
@@ -3893,6 +4093,24 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_build,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_name,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_namespace,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_password,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_registry,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_username,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token,
@@ -4037,6 +4255,9 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_constructor_createregistrysecretrequestbuilder_new,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_constructor_createclaimrequestbuilder_new,
@@ -4245,6 +4466,105 @@ class PresignedPut
       return false
     end
     if @headers != other.headers
+      return false
+    end
+
+    true
+  end
+end
+
+  # Record type CreateRegistrySecretRequest
+class CreateRegistrySecretRequest
+  attr_reader :namespace, :name, :registry, :username, :password
+
+  def initialize(namespace:, name:, registry:, username:, password:)
+    @namespace = namespace
+    @name = name
+    @registry = registry
+    @username = username
+    @password = password
+  end
+
+  def ==(other)
+    if @namespace != other.namespace
+      return false
+    end
+    if @name != other.name
+      return false
+    end
+    if @registry != other.registry
+      return false
+    end
+    if @username != other.username
+      return false
+    end
+    if @password != other.password
+      return false
+    end
+
+    true
+  end
+end
+
+  # Record type RegistrySecret
+class RegistrySecret
+  attr_reader :namespace, :name, :registry
+
+  def initialize(namespace:, name:, registry:)
+    @namespace = namespace
+    @name = name
+    @registry = registry
+  end
+
+  def ==(other)
+    if @namespace != other.namespace
+      return false
+    end
+    if @name != other.name
+      return false
+    end
+    if @registry != other.registry
+      return false
+    end
+
+    true
+  end
+end
+
+  # Record type ResolvedImage
+class ResolvedImage
+  attr_reader :reference, :resolved_ref, :pinned_ref, :digest, :variant, :platform_digest, :media_type
+
+  def initialize(reference:, resolved_ref:, pinned_ref:, digest:, variant:, platform_digest:, media_type:)
+    @reference = reference
+    @resolved_ref = resolved_ref
+    @pinned_ref = pinned_ref
+    @digest = digest
+    @variant = variant
+    @platform_digest = platform_digest
+    @media_type = media_type
+  end
+
+  def ==(other)
+    if @reference != other.reference
+      return false
+    end
+    if @resolved_ref != other.resolved_ref
+      return false
+    end
+    if @pinned_ref != other.pinned_ref
+      return false
+    end
+    if @digest != other.digest
+      return false
+    end
+    if @variant != other.variant
+      return false
+    end
+    if @platform_digest != other.platform_digest
+      return false
+    end
+    if @media_type != other.media_type
       return false
     end
 
@@ -4907,6 +5227,15 @@ end
 
 
 
+def self.registry_secret_name_prefix()
+  result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_func_registry_secret_name_prefix,)
+  return result.consumeIntoString
+end
+
+
+
+
+
 def self.healthy_pool_display_status()
   result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_func_healthy_pool_display_status,)
   return result.consumeIntoTypePoolDisplayStatus
@@ -5350,6 +5679,40 @@ end
     )
     return result.consumeIntoTypePool
   end
+  def create_registry_secret(request)
+        request = request
+        RustBuffer.check_lower_TypeCreateRegistrySecretRequest(request)
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+      SdkError,
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_registry_secret(uniffi_clone_handle(),RustBuffer.alloc_from_TypeCreateRegistrySecretRequest(request),RustCallStatus.new),
+    )
+    return result.consumeIntoTypeRegistrySecret
+  end
+  def delete_registry_secret(namespace, name)
+        namespace = FleetSdk::uniffi_utf8(namespace)
+
+        name = FleetSdk::uniffi_utf8(name)
+
+      FleetSdk.uniffi_rust_future_void(
+
+        SdkError,
+
+        UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_registry_secret(uniffi_clone_handle(),RustBuffer.allocFromString(namespace),RustBuffer.allocFromString(name),RustCallStatus.new),
+
+      )
+  end
+
+  def resolve_image(reference, runtime)
+        reference = FleetSdk::uniffi_utf8(reference)
+
+        runtime = (runtime ? FleetSdk::uniffi_utf8(runtime) : nil)
+        RustBuffer.check_lower_Optionalstring(runtime)
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+      SdkError,
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_resolve_image(uniffi_clone_handle(),RustBuffer.allocFromString(reference),RustBuffer.alloc_from_Optionalstring(runtime),RustCallStatus.new),
+    )
+    return result.consumeIntoTypeResolvedImage
+  end
   def service_request(sandbox, service, path, request)
         sandbox = sandbox
         RustBuffer.check_lower_TypeSandbox(sandbox)
@@ -5497,6 +5860,93 @@ end
       UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys(uniffi_clone_handle(),RustCallStatus.new),
     )
     return result.consumeIntoSequenceTypeUserApiKey
+  end
+
+end
+
+  class CreateRegistrySecretRequestBuilder
+
+  # A private helper for initializing instances of the class from a raw handle,
+  # bypassing any initialization logic and ensuring they are GC'd properly.
+  def self.uniffi_allocate(handle)
+    inst = allocate
+    inst.instance_variable_set :@handle, handle
+    ObjectSpace.define_finalizer(inst, uniffi_define_finalizer_by_handle(handle, inst.object_id))
+    return inst
+  end
+
+  # A private helper for registering an object finalizer.
+  # N.B. it's important that this does not capture a reference
+  # to the actual instance, only its underlying handle.
+  def self.uniffi_define_finalizer_by_handle(handle, object_id)
+    Proc.new do |_id|
+      FleetSdk.rust_call(
+        :uniffi_cyclops_sdk_fn_free_createregistrysecretrequestbuilder,
+        handle
+      )
+    end
+  end
+
+  # A private helper for lowering instances into a raw handle.
+  # This does an explicit typecheck, because accidentally lowering a different type of
+  # object in a place where this type is expected, could lead to memory unsafety.
+  def self.uniffi_check_lower(inst)
+    if not inst.is_a? self
+      raise TypeError.new "Expected a CreateRegistrySecretRequestBuilder instance, got #{inst}"
+    end
+  end
+
+  def uniffi_clone_handle()
+    return FleetSdk.rust_call(
+      :uniffi_cyclops_sdk_fn_clone_createregistrysecretrequestbuilder,
+      @handle
+    )
+  end
+
+  def self.uniffi_lower(inst)
+    return inst.uniffi_clone_handle()
+  end
+  def initialize()
+    handle = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_constructor_createregistrysecretrequestbuilder_new,)
+    @handle = handle
+    ObjectSpace.define_finalizer(self, self.class.uniffi_define_finalizer_by_handle(handle, self.object_id))
+  end
+
+
+
+  def build()
+    result = FleetSdk.rust_call_with_error(SdkBuildError,:uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_build,uniffi_clone_handle(),)
+    return result.consumeIntoTypeCreateRegistrySecretRequest
+  end
+  def name(value)
+        value = FleetSdk::uniffi_utf8(value)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_name,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return CreateRegistrySecretRequestBuilder.uniffi_allocate(result)
+  end
+  def namespace(value)
+        value = FleetSdk::uniffi_utf8(value)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_namespace,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return CreateRegistrySecretRequestBuilder.uniffi_allocate(result)
+  end
+  def password(value)
+        value = FleetSdk::uniffi_utf8(value)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_password,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return CreateRegistrySecretRequestBuilder.uniffi_allocate(result)
+  end
+  def registry(value)
+        value = FleetSdk::uniffi_utf8(value)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_registry,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return CreateRegistrySecretRequestBuilder.uniffi_allocate(result)
+  end
+  def username(value)
+        value = FleetSdk::uniffi_utf8(value)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_username,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return CreateRegistrySecretRequestBuilder.uniffi_allocate(result)
   end
 
 end

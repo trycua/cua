@@ -648,6 +648,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name(
     ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_args(
+    ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build(
     ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_claim_secrets(
@@ -657,6 +659,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image(
     ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_env(
     ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware(
     ): Short
@@ -673,6 +677,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc(
     ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_process_mode(
     ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime(
     ): Short
@@ -772,6 +778,8 @@ external fun uniffi_cyclops_sdk_schema_fn_free_vmtemplatebuilder(`handle`: Long,
 ): Unit
 external fun uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new(uniffi_out_err: UniffiRustCallStatus,
 ): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_args(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
 external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): RustBuffer.ByValue
 external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_claim_secrets(`ptr`: Long,`value`: Byte,uniffi_out_err: UniffiRustCallStatus,
@@ -781,6 +789,8 @@ external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command(`ptr`
 external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_container_disk_image(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores(`ptr`: Long,`value`: Int,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_env(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
@@ -797,6 +807,8 @@ external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector
 external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_oidc(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes(`ptr`: Long,`value`: Long,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_process_mode(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
@@ -995,6 +1007,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name() != 1803.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_args() != 38529.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build() != 17867.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1008,6 +1023,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores() != 25645.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_env() != 48368.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware() != 33926.toShort()) {
@@ -1032,6 +1050,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes() != 40623.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_process_mode() != 49070.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime() != 63375.toShort()) {
@@ -2951,6 +2972,8 @@ public object FfiConverterTypeSandboxTemplateRefBuilder: FfiConverter<SandboxTem
 
 public interface VmTemplateBuilderInterface {
 
+    fun `args`(`value`: List<kotlin.String>): VmTemplateBuilder
+
     fun `build`(): VmTemplate
 
     fun `claimSecrets`(`value`: kotlin.Boolean): VmTemplateBuilder
@@ -2960,6 +2983,8 @@ public interface VmTemplateBuilderInterface {
     fun `containerDiskImage`(`value`: kotlin.String): VmTemplateBuilder
 
     fun `cpuCores`(`value`: kotlin.UInt): VmTemplateBuilder
+
+    fun `env`(`value`: Map<kotlin.String, kotlin.String>): VmTemplateBuilder
 
     fun `firmware`(`value`: Firmware): VmTemplateBuilder
 
@@ -2976,6 +3001,8 @@ public interface VmTemplateBuilderInterface {
     fun `oidc`(`value`: OidcConfig): VmTemplateBuilder
 
     fun `probes`(`value`: PreservedJson): VmTemplateBuilder
+
+    fun `processMode`(`value`: ProcessMode): VmTemplateBuilder
 
     fun `runtime`(`value`: RuntimeKind): VmTemplateBuilder
 
@@ -3092,6 +3119,19 @@ open class VmTemplateBuilder: Disposable, AutoCloseable, VmTemplateBuilderInterf
         }
     }
 
+    override fun `args`(`value`: List<kotlin.String>): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_args(
+        it,
+        FfiConverterSequenceString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
 
     @Throws(SchemaBuildException::class)override fun `build`(): VmTemplate {
             return FfiConverterTypeVmTemplate.lift(
@@ -3152,6 +3192,19 @@ open class VmTemplateBuilder: Disposable, AutoCloseable, VmTemplateBuilderInterf
     UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores(
         it,
         FfiConverterUInt.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `env`(`value`: Map<kotlin.String, kotlin.String>): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_env(
+        it,
+        FfiConverterMapStringString.lower(`value`),_status)
 }
     }
     )
@@ -3256,6 +3309,19 @@ open class VmTemplateBuilder: Disposable, AutoCloseable, VmTemplateBuilderInterf
     UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes(
         it,
         FfiConverterTypePreservedJson.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `processMode`(`value`: ProcessMode): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_process_mode(
+        it,
+        FfiConverterTypeProcessMode.lower(`value`),_status)
 }
     }
     )
@@ -4352,6 +4418,12 @@ data class VmTemplate (
     var `oidc`: OidcConfig?
     ,
     var `claimSecrets`: kotlin.Boolean? = null
+    ,
+    var `args`: List<kotlin.String>? = null
+    ,
+    var `env`: Map<kotlin.String, kotlin.String>? = null
+    ,
+    var `processMode`: ProcessMode? = null
 
 ): Disposable{
 
@@ -4378,7 +4450,10 @@ data class VmTemplate (
         this.`probes`,
         this.`services`,
         this.`oidc`,
-        this.`claimSecrets`
+        this.`claimSecrets`,
+        this.`args`,
+        this.`env`,
+        this.`processMode`
     )
     }
 
@@ -4407,6 +4482,9 @@ public object FfiConverterTypeVmTemplate: FfiConverterRustBuffer<VmTemplate> {
             FfiConverterOptionalSequenceTypeSandboxService.read(buf),
             FfiConverterOptionalTypeOidcConfig.read(buf),
             FfiConverterOptionalBoolean.read(buf),
+            FfiConverterOptionalSequenceString.read(buf),
+            FfiConverterOptionalMapStringString.read(buf),
+            FfiConverterOptionalTypeProcessMode.read(buf),
         )
     }
 
@@ -4426,7 +4504,10 @@ public object FfiConverterTypeVmTemplate: FfiConverterRustBuffer<VmTemplate> {
             FfiConverterOptionalTypePreservedJson.allocationSize(value.`probes`) +
             FfiConverterOptionalSequenceTypeSandboxService.allocationSize(value.`services`) +
             FfiConverterOptionalTypeOidcConfig.allocationSize(value.`oidc`) +
-            FfiConverterOptionalBoolean.allocationSize(value.`claimSecrets`)
+            FfiConverterOptionalBoolean.allocationSize(value.`claimSecrets`) +
+            FfiConverterOptionalSequenceString.allocationSize(value.`args`) +
+            FfiConverterOptionalMapStringString.allocationSize(value.`env`) +
+            FfiConverterOptionalTypeProcessMode.allocationSize(value.`processMode`)
     )
 
     override fun write(value: VmTemplate, buf: ByteBuffer) {
@@ -4446,6 +4527,9 @@ public object FfiConverterTypeVmTemplate: FfiConverterRustBuffer<VmTemplate> {
             FfiConverterOptionalSequenceTypeSandboxService.write(value.`services`, buf)
             FfiConverterOptionalTypeOidcConfig.write(value.`oidc`, buf)
             FfiConverterOptionalBoolean.write(value.`claimSecrets`, buf)
+            FfiConverterOptionalSequenceString.write(value.`args`, buf)
+            FfiConverterOptionalMapStringString.write(value.`env`, buf)
+            FfiConverterOptionalTypeProcessMode.write(value.`processMode`, buf)
     }
 }
 
@@ -4622,6 +4706,52 @@ public object FfiConverterTypeJsonValueError : FfiConverterRustBuffer<JsonValueE
     }
 
 }
+
+
+
+/**
+ * How `vmTemplate.command`/`args`/`env` reach the sandbox
+ * (`vmTemplate.processMode`). Absent means `Legacy`.
+ */
+
+enum class ProcessMode {
+
+    /**
+     * What templates did before processMode existed: pod runtimes run
+     * command/args/env; KubeVirt ignores command and refuses args/env.
+     */
+    LEGACY,
+    /**
+     * Every runtime runs command/args/env. Pod runtimes set them on the
+     * sandbox container; KubeVirt renders them into the sandbox's cloud-init.
+     */
+    RUN;
+
+
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeProcessMode: FfiConverterRustBuffer<ProcessMode> {
+    override fun read(buf: ByteBuffer) = try {
+        ProcessMode.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: ProcessMode) = 4UL
+
+    override fun write(value: ProcessMode, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
 
 
 
@@ -5152,6 +5282,38 @@ public object FfiConverterOptionalTypeImagePullPolicy: FfiConverterRustBuffer<Im
         } else {
             buf.put(1)
             FfiConverterTypeImagePullPolicy.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeProcessMode: FfiConverterRustBuffer<ProcessMode?> {
+    override fun read(buf: ByteBuffer): ProcessMode? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeProcessMode.read(buf)
+    }
+
+    override fun allocationSize(value: ProcessMode?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeProcessMode.allocationSize(value)
+        }
+    }
+
+    override fun write(value: ProcessMode?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeProcessMode.write(value, buf)
         }
     }
 }

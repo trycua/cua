@@ -11,8 +11,9 @@ pub use claim::{
     OSGymSandboxClaimSandbox, OSGymSandboxClaimStatus,
 };
 pub use common::{
-    Firmware, ImagePullPolicy, OidcConfig, RuntimeKind, SandboxService, SandboxServiceBuilder,
-    ServiceProtocol, VmTemplate, VmTemplateBuilder,
+    Firmware, ImagePullPolicy, OidcConfig, ProcessMode, REGISTRY_SECRET_NAME_PREFIX, RuntimeKind,
+    SHARED_ECR_PULL_SECRET, SandboxService, SandboxServiceBuilder, ServiceProtocol, VmTemplate,
+    VmTemplateBuilder,
 };
 pub use common::{SandboxTemplateRef, SandboxTemplateRefBuilder};
 pub use json::{JsonValueError, PreservedJson};

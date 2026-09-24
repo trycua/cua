@@ -268,6 +268,11 @@ function seedVmTemplateBuilder(vm: VmTemplate): VmTemplateBuilderLike {
   if (vm.probes !== undefined) builder = builder.probes(vm.probes)
   if (vm.services !== undefined) builder = builder.services(vm.services)
   if (vm.oidc !== undefined) builder = builder.oidc(vm.oidc)
+  // Carry the process fields too: reconcile/update patches clear any field the
+  // rebuilt template omits, so dropping these would wipe them on a services edit.
+  if (vm.args !== undefined) builder = builder.args(vm.args)
+  if (vm.env !== undefined) builder = builder.env(vm.env)
+  if (vm.processMode !== undefined) builder = builder.processMode(vm.processMode)
   // The SDK patches a dropped claimSecrets to null, so a services edit has to
   // carry it or it would turn claim-secret delivery off.
   if (vm.claimSecrets !== undefined) {

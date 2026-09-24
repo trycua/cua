@@ -132,7 +132,7 @@ test_name_patterns_agree_with_allowlist {
 
 # Kinds must not overlap: a kind's sample name matches exactly one pattern, so
 # only that kind's type and payload rules can admit it. Add a sample per kind.
-kind_sample_names := {"cua-claim-x"}
+kind_sample_names := {"cua-claim-x", "cua-registry-x"}
 
 test_each_kind_name_matches_exactly_one_pattern {
 	count({n | n := kind_sample_names[_]; count({p | p := tenant_secret_admission.tenant_secret_name_pattern[_]; regex.match(p, n)}) != 1}) == 0

@@ -293,6 +293,16 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: true,
     },
+    "uniffi_cyclops_sdk_fn_clone_createregistrysecretrequestbuilder": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_fn_free_createregistrysecretrequestbuilder": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
     "uniffi_cyclops_sdk_fn_clone_createsignedserviceurlrequestbuilder": {
       args: [FfiType.Handle],
       ret: FfiType.Handle,
@@ -413,6 +423,11 @@ const DEFINITIONS = {
       ret: FfiType.RustBuffer,
       hasRustCallStatus: true,
     },
+    "uniffi_cyclops_sdk_fn_func_registry_secret_name_prefix": {
+      args: [],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
     "uniffi_cyclops_sdk_fn_func_removed_pool_display_status": {
       args: [],
       ret: FfiType.RustBuffer,
@@ -484,6 +499,41 @@ const DEFINITIONS = {
       hasRustCallStatus: true,
     },
     "uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_spec": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_fn_constructor_createregistrysecretrequestbuilder_new": {
+      args: [],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_build": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_name": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_namespace": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_password": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_registry": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_username": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: true,
@@ -628,6 +678,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_fn_method_cyclopsclient_create_registry_secret": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_fn_method_cyclopsclient_create_signed_service_url": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -660,6 +715,11 @@ const DEFINITIONS = {
     },
     "uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool": {
       args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_registry_secret": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
@@ -754,6 +814,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_fn_method_cyclopsclient_resolve_image": {
       args: [FfiType.Handle, FfiType.RustBuffer, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: false,
@@ -933,6 +998,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_checksum_func_registry_secret_name_prefix": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_checksum_func_removed_pool_display_status": {
       args: [],
       ret: FfiType.UInt16,
@@ -1004,6 +1074,41 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_checksum_constructor_createregistrysecretrequestbuilder_new": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_build": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_name": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_namespace": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_password": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_registry": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_username": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1148,6 +1253,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_registry_secret": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url": {
       args: [],
       ret: FfiType.UInt16,
@@ -1179,6 +1289,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_registry_secret": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1274,6 +1389,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_checksum_method_cyclopsclient_resolve_image": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -1555,6 +1675,8 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_fn_free_createclaimrequestbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cyclops_sdk_fn_clone_createpoolrequestbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_fn_free_createpoolrequestbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cyclops_sdk_fn_clone_createregistrysecretrequestbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_fn_free_createregistrysecretrequestbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cyclops_sdk_fn_clone_createsignedserviceurlrequestbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_fn_free_createsignedserviceurlrequestbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cyclops_sdk_fn_clone_createtemplaterequestbuilder(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
@@ -1579,6 +1701,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_fn_func_fleet_label_key(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cyclops_sdk_fn_func_healthy_pool_display_status(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cyclops_sdk_fn_func_pool_display_status(pool: Uint8Array, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cyclops_sdk_fn_func_registry_secret_name_prefix(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cyclops_sdk_fn_func_removed_pool_display_status(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cyclops_sdk_fn_func_terminating_pool_display_status(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cyclops_sdk_fn_func_unknown_pool_display_status(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
@@ -1594,6 +1717,13 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_build(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_namespace(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_spec(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_fn_constructor_createregistrysecretrequestbuilder_new(uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_build(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_name(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_namespace(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_password(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_registry(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_username(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_fn_constructor_createsignedserviceurlrequestbuilder_new(uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_build(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_expires_in_seconds(uniffiSelf: bigint, value: number, uniffi_out_err: UniffiRustCallStatus): bigint;
@@ -1622,6 +1752,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(uniffiSelf: bigint, namespace: Uint8Array, manifest: bigint): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace(uniffiSelf: bigint, name: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool(uniffiSelf: bigint, request: Uint8Array): bigint;
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_create_registry_secret(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_create_signed_service_url(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_create_user_api_key(uniffiSelf: bigint, request: Uint8Array): bigint;
@@ -1629,6 +1760,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image(uniffiSelf: bigint, namespace: Uint8Array, name: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_namespace(uniffiSelf: bigint, name: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool(uniffiSelf: bigint, pool: Uint8Array): bigint;
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_registry_secret(uniffiSelf: bigint, namespace: Uint8Array, name: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template(uniffiSelf: bigint, template: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_user_api_key(uniffiSelf: bigint, id: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim(uniffiSelf: bigint, claim: Uint8Array): bigint;
@@ -1648,6 +1780,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template(uniffiSelf: bigint, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(uniffiSelf: bigint, claim: Uint8Array, shutdownTime: Uint8Array): bigint;
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_resolve_image(uniffiSelf: bigint, reference: Uint8Array, runtime: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_revoke_signed_service_url(uniffiSelf: bigint, signedServiceUrl: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(uniffiSelf: bigint, sandbox: Uint8Array, service: Uint8Array, path: Uint8Array, request: Uint8Array): bigint;
     uniffi_cyclops_sdk_fn_method_cyclopsclient_service_websocket_url(uniffiSelf: bigint, sandbox: Uint8Array, service: Uint8Array, path: Uint8Array): bigint;
@@ -1683,6 +1816,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_checksum_func_fleet_label_key(): number;
     uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status(): number;
     uniffi_cyclops_sdk_checksum_func_pool_display_status(): number;
+    uniffi_cyclops_sdk_checksum_func_registry_secret_name_prefix(): number;
     uniffi_cyclops_sdk_checksum_func_removed_pool_display_status(): number;
     uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status(): number;
     uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status(): number;
@@ -1698,6 +1832,13 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_build(): number;
     uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_namespace(): number;
     uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec(): number;
+    uniffi_cyclops_sdk_checksum_constructor_createregistrysecretrequestbuilder_new(): number;
+    uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_build(): number;
+    uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_name(): number;
+    uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_namespace(): number;
+    uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_password(): number;
+    uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_registry(): number;
+    uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_username(): number;
     uniffi_cyclops_sdk_checksum_constructor_createsignedserviceurlrequestbuilder_new(): number;
     uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_build(): number;
     uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_expires_in_seconds(): number;
@@ -1726,6 +1867,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool(): number;
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_registry_secret(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key(): number;
@@ -1733,6 +1875,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool(): number;
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_registry_secret(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim(): number;
@@ -1752,6 +1895,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim(): number;
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_resolve_image(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_revoke_signed_service_url(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request(): number;
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_websocket_url(): number;

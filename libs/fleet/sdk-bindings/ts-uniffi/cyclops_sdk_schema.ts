@@ -733,6 +733,47 @@ const FfiConverterTypeOidcConfig = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * How `vmTemplate.command`/`args`/`env` reach the sandbox
+ * (`vmTemplate.processMode`). Absent means `Legacy`.
+ */
+export enum ProcessMode {
+    /**
+     * What templates did before processMode existed: pod runtimes run
+     * command/args/env; KubeVirt ignores command and refuses args/env.
+     */
+    Legacy,
+    /**
+     * Every runtime runs command/args/env. Pod runtimes set them on the
+     * sandbox container; KubeVirt renders them into the sandbox's cloud-init.
+     */
+    Run
+}
+
+const FfiConverterTypeProcessMode = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ProcessMode;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ProcessMode.Legacy;
+                case 2: return ProcessMode.Run;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ProcessMode.Legacy: return ordinalConverter.write(1, into);
+                case ProcessMode.Run: return ordinalConverter.write(2, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
 export type VmTemplate = {
     containerDiskImage: string,
     command?: Array<string>,
@@ -749,7 +790,10 @@ export type VmTemplate = {
     probes?: PreservedJsonLike,
     services?: Array<SandboxService>,
     oidc?: OidcConfig,
-    claimSecrets?: boolean
+    claimSecrets?: boolean,
+    args?: Array<string>,
+    env?: Map<string, string>,
+    processMode?: ProcessMode
 }
 
 /**
@@ -757,7 +801,10 @@ export type VmTemplate = {
  */
 export const VmTemplate = (() => {
     const defaults = () => ({
-        claimSecrets: undefined
+        claimSecrets: undefined,
+        args: undefined,
+        env: undefined,
+        processMode: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<VmTemplate, ReturnType<typeof defaults>>(defaults);
@@ -789,7 +836,10 @@ const FfiConverterTypeVmTemplate = (() => {
                 probes: FfiConverterOptionalTypePreservedJson.read(from),
                 services: FfiConverterOptionalSequenceTypeSandboxService.read(from),
                 oidc: FfiConverterOptionalTypeOidcConfig.read(from),
-                claimSecrets: FfiConverterOptionalBoolean.read(from)
+                claimSecrets: FfiConverterOptionalBoolean.read(from),
+                args: FfiConverterOptionalSequenceString.read(from),
+                env: FfiConverterOptionalMapStringString.read(from),
+                processMode: FfiConverterOptionalTypeProcessMode.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -809,6 +859,9 @@ const FfiConverterTypeVmTemplate = (() => {
             FfiConverterOptionalSequenceTypeSandboxService.write(value.services, into);
             FfiConverterOptionalTypeOidcConfig.write(value.oidc, into);
             FfiConverterOptionalBoolean.write(value.claimSecrets, into);
+            FfiConverterOptionalSequenceString.write(value.args, into);
+            FfiConverterOptionalMapStringString.write(value.env, into);
+            FfiConverterOptionalTypeProcessMode.write(value.processMode, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.containerDiskImage) +
@@ -826,7 +879,10 @@ const FfiConverterTypeVmTemplate = (() => {
              FfiConverterOptionalTypePreservedJson.allocationSize(value.probes) +
              FfiConverterOptionalSequenceTypeSandboxService.allocationSize(value.services) +
              FfiConverterOptionalTypeOidcConfig.allocationSize(value.oidc) +
-             FfiConverterOptionalBoolean.allocationSize(value.claimSecrets);
+             FfiConverterOptionalBoolean.allocationSize(value.claimSecrets) +
+             FfiConverterOptionalSequenceString.allocationSize(value.args) +
+             FfiConverterOptionalMapStringString.allocationSize(value.env) +
+             FfiConverterOptionalTypeProcessMode.allocationSize(value.processMode);
 
         }
     };
@@ -1449,6 +1505,9 @@ const FfiConverterOptionalSequenceTypeSandboxService = new FfiConverterOptional(
 // FfiConverter for OidcConfig | undefined
 const FfiConverterOptionalTypeOidcConfig = new FfiConverterOptional(FfiConverterTypeOidcConfig);
 
+// FfiConverter for ProcessMode | undefined
+const FfiConverterOptionalTypeProcessMode = new FfiConverterOptional(FfiConverterTypeProcessMode);
+
 // FfiConverter for WarmPoolAutoscaling | undefined
 const FfiConverterOptionalTypeWarmPoolAutoscaling = new FfiConverterOptional(FfiConverterTypeWarmPoolAutoscaling);
 
@@ -1502,6 +1561,7 @@ export default Object.freeze({
     FfiConverterTypeOSGymSandboxWarmPoolStatus,
     FfiConverterTypeOidcConfig,
     FfiConverterTypePreservedJson,
+    FfiConverterTypeProcessMode,
     FfiConverterTypeRuntimeKind,
     FfiConverterTypeSandboxService,
     FfiConverterTypeSandboxTemplateRef,

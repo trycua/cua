@@ -1399,6 +1399,9 @@ type VmTemplate struct {
 	Services             *[]SandboxService
 	Oidc                 *OidcConfig
 	ClaimSecrets         *bool
+	Args                 *[]string
+	Env                  *map[string]string
+	ProcessMode          *ProcessMode
 }
 
 func (r *VmTemplate) Destroy() {
@@ -1418,6 +1421,9 @@ func (r *VmTemplate) Destroy() {
 	FfiDestroyerOptionalSequenceSandboxService{}.Destroy(r.Services)
 	FfiDestroyerOptionalOidcConfig{}.Destroy(r.Oidc)
 	FfiDestroyerOptionalBool{}.Destroy(r.ClaimSecrets)
+	FfiDestroyerOptionalSequenceString{}.Destroy(r.Args)
+	FfiDestroyerOptionalMapStringString{}.Destroy(r.Env)
+	FfiDestroyerOptionalProcessMode{}.Destroy(r.ProcessMode)
 }
 
 type FfiConverterVmTemplate struct{}
@@ -1446,6 +1452,9 @@ func (c FfiConverterVmTemplate) Read(reader io.Reader) VmTemplate {
 		FfiConverterOptionalSequenceSandboxServiceINSTANCE.Read(reader),
 		FfiConverterOptionalOidcConfigINSTANCE.Read(reader),
 		FfiConverterOptionalBoolINSTANCE.Read(reader),
+		FfiConverterOptionalSequenceStringINSTANCE.Read(reader),
+		FfiConverterOptionalMapStringStringINSTANCE.Read(reader),
+		FfiConverterOptionalProcessModeINSTANCE.Read(reader),
 	}
 }
 
@@ -1474,6 +1483,9 @@ func (c FfiConverterVmTemplate) Write(writer io.Writer, value VmTemplate) {
 	FfiConverterOptionalSequenceSandboxServiceINSTANCE.Write(writer, value.Services)
 	FfiConverterOptionalOidcConfigINSTANCE.Write(writer, value.Oidc)
 	FfiConverterOptionalBoolINSTANCE.Write(writer, value.ClaimSecrets)
+	FfiConverterOptionalSequenceStringINSTANCE.Write(writer, value.Args)
+	FfiConverterOptionalMapStringStringINSTANCE.Write(writer, value.Env)
+	FfiConverterOptionalProcessModeINSTANCE.Write(writer, value.ProcessMode)
 }
 
 type FfiDestroyerVmTemplate struct{}
@@ -1707,6 +1719,48 @@ func (_ FfiDestroyerJsonValueError) Destroy(value *JsonValueError) {
 		_ = variantValue
 		panic(fmt.Sprintf("invalid error value `%v` in FfiDestroyerJsonValueError.Destroy", value))
 	}
+}
+
+// How `vmTemplate.command`/`args`/`env` reach the sandbox
+// (`vmTemplate.processMode`). Absent means `Legacy`.
+type ProcessMode uint
+
+const (
+	// What templates did before processMode existed: pod runtimes run
+	// command/args/env; KubeVirt ignores command and refuses args/env.
+	ProcessModeLegacy ProcessMode = 1
+	// Every runtime runs command/args/env. Pod runtimes set them on the
+	// sandbox container; KubeVirt renders them into the sandbox's cloud-init.
+	ProcessModeRun ProcessMode = 2
+)
+
+type FfiConverterProcessMode struct{}
+
+var FfiConverterProcessModeINSTANCE = FfiConverterProcessMode{}
+
+func (c FfiConverterProcessMode) Lift(rb RustBufferI) ProcessMode {
+	return LiftFromRustBuffer[ProcessMode](c, rb)
+}
+
+func (c FfiConverterProcessMode) Lower(value ProcessMode) C.RustBuffer {
+	return LowerIntoRustBuffer[ProcessMode](c, value)
+}
+
+func (c FfiConverterProcessMode) LowerExternal(value ProcessMode) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[ProcessMode](c, value))
+}
+func (FfiConverterProcessMode) Read(reader io.Reader) ProcessMode {
+	id := readInt32(reader)
+	return ProcessMode(id)
+}
+
+func (FfiConverterProcessMode) Write(writer io.Writer, value ProcessMode) {
+	writeInt32(writer, int32(value))
+}
+
+type FfiDestroyerProcessMode struct{}
+
+func (_ FfiDestroyerProcessMode) Destroy(value ProcessMode) {
 }
 
 type RuntimeKind uint
@@ -2386,6 +2440,47 @@ type FfiDestroyerOptionalImagePullPolicy struct{}
 func (_ FfiDestroyerOptionalImagePullPolicy) Destroy(value *ImagePullPolicy) {
 	if value != nil {
 		FfiDestroyerImagePullPolicy{}.Destroy(*value)
+	}
+}
+
+type FfiConverterOptionalProcessMode struct{}
+
+var FfiConverterOptionalProcessModeINSTANCE = FfiConverterOptionalProcessMode{}
+
+func (c FfiConverterOptionalProcessMode) Lift(rb RustBufferI) *ProcessMode {
+	return LiftFromRustBuffer[*ProcessMode](c, rb)
+}
+
+func (_ FfiConverterOptionalProcessMode) Read(reader io.Reader) *ProcessMode {
+	if readInt8(reader) == 0 {
+		return nil
+	}
+	temp := FfiConverterProcessModeINSTANCE.Read(reader)
+	return &temp
+}
+
+func (c FfiConverterOptionalProcessMode) Lower(value *ProcessMode) C.RustBuffer {
+	return LowerIntoRustBuffer[*ProcessMode](c, value)
+}
+
+func (c FfiConverterOptionalProcessMode) LowerExternal(value *ProcessMode) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[*ProcessMode](c, value))
+}
+
+func (_ FfiConverterOptionalProcessMode) Write(writer io.Writer, value *ProcessMode) {
+	if value == nil {
+		writeInt8(writer, 0)
+	} else {
+		writeInt8(writer, 1)
+		FfiConverterProcessModeINSTANCE.Write(writer, *value)
+	}
+}
+
+type FfiDestroyerOptionalProcessMode struct{}
+
+func (_ FfiDestroyerOptionalProcessMode) Destroy(value *ProcessMode) {
+	if value != nil {
+		FfiDestroyerProcessMode{}.Destroy(*value)
 	}
 }
 

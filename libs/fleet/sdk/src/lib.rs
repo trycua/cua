@@ -6,6 +6,7 @@ mod image_uploads;
 mod images;
 mod namespaces;
 mod pools;
+mod registry_secrets;
 mod routes;
 mod services;
 mod signed_service_urls;
@@ -29,6 +30,10 @@ pub use fleets::{
 pub use image_uploads::{
     ImageUploadFileRequest, ImageUploadInstruction, ImageUploadRequest, ImageUploadResponse,
     PresignedPut,
+};
+pub use registry_secrets::{
+    CreateRegistrySecretRequest, CreateRegistrySecretRequestBuilder, RegistrySecret, ResolvedImage,
+    registry_secret_name_prefix,
 };
 pub use routes::validate_dns_label;
 pub use status::{

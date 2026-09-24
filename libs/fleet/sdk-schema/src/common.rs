@@ -31,6 +31,10 @@ fn image_pull_policy_schema(generator: &mut schemars::SchemaGenerator) -> schema
     ImagePullPolicy::json_schema(generator)
 }
 
+fn process_mode_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    ProcessMode::json_schema(generator)
+}
+
 fn service_protocol_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
     ServiceProtocol::json_schema(generator)
 }
@@ -54,6 +58,20 @@ fn services_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schem
 pub(crate) fn oidc_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
     OidcConfig::json_schema(generator)
 }
+
+pub(crate) fn env_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    HashMap::<String, String>::json_schema(generator)
+}
+
+/// Name prefix of a tenant-owned registry pull Secret. The /api/k8s gateway
+/// lets a tenant create (and delete) only `kubernetes.io/dockerconfigjson`
+/// Secrets with this prefix, and admits `vmTemplate.imagePullSecret` naming one
+/// for any registry. The shared `ecr-credentials` Secret keeps its ECR
+/// repository allowlist.
+pub const REGISTRY_SECRET_NAME_PREFIX: &str = "cua-registry-";
+
+/// The shared, operator-provisioned ECR pull Secret in every pool namespace.
+pub const SHARED_ECR_PULL_SECRET: &str = "ecr-credentials";
 
 pub(crate) fn default_runtime() -> Option<RuntimeKind> {
     Some(RuntimeKind::Kubevirt)
@@ -107,6 +125,18 @@ pub enum ImagePullPolicy {
     Always,
     IfNotPresent,
     Never,
+}
+
+/// How `vmTemplate.command`/`args`/`env` reach the sandbox
+/// (`vmTemplate.processMode`). Absent means `Legacy`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, uniffi::Enum)]
+pub enum ProcessMode {
+    /// What templates did before processMode existed: pod runtimes run
+    /// command/args/env; KubeVirt ignores command and refuses args/env.
+    Legacy,
+    /// Every runtime runs command/args/env. Pod runtimes set them on the
+    /// sandbox container; KubeVirt renders them into the sandbox's cloud-init.
+    Run,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, uniffi::Enum)]
@@ -194,7 +224,7 @@ pub struct VmTemplate {
     )]
     pub container_disk_image: String,
     #[schemars(
-        description = "Pod runtimes (macos/gvisor) only. Entrypoint command for the sandbox container (overrides the image default)."
+        description = "Entrypoint command (Kubernetes command semantics: replaces the image ENTRYPOINT). Pod runtimes (gvisor/macos) run it on the sandbox container. KubeVirt runs it only with processMode: Run (as /etc/cua/command.sh under cua-command.service, through the sandbox's cloud-init); without it KubeVirt ignores command, as it always has."
     )]
     #[schemars(schema_with = "string_list_schema")]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -235,7 +265,10 @@ pub struct VmTemplate {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default)]
     pub image_pull_policy: Option<ImagePullPolicy>,
-    #[schemars(schema_with = "string_schema")]
+    #[schemars(
+        description = "Pull Secret for containerDiskImage, in the pool namespace. Either the shared ecr-credentials Secret (only for the allowlisted ECR repositories) or a tenant-created kubernetes.io/dockerconfigjson Secret named cua-registry-<name> (any registry). Public images need none.",
+        schema_with = "string_schema"
+    )]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default)]
     pub image_pull_secret: Option<String>,
@@ -281,13 +314,37 @@ pub struct VmTemplate {
     #[schemars(default)]
     pub oidc: Option<OidcConfig>,
     #[schemars(
-        description = "Opt in to claim-scoped secret delivery (OSGymSandboxClaim spec.secretRef). The pool-operator gives every sandbox an operator-owned Secret, empty while the sandbox is warm, fills it when a claim binds and wipes it on release, so a warm sandbox receives its claimant's secrets without a restart. Pod runtimes mount it read-only as a directory (never subPath) at /run/cua, root-owned, mode 0600; the image keeps its default root user, and its root token-sync helper hands the token to a non-root driver. KubeVirt shares it over virtiofs as tag cua-claim-secrets (needs the KubeVirt EnableVirtioFsConfigVolumes feature gate); the guest image mounts that tag read-only at /run/cua. cua-env-driver images enable their await-token mode only when /run/cua is a mount point, so the key env-token becomes /run/cua/env-token. Claims with a secretRef fail on templates without this flag.",
+        description = "Opt in to claim-scoped secret delivery (OSGymSandboxClaim spec.secretRef). The pool-operator gives every sandbox an operator-owned Secret, empty while the sandbox is warm, fills it when a claim binds and wipes it on release, so a warm sandbox receives its claimant's secrets without a restart. Pod runtimes mount it read-only as a directory (never subPath) at /run/cua, root-owned, mode 0600; the image keeps its default root user, and its root token-sync helper hands the token to a non-root driver. KubeVirt shares it over virtiofs as tag cua-claim-secrets (the EnableVirtioFsConfigVolumes feature gate is GA from KubeVirt v1.8; older KubeVirt needs it enabled); the guest image mounts that tag read-only at /run/cua. cua-env-driver images enable their await-token mode only when /run/cua is a mount point, so the key env-token becomes /run/cua/env-token. Claims with a secretRef fail on templates without this flag.",
         schema_with = "bool_schema"
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(default)]
     #[uniffi(default = None)]
     pub claim_secrets: Option<bool>,
+    #[schemars(
+        description = "Arguments (Kubernetes args semantics: they replace the image CMD and follow vmTemplate.command). Runs on pod runtimes (gvisor/macos). On runtime kubevirt it needs processMode: Run and a command (a VM image has no entrypoint to pass them to); without Run the gateway and the pool-operator refuse it."
+    )]
+    #[schemars(schema_with = "string_list_schema")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(default)]
+    #[uniffi(default = None)]
+    pub args: Option<Vec<String>>,
+    #[schemars(
+        description = "Plain environment variables for the sandbox's command (not for secrets: the values are stored in the template and visible to anyone who can read it). Names must match ^[A-Za-z_][A-Za-z0-9_]*$. $(NAME) references in command/args expand as in Kubernetes. Pod runtimes (gvisor/macos) set them on the sandbox container. On runtime kubevirt they need processMode: Run and go to /etc/cua/env (root, 0600) and the command's environment; values must be single-line there. Without Run the gateway and the pool-operator refuse env on kubevirt."
+    )]
+    #[schemars(schema_with = "env_schema")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(default)]
+    #[uniffi(default = None)]
+    pub env: Option<HashMap<String, String>>,
+    #[schemars(
+        description = "How command, args and env reach the sandbox. Absent or Legacy: unchanged behavior (pod runtimes run them; KubeVirt ignores command and refuses args and env). Run: every runtime runs them with the same semantics. Pod runtimes set them on the sandbox container; KubeVirt writes /etc/cua/env (0600), /etc/cua/command.sh (0700) and cua-command.service into the sandbox's cloud-init Secret, which the guest re-reads on every boot, so warm VMs get it on return-to-pool too. KubeVirt Run needs a Linux guest with cloud-init and systemd.",
+        schema_with = "process_mode_schema"
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(default)]
+    #[uniffi(default = None)]
+    pub process_mode: Option<ProcessMode>,
 }
 
 pub(crate) fn date_time_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {

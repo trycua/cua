@@ -90,6 +90,76 @@ async fn reconcile_template_keeps_a_pull_secret_the_desired_spec_asks_for() {
     );
 }
 
+/// Reconcile means "make the template exactly this". A desired spec without
+/// a command, args, env or processMode must clear the ones an earlier spec set,
+/// which a merge patch can only say with explicit nulls.
+#[tokio::test]
+async fn reconcile_template_clears_process_fields_the_desired_spec_omits() {
+    let mut stored = template(None);
+    stored.spec.vm_template.command = Some(vec!["python".into(), "-m".into(), "old".into()]);
+    stored.spec.vm_template.env = Some(std::collections::HashMap::from([(
+        "OLD".into(),
+        "1".into(),
+    )]));
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(200, &stored)),
+        Ok(json_response(200, &template(None))),
+    ]));
+
+    client(Arc::clone(&http))
+        .reconcile_template(create_request(None))
+        .await
+        .unwrap();
+
+    let requests = http.authenticated_requests().await;
+    let body: serde_json::Value =
+        serde_json::from_slice(requests[1].body.as_deref().unwrap()).unwrap();
+    let vm_template = body["spec"]["vmTemplate"].as_object().unwrap();
+    for key in ["command", "args", "env", "processMode"] {
+        assert_eq!(
+            vm_template.get(key),
+            Some(&serde_json::Value::Null),
+            "{key}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn reconcile_template_sends_env_command_and_process_mode_it_asks_for() {
+    let mut request = create_request(None);
+    let vm_template = &mut request.spec.vm_template;
+    vm_template.command = Some(vec!["python".into(), "-m".into(), "server".into()]);
+    vm_template.args = Some(vec!["--port".into(), "8765".into()]);
+    vm_template.env = Some(std::collections::HashMap::from([(
+        "FOO".into(),
+        "bar".into(),
+    )]));
+    vm_template.process_mode = Some(cyclops_sdk_schema::ProcessMode::Run);
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(200, &template(None))),
+        Ok(json_response(200, &template(None))),
+    ]));
+
+    client(Arc::clone(&http))
+        .reconcile_template(request)
+        .await
+        .unwrap();
+
+    let requests = http.authenticated_requests().await;
+    let body: serde_json::Value =
+        serde_json::from_slice(requests[1].body.as_deref().unwrap()).unwrap();
+    let vm_template = &body["spec"]["vmTemplate"];
+    assert_eq!(
+        vm_template["command"],
+        serde_json::json!(["python", "-m", "server"])
+    );
+    assert_eq!(vm_template["args"], serde_json::json!(["--port", "8765"]));
+    assert_eq!(vm_template["env"], serde_json::json!({"FOO": "bar"}));
+    assert_eq!(vm_template["processMode"], serde_json::json!("Run"));
+}
+
 /// Terraform drops `command`, the probes or `claim_secrets` by leaving them
 /// out of the desired spec; the merge patch has to null them to clear them.
 #[tokio::test]

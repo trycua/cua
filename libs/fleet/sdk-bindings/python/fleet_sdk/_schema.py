@@ -522,6 +522,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new() != 27302:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_args() != 38529:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build() != 17867:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_claim_secrets() != 62567:
@@ -531,6 +533,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image() != 49021:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores() != 25645:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_env() != 48368:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware() != 33926:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -547,6 +551,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc() != 27280:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes() != 40623:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_process_mode() != 49070:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime() != 63375:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1015,6 +1021,12 @@ _UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new.argtyp
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_args.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_args.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -1044,6 +1056,12 @@ _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores.argty
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_env.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_env.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1092,6 +1110,12 @@ _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes.argtypes
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_process_mode.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_process_mode.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1212,6 +1236,9 @@ _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_n
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_args.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_args.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build.restype = ctypes.c_uint16
@@ -1227,6 +1254,9 @@ _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_env.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_env.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware.restype = ctypes.c_uint16
@@ -1251,6 +1281,9 @@ _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc.rest
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_process_mode.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_process_mode.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime.restype = ctypes.c_uint16
@@ -2577,9 +2610,86 @@ class _UniffiFfiConverterOptionalTypeOidcConfig(_UniffiConverterRustBuffer):
         else:
             raise InternalError("Unexpected flag byte for optional type")
 
+
+
+
+
+
+class ProcessMode(enum.Enum):
+    """
+    How `vmTemplate.command`/`args`/`env` reach the sandbox
+    (`vmTemplate.processMode`). Absent means `Legacy`.
+"""
+
+    LEGACY = 0
+    """
+    What templates did before processMode existed: pod runtimes run
+    command/args/env; KubeVirt ignores command and refuses args/env.
+"""
+
+    RUN = 1
+    """
+    Every runtime runs command/args/env. Pod runtimes set them on the
+    sandbox container; KubeVirt renders them into the sandbox's cloud-init.
+"""
+
+
+
+class _UniffiFfiConverterTypeProcessMode(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return ProcessMode.LEGACY
+        if variant == 2:
+            return ProcessMode.RUN
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == ProcessMode.LEGACY:
+            return
+        if value == ProcessMode.RUN:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == ProcessMode.LEGACY:
+            buf.write_i32(1)
+        if value == ProcessMode.RUN:
+            buf.write_i32(2)
+
+
+
+class _UniffiFfiConverterOptionalTypeProcessMode(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeProcessMode.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeProcessMode.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeProcessMode.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
 @dataclass
 class VmTemplate:
-    def __init__(self, *, container_disk_image:str, command:typing.Optional[typing.List[str]], runtime:typing.Optional[RuntimeKind], runtime_class_name:typing.Optional[str], node_selector:typing.Optional[dict[str, str]], tolerations:typing.Optional[typing.List[PreservedJson]], image_pull_policy:typing.Optional[ImagePullPolicy], image_pull_secret:typing.Optional[str], cpu_cores:typing.Optional[int], memory:typing.Optional[str], firmware:typing.Optional[Firmware], nested_virtualization:typing.Optional[bool], probes:typing.Optional[PreservedJson], services:typing.Optional[typing.List[SandboxService]], oidc:typing.Optional[OidcConfig], claim_secrets:typing.Optional[bool] = _DEFAULT):
+    def __init__(self, *, container_disk_image:str, command:typing.Optional[typing.List[str]], runtime:typing.Optional[RuntimeKind], runtime_class_name:typing.Optional[str], node_selector:typing.Optional[dict[str, str]], tolerations:typing.Optional[typing.List[PreservedJson]], image_pull_policy:typing.Optional[ImagePullPolicy], image_pull_secret:typing.Optional[str], cpu_cores:typing.Optional[int], memory:typing.Optional[str], firmware:typing.Optional[Firmware], nested_virtualization:typing.Optional[bool], probes:typing.Optional[PreservedJson], services:typing.Optional[typing.List[SandboxService]], oidc:typing.Optional[OidcConfig], claim_secrets:typing.Optional[bool] = _DEFAULT, args:typing.Optional[typing.List[str]] = _DEFAULT, env:typing.Optional[dict[str, str]] = _DEFAULT, process_mode:typing.Optional[ProcessMode] = _DEFAULT):
         self.container_disk_image = container_disk_image
         self.command = command
         self.runtime = runtime
@@ -2599,12 +2709,24 @@ class VmTemplate:
             self.claim_secrets = None
         else:
             self.claim_secrets = claim_secrets
+        if args is _DEFAULT:
+            self.args = None
+        else:
+            self.args = args
+        if env is _DEFAULT:
+            self.env = None
+        else:
+            self.env = env
+        if process_mode is _DEFAULT:
+            self.process_mode = None
+        else:
+            self.process_mode = process_mode
 
 
 
 
     def __str__(self):
-        return "VmTemplate(container_disk_image={}, command={}, runtime={}, runtime_class_name={}, node_selector={}, tolerations={}, image_pull_policy={}, image_pull_secret={}, cpu_cores={}, memory={}, firmware={}, nested_virtualization={}, probes={}, services={}, oidc={}, claim_secrets={})".format(self.container_disk_image, self.command, self.runtime, self.runtime_class_name, self.node_selector, self.tolerations, self.image_pull_policy, self.image_pull_secret, self.cpu_cores, self.memory, self.firmware, self.nested_virtualization, self.probes, self.services, self.oidc, self.claim_secrets)
+        return "VmTemplate(container_disk_image={}, command={}, runtime={}, runtime_class_name={}, node_selector={}, tolerations={}, image_pull_policy={}, image_pull_secret={}, cpu_cores={}, memory={}, firmware={}, nested_virtualization={}, probes={}, services={}, oidc={}, claim_secrets={}, args={}, env={}, process_mode={})".format(self.container_disk_image, self.command, self.runtime, self.runtime_class_name, self.node_selector, self.tolerations, self.image_pull_policy, self.image_pull_secret, self.cpu_cores, self.memory, self.firmware, self.nested_virtualization, self.probes, self.services, self.oidc, self.claim_secrets, self.args, self.env, self.process_mode)
     def __eq__(self, other):
         if self.container_disk_image != other.container_disk_image:
             return False
@@ -2638,6 +2760,12 @@ class VmTemplate:
             return False
         if self.claim_secrets != other.claim_secrets:
             return False
+        if self.args != other.args:
+            return False
+        if self.env != other.env:
+            return False
+        if self.process_mode != other.process_mode:
+            return False
         return True
 
 class _UniffiFfiConverterTypeVmTemplate(_UniffiConverterRustBuffer):
@@ -2660,6 +2788,9 @@ class _UniffiFfiConverterTypeVmTemplate(_UniffiConverterRustBuffer):
             services=_UniffiFfiConverterOptionalSequenceTypeSandboxService.read(buf),
             oidc=_UniffiFfiConverterOptionalTypeOidcConfig.read(buf),
             claim_secrets=_UniffiFfiConverterOptionalBoolean.read(buf),
+            args=_UniffiFfiConverterOptionalSequenceString.read(buf),
+            env=_UniffiFfiConverterOptionalMapStringString.read(buf),
+            process_mode=_UniffiFfiConverterOptionalTypeProcessMode.read(buf),
         )
 
     @staticmethod
@@ -2680,6 +2811,9 @@ class _UniffiFfiConverterTypeVmTemplate(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalSequenceTypeSandboxService.check_lower(value.services)
         _UniffiFfiConverterOptionalTypeOidcConfig.check_lower(value.oidc)
         _UniffiFfiConverterOptionalBoolean.check_lower(value.claim_secrets)
+        _UniffiFfiConverterOptionalSequenceString.check_lower(value.args)
+        _UniffiFfiConverterOptionalMapStringString.check_lower(value.env)
+        _UniffiFfiConverterOptionalTypeProcessMode.check_lower(value.process_mode)
 
     @staticmethod
     def write(value, buf):
@@ -2699,6 +2833,9 @@ class _UniffiFfiConverterTypeVmTemplate(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalSequenceTypeSandboxService.write(value.services, buf)
         _UniffiFfiConverterOptionalTypeOidcConfig.write(value.oidc, buf)
         _UniffiFfiConverterOptionalBoolean.write(value.claim_secrets, buf)
+        _UniffiFfiConverterOptionalSequenceString.write(value.args, buf)
+        _UniffiFfiConverterOptionalMapStringString.write(value.env, buf)
+        _UniffiFfiConverterOptionalTypeProcessMode.write(value.process_mode, buf)
 
 @dataclass
 class OsGymSandboxSpec:
@@ -3725,6 +3862,8 @@ class _UniffiFfiConverterTypeSandboxTemplateRefBuilder:
 
 class VmTemplateBuilderProtocol(typing.Protocol):
 
+    def args(self, value: typing.List[str]) -> VmTemplateBuilder:
+        raise NotImplementedError
     def build(self, ) -> VmTemplate:
         raise NotImplementedError
     def claim_secrets(self, value: bool) -> VmTemplateBuilder:
@@ -3734,6 +3873,8 @@ class VmTemplateBuilderProtocol(typing.Protocol):
     def container_disk_image(self, value: str) -> VmTemplateBuilder:
         raise NotImplementedError
     def cpu_cores(self, value: int) -> VmTemplateBuilder:
+        raise NotImplementedError
+    def env(self, value: dict[str, str]) -> VmTemplateBuilder:
         raise NotImplementedError
     def firmware(self, value: Firmware) -> VmTemplateBuilder:
         raise NotImplementedError
@@ -3750,6 +3891,8 @@ class VmTemplateBuilderProtocol(typing.Protocol):
     def oidc(self, value: OidcConfig) -> VmTemplateBuilder:
         raise NotImplementedError
     def probes(self, value: PreservedJson) -> VmTemplateBuilder:
+        raise NotImplementedError
+    def process_mode(self, value: ProcessMode) -> VmTemplateBuilder:
         raise NotImplementedError
     def runtime(self, value: RuntimeKind) -> VmTemplateBuilder:
         raise NotImplementedError
@@ -3792,6 +3935,21 @@ class VmTemplateBuilder(VmTemplateBuilderProtocol):
         inst = cls.__new__(cls)
         inst._handle = handle
         return inst
+    def args(self, value: typing.List[str]) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterSequenceString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterSequenceString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_args,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
     def build(self, ) -> VmTemplate:
         _uniffi_lowered_args = (
             self._uniffi_clone_handle(),
@@ -3861,6 +4019,21 @@ class VmTemplateBuilder(VmTemplateBuilderProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def env(self, value: dict[str, str]) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterMapStringString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterMapStringString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_env,
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
@@ -3981,6 +4154,21 @@ class VmTemplateBuilder(VmTemplateBuilderProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def process_mode(self, value: ProcessMode) -> VmTemplateBuilder:
+
+        _UniffiFfiConverterTypeProcessMode.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeProcessMode.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeVmTemplateBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_process_mode,
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)
@@ -4224,6 +4412,7 @@ __all__ = [
     "ImagePullPolicy",
     "Firmware",
     "ServiceProtocol",
+    "ProcessMode",
     "WarmPoolTtlPolicy",
     "JsonValueError",
     "SchemaBuildError",

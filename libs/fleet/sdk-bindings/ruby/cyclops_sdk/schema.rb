@@ -432,6 +432,9 @@ end
     RustBuffer.check_lower_OptionalSequenceTypeSandboxService(v.services)
     RustBuffer.check_lower_OptionalTypeOidcConfig(v.oidc)
     RustBuffer.check_lower_Optionalbool(v.claim_secrets)
+    RustBuffer.check_lower_OptionalSequencestring(v.args)
+    RustBuffer.check_lower_OptionalMapStringString(v.env)
+    RustBuffer.check_lower_OptionalTypeProcessMode(v.process_mode)
   end
 
   def self.alloc_from_TypeVmTemplate(v)
@@ -506,6 +509,25 @@ end
   end
 
 
+
+
+  # The Enum type ProcessMode.
+
+  def self.check_lower_TypeProcessMode(v)
+  end
+
+  def self.alloc_from_TypeProcessMode(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeProcessMode(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeProcessMode
+    consumeWithStream do |stream|
+      return stream.readTypeProcessMode
+    end
+  end
 
 
   # The Enum type RuntimeKind.
@@ -795,6 +817,27 @@ end
   def consumeIntoOptionalTypeImagePullPolicy
     consumeWithStream do |stream|
       return stream.readOptionalTypeImagePullPolicy
+    end
+  end
+
+  # The Optional<T> type for TypeProcessMode.
+
+  def self.check_lower_OptionalTypeProcessMode(v)
+    if not v.nil?
+      RustBuffer.check_lower_TypeProcessMode(v)
+    end
+  end
+
+  def self.alloc_from_OptionalTypeProcessMode(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_OptionalTypeProcessMode(v)
+      return builder.finalize()
+    end
+  end
+
+  def consumeIntoOptionalTypeProcessMode
+    consumeWithStream do |stream|
+      return stream.readOptionalTypeProcessMode
     end
   end
 
@@ -1357,7 +1400,10 @@ class RustBufferStream
       probes: readOptionalTypePreservedJson,
       services: readOptionalSequenceTypeSandboxService,
       oidc: readOptionalTypeOidcConfig,
-      claim_secrets: readOptionalbool
+      claim_secrets: readOptionalbool,
+      args: readOptionalSequencestring,
+      env: readOptionalMapStringString,
+      process_mode: readOptionalTypeProcessMode
     )
   end
 
@@ -1429,6 +1475,25 @@ class RustBufferStream
 
     raise InternalError, 'Unexpected variant tag for TypeJsonValueError'
   end
+
+
+
+
+  # The Enum type ProcessMode.
+
+  def readTypeProcessMode
+    variant = unpack_from 4, 'l>'
+
+    if variant == 1
+      return ProcessMode::LEGACY
+    end
+    if variant == 2
+      return ProcessMode::RUN
+    end
+
+    raise InternalError, 'Unexpected variant tag for TypeProcessMode'
+  end
+
 
 
 
@@ -1662,6 +1727,20 @@ class RustBufferStream
       return readTypeImagePullPolicy
     else
       raise InternalError, 'Unexpected flag byte for OptionalTypeImagePullPolicy'
+    end
+  end
+
+  # The Optional<T> type for TypeProcessMode.
+
+  def readOptionalTypeProcessMode
+    flag = unpack_from 1, 'c'
+
+    if flag == 0
+      return nil
+    elsif flag == 1
+      return readTypeProcessMode
+    else
+      raise InternalError, 'Unexpected flag byte for OptionalTypeProcessMode'
     end
   end
 
@@ -2108,6 +2187,9 @@ class RustBufferBuilder
     self.write_OptionalSequenceTypeSandboxService(v.services)
     self.write_OptionalTypeOidcConfig(v.oidc)
     self.write_Optionalbool(v.claim_secrets)
+    self.write_OptionalSequencestring(v.args)
+    self.write_OptionalMapStringString(v.env)
+    self.write_OptionalTypeProcessMode(v.process_mode)
   end
 
   # The Record type WarmPoolAutoscaling.
@@ -2132,6 +2214,13 @@ class RustBufferBuilder
  end
 
 
+
+
+  # The Enum type ProcessMode.
+
+  def write_TypeProcessMode(v)
+    pack_into(4, 'l>', v)
+ end
 
 
   # The Enum type RuntimeKind.
@@ -2275,6 +2364,17 @@ class RustBufferBuilder
     else
       pack_into(1, 'c', 1)
       self.write_TypeImagePullPolicy(v)
+    end
+  end
+
+  # The Optional<T> type for TypeProcessMode.
+
+  def write_OptionalTypeProcessMode(v)
+    if v.nil?
+      pack_into(1, 'c', 0)
+    else
+      pack_into(1, 'c', 1)
+      self.write_TypeProcessMode(v)
     end
   end
 
@@ -2486,6 +2586,7 @@ end
 
 
 
+
 module JsonValueError
   class Invalid < StandardError
     def initialize(reason)
@@ -2509,6 +2610,7 @@ end
 ERROR_MODULE_TO_READER_METHOD = {
 
   SchemaBuildError => :readTypeSchemaBuildError,
+
 
 
 
@@ -2632,6 +2734,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new,
     [RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_args,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build,
     [:uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
@@ -2646,6 +2751,9 @@ module UniFFILib
     :uint64
   attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores,
     [:uint64, :uint32, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_env,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
   attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
@@ -2670,6 +2778,9 @@ module UniFFILib
     :uint64
   attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes,
     [:uint64, :uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_process_mode,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
   attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
@@ -2791,6 +2902,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name,
     [RustCallStatus.by_ref],
     :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_args,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build,
     [RustCallStatus.by_ref],
     :uint16
@@ -2804,6 +2918,9 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_env,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware,
@@ -2828,6 +2945,9 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_process_mode,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime,
@@ -2933,6 +3053,17 @@ class ImagePullPolicy
   ALWAYS = 1
   IF_NOT_PRESENT = 2
   NEVER = 3
+
+end
+
+
+
+
+
+
+class ProcessMode
+  LEGACY = 1
+  RUN = 2
 
 end
 
@@ -3208,9 +3339,9 @@ end
 
   # Record type VmTemplate
 class VmTemplate
-  attr_reader :container_disk_image, :command, :runtime, :runtime_class_name, :node_selector, :tolerations, :image_pull_policy, :image_pull_secret, :cpu_cores, :memory, :firmware, :nested_virtualization, :probes, :services, :oidc, :claim_secrets
+  attr_reader :container_disk_image, :command, :runtime, :runtime_class_name, :node_selector, :tolerations, :image_pull_policy, :image_pull_secret, :cpu_cores, :memory, :firmware, :nested_virtualization, :probes, :services, :oidc, :claim_secrets, :args, :env, :process_mode
 
-  def initialize(container_disk_image:, command:, runtime:, runtime_class_name:, node_selector:, tolerations:, image_pull_policy:, image_pull_secret:, cpu_cores:, memory:, firmware:, nested_virtualization:, probes:, services:, oidc:, claim_secrets: nil)
+  def initialize(container_disk_image:, command:, runtime:, runtime_class_name:, node_selector:, tolerations:, image_pull_policy:, image_pull_secret:, cpu_cores:, memory:, firmware:, nested_virtualization:, probes:, services:, oidc:, claim_secrets: nil, args: nil, env: nil, process_mode: nil)
     @container_disk_image = container_disk_image
     @command = command
     @runtime = runtime
@@ -3227,6 +3358,9 @@ class VmTemplate
     @services = services
     @oidc = oidc
     @claim_secrets = claim_secrets
+    @args = args
+    @env = env
+    @process_mode = process_mode
   end
 
   def ==(other)
@@ -3276,6 +3410,15 @@ class VmTemplate
       return false
     end
     if @claim_secrets != other.claim_secrets
+      return false
+    end
+    if @args != other.args
+      return false
+    end
+    if @env != other.env
+      return false
+    end
+    if @process_mode != other.process_mode
       return false
     end
 
@@ -3649,6 +3792,12 @@ end
 
 
 
+  def args(value)
+        value = value.map { |v| CyclopsSdkSchema::uniffi_utf8(v) }
+        RustBuffer.check_lower_Sequencestring(value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_args,uniffi_clone_handle(),RustBuffer.alloc_from_Sequencestring(value))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
   def build()
     result = CyclopsSdkSchema.rust_call_with_error(SchemaBuildError,:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build,uniffi_clone_handle(),)
     return result.consumeIntoTypeVmTemplate
@@ -3675,6 +3824,12 @@ end
         value = CyclopsSdkSchema::uniffi_in_range(value, "u32", 0, 2**32)
 
     result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores,uniffi_clone_handle(),value)
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+  def env(value)
+        value = value.each.with_object({}) { |(k, v), res| res[CyclopsSdkSchema::uniffi_utf8(k)] = CyclopsSdkSchema::uniffi_utf8(v) }
+        RustBuffer.check_lower_MapStringString(value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_env,uniffi_clone_handle(),RustBuffer.alloc_from_MapStringString(value))
     return VmTemplateBuilder.uniffi_allocate(result)
   end
   def firmware(value)
@@ -3723,6 +3878,12 @@ end
         value = value
         (PreservedJson.uniffi_check_lower value)
     result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes,uniffi_clone_handle(),(PreservedJson.uniffi_lower value))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+  def process_mode(value)
+        value = value
+        RustBuffer.check_lower_TypeProcessMode(value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_process_mode,uniffi_clone_handle(),RustBuffer.alloc_from_TypeProcessMode(value))
     return VmTemplateBuilder.uniffi_allocate(result)
   end
   def runtime(value)

@@ -6,6 +6,13 @@ default allow = false
 
 ecr_pull_secret := "ecr-credentials"
 
+# Tenant-owned pull Secrets: kubernetes.io/dockerconfigjson Secrets the tenant
+# created through /api/k8s (tenant_secret_admission.rego only admits that
+# shape under this prefix). They hold the tenant's own registry credentials, so
+# unlike the shared ecr-credentials they need no image allowlist: a template
+# may pair one with any registry image.
+registry_secret_pattern := `^cua-registry-[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+
 allowed_image_repositories := {
 	"296062593712.dkr.ecr.us-west-2.amazonaws.com/cua-gymdriver-dev",
 	"public.ecr.aws/k5j5w0x5/cua-windows-2022",
@@ -111,6 +118,13 @@ has_image {
 	object.get(template, "containerDiskImage", null) != null
 }
 
+tenant_registry_secret {
+	secret := template.imagePullSecret
+	is_string(secret)
+	count(secret) <= 253
+	regex.match(registry_secret_pattern, secret)
+}
+
 allowed_image {
 	image := template.containerDiskImage
 	repository := allowed_image_repositories[_]
@@ -141,6 +155,11 @@ image_configuration_allowed {
 }
 
 image_configuration_allowed {
+	input.method != "PATCH"
+	tenant_registry_secret
+}
+
+image_configuration_allowed {
 	input.method == "PATCH"
 	not has_pull_secret
 	not has_image
@@ -155,6 +174,11 @@ image_configuration_allowed {
 	input.method == "PATCH"
 	template.imagePullSecret == ecr_pull_secret
 	allowed_image
+}
+
+image_configuration_allowed {
+	input.method == "PATCH"
+	tenant_registry_secret
 }
 
 requests_macos {

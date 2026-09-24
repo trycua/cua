@@ -341,6 +341,10 @@ is_write_method {
 #     OSGymSandboxClaim spec.secretRef, and the pool-operator delivers its
 #     keys into the bound sandbox (the cua-env-driver token at
 #     /run/cua/env-token; osgym/pool-operator/claim_secrets.py).
+#   * cua-registry-*: a tenant's own registry pull credentials, a
+#     kubernetes.io/dockerconfigjson Secret the SDK names in
+#     vmTemplate.imagePullSecret (pool_admission.rego admits that pairing for
+#     any image). "Update" is delete + create.
 # A reviewed product decision, not observed traffic. Write-only by design: no
 # GET, LIST, WATCH, PUT or PATCH on any Secret, so a tenant cannot read back
 # even its own Secrets, and cannot touch any Secret outside these prefixes
@@ -354,6 +358,10 @@ is_write_method {
 # (tenant_secret_admission_test.rego checks the two sets agree).
 tenant_secret_name_pattern[pattern] {
 	pattern := `^cua-claim-[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+}
+
+tenant_secret_name_pattern[pattern] {
+	pattern := `^cua-registry-[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 }
 
 k8s_request_allowed {

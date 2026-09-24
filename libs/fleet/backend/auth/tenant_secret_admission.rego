@@ -41,6 +41,14 @@ tenant_secret_name_pattern[pattern] {
 	pattern := claim_secret_name_pattern
 }
 
+# Registry pull secrets: a tenant's own registry credentials, named from
+# vmTemplate.imagePullSecret for private images (pool_admission.rego).
+registry_secret_name_pattern := `^cua-registry-[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+
+tenant_secret_name_pattern[pattern] {
+	pattern := registry_secret_name_pattern
+}
+
 # ── Kinds ───────────────────────────────────────────────────────────────────
 
 # Claim secret: a plain Opaque Secret (type omitted or "Opaque"), any string
@@ -48,6 +56,34 @@ tenant_secret_name_pattern[pattern] {
 kind_admitted {
 	name_matches(claim_secret_name_pattern)
 	optional_equals(request_object, "type", "Opaque")
+}
+
+# Registry pull secret: type kubernetes.io/dockerconfigjson stated explicitly
+# (an omitted type is Opaque), exactly one payload map holding only
+# .dockerconfigjson (the apiserver validates it is a docker config), and the
+# label cua.ai/registry-secret: "true", which marks it as managed by this
+# feature so nothing else in the namespace is mistaken for one.
+registry_secret_type := "kubernetes.io/dockerconfigjson"
+
+registry_secret_key := ".dockerconfigjson"
+
+registry_secret_label := "cua.ai/registry-secret"
+
+kind_admitted {
+	name_matches(registry_secret_name_pattern)
+	request_object.type == registry_secret_type
+	request_object.metadata.labels[registry_secret_label] == "true"
+	registry_secret_payload
+}
+
+registry_secret_payload {
+	not has_key(request_object, "stringData")
+	object.keys(request_object.data) == {registry_secret_key}
+}
+
+registry_secret_payload {
+	not has_key(request_object, "data")
+	object.keys(request_object.stringData) == {registry_secret_key}
 }
 
 # ── Shared envelope ─────────────────────────────────────────────────────────

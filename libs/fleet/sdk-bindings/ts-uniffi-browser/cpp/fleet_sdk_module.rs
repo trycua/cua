@@ -133,6 +133,20 @@ extern "C" {
     ) -> u64;
     fn uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool(ptr: u64, pool: u::RustBuffer)
         -> u64;
+    fn uniffi_cyclops_sdk_fn_method_cyclopsclient_create_registry_secret(
+        ptr: u64,
+        request: u::RustBuffer,
+    ) -> u64;
+    fn uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_registry_secret(
+        ptr: u64,
+        namespace: u::RustBuffer,
+        name: u::RustBuffer,
+    ) -> u64;
+    fn uniffi_cyclops_sdk_fn_method_cyclopsclient_resolve_image(
+        ptr: u64,
+        reference: u::RustBuffer,
+        runtime: u::RustBuffer,
+    ) -> u64;
     fn uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(
         ptr: u64,
         sandbox: u::RustBuffer,
@@ -192,6 +206,46 @@ extern "C" {
         id: u::RustBuffer,
     ) -> u64;
     fn uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys(ptr: u64) -> u64;
+    fn uniffi_cyclops_sdk_fn_clone_createregistrysecretrequestbuilder(
+        handle: u64,
+        status_: &mut u::RustCallStatus,
+    ) -> u64;
+    fn uniffi_cyclops_sdk_fn_free_createregistrysecretrequestbuilder(
+        handle: u64,
+        status_: &mut u::RustCallStatus,
+    );
+    fn uniffi_cyclops_sdk_fn_constructor_createregistrysecretrequestbuilder_new(
+        status_: &mut u::RustCallStatus,
+    ) -> u64;
+    fn uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_build(
+        ptr: u64,
+        status_: &mut u::RustCallStatus,
+    ) -> u::RustBuffer;
+    fn uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_name(
+        ptr: u64,
+        value: u::RustBuffer,
+        status_: &mut u::RustCallStatus,
+    ) -> u64;
+    fn uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_namespace(
+        ptr: u64,
+        value: u::RustBuffer,
+        status_: &mut u::RustCallStatus,
+    ) -> u64;
+    fn uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_password(
+        ptr: u64,
+        value: u::RustBuffer,
+        status_: &mut u::RustCallStatus,
+    ) -> u64;
+    fn uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_registry(
+        ptr: u64,
+        value: u::RustBuffer,
+        status_: &mut u::RustCallStatus,
+    ) -> u64;
+    fn uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_username(
+        ptr: u64,
+        value: u::RustBuffer,
+        status_: &mut u::RustCallStatus,
+    ) -> u64;
     fn uniffi_cyclops_sdk_fn_clone_accesstokenprovider(
         handle: u64,
         status_: &mut u::RustCallStatus,
@@ -494,6 +548,9 @@ extern "C" {
     ) -> u::RustBuffer;
     fn uniffi_cyclops_sdk_fn_func_fleet_label_key(status_: &mut u::RustCallStatus)
         -> u::RustBuffer;
+    fn uniffi_cyclops_sdk_fn_func_registry_secret_name_prefix(
+        status_: &mut u::RustCallStatus,
+    ) -> u::RustBuffer;
     fn uniffi_cyclops_sdk_fn_func_healthy_pool_display_status(
         status_: &mut u::RustCallStatus,
     ) -> u::RustBuffer;
@@ -635,6 +692,7 @@ extern "C" {
     fn ffi_cyclops_sdk_rust_future_complete_void(handle: u64, status_: &mut u::RustCallStatus);
     fn uniffi_cyclops_sdk_checksum_func_claim_env_token_key() -> u16;
     fn uniffi_cyclops_sdk_checksum_func_fleet_label_key() -> u16;
+    fn uniffi_cyclops_sdk_checksum_func_registry_secret_name_prefix() -> u16;
     fn uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status() -> u16;
     fn uniffi_cyclops_sdk_checksum_func_pool_display_status() -> u16;
     fn uniffi_cyclops_sdk_checksum_func_removed_pool_display_status() -> u16;
@@ -665,6 +723,9 @@ extern "C" {
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_registry_secret() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_registry_secret() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_resolve_image() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_websocket_url() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url() -> u16;
@@ -679,6 +740,12 @@ extern "C" {
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_build() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_name() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_namespace() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_password() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_registry() -> u16;
+    fn uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_username() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_httpclient_execute() -> u16;
     fn uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build() -> u16;
@@ -736,6 +803,7 @@ extern "C" {
     fn uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client(
     ) -> u16;
     fn uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client() -> u16;
+    fn uniffi_cyclops_sdk_checksum_constructor_createregistrysecretrequestbuilder_new() -> u16;
     fn uniffi_cyclops_sdk_checksum_constructor_createclaimrequestbuilder_new() -> u16;
     fn uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new() -> u16;
     fn uniffi_cyclops_sdk_checksum_constructor_createsignedserviceurlrequestbuilder_new() -> u16;
@@ -1168,6 +1236,43 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool(
     .into_js()
 }
 #[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_create_registry_secret(
+    ptr: js::Handle,
+    request: js::ForeignBytes,
+) -> js::Handle {
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_create_registry_secret(
+        u64::into_rust(ptr),
+        u::RustBuffer::into_rust(request),
+    )
+    .into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_registry_secret(
+    ptr: js::Handle,
+    namespace: js::ForeignBytes,
+    name: js::ForeignBytes,
+) -> js::Handle {
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_registry_secret(
+        u64::into_rust(ptr),
+        u::RustBuffer::into_rust(namespace),
+        u::RustBuffer::into_rust(name),
+    )
+    .into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_resolve_image(
+    ptr: js::Handle,
+    reference: js::ForeignBytes,
+    runtime: js::ForeignBytes,
+) -> js::Handle {
+    uniffi_cyclops_sdk_fn_method_cyclopsclient_resolve_image(
+        u64::into_rust(ptr),
+        u::RustBuffer::into_rust(reference),
+        u::RustBuffer::into_rust(runtime),
+    )
+    .into_js()
+}
+#[wasm_bindgen]
 pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(
     ptr: js::Handle,
     sandbox: js::ForeignBytes,
@@ -1327,6 +1432,146 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys
     ptr: js::Handle,
 ) -> js::Handle {
     uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys(u64::into_rust(ptr)).into_js()
+}
+#[wasm_bindgen]
+pub fn ubrn_uniffi_cyclops_sdk_fn_clone_createregistrysecretrequestbuilder(
+    handle: js::Handle,
+    f_status_: &mut js::RustCallStatus,
+) -> js::Handle {
+    let mut u_status_ = u::RustCallStatus::default();
+    let value_ = unsafe {
+        uniffi_cyclops_sdk_fn_clone_createregistrysecretrequestbuilder(
+            u64::into_rust(handle),
+            &mut u_status_,
+        )
+    };
+    f_status_.copy_from(u_status_);
+    value_.into_js()
+}
+#[wasm_bindgen]
+pub fn ubrn_uniffi_cyclops_sdk_fn_free_createregistrysecretrequestbuilder(
+    handle: js::Handle,
+    f_status_: &mut js::RustCallStatus,
+) {
+    let mut u_status_ = u::RustCallStatus::default();
+    unsafe {
+        uniffi_cyclops_sdk_fn_free_createregistrysecretrequestbuilder(
+            u64::into_rust(handle),
+            &mut u_status_,
+        )
+    };
+    f_status_.copy_from(u_status_);
+}
+#[wasm_bindgen]
+pub fn ubrn_uniffi_cyclops_sdk_fn_constructor_createregistrysecretrequestbuilder_new(
+    f_status_: &mut js::RustCallStatus,
+) -> js::Handle {
+    let mut u_status_ = u::RustCallStatus::default();
+    let value_ = unsafe {
+        uniffi_cyclops_sdk_fn_constructor_createregistrysecretrequestbuilder_new(&mut u_status_)
+    };
+    f_status_.copy_from(u_status_);
+    value_.into_js()
+}
+#[wasm_bindgen]
+pub fn ubrn_uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_build(
+    ptr: js::Handle,
+    f_status_: &mut js::RustCallStatus,
+) -> js::ForeignBytes {
+    let mut u_status_ = u::RustCallStatus::default();
+    let value_ = unsafe {
+        uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_build(
+            u64::into_rust(ptr),
+            &mut u_status_,
+        )
+    };
+    f_status_.copy_from(u_status_);
+    value_.into_js()
+}
+#[wasm_bindgen]
+pub fn ubrn_uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_name(
+    ptr: js::Handle,
+    value: js::ForeignBytes,
+    f_status_: &mut js::RustCallStatus,
+) -> js::Handle {
+    let mut u_status_ = u::RustCallStatus::default();
+    let value_ = unsafe {
+        uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_name(
+            u64::into_rust(ptr),
+            u::RustBuffer::into_rust(value),
+            &mut u_status_,
+        )
+    };
+    f_status_.copy_from(u_status_);
+    value_.into_js()
+}
+#[wasm_bindgen]
+pub fn ubrn_uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_namespace(
+    ptr: js::Handle,
+    value: js::ForeignBytes,
+    f_status_: &mut js::RustCallStatus,
+) -> js::Handle {
+    let mut u_status_ = u::RustCallStatus::default();
+    let value_ = unsafe {
+        uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_namespace(
+            u64::into_rust(ptr),
+            u::RustBuffer::into_rust(value),
+            &mut u_status_,
+        )
+    };
+    f_status_.copy_from(u_status_);
+    value_.into_js()
+}
+#[wasm_bindgen]
+pub fn ubrn_uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_password(
+    ptr: js::Handle,
+    value: js::ForeignBytes,
+    f_status_: &mut js::RustCallStatus,
+) -> js::Handle {
+    let mut u_status_ = u::RustCallStatus::default();
+    let value_ = unsafe {
+        uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_password(
+            u64::into_rust(ptr),
+            u::RustBuffer::into_rust(value),
+            &mut u_status_,
+        )
+    };
+    f_status_.copy_from(u_status_);
+    value_.into_js()
+}
+#[wasm_bindgen]
+pub fn ubrn_uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_registry(
+    ptr: js::Handle,
+    value: js::ForeignBytes,
+    f_status_: &mut js::RustCallStatus,
+) -> js::Handle {
+    let mut u_status_ = u::RustCallStatus::default();
+    let value_ = unsafe {
+        uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_registry(
+            u64::into_rust(ptr),
+            u::RustBuffer::into_rust(value),
+            &mut u_status_,
+        )
+    };
+    f_status_.copy_from(u_status_);
+    value_.into_js()
+}
+#[wasm_bindgen]
+pub fn ubrn_uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_username(
+    ptr: js::Handle,
+    value: js::ForeignBytes,
+    f_status_: &mut js::RustCallStatus,
+) -> js::Handle {
+    let mut u_status_ = u::RustCallStatus::default();
+    let value_ = unsafe {
+        uniffi_cyclops_sdk_fn_method_createregistrysecretrequestbuilder_username(
+            u64::into_rust(ptr),
+            u::RustBuffer::into_rust(value),
+            &mut u_status_,
+        )
+    };
+    f_status_.copy_from(u_status_);
+    value_.into_js()
 }
 #[wasm_bindgen]
 pub fn ubrn_uniffi_cyclops_sdk_fn_clone_accesstokenprovider(
@@ -2403,6 +2648,15 @@ pub fn ubrn_uniffi_cyclops_sdk_fn_func_fleet_label_key(
     value_.into_js()
 }
 #[wasm_bindgen]
+pub fn ubrn_uniffi_cyclops_sdk_fn_func_registry_secret_name_prefix(
+    f_status_: &mut js::RustCallStatus,
+) -> js::ForeignBytes {
+    let mut u_status_ = u::RustCallStatus::default();
+    let value_ = unsafe { uniffi_cyclops_sdk_fn_func_registry_secret_name_prefix(&mut u_status_) };
+    f_status_.copy_from(u_status_);
+    value_.into_js()
+}
+#[wasm_bindgen]
 pub fn ubrn_uniffi_cyclops_sdk_fn_func_healthy_pool_display_status(
     f_status_: &mut js::RustCallStatus,
 ) -> js::ForeignBytes {
@@ -2834,6 +3088,10 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_func_fleet_label_key() -> js::UIn
     uniffi_cyclops_sdk_checksum_func_fleet_label_key().into_js()
 }
 #[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_func_registry_secret_name_prefix() -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_func_registry_secret_name_prefix().into_js()
+}
+#[wasm_bindgen]
 pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status() -> js::UInt16 {
     uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status().into_js()
 }
@@ -2962,6 +3220,20 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool(
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool().into_js()
 }
 #[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_registry_secret(
+) -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_registry_secret().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_registry_secret(
+) -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_registry_secret().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_resolve_image() -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_cyclopsclient_resolve_image().into_js()
+}
+#[wasm_bindgen]
 pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() -> js::UInt16
 {
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request().into_js()
@@ -3028,6 +3300,36 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_
 pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys(
 ) -> js::UInt16 {
     uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_build(
+) -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_build().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_name(
+) -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_name().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_namespace(
+) -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_namespace().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_password(
+) -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_password().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_registry(
+) -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_registry().into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_username(
+) -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_method_createregistrysecretrequestbuilder_username().into_js()
 }
 #[wasm_bindgen]
 pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token(
@@ -3262,6 +3564,11 @@ pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect
 ) -> js::UInt16 {
     uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client()
         .into_js()
+}
+#[wasm_bindgen]
+pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_constructor_createregistrysecretrequestbuilder_new(
+) -> js::UInt16 {
+    uniffi_cyclops_sdk_checksum_constructor_createregistrysecretrequestbuilder_new().into_js()
 }
 #[wasm_bindgen]
 pub unsafe fn ubrn_uniffi_cyclops_sdk_checksum_constructor_createclaimrequestbuilder_new(

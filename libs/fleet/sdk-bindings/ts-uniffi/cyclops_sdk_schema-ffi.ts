@@ -443,6 +443,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: true,
     },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_args": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
     "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build": {
       args: [FfiType.Handle],
       ret: FfiType.RustBuffer,
@@ -465,6 +470,11 @@ const DEFINITIONS = {
     },
     "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores": {
       args: [FfiType.Handle, FfiType.UInt32],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_env": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: true,
     },
@@ -505,6 +515,11 @@ const DEFINITIONS = {
     },
     "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes": {
       args: [FfiType.Handle, FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_process_mode": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
       hasRustCallStatus: true,
     },
@@ -668,6 +683,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_args": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build": {
       args: [],
       ret: FfiType.UInt16,
@@ -689,6 +709,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_env": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -729,6 +754,11 @@ const DEFINITIONS = {
       hasRustCallStatus: false,
     },
     "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_process_mode": {
       args: [],
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
@@ -884,11 +914,13 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_build(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_name(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new(uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_args(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_claim_secrets(uniffiSelf: bigint, value: number, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_container_disk_image(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores(uniffiSelf: bigint, value: number, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_env(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_policy(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_secret(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
@@ -897,6 +929,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_oidc(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes(uniffiSelf: bigint, value: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_process_mode(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime_class_name(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_services(uniffiSelf: bigint, value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
@@ -929,11 +962,13 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_build(): number;
     uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name(): number;
     uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_args(): number;
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build(): number;
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_claim_secrets(): number;
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command(): number;
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image(): number;
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_env(): number;
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware(): number;
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_policy(): number;
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret(): number;
@@ -942,6 +977,7 @@ interface NativeModuleInterface {
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector(): number;
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc(): number;
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes(): number;
+    uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_process_mode(): number;
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime(): number;
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime_class_name(): number;
     uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_services(): number;

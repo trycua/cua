@@ -10,7 +10,7 @@
       "revision": "6600256cb0f1b07651e3bc86166196307bad7e2d",
       "license": "AGPL-3.0-only",
       "redistributionAllowed": true,
-      "verificationStatus": "license-review-required",
+      "verificationStatus": "release-verified",
       "exportSource": "models/conversion-recipe.json and models/export_omniparser_detector.py in the Cua source archive, with principal exporter sources listed in source-ledger.json",
       "sourceArtifact": {
         "artifact": "omniparser-icon-detect-model.pt",
@@ -18,7 +18,7 @@
         "sha256": "dab3d4351ad00b035db829909a4db98354d5a90f6990e4ac00222a9a95d4bf57",
         "size": 40623819
       },
-      "usageRestrictions": ["Do not publish until AGPL release review is complete"]
+      "usageRestrictions": ["AGPL-3.0-only: redistribution, and network use of this converted model, require the corresponding source bundled under source/; see THIRD_PARTY_NOTICES.md and SOURCE_OFFER.md"]
     },
     {
       "artifact": "pp-ocrv5-mobile-det.onnx",

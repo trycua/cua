@@ -231,7 +231,9 @@ def model_ledger(lock: dict[str, Any]) -> dict[str, Any]:
                 "path": "source/upstream/omniparser-icon-detect-model.pt",
                 "sha256": entry["source_sha256"], "size": 40623819
             }
-            model["usageRestrictions"] = ["Do not publish until AGPL release review is complete"]
+            model["usageRestrictions"] = [
+                "AGPL-3.0-only: redistribution, and network use of this converted model, require the corresponding source bundled under source/; see THIRD_PARTY_NOTICES.md and SOURCE_OFFER.md"
+            ]
         models.append(model)
     return {"schemaVersion": 1, "models": models}
 
@@ -290,7 +292,7 @@ def release_manifest(bundle: Path, lock: dict[str, Any], target: str, version: s
         ))
     return {
         "schemaVersion": 1, "component": "cua-perception", "version": version,
-        "driverVersion": ">=0.28.2", "sourceSha": revision, "target": target_value,
+        "driverVersion": ">=0.29.0", "sourceSha": revision, "target": target_value,
         "protocol": {"name": "cua-perception-worker", "version": 1}, "artifacts": entries,
         "modelLedger": "model-ledger.json", "sourceLedger": "source-ledger.json",
         "suppliedVerification": {"health": "verification/health.json", "selfTest": "verification/self-test.json", "realParse": "verification/real-parse.json"},
@@ -405,7 +407,7 @@ def assemble(args: argparse.Namespace) -> tuple[Path, Path]:
                 "component": "onnx-runtime-cpu-archive", "url": target_lock["archive_url"],
                 "sha256": target_lock["archive_sha256"],
             }],
-            "review_status": "license-review-required",
+            "review_status": "maintainer-approved-agpl-distribution",
         })
         fixture = bundle / "verification/known-answer.png"
         fixture.parent.mkdir()

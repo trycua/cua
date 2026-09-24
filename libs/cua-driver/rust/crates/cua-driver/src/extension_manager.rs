@@ -61,16 +61,16 @@ const VERIFIED_PUBLISHER_ID: &str = "cua";
 #[cfg_attr(feature = "review-trust-root", allow(dead_code))]
 const VERIFIED_PUBLISHER_NAME: &str = "Cua";
 #[cfg(not(feature = "review-trust-root"))]
-const VERIFIED_KEY_ID: &str = "cua-extension-ed25519-2026-01";
+const VERIFIED_KEY_ID: &str = "cua-extension-ed25519-2026-09";
 // The corresponding private key is held outside this repository.
 #[cfg(not(feature = "review-trust-root"))]
-const VERIFIED_KEY_VALID_FROM_UNIX: u64 = 1_735_689_600; // 2025-01-01
+const VERIFIED_KEY_VALID_FROM_UNIX: u64 = 1_790_208_000; // 2026-09-24
 #[cfg(not(feature = "review-trust-root"))]
 const VERIFIED_KEY_VALID_UNTIL_UNIX: u64 = 2_082_758_400; // 2036-01-01
 #[cfg(any(not(feature = "review-trust-root"), test))]
 const VERIFIED_PUBLIC_KEY: [u8; 32] = [
-    0x74, 0x1e, 0xc4, 0xff, 0x7e, 0x9f, 0x4d, 0x72, 0xe2, 0x1c, 0xf7, 0xeb, 0xf3, 0x26, 0xb8, 0x8b,
-    0x84, 0xc5, 0x6e, 0xcb, 0x14, 0xfe, 0x3a, 0x4e, 0xf7, 0x3a, 0xd2, 0xf2, 0x09, 0x78, 0x6e, 0xc4,
+    0xe9, 0x2d, 0xf5, 0x3e, 0x93, 0x1b, 0x89, 0xe6, 0x86, 0x8a, 0xba, 0x65, 0xe6, 0xbd, 0xec, 0x35,
+    0x19, 0x6c, 0x57, 0x5b, 0x9f, 0x38, 0xfc, 0xb0, 0xe8, 0x8b, 0x74, 0xa3, 0x19, 0x8d, 0x92, 0x8a,
 ];
 #[cfg(feature = "review-trust-root")]
 const REVIEW_PUBLISHER_ID: &str = "cua-review-only";

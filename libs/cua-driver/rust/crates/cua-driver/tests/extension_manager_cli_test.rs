@@ -393,7 +393,7 @@ fn signed_catalog_rejects_forgery_before_state_creation() {
         "payload": {
             "schema_version": 1, "catalog_version": 1, "expires_unix": 4102444800_u64,
             "publisher_id": "cua", "publisher_name": "Cua",
-            "key_id": "cua-extension-ed25519-2026-01", "extension_id": "cua-perception",
+            "key_id": "cua-extension-ed25519-2026-09", "extension_id": "cua-perception",
             "version": "1.2.3", "target": current_target(),
             "archive": archive.file_name().unwrap().to_str().unwrap(),
             "archive_size": archive_bytes.len(),

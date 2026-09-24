@@ -348,11 +348,14 @@ def _validate_model_source_binding(manifest: Mapping[str, Any], payload_root: Pa
     source_ledger = read_json(confined_file(payload_root, str(manifest["sourceLedger"])))
     source_entries = {entry["artifact"]: entry for entry in source_ledger["sources"]}
     for model in model_ledger["models"]:
-        if model.get("verificationStatus") != "license-review-required":
+        # AGPL artifacts need their corresponding source whatever their review status.
+        if model.get("verificationStatus") != "license-review-required" and not str(
+            model.get("license", "")
+        ).startswith("AGPL-"):
             continue
         binding = model.get("sourceArtifact")
         if not binding:
-            raise CandidateError(f"license-review-required model lacks a bundled source input: {model['artifact']}")
+            raise CandidateError(f"AGPL or license-review-required model lacks a bundled source input: {model['artifact']}")
         source = source_entries.get(binding.get("artifact"))
         artifact = next(
             (item for item in manifest["artifacts"] if item["kind"] == "source" and item["name"] == binding.get("artifact")),
@@ -743,7 +746,7 @@ def staged_artifact_path(item: Mapping[str, Any]) -> Path:
 def package_candidate(
     manifest_path: Path, payload_root: Path, output: Path, *,
     executed_evidence_path: Path,
-    key_id: str = "cua-extension-ed25519-2026-01",
+    key_id: str = "cua-extension-ed25519-2026-09",
     catalog_version: int = 1,
     expires_unix: int = 2000000000,
 ) -> Path:

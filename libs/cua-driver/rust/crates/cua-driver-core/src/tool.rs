@@ -198,12 +198,16 @@ impl ToolDef {
 
 fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
     let mut schema = schema.clone();
-    if !crate::action_target::supports_typed_target(tool_name) {
-        return schema;
-    }
     let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) else {
         return schema;
     };
+    // Dispatch accepts public session labels independently of the platform tool.
+    properties
+        .entry("session")
+        .or_insert_with(crate::tool_schema::session_schema);
+    if !crate::action_target::supports_typed_target(tool_name) {
+        return schema;
+    }
     // Reuse the portable contract's exact tagged-union schema while retaining
     // the live runtime's broader legacy `scope=window|desktop` decoder.
     if let Some(portable) = cua_driver_contract::tool_contract(tool_name) {
@@ -1107,6 +1111,21 @@ impl ToolRegistry {
         // Normalize deprecated public argument spellings before any policy,
         // consent, recording, or implementation layer interprets the call.
         normalize_delivery_mode_args(tool.def(), &mut args);
+        // Check public names against the same schema clients see, before injecting metadata.
+        let schema = advertised_runtime_input_schema(resolved_name, &tool.def().input_schema);
+        if schema["additionalProperties"] == false {
+            if let Some(arguments) = args.as_object() {
+                let properties = schema.get("properties").and_then(Value::as_object);
+                if let Some(name) = arguments.keys().find(|name| {
+                    !properties.is_some_and(|properties| properties.contains_key(*name))
+                }) {
+                    return protected_refusal(
+                        "invalid_arguments",
+                        &format!("{resolved_name}: unknown argument {name}"),
+                    );
+                }
+            }
+        }
         if let Err(result) = crate::action_target::normalize_action_target(resolved_name, &mut args)
         {
             return result;
@@ -3784,8 +3803,17 @@ resources:
         }
     }
 
+    #[test]
+    fn recording_advertises_the_shared_session_argument() {
+        let tool = crate::recording_tools::StartRecordingTool::new(Arc::new(
+            crate::recording::RecordingSession::new(),
+        ));
+        let advertised = super::Tool::def(&tool).to_list_entry();
+        assert_eq!(advertised["inputSchema"]["properties"]["session"]["type"], "string");
+    }
+
     #[tokio::test]
-    async fn canonical_dispatch_normalizes_legacy_delivery_mode_before_execution() {
+    async fn dispatch_checks_argument_names_after_alias_normalization() {
         let hits = Arc::new(AtomicUsize::new(0));
         let last_args = Arc::new(Mutex::new(None));
         let mut registry = super::ToolRegistry::new();
@@ -3799,7 +3827,8 @@ resources:
                     "type": "object",
                     "properties": {
                         "delivery_mode": crate::tool_schema::delivery_mode_schema()
-                    }
+                    },
+                    "additionalProperties": false
                 }),
                 read_only: false,
                 destructive: false,
@@ -3812,7 +3841,7 @@ resources:
         let result = registry
             .invoke_with_context(
                 "click",
-                serde_json::json!({"dispatch": "foreground"}),
+                serde_json::json!({"dispatch": "foreground", "session": "schema-test"}),
                 standard_context(),
             )
             .await;
@@ -3822,6 +3851,20 @@ resources:
         let received = last_args.lock().unwrap().clone().expect("arguments");
         assert_eq!(received["delivery_mode"], "foreground");
         assert!(received.get("dispatch").is_none());
+
+        let result = registry
+            .invoke_with_context(
+                "click",
+                serde_json::json!({"unknown": null}),
+                standard_context(),
+            )
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.unwrap()["refusal"]["code"],
+            "invalid_arguments"
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "must refuse before invocation");
     }
 
     #[tokio::test]

@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import keyring
+from keyring.backends.null import Keyring as NullKeyring
 from keyring.errors import KeyringError, PasswordDeleteError
 
 KEYRING_SERVICE = "run.cua.ai"
@@ -90,7 +91,22 @@ class OAuthCredentials:
 def _read() -> str | None:
     try:
         return keyring.get_password(KEYRING_SERVICE, KEYRING_ACCOUNT)
-    except KeyringError as error:
+    except (KeyringError, OSError) as error:
+        raise CredentialStorageError(_NO_STORE_MESSAGE) from error
+
+
+def check_credential_store() -> None:
+    """Check read access without writing or requiring valid existing credentials.
+
+    A successful read cannot guarantee that a later write will succeed. Reject
+    the explicitly disabled backend too: its writes silently discard tokens.
+    """
+    try:
+        if isinstance(keyring.get_keyring(), NullKeyring):
+            raise CredentialStorageError(_NO_STORE_MESSAGE)
+        _read()
+    except (KeyringError, OSError) as error:
+        # Backend errors can contain credential material or private paths.
         raise CredentialStorageError(_NO_STORE_MESSAGE) from error
 
 
@@ -112,7 +128,7 @@ def save_credentials(credentials: OAuthCredentials) -> None:
     """Store OIDC credentials in the operating system credential vault."""
     try:
         keyring.set_password(KEYRING_SERVICE, KEYRING_ACCOUNT, json.dumps(credentials.to_dict()))
-    except KeyringError as error:
+    except (KeyringError, OSError) as error:
         raise CredentialStorageError(_NO_STORE_MESSAGE) from error
 
 

@@ -294,7 +294,7 @@ def test_templates_and_schemas_are_valid_and_pin_known_models() -> None:
     ):
         assert expected in serialized
     assert models[0]["license"] == "AGPL-3.0-only"
-    assert models[0]["verificationStatus"] == "license-review-required"
+    assert models[0]["verificationStatus"] == "release-verified"
     platforms = json.loads((CONTROL / "platform-inputs.json").read_text())
     platform_validator = Draft202012Validator(
         json.loads((CONTROL / "platform-inputs.schema.json").read_text())
@@ -351,7 +351,7 @@ def test_packages_deterministically_with_catalog_sbom_and_redacted_provenance(
     ).encode()
     provenance = json.loads((first / "provenance.redacted.json").read_text())
     assert catalog["publisher_id"] == "cua"
-    assert catalog["key_id"] == "cua-extension-ed25519-2026-01"
+    assert catalog["key_id"] == "cua-extension-ed25519-2026-09"
     assert catalog["archive_sha256"] == release.file_digest(archive)
     assert catalog["next_key"] is None
     assert list(catalog) == [
@@ -540,6 +540,23 @@ def test_license_review_model_requires_exact_bundled_source_input(tmp_path: Path
         release.load_and_validate_manifest(manifest_path, payload)
 
 
+def test_release_verified_agpl_model_still_requires_bundled_source_input(tmp_path: Path) -> None:
+    payload, manifest_path = fixture(tmp_path)
+    model_ledger_path = payload / "model-ledger.json"
+    model_ledger = json.loads(model_ledger_path.read_text())
+    manifest = json.loads(manifest_path.read_text())
+    for item in manifest["artifacts"]:
+        if item["kind"] == "model" and item["name"] == model_ledger["models"][0]["artifact"]:
+            item["license"]["spdx"] = "AGPL-3.0-only"
+    manifest_path.write_text(json.dumps(manifest))
+    model_ledger["models"][0]["license"] = "AGPL-3.0-only"
+    model_ledger["models"][0]["verificationStatus"] = "release-verified"
+    model_ledger["models"][0].pop("sourceArtifact", None)
+    model_ledger_path.write_text(json.dumps(model_ledger))
+    with pytest.raises(release.CandidateError, match="lacks a bundled source input"):
+        release.load_and_validate_manifest(manifest_path, payload)
+
+
 def test_source_ledger_must_bind_hash_size_revision_and_bundled_offer(tmp_path: Path) -> None:
     payload, manifest_path = fixture(tmp_path)
     ledger_path = payload / "source-ledger.json"
@@ -707,6 +724,11 @@ def test_release_stream_is_candidate_only_and_driver_remains_excluded() -> None:
             "type": "toml",
             "path": "Cargo.toml",
             "jsonpath": "$.package.version",
+        },
+        {
+            "type": "json",
+            "path": "tests/fixtures/parse-response.json",
+            "jsonpath": "$.result.identity.extension.version",
         }
     ]
     assert "include-paths" not in config["packages"][path]
@@ -764,10 +786,10 @@ def test_trust_root_and_rfc8032_vector_match_extension_manager_contract() -> Non
     Draft202012Validator(json.loads((CONTROL / "trust-root.schema.json").read_text())).validate(
         trust
     )
-    assert trust["activeKeyId"] == "cua-extension-ed25519-2026-01"
-    assert trust["keys"][0]["publicKeyBase64"] == "dB7E/36fTXLiHPfr8ya4i4TFbssU/jpO9zrS8gl4bsQ="
+    assert trust["activeKeyId"] == "cua-extension-ed25519-2026-09"
+    assert trust["keys"][0]["publicKeyBase64"] == "6S31PpMbieaGirpl5r3sNRlsV1ufOPyw6It0oxmNkoo="
     assert trust["rotation"]["privateKeysStoredInRepository"] is False
-    assert trust["keys"][0]["validFromUnix"] == 1735689600
+    assert trust["keys"][0]["validFromUnix"] == 1790208000
     assert trust["keys"][0]["validUntilUnix"] == 2082758400
     assert (
         vector["publicKeyHex"] == "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"

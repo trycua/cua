@@ -2789,6 +2789,7 @@ mod tests {
             .get_desktop_state(GetDesktopStateInput {
                 session: Some("run-1".into()),
                 screenshot_out_file: None,
+                max_image_dimension: None,
             })
             .await
             .unwrap();

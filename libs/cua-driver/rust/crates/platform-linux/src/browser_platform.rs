@@ -64,7 +64,7 @@ fn run_existing_profile_cleanup<T: Send + 'static>(
         })
 }
 
-fn is_chromium(name: &str) -> bool {
+pub(crate) fn is_chromium_identity(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     let products = [
         "chrome", "chromium", "electron", "brave", "edge", "msedge", "vivaldi", "opera", "arc",
@@ -72,6 +72,10 @@ fn is_chromium(name: &str) -> bool {
     ];
     name.split(|ch: char| !ch.is_ascii_alphanumeric())
         .any(|token| products.contains(&token))
+}
+
+fn is_chromium(name: &str) -> bool {
+    is_chromium_identity(name)
 }
 
 fn is_firefox(name: &str) -> bool {

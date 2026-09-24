@@ -14,6 +14,7 @@
 use super::bindings::*;
 use super::window_scope::{decide_window_scope, TopLevelCandidate, WindowScope};
 use core_foundation::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
+use cua_driver_core::walk_budget::{WalkBudget, WalkOutcome};
 
 /// Default maximum depth for AX tree walks. Deep menus and complex web views
 /// can nest deeply; 25 covers realistic app chrome without exploding on
@@ -135,8 +136,10 @@ fn is_addressable(actions_present: bool, value_settable: bool, enabled: Option<b
 pub struct TreeWalkResult {
     pub tree_markdown: String,
     pub nodes: Vec<AXNode>,
-    /// True when the walk was cut short by the MAX_ELEMENTS cap.
+    /// True when the walk was cut short by its node or time budget.
     pub truncated: bool,
+    /// Why and where the walk stopped (see [`cua_driver_core::walk_budget`]).
+    pub walk: WalkOutcome,
     /// Whether the requested `window_id` actually resolved to an AX surface,
     /// and if not, why. `None` when no `window_id` was requested.
     ///
@@ -187,14 +190,29 @@ pub fn walk_tree_bounded(
     max_elements: usize,
     max_depth: usize,
 ) -> TreeWalkResult {
+    walk_tree_budgeted(
+        pid,
+        window_id,
+        query,
+        max_depth,
+        WalkBudget::nodes_only(max_elements),
+    )
+}
+
+/// [`walk_tree_bounded`] under a caller's [`WalkBudget`]: the walk also stops
+/// when the budget's `timeout_ms` runs out, returning the partial tree. Each
+/// AX call is bounded by the per-element messaging timeout, so the walk
+/// overruns the deadline by at most one attribute read.
+pub fn walk_tree_budgeted(
+    pid: i32,
+    window_id: Option<u32>,
+    query: Option<&str>,
+    max_depth: usize,
+    mut budget: WalkBudget,
+) -> TreeWalkResult {
     let mut nodes: Vec<AXNode> = Vec::new();
     let mut lines: Vec<(usize, String)> = Vec::new(); // (depth, line)
     let mut index_counter = 0usize;
-    // Shared visited-node counter passed into walk_element to enforce the cap.
-    let mut visited_count = 0usize;
-    // Set to true only when walk_element actually stops early due to the cap —
-    // avoids a false-positive when the tree naturally ends on exactly the cap.
-    let mut truncated = false;
     let mut window_scope: Option<WindowScope> = None;
 
     unsafe {
@@ -204,6 +222,7 @@ pub fn walk_tree_bounded(
                 tree_markdown: String::new(),
                 nodes,
                 truncated: false,
+                walk: budget.outcome(),
                 // No application AX element at all, so a requested window
                 // certainly did not resolve.
                 window_scope: window_id.map(|_| WindowScope::AxUnresolved { ax_window_count: 0 }),
@@ -226,7 +245,12 @@ pub fn walk_tree_bounded(
         // AXChildren omits windows when the app isn't frontmost (AppKit limitation).
         // AXWindows returns the window list regardless of activation state.
         let from_children = copy_children(app_elem);
-        let from_windows = copy_ax_windows(app_elem);
+        // A requested window on another Space is absent from AXWindows; the
+        // `_including` variant recovers it by exact CGWindowID.
+        let from_windows = match window_id {
+            Some(wid) => copy_ax_windows_including(app_elem, pid, wid),
+            None => copy_ax_windows(app_elem),
+        };
 
         let mut top_level = from_children;
         for w in from_windows {
@@ -297,9 +321,7 @@ pub fn walk_tree_bounded(
                 &mut nodes,
                 &mut lines,
                 &mut index_counter,
-                &mut visited_count,
-                &mut truncated,
-                max_elements,
+                &mut budget,
                 max_depth,
             );
         }
@@ -312,7 +334,7 @@ pub fn walk_tree_bounded(
         CFRelease(app_elem as CFTypeRef);
     }
 
-    let truncated_flag = truncated;
+    let walk = budget.outcome();
     let raw_markdown = render_lines(&lines);
     let mut tree_markdown = if let Some(q) = query {
         filter_tree(&raw_markdown, q)
@@ -320,19 +342,16 @@ pub fn walk_tree_bounded(
         raw_markdown
     };
 
-    if truncated_flag {
-        tree_markdown.push_str(&format!(
-            "\n⚠️  AX tree truncated at {max_elements} nodes \
-             (app has a very large accessibility tree — Arc, Electron, or similar). \
-             Element indices above are still valid. Use pixel clicks for elements \
-             not visible in this partial tree."
-        ));
+    if let Some(note) = walk.note() {
+        tree_markdown.push('\n');
+        tree_markdown.push_str(&note);
     }
 
     TreeWalkResult {
         tree_markdown,
         nodes,
-        truncated: truncated_flag,
+        truncated: walk.truncated(),
+        walk,
         window_scope,
     }
 }
@@ -346,21 +365,17 @@ unsafe fn walk_element(
     nodes: &mut Vec<AXNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
-    visited_count: &mut usize,
-    truncated: &mut bool,
-    max_elements: usize,
+    budget: &mut WalkBudget,
     max_depth: usize,
 ) {
     if depth > max_depth {
         return;
     }
-    // Enforce total-node cap — mirrors Swift's maxElements guard.
-    // Set the truncated flag only when we actually stop early.
-    if *visited_count >= max_elements {
-        *truncated = true;
+    // Node and time budget: a refused node is counted as discovered but not
+    // visited, and the walk unwinds with the partial tree it has.
+    if !budget.admit() {
         return;
     }
-    *visited_count += 1;
 
     // Messaging timeouts are per AX object, not inherited from the application
     // element, so every descendant must be bounded before any attribute read.
@@ -385,9 +400,7 @@ unsafe fn walk_element(
                 nodes,
                 lines,
                 counter,
-                visited_count,
-                truncated,
-                max_elements,
+                budget,
                 max_depth,
             );
             CFRelease(child as CFTypeRef);
@@ -453,9 +466,7 @@ unsafe fn walk_element(
                 nodes,
                 lines,
                 counter,
-                visited_count,
-                truncated,
-                max_elements,
+                budget,
                 max_depth,
             );
             CFRelease(child as CFTypeRef);
@@ -576,9 +587,7 @@ unsafe fn walk_element(
             nodes,
             lines,
             counter,
-            visited_count,
-            truncated,
-            max_elements,
+            budget,
             max_depth,
         );
         CFRelease(child as CFTypeRef);

@@ -18,20 +18,26 @@ class AuthorizedWorkflowTest(unittest.TestCase):
         self.assertTrue(action_refs)
         self.assertTrue(all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in action_refs))
 
-    def test_secret_bearing_steps_use_only_preinstalled_python(self) -> None:
-        steps = re.findall(
-            r"(?ms)^      - (?:id: [^\n]+\n        )?name:.*?(?=^      - |\Z)",
-            self.workflow,
-        )
-        secret_steps = [step for step in steps if "TYPESAFE_API_KEY:" in step]
-        self.assertEqual(len(secret_steps), 2)
+    def test_workflow_is_credential_free(self) -> None:
+        self.assertNotIn("TYPESAFE_API_KEY", self.workflow)
+        self.assertNotIn("secrets.", self.workflow)
+        self.assertNotIn("run_live", self.workflow)
+        self.assertNotIn("--live", self.workflow)
+
+    def test_mock_steps_use_preinstalled_python_and_audit_mock_rows(self) -> None:
         self.assertIn(
             'python_bin="$GITHUB_WORKSPACE/libs/cua-driver/examples/jev-use/.venv/bin/python"',
             self.workflow,
         )
-        for step in secret_steps:
-            self.assertNotRegex(step, r"\b(?:uv|npm|npx|cargo|pip|python)\s+(?:run|sync|install|build)")
-            self.assertRegex(step, r"(?:\.venv/bin/python|\$python_bin)")
+        self.assertIn("verify_setup.py --typescript --max-steps 2", self.workflow)
+        self.assertIn(".venv/bin/python verify_choice_cli.py", self.workflow)
+        self.assertIn('assert summary["live_requested"] is False', self.workflow)
+        self.assertIn('assert summary["typescript_requested"] is True', self.workflow)
+        mock_checks = re.search(
+            r"name: Run bounded mock checks\n(?:[^\n]*\n)*?.*?verify_setup\.py --typescript",
+            self.workflow,
+        )
+        self.assertIsNotNone(mock_checks)
 
 
 if __name__ == "__main__":

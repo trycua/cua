@@ -107,6 +107,111 @@ desktop certification, and it does not replace the desktop matrix.
 
 ## Desktop runners
 
+### Choose the evidence tier
+
+Use the narrowest useful tier during implementation, then complete the required
+platform evidence before delivery. The tiers describe evidence authority, not
+new workflow gates or permission to omit the final matrix.
+
+| Tier | Examples | What it establishes |
+| --- | --- | --- |
+| Fast | `CI: Cua Driver quick feedback (non-certifying)`, focused local tests | Formatting and shared contracts; no native desktop behavior. |
+| Platform | `E2E: Rust Linux interactive`, `E2E: Rust Windows interactive`, the logged-in macOS Lume runner | Complete canonical desktop behavior at an exact source SHA when all required lanes and strict preflight pass. |
+| Live | Protected Jev evidence workflows | Bounded provider behavior with exact signed candidate and platform prerequisites; not a replacement for the canonical matrix. |
+| Release-evidence | Signed candidate, certification records, private evidence validation | Artifact provenance and final review material; a recording or upload alone is not a passing desktop test. |
+
+For a change after a certified candidate, compare the tested commit with the
+proposed commit. The advisory classifier returns potentially affected desktop
+platforms and reasons as JSON:
+
+```bash
+python3 .github/scripts/cua_driver_e2e_impact.py TESTED_SHA CANDIDATE_SHA
+```
+
+Pass two full committed SHAs from this checkout; the command does not read a
+dirty worktree or start a test. It includes both sides of a rename. Explicit
+documentation and non-certifying diagnostic tooling can return an empty
+`affected_platforms` list. Platform implementation, harness, and workflow
+changes name the affected OS; shared, unknown, or ambiguous files return all
+three. Check the actual diff and the repository's certification timing rule
+before reusing any evidence. An empty list is advice about *new changes since
+the tested SHA*, not a certification result or a waiver of the complete stable
+candidate matrix. Keep the earlier exact-SHA result and account for each
+subsequent change in the PR review record.
+
+### Quick development feedback
+
+`CI: Cua Driver quick feedback (non-certifying)` runs on relevant pull requests
+or by manual dispatch. It checks Rust formatting, the shared web fixture journal,
+the visual contract and perception protocol, and platform-independent core
+unit tests. Use it while iterating on those areas. It does not create a
+desktop session, exercise native input or capture, install a release, or issue
+a certification artifact. Its goal is a warm-cache run under 10 minutes;
+check the workflow's measured duration rather than treating the timeout as a
+performance guarantee.
+
+`CI: Cua Driver desktop readiness (non-certifying)` runs the lightweight
+Linux and Windows checks in temporary GUI sessions when the preflight scripts
+change. It does not invoke the strict preflight or any behavior matrix.
+
+For a local focused iteration, run the matching commands from the repository
+root (a first compilation may be much slower than a warm run):
+
+```bash
+cargo fmt --manifest-path libs/cua-driver/rust/Cargo.toml --all -- --check
+node --test libs/cua-driver/tests/fixtures/shared/web/journal.test.cjs
+cd libs/cua-driver/rust
+cargo test --locked -p cua-driver-contract --test visual_contract
+cargo test --locked -p cua-perception --test protocol
+cargo test --locked -p cua-driver-core --lib
+```
+
+Before spending time on a desktop matrix, run the lightweight host readiness
+check in the same logged-in desktop session that will run the test:
+
+```bash
+# Linux, from the repository root
+scripts/ci/linux/preflight-rust-e2e.sh
+```
+
+```powershell
+# Windows, from the repository root
+.\scripts\ci\windows\preflight-rust-e2e.ps1
+```
+
+These commands report the architecture, display or input desktop, session bus
+where applicable, recording tools, checkout SHA, and an already-built driver
+version (not its source identity). They do not build fixtures, request
+permissions, start the Driver, or write or clear E2E artifacts. A missing
+binary or optional browser does not fail the lightweight check. The commands
+cannot establish AX/UIA, capture, permission, video, fixture, or browser behavior.
+The canonical runner's strict environment preflight still proves those before
+any behavioral rows.
+If `CUA_E2E_SOURCE_SHA` is set, the lightweight check fails when it differs
+from the checked-out SHA. For a hosted Linux X11 lane, enter its `xvfb-run` and
+`dbus-run-session` environment before running this check.
+
+For desktop behavior, use a diagnostic lane only to narrow a failure. The
+complete Linux, Windows, and macOS runs at the stable exact candidate SHA
+remain the certification gate described below and in the test harnesses guide.
+The Linux and Windows E2E workflows cache Rust dependencies/build products
+per OS and lane, and cache npm downloads for the Electron fixture on exact-ref
+dispatches. A dispatch against a different reviewed SHA may restore a Rust
+cache but cannot save it. Exact-ref branch dispatches save only in that branch's
+GitHub cache scope; Windows RDP parity replays cannot save a cache. No fixture `node_modules`,
+recording, result, or certification artifact is cached.
+
+To measure the change, compare the wall time of each job and its build/test
+step in successive cold- and warm-cache full-matrix runs at a stable candidate.
+Record queue, setup, execution, and upload separately. As a pre-cache baseline,
+the exact-merge-SHA September 22, 2026 runs (`35789003557` Linux,
+`35789006039` Windows) took 25m31s for Linux shared and 40m52s for Windows
+shared (job start to completion). The corresponding behavior-matrix steps took
+23m20s and 39m41s. The other lanes ran in parallel; these times are not a
+median or evidence of a 30% improvement. Compare multiple warm runs before
+claiming a sustained reduction, and retain the source SHA and cache-hit state
+with each measurement.
+
 | Runner                          | Session                                                            | Canonical command |
 | ------------------------------- | ------------------------------------------------------------------ | ----------------- |
 | `linux/run-rust-e2e.sh`         | Existing Linux X11 or Wayland desktop                              | no selector       |
@@ -118,8 +223,9 @@ desktop certification, and it does not replace the desktop matrix.
 
 Use the command without a selector for the canonical complete run. CI sets the
 private `CUA_E2E_INTERNAL_LANE` partition to `shared`, `native`, or `capture`
-when it fans the same matrix into independent jobs. Those values are not public
-alternate suites.
+when it fans the same matrix into independent jobs. The hosted macOS wrapper
+also accepts `browser`, which it routes to the standalone browser suite instead
+of the repo-local matrix. Those values are not public alternate suites.
 
 The complete harness result at the exact source SHA is the behavioral gate.
 Manual app smokes, standalone videos, legacy runners, and environment-parity
@@ -130,13 +236,12 @@ complete repo-local matrix.
 The maintainer-facing macOS command is
 `libs/cua-driver/tests/runners/macos-lume/run-all.sh`. It verifies the private
 Lume seed, installs the exact committed source, and then delegates to the thin
-`macos/run-rust-e2e.sh` matrix runner above. Pass `--standalone-browser` to run
-the optional installed Chrome/Edge browser matrix after the canonical repo-local
-harness matrix.
+`macos/run-rust-e2e.sh` matrix runner above. It then always runs the installed
+Chrome/Edge browser matrix after the canonical repo-local harness matrix.
 
 Run the canonical logged-in Lume gate directly from Terminal in the disposable
 guest; do not install or register a GitHub Actions runner in that guest. After a
-successful `run-all.sh --standalone-browser` invocation, bundle the private
+successful `run-all.sh` invocation, bundle the private
 artifact directories, calculate their SHA-256 digest, and dispatch
 `.github/workflows/e2e-rust-macos.yml` in `lume` mode at the exact candidate SHA
 with the harness run ID and digest. That protected `ubuntu-latest` job only
@@ -152,14 +257,21 @@ exact source SHA. Probe permission checks describe only the temporary probe
 process. Dispatch only a reviewed commit SHA; the selected source is executable
 test code and the bootstrap uses the hosted runner's passwordless sudo policy.
 
-After that prerequisite passes, three fresh hosted runners execute the shared,
-native, and capture partitions through `macos/run-hosted-rust-e2e.sh`. Each
+After that prerequisite passes, four fresh hosted runners execute the shared,
+native, capture, and browser lanes through `macos/run-hosted-rust-e2e.sh`. Each
 runner refuses unexpected hosts or pre-existing app state, creates a temporary
 certificate-backed identity and Keychain, installs the exact source as
 `CuaDriverLocal.app`, seeds only its Accessibility and Screen Capture TCC rows,
 records the app's separate `replayd` approval before its first direct capture,
 verifies the daemon-attributed permission result, and delegates to
-`macos/run-rust-e2e.sh`. GitHub's image-level approval covers the hosted runner
+`macos/run-rust-e2e.sh`. The browser lane instead runs
+`run-rust-standalone-browser-e2e.sh` against the same unrestricted installed
+daemon for the image's Google Chrome and Microsoft Edge, writing evidence to
+`artifacts/cua-driver/macos-standalone-browser/` like the Lume gate. It fails
+before bootstrap when either browser is missing or fails the driver's vendor
+code-signing requirement, and it never shrinks the product set. The image's Edge
+carries a stray `com.apple.FinderInfo` attribute that strict verification
+rejects; the lane removes only that unsigned attribute and records each path. The `certify` job requires every lane. GitHub's image-level approval covers the hosted runner
 agent, while the bundled driver is its own responsible ScreenCaptureKit client
 and would otherwise show the private-window-picker reminder over the headed
 test. The lane uploads bootstrap, structured result, log, and video evidence

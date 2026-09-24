@@ -87,6 +87,49 @@ const FfiConverterTypeClaimLifecycle = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * Reference to a claim-scoped Secret delivered into the bound sandbox. See
+ * [`CLAIM_SECRET_NAME_PREFIX`].
+ */
+export type ClaimSecretRef = {
+    name: string
+}
+
+/**
+ * Generated factory for {@link ClaimSecretRef} record objects.
+ */
+export const ClaimSecretRef = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ClaimSecretRef, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ClaimSecretRef>,
+    });
+})();
+
+const FfiConverterTypeClaimSecretRef = (() => {
+    type TypeName = ClaimSecretRef;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                name: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.name, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.name);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type SandboxTemplateRef = {
     name: string
 }
@@ -131,7 +174,8 @@ export type ClaimSpec = {
     warmpool?: string,
     bindDeadline?: number,
     lifecycle?: ClaimLifecycle,
-    ttlSecondsAfterCreated?: number
+    ttlSecondsAfterCreated?: number,
+    secretRef?: ClaimSecretRef
 }
 
 /**
@@ -139,7 +183,8 @@ export type ClaimSpec = {
  */
 export const ClaimSpec = (() => {
     const defaults = () => ({
-        ttlSecondsAfterCreated: undefined
+        ttlSecondsAfterCreated: undefined,
+        secretRef: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<ClaimSpec, ReturnType<typeof defaults>>(defaults);
@@ -160,7 +205,8 @@ const FfiConverterTypeClaimSpec = (() => {
                 warmpool: FfiConverterOptionalString.read(from),
                 bindDeadline: FfiConverterOptionalUInt32.read(from),
                 lifecycle: FfiConverterOptionalTypeClaimLifecycle.read(from),
-                ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from)
+                ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from),
+                secretRef: FfiConverterOptionalTypeClaimSecretRef.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -169,13 +215,15 @@ const FfiConverterTypeClaimSpec = (() => {
             FfiConverterOptionalUInt32.write(value.bindDeadline, into);
             FfiConverterOptionalTypeClaimLifecycle.write(value.lifecycle, into);
             FfiConverterOptionalUInt32.write(value.ttlSecondsAfterCreated, into);
+            FfiConverterOptionalTypeClaimSecretRef.write(value.secretRef, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypeSandboxTemplateRef.allocationSize(value.sandboxTemplateRef) +
              FfiConverterOptionalString.allocationSize(value.warmpool) +
              FfiConverterOptionalUInt32.allocationSize(value.bindDeadline) +
              FfiConverterOptionalTypeClaimLifecycle.allocationSize(value.lifecycle) +
-             FfiConverterOptionalUInt32.allocationSize(value.ttlSecondsAfterCreated);
+             FfiConverterOptionalUInt32.allocationSize(value.ttlSecondsAfterCreated) +
+             FfiConverterOptionalTypeClaimSecretRef.allocationSize(value.secretRef);
 
         }
     };
@@ -685,6 +733,47 @@ const FfiConverterTypeOidcConfig = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * How `vmTemplate.command`/`args`/`env` reach the sandbox
+ * (`vmTemplate.processMode`). Absent means `Legacy`.
+ */
+export enum ProcessMode {
+    /**
+     * What templates did before processMode existed: pod runtimes run
+     * command/args/env; KubeVirt ignores command and refuses args/env.
+     */
+    Legacy,
+    /**
+     * Every runtime runs command/args/env. Pod runtimes set them on the
+     * sandbox container; KubeVirt renders them into the sandbox's cloud-init.
+     */
+    Run
+}
+
+const FfiConverterTypeProcessMode = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ProcessMode;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ProcessMode.Legacy;
+                case 2: return ProcessMode.Run;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ProcessMode.Legacy: return ordinalConverter.write(1, into);
+                case ProcessMode.Run: return ordinalConverter.write(2, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
 export type VmTemplate = {
     containerDiskImage: string,
     command?: Array<string>,
@@ -700,7 +789,11 @@ export type VmTemplate = {
     nestedVirtualization?: boolean,
     probes?: PreservedJsonLike,
     services?: Array<SandboxService>,
-    oidc?: OidcConfig
+    oidc?: OidcConfig,
+    claimSecrets?: boolean,
+    args?: Array<string>,
+    env?: Map<string, string>,
+    processMode?: ProcessMode
 }
 
 /**
@@ -708,6 +801,10 @@ export type VmTemplate = {
  */
 export const VmTemplate = (() => {
     const defaults = () => ({
+        claimSecrets: undefined,
+        args: undefined,
+        env: undefined,
+        processMode: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<VmTemplate, ReturnType<typeof defaults>>(defaults);
@@ -738,7 +835,11 @@ const FfiConverterTypeVmTemplate = (() => {
                 nestedVirtualization: FfiConverterOptionalBoolean.read(from),
                 probes: FfiConverterOptionalTypePreservedJson.read(from),
                 services: FfiConverterOptionalSequenceTypeSandboxService.read(from),
-                oidc: FfiConverterOptionalTypeOidcConfig.read(from)
+                oidc: FfiConverterOptionalTypeOidcConfig.read(from),
+                claimSecrets: FfiConverterOptionalBoolean.read(from),
+                args: FfiConverterOptionalSequenceString.read(from),
+                env: FfiConverterOptionalMapStringString.read(from),
+                processMode: FfiConverterOptionalTypeProcessMode.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -757,6 +858,10 @@ const FfiConverterTypeVmTemplate = (() => {
             FfiConverterOptionalTypePreservedJson.write(value.probes, into);
             FfiConverterOptionalSequenceTypeSandboxService.write(value.services, into);
             FfiConverterOptionalTypeOidcConfig.write(value.oidc, into);
+            FfiConverterOptionalBoolean.write(value.claimSecrets, into);
+            FfiConverterOptionalSequenceString.write(value.args, into);
+            FfiConverterOptionalMapStringString.write(value.env, into);
+            FfiConverterOptionalTypeProcessMode.write(value.processMode, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.containerDiskImage) +
@@ -773,7 +878,11 @@ const FfiConverterTypeVmTemplate = (() => {
              FfiConverterOptionalBoolean.allocationSize(value.nestedVirtualization) +
              FfiConverterOptionalTypePreservedJson.allocationSize(value.probes) +
              FfiConverterOptionalSequenceTypeSandboxService.allocationSize(value.services) +
-             FfiConverterOptionalTypeOidcConfig.allocationSize(value.oidc);
+             FfiConverterOptionalTypeOidcConfig.allocationSize(value.oidc) +
+             FfiConverterOptionalBoolean.allocationSize(value.claimSecrets) +
+             FfiConverterOptionalSequenceString.allocationSize(value.args) +
+             FfiConverterOptionalMapStringString.allocationSize(value.env) +
+             FfiConverterOptionalTypeProcessMode.allocationSize(value.processMode);
 
         }
     };
@@ -972,11 +1081,53 @@ const FfiConverterTypeWarmPoolAutoscaling = (() => {
     return new FFIConverter();
 })();
 
+/**
+ * What the pool-operator deletes when a warm pool's creation TTL
+ * (`ttlSecondsAfterCreated`) or idle TTL (`idleTtlSeconds`) expires.
+ */
+export enum WarmPoolTtlPolicy {
+    /**
+     * Delete only the warm pool. Its claims and namespace stay.
+     */
+    Retain,
+    /**
+     * Also delete the pool's dead unbound claims (TTL passed, older than
+     * max(900s, bindDeadline)). Bound claims, the namespace and volumes stay.
+     */
+    Cascade
+}
+
+const FfiConverterTypeWarmPoolTtlPolicy = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = WarmPoolTtlPolicy;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return WarmPoolTtlPolicy.Retain;
+                case 2: return WarmPoolTtlPolicy.Cascade;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case WarmPoolTtlPolicy.Retain: return ordinalConverter.write(1, into);
+                case WarmPoolTtlPolicy.Cascade: return ordinalConverter.write(2, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
 export type OsGymSandboxWarmPoolSpec = {
     replicas: number,
     sandboxTemplateRef: SandboxTemplateRef,
     autoscaling?: WarmPoolAutoscaling,
-    ttlSecondsAfterCreated?: number
+    ttlSecondsAfterCreated?: number,
+    idleTtlSeconds?: number,
+    ttlPolicy?: WarmPoolTtlPolicy
 }
 
 /**
@@ -984,7 +1135,9 @@ export type OsGymSandboxWarmPoolSpec = {
  */
 export const OsGymSandboxWarmPoolSpec = (() => {
     const defaults = () => ({
-        ttlSecondsAfterCreated: undefined
+        ttlSecondsAfterCreated: undefined,
+        idleTtlSeconds: undefined,
+        ttlPolicy: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<OsGymSandboxWarmPoolSpec, ReturnType<typeof defaults>>(defaults);
@@ -1004,7 +1157,9 @@ const FfiConverterTypeOSGymSandboxWarmPoolSpec = (() => {
                 replicas: FfiConverterUInt32.read(from),
                 sandboxTemplateRef: FfiConverterTypeSandboxTemplateRef.read(from),
                 autoscaling: FfiConverterOptionalTypeWarmPoolAutoscaling.read(from),
-                ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from)
+                ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from),
+                idleTtlSeconds: FfiConverterOptionalUInt32.read(from),
+                ttlPolicy: FfiConverterOptionalTypeWarmPoolTtlPolicy.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -1012,12 +1167,16 @@ const FfiConverterTypeOSGymSandboxWarmPoolSpec = (() => {
             FfiConverterTypeSandboxTemplateRef.write(value.sandboxTemplateRef, into);
             FfiConverterOptionalTypeWarmPoolAutoscaling.write(value.autoscaling, into);
             FfiConverterOptionalUInt32.write(value.ttlSecondsAfterCreated, into);
+            FfiConverterOptionalUInt32.write(value.idleTtlSeconds, into);
+            FfiConverterOptionalTypeWarmPoolTtlPolicy.write(value.ttlPolicy, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterUInt32.allocationSize(value.replicas) +
              FfiConverterTypeSandboxTemplateRef.allocationSize(value.sandboxTemplateRef) +
              FfiConverterOptionalTypeWarmPoolAutoscaling.allocationSize(value.autoscaling) +
-             FfiConverterOptionalUInt32.allocationSize(value.ttlSecondsAfterCreated);
+             FfiConverterOptionalUInt32.allocationSize(value.ttlSecondsAfterCreated) +
+             FfiConverterOptionalUInt32.allocationSize(value.idleTtlSeconds) +
+             FfiConverterOptionalTypeWarmPoolTtlPolicy.allocationSize(value.ttlPolicy);
 
         }
     };
@@ -1027,7 +1186,9 @@ const FfiConverterTypeOSGymSandboxWarmPoolSpec = (() => {
 export type OsGymSandboxWarmPoolStatus = {
     replicas?: number,
     readyReplicas?: number,
-    selector?: string
+    selector?: string,
+    lastClaimedAt?: string,
+    lastActivityTime?: string
 }
 
 /**
@@ -1035,6 +1196,8 @@ export type OsGymSandboxWarmPoolStatus = {
  */
 export const OsGymSandboxWarmPoolStatus = (() => {
     const defaults = () => ({
+        lastClaimedAt: undefined,
+        lastActivityTime: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<OsGymSandboxWarmPoolStatus, ReturnType<typeof defaults>>(defaults);
@@ -1053,18 +1216,24 @@ const FfiConverterTypeOSGymSandboxWarmPoolStatus = (() => {
             return {
                 replicas: FfiConverterOptionalUInt32.read(from),
                 readyReplicas: FfiConverterOptionalUInt32.read(from),
-                selector: FfiConverterOptionalString.read(from)
+                selector: FfiConverterOptionalString.read(from),
+                lastClaimedAt: FfiConverterOptionalString.read(from),
+                lastActivityTime: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterOptionalUInt32.write(value.replicas, into);
             FfiConverterOptionalUInt32.write(value.readyReplicas, into);
             FfiConverterOptionalString.write(value.selector, into);
+            FfiConverterOptionalString.write(value.lastClaimedAt, into);
+            FfiConverterOptionalString.write(value.lastActivityTime, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterOptionalUInt32.allocationSize(value.replicas) +
              FfiConverterOptionalUInt32.allocationSize(value.readyReplicas) +
-             FfiConverterOptionalString.allocationSize(value.selector);
+             FfiConverterOptionalString.allocationSize(value.selector) +
+             FfiConverterOptionalString.allocationSize(value.lastClaimedAt) +
+             FfiConverterOptionalString.allocationSize(value.lastActivityTime);
 
         }
     };
@@ -1282,6 +1451,9 @@ const FfiConverterOptionalUInt32 = new FfiConverterOptional(FfiConverterUInt32);
 // FfiConverter for ClaimLifecycle | undefined
 const FfiConverterOptionalTypeClaimLifecycle = new FfiConverterOptional(FfiConverterTypeClaimLifecycle);
 
+// FfiConverter for ClaimSecretRef | undefined
+const FfiConverterOptionalTypeClaimSecretRef = new FfiConverterOptional(FfiConverterTypeClaimSecretRef);
+
 // FfiConverter for Array<OsGymSandboxClaimCondition>
 const FfiConverterSequenceTypeOSGymSandboxClaimCondition = new FfiConverterArray(FfiConverterTypeOSGymSandboxClaimCondition);
 
@@ -1333,8 +1505,14 @@ const FfiConverterOptionalSequenceTypeSandboxService = new FfiConverterOptional(
 // FfiConverter for OidcConfig | undefined
 const FfiConverterOptionalTypeOidcConfig = new FfiConverterOptional(FfiConverterTypeOidcConfig);
 
+// FfiConverter for ProcessMode | undefined
+const FfiConverterOptionalTypeProcessMode = new FfiConverterOptional(FfiConverterTypeProcessMode);
+
 // FfiConverter for WarmPoolAutoscaling | undefined
 const FfiConverterOptionalTypeWarmPoolAutoscaling = new FfiConverterOptional(FfiConverterTypeWarmPoolAutoscaling);
+
+// FfiConverter for WarmPoolTtlPolicy | undefined
+const FfiConverterOptionalTypeWarmPoolTtlPolicy = new FfiConverterOptional(FfiConverterTypeWarmPoolTtlPolicy);
 
 
 /**
@@ -1368,6 +1546,7 @@ export default Object.freeze({
   initialize: uniffiEnsureInitialized,
   converters: {
     FfiConverterTypeClaimLifecycle,
+    FfiConverterTypeClaimSecretRef,
     FfiConverterTypeClaimSpec,
     FfiConverterTypeFirmware,
     FfiConverterTypeImagePullPolicy,
@@ -1382,6 +1561,7 @@ export default Object.freeze({
     FfiConverterTypeOSGymSandboxWarmPoolStatus,
     FfiConverterTypeOidcConfig,
     FfiConverterTypePreservedJson,
+    FfiConverterTypeProcessMode,
     FfiConverterTypeRuntimeKind,
     FfiConverterTypeSandboxService,
     FfiConverterTypeSandboxTemplateRef,
@@ -1389,5 +1569,6 @@ export default Object.freeze({
     FfiConverterTypeServiceProtocol,
     FfiConverterTypeVmTemplate,
     FfiConverterTypeWarmPoolAutoscaling,
+    FfiConverterTypeWarmPoolTtlPolicy,
   }
 });

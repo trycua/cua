@@ -738,10 +738,18 @@ fi
         ):
             self.assertIn("needs: release-attribution-preflight", block)
 
-        # Keep the publication-time guard as defense in depth.
+        # Keep the publication-time guard as defense in depth, and run it with
+        # the same release-control tooling as the preflight so both agree.
         self.assertEqual(
-            workflow.count("python3 .github/scripts/release_attribution.py collect"),
-            1,
+            workflow.count(
+                "python3 release-control/.github/scripts/release_attribution.py collect"
+            ),
+            2,
+        )
+        self.assertNotIn("python3 .github/scripts/release_attribution.py", workflow)
+        self.assertEqual(
+            workflow.count("--release-metadata-path libs/cua-driver/rust/CHANGELOG.md"),
+            2,
         )
 
     def test_driver_windows_release_signs_every_pe_binary_before_packaging(self) -> None:

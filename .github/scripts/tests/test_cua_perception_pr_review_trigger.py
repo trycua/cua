@@ -135,19 +135,20 @@ def test_pr_review_produces_candidates_without_entering_the_protected_environmen
     assert not re.findall(r"^\s*environment:", trigger_text, re.MULTILINE)
 
 
-def test_protected_live_workflow_owns_secrets_and_environment() -> None:
+def test_protected_candidate_workflow_is_secret_free_and_keeps_environment() -> None:
     live_text, live_workflow = load_workflow(LIVE)
-    live_job = live_workflow["jobs"]["live"]
+    live_job = live_workflow["jobs"]["candidate"]
     assert live_job["environment"] == "authorized-live-jev-use-demo"
+    assert "TYPESAFE_API_KEY" not in live_text
+    assert "LIVE_TYPESAFE_API_KEY" not in live_text
+    assert "${{ secrets." not in live_text
+    assert "run_live" not in live_text
+    assert "CUA_JEV_LIVE" not in live_text
     secret_steps = [step for step in live_job["steps"] if "${{ secrets." in str(step)]
-    assert len(secret_steps) == 1
-    typesafe_step = next(
-        step for step in secret_steps if "LIVE_TYPESAFE_API_KEY" in step.get("env", {})
+    assert secret_steps == []
+    assert "TYPESAFE_API_KEY" not in "\n".join(
+        str(job) for name, job in live_workflow["jobs"].items() if name != "candidate"
     )
-    assert typesafe_step["env"] == {
-        "GH_TOKEN": "${{ github.token }}",
-        "LIVE_TYPESAFE_API_KEY": "${{ secrets.TYPESAFE_API_KEY }}",
-    }
     evidence_step = next(
         step
         for step in live_job["steps"]
@@ -157,14 +158,11 @@ def test_protected_live_workflow_owns_secrets_and_environment() -> None:
         "CUA_PERCEPTION_EVIDENCE_RECIPIENT": ("${{ vars.EVIDENCE_ARCHIVE_RECIPIENT_PUBLIC_KEY }}"),
     }
     assert "EVIDENCE_ARCHIVE_KEY" not in live_text
-    assert "TYPESAFE_API_KEY" not in "\n".join(
-        str(job) for name, job in live_workflow["jobs"].items() if name != "live"
-    )
     validation = next(
         step["run"] for step in live_job["steps"] if step.get("name", "").startswith("Fully decode")
     )
-    assert 'chooser["mode"] == "live"' in validation
-    assert 'chooser["provider"] == "typesafe"' in validation
+    assert 'chooser["mode"] == "mock"' in validation
+    assert 'chooser["provider"] == "fixture"' in validation
 
 
 def test_macos_direct_lume_registration_is_manual_and_not_pr_event_chained() -> None:

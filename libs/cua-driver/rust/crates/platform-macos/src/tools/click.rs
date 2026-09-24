@@ -960,6 +960,26 @@ impl Tool for ClickTool {
                 None
             };
 
+            // Pin the overlay above the target window BEFORE animating so
+            // the cursor is already sandwiched correctly while it glides in.
+            // Explicit AX focus and routed pointer clicks share this glide.
+            if let Some(wid) = window_id {
+                crate::cursor::overlay::send_command(
+                    cursor_key.clone(),
+                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
+                );
+            }
+            // Animate the visual cursor to the click point and wait for it to
+            // arrive — mirrors Swift's `AgentCursor.shared.animateAndWait(to:)`.
+            crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
+            // Keep the registry in sync with the overlay (see AX path above).
+            self.state
+                .cursor_registry
+                .update_position(&cursor_key, screen_x, screen_y);
+            self.state
+                .cursor_registry
+                .note_press(&cursor_key, screen_x, screen_y);
+
             // A coordinate click promises pointer events at that position.
             // AXPress may report success without mouse/pointer down/up (canvas
             // and custom handlers), so it must never short-circuit or precede
@@ -993,6 +1013,13 @@ impl Tool for ClickTool {
                 .await;
                 match ax_result {
                     Ok(Ok(true)) => {
+                        crate::cursor::overlay::send_command(
+                            cursor_key.clone(),
+                            cursor_overlay::OverlayCommand::ClickPulse {
+                                x: screen_x,
+                                y: screen_y,
+                            },
+                        );
                         return ToolResult::text(format!(
                             "✅ PX hit-test focused the background element via AX."
                         ))
@@ -1029,25 +1056,6 @@ impl Tool for ClickTool {
             // background, matching the existing contract and result label.
             let fg = delivery_mode.is_foreground() && window_id.is_some();
             let activation_policy = pixel_activation_policy(&button_str, fg, window_id.is_some());
-
-            // Pin the overlay above the target window BEFORE animating so
-            // the cursor is already sandwiched correctly while it glides in.
-            if let Some(wid) = window_id {
-                crate::cursor::overlay::send_command(
-                    cursor_key.clone(),
-                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-                );
-            }
-            // Animate the visual cursor to the click point and wait for it to
-            // arrive — mirrors Swift's `AgentCursor.shared.animateAndWait(to:)`.
-            crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
-            // Keep the registry in sync with the overlay (see AX path above).
-            self.state
-                .cursor_registry
-                .update_position(&cursor_key, screen_x, screen_y);
-            self.state
-                .cursor_registry
-                .note_press(&cursor_key, screen_x, screen_y);
 
             // Observe side effects without restoring a stale foreground app
             // during target-only focus: the user may switch windows mid-click.

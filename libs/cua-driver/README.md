@@ -14,9 +14,16 @@ authority remain in Driver, and a region-derived pixel click must carry the
 same one-use `capture_id` as the observation.
 
 See the [extension and runtime contract](docs/perception-extension.md) for
-installation, failure, capture, and action boundaries. Review the [third-party
-notices](docs/perception-third-party-notices.md) before distributing the
-separate worker, model, or ONNX Runtime artifacts.
+installation, failure, capture, and action boundaries.
+
+> [!WARNING]
+> The extension is not MIT licensed. Its OmniParser icon detector is
+> AGPL-3.0-only. Installing the extension does not change the Driver's MIT
+> license. However, redistributing the extension, or offering it to users over a
+> network, can require you to provide the AGPL corresponding source. If your
+> organization does not accept AGPL components, do not install the extension.
+> Read the [third-party notices and precautions](docs/perception-third-party-notices.md)
+> before you install, redistribute, or host it.
 
 For offline inspection of an existing PNG, the CLI also provides a local-only
 mode:

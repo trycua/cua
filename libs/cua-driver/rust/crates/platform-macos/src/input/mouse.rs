@@ -451,8 +451,6 @@ pub fn click_at_xy_chromium(
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
     let target = CGPoint::new(screen_x, screen_y);
     let off_screen = CGPoint::new(-1.0, -1.0);
-    let win_local = (win_local_x, win_local_y);
-    let off_local = (-1.0_f64, -1.0_f64);
     let flags = parse_modifier_flags(modifiers);
     let click_pairs = count.clamp(1, 2);
     let window_id = wid as i64;
@@ -466,7 +464,7 @@ pub fn click_at_xy_chromium(
 
     // Stamp required fields onto a CGEvent.  All captured values are Copy so
     // this closure is Fn (callable multiple times).
-    let stamp = |event: &CGEvent, local: (f64, f64), click_state: i64, phase: i64| {
+    let stamp = |event: &CGEvent, click_state: i64, phase: i64| {
         let ptr = event.as_ptr() as *mut std::ffi::c_void;
         let set = |f: u32, v: i64| {
             crate::input::skylight::set_integer_field(ptr, f, v);
@@ -482,17 +480,17 @@ pub fn click_at_xy_chromium(
             set(92, window_id); // kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent
         }
         set(58, click_group_id); // click-group ID (gesture coalescing)
-        crate::input::skylight::set_window_location(ptr, local.0, local.1);
         if flags != CGEventFlags::CGEventFlagNull {
             event.set_flags(flags);
         }
     };
 
-    let post = |event: &CGEvent| {
+    let post = |event: &CGEvent, screen: (f64, f64), local: (f64, f64)| {
         let ptr = event.as_ptr() as *mut std::ffi::c_void;
-        if !crate::input::skylight::post_to_pid(pid as libc::pid_t, ptr, false) {
-            event.post_to_pid(pid as libc::pid_t);
-        }
+        crate::input::skylight::set_window_location(ptr, screen.0, screen.1);
+        crate::input::skylight::post_to_pid(pid as libc::pid_t, ptr, false);
+        crate::input::skylight::set_window_location(ptr, local.0, local.1);
+        event.post_to_pid(pid as libc::pid_t);
     };
 
     // Step 1: mouseMoved at target (phase=2, clickState=0).
@@ -503,8 +501,8 @@ pub fn click_at_xy_chromium(
         CGMouseButton::Left,
     )
     .map_err(|_| anyhow::anyhow!("mouseMoved event creation failed"))?;
-    stamp(&move_event, win_local, 0, 2);
-    post(&move_event);
+    stamp(&move_event, 0, 2);
+    post(&move_event, (screen_x, screen_y), (win_local_x, win_local_y));
     std::thread::sleep(std::time::Duration::from_millis(15));
 
     // Step 2: off-screen primer click — opens Chromium user-activation gate
@@ -516,8 +514,8 @@ pub fn click_at_xy_chromium(
         CGMouseButton::Left,
     )
     .map_err(|_| anyhow::anyhow!("primer down event creation failed"))?;
-    stamp(&primer_down, off_local, 1, 1);
-    post(&primer_down);
+    stamp(&primer_down, 1, 1);
+    post(&primer_down, (-1.0, -1.0), (-1.0, -1.0));
     std::thread::sleep(std::time::Duration::from_millis(1));
 
     let primer_up = CGEvent::new_mouse_event(
@@ -527,8 +525,8 @@ pub fn click_at_xy_chromium(
         CGMouseButton::Left,
     )
     .map_err(|_| anyhow::anyhow!("primer up event creation failed"))?;
-    stamp(&primer_up, off_local, 1, 2);
-    post(&primer_up);
+    stamp(&primer_up, 1, 2);
+    post(&primer_up, (-1.0, -1.0), (-1.0, -1.0));
     // ≥1 frame so Chromium sees primer + target as separate gestures, not run-on.
     std::thread::sleep(std::time::Duration::from_millis(100));
 
@@ -544,8 +542,8 @@ pub fn click_at_xy_chromium(
             CGMouseButton::Left,
         )
         .map_err(|_| anyhow::anyhow!("target down event creation failed"))?;
-        stamp(&down, win_local, click_state, 3);
-        post(&down);
+        stamp(&down, click_state, 3);
+        post(&down, (screen_x, screen_y), (win_local_x, win_local_y));
         std::thread::sleep(std::time::Duration::from_millis(1));
 
         let up = CGEvent::new_mouse_event(
@@ -555,8 +553,8 @@ pub fn click_at_xy_chromium(
             CGMouseButton::Left,
         )
         .map_err(|_| anyhow::anyhow!("target up event creation failed"))?;
-        stamp(&up, win_local, click_state, 3);
-        post(&up);
+        stamp(&up, click_state, 3);
+        post(&up, (screen_x, screen_y), (win_local_x, win_local_y));
 
         if pair_index < click_pairs {
             // ~80 ms between pairs — under the system double-click threshold,

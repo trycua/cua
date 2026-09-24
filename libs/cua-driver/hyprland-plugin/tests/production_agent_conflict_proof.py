@@ -37,7 +37,7 @@ import time
 from driver_input_live import state, wait_for
 from primary_trace import analyze
 from production_cancel_proof import (MAX_GROUNDING_AGE_NS, PROFILE, close_owned, grounded_snapshot,
-    validate_app_profile, verify_fresh_observation, verify_recovery_cleanup, verify_recovery_trace)
+    observation_started_ns, validate_app_profile, verify_fresh_observation, verify_recovery_cleanup, verify_recovery_trace)
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
 import production_pointer_grounding as pointer_grounding
 from production_primary_conflict_proof import ExactDesktop, clear_status, validate_plan as primary_plan
@@ -135,8 +135,8 @@ def verify_close_events(before, after, allowed):
 
 def ground(actor, spec):
     """Ground one scroll on the acting runtime's fresh image; resolve scroll_visible before input."""
-    started_ns = time.monotonic_ns()
     before = grounded_snapshot(actor, spec['target'], spec)
+    prepared_ns = observation_started_ns(before)
     image = pointer_grounding.read_pixels(before['proof_image'])
     stage = spec['pointer_stage']
     if stage == 'scroll_visible':
@@ -145,7 +145,7 @@ def ground(actor, spec):
     arguments, oracle = pointer_grounding.action(before, image, spec['app'], stage)
     return {'snapshot': before, 'arguments': arguments, 'oracle': oracle, 'stage': stage,
             'requested_stage': spec['pointer_stage'],
-            'prepared_ns': before.get('proof_observation_started_ns', started_ns)}
+            'prepared_ns': prepared_ns}
 
 
 def action(actor, observer, spec, stage, trace, guard, save, record, *, owner_lane=None):

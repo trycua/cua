@@ -264,12 +264,14 @@ def run(args):
         assert checked['result'] == 'passed' and released_synthetic_input(stopped), checked
         assert [row[2] for row in stopped['events'] if row[2] in ('start', 'stop')] == ['start', 'stop'], \
             'trace restarted within an action phase'
-        boundary = report['phases'][phase]['trace_after']
-        assert stopped['events'][:boundary['count']] == boundary['events'], 'final trace history changed'
         if phase == 'refusal':
             assert not any(row[5] in (1, 2) for row in stopped['events']), 'refusal dispatched or teardown sent input'
-        else:
-            checked = verify_recovery_cleanup(report['phases'][phase]['trace_after'], stopped)
+        # A lost start acknowledgement or failed action leaves no post-action boundary.
+        boundary = report['phases'].get(phase, {}).get('trace_after')
+        assert boundary is not None, f'{phase} trace boundary was never recorded; final history is unverifiable'
+        assert stopped['events'][:boundary['count']] == boundary['events'], 'final trace history changed'
+        if phase != 'refusal':
+            checked = verify_recovery_cleanup(boundary, stopped)
         guard()
         report['phases'][phase]['final_status'] = desktop.status(unreserved=True, allow_passive=phase == 'recovery')
         report['phases'][phase]['isolation'] = checked

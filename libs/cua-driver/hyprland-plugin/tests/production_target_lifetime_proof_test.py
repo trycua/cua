@@ -294,6 +294,40 @@ class InjectionTests(unittest.TestCase):
                     with self.assertRaisesRegex(AssertionError, 'one termination'):
                         fault.inject(Mock(), trace(ACTIVE[:1]), pending, Mock())
 
+    def test_status_without_resource_counters_is_not_yet_cleared_and_never_fatal(self):
+        def bounded(check, timeout):
+            for _ in range(3):
+                value = check()
+                if value:
+                    return value
+            raise AssertionError('bounded evidence wait expired')
+        for eventually_cleared in (True, False):
+            with self.subTest(eventually_cleared=eventually_cleared), ExitStack() as stack:
+                fault = object.__new__(proof.TargetLifetime)
+                fault.fd, fault.sent, fault.record = 77, False, {}
+                fault.guard, fault.spec = Mock(), plan()['agents'][0]
+                before, after = statuses()
+                partial = deepcopy(after)
+                del partial['input']['lanes'][0]['pointer_resources']
+                samples = [partial, after, after] if eventually_cleared else [partial] * 3
+                fault.status = Mock(side_effect=[before, *samples])
+                fault.gone = Mock(return_value={'pidfd_exited': True, 'window_absent': True, 'observed_ns': 9_000_000})
+                stack.enter_context(patch.object(proof, 'poll_active', return_value=(trace(ACTIVE), {1: 2})))
+                stack.enter_context(patch.object(proof, 'saved_document'))
+                stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=[5_000_000, 6_000_000, 10_000_000]))
+                stack.enter_context(patch.object(proof.signal, 'pidfd_send_signal', create=True))
+                stack.enter_context(patch.object(proof, 'wait_for', side_effect=bounded))
+                pending = Mock(done=Mock(return_value=False))
+                if eventually_cleared:
+                    self.assertEqual(fault.inject(Mock(), trace(ACTIVE[:1]), pending, Mock()), 1)
+                    self.assertEqual(fault.record['after'], after)
+                    self.assertNotIn('last_clear_error', fault.record)
+                else:
+                    with self.assertRaisesRegex(AssertionError, 'bounded evidence wait expired'):
+                        fault.inject(Mock(), trace(ACTIVE[:1]), pending, Mock())
+                    self.assertEqual(fault.record['last_status'], partial)
+                    self.assertEqual(fault.record['last_clear_error'], "KeyError: 'pointer_resources'")
+
     def test_gone_requires_pidfd_exit_and_old_address_absence(self):
         for exited, windows in ((False, []), (True, [{'pid': 21, 'address': '0xc8'}]),
                                 (True, [{'pid': 20, 'address': '0xff'}]), (True, [])):

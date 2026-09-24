@@ -34,7 +34,8 @@ from primary_trace import Trace, analyze
 from production_cancel_proof import (GROUNDING_DISPATCH_RESERVE_NS, MAX_GROUNDING_ATTEMPTS,
     MAX_GROUNDING_AGE_NS, POINTER_STAGES, PROFILE,
     RECOVERY_STAGES, active_drags, call_drag, close_owned, grounded_snapshot, validate_app_profile,
-    poll_active, prepare_drag, stopped_prefix, verify_recovery_cleanup, verify_recovery_trace)
+    poll_active, prepare_drag, require_recovery_runtimes, stopped_prefix, verify_recovery_cleanup,
+    verify_recovery_trace)
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
 import production_pointer_grounding as pointer_grounding
 from production_realapp_proof import (PRIMARY_LIFETIME_MS, app_process_identity,
@@ -217,7 +218,7 @@ def verify_fault(boundary, record, action):
     assert set(active_drags(prefix)) == {lane}
     tail = trace_interval(prefix, boundary)
     assert record['gate_ns'] <= record['requested_ns'] <= record['acknowledged_ns'] <= record['after']['observed_ns']
-    assert 0 <= record['requested_ns'] - record['gate_ns'] <= 250_000_000
+    assert 0 <= record['requested_ns'] - record['gate_ns'] <= 250_000_000, 'stale fault gate'
     assert prefix['events'][-1][1] <= record['requested_ns'], 'trace clock is incompatible'
     synthetic = [row for row in tail if row[5] in (1, 2)]
     assert all(row[5] == lane for row in synthetic), 'cleanup crossed lanes'
@@ -292,6 +293,7 @@ def recover(client, observer, victim, spec, stage, trace, boundary, lane, guard,
     result['app_effect'] = pointer_grounding.verify(after, pointer_grounding.read_pixels(after['proof_image']), oracle)
     page = trace.collect()
     result['trace'] = verify_recovery_trace(boundary, page, lane, tool)
+    require_recovery_runtimes(client, observer)
     guard()
     result['result'] = 'verified'
     return page

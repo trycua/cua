@@ -294,6 +294,25 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual(events, ['click_b2', 'expiry', 'click_a1'] if expires else ['click_b2', 'expiry'])
                 first_client.tool.assert_called_once_with('start_session', {'session': 'idle-proof'})
 
+    def test_invalid_plan_records_failed_result_without_runtime_or_status_reads(self):
+        import json
+        for name, text in (('invalid_plan', json.dumps({**plan(), 'idle_timeout': 1})), ('malformed_json', '{')):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+                path = Path(directory) / 'plan.json'
+                path.write_text(text)
+                args = SimpleNamespace(plan=path, evidence=Path(directory) / 'proof',
+                                       trace_socket=Path('/synthetic/cua-input-v3.sock'))
+                spawn = stack.enter_context(patch.object(proof, 'DirectMCP'))
+                status_read = stack.enter_context(patch.object(proof, 'read_input_status'))
+                stack.enter_context(patch('sys.stdout', new_callable=io.StringIO))
+                self.assertEqual(proof.run(args), 1)
+                spawn.assert_not_called()
+                status_read.assert_not_called()
+                report = json.loads((args.evidence / 'result.json').read_text())
+                self.assertEqual(report['result'], 'failed')
+                self.assertEqual(report['cleanup_errors'], [])
+                self.assertIn('error', report)
+
 
 if __name__ == '__main__':
     unittest.main()

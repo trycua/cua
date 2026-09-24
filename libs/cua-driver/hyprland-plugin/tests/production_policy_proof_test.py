@@ -287,6 +287,29 @@ class OracleTests(unittest.TestCase):
             self.assertIn('source differs', report['error']['message'])
 
 
+    def test_inkscape_only_profile_is_accepted_and_selects_profile_provenance(self):
+        candidate = {**plan(app='inkscape'), 'app_profile': 'inkscape-only'}
+        validate_plan(candidate)
+        for profile, app, message in (('inkscape-only', 'calc', 'outside the selected app profile'),
+                                      ('bogus', 'inkscape', 'unknown app qualification profile'),
+                                      (['inkscape-only'], 'inkscape', 'unknown app qualification profile')):
+            with self.subTest(profile=profile, app=app), self.assertRaisesRegex(AssertionError, message):
+                validate_plan({**plan(app=app), 'app_profile': profile})
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {}, clear=True):
+            directory = Path(temporary)
+            path = directory / 'plan.json'
+            path.write_text(json.dumps(candidate))
+            args = SimpleNamespace(plan=path, evidence=directory / 'evidence')
+            with patch('production_policy_proof.provenance',
+                       side_effect=AssertionError('profile provenance reached')) as provenance, \
+                    patch('production_policy_proof.DirectMCP') as spawn:
+                self.assertEqual(run(args), 1)
+                provenance.assert_called_once_with(args, app_profile='inkscape-only')
+                spawn.assert_not_called()
+            report = json.loads((args.evidence / 'result.json').read_text())
+            self.assertIn('profile provenance reached', report['error']['message'])
+
+
 class OrchestrationTests(unittest.TestCase):
     def exercise(self, directory, failure=None, *, app='calc', case='managed_deny',
                  missing_grounding=None):

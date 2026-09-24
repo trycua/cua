@@ -153,6 +153,13 @@ jobs:
               --exclude-path libs/cua-driver/experiments/cua-perception-inference \
               --exclude-companion-path libs/cua-driver/rust/Cargo.toml \
               --exclude-companion-path libs/cua-driver/rust/Cargo.lock \
+              --release-metadata-path libs/cua-driver/rust/CHANGELOG.md \
+              --release-metadata-path libs/cua-driver/rust/VERSION \
+              --release-metadata-path libs/cua-driver/rust/Cargo.toml \
+              --release-metadata-path libs/cua-driver/rust/Cargo.lock \
+              --release-metadata-path libs/cua-driver/rust/Skills/cua-driver/SKILL.md \
+              --release-metadata-path libs/cua-driver/typescript/package.json \
+              --release-metadata-path libs/cua-driver/typescript/package-lock.json \
               --changelog libs/cua-driver/rust/CHANGELOG.md \
               --output /tmp/cua-driver-release-manifest.json
           fi

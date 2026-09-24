@@ -72,10 +72,13 @@ uv run --frozen python/choose_decision.py --model jev \
 
 The S1 path runs locally and needs the separately installed `cua-s1` Python
 package, PyTorch, PEFT, and a Transformers build that recognizes
-`Qwen/Qwen3.5-4B`. The repository's `cua-s1[four-b]` dependency currently
-pins Transformers below 5, which cannot load this base model; the isolated
-proof used Transformers 5.17.0. Resolve and test that packaging constraint
-before treating the command as a supported installation recipe.
+`Qwen/Qwen3.5-4B`. Install the `cua-s1[four-b]` inference extra from the
+source that includes the Transformers 5 dependency update proposed in #4060;
+the main-branch extra still pins Transformers below 5. From the repository
+root, use `uv sync --project libs/cua-s1/python --extra four-b`, then run this
+chooser with `libs/cua-s1/python/.venv/bin/python`. The isolated pinned-weight
+proof used Transformers 5.17.0. This is a local source recipe, not a published
+package or a guarantee that every allowed dependency version loads the model.
 
 The published `cua-ai/cua-s1-4b-0.2` artifact is a PEFT adapter, not a
 standalone model. Pin and locally download both the base revision
@@ -85,7 +88,8 @@ standalone model. Pin and locally download both the base revision
 
 ```bash
 S1_DEVICE=cpu S1_DTYPE=float16 \
-  /path/to/s1-venv/bin/python python/choose_decision.py --model s1 \
+  /path/to/repo/libs/cua-s1/python/.venv/bin/python \
+  python/choose_decision.py --model s1 \
   < fixtures/jev-choice-request-v1.json
 ```
 

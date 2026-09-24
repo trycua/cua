@@ -56,6 +56,8 @@ jobs:
         run: uv run python -m unittest discover -s python/tests -v
       - name: Verify bounded chooser CLI in mock mode
         run: uv run --frozen python verify_choice_cli.py
+      - name: Verify closed-candidate decision CLI in mock mode
+        run: uv run --frozen python verify_decision_cli.py --model mock
 
   unit-typescript:
     name: TypeScript unit and typecheck

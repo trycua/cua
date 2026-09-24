@@ -85,6 +85,7 @@ fn window_target_candidates_for_pid(
         .filter(|window| window.pid == pid)
         .map(|window| WindowTargetCandidate {
             window_id: u64::from(window.window_id),
+            transient_for: None,
             title: window.title,
             app_name: Some(window.app_name),
             is_on_screen: window.is_on_screen,

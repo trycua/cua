@@ -68,6 +68,74 @@ desktop route after user screenshot approval. The window route returned
 `unverifiable`, so screenshots and user confirmation established the result.
 This is not certification of background targeting, other compositors, or video.
 
+## X11 observation and input details
+
+**What is open over the window.** `get_window_state` lists the pid's transient
+dialogs (`dialogs: [{window_id, title, transient_for, modal, bounds}]`) and
+override-redirect popups (`popups: [...]`) that are mapped, with a `follow_up`
+sentence naming the call that targets each one
+(`get_window_state(pid, window_id=<that id>)`). When one overlaps the window
+the screenshot is taken from the screen (`screenshot_composited:true`) so the
+menu or dialog is visible; the window's own drawable never shows them. The
+payload states its frame (`coordinate_frame:"window"`, `frame_note`): `x`/`y`
+of the pointer tools are pixels of THIS screenshot. Closed menus are listed
+with a `description` ("closed menu with N items…") and are not walked —
+click the menu (a real press) and read the popup by its window_id.
+`press_key` / `hotkey` that map a new top-level report it as `window_opened`
+with `window_change` evidence. Action results carry the same text as
+`summary` inside `structuredContent`, for clients that only show that.
+
+**Screenshot scale.** The window screenshot is delivered at or below 1.15
+megapixels (long edge ≤ `max_image_dimension`, 1568 by default): larger
+images are downsized before a model reads them, and its pixel coordinates
+would then be uniformly short. Pointer `x`/`y` and each element's
+`screenshot_frame` are pixels of the delivered image (the element's `frame`
+stays in screen coordinates, as on every platform); `frame_scale` < 1 and
+`screenshot_original_width` report the downsizing, and the driver scales your
+pixels back to the window.
+An explicit per-call `max_image_dimension` (0 = native) replaces this cap.
+
+**Keys while the app's own popup is open.** A Qt combo list / completer or a
+GTK/VCL menu holds a keyboard grab that makes the X server drop keys from the
+virtual keyboard. `press_key` / `hotkey` / `type_text` / `set_value` then go
+through the core keyboard (`path: "xtest_core_grab"`, the result names the
+popup and states that the core focus and active window were verified
+unchanged), or — when another application holds the core focus — are refused
+with `code: "popup_keyboard_grab"` and a hint: dismiss the popup (click
+outside it, or click one of its rows by element_index after
+`get_window_state(pid, window_id=<popup>)`) and retry. Typing an absolute path
+into a Qt file dialog opens its completer after the first `/`; prefer
+`set_value` on the "File name" field, which writes the path in one go.
+
+**Popup walks, labels, descriptions.** `get_window_state(pid, window_id=<popup>)`
+returns the popup's own rows (list / tree / menu items), never the main
+window's menubar. Elements carry `description` when the toolkit publishes one
+(Qt keeps a button's tooltip there: `push button "" (description "Pause")`;
+`label` falls back to it). A control's `label` is never its value: a spin
+button or slider nobody names is `unlabelled: true` with its place in
+`description` (`unlabelled spin button; 3rd of 4 spin buttons in this panel`,
+in visual order). `parent_index` is the nearest indexed real ancestor.
+
+**Grid presses.** After a click that lands on a table cell (LibreOffice Calc),
+the result appends `focus: cell D2` (`focused_cell`, evidence) read from the
+focus log, so a one-row miss is visible before you type.
+
+**Multi-click.** `click` takes `count: 2` (double) or `count: 3` (triple, a
+line/paragraph selection in editors) as one press train with real double-click
+cadence in both delivery modes; there is no `triple_click` tool.
+
+**Typing throughput.** Key-event typing (XTest in foreground, the virtual
+keyboard in background) runs at roughly 45-60 characters per second, so a
+1,300-character script takes about 30 s: scale a client-side `type_text`
+deadline with the text length instead of using a flat one (0.04 s per
+character leaves margin over those rates). A terminal can still be echoing when the call returns; read the
+result again before retyping text that looks truncated.
+
+**Cross-application drops.** A pointer action whose point lies over another
+application's window (a drag dropped onto VLC) reports that window's title
+change and the windows its pid opened as `foreign_window` / `window_change`
+evidence; the focus guard alone only watches the target pid.
+
 ## Native application menus
 
 Use `invoke_menu({pid, window_id, path:[...]})` for a known GTK/Qt application

@@ -283,6 +283,16 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         count
     }
 
+    pub fn window_for_snapshot(&self, pid: i32, snapshot_id: u32) -> Option<u64> {
+        self.inner
+            .lock()
+            .unwrap()
+            .get(&pid)?
+            .iter()
+            .find(|entry| entry.id == snapshot_id)
+            .map(|entry| entry.window_id)
+    }
+
     pub fn resolve(
         &self,
         pid: i32,

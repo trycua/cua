@@ -58,6 +58,8 @@ pub mod cursor_hook;
 pub mod cursor_sampler;
 pub mod cursor_shape;
 pub mod daemon;
+pub mod desktop_capture_scale;
+pub mod element_frame;
 pub mod element_query;
 pub mod element_token;
 pub mod expectation;
@@ -92,6 +94,7 @@ pub mod tool_args;
 pub mod tool_schema;
 pub mod video;
 pub mod video_ffmpeg;
+pub mod walk_budget;
 pub mod window_inspection;
 pub mod window_target;
 

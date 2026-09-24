@@ -86,11 +86,38 @@ fn capture_window_with_backends(
     ))
 }
 
+/// Longest an `import` run may take before it is killed.
+///
+/// Given a window id the server no longer knows, ImageMagick falls back to
+/// its interactive `XSelectWindow`: it grabs the X server and waits for a
+/// mouse click that never comes, and every other X client on the display
+/// hangs with it until the process dies. Killing it releases the grab.
+const IMPORT_TIMEOUT: Duration = Duration::from_secs(5);
+
 fn capture_via_import(xid: u64) -> Result<Vec<u8>> {
-    let out = Command::new("import")
+    if !crate::x11::window_exists(xid) {
+        bail!("window {xid} no longer exists");
+    }
+    let child = Command::new("import")
         .args(["-window", &xid.to_string(), "png:-"])
-        .output()
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| anyhow!("failed to launch ImageMagick import: {e}"))?;
+    let pid = child.id();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    let out = match rx.recv_timeout(IMPORT_TIMEOUT) {
+        Ok(out) => out.map_err(|e| anyhow!("failed to wait for ImageMagick import: {e}"))?,
+        Err(_) => {
+            // SAFETY: plain libc call on a pid this process spawned and has not reaped.
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+            bail!("ImageMagick import did not exit within {IMPORT_TIMEOUT:?} and was killed");
+        }
+    };
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         let detail = stderr.trim().chars().take(512).collect::<String>();
@@ -915,6 +942,52 @@ pub(crate) fn screenshot_display_bytes_x11() -> Result<Vec<u8>> {
     };
     let mut rgba = Vec::with_capacity((w * h * 4) as usize);
     for chunk in bytes.chunks_exact(bpp) {
+        let (b, g, r) = (chunk[0], chunk[1], chunk[2]);
+        rgba.extend_from_slice(&[r, g, b, 255]);
+    }
+    cua_driver_core::image_utils::encode_rgba_to_png(&rgba, w, h)
+}
+
+/// Capture a rectangle of the root window (what is on the screen there,
+/// override-redirect popups and transient dialogs included) as PNG. Used
+/// for a window whose own drawable would hide the menu or dialog open over
+/// it. The rectangle is clipped to the screen.
+pub fn screenshot_root_region_png(x: i32, y: i32, width: u32, height: u32) -> Result<Vec<u8>> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::*;
+    use x11rb::rust_connection::RustConnection;
+    let (conn, screen_num) = RustConnection::connect(None)
+        .map_err(|e| anyhow::anyhow!("{e}{}", crate::no_display_hint()))?;
+    let root = conn.setup().roots[screen_num].root;
+    let geom = conn.get_geometry(root)?.reply()?;
+    let (sw, sh) = (i32::from(geom.width), i32::from(geom.height));
+    let x0 = x.clamp(0, sw);
+    let y0 = y.clamp(0, sh);
+    let x1 = (x.saturating_add(width as i32)).clamp(0, sw);
+    let y1 = (y.saturating_add(height as i32)).clamp(0, sh);
+    let (w, h) = ((x1 - x0) as u32, (y1 - y0) as u32);
+    if w == 0 || h == 0 {
+        anyhow::bail!(
+            "window rectangle {x},{y} {width}x{height} lies outside the {sw}x{sh} screen"
+        );
+    }
+    let img = conn
+        .get_image(
+            ImageFormat::Z_PIXMAP,
+            root,
+            x0 as i16,
+            y0 as i16,
+            w as u16,
+            h as u16,
+            !0u32,
+        )?
+        .reply()?;
+    let bpp = match img.depth {
+        32 | 24 => 4usize,
+        _ => anyhow::bail!("Unsupported depth"),
+    };
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+    for chunk in img.data.chunks_exact(bpp) {
         let (b, g, r) = (chunk[0], chunk[1], chunk[2]);
         rgba.extend_from_slice(&[r, g, b, 255]);
     }

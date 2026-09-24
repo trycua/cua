@@ -58,13 +58,6 @@ pub fn publish_window(
     encoded_dimensions: (u32, u32),
     native_action_dimensions: (u32, u32),
 ) -> anyhow::Result<String> {
-    // The resizer preserves aspect ratio before rounding each encoded axis.
-    // Derive both ratios independently so a one-pixel rounded height does not
-    // skew Y coordinates in the native window frame.
-    let scale_x = f64::from(native_action_dimensions.0) / f64::from(encoded_dimensions.0);
-    let scale_y = f64::from(native_action_dimensions.1) / f64::from(encoded_dimensions.1);
-    let screenshot_to_action =
-        ScreenshotToActionTransform::new(scale_x, 0.0, 0.0, scale_y, 0.0, 0.0)?;
     publish(
         service,
         args,
@@ -72,7 +65,7 @@ pub fn publish_window(
         window_target(pid, window_id),
         encoded_dimensions,
         native_action_dimensions,
-        screenshot_to_action,
+        scaled_transform(encoded_dimensions, native_action_dimensions)?,
     )
 }
 
@@ -80,17 +73,40 @@ pub fn publish_desktop(
     service: &CaptureService,
     args: &Value,
     png_bytes: &[u8],
-    dimensions: (u32, u32),
+    encoded_dimensions: (u32, u32),
+    native_action_dimensions: (u32, u32),
 ) -> anyhow::Result<String> {
+    // The desktop screenshot can be downsized below the action frame.
     publish(
         service,
         args,
         png_bytes,
         CaptureTarget::PrimaryDesktop,
-        dimensions,
-        dimensions,
-        ScreenshotToActionTransform::identity(),
+        encoded_dimensions,
+        native_action_dimensions,
+        scaled_transform(encoded_dimensions, native_action_dimensions)?,
     )
+}
+
+/// Screenshot-to-action scaling for a capture encoded at `encoded` pixels of
+/// a `native` action frame. The resizer preserves aspect ratio before rounding
+/// each encoded axis, so both ratios are derived independently: a one-pixel
+/// rounded height must not skew Y coordinates.
+fn scaled_transform(
+    encoded: (u32, u32),
+    native: (u32, u32),
+) -> anyhow::Result<ScreenshotToActionTransform> {
+    anyhow::ensure!(
+        encoded.0 > 0 && encoded.1 > 0,
+        "capture has an empty encoded frame: {}x{}",
+        encoded.0,
+        encoded.1
+    );
+    let scale_x = f64::from(native.0) / f64::from(encoded.0);
+    let scale_y = f64::from(native.1) / f64::from(encoded.1);
+    Ok(ScreenshotToActionTransform::new(
+        scale_x, 0.0, 0.0, scale_y, 0.0, 0.0,
+    )?)
 }
 
 fn admit(
@@ -355,7 +371,7 @@ mod tests {
     fn retired_session_capture_is_stale() {
         let service = CaptureService::default();
         let call_args = args("retired");
-        let id = publish_desktop(&service, &call_args, &png(3, 2, 0x77), (3, 2)).unwrap();
+        let id = publish_desktop(&service, &call_args, &png(3, 2, 0x77), (3, 2), (3, 2)).unwrap();
 
         let binding = service.binding_from_args(&call_args).unwrap();
         service.retire_session(&binding);
@@ -387,7 +403,7 @@ mod tests {
     fn another_session_cannot_admit_or_consume_a_capture() {
         let service = CaptureService::default();
         let owner = args("owner");
-        let id = publish_desktop(&service, &owner, &png(4, 3, 0x21), (4, 3)).unwrap();
+        let id = publish_desktop(&service, &owner, &png(4, 3, 0x21), (4, 3), (4, 3)).unwrap();
 
         let refusal = admit_desktop(&service, &args("other"), &id, (2.0, 1.0), (4, 3))
             .expect_err("cross-session admission must fail");
@@ -414,11 +430,23 @@ mod tests {
             &call_args,
             &png(logical.0, logical.1, 0x31),
             logical,
+            logical,
         )
         .unwrap();
         assert_eq!(
             admit_desktop(&service, &call_args, &id, (800.0, 500.0), logical).unwrap(),
             (800.0, 500.0)
+        );
+    }
+
+    #[test]
+    fn downsized_desktop_capture_maps_back_to_the_action_frame() {
+        let service = CaptureService::default();
+        let call_args = args("downsized");
+        let id = publish_desktop(&service, &call_args, &png(4, 3, 0x42), (4, 3), (8, 6)).unwrap();
+        assert_eq!(
+            admit_desktop(&service, &call_args, &id, (2.0, 1.5), (8, 6)).unwrap(),
+            (4.0, 3.0)
         );
     }
 
@@ -462,7 +490,7 @@ mod tests {
     fn desktop_publication_uses_the_post_normalization_bytes() {
         let service = CaptureService::default();
         let normalized = png(4, 3, 0x18);
-        let id = publish_desktop(&service, &args("desktop"), &normalized, (4, 3)).unwrap();
+        let id = publish_desktop(&service, &args("desktop"), &normalized, (4, 3), (4, 3)).unwrap();
         let binding = service.binding_from_args(&args("desktop")).unwrap();
         let capture = service
             .read_for_perception(service.parse_capture_id(&id).unwrap(), &binding)

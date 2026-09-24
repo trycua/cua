@@ -107,6 +107,7 @@ Windows requires no special permissions.
 - `query` (string, optional): Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count.
 - `screenshot_out_file` (string, optional): When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead.
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+- `timeout_ms` (integer, optional): Wall-clock budget in milliseconds for the accessibility-tree walk (default 1000, min 100, max 120000). Bounds the WHOLE walk. When the budget runs out the tool returns the PARTIAL tree it has, flagged with `truncated: true`, `truncation_reason`, `nodes_visited`, `nodes_pending` and `elements_complete: false`; retry with a larger value (e.g. 5000) or narrow with `query` / `max_depth`. default: `1000`; range: 100–120000
 - `window_id` (integer, required): HWND of the target window. Must belong to `pid`. Enumerate via `list_windows` or read from `launch_app`'s `windows` array.
 
 ```json
@@ -125,10 +126,11 @@ For the full UIA subtree of a single window (with interactive element indices yo
 
 ### `get_desktop_state`
 
-Capture the full display in true screen pixels with no downscale. Use its native-size PNG as the coordinate source for actions whose target is &#123;kind:"desktop",display_id:"primary"&#125;. Returns the true screen size. Vision-only: no UIA tree walk.
+Capture the full display in true screen pixels, full size unless `max_image_dimension` caps it. Use its PNG as the coordinate source for actions whose target is &#123;kind:"desktop",display_id:"primary"&#125;. Returns the true screen size. Vision-only: no UIA tree walk.
 
 **Arguments:**
 
+- `max_image_dimension` (integer, optional): Optional long-edge cap for the returned PNG, in pixels (aspect ratio preserved). Omitted or 0 returns the full-size capture. When the cap downsizes the image, the response reports `screenshot_original_width/height`, and x/y read off it for this session's later scope:"desktop" actions (or passed with its `capture_id`) are mapped back to the full-size frame automatically. range: 0–unbounded
 - `screenshot_out_file` (string, optional): Write PNG here instead of base64.
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 

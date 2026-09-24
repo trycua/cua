@@ -3,7 +3,7 @@ use crate::element_token::{
 };
 use crate::protocol::ToolResult;
 use std::any::Any;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 pub trait SnapshotPayload: Send + Sync + 'static {
@@ -17,69 +17,21 @@ struct Snapshot<S> {
     window_id: u64,
     screenshot_owner: Option<String>,
     screenshot_scale: Option<f64>,
+    zoom: Option<ZoomContext>,
     payload: S,
 }
 
-struct SnapshotStoreState<S> {
-    snapshots: HashMap<i32, Vec<Snapshot<S>>>,
-    retired_screenshots: HashSet<(i32, u64)>,
-    retired_screenshot_order: VecDeque<(i32, u64)>,
-    retired_screenshot_overflowed: bool,
-}
-
-const RETIRED_SCREENSHOT_CAPACITY: usize = 256;
-
-impl<S> Default for SnapshotStoreState<S> {
-    fn default() -> Self {
-        Self {
-            snapshots: HashMap::new(),
-            retired_screenshots: HashSet::new(),
-            retired_screenshot_order: VecDeque::new(),
-            retired_screenshot_overflowed: false,
-        }
+impl<S> Snapshot<S> {
+    fn screenshot(&self, session: Option<&str>) -> Option<ScreenshotContext> {
+        let scale = self
+            .screenshot_scale
+            .filter(|_| self.screenshot_owner.as_deref() == session)?;
+        Some(ScreenshotContext {
+            snapshot_id: self.id,
+            window_id: self.window_id,
+            scale,
+        })
     }
-}
-
-impl<S> SnapshotStoreState<S> {
-    fn retire_screenshot(&mut self, key: (i32, u64)) {
-        if self.retired_screenshot_overflowed || self.retired_screenshots.contains(&key) {
-            return;
-        }
-        if self.retired_screenshots.len() == RETIRED_SCREENSHOT_CAPACITY {
-            self.retired_screenshot_overflowed = true;
-            return;
-        }
-        self.retired_screenshots.insert(key);
-        self.retired_screenshot_order.push_back(key);
-    }
-
-    fn restore_screenshot(&mut self, key: (i32, u64)) {
-        if self.retired_screenshots.remove(&key) {
-            self.retired_screenshot_order.retain(|entry| *entry != key);
-        }
-    }
-
-    fn missing_screenshot_is_retired(&self, pid: i32, window_id: Option<u64>) -> bool {
-        self.retired_screenshot_overflowed
-            || match window_id {
-                Some(window_id) => self.retired_screenshots.contains(&(pid, window_id)),
-                None => self
-                    .retired_screenshots
-                    .iter()
-                    .any(|(retired_pid, _)| *retired_pid == pid),
-            }
-    }
-
-    fn reset_retired_screenshots(&mut self) {
-        self.retired_screenshots.clear();
-        self.retired_screenshot_order.clear();
-        self.retired_screenshot_overflowed = false;
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ScreenshotContextError {
-    ReplacedOrUnavailable,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -90,14 +42,14 @@ pub struct ScreenshotContext {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SnapshotBoundZoomContext {
+pub struct ZoomContext {
     pub screenshot: ScreenshotContext,
     pub origin_x: f64,
     pub origin_y: f64,
     pub scale_inv: f64,
 }
 
-impl SnapshotBoundZoomContext {
+impl ZoomContext {
     pub fn zoom_to_window(&self, x: f64, y: f64) -> (f64, f64) {
         (
             self.origin_x + x * self.scale_inv,
@@ -106,101 +58,9 @@ impl SnapshotBoundZoomContext {
     }
 }
 
-pub struct SnapshotBoundZoomRegistry {
-    inner: Mutex<HashMap<(i32, u64, Option<String>), SnapshotBoundZoomContext>>,
-}
-
-impl SnapshotBoundZoomRegistry {
-    pub fn new() -> Self {
-        Self {
-            inner: Mutex::new(HashMap::new()),
-        }
-    }
-
-    pub fn set_if_current<S: SnapshotPayload>(
-        &self,
-        cache: &SnapshotStore<S>,
-        pid: i32,
-        session: Option<&str>,
-        context: SnapshotBoundZoomContext,
-    ) -> Result<(), ToolResult> {
-        cache
-            .with_valid_screenshot_context(pid, session, context.screenshot, || {
-                self.inner.lock().unwrap().insert(
-                    (
-                        pid,
-                        context.screenshot.window_id,
-                        session.map(str::to_owned),
-                    ),
-                    context,
-                );
-            })
-            .map_err(|_| zoom_context_refusal(pid, Some(context.screenshot.window_id)))
-    }
-
-    pub fn resolve<S: SnapshotPayload>(
-        &self,
-        cache: &SnapshotStore<S>,
-        pid: i32,
-        window_id: Option<u64>,
-        session: Option<&str>,
-    ) -> Result<SnapshotBoundZoomContext, ToolResult> {
-        let owner = session.map(str::to_owned);
-        let (key, context) = {
-            let inner = self.inner.lock().unwrap();
-            let mut matches = inner
-                .iter()
-                .filter(|((entry_pid, entry_window, entry_owner), _)| {
-                    *entry_pid == pid
-                        && window_id.is_none_or(|window_id| *entry_window == window_id)
-                        && entry_owner == &owner
-                });
-            let Some((key, context)) = matches.next() else {
-                return Err(zoom_context_refusal(pid, window_id));
-            };
-            if matches.next().is_some() {
-                return Err(zoom_context_refusal(pid, window_id));
-            }
-            (key.clone(), *context)
-        };
-        if cache
-            .validate_screenshot_context(pid, session, context.screenshot)
-            .is_err()
-        {
-            self.inner.lock().unwrap().remove(&key);
-            return Err(zoom_context_refusal(pid, window_id));
-        }
-        Ok(context)
-    }
-
-    pub fn retire_replaced(&self, pid: i32, window_id: u64, current_snapshot_id: u32) -> bool {
-        let mut inner = self.inner.lock().unwrap();
-        let before = inner.len();
-        inner.retain(|(entry_pid, entry_window, _), context| {
-            *entry_pid != pid
-                || *entry_window != window_id
-                || context.screenshot.snapshot_id == current_snapshot_id
-        });
-        inner.len() != before
-    }
-
-    pub fn retire_session(&self, session: &str) -> usize {
-        let mut inner = self.inner.lock().unwrap();
-        let before = inner.len();
-        inner.retain(|(_, _, owner), _| owner.as_deref() != Some(session));
-        before - inner.len()
-    }
-}
-
-impl Default for SnapshotBoundZoomRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 fn screenshot_context_refusal(pid: Option<i32>, window_id: Option<u64>) -> ToolResult {
     ToolResult::error(
-        "The latest snapshot for this window does not contain a screenshot owned by this session. Call get_window_state with a screenshot on the same connection before using pixels.",
+        "No current snapshot for this window contains a screenshot owned by this session. Call get_window_state with a screenshot on the same connection before using pixels.",
     )
     .with_structured(serde_json::json!({
         "code": "screenshot_context_missing",
@@ -222,23 +82,25 @@ fn zoom_context_refusal(pid: i32, window_id: Option<u64>) -> ToolResult {
 
 pub struct SnapshotStore<S: SnapshotPayload> {
     runtime_scope: String,
-    inner: Mutex<SnapshotStoreState<S>>,
+    inner: Mutex<HashMap<i32, Vec<Snapshot<S>>>>,
 }
 
 impl<S: SnapshotPayload> SnapshotStore<S> {
     pub fn new() -> Self {
         Self {
             runtime_scope: current_runtime_scope(),
-            inner: Mutex::new(SnapshotStoreState::default()),
+            inner: Mutex::new(HashMap::new()),
         }
     }
 
     pub fn publish(&self, pid: i32, window_id: u64, payload: S) -> u32 {
         self.publish_for_session(pid, window_id, payload, None, None)
             .expect("anonymous snapshot publication cannot be retired")
+            .0
     }
 
-    /// Publish the latest runtime-owned snapshot and its screenshot coordinate frame.
+    /// Publish the latest runtime-owned snapshot and its screenshot coordinate frame,
+    /// returning its id and the ids of the snapshots it replaced or evicted.
     ///
     /// `screenshot_scale` is the native-image-width / delivered-image-width ratio.
     /// A `None` scale deliberately records that the latest observation did not
@@ -251,201 +113,62 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         payload: S,
         session: Option<&str>,
         screenshot_scale: Option<f64>,
-    ) -> Option<u32> {
-        let (id, replaced, evicted) = {
+    ) -> Option<(u32, Vec<u32>)> {
+        let (id, retired) = {
             let mut inner = self.inner.lock().unwrap();
             if session.is_some_and(crate::session::is_session_ended) {
                 return None;
             }
-            inner.restore_screenshot((pid, window_id));
-            let (id, replaced, evicted) = {
-                let lane = inner.snapshots.entry(pid).or_default();
-                let replaced = lane
-                    .iter()
-                    .position(|entry| entry.window_id == window_id)
-                    .map(|position| lane.remove(position));
-                let evicted = (lane.len() == LRU_CAP_PER_PID).then(|| lane.remove(0));
-                let id = crate::element_token::mint_snapshot_id();
-                lane.push(Snapshot {
-                    id,
-                    window_id,
-                    screenshot_owner: session.map(str::to_owned),
-                    screenshot_scale,
-                    payload,
-                });
-                (id, replaced, evicted)
-            };
-            if let Some(evicted) = &evicted {
-                inner.retire_screenshot((pid, evicted.window_id));
+            let lane = inner.entry(pid).or_default();
+            let mut retired = Vec::new();
+            if let Some(position) = lane.iter().position(|entry| entry.window_id == window_id) {
+                retired.push(lane.remove(position));
             }
-            (id, replaced, evicted)
+            if lane.len() == LRU_CAP_PER_PID {
+                retired.push(lane.remove(0));
+            }
+            let id = crate::element_token::mint_snapshot_id();
+            lane.push(Snapshot {
+                id,
+                window_id,
+                screenshot_owner: session.map(str::to_owned),
+                screenshot_scale,
+                zoom: None,
+                payload,
+            });
+            (id, retired)
         };
-        drop((replaced, evicted));
-        Some(id)
+        let invalidated = retired.iter().map(|snapshot| snapshot.id).collect();
+        drop(retired);
+        Some((id, invalidated))
     }
 
     /// Resolve the screenshot transform from the same authoritative latest
-    /// snapshot used for element tokens.
-    ///
-    /// No snapshot preserves the legacy native-pixel fallback. Once a snapshot
-    /// exists, a different owner or a newer observation without a screenshot
-    /// makes older image coordinates stale and must be refused.
-    pub fn screenshot_scale(
-        &self,
-        pid: i32,
-        window_id: Option<u64>,
-        session: Option<&str>,
-    ) -> Result<Option<f64>, ScreenshotContextError> {
-        Ok(self
-            .screenshot_context(pid, window_id, session)?
-            .map(|context| context.scale))
-    }
-
+    /// snapshot used for element tokens. Without a window, every snapshot of
+    /// the process must agree on one transform owned by this session.
     pub fn screenshot_context(
         &self,
         pid: i32,
         window_id: Option<u64>,
         session: Option<&str>,
-    ) -> Result<Option<ScreenshotContext>, ScreenshotContextError> {
-        let inner = self.inner.lock().unwrap();
-        let Some(lane) = inner.snapshots.get(&pid) else {
-            return if inner.missing_screenshot_is_retired(pid, window_id) {
-                Err(ScreenshotContextError::ReplacedOrUnavailable)
-            } else {
-                Ok(None)
-            };
-        };
-        if let Some(window_id) = window_id {
-            let Some(snapshot) = lane.iter().find(|entry| entry.window_id == window_id) else {
-                return if inner.missing_screenshot_is_retired(pid, Some(window_id)) {
-                    Err(ScreenshotContextError::ReplacedOrUnavailable)
-                } else {
-                    Ok(None)
-                };
-            };
-            if snapshot.screenshot_owner.as_deref() != session {
-                return Err(ScreenshotContextError::ReplacedOrUnavailable);
-            }
-            let scale = snapshot
-                .screenshot_scale
-                .ok_or(ScreenshotContextError::ReplacedOrUnavailable)?;
-            return Ok(Some(ScreenshotContext {
-                snapshot_id: snapshot.id,
-                window_id,
-                scale,
-            }));
-        }
-        if inner.missing_screenshot_is_retired(pid, None) {
-            return Err(ScreenshotContextError::ReplacedOrUnavailable);
-        }
-        let mut agreed: Option<ScreenshotContext> = None;
-        for snapshot in lane {
-            if snapshot.screenshot_owner.as_deref() != session {
-                return Err(ScreenshotContextError::ReplacedOrUnavailable);
-            }
-            let scale = snapshot
-                .screenshot_scale
-                .ok_or(ScreenshotContextError::ReplacedOrUnavailable)?;
-            let context = ScreenshotContext {
-                snapshot_id: snapshot.id,
-                window_id: snapshot.window_id,
-                scale,
-            };
-            match agreed {
-                None => agreed = Some(context),
-                Some(previous) if (previous.scale - scale).abs() < 1e-9 => {}
-                Some(_) => return Err(ScreenshotContextError::ReplacedOrUnavailable),
-            }
-        }
-        Ok(agreed)
-    }
-
-    pub fn validate_screenshot_context(
-        &self,
-        pid: i32,
-        session: Option<&str>,
-        expected: ScreenshotContext,
-    ) -> Result<(), ScreenshotContextError> {
-        match self.screenshot_context(pid, Some(expected.window_id), session)? {
-            Some(current)
-                if current.snapshot_id == expected.snapshot_id
-                    && (current.scale - expected.scale).abs() < 1e-9 =>
-            {
-                Ok(())
-            }
-            _ => Err(ScreenshotContextError::ReplacedOrUnavailable),
-        }
-    }
-
-    fn with_valid_screenshot_context<R>(
-        &self,
-        pid: i32,
-        session: Option<&str>,
-        expected: ScreenshotContext,
-        publish: impl FnOnce() -> R,
-    ) -> Result<R, ScreenshotContextError> {
-        let inner = self.inner.lock().unwrap();
-        let valid = inner.snapshots.get(&pid).is_some_and(|lane| {
-            lane.iter().any(|snapshot| {
-                snapshot.window_id == expected.window_id
-                    && snapshot.id == expected.snapshot_id
-                    && snapshot.screenshot_owner.as_deref() == session
-                    && snapshot
-                        .screenshot_scale
-                        .is_some_and(|scale| (scale - expected.scale).abs() < 1e-9)
-            })
-        });
-        if !valid {
-            return Err(ScreenshotContextError::ReplacedOrUnavailable);
-        }
-        let result = publish();
-        drop(inner);
-        Ok(result)
-    }
-
-    pub fn unique_screenshot_context_for_window(
-        &self,
-        window_id: u64,
-        session: Option<&str>,
-    ) -> Result<(i32, ScreenshotContext), ScreenshotContextError> {
-        let inner = self.inner.lock().unwrap();
-        let mut matches = inner.snapshots.iter().filter_map(|(pid, lane)| {
-            let snapshot = lane
-                .iter()
-                .find(|snapshot| snapshot.window_id == window_id)?;
-            (snapshot.screenshot_owner.as_deref() == session).then_some((pid, snapshot))
-        });
-        let Some((pid, snapshot)) = matches.next() else {
-            return Err(ScreenshotContextError::ReplacedOrUnavailable);
-        };
-        if matches.next().is_some() {
-            return Err(ScreenshotContextError::ReplacedOrUnavailable);
-        }
-        let scale = snapshot
-            .screenshot_scale
-            .ok_or(ScreenshotContextError::ReplacedOrUnavailable)?;
-        Ok((
-            *pid,
-            ScreenshotContext {
-                snapshot_id: snapshot.id,
-                window_id,
-                scale,
-            },
-        ))
-    }
-
-    pub fn screenshot_context_or_refusal(
-        &self,
-        pid: i32,
-        window_id: u64,
-        session: Option<&str>,
     ) -> Result<ScreenshotContext, ToolResult> {
-        match self.screenshot_context(pid, Some(window_id), session) {
-            Ok(Some(context)) => Ok(context),
-            Ok(None) | Err(ScreenshotContextError::ReplacedOrUnavailable) => {
-                Err(screenshot_context_refusal(Some(pid), Some(window_id)))
+        let inner = self.inner.lock().unwrap();
+        let lane = inner.get(&pid).map(Vec::as_slice).unwrap_or_default();
+        let context = match window_id {
+            Some(window_id) => lane
+                .iter()
+                .find(|snapshot| snapshot.window_id == window_id)
+                .and_then(|snapshot| snapshot.screenshot(session)),
+            None => {
+                let mut contexts = lane.iter().map(|snapshot| snapshot.screenshot(session));
+                contexts.next().flatten().filter(|first| {
+                    contexts.all(|context| {
+                        context.is_some_and(|context| (context.scale - first.scale).abs() < 1e-9)
+                    })
+                })
             }
-        }
+        };
+        context.ok_or_else(|| screenshot_context_refusal(Some(pid), window_id))
     }
 
     pub fn screenshot_context_for_zoom(
@@ -454,27 +177,62 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         window_id: u64,
         session: Option<&str>,
     ) -> Result<(i32, ScreenshotContext), ToolResult> {
-        match pid {
-            Some(pid) => self
-                .screenshot_context_or_refusal(pid, window_id, session)
-                .map(|context| (pid, context)),
-            None => self
-                .unique_screenshot_context_for_window(window_id, session)
-                .map_err(|_| screenshot_context_refusal(None, Some(window_id))),
+        if let Some(pid) = pid {
+            return self
+                .screenshot_context(pid, Some(window_id), session)
+                .map(|context| (pid, context));
+        }
+        let inner = self.inner.lock().unwrap();
+        let mut matches = inner.iter().filter_map(|(pid, lane)| {
+            let snapshot = lane
+                .iter()
+                .find(|snapshot| snapshot.window_id == window_id)?;
+            Some((*pid, snapshot.screenshot(session)?))
+        });
+        match (matches.next(), matches.next()) {
+            (Some(found), None) => Ok(found),
+            _ => Err(screenshot_context_refusal(None, Some(window_id))),
         }
     }
 
-    pub fn screenshot_scale_or_refusal(
+    pub fn set_zoom(
+        &self,
+        pid: i32,
+        session: Option<&str>,
+        zoom: ZoomContext,
+    ) -> Result<(), ToolResult> {
+        let mut inner = self.inner.lock().unwrap();
+        let snapshot = inner
+            .get_mut(&pid)
+            .and_then(|lane| {
+                lane.iter_mut()
+                    .find(|snapshot| snapshot.window_id == zoom.screenshot.window_id)
+            })
+            .filter(|snapshot| snapshot.screenshot(session) == Some(zoom.screenshot))
+            .ok_or_else(|| zoom_context_refusal(pid, Some(zoom.screenshot.window_id)))?;
+        snapshot.zoom = Some(zoom);
+        Ok(())
+    }
+
+    pub fn zoom(
         &self,
         pid: i32,
         window_id: Option<u64>,
         session: Option<&str>,
-    ) -> Result<f64, ToolResult> {
-        match self.screenshot_scale(pid, window_id, session) {
-            Ok(scale) => Ok(scale.unwrap_or(1.0)),
-            Err(ScreenshotContextError::ReplacedOrUnavailable) => {
-                Err(screenshot_context_refusal(Some(pid), window_id))
-            }
+    ) -> Result<ZoomContext, ToolResult> {
+        let inner = self.inner.lock().unwrap();
+        let mut zooms = inner
+            .get(&pid)
+            .into_iter()
+            .flatten()
+            .filter(|snapshot| {
+                window_id.is_none_or(|window_id| snapshot.window_id == window_id)
+                    && snapshot.screenshot_owner.as_deref() == session
+            })
+            .filter_map(|snapshot| snapshot.zoom);
+        match (zooms.next(), zooms.next()) {
+            (Some(zoom), None) => Ok(zoom),
+            _ => Err(zoom_context_refusal(pid, window_id)),
         }
     }
 
@@ -482,23 +240,14 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         let retired = {
             let mut inner = self.inner.lock().unwrap();
             let mut retired = Vec::new();
-            let mut tombstones = Vec::new();
-            for (pid, lane) in inner.snapshots.iter_mut() {
-                let mut index = 0;
-                while index < lane.len() {
-                    if lane[index].screenshot_owner.as_deref() == Some(session) {
-                        tombstones.push((*pid, lane[index].window_id));
-                        retired.push(lane.remove(index));
-                    } else {
-                        index += 1;
-                    }
-                }
+            for lane in inner.values_mut() {
+                let (owned, kept) = std::mem::take(lane)
+                    .into_iter()
+                    .partition(|snapshot| snapshot.screenshot_owner.as_deref() == Some(session));
+                *lane = kept;
+                retired.extend::<Vec<_>>(owned);
             }
-            inner.snapshots.retain(|_, lane| !lane.is_empty());
-            tombstones.sort_unstable();
-            for tombstone in tombstones {
-                inner.retire_screenshot(tombstone);
-            }
+            inner.retain(|_, lane| !lane.is_empty());
             retired
         };
         let count = retired.len();
@@ -533,7 +282,6 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         }
         let inner = self.inner.lock().unwrap();
         let entry = inner
-            .snapshots
             .get(&pid)
             .and_then(|lane| lane.iter().find(|entry| entry.id == reference.snapshot_id));
         let Some(entry) = entry else {
@@ -581,27 +329,20 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         })
     }
 
-    pub fn remove(&self, pid: i32, window_id: u64) {
+    pub fn remove(&self, pid: i32, window_id: u64) -> Option<u32> {
         let retired = {
             let mut inner = self.inner.lock().unwrap();
-            let retired = inner.snapshots.get_mut(&pid).and_then(|lane| {
+            inner.get_mut(&pid).and_then(|lane| {
                 let position = lane.iter().position(|entry| entry.window_id == window_id)?;
                 Some(lane.remove(position))
-            });
-            if retired.is_some() {
-                inner.retire_screenshot((pid, window_id));
-            }
-            retired
+            })
         };
-        drop(retired);
+        retired.map(|snapshot| snapshot.id)
     }
 
     pub fn clear(&self) -> usize {
-        let mut inner = self.inner.lock().unwrap();
-        let retired = std::mem::take(&mut inner.snapshots);
-        inner.reset_retired_screenshots();
+        let retired = std::mem::take(&mut *self.inner.lock().unwrap());
         let count = retired.len();
-        drop(inner);
         drop(retired);
         count
     }
@@ -638,7 +379,6 @@ impl<S: SnapshotPayload> RuntimeStore for SnapshotStore<S> {
         self.inner
             .lock()
             .unwrap()
-            .snapshots
             .get(&pid)
             .is_some_and(|lane| lane.iter().any(|entry| entry.id == snapshot_id))
     }
@@ -725,31 +465,45 @@ mod tests {
             .is_err());
     }
 
+    fn refusal_code(result: ToolResult) -> String {
+        result.structured_content.unwrap()["code"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    fn scale(cache: &SnapshotStore<Payload>, window_id: u64, session: &str) -> Option<f64> {
+        cache
+            .screenshot_context(10, Some(window_id), Some(session))
+            .ok()
+            .map(|context| context.scale)
+    }
+
+    fn zoom_on(snapshot: u32, scale: f64) -> ZoomContext {
+        ZoomContext {
+            screenshot: ScreenshotContext {
+                snapshot_id: snapshot,
+                window_id: 20,
+                scale,
+            },
+            origin_x: 100.0,
+            origin_y: 50.0,
+            scale_inv: 2.0,
+        }
+    }
+
     #[test]
     fn screenshot_coordinates_never_borrow_another_sessions_latest_transform() {
         let cache = SnapshotStore::new();
         cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(7.35));
-        assert_eq!(
-            cache.screenshot_scale(10, Some(20), Some("client-a")),
-            Ok(Some(7.35))
-        );
+        assert_eq!(scale(&cache, 20, "client-a"), Some(7.35));
 
         cache.publish_for_session(10, 20, Payload(vec![]), Some("client-b"), Some(1.0));
-        assert_eq!(
-            cache.screenshot_scale(10, Some(20), Some("client-b")),
-            Ok(Some(1.0))
-        );
-        assert_eq!(
-            cache.screenshot_scale(10, Some(20), Some("client-a")),
-            Err(ScreenshotContextError::ReplacedOrUnavailable)
-        );
+        assert_eq!(scale(&cache, 20, "client-b"), Some(1.0));
         let refusal = cache
-            .screenshot_scale_or_refusal(10, Some(20), Some("client-a"))
+            .screenshot_context(10, Some(20), Some("client-a"))
             .expect_err("stale image coordinates must be refused");
-        assert_eq!(
-            refusal.structured_content.as_ref().unwrap()["code"],
-            "screenshot_context_missing"
-        );
+        assert_eq!(refusal_code(refusal), "screenshot_context_missing");
     }
 
     #[test]
@@ -757,14 +511,8 @@ mod tests {
         let cache = SnapshotStore::new();
         cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(7.35));
         cache.publish_for_session(10, 21, Payload(vec![]), Some("client-b"), Some(2.0));
-        assert_eq!(
-            cache.screenshot_scale(10, Some(20), Some("client-a")),
-            Ok(Some(7.35))
-        );
-        assert_eq!(
-            cache.screenshot_scale(10, Some(21), Some("client-b")),
-            Ok(Some(2.0))
-        );
+        assert_eq!(scale(&cache, 20, "client-a"), Some(7.35));
+        assert_eq!(scale(&cache, 21, "client-b"), Some(2.0));
     }
 
     #[test]
@@ -773,17 +521,67 @@ mod tests {
         cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(7.35));
         cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(1.0));
         assert_eq!(
-            cache.screenshot_scale(10, Some(20), Some("client-a")),
-            Ok(Some(1.0)),
+            scale(&cache, 20, "client-a"),
+            Some(1.0),
             "a newer native capture replaces the older resized frame"
         );
 
         cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), None);
         assert_eq!(
-            cache.screenshot_scale(10, Some(20), Some("client-a")),
-            Err(ScreenshotContextError::ReplacedOrUnavailable),
+            scale(&cache, 20, "client-a"),
+            None,
             "a newer tree-only observation retires the older image frame"
         );
+    }
+
+    #[test]
+    fn window_relative_pixels_require_a_current_snapshot() {
+        let cache = SnapshotStore::<Payload>::new();
+        assert_eq!(scale(&cache, 20, "client-a"), None);
+        cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(2.0));
+        cache.remove(10, 20);
+        assert_eq!(scale(&cache, 20, "client-a"), None);
+    }
+
+    #[test]
+    fn window_less_screenshot_context_requires_one_agreed_transform() {
+        let cache = SnapshotStore::new();
+        assert!(cache
+            .screenshot_context(10, None, Some("client-a"))
+            .is_err());
+        cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(2.0));
+        cache.publish_for_session(10, 21, Payload(vec![]), Some("client-a"), Some(2.0));
+        assert_eq!(
+            cache
+                .screenshot_context(10, None, Some("client-a"))
+                .unwrap()
+                .scale,
+            2.0
+        );
+        cache.publish_for_session(10, 22, Payload(vec![]), Some("client-a"), Some(3.0));
+        assert!(cache
+            .screenshot_context(10, None, Some("client-a"))
+            .is_err());
+    }
+
+    #[test]
+    fn publication_reports_replaced_and_evicted_snapshots() {
+        let cache = SnapshotStore::new();
+        let (first, invalidated) = cache
+            .publish_for_session(10, 0, Payload(vec![]), None, None)
+            .unwrap();
+        assert!(invalidated.is_empty());
+        let (second, invalidated) = cache
+            .publish_for_session(10, 0, Payload(vec![]), None, None)
+            .unwrap();
+        assert_eq!(invalidated, vec![first]);
+        for window_id in 1..LRU_CAP_PER_PID as u64 {
+            cache.publish(10, window_id, Payload(vec![]));
+        }
+        let (_, invalidated) = cache
+            .publish_for_session(10, LRU_CAP_PER_PID as u64, Payload(vec![]), None, None)
+            .unwrap();
+        assert_eq!(invalidated, vec![second]);
     }
 
     #[test]
@@ -792,100 +590,8 @@ mod tests {
         cache.publish_for_session(10, 20, Payload(vec![]), Some("ending"), Some(7.35));
         cache.publish_for_session(10, 21, Payload(vec![]), Some("survivor"), Some(2.0));
         assert_eq!(cache.retire_session_screenshots("ending"), 1);
-        assert_eq!(
-            cache.screenshot_scale(10, Some(20), Some("ending")),
-            Err(ScreenshotContextError::ReplacedOrUnavailable)
-        );
-        assert_eq!(
-            cache.screenshot_scale(10, Some(21), Some("survivor")),
-            Ok(Some(2.0))
-        );
-    }
-
-    #[test]
-    fn retired_screenshot_refuses_cross_session_and_anonymous_replay_until_republished() {
-        let cache = SnapshotStore::new();
-        cache.publish_for_session(10, 20, Payload(vec![]), Some("ending"), Some(7.35));
-        assert_eq!(cache.retire_session_screenshots("ending"), 1);
-
-        for session in [Some("ending"), Some("other"), None] {
-            assert_eq!(
-                cache.screenshot_scale(10, Some(20), session),
-                Err(ScreenshotContextError::ReplacedOrUnavailable),
-                "a retired screenshot must not become native-pixel fallback"
-            );
-        }
-        assert_eq!(
-            cache.screenshot_scale(10, None, Some("other")),
-            Err(ScreenshotContextError::ReplacedOrUnavailable)
-        );
-
-        cache.publish_for_session(10, 20, Payload(vec![]), Some("other"), Some(2.0));
-        assert_eq!(
-            cache.screenshot_scale(10, Some(20), Some("other")),
-            Ok(Some(2.0)),
-            "a fresh snapshot clears the lightweight retirement tombstone"
-        );
-        assert_eq!(
-            cache.screenshot_scale(10, Some(20), None),
-            Err(ScreenshotContextError::ReplacedOrUnavailable)
-        );
-
-        cache.publish_for_session(10, 20, Payload(vec![]), None, Some(1.5));
-        assert_eq!(
-            cache.screenshot_scale(10, Some(20), None),
-            Ok(Some(1.5)),
-            "a fresh anonymous snapshot also recovers the coordinate context"
-        );
-    }
-
-    #[test]
-    fn lru_eviction_retires_only_the_evicted_screenshot_key() {
-        let cache = SnapshotStore::new();
-        for window_id in 0..LRU_CAP_PER_PID as u64 {
-            cache.publish_for_session(10, window_id, Payload(vec![]), Some("client-a"), Some(2.0));
-        }
-        cache.publish_for_session(
-            10,
-            LRU_CAP_PER_PID as u64,
-            Payload(vec![]),
-            Some("client-a"),
-            Some(2.0),
-        );
-
-        assert_eq!(
-            cache.screenshot_scale(10, Some(0), Some("client-a")),
-            Err(ScreenshotContextError::ReplacedOrUnavailable),
-            "evicting an observed window must not restore native-pixel fallback"
-        );
-        assert_eq!(
-            cache.screenshot_scale(10, Some(1), Some("client-a")),
-            Ok(Some(2.0))
-        );
-        assert_eq!(
-            cache.screenshot_scale(10, Some(9999), Some("client-a")),
-            Ok(None),
-            "a never-observed key keeps the legacy fallback"
-        );
-    }
-
-    #[test]
-    fn explicit_remove_retires_only_a_snapshot_that_existed() {
-        let cache = SnapshotStore::new();
-        cache.publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(2.0));
-        cache.remove(10, 20);
-
-        assert_eq!(
-            cache.screenshot_scale(10, Some(20), Some("client-a")),
-            Err(ScreenshotContextError::ReplacedOrUnavailable),
-            "removing an observed window must not restore native-pixel fallback"
-        );
-        cache.remove(10, 21);
-        assert_eq!(
-            cache.screenshot_scale(10, Some(21), Some("client-a")),
-            Ok(None),
-            "removing an absent key must not retire a never-observed window"
-        );
+        assert_eq!(scale(&cache, 20, "ending"), None);
+        assert_eq!(scale(&cache, 21, "survivor"), Some(2.0));
     }
 
     #[test]
@@ -897,184 +603,28 @@ mod tests {
             cache.publish_for_session(10, 20, Payload(vec![]), Some(&session), Some(7.35)),
             None
         );
-        assert_eq!(
-            cache.screenshot_scale(10, Some(20), Some(&session)),
-            Ok(None)
-        );
-    }
-
-    #[test]
-    fn no_snapshot_keeps_legacy_native_pixel_fallback() {
-        let cache = SnapshotStore::<Payload>::new();
-        assert_eq!(
-            cache.screenshot_scale(10, Some(20), Some("client-a")),
-            Ok(None)
-        );
-    }
-
-    #[test]
-    fn retired_screenshot_index_has_deterministic_fixed_capacity() {
-        let mut state = SnapshotStoreState::<Payload>::default();
-        let expected = (0..RETIRED_SCREENSHOT_CAPACITY)
-            .map(|index| (1000 + index as i32, 2000 + index as u64))
-            .collect::<Vec<_>>();
-        for key in &expected {
-            state.retire_screenshot(*key);
-        }
-
-        assert_eq!(state.retired_screenshots.len(), RETIRED_SCREENSHOT_CAPACITY);
-        assert_eq!(
-            state
-                .retired_screenshot_order
-                .iter()
-                .copied()
-                .collect::<Vec<_>>(),
-            expected
-        );
-        assert!(!state.retired_screenshot_overflowed);
-
-        let order_before_duplicate = state.retired_screenshot_order.clone();
-        state.retire_screenshot(expected[0]);
-        assert_eq!(state.retired_screenshot_order, order_before_duplicate);
-
-        state.retire_screenshot((9999, 9999));
-        assert!(state.retired_screenshot_overflowed);
-        assert_eq!(state.retired_screenshots.len(), RETIRED_SCREENSHOT_CAPACITY);
-        assert_eq!(state.retired_screenshot_order, order_before_duplicate);
-        assert!(!state.retired_screenshots.contains(&(9999, 9999)));
-    }
-
-    fn overflow_retired_screenshots(cache: &SnapshotStore<Payload>) -> (i32, u64) {
-        for index in 0..=RETIRED_SCREENSHOT_CAPACITY {
-            cache.publish_for_session(
-                1000 + index as i32,
-                2000 + index as u64,
-                Payload(vec![]),
-                Some("ending"),
-                Some(2.0),
-            );
-        }
-        assert_eq!(
-            cache.retire_session_screenshots("ending"),
-            RETIRED_SCREENSHOT_CAPACITY + 1
-        );
-        (
-            1000 + RETIRED_SCREENSHOT_CAPACITY as i32,
-            2000 + RETIRED_SCREENSHOT_CAPACITY as u64,
-        )
-    }
-
-    #[test]
-    fn retired_screenshot_overflow_refuses_unrecorded_and_unseen_replay() {
-        let cache = SnapshotStore::new();
-        let overflow_key = overflow_retired_screenshots(&cache);
-
-        let inner = cache.inner.lock().unwrap();
-        assert!(inner.retired_screenshot_overflowed);
-        assert_eq!(inner.retired_screenshots.len(), RETIRED_SCREENSHOT_CAPACITY);
-        assert_eq!(
-            inner.retired_screenshot_order.len(),
-            RETIRED_SCREENSHOT_CAPACITY
-        );
-        assert!(!inner.retired_screenshots.contains(&overflow_key));
-        drop(inner);
-
-        assert_eq!(
-            cache.screenshot_scale(overflow_key.0, Some(overflow_key.1), None),
-            Err(ScreenshotContextError::ReplacedOrUnavailable)
-        );
-        assert_eq!(
-            cache.screenshot_scale(9999, Some(9999), None),
-            Err(ScreenshotContextError::ReplacedOrUnavailable)
-        );
-    }
-
-    #[test]
-    fn fresh_snapshot_resolves_while_retirement_index_is_overflowed() {
-        let cache = SnapshotStore::new();
-        let overflow_key = overflow_retired_screenshots(&cache);
-
-        cache.publish_for_session(
-            overflow_key.0,
-            overflow_key.1,
-            Payload(vec![]),
-            Some("fresh"),
-            Some(3.0),
-        );
-        assert_eq!(
-            cache.screenshot_scale(overflow_key.0, Some(overflow_key.1), Some("fresh")),
-            Ok(Some(3.0))
-        );
-        assert_eq!(
-            cache.screenshot_scale(overflow_key.0, Some(overflow_key.1), Some("other")),
-            Err(ScreenshotContextError::ReplacedOrUnavailable)
-        );
-        assert_eq!(
-            cache.screenshot_scale(9999, Some(9999), Some("fresh")),
-            Err(ScreenshotContextError::ReplacedOrUnavailable)
-        );
-    }
-
-    #[test]
-    fn clear_resets_retired_screenshot_overflow() {
-        let cache = SnapshotStore::new();
-        overflow_retired_screenshots(&cache);
-        cache.clear();
-
-        let inner = cache.inner.lock().unwrap();
-        assert!(inner.retired_screenshots.is_empty());
-        assert!(inner.retired_screenshot_order.is_empty());
-        assert!(!inner.retired_screenshot_overflowed);
-        drop(inner);
-        assert_eq!(cache.screenshot_scale(9999, Some(9999), None), Ok(None));
+        assert_eq!(scale(&cache, 20, &session), None);
     }
 
     #[test]
     fn zoom_context_is_bound_to_snapshot_session_and_window() {
         let cache = SnapshotStore::new();
-        let zooms = SnapshotBoundZoomRegistry::new();
         let snapshot = cache
             .publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(7.35))
-            .unwrap();
-        let context = SnapshotBoundZoomContext {
-            screenshot: ScreenshotContext {
-                snapshot_id: snapshot,
-                window_id: 20,
-                scale: 7.35,
-            },
-            origin_x: 100.0,
-            origin_y: 50.0,
-            scale_inv: 2.0,
-        };
-        zooms
-            .set_if_current(&cache, 10, Some("client-a"), context)
-            .unwrap();
+            .unwrap()
+            .0;
+        let context = zoom_on(snapshot, 7.35);
+        cache.set_zoom(10, Some("client-a"), context).unwrap();
 
-        assert_eq!(
-            zooms
-                .resolve(&cache, 10, Some(20), Some("client-a"))
-                .unwrap(),
-            context
-        );
+        assert_eq!(cache.zoom(10, Some(20), Some("client-a")).unwrap(), context);
+        assert_eq!(cache.zoom(10, None, Some("client-a")).unwrap(), context);
         assert_eq!(context.zoom_to_window(3.0, 4.0), (106.0, 58.0));
-        assert_eq!(
-            zooms
-                .resolve(&cache, 10, Some(20), Some("client-b"))
-                .unwrap_err()
-                .structured_content
-                .as_ref()
-                .unwrap()["code"],
-            "zoom_context_missing"
-        );
-        assert_eq!(
-            zooms
-                .resolve(&cache, 10, Some(21), Some("client-a"))
-                .unwrap_err()
-                .structured_content
-                .as_ref()
-                .unwrap()["code"],
-            "zoom_context_missing"
-        );
+        for (window_id, session) in [(20, "client-b"), (21, "client-a")] {
+            assert_eq!(
+                refusal_code(cache.zoom(10, Some(window_id), Some(session)).unwrap_err()),
+                "zoom_context_missing"
+            );
+        }
     }
 
     #[test]
@@ -1082,7 +632,8 @@ mod tests {
         let cache = SnapshotStore::new();
         let first = cache
             .publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(2.0))
-            .unwrap();
+            .unwrap()
+            .0;
         assert_eq!(
             cache
                 .screenshot_context_for_zoom(None, 20, Some("client-a"))
@@ -1104,156 +655,59 @@ mod tests {
             10
         );
         assert!(cache
-            .unique_screenshot_context_for_window(20, Some("client-b"))
+            .screenshot_context_for_zoom(None, 20, Some("client-b"))
             .is_err());
 
         cache.publish_for_session(11, 20, Payload(vec![]), Some("client-a"), Some(1.0));
         assert!(cache
-            .unique_screenshot_context_for_window(20, Some("client-a"))
+            .screenshot_context_for_zoom(None, 20, Some("client-a"))
             .is_err());
     }
 
     #[test]
     fn late_zoom_completion_cannot_replace_newer_valid_context() {
         let cache = SnapshotStore::new();
-        let zooms = SnapshotBoundZoomRegistry::new();
         let snapshot_a = cache
             .publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(2.0))
-            .unwrap();
-        let slow_a = SnapshotBoundZoomContext {
-            screenshot: ScreenshotContext {
-                snapshot_id: snapshot_a,
-                window_id: 20,
-                scale: 2.0,
-            },
-            origin_x: 10.0,
-            origin_y: 20.0,
-            scale_inv: 2.0,
-        };
-
+            .unwrap()
+            .0;
         let snapshot_b = cache
             .publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(1.0))
-            .unwrap();
-        let valid_b = SnapshotBoundZoomContext {
-            screenshot: ScreenshotContext {
-                snapshot_id: snapshot_b,
-                window_id: 20,
-                scale: 1.0,
-            },
-            origin_x: 30.0,
-            origin_y: 40.0,
-            scale_inv: 1.0,
-        };
-        zooms
-            .set_if_current(&cache, 10, Some("client-a"), valid_b)
-            .unwrap();
-        assert!(zooms
-            .set_if_current(&cache, 10, Some("client-a"), slow_a)
+            .unwrap()
+            .0;
+        let valid_b = zoom_on(snapshot_b, 1.0);
+        cache.set_zoom(10, Some("client-a"), valid_b).unwrap();
+        assert!(cache
+            .set_zoom(10, Some("client-a"), zoom_on(snapshot_a, 2.0))
             .is_err());
-        assert_eq!(
-            zooms
-                .resolve(&cache, 10, Some(20), Some("client-a"))
-                .unwrap(),
-            valid_b
-        );
+        assert_eq!(cache.zoom(10, Some(20), Some("client-a")).unwrap(), valid_b);
     }
 
     #[test]
-    fn newer_snapshot_retires_zoom_for_click_drag_and_held_pointer_coordinates() {
+    fn newer_snapshot_or_session_end_retires_zoom() {
         let cache = SnapshotStore::new();
-        let zooms = SnapshotBoundZoomRegistry::new();
         let snapshot = cache
             .publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(7.35))
+            .unwrap()
+            .0;
+        cache
+            .set_zoom(10, Some("client-a"), zoom_on(snapshot, 7.35))
             .unwrap();
-        let context = SnapshotBoundZoomContext {
-            screenshot: ScreenshotContext {
-                snapshot_id: snapshot,
-                window_id: 20,
-                scale: 7.35,
-            },
-            origin_x: 100.0,
-            origin_y: 50.0,
-            scale_inv: 2.0,
-        };
-        zooms
-            .set_if_current(&cache, 10, Some("client-a"), context)
-            .unwrap();
-
-        let click = context.zoom_to_window(1.0, 2.0);
-        let drag_from = context.zoom_to_window(3.0, 4.0);
-        let held_pointer_to = context.zoom_to_window(5.0, 6.0);
+        cache.publish_for_session(10, 20, Payload(vec![]), Some("client-b"), Some(1.0));
         assert_eq!(
-            (click, drag_from, held_pointer_to),
-            ((102.0, 54.0), (106.0, 58.0), (110.0, 62.0))
-        );
-
-        let replacement = cache
-            .publish_for_session(10, 20, Payload(vec![]), Some("client-b"), Some(1.0))
-            .unwrap();
-        assert!(zooms.retire_replaced(10, 20, replacement));
-        let refusal = zooms
-            .resolve(&cache, 10, Some(20), Some("client-a"))
-            .expect_err("all uses of the old zoom image must become stale together");
-        assert_eq!(
-            refusal.structured_content.as_ref().unwrap()["code"],
+            refusal_code(cache.zoom(10, Some(20), Some("client-a")).unwrap_err()),
             "zoom_context_missing"
         );
-    }
-
-    #[test]
-    fn zoom_context_retires_on_same_session_replacement_and_session_end() {
-        let cache = SnapshotStore::new();
-        let zooms = SnapshotBoundZoomRegistry::new();
-        let snapshot = cache
-            .publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(7.35))
-            .unwrap();
-        zooms
-            .set_if_current(
-                &cache,
-                10,
-                Some("client-a"),
-                SnapshotBoundZoomContext {
-                    screenshot: ScreenshotContext {
-                        snapshot_id: snapshot,
-                        window_id: 20,
-                        scale: 7.35,
-                    },
-                    origin_x: 0.0,
-                    origin_y: 0.0,
-                    scale_inv: 1.0,
-                },
-            )
-            .unwrap();
-
-        let replacement = cache
-            .publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(1.0))
-            .unwrap();
-        assert!(zooms.retire_replaced(10, 20, replacement));
-        assert!(zooms
-            .resolve(&cache, 10, Some(20), Some("client-a"))
-            .is_err());
 
         let latest = cache
-            .screenshot_context(10, Some(20), Some("client-a"))
+            .publish_for_session(10, 20, Payload(vec![]), Some("client-a"), Some(1.0))
             .unwrap()
+            .0;
+        cache
+            .set_zoom(10, Some("client-a"), zoom_on(latest, 1.0))
             .unwrap();
-        zooms
-            .set_if_current(
-                &cache,
-                10,
-                Some("client-a"),
-                SnapshotBoundZoomContext {
-                    screenshot: latest,
-                    origin_x: 0.0,
-                    origin_y: 0.0,
-                    scale_inv: 1.0,
-                },
-            )
-            .unwrap();
-        assert_eq!(zooms.retire_session("client-a"), 1);
-        assert!(zooms
-            .resolve(&cache, 10, Some(20), Some("client-a"))
-            .is_err());
+        assert_eq!(cache.retire_session_screenshots("client-a"), 1);
+        assert!(cache.zoom(10, Some(20), Some("client-a")).is_err());
     }
 
     struct DropCounter {
@@ -1282,7 +736,7 @@ mod tests {
     }
 
     #[test]
-    fn screenshot_retirement_keeps_only_tombstone_not_payload() {
+    fn session_retirement_drops_payload_outside_lock() {
         let cache = Arc::new(SnapshotStore::new());
         let drops = Arc::new(AtomicUsize::new(0));
         cache.publish_for_session(
@@ -1297,15 +751,7 @@ mod tests {
         );
         assert_eq!(cache.retire_session_screenshots("ending"), 1);
         assert_eq!(drops.load(Ordering::SeqCst), 1);
-        let inner = cache.inner.lock().unwrap();
-        assert!(inner.snapshots.is_empty());
-        assert_eq!(inner.retired_screenshots.len(), 1);
-        assert_eq!(inner.retired_screenshot_order.len(), 1);
-        drop(inner);
-        assert_eq!(
-            cache.screenshot_scale(10, Some(20), None),
-            Err(ScreenshotContextError::ReplacedOrUnavailable)
-        );
+        assert!(cache.inner.lock().unwrap().is_empty());
     }
 
     #[test]

@@ -23,7 +23,7 @@ fn def() -> &'static ToolDef {
             500 px wide.\n\n\
             After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordinates \
             back to full-window space. Coordinate actions return `screenshot_context_missing` \
-            when the latest snapshot does not contain a screenshot owned by this session. \
+            when no current snapshot contains a screenshot owned by this session. \
             `from_zoom` actions return `zoom_context_missing` when the zoom was never created or \
             was replaced; call `get_window_state`, then `zoom`, again on the same connection.".into(),
         input_schema: serde_json::json!({
@@ -111,8 +111,7 @@ impl Tool for ZoomTool {
         match result {
             Ok(Ok(crop)) => {
                 // Store zoom context so from_zoom clicks can translate back.
-                if let Err(refusal) = state.zoom_registry.set_if_current(
-                    &state.snapshots,
+                if let Err(refusal) = state.snapshots.set_zoom(
                     pid,
                     session_id.as_deref(),
                     ZoomContext {

@@ -148,9 +148,7 @@ pub use check_permissions::{
     PERMISSIONS_HOST_REQUEST_ARG,
 };
 
-pub use cua_driver_core::snapshot_store::{
-    SnapshotBoundZoomContext as ZoomContext, SnapshotBoundZoomRegistry as ZoomRegistry,
-};
+pub use cua_driver_core::snapshot_store::ZoomContext;
 
 /// Input delivery modality — the agent-selected rung of the best-effort-background
 /// ladder, passed per call (never a stored/config setting).
@@ -638,7 +636,6 @@ impl Default for SessionConfigRegistry {
 pub struct ToolState {
     pub snapshots: Arc<Snapshots>,
     pub cursor_registry: Arc<CursorRegistry>,
-    pub zoom_registry: Arc<ZoomRegistry>,
     pub(crate) capture_bindings: Arc<capture_binding::MacCaptureBindings>,
     /// Global, disk-persisted config — the base layer and the only one the
     /// anonymous session / CLI writes.
@@ -691,7 +688,6 @@ impl ToolState {
         Self {
             snapshots: Arc::new(Snapshots::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),
-            zoom_registry: Arc::new(ZoomRegistry::new()),
             capture_bindings: Arc::new(capture_binding::MacCaptureBindings::new(capture_service)),
             // Load persisted config from ~/.cua-driver/config.json so that
             // `cua-driver config set` changes carry over into MCP sessions.
@@ -711,11 +707,14 @@ pub(super) fn screenshot_scale(
     pid: i32,
     window_id: Option<u32>,
 ) -> Result<f64, cua_driver_core::protocol::ToolResult> {
-    state.snapshots.screenshot_scale_or_refusal(
-        pid,
-        window_id.map(u64::from),
-        args.get("_session_id").and_then(serde_json::Value::as_str),
-    )
+    state
+        .snapshots
+        .screenshot_context(
+            pid,
+            window_id.map(u64::from),
+            args.get("_session_id").and_then(serde_json::Value::as_str),
+        )
+        .map(|context| context.scale)
 }
 
 pub(super) fn zoom_context(
@@ -724,8 +723,7 @@ pub(super) fn zoom_context(
     pid: i32,
     window_id: Option<u32>,
 ) -> Result<ZoomContext, cua_driver_core::protocol::ToolResult> {
-    state.zoom_registry.resolve(
-        &state.snapshots,
+    state.snapshots.zoom(
         pid,
         window_id.map(u64::from),
         args.get("_session_id").and_then(serde_json::Value::as_str),
@@ -825,13 +823,11 @@ pub fn register_all(
     {
         let session_config = state.session_config.clone();
         let snapshots = state.snapshots.clone();
-        let zoom_registry = state.zoom_registry.clone();
         let cursor_registry = state.cursor_registry.clone();
         let capture_bindings = state.capture_bindings.clone();
         let registration =
             cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
                 session_config.clear(session_id);
-                zoom_registry.retire_session(session_id);
                 snapshots.retire_session_screenshots(session_id);
                 capture_bindings.retire_session(session_id);
                 // Per-session agent cursor: the session_id is the cursor key when

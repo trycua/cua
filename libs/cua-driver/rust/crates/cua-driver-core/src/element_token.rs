@@ -11,8 +11,12 @@ pub(crate) fn mint_snapshot_id() -> u32 {
     SNAPSHOT_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
+pub fn format_snapshot_id(snapshot_id: u32) -> String {
+    format!("s{snapshot_id:08x}")
+}
+
 pub fn format_token(snapshot_id: u32, element_index: usize) -> String {
-    format!("s{snapshot_id:08x}:{element_index}")
+    format!("{}:{element_index}", format_snapshot_id(snapshot_id))
 }
 
 pub fn token_for(snapshot_id: u32, element_index: usize) -> String {

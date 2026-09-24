@@ -547,14 +547,11 @@ pub fn load_driver_config() -> DriverConfig {
     cfg
 }
 
-use cua_driver_core::snapshot_store::{
-    SnapshotBoundZoomContext as ZoomContext, SnapshotBoundZoomRegistry as ZoomRegistry,
-};
+use cua_driver_core::snapshot_store::ZoomContext;
 
 pub struct ToolState {
     pub snapshots: Arc<Snapshots>,
     pub cursor_registry: Arc<CursorRegistry>,
-    pub zoom_registry: Arc<ZoomRegistry>,
     pub config: Arc<RwLock<DriverConfig>>,
     capture_bridge: Option<Arc<crate::capture_admission::WindowsCaptureBridge>>,
 }
@@ -566,7 +563,6 @@ impl ToolState {
         Arc::new(Self {
             snapshots: Arc::new(Snapshots::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),
-            zoom_registry: Arc::new(ZoomRegistry::new()),
             config: Arc::new(RwLock::new(load_driver_config())),
             capture_bridge: capture_service
                 .map(crate::capture_admission::WindowsCaptureBridge::new),
@@ -579,8 +575,7 @@ impl ToolState {
         pid: u32,
         window_id: Option<u64>,
     ) -> Result<ZoomContext, ToolResult> {
-        self.zoom_registry.resolve(
-            &self.snapshots,
+        self.snapshots.zoom(
             pid as i32,
             window_id,
             args.get("_session_id").and_then(Value::as_str),
@@ -594,11 +589,14 @@ fn screenshot_scale(
     pid: u32,
     window_id: Option<u64>,
 ) -> Result<f64, ToolResult> {
-    state.snapshots.screenshot_scale_or_refusal(
-        pid as i32,
-        window_id,
-        args.get("_session_id").and_then(Value::as_str),
-    )
+    state
+        .snapshots
+        .screenshot_context(
+            pid as i32,
+            window_id,
+            args.get("_session_id").and_then(Value::as_str),
+        )
+        .map(|context| context.scale)
 }
 
 fn capture_admission_refusal(error: anyhow::Error) -> ToolResult {
@@ -1519,6 +1517,7 @@ impl Tool for GetWindowStateTool {
                     .as_ref()
                     .map(|(_, _, w, _, native_w, _, _)| *native_w as f64 / *w as f64);
                 let mut published_snapshot = false;
+                let mut invalidated = Vec::new();
 
                 if let Some((tr, payload)) = tree_opt {
                     let is_msaa = tr.nodes.iter().any(|node| node.msaa_role.is_some());
@@ -1538,7 +1537,7 @@ impl Tool for GetWindowStateTool {
                     structured["elements_complete"] = json!(false);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
 
-                    let snapshot_id = (!observation_only)
+                    let (snapshot_id, replaced) = (!observation_only)
                         .then(|| {
                             state.snapshots.publish_for_session(
                                 pid as i32,
@@ -1548,13 +1547,10 @@ impl Tool for GetWindowStateTool {
                                 screenshot_scale,
                             )
                         })
-                        .flatten();
+                        .flatten()
+                        .unzip();
                     published_snapshot = snapshot_id.is_some();
-                    if let Some(snapshot_id) = snapshot_id {
-                        state
-                            .zoom_registry
-                            .retire_replaced(pid as i32, hwnd, snapshot_id);
-                    }
+                    invalidated.extend(replaced.into_iter().flatten());
 
                     // Structured `elements` array — preferred consumption
                     // path. Shape matches the cross-platform spec:
@@ -1576,10 +1572,9 @@ impl Tool for GetWindowStateTool {
                     structured["elements"] = json!(elements);
                     // Surface 6: snapshot id mirror for debug correlation.
                     if let Some(snapshot_id) = snapshot_id {
-                        structured["snapshot_id"] =
-                            json!(cua_driver_core::element_token::token_for(snapshot_id, 0)
-                                .trim_end_matches(":0")
-                                .to_string());
+                        structured["snapshot_id"] = json!(
+                            cua_driver_core::element_token::format_snapshot_id(snapshot_id)
+                        );
                     }
                     structured["_note"] = json!(
                         "Prefer `elements` — `tree_markdown` will continue to work \
@@ -1626,17 +1621,26 @@ impl Tool for GetWindowStateTool {
                         &[],
                         crate::uia::snapshot::SnapshotKind::Uia,
                     );
-                    if let Some(snapshot_id) = state.snapshots.publish_for_session(
+                    if let Some((_, replaced)) = state.snapshots.publish_for_session(
                         pid as i32,
                         hwnd,
                         payload,
                         session_id.as_deref(),
                         screenshot_scale,
                     ) {
-                        state
-                            .zoom_registry
-                            .retire_replaced(pid as i32, hwnd, snapshot_id);
+                        invalidated.extend(replaced);
                     }
+                }
+                if !invalidated.is_empty() {
+                    let ids: Vec<String> = invalidated
+                        .into_iter()
+                        .map(cua_driver_core::element_token::format_snapshot_id)
+                        .collect();
+                    content.push(cua_driver_core::protocol::Content::text(format!(
+                        "Invalidated snapshots {}: their element_tokens are stale.",
+                        ids.join(", ")
+                    )));
+                    structured["invalidated_snapshot_ids"] = json!(ids);
                 }
 
                 if let Some((b64_opt, file_path, w, h, native_w, native_h, png)) = screenshot_opt {
@@ -9075,7 +9079,7 @@ impl Tool for ZoomTool {
                 the target remains visible even if the caller's coordinates are slightly off.\n\n\
                 After a zoom, pass `from_zoom=true` to click/type_text to auto-translate \
                 coordinates back to full-window space. Coordinate actions return \
-                `screenshot_context_missing` when the latest snapshot does not contain a \
+                `screenshot_context_missing` when no current snapshot contains a \
                 screenshot owned by this session. `from_zoom` actions return \
                 `zoom_context_missing` when the zoom was never created or was replaced; call \
                 `get_window_state`, then `zoom`, again on the same connection.\n\n\
@@ -9158,8 +9162,7 @@ impl Tool for ZoomTool {
 
         match result {
             Ok(Ok(crop)) => {
-                if let Err(refusal) = state.zoom_registry.set_if_current(
-                    &state.snapshots,
+                if let Err(refusal) = state.snapshots.set_zoom(
                     pid,
                     session_id.as_deref(),
                     ZoomContext {
@@ -10344,10 +10347,8 @@ pub fn build_registry_with_provider(
     // `register_all` session_end hook (platform-macos/src/tools/mod.rs).
     let cursor_registry = state.cursor_registry.clone();
     let snapshots = state.snapshots.clone();
-    let zoom_registry = state.zoom_registry.clone();
     let session_end_hook =
         cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
-            zoom_registry.retire_session(session_id);
             snapshots.retire_session_screenshots(session_id);
             cursor_registry.remove(session_id);
             crate::overlay::remove_cursor(session_id.to_owned());

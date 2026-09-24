@@ -36,7 +36,7 @@
 //! BEFORE deterministically trips and AFTER deterministically survives.
 
 use super::{CachedSnapshot, ElementCache, RetainedElement, SnapshotKind};
-use cua_driver_core::element_token::{format_token, ResolvedElement};
+use cua_driver_core::element_token::{token_for, ResolvedElement};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 use std::sync::mpsc;
@@ -146,7 +146,7 @@ fn acquire(cache: &ElementCache, snapshot: u32, idx: usize) -> Option<RetainedEl
         .resolve_element_args(
             PID as i32,
             None,
-            Some(&format_token(snapshot, idx)),
+            Some(&token_for(snapshot, idx)),
             None,
             Some(HWND),
             "test",
@@ -323,7 +323,7 @@ fn exact_snapshot_retains_matching_identity_and_geometry() {
         .resolve_element_args(
             PID as i32,
             None,
-            Some(&format_token(second, 0)),
+            Some(&token_for(second, 0)),
             None,
             Some(HWND + 1),
             "test",
@@ -447,7 +447,7 @@ fn recording_metadata_uses_snapshot_without_native_geometry() {
         cua_driver_core::element_cache::register_runtime_cache(&cache);
         let ptr = make_fake(hits, false);
         let id = cache.publish(PID as i32, HWND, snapshot_with(vec![ptr]));
-        let args = serde_json::json!({"element_token": format_token(id, 0)});
+        let args = serde_json::json!({"element_token": token_for(id, 0)});
         assert_eq!(
             crate::recording_hooks::element_window_local_xy(PID as i64, &args, false),
             Some((HWND, None))

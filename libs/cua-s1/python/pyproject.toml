@@ -43,22 +43,22 @@ mcp = [
     "mcp>=1,<2",
 ]
 nano-vision = [
-    "transformers>=4.45,<5",
+    "transformers>=4.45,<6",
     "pillow>=10,<12",
 ]
 four-b = [
-    "transformers>=4.45,<5",
+    "transformers>=4.45,<6",
     "peft>=0.13,<1",
 ]
 four-b-train = [
-    "transformers>=4.45,<5",
+    "transformers>=4.45,<6",
     "peft>=0.13,<1",
     "accelerate>=0.34,<2",
     "torchvision>=0.17,<1",
     "cua-bench-s1",
 ]
 four-b-rl = [
-    "transformers>=4.45,<5",
+    "transformers>=4.45,<6",
     "peft>=0.13,<1",
     "accelerate>=0.34,<2",
     # The RL trainer renders its own set-of-mark screenshots (multimodal mode)
@@ -73,7 +73,7 @@ four-b-rl = [
 all = [
     "mcp>=1,<2",
     "pdfplumber>=0.11,<1",
-    "transformers>=4.45,<5",
+    "transformers>=4.45,<6",
     "pillow>=10,<12",
     "peft>=0.13,<1",
 ]

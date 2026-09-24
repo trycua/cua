@@ -138,7 +138,8 @@ The extension artifact has its own license and source obligations. The current
 candidate ledgers identify the OmniParser detector artifact as AGPL-3.0-only,
 the PP-OCR detector and recognizer artifacts as Apache-2.0, and the packaged
 ONNX Runtime by an exact version and hash selected at assembly time. Read the
-[perception third-party notices](perception-third-party-notices.md). A release
+[perception third-party notices](perception-third-party-notices.md), including
+its precautions for redistribution and hosted services. A release
 must include the reviewed notices, ledgers, SBOM, source/conversion materials,
 and any corresponding-source offer required for the way the artifact is
 distributed or offered over a network.

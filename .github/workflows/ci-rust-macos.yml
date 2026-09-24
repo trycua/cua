@@ -1,0 +1,60 @@
+name: "CI: Rust macOS unit"
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/rust/.cargo/**"
+      - "libs/cua-driver/rust/Cargo.toml"
+      - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/rust-toolchain.toml"
+      - "libs/cua-driver/rust/crates/cua-driver-contract/**"
+      - "libs/cua-driver/rust/crates/cua-driver-core/**"
+      - "libs/cua-driver/rust/crates/cursor-overlay/**"
+      - "libs/cua-driver/rust/crates/pip-preview/**"
+      - "libs/cua-driver/rust/crates/platform-macos/**"
+      - ".github/workflows/ci-rust-macos.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-driver/rust/.cargo/**"
+      - "libs/cua-driver/rust/Cargo.toml"
+      - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/rust-toolchain.toml"
+      - "libs/cua-driver/rust/crates/cua-driver-contract/**"
+      - "libs/cua-driver/rust/crates/cua-driver-core/**"
+      - "libs/cua-driver/rust/crates/cursor-overlay/**"
+      - "libs/cua-driver/rust/crates/pip-preview/**"
+      - "libs/cua-driver/rust/crates/platform-macos/**"
+      - ".github/workflows/ci-rust-macos.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-rust-macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Rust macOS unit
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          shared-key: macos-unit
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Run each crate's whole inline suite so new test modules cannot be
+      # silently left out by a hand-maintained filter list. Tests that need a
+      # logged-in, TCC-authorized desktop are #[ignore] and belong to the Lume
+      # harness (libs/cua-driver/tests/runners/macos-lume/run-all.sh).
+      - name: Run platform-macos unit tests
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p platform-macos --lib
+      - name: Run cua-driver-core unit tests on macOS
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p cua-driver-core --lib

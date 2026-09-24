@@ -354,8 +354,24 @@ fn has_trusted_codesign_identity(
     let requirement = format!(
         "=anchor apple generic and certificate leaf[subject.OU] = \"{team_identifier}\" and identifier \"{identifier}\""
     );
+    // Note: `--strict` (bare) also enables the `sideband` sub-check, which
+    // rejects "resource forks, Finder attributes, or similar sideband data".
+    // Newer macOS releases attach a kernel/AMFI-enforced `com.apple.provenance`
+    // extended attribute to every executable as part of app-provenance
+    // tracking. `sideband` predates that attribute and misclassifies it as
+    // leftover detritus, so a genuinely vendor-signed, unmodified executable
+    // (e.g. a stock Google Chrome install) fails verification. The attribute
+    // cannot be stripped (SIP/AMFI-protected), so this is not recoverable by
+    // cleaning the target file — scope `--strict` to `symlinks` only, which
+    // still rejects bundles with broken/escaping symlinks but does not choke
+    // on `com.apple.provenance`. See: https://github.com/trycua/cua/issues/4058
     let verified = std::process::Command::new("/usr/bin/codesign")
-        .args(["--verify", "--strict", "--test-requirement", &requirement])
+        .args([
+            "--verify",
+            "--strict=symlinks",
+            "--test-requirement",
+            &requirement,
+        ])
         .arg(executable)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

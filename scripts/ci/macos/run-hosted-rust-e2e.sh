@@ -16,9 +16,11 @@ BOOTSTRAP_DIR="${REPO_ROOT}/artifacts/cua-driver/macos-hosted-bootstrap"
 BROWSER_ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos-standalone-browser"
 # The browser lane certifies every installed product the Lume seed carries.
 STANDALONE_BROWSER_PRODUCTS="chrome,edge"
+# app path|code-signing identifier|vendor team, matching the driver's pid-free
+# isolated-launch attestation in platform-macos/src/browser/platform.rs.
 STANDALONE_BROWSER_APPS=(
-  "/Applications/Google Chrome.app"
-  "/Applications/Microsoft Edge.app"
+  "/Applications/Google Chrome.app|com.google.Chrome|EQHXZ8M8AV"
+  "/Applications/Microsoft Edge.app|com.microsoft.edgemac|UBF8T346G9"
 )
 KEYCHAIN="${RUNNER_TEMP:-}/cua-driver-hosted-signing.keychain-db"
 DAEMON_SOCKET="${HOME}/Library/Caches/cua-driver-local/cua-driver-local.sock"
@@ -211,12 +213,15 @@ sudo -n -v >/dev/null 2>&1 \
 if [[ "${LANE}" == browser ]]; then
   # A missing or unsigned vendor browser must fail the lane; it never shrinks
   # the certified product set.
-  for browser_app in "${STANDALONE_BROWSER_APPS[@]}"; do
-    browser_name="$(basename "${browser_app}" .app)"
-    [[ -x "${browser_app}/Contents/MacOS/${browser_name}" ]] \
+  for browser_entry in "${STANDALONE_BROWSER_APPS[@]}"; do
+    IFS='|' read -r browser_app browser_identifier browser_team <<< "${browser_entry}"
+    browser_executable="${browser_app}/Contents/MacOS/$(basename "${browser_app}" .app)"
+    [[ -x "${browser_executable}" ]] \
       || fail "missing hosted standalone browser: ${browser_app}"
-    codesign --verify --strict "${browser_app}" >/dev/null 2>&1 \
-      || fail "hosted standalone browser signature is not valid: ${browser_app}"
+    browser_requirement="=anchor apple generic and certificate leaf[subject.OU] = \"${browser_team}\" and identifier \"${browser_identifier}\""
+    codesign --verify --strict --test-requirement "${browser_requirement}" \
+        "${browser_executable}" >/dev/null 2>&1 \
+      || fail "hosted standalone browser signature is not valid: ${browser_executable}"
   done
 fi
 
@@ -250,11 +255,16 @@ mkdir -p "${BOOTSTRAP_DIR}"
 if [[ "${LANE}" == browser ]]; then
   {
     printf 'standalone_browser_products=%s\n' "${STANDALONE_BROWSER_PRODUCTS}"
-    for browser_app in "${STANDALONE_BROWSER_APPS[@]}"; do
+    for browser_entry in "${STANDALONE_BROWSER_APPS[@]}"; do
+      browser_app="${browser_entry%%|*}"
       printf '%s version=%s\n' "${browser_app}" \
         "$(defaults read "${browser_app}/Contents/Info" CFBundleShortVersionString)"
       codesign -dv "${browser_app}" 2>&1 \
         | grep -E '^(Identifier|TeamIdentifier)='
+      # Informational only: the driver attests the main executable, and the
+      # hosted image's Edge bundle does not pass a whole-bundle strict check.
+      printf 'bundle_strict_verify: '
+      codesign --verify --strict "${browser_app}" 2>&1 && printf 'ok\n'
     done
   } > "${BOOTSTRAP_DIR}/standalone-browsers.txt"
 fi

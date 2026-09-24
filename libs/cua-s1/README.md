@@ -76,8 +76,11 @@ uv sync --project libs/cua-s1/python --extra four-b
 
 The `four-b` inference extra cannot be combined in one environment with
 `nano-vision`, `four-b-train`, `four-b-rl`, or `all`. Those extras retain
-their Transformers 4 dependency; their compatibility with Transformers 5
-has not been established. Use separate environments when working on both.
+their Transformers 4 dependency. In particular, the training and RL recipes
+default to Qwen3.5, which that dependency cannot load; the recipes need a
+separate compatibility update before they can train this base model. Use
+separate environments for other extras, and do not treat the training extras
+as a working Qwen3.5 setup.
 
 `cua_s1.nano` (the `cua-s1-nano-0.1` architecture) supports a text-only
 context modality with no extra dependencies, and an optional multimodal

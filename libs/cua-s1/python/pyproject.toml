@@ -48,7 +48,7 @@ nano-vision = [
 ]
 four-b = [
     "transformers>=5.10.1,<6",
-    "peft>=0.13,<1",
+    "peft>=0.21,<1",
     "torchvision>=0.17,<1",
 ]
 four-b-train = [

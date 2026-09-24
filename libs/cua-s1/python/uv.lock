@@ -375,7 +375,7 @@ requires-dist = [
     { name = "pdfplumber", marker = "extra == 'all'", specifier = ">=0.11,<1" },
     { name = "pdfplumber", marker = "extra == 'pdf'", specifier = ">=0.11,<1" },
     { name = "peft", marker = "extra == 'all'", specifier = ">=0.13,<1" },
-    { name = "peft", marker = "extra == 'four-b'", specifier = ">=0.13,<1" },
+    { name = "peft", marker = "extra == 'four-b'", specifier = ">=0.21,<1" },
     { name = "peft", marker = "extra == 'four-b-rl'", specifier = ">=0.13,<1" },
     { name = "peft", marker = "extra == 'four-b-train'", specifier = ">=0.13,<1" },
     { name = "pillow", marker = "extra == 'all'", specifier = ">=10,<12" },

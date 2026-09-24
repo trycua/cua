@@ -7,6 +7,7 @@ freshness, Driver actions, and independent verification stay with the caller.
 from __future__ import annotations
 
 import math
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -51,6 +52,7 @@ class ModelScores:
 @dataclass(frozen=True)
 class DecisionResult:
     kind: DecisionKind
+    capture_id: str
     selected_id: str | None
     model: str
     confidence: float | None
@@ -61,6 +63,7 @@ class DecisionResult:
         return {
             "schema": "cua.decision_choice_v1",
             "kind": self.kind,
+            "capture_id": self.capture_id,
             "selected_id": self.selected_id,
             "model": self.model,
             "confidence": self.confidence,
@@ -95,9 +98,12 @@ def choose(model: DecisionModel, request: DecisionRequest) -> DecisionResult:
             raise ValueError("probabilities must be finite numbers in [0, 1]")
         if abs(sum(probabilities.values()) - 1) > 0.02:
             raise ValueError("probability mass must be approximately one")
-        argmax = max(allowed, key=lambda candidate_id: probabilities[candidate_id])
-        selected = scores.selected_id or argmax
-        if selected not in allowed or probabilities[selected] != probabilities[argmax]:
+        top = max(probabilities.values())
+        winners = [candidate_id for candidate_id in allowed if probabilities[candidate_id] == top]
+        if len(winners) != 1:
+            raise ValueError("a tied top score is not actionable")
+        selected = scores.selected_id or winners[0]
+        if selected != winners[0]:
             raise ValueError("selection must be an allowed argmax")
         confidence = scores.confidence if scores.confidence is not None else probabilities[selected]
         if (
@@ -116,6 +122,7 @@ def choose(model: DecisionModel, request: DecisionRequest) -> DecisionResult:
         )
         return DecisionResult(
             kind=kind,
+            capture_id=request.capture_id,
             selected_id=selected,
             model=scores.model,
             confidence=confidence,
@@ -123,7 +130,7 @@ def choose(model: DecisionModel, request: DecisionRequest) -> DecisionResult:
         )
     except Exception as error:
         reason = "option_limit" if isinstance(error, OptionLimitError) else "model_error"
-        return DecisionResult("error", None, model.name, None, {}, reason)
+        return DecisionResult("error", request.capture_id, None, model.name, None, {}, reason)
 
 
 class OptionLimitError(ValueError):
@@ -170,19 +177,19 @@ class _S1Option:
 
 def visual_regions_as_text(request: DecisionRequest) -> str:
     """Describe OmniParser regions; this is not an accessibility tree."""
-    lines = [f"Visual-region-derived observation for capture {request.capture_id}:"]
+    lines = [f"Visual-region-derived observation for capture {json.dumps(request.capture_id)}:"]
     for region in request.regions:
         bounds = region["bounds"]
         label = region.get("text") or region.get("label")
         lines.append(
-            f"{region['id']}: {region['kind']} {label!r} at "
+            f"{json.dumps(region['id'])}: {region['kind']} {label!r} at "
             f"({bounds['x']},{bounds['y']},{bounds['width']},{bounds['height']})"
         )
     return "\n".join(lines)
 
 
 class S1DecisionModel:
-    name = "cua-s1-4b-0.2"
+    name = "cua-s1-4b-local"
 
     def __init__(
         self,
@@ -203,7 +210,7 @@ class S1DecisionModel:
         ):
             raise ValueError("multimodal S1 requires an existing local screenshot")
         options = [
-            _S1Option(item["id"], "Decision", item["description"], "select")
+            _S1Option(item["id"], "Decision", json.dumps(item["description"]), "select")
             for item in request.candidates
         ]
         kwargs: dict[str, Any] = {

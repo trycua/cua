@@ -80,11 +80,14 @@ def main() -> None:
         except (KeyError, ValueError, ImportError) as error:
             raise SystemExit(f"S1 setup failed: {error}") from None
     else:
-        from typesafe_sdk import TypeSafeClient
+        try:
+            from typesafe_sdk import TypeSafeClient
 
-        with TypeSafeClient() as client:
-            result = choose_request(request, TypeSafeDecisionModel(client))
-            sys.stdout.write(json.dumps(result, separators=(",", ":")) + "\n")
+            with TypeSafeClient() as client:
+                result = choose_request(request, TypeSafeDecisionModel(client))
+        except Exception:
+            raise SystemExit("provider setup failed") from None
+        sys.stdout.write(json.dumps(result, separators=(",", ":")) + "\n")
         return
     result = choose_request(request, model)
     sys.stdout.write(json.dumps(result, separators=(",", ":")) + "\n")

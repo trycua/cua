@@ -24,10 +24,20 @@ or screenshot bytes.
 
 The input is the existing `cua.jev_choice_request_v1` request accepted by
 `choose_action.py`. The output is a separate
-`cua.decision_choice_v1` response with `kind`, `selected_id`, `model`,
+`cua.decision_choice_v1` response with `kind`, `capture_id`, `selected_id`, `model`,
 `confidence`, `probabilities`, and `reason`. This output is not a drop-in
 replacement for the older `cua.jev_choice_v1` response; callers must handle
-all four outcome kinds.
+all four outcome kinds and match `capture_id` to the current observation.
+Tied top scores are non-actionable errors. For a `selected` outcome, callers
+should also apply their own minimum score and margin before dispatching an
+action. `confidence` preserves the provider's reported value when Jev supplies
+one; with S1 and mock it is the selected option probability. For a
+model-independent threshold, use `probabilities[selected_id]` instead.
+
+Malformed model output and lazy model-loading failures return `kind: "error"`
+with a non-secret `reason: "model_error"`. Missing local S1 paths or a failure
+to initialize the TypeSafe client stop the CLI with a generic nonzero setup
+error and no JSON response. Never treat a missing response as `selected`.
 
 ## Run a bounded request
 
@@ -67,7 +77,10 @@ S1_DEVICE=cpu S1_DTYPE=float16 \
 ```
 
 The S1 text adapter renders OmniParser regions as text and labels the result
-`Visual-region-derived observation`. It is not a genuine accessibility tree.
+`Visual-region-derived observation`. It is not a genuine accessibility tree,
+even though the underlying S1 prompt still titles this text field
+`Accessibility tree:`. The reserved options are represented as closed-choice
+decisions; their accuracy is not established by S1's element/action training.
 S1's one-letter-per-option readout supports at most 26 candidates, including
 `reobserve` and `abstain`; a larger validated request returns `error` with
 `reason: "option_limit"` and never silently truncates the table. The Jev

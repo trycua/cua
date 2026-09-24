@@ -31,7 +31,10 @@ bash libs/cua-driver/scripts/install-local.sh \
 
 `CUA_DRIVER_REQUIRE_STABLE_SIGNING=1` is the environment equivalent. Strict
 mode stops before replacing the live app when no usable certificate-backed
-identity is available.
+identity is available. It also refuses to select the login Keychain implicitly:
+an older key there can interrupt an unattended run with a macOS password
+dialog. Released Cua Driver installations do not need local signing; they
+install an already signed bundle and verify it on the Mac.
 
 For the most reliable non-interactive rebuilds, use a dedicated keychain:
 
@@ -61,15 +64,18 @@ code-signing tools:
 ```bash
 read -r -s -p 'Keychain password: ' KEYCHAIN_PASSWORD; echo
 security set-key-partition-list \
-  -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" \
+  -S apple-tool:,apple:,codesign: -t private -s \
+  -l 'CuaDriver Local Signing (cua-driver-rs)' \
+  -k "$KEYCHAIN_PASSWORD" \
   "$SIGNING_KEYCHAIN"
 unset KEYCHAIN_PASSWORD
 ```
 
-Then rerun the strict installer and grant Accessibility and Screen Recording
-once. When the dedicated default keychain above exists, the installer prefers
-it automatically; exporting `CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN` remains the
-most explicit choice.
+This command updates only the dedicated Cua Driver local-development key. Do
+not paste the password into test output. Then rerun the strict installer and
+grant Accessibility and Screen Recording once. When the dedicated default
+keychain above exists, the installer prefers it automatically; exporting
+`CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN` remains the most explicit choice.
 
 Released installers show a telemetry notice before asking the installed binary
 to record anything. Telemetry is enabled by default and can be persistently

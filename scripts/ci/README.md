@@ -223,8 +223,9 @@ with each measurement.
 
 Use the command without a selector for the canonical complete run. CI sets the
 private `CUA_E2E_INTERNAL_LANE` partition to `shared`, `native`, or `capture`
-when it fans the same matrix into independent jobs. Those values are not public
-alternate suites.
+when it fans the same matrix into independent jobs. The hosted macOS wrapper
+also accepts `browser`, which it routes to the standalone browser suite instead
+of the repo-local matrix. Those values are not public alternate suites.
 
 The complete harness result at the exact source SHA is the behavioral gate.
 Manual app smokes, standalone videos, legacy runners, and environment-parity
@@ -256,14 +257,19 @@ exact source SHA. Probe permission checks describe only the temporary probe
 process. Dispatch only a reviewed commit SHA; the selected source is executable
 test code and the bootstrap uses the hosted runner's passwordless sudo policy.
 
-After that prerequisite passes, three fresh hosted runners execute the shared,
-native, and capture partitions through `macos/run-hosted-rust-e2e.sh`. Each
+After that prerequisite passes, four fresh hosted runners execute the shared,
+native, capture, and browser lanes through `macos/run-hosted-rust-e2e.sh`. Each
 runner refuses unexpected hosts or pre-existing app state, creates a temporary
 certificate-backed identity and Keychain, installs the exact source as
 `CuaDriverLocal.app`, seeds only its Accessibility and Screen Capture TCC rows,
 records the app's separate `replayd` approval before its first direct capture,
 verifies the daemon-attributed permission result, and delegates to
-`macos/run-rust-e2e.sh`. GitHub's image-level approval covers the hosted runner
+`macos/run-rust-e2e.sh`. The browser lane instead runs
+`run-rust-standalone-browser-e2e.sh` against the same unrestricted installed
+daemon for the image's Google Chrome and Microsoft Edge, writing evidence to
+`artifacts/cua-driver/macos-standalone-browser/` like the Lume gate. It fails
+before bootstrap when either vendor-signed browser is missing and never shrinks
+the product set. The `certify` job requires every lane. GitHub's image-level approval covers the hosted runner
 agent, while the bundled driver is its own responsible ScreenCaptureKit client
 and would otherwise show the private-window-picker reminder over the headed
 test. The lane uploads bootstrap, structured result, log, and video evidence

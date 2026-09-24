@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Prepare a fresh GitHub-hosted macOS 26 runner and run one canonical E2E lane.
+# The shared, native, and capture lanes partition the repo-local matrix. The
+# browser lane runs the standalone installed Chrome/Edge matrix, which the Lume
+# gate runs after its repo-local matrix.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,6 +13,13 @@ INSTALLED_BIN="${LOCAL_APP}/Contents/MacOS/cua-driver-local"
 TCC_SEEDER="${DRIVER_ROOT}/tests/runners/macos-lume/seed-tcc-guest.sh"
 LANE="${CUA_E2E_INTERNAL_LANE:-}"
 BOOTSTRAP_DIR="${REPO_ROOT}/artifacts/cua-driver/macos-hosted-bootstrap"
+BROWSER_ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos-standalone-browser"
+# The browser lane certifies every installed product the Lume seed carries.
+STANDALONE_BROWSER_PRODUCTS="chrome,edge"
+STANDALONE_BROWSER_APPS=(
+  "/Applications/Google Chrome.app"
+  "/Applications/Microsoft Edge.app"
+)
 KEYCHAIN="${RUNNER_TEMP:-}/cua-driver-hosted-signing.keychain-db"
 DAEMON_SOCKET="${HOME}/Library/Caches/cua-driver-local/cua-driver-local.sock"
 SCREEN_CAPTURE_APPROVALS="${HOME}/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist"
@@ -163,8 +173,8 @@ capture_command_output() {
 [[ -z "${SSH_CONNECTION:-}" && -z "${SSH_TTY:-}" ]] \
   || fail "SSH sessions cannot seed or certify hosted TCC state"
 case "${LANE}" in
-  shared|native|capture) ;;
-  *) fail "CUA_E2E_INTERNAL_LANE must be shared, native, or capture" ;;
+  shared|native|capture|browser) ;;
+  *) fail "CUA_E2E_INTERNAL_LANE must be shared, native, capture, or browser" ;;
 esac
 
 CURRENT_USER="$(id -un)"
@@ -198,6 +208,17 @@ done
   || fail "refusing a runner with a pre-existing signing keychain"
 sudo -n -v >/dev/null 2>&1 \
   || fail "requires the hosted runner's noninteractive sudo policy"
+if [[ "${LANE}" == browser ]]; then
+  # A missing or unsigned vendor browser must fail the lane; it never shrinks
+  # the certified product set.
+  for browser_app in "${STANDALONE_BROWSER_APPS[@]}"; do
+    browser_name="$(basename "${browser_app}" .app)"
+    [[ -x "${browser_app}/Contents/MacOS/${browser_name}" ]] \
+      || fail "missing hosted standalone browser: ${browser_app}"
+    codesign --verify --strict "${browser_app}" >/dev/null 2>&1 \
+      || fail "hosted standalone browser signature is not valid: ${browser_app}"
+  done
+fi
 
 SOURCE_SHA="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
 [[ "${CUA_E2E_SOURCE_SHA:-}" =~ ^[0-9a-fA-F]{40}$ ]] \
@@ -226,6 +247,17 @@ mkdir -p "${BOOTSTRAP_DIR}"
   ffprobe -version 2>&1 | sed -n '1p'
   jq --version
 } > "${BOOTSTRAP_DIR}/environment.txt"
+if [[ "${LANE}" == browser ]]; then
+  {
+    printf 'standalone_browser_products=%s\n' "${STANDALONE_BROWSER_PRODUCTS}"
+    for browser_app in "${STANDALONE_BROWSER_APPS[@]}"; do
+      printf '%s version=%s\n' "${browser_app}" \
+        "$(defaults read "${browser_app}/Contents/Info" CFBundleShortVersionString)"
+      codesign -dv "${browser_app}" 2>&1 \
+        | grep -E '^(Identifier|TeamIdentifier)='
+    done
+  } > "${BOOTSTRAP_DIR}/standalone-browsers.txt"
+fi
 
 cat > "${BOOTSTRAP_DIR}/cleanup-targets.txt" <<EOF
 Installer recursive cleanup is limited to source-derived task-owned paths:
@@ -405,7 +437,19 @@ export CUA_E2E_FRESH_FIXTURE_STATE=1
 mark_phase "matrix-${LANE}"
 echo "[E2E] Running hosted macOS ${LANE} lane"
 MATRIX_STATUS=0
-bash "${SCRIPT_DIR}/run-rust-e2e.sh" || MATRIX_STATUS=$?
+if [[ "${LANE}" == browser ]]; then
+  # Mirror the Lume gate: the standalone matrix runs against the same
+  # unrestricted installed daemon, with a fresh evidence directory and a
+  # repo-owned isolated profile per browser row.
+  CUA_TEST_DRIVER_BIN="${CARGO_TARGET_DIR}/release/cua-driver" \
+    CUA_E2E_BROWSER_PRODUCTS="${STANDALONE_BROWSER_PRODUCTS}" \
+    CUA_E2E_BROWSER_STDERR=1 \
+    CUA_E2E_ARTIFACT_DIR="${BROWSER_ARTIFACT_DIR}" \
+    bash "${REPO_ROOT}/scripts/ci/run-rust-standalone-browser-e2e.sh" \
+    || MATRIX_STATUS=$?
+else
+  bash "${SCRIPT_DIR}/run-rust-e2e.sh" || MATRIX_STATUS=$?
+fi
 kill "${WATCHDOG_PID}" >/dev/null 2>&1 || true
 wait "${WATCHDOG_PID}" 2>/dev/null || true
 WATCHDOG_PID=""

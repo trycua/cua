@@ -48,6 +48,8 @@ struct FixtureState {
     oopif_present: bool,
     emit_rogue_attach: bool,
     main_url: String,
+    main_title: String,
+    omit_snapshot_title: bool,
     main_loader: String,
     iframe_loader: String,
     oopif_loader: String,
@@ -58,6 +60,9 @@ struct FixtureState {
     semantic_large_page: bool,
     semantic_full_dom_fails: bool,
     semantic_full_dom_times_out: bool,
+    deeply_nested_dom_reply: bool,
+    deeply_nested_oopif_reply: bool,
+    document_error: Option<&'static str>,
     semantic_truncated_dom: bool,
     screenshot_data: String,
     viewport_css_width: f64,
@@ -74,6 +79,8 @@ impl Default for FixtureState {
             oopif_present: true,
             emit_rogue_attach: false,
             main_url: "https://fixture.test/".into(),
+            main_title: "Current fixture title".into(),
+            omit_snapshot_title: false,
             main_loader: "L_MAIN_1".into(),
             iframe_loader: "L_IFRAME_1".into(),
             oopif_loader: "L_OOPIF_1".into(),
@@ -84,6 +91,9 @@ impl Default for FixtureState {
             semantic_large_page: false,
             semantic_full_dom_fails: false,
             semantic_full_dom_times_out: false,
+            deeply_nested_dom_reply: false,
+            deeply_nested_oopif_reply: false,
+            document_error: None,
             semantic_truncated_dom: false,
             screenshot_data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZJrAAAAAASUVORK5CYII=".into(),
             viewport_css_width: 800.0,
@@ -111,6 +121,7 @@ type SharedState = Arc<StdMutex<FixtureState>>;
 fn main_document() -> Value {
     json!({
         "root": {
+            "backendNodeId": 90000,
             "nodeType": 9,
             "nodeName": "#document",
             "documentURL": "https://fixture.test/",
@@ -252,6 +263,7 @@ fn large_semantic_document() -> Value {
     }
     json!({
         "root": {
+            "backendNodeId": 90001,
             "nodeType": 9,
             "nodeName": "#document",
             "documentURL": "https://fixture.test/inbox/item-2",
@@ -269,6 +281,7 @@ fn large_semantic_document() -> Value {
 fn truncated_semantic_document() -> Value {
     json!({
         "root": {
+            "backendNodeId": 90001,
             "nodeType": 9,
             "nodeName": "#document",
             "documentURL": "https://fixture.test/inbox/item-2",
@@ -369,16 +382,27 @@ fn large_semantic_ax_tree(frame_id: &str) -> Value {
     json!({"nodes": nodes})
 }
 
-fn semantic_layout_snapshot(backends: &[i64], bounds: &[[f64; 4]]) -> Value {
+fn semantic_layout_snapshot(
+    backends: &[i64],
+    bounds: &[[f64; 4]],
+    document: &Value,
+    title: &str,
+) -> Value {
     let styles = (0..backends.len())
         .map(|_| json!([0, 1, 2, 3, 3]))
         .collect::<Vec<_>>();
-    let node_indices = (0..backends.len()).collect::<Vec<_>>();
+    let node_indices = (1..=backends.len()).collect::<Vec<_>>();
     let paint_orders = (1..=backends.len()).collect::<Vec<_>>();
+    let mut node_backends = vec![document["root"]["backendNodeId"].as_i64().unwrap()];
+    node_backends.extend_from_slice(backends);
     json!({
-        "strings": ["block", "visible", "1", "auto", "pointer"],
+        "strings": ["block", "visible", "1", "auto", "pointer",
+            document["root"]["documentURL"], document["root"]["frameId"], title],
         "documents": [{
-            "nodes": {"backendNodeId": backends},
+            "documentURL": 5,
+            "frameId": 6,
+            "title": 7,
+            "nodes": {"backendNodeId": node_backends},
             "layout": {
                 "nodeIndex": node_indices,
                 "bounds": bounds,
@@ -392,6 +416,7 @@ fn semantic_layout_snapshot(backends: &[i64], bounds: &[[f64; 4]]) -> Value {
 fn oopif_document() -> Value {
     json!({
         "root": {
+            "backendNodeId": 90002,
             "nodeType": 9,
             "nodeName": "#document",
             "documentURL": "https://ads.example/frame",
@@ -469,7 +494,11 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             })),
             "DOM.getDocument" if is_tab => {
                 let depth = call.params["depth"].as_i64().unwrap_or(-1);
-                if st.semantic_full_dom_times_out && (depth == -1 || depth > 8) {
+                if let Some(message) = st.document_error {
+                    MockReply::err(-32000, message)
+                } else if st.deeply_nested_dom_reply && (depth == -1 || depth > 8) {
+                    MockReply::ok(deeply_nested_document(main_document()))
+                } else if st.semantic_full_dom_times_out && (depth == -1 || depth > 8) {
                     MockReply::err(-32000, "CDP DOM.getDocument timed out after 20s")
                 } else if st.semantic_full_dom_fails && (depth == -1 || depth > 8) {
                     MockReply::err(-32000, "Object reference chain is too long")
@@ -488,7 +517,17 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     "node": large_semantic_document()["root"]["children"][0].clone()
                 }))
             }
-            "DOM.getDocument" if is_oopif => MockReply::ok(oopif_document()),
+            "DOM.getDocument" if is_oopif => {
+                let depth = call.params["depth"].as_i64().unwrap_or(-1);
+                let document = oopif_document();
+                MockReply::ok(
+                    if st.deeply_nested_oopif_reply && (depth == -1 || depth > 8) {
+                        deeply_nested_document(document)
+                    } else {
+                        document
+                    },
+                )
+            }
             "Accessibility.getFullAXTree" if is_tab => {
                 let frame_id = call.params["frameId"].as_str().unwrap_or("F_MAIN");
                 if st.semantic_large_page {
@@ -507,7 +546,7 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                  "childIds": []}
             ]})),
             "DOMSnapshot.captureSnapshot" if is_tab => {
-                if st.semantic_large_page {
+                let mut snapshot = if st.semantic_large_page {
                     let mut backends = vec![999, 2000, 2003, 2010, 2011];
                     let mut bounds = vec![
                         [0.0, 0.0, 800.0, 600.0],
@@ -520,14 +559,28 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                         backends.push(3_000 + id);
                         bounds.push([20.0, 2_000.0 + id as f64 * 40.0, 160.0, 30.0]);
                     }
-                    MockReply::ok(semantic_layout_snapshot(&backends, &bounds))
+                    semantic_layout_snapshot(
+                        &backends,
+                        &bounds,
+                        &large_semantic_document(),
+                        &st.main_title,
+                    )
                 } else {
-                    MockReply::ok(semantic_layout_snapshot(&[], &[]))
+                    semantic_layout_snapshot(&[], &[], &main_document(), &st.main_title)
+                };
+                if st.omit_snapshot_title {
+                    snapshot["documents"][0]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("title");
                 }
+                MockReply::ok(snapshot)
             }
             "DOMSnapshot.captureSnapshot" if is_oopif => MockReply::ok(semantic_layout_snapshot(
                 &[90, 100],
                 &[[0.0, 0.0, 300.0, 100.0], [10.0, 10.0, 120.0, 30.0]],
+                &oopif_document(),
+                "Embedded frame title",
             )),
             "Page.getLayoutMetrics" => MockReply::ok(json!({
                 "cssVisualViewport": {
@@ -845,6 +898,7 @@ impl BrowserPlatform for FixturePlatform {
             endpoint: None,
             message: "fixture: nothing to do".into(),
             prepared_pid: None,
+            launch_posture: None,
             side_effects: Default::default(),
             attachment: None,
         })
@@ -1347,6 +1401,81 @@ async fn snapshot(f: &Fixture, target_id: &str, tab_id: &str) -> Value {
     structured(&result).clone()
 }
 
+fn deeply_nested_document(mut document: Value) -> Value {
+    let mut node = json!({});
+    for _ in 0..140 {
+        node = json!({ "children": [node] });
+    }
+    document["root"]["children"]
+        .as_array_mut()
+        .unwrap()
+        .push(node);
+    document
+}
+
+#[tokio::test]
+async fn default_snapshot_recovers_from_deep_replies_and_marks_truncation() {
+    for (main, child) in [(true, false), (false, true)] {
+        let f = fixture_with(|st| {
+            st.deeply_nested_dom_reply = main;
+            st.deeply_nested_oopif_reply = child;
+        })
+        .await;
+        let (target, tab) = bind(&f).await;
+        let snap = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            snapshot(&f, &target, &tab),
+        )
+        .await
+        .expect("bounded document recovery must not wait for the request timeout");
+        assert_eq!(snap["status"], "ok", "{snap}");
+        assert_eq!(snap["truncated"], true, "{snap}");
+        assert!(snap.get("snapshot_id").is_some(), "legacy response shape");
+        assert!(
+            snap.get("snapshot").is_none(),
+            "must not switch to semantic format"
+        );
+        assert!(!ref_of(&snap, "main", "").is_empty());
+        assert!(!ref_of(&snap, "oopif", "").is_empty());
+        assert!(recorded_calls(&f, "DOM.getDocument")
+            .iter()
+            .any(|(_, params)| params["depth"] == 8));
+    }
+}
+
+#[tokio::test]
+async fn semantic_snapshot_recovers_promptly_from_deep_replies() {
+    let f = fixture_with(|st| st.deeply_nested_dom_reply = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        semantic_snapshot(&f, &target, &tab),
+    )
+    .await
+    .expect("semantic fallback must receive the parser failure promptly");
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["complete"], false, "{snap}");
+}
+
+#[tokio::test]
+async fn default_snapshot_refuses_unrecoverable_document_errors() {
+    for (message, expected_calls) in [
+        ("document is unavailable", 1),
+        ("CDP DOM.getDocument timed out after 20s", 1),
+        ("Object reference chain is too long", 10),
+    ] {
+        let f = fixture_with(|st| st.document_error = Some(message)).await;
+        let (target, tab) = bind(&f).await;
+        let snap = snapshot(&f, &target, &tab).await;
+        assert_eq!(snap["status"], "refused", "{snap}");
+        assert!(
+            snap.get("refs").is_none(),
+            "must not publish partial success"
+        );
+        assert_eq!(recorded_calls(&f, "DOM.getDocument").len(), expected_calls);
+    }
+}
+
 async fn semantic_snapshot(f: &Fixture, target_id: &str, tab_id: &str) -> Value {
     let tool = GetBrowserStateTool::new(f.engine.clone());
     let result = tool
@@ -1623,6 +1752,63 @@ async fn requested_tab_screenshot_refuses_malformed_image_data() {
         .content
         .iter()
         .all(|content| !matches!(content, Content::Image { .. })));
+}
+
+#[tokio::test]
+async fn semantic_title_follows_the_collected_document_after_navigation() {
+    let f = fixture_with(|_| {}).await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(first["page"]["title"], "Current fixture title", "{first}");
+    {
+        let mut st = f.state.lock().unwrap();
+        st.main_title = "New article title".into();
+        st.main_url = "https://fixture.test/inbox/item-2".into();
+        st.main_loader = "L_MAIN_2".into();
+        st.semantic_large_page = true;
+    }
+    let next = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(next["page"]["url"], "https://fixture.test/inbox/item-2");
+    assert_eq!(next["page"]["title"], "New article title", "{next}");
+    assert_ne!(next["page"]["title"], "Embedded frame title");
+}
+
+#[tokio::test]
+async fn semantic_continuation_retains_its_collected_title() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let token = first["snapshot"]["continuation"].as_str().unwrap();
+    f.state.lock().unwrap().main_title = "Title changed after collection".into();
+    let continued = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
+    assert_eq!(
+        continued["page"]["title"], "Current fixture title",
+        "{continued}"
+    );
+    let fresh = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(
+        fresh["page"]["title"], "Title changed after collection",
+        "{fresh}"
+    );
+}
+
+#[tokio::test]
+async fn semantic_missing_title_is_incomplete_instead_of_using_the_cached_tab_title() {
+    let f = fixture_with(|st| st.omit_snapshot_title = true).await;
+    let (target, tab) = bind(&f).await;
+    let snapshot = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(snapshot["status"], "ok", "{snapshot}");
+    assert_eq!(snapshot["page"]["title"], "", "{snapshot}");
+    assert_eq!(snapshot["snapshot"]["complete"], false, "{snapshot}");
+}
+
+#[tokio::test]
+async fn semantic_empty_document_title_is_valid() {
+    let f = fixture_with(|st| st.main_title.clear()).await;
+    let (target, tab) = bind(&f).await;
+    let snapshot = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(snapshot["page"]["title"], "", "{snapshot}");
+    assert_eq!(snapshot["snapshot"]["complete"], true, "{snapshot}");
 }
 
 #[tokio::test]

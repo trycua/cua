@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::daemon::TestDaemon;
 use crate::driver::Driver;
-use crate::paths::driver_binary;
+use crate::paths::{driver_binary, ensure_driver_binary};
 use crate::reaper::ChildReaper;
 use crate::response::ToolResponse;
 
@@ -46,7 +46,7 @@ impl CliDriver {
     }
 
     fn with_binary_and_daemon_env(bin: std::path::PathBuf, env: &[(&str, &str)]) -> Self {
-        if !bin.exists() {
+        if !ensure_driver_binary(&bin) {
             return CliDriver {
                 bin,
                 _reaper: None,

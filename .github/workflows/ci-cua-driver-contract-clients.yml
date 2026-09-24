@@ -159,11 +159,15 @@ jobs:
       - name: Prove portable contracts match the live registry
         if: runner.os != 'Windows' || steps.windows-session.outputs.session_id != '0'
         working-directory: libs/cua-driver/rust
+        env:
+          CUA_TEST_REQUIRE_DRIVER_BIN: "1"
         run: cargo test --locked -p cua-driver --test schema_consistency_test portable_desktop_contracts_are_accepted_by_active_backend
 
       - name: Verify released CLI and MCP compatibility
         if: runner.os != 'Windows' || steps.windows-session.outputs.session_id != '0'
         working-directory: libs/cua-driver/rust
+        env:
+          CUA_TEST_REQUIRE_DRIVER_BIN: "1"
         run: cargo test --locked -p cua-driver --test compatibility_contract_test
 
       - name: Compile the UniFFI SDK library

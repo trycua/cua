@@ -46,7 +46,9 @@ Only apps with NSApplicationActivationPolicyRegular are included — background 
 
 Use this for "is X installed?" as well as "is X running?". For per-window state — on-screen, on-current-Space, minimized, window titles — call list_windows instead. For just opening an app — running or not — call launch_app(&#123;bundle_id: ...&#125;) directly; list_apps is not a prerequisite.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `list_windows`
 
@@ -58,6 +60,7 @@ Per-record fields: window_id, pid, app_name, title, bounds (x/y/width/height, to
 
 - `on_screen_only` (boolean, optional): When true, drop windows not on the current Space. Default false.
 - `pid` (integer, optional): Optional pid filter. When set, only this pid's windows are returned.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `get_window_state`
 
@@ -102,7 +105,9 @@ Return a lightweight snapshot of the desktop: running regular apps and on-screen
 
 For the full AX subtree of a single window (with interactive element indices you can click by), use `get_window_state` instead — that's the heavy per-window tool. This one is a fast discovery read that needs no TCC grants.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `get_desktop_state`
 
@@ -133,7 +138,9 @@ Return the current mouse cursor position in screen points (origin top-left).
 
 Return the current cua-driver-rs configuration.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `get_recording_state`
 
@@ -141,7 +148,9 @@ Report the current trajectory recorder state: whether recording is enabled, the 
 
 Pure read-only.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `get_agent_cursor_state`
 
@@ -181,6 +190,7 @@ Returns the launched app's pid, bundle_id, name, and a `windows` array (same sha
 - `bundle_id` (string, optional): App bundle identifier, e.g. com.apple.calculator. Preferred over name.
 - `creates_new_application_instance` (boolean, optional): When true, force a new app instance even if already running (open -n). Use for concurrent multi-agent/multi-session work so each session gets an isolated instance + window instead of sharing one — on single-instance apps (e.g. Calculator) every caller otherwise gets the same window and the sessions clobber each other.
 - `name` (string, optional): App display name. Used only when bundle_id is absent.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `urls` (array of string, optional): Optional file paths or URLs to open with the app (e.g. a folder path for Finder).
 - `webkit_inspector_port` (integer, optional): Open a WebKit inspector server on this port (sets WEBKIT_INSPECTOR_SERVER env var).
 
@@ -191,6 +201,7 @@ Force-terminate a process by pid (kill -9 equivalent on macOS / Linux; taskkill 
 **Arguments:**
 
 - `pid` (integer, required): PID of the process to terminate.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ```json
 {"pid":844}
@@ -203,6 +214,7 @@ Persistently activate an app and leave it in the foreground. Most input does not
 **Arguments:**
 
 - `pid` (integer, required)
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `window_id` (integer, optional)
 
 ```json
@@ -522,6 +534,7 @@ After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordin
 **Arguments:**
 
 - `pid` (integer, optional): Optional target pid. When omitted, the driver resolves the unique current snapshot for this session and window.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `window_id` (integer, required): CGWindowID from list_windows.
 - `x1` (number, required): Left edge of region in screenshot pixels.
 - `x2` (number, required): Right edge of region in screenshot pixels.
@@ -557,6 +570,7 @@ Actions:
 - `javascript` (string, optional): JavaScript to execute. Required for execute_javascript.
 - `pid` (integer, optional): Target process ID.
 - `selector` (string, optional): CSS selector for click_element (e.g. 'button.submit', '#login a').
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `target_url_contains` (string, optional): Optional, for execute_javascript/insert_text/type_keystrokes: require exactly one browser tab whose URL contains this substring. Use this on a multi-tab browser — there's no built-in link between window_id and which tab a CDP call reaches.
 - `text` (string, optional): Text to insert or type. Required for insert_text and type_keystrokes. The target field must already have DOM focus (click/focus it first).
 - `user_has_confirmed_enabling` (boolean, optional): Must be true to proceed with enable_javascript_apple_events. This will quit and relaunch the browser.
@@ -619,6 +633,7 @@ State persists for the life of the daemon; a restart resets to disabled with no 
 
 - `output_dir` (string, required): Absolute or ~-rooted directory where turn folders and (when enabled) the video file are written.
 - `record_video` (boolean, optional): Capture the main display to &lt;output_dir&gt;/recording.mp4. Default: false. Set to true to also capture the main display to recording.mp4 (otherwise only the per-turn screenshots + JSON are recorded). On macOS this uses native ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on Windows + Linux it requires ffmpeg on PATH.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ```json
 {"output_dir":"~/cua-trajectories/demo1"}
@@ -630,7 +645,9 @@ Stop trajectory recording. Disables further per-turn capture and, when video was
 
 A manual `stop_recording` is **unconditional** — it stops whatever recording is active regardless of which session started it. Ownership-scoped teardown (so one client disconnecting can't stop a recording a later client started) is handled by the registry's `session_end` lifecycle hook, not by this tool.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `replay_trajectory`
 
@@ -645,6 +662,7 @@ Caveats:
 
 - `delay_ms` (integer, optional): Milliseconds to sleep between turns, for human-observable pacing. Default 500. range: 0–10000
 - `dir` (string, required): Trajectory directory previously written by `start_recording`. Absolute or ~-rooted.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `stop_on_error` (boolean, optional): Stop replay on the first tool-call error. Default true — set false to best-effort through the full trajectory.
 
 ```json
@@ -665,6 +683,7 @@ Note: capture_mode is a per-call param (on get_window_state / click), not a stor
 - `experimental_pip_geometry` (string, optional): PiP window size + optional position in `WxH` or `WxH+X+Y` form (e.g. `320x200+24+24`). Applies on next daemon restart.
 - `key` (string, optional): Name of a single config field to write (&#123;key, value&#125; shape, matching the CLI `config set` and the Windows/Linux tools). Pair with `value`. Equivalent to passing the field directly.
 - `max_image_dimension` (integer, optional): Max dimension for screenshot resizing (0 = no limit).
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `value` (unknown, optional): New value for `key`. JSON type depends on the key.
 
 ### `start_session`
@@ -736,6 +755,7 @@ Returns: `accessibility` + `screen_recording` (booleans from the TCC preflight A
 
 - `probe_direct_capture` (boolean, optional): When prompting and Screen Recording is granted, also run the live ScreenCaptureKit probe that may raise Tahoe's direct-capture consent. Default true. Set false for a staged Accessibility/Screen Recording request.
 - `prompt` (boolean, optional): Raise the system permission prompts for missing grants. Default false; only a trusted host setup route may set true. default: `false`
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `health_report`
 
@@ -785,13 +805,16 @@ Stability: schema_version="1" is the contract. Future breaking changes will be `
 **Arguments:**
 
 - `include` (array of string, optional): Only run these checks (canonical names). Wins over `skip`.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `skip` (array of string, optional): Skip these checks (canonical names). Ignored when `include` is set.
 
 ### `check_for_update`
 
 Check the saved stable/nightly Cua Driver channel for a release on GitHub. Returns current and selected channels, current and latest versions, an `update_available` boolean, the install one-liner, and the release notes URL. Read-only — never installs. Pacman-owned Linux executables return package-manager guidance without checking GitHub. Mirror of `cua-driver check-update --json`.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `install_ffmpeg`
 
@@ -800,6 +823,7 @@ Install the ffmpeg binary used by start_recording's video capture (Linux/Windows
 **Arguments:**
 
 - `confirm` (boolean, optional): Run the install command. Without it, only the planned command is reported.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ## Other tools
 
@@ -1059,6 +1083,7 @@ Preview or install one Driver-managed optional extension. The first call without
 
 - `confirm` (boolean, optional): Install the previewed extension. Omit or false for a read-only plan.
 - `name` (string, required)
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ```json
 {"name":"perception"}

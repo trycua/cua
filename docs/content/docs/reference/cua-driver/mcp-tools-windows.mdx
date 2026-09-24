@@ -48,7 +48,9 @@ Running apps are derived from visible top-level windows + the foreground pid (mi
 
 Use this for "is X installed?" as well as "is X running?". For per-window state — on-screen, minimized, window titles — call list_windows instead. For just opening an app — running or not — call launch_app(&#123;path: ...&#125;) directly; list_apps is not a prerequisite.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `list_windows`
 
@@ -64,6 +66,7 @@ Inputs: pid (optional pid filter), on_screen_only (bool, default false).
 
 - `on_screen_only` (boolean, optional): When true, drop windows that aren't currently on-screen. Default false.
 - `pid` (integer, optional): Optional pid filter. When set, only this pid's windows are returned.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `get_window_state`
 
@@ -116,7 +119,9 @@ Return a lightweight snapshot of the desktop: running processes and on-screen vi
 
 For the full UIA subtree of a single window (with interactive element indices you can click by), use get_window_state instead — this is a fast discovery read.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `get_desktop_state`
 
@@ -162,7 +167,9 @@ Current schema (Windows):
 
 `capture_mode` is deprecated and no longer affects behavior — `get_window_state` always returns both the UIA tree and a screenshot.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `get_recording_state`
 
@@ -170,7 +177,9 @@ Report the current trajectory recorder state: whether recording is enabled, the 
 
 Pure read-only.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `get_agent_cursor_state`
 
@@ -207,6 +216,7 @@ Windows-only field: `path` (Swift uses `bundle_id` since macOS apps resolve via 
 - `launch_path` (string, optional): Round-trip the `launch_path` returned by `list_apps`. Highest precedence — when set, this exact string is handed to ShellExecuteEx unchanged. For Windows desktop apps it's the full `.exe` commandline (path + arguments preserved from the source shortcut); for UWP apps it's `shell:appsFolder\{PackageFamilyName}!{AppId}`. For precise UWP pid capture, prefer `aumid` over `launch_path`.
 - `name` (string, optional): App display name. Tried against the `shell:AppsFolder` index first for packaged-app lookup; on a miss, passed to ShellExecuteEx's PATH search.
 - `path` (string, optional): Full path to executable. Windows-only; takes precedence over name/bundle_id/aumid (but not over `launch_path`).
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `start_minimized` (boolean, optional): When true, launch the app's window minimized to the taskbar instead of restored-but-not-activated. Use this when the agent wants to drive the app entirely in the background — the user's previously-frontmost window (e.g. terminal) stays visually on top. Desktop launches hold the foreground lock through startup and use SW_SHOWMINNOACTIVE; packaged-app activation remains broker-controlled and receives a best-effort SW_SHOWMINNOACTIVE post-pass. UIA / background dispatch still work on a minimized window; only `screenshot` and `delivery_mode:"foreground"` need it restored.
 - `urls` (array of string, optional): URLs to open in the default browser via ShellExecuteEx (no activation).
 - `webkit_inspector_port` (integer, optional): Accepted for cross-platform parity; no-op on Windows.
@@ -218,6 +228,7 @@ Force-terminate a process by pid. Use when the standard close path (Alt+F4 / WM_
 **Arguments:**
 
 - `pid` (integer, required): PID of the process to terminate.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ```json
 {"pid":844}
@@ -234,6 +245,7 @@ Implementation uses the `AttachThreadInput` trick to bypass Windows' foreground-
 **Arguments:**
 
 - `pid` (integer, required): Target process ID.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `window_id` (integer, optional): Optional HWND. Defaults to pid's first visible top-level window.
 
 ```json
@@ -564,6 +576,7 @@ Windows-specific: `window_id` is the canonical addressing field (HWND). `pid` is
 **Arguments:**
 
 - `pid` (integer, optional): Optional target process ID. When omitted, the unique current snapshot for this session and HWND is used.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `window_id` (integer, required): HWND of the target window.
 - `x1` (number, required): Left edge of the region (resized-image pixels).
 - `x2` (number, required): Right edge of the region (resized-image pixels).
@@ -599,6 +612,7 @@ Actions:
 - `javascript` (string, optional): JavaScript to execute. Required for execute_javascript.
 - `pid` (integer, optional): Target process ID.
 - `selector` (string, optional): CSS selector for click_element (e.g. 'button.submit', '#login a').
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `target_url_contains` (string, optional): Optional, for execute_javascript/insert_text/type_keystrokes: require exactly one browser tab whose URL contains this substring. Use this on a multi-tab browser — there's no built-in link between window_id and which tab a CDP call reaches.
 - `text` (string, optional): Text to insert or type. Required for insert_text and type_keystrokes. The target field must already have DOM focus (click/focus it first).
 - `user_has_confirmed_enabling` (boolean, optional): Must be true to proceed with enable_javascript_apple_events. This will quit and relaunch the browser.
@@ -661,6 +675,7 @@ State persists for the life of the daemon; a restart resets to disabled with no 
 
 - `output_dir` (string, required): Absolute or ~-rooted directory where turn folders and (when enabled) the video file are written.
 - `record_video` (boolean, optional): Capture the main display to &lt;output_dir&gt;/recording.mp4. Default: false. Set to true to also capture the main display to recording.mp4 (otherwise only the per-turn screenshots + JSON are recorded). On macOS this uses native ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on Windows + Linux it requires ffmpeg on PATH.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ```json
 {"output_dir":"~/cua-trajectories/demo1"}
@@ -672,7 +687,9 @@ Stop trajectory recording. Disables further per-turn capture and, when video was
 
 A manual `stop_recording` is **unconditional** — it stops whatever recording is active regardless of which session started it. Ownership-scoped teardown (so one client disconnecting can't stop a recording a later client started) is handled by the registry's `session_end` lifecycle hook, not by this tool.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `replay_trajectory`
 
@@ -687,6 +704,7 @@ Caveats:
 
 - `delay_ms` (integer, optional): Milliseconds to sleep between turns, for human-observable pacing. Default 500. range: 0–10000
 - `dir` (string, required): Trajectory directory previously written by `start_recording`. Absolute or ~-rooted.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `stop_on_error` (boolean, optional): Stop replay on the first tool-call error. Default true — set false to best-effort through the full trajectory.
 
 ```json
@@ -718,6 +736,7 @@ Returns the full updated config in the same shape as `get_config`.
 - `experimental_pip_geometry` (string, optional): Legacy per-field shape. PiP window size + optional position.
 - `key` (string, optional): Dotted snake_case path to a leaf config field (Swift-compatible shape). Pair with `value`.
 - `max_image_dimension` (integer, optional): Legacy per-field shape.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `value` (unknown, optional): New value for `key`. JSON type depends on the key.
 
 ### `start_session`
@@ -783,7 +802,9 @@ Configure only movement physics and visibility timing for a session cursor.
 
 Check required permissions for cua-driver-rs on Windows.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `health_report`
 
@@ -833,13 +854,16 @@ Stability: schema_version="1" is the contract. Future breaking changes will be `
 **Arguments:**
 
 - `include` (array of string, optional): Only run these checks (canonical names). Wins over `skip`.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `skip` (array of string, optional): Skip these checks (canonical names). Ignored when `include` is set.
 
 ### `check_for_update`
 
 Check the saved stable/nightly Cua Driver channel for a release on GitHub. Returns current and selected channels, current and latest versions, an `update_available` boolean, the install one-liner, and the release notes URL. Read-only — never installs. Pacman-owned Linux executables return package-manager guidance without checking GitHub. Mirror of `cua-driver check-update --json`.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `install_ffmpeg`
 
@@ -848,6 +872,7 @@ Install the ffmpeg binary used by start_recording's video capture (Linux/Windows
 **Arguments:**
 
 - `confirm` (boolean, optional): Run the install command. Without it, only the planned command is reported.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ## Other tools
 
@@ -895,6 +920,7 @@ Diagnostic: dump everything cua-driver sees about a pid's top-level windows from
 **Arguments:**
 
 - `pid` (integer, required): PID of the process to inspect.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ```json
 {"pid":844}
@@ -1119,6 +1145,7 @@ Preview or install one Driver-managed optional extension. The first call without
 
 - `confirm` (boolean, optional): Install the previewed extension. Omit or false for a read-only plan.
 - `name` (string, required)
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ```json
 {"name":"perception"}

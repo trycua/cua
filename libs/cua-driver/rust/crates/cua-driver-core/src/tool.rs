@@ -198,13 +198,19 @@ impl ToolDef {
 
 fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
     let mut schema = schema.clone();
+    let closed = schema["additionalProperties"] == false;
     let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) else {
         return schema;
     };
-    // Dispatch accepts public session labels independently of the platform tool.
-    properties
-        .entry("session")
-        .or_insert_with(crate::tool_schema::session_schema);
+    if closed
+        && cua_driver_contract::tool_contract(tool_name).is_none_or(|contract| {
+            contract.schema_mode != cua_driver_contract::SchemaMode::CanonicalRuntime
+        })
+    {
+        properties
+            .entry("session")
+            .or_insert_with(crate::tool_schema::session_schema);
+    }
     if !crate::action_target::supports_typed_target(tool_name) {
         return schema;
     }
@@ -1111,21 +1117,17 @@ impl ToolRegistry {
         // Normalize deprecated public argument spellings before any policy,
         // consent, recording, or implementation layer interprets the call.
         normalize_delivery_mode_args(tool.def(), &mut args);
-        // Check public names against the same schema clients see, before injecting metadata.
         let schema = advertised_runtime_input_schema(resolved_name, &tool.def().input_schema);
-        if schema["additionalProperties"] == false {
-            if let Some(arguments) = args.as_object() {
-                let properties = schema.get("properties").and_then(Value::as_object);
-                if let Some(name) = arguments.keys().find(|name| {
-                    !properties.is_some_and(|properties| properties.contains_key(*name))
-                }) {
-                    return protected_refusal(
-                        "invalid_arguments",
-                        &format!("{resolved_name}: unknown argument {name}"),
-                    );
-                }
-            }
-        }
+        let unknown_argument = args.as_object().and_then(|arguments| {
+            let properties = schema.get("properties").and_then(Value::as_object);
+            arguments
+                .keys()
+                .find(|name| {
+                    schema["additionalProperties"] == false
+                        && !properties.is_some_and(|properties| properties.contains_key(*name))
+                })
+                .cloned()
+        });
         if let Err(result) = crate::action_target::normalize_action_target(resolved_name, &mut args)
         {
             return result;
@@ -1277,6 +1279,13 @@ impl ToolRegistry {
             return protected_refusal(
                 "os_permission_prompt_requires_trusted_host",
                 "operating-system permission prompts must be initiated by a trusted host outside the agent tool path; call check_permissions with prompt=false to inspect state",
+            );
+        }
+
+        if let Some(name) = unknown_argument {
+            return protected_refusal(
+                "invalid_arguments",
+                &format!("{resolved_name}: unknown argument {name}"),
             );
         }
 
@@ -3177,6 +3186,11 @@ mod runtime_isolation_tests {
                 },
                 "additionalProperties": false
             })
+        } else if name == "check_permissions" {
+            serde_json::json!({
+                "type": "object", "properties": {"prompt": {"type": "boolean"}},
+                "additionalProperties": false
+            })
         } else {
             serde_json::json!({"type": "object"})
         };
@@ -3809,7 +3823,10 @@ resources:
             crate::recording::RecordingSession::new(),
         ));
         let advertised = super::Tool::def(&tool).to_list_entry();
-        assert_eq!(advertised["inputSchema"]["properties"]["session"]["type"], "string");
+        assert_eq!(
+            advertised["inputSchema"]["properties"]["session"]["type"],
+            "string"
+        );
     }
 
     #[tokio::test]
@@ -3864,7 +3881,11 @@ resources:
             result.structured_content.unwrap()["refusal"]["code"],
             "invalid_arguments"
         );
-        assert_eq!(hits.load(Ordering::SeqCst), 1, "must refuse before invocation");
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "must refuse before invocation"
+        );
     }
 
     #[tokio::test]
@@ -4041,7 +4062,7 @@ resources:
             let denied = registry
                 .invoke_with_context(
                     "check_permissions",
-                    serde_json::json!({"prompt": true, "session": "permissions"}),
+                    serde_json::json!({"prompt": true, "session": "permissions", "unknown": null}),
                     context,
                 )
                 .await;

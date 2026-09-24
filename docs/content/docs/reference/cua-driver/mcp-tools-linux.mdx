@@ -47,7 +47,9 @@ Running apps come from `/proc`. Installed apps come from XDG Desktop Entry files
 
 Use this for "is X installed?" as well as "is X running?". For per-window state — visibility, geometry, titles — call list_windows instead.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `list_windows`
 
@@ -57,6 +59,7 @@ List top-level windows. Each record includes z_index (integer or null; higher va
 
 - `on_screen_only` (boolean, optional): When true, filter to visible windows only. Default false.
 - `pid` (integer, optional)
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `get_window_state`
 
@@ -95,7 +98,9 @@ Return a lightweight snapshot of the desktop: running processes and on-screen vi
 
 For the full AT-SPI subtree of a single window (with interactive element indices you can click by), use get_window_state instead — this is a fast discovery read.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `get_desktop_state`
 
@@ -126,7 +131,9 @@ Return the current mouse cursor position in screen points (origin top-left).
 
 Return current cua-driver-rs configuration.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `get_recording_state`
 
@@ -134,7 +141,9 @@ Report the current trajectory recorder state: whether recording is enabled, the 
 
 Pure read-only.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `get_agent_cursor_state`
 
@@ -160,6 +169,7 @@ Launch a Linux app in the background. Provide launch_path (preferred — round-t
 - `bundle_id` (string, optional): Ignored on Linux (macOS/Windows concept).
 - `launch_path` (string, optional): Round-trip the `launch_path` returned by `list_apps` — the Exec= command from the .desktop file with XDG field codes already stripped. Highest precedence on Linux; spawned directly via the system shell.
 - `name` (string, optional): App name or command to launch. Tried as a direct command first, then matched against installed .desktop applications (exact display name, desktop-file id, or Exec basename; else an unambiguous display-name substring).
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `urls` (array of string, optional): URLs to open via xdg-open.
 
 ### `kill_app`
@@ -169,6 +179,7 @@ Force-terminate a process by pid (kill -9 equivalent on Linux). Use as escalatio
 **Arguments:**
 
 - `pid` (integer, required): PID of the process to terminate.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ```json
 {"pid":844}
@@ -181,6 +192,7 @@ Persistently activate a window so subsequent input lands on it. This deliberatel
 **Arguments:**
 
 - `pid` (integer, required)
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `window_id` (integer, optional): X11 window id (xid) to activate. If omitted, the first window of `pid` is used.
 
 ```json
@@ -456,6 +468,7 @@ After a zoom, pass from_zoom=true to click/type_text to auto-translate coordinat
 **Arguments:**
 
 - `pid` (integer, optional): Optional target pid. When omitted, the driver resolves the unique current snapshot for this session and window.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `window_id` (integer, required)
 - `x1` (number, required)
 - `x2` (number, required)
@@ -491,6 +504,7 @@ Actions:
 - `javascript` (string, optional): JavaScript to execute. Required for execute_javascript.
 - `pid` (integer, optional): Target process ID.
 - `selector` (string, optional): CSS selector for click_element (e.g. 'button.submit', '#login a').
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `target_url_contains` (string, optional): Optional, for execute_javascript/insert_text/type_keystrokes: require exactly one browser tab whose URL contains this substring. Use this on a multi-tab browser — there's no built-in link between window_id and which tab a CDP call reaches.
 - `text` (string, optional): Text to insert or type. Required for insert_text and type_keystrokes. The target field must already have DOM focus (click/focus it first).
 - `user_has_confirmed_enabling` (boolean, optional): Must be true to proceed with enable_javascript_apple_events. This will quit and relaunch the browser.
@@ -553,6 +567,7 @@ State persists for the life of the daemon; a restart resets to disabled with no 
 
 - `output_dir` (string, required): Absolute or ~-rooted directory where turn folders and (when enabled) the video file are written.
 - `record_video` (boolean, optional): Capture the main display to &lt;output_dir&gt;/recording.mp4. Default: false. Set to true to also capture the main display to recording.mp4 (otherwise only the per-turn screenshots + JSON are recorded). On macOS this uses native ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on Windows + Linux it requires ffmpeg on PATH.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ```json
 {"output_dir":"~/cua-trajectories/demo1"}
@@ -564,7 +579,9 @@ Stop trajectory recording. Disables further per-turn capture and, when video was
 
 A manual `stop_recording` is **unconditional** — it stops whatever recording is active regardless of which session started it. Ownership-scoped teardown (so one client disconnecting can't stop a recording a later client started) is handled by the registry's `session_end` lifecycle hook, not by this tool.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `replay_trajectory`
 
@@ -579,6 +596,7 @@ Caveats:
 
 - `delay_ms` (integer, optional): Milliseconds to sleep between turns, for human-observable pacing. Default 500. range: 0–10000
 - `dir` (string, required): Trajectory directory previously written by `start_recording`. Absolute or ~-rooted.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `stop_on_error` (boolean, optional): Stop replay on the first tool-call error. Default true — set false to best-effort through the full trajectory.
 
 ```json
@@ -604,6 +622,7 @@ The experimental_pip keys persist to ~/.cua-driver/config.json and apply on next
 - `experimental_pip_geometry` (string, optional): PiP window size + optional position in `WxH` or `WxH+X+Y` form.
 - `key` (string, optional): Name of a single config field to write (&#123;key, value&#125; shape). Pair with `value`.
 - `max_image_dimension` (integer, optional): Legacy per-field shape. Max dimension for screenshot resizing (0 = no limit).
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `value` (unknown, optional): New value for `key`. JSON type depends on the key.
 
 ### `start_session`
@@ -669,7 +688,9 @@ Configure only movement physics and visibility timing for a session cursor.
 
 Check required permissions for cua-driver-rs on Linux.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `health_report`
 
@@ -719,13 +740,16 @@ Stability: schema_version="1" is the contract. Future breaking changes will be `
 **Arguments:**
 
 - `include` (array of string, optional): Only run these checks (canonical names). Wins over `skip`.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 - `skip` (array of string, optional): Skip these checks (canonical names). Ignored when `include` is set.
 
 ### `check_for_update`
 
 Check the saved stable/nightly Cua Driver channel for a release on GitHub. Returns current and selected channels, current and latest versions, an `update_available` boolean, the install one-liner, and the release notes URL. Read-only — never installs. Pacman-owned Linux executables return package-manager guidance without checking GitHub. Mirror of `cua-driver check-update --json`.
 
-**Arguments:** none.
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ### `install_ffmpeg`
 
@@ -734,6 +758,7 @@ Install the ffmpeg binary used by start_recording's video capture (Linux/Windows
 **Arguments:**
 
 - `confirm` (boolean, optional): Run the install command. Without it, only the planned command is reported.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ## Other tools
 
@@ -834,6 +859,7 @@ Run multiple mouse drag gestures concurrently via Linux MPX/XI2 virtual master p
 **Arguments:**
 
 - `drags` (array of object, required): items: 2–unbounded
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ```json
 {"drags":["example"]}
@@ -1058,6 +1084,7 @@ Preview or install one Driver-managed optional extension. The first call without
 
 - `confirm` (boolean, optional): Install the previewed extension. Omit or false for a read-only plan.
 - `name` (string, required)
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ```json
 {"name":"perception"}

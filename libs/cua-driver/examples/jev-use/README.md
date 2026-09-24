@@ -257,6 +257,12 @@ npm test
 npm run typecheck
 ```
 
+## Other decision models
+
+For an optional Python-only closed-candidate interface spanning Jev and local
+Cua-S1-4B, see [Closed-candidate decision models](decision-models.md). It does
+not change the existing Python or TypeScript runners.
+
 ## Relationship to PR #3914
 
 [PR #3914](https://github.com/trycua/cua/pull/3914) proposes an optional Jev

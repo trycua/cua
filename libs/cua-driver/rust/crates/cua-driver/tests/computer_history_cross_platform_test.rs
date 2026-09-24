@@ -565,8 +565,7 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
             json!({
                 "pid": pid,
                 "window_id": window_id,
-                "element_index": element_index,
-                "snapshot_id": snapshot.snapshot_id(),
+                "element_token": snapshot.element_token(element_index),
                 "delivery_mode": "foreground",
                 "session": RAW_SESSION
             }),

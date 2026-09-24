@@ -68,7 +68,7 @@ fn background_type_on_native_cocoa_is_ax_verified() {
         // so prefer visible windows and select the one that actually exposes
         // the editor instead of assuming `windows[0]` is the document.
         windows.sort_by_key(|window| !window["is_on_screen"].as_bool().unwrap_or(false));
-        let (wid, el, snapshot_id) = windows
+        let (wid, element_token) = windows
             .iter()
             .filter_map(|window| window["window_id"].as_u64())
             .find_map(|window_id| {
@@ -86,9 +86,9 @@ fn background_type_on_native_cocoa_is_ax_verified() {
                         elements
                             .iter()
                             .find(|element| element["role"] == "AXTextArea")
-                            .and_then(|element| element["element_index"].as_u64())
+                            .and_then(|element| element["element_token"].as_str())
                     })
-                    .map(|element_index| (window_id, element_index, state.snapshot_id().to_owned()))
+                    .map(|element_token| (window_id, element_token.to_owned()))
             })
             .expect("TextEdit opened no window containing an AXTextArea");
 
@@ -102,8 +102,7 @@ fn background_type_on_native_cocoa_is_ax_verified() {
                 driver.call(
                     "type_text",
                     serde_json::json!({
-                        "pid": pid, "window_id": wid, "element_index": el,
-                        "snapshot_id": snapshot_id,
+                        "pid": pid, "window_id": wid, "element_token": element_token,
                         "text": "ladder", "delivery_mode": "background"
                     }),
                 )

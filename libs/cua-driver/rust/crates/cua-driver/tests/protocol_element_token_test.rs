@@ -69,15 +69,9 @@ fn token_accepting_tools_advertise_element_token_in_schema_and_capabilities() {
             Some("string"),
             "{tool_name} element_token must be type:string"
         );
-        assert_eq!(
-            props["element_index"]["type"].as_str(),
-            Some("integer"),
-            "{tool_name} element_index must remain available only as a snapshot-bound pair"
-        );
-        assert_eq!(
-            props["snapshot_id"]["type"].as_str(),
-            Some("string"),
-            "{tool_name} must advertise snapshot_id for safe integer targeting"
+        assert!(
+            !props.contains_key("element_index") && !props.contains_key("snapshot_id"),
+            "{tool_name} must accept only element_token as an element target"
         );
 
         // (b) capabilities array includes `accessibility.element_tokens`.

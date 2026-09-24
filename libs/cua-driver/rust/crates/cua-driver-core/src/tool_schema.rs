@@ -91,34 +91,14 @@ pub fn scope_schema() -> Value {
     })
 }
 
-/// `element_index` — the integer handle from the last get_window_state.
-pub fn element_index_schema() -> Value {
-    json!({
-        "type": "integer",
-        "description": "Element index from get_window_state. Requires the \
-            matching `snapshot_id` alongside it. Prefer `element_token`, \
-            which carries both values."
-    })
-}
-
-/// `snapshot_id` — the snapshot handle paired with a numeric element index.
-pub fn snapshot_id_schema() -> Value {
-    json!({
-        "type": "string",
-        "pattern": "^s[0-9a-f]{8}$",
-        "description": "Snapshot handle from get_window_state. Required when \
-            targeting by element_index; stale snapshots fail closed."
-    })
-}
-
 /// `element_token` — the opaque, validity-checked handle from get_window_state.
 pub fn element_token_schema() -> Value {
     json!({
         "type": "string",
         "description": "Opaque per-snapshot element handle from \
-            `structuredContent.elements[].element_token`. If element_index, \
-            snapshot_id, or window_id are also supplied they must agree. Returns \
-            an explicit stale error once a newer snapshot supersedes it."
+            `structuredContent.elements[].element_token`. Returns an explicit \
+            stale error naming the current snapshots once a newer read \
+            supersedes it."
     })
 }
 
@@ -135,9 +115,7 @@ fn shared_param_canonical(name: &str) -> Option<Value> {
         "modifier" => modifier_schema(),
         "button" => button_schema(),
         "scope" => scope_schema(),
-        "element_index" => element_index_schema(),
         "element_token" => element_token_schema(),
-        "snapshot_id" => snapshot_id_schema(),
         "capture_mode" => crate::capture_mode::capture_mode_schema(),
         _ => return None,
     };

@@ -1,5 +1,5 @@
 use crate::element_token::{
-    parse_element_args, refusal, ResolvedElement, LRU_CAP_PER_PID, STALE_TOKEN_ERROR,
+    format_snapshot_id, parse_token, refusal, ResolvedElement, LRU_CAP_PER_PID, STALE_TOKEN_ERROR,
 };
 use crate::protocol::ToolResult;
 use std::any::Any;
@@ -66,6 +66,34 @@ fn screenshot_context_refusal(pid: Option<i32>, window_id: Option<u64>) -> ToolR
         "code": "screenshot_context_missing",
         "pid": pid,
         "window_id": window_id,
+    }))
+}
+
+fn stale_token_refusal<S>(pid: i32, lane: &[Snapshot<S>]) -> ToolResult {
+    let current: Vec<_> = lane
+        .iter()
+        .map(|snapshot| (format_snapshot_id(snapshot.id), snapshot.window_id))
+        .collect();
+    let message = match current.as_slice() {
+        [] => format!("{STALE_TOKEN_ERROR}; pid {pid} has no current snapshot"),
+        current => format!(
+            "{STALE_TOKEN_ERROR}; current snapshots for pid {pid}: {}",
+            current
+                .iter()
+                .map(|(snapshot_id, window_id)| format!("{snapshot_id} (window {window_id})"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+    ToolResult::error(message.clone()).with_structured(serde_json::json!({
+        "status": "refused",
+        "refusal": { "code": "stale_element_token", "message": message },
+        "current_snapshots": current
+            .iter()
+            .map(|(snapshot_id, window_id)| {
+                serde_json::json!({ "snapshot_id": snapshot_id, "window_id": window_id })
+            })
+            .collect::<Vec<_>>(),
     }))
 }
 
@@ -255,76 +283,40 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         count
     }
 
-    pub fn resolve_element_args(
+    pub fn resolve(
         &self,
         pid: i32,
-        element_index: Option<usize>,
-        element_token: Option<&str>,
-        snapshot_id: Option<&str>,
-        window_id: Option<u64>,
-        tool_name: &str,
+        args: &serde_json::Value,
     ) -> Result<ResolvedElement<S::Element>, ToolResult> {
-        let Some(reference) = parse_element_args(
-            element_index,
-            element_token,
-            snapshot_id,
-            window_id,
-            tool_name,
-        )?
+        let Some(token) = args
+            .get("element_token")
+            .and_then(serde_json::Value::as_str)
         else {
             return Ok(ResolvedElement::None);
         };
-        if current_runtime_scope() != self.runtime_scope {
-            return Err(refusal(
-                "generation_mismatch",
-                "element_token belongs to another runtime generation".into(),
-            ));
-        }
+        let (snapshot_id, element_index) = parse_token(token).ok_or_else(|| {
+            refusal(
+                "invalid_element_token",
+                "element_token has invalid format".into(),
+            )
+        })?;
         let inner = self.inner.lock().unwrap();
-        let entry = inner
-            .get(&pid)
-            .and_then(|lane| lane.iter().find(|entry| entry.id == reference.snapshot_id));
-        let Some(entry) = entry else {
-            drop(inner);
-            let caches = runtime_stores()
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|(scope, _)| *scope != &self.runtime_scope)
-                .filter_map(|(_, cache)| cache.upgrade())
-                .collect::<Vec<_>>();
-            let foreign = caches
-                .iter()
-                .any(|cache| cache.contains(pid, reference.snapshot_id));
-            return Err(if foreign {
-                refusal(
-                    "generation_mismatch",
-                    "element_token belongs to another runtime generation".into(),
-                )
-            } else {
-                refusal("stale_element_token", STALE_TOKEN_ERROR.into())
-            });
+        let lane = inner.get(&pid).map(Vec::as_slice).unwrap_or_default();
+        let Some(snapshot) = lane.iter().find(|snapshot| snapshot.id == snapshot_id) else {
+            return Err(stale_token_refusal(pid, lane));
         };
-        let element = entry
-            .payload
-            .retain(reference.element_index)
-            .ok_or_else(|| {
-                refusal(
-                    "invalid_element_token",
-                    format!(
-                        "element_token element_index {} out of range (snapshot had {} elements)",
-                        reference.element_index,
-                        entry.payload.len()
-                    ),
-                )
-            })?;
-        let window_id = entry.window_id;
-        drop(inner);
-        reference.validate_window(window_id, tool_name)?;
+        let element = snapshot.payload.retain(element_index).ok_or_else(|| {
+            refusal(
+                "invalid_element_token",
+                format!(
+                    "element_token element_index {element_index} out of range (snapshot had {} elements)",
+                    snapshot.payload.len()
+                ),
+            )
+        })?;
         Ok(ResolvedElement::Element {
-            window_id: Some(window_id),
-            element_index: reference.element_index,
-            via_token: reference.via_token,
+            window_id: snapshot.window_id,
+            element_index,
             element,
         })
     }
@@ -370,19 +362,10 @@ impl<S: SnapshotPayload> Default for SnapshotStore<S> {
 }
 
 trait RuntimeStore: Any + Send + Sync {
-    fn contains(&self, pid: i32, snapshot_id: u32) -> bool;
     fn clear(&self) -> usize;
 }
 
 impl<S: SnapshotPayload> RuntimeStore for SnapshotStore<S> {
-    fn contains(&self, pid: i32, snapshot_id: u32) -> bool {
-        self.inner
-            .lock()
-            .unwrap()
-            .get(&pid)
-            .is_some_and(|lane| lane.iter().any(|entry| entry.id == snapshot_id))
-    }
-
     fn clear(&self) -> usize {
         self.clear()
     }
@@ -435,7 +418,10 @@ mod tests {
         let cache = SnapshotStore::new();
         let id = cache.publish(42, 7, Payload(vec![10, 20, 30]));
         let result = cache
-            .resolve_element_args(42, None, Some(&token_for(id, 2)), None, None, "click")
+            .resolve(
+                42,
+                &serde_json::json!({ "element_token": token_for(id, 2) }),
+            )
             .unwrap();
         assert!(matches!(
             result,
@@ -447,7 +433,7 @@ mod tests {
     fn miss_returns_refusal() {
         let cache = SnapshotStore::<Payload>::new();
         assert!(cache
-            .resolve_element_args(1, None, Some(&token_for(0, 0)), None, None, "click")
+            .resolve(1, &serde_json::json!({ "element_token": token_for(0, 0) }))
             .is_err());
     }
 
@@ -457,11 +443,14 @@ mod tests {
         let id = cache.publish(9, 99, Payload(vec![1, 2, 3, 4, 5]));
         for index in 0..5 {
             assert!(cache
-                .resolve_element_args(9, None, Some(&token_for(id, index)), None, None, "click")
+                .resolve(
+                    9,
+                    &serde_json::json!({ "element_token": token_for(id, index) })
+                )
                 .is_ok());
         }
         assert!(cache
-            .resolve_element_args(9, None, Some(&token_for(id, 5)), None, None, "click")
+            .resolve(9, &serde_json::json!({ "element_token": token_for(id, 5) }))
             .is_err());
     }
 
@@ -780,37 +769,22 @@ mod tests {
         let high = (1_u64 << 32) | low;
         let first = cache.publish(42, low, Payload(vec![10]));
         let second = cache.publish(42, high, Payload(vec![20]));
-        let token = token_for(second, 0);
-        let resolved = cache
-            .resolve_element_args(42, None, Some(&token), None, Some(high), "click")
-            .unwrap();
-        assert!(
-            matches!(resolved, ResolvedElement::Element { window_id: Some(window), element: 20, .. } if window == high)
-        );
-        assert!(cache
-            .resolve_element_args(42, None, Some(&token), None, Some(low), "click")
-            .is_err());
-        let handle = format!("s{second:08x}");
-        assert!(cache
-            .resolve_element_args(42, Some(0), None, Some(&handle), Some(high), "click")
-            .is_ok());
-        assert!(cache
-            .resolve_element_args(42, Some(0), None, Some(&handle), Some(low), "click")
-            .is_err());
+        let token = serde_json::json!({ "element_token": token_for(second, 0) });
+        assert!(matches!(
+            cache.resolve(42, &token).unwrap(),
+            ResolvedElement::Element { window_id, element: 20, .. } if window_id == high
+        ));
         cache.remove(42, high);
-        assert!(cache
-            .resolve_element_args(42, None, Some(&token), None, None, "click")
-            .is_err());
-        assert!(cache
-            .resolve_element_args(
-                42,
-                None,
-                Some(&token_for(first, 0)),
-                None,
-                Some(low),
-                "click"
-            )
-            .is_ok());
+        assert!(cache.resolve(42, &token).is_err());
+        assert!(matches!(
+            cache
+                .resolve(
+                    42,
+                    &serde_json::json!({ "element_token": token_for(first, 0) })
+                )
+                .unwrap(),
+            ResolvedElement::Element { window_id: 7, .. }
+        ));
     }
 
     #[test]
@@ -823,17 +797,16 @@ mod tests {
             let first_id = first.publish(42, 7, Payload(vec![10]));
             let second_id = second.publish(42, 7, Payload(vec![20]));
             assert!(second
-                .resolve_element_args(42, None, Some(&token_for(first_id, 0)), None, None, "click")
+                .resolve(
+                    42,
+                    &serde_json::json!({ "element_token": token_for(first_id, 0) })
+                )
                 .is_err());
             drop(first);
             let resolved = second
-                .resolve_element_args(
+                .resolve(
                     42,
-                    None,
-                    Some(&token_for(second_id, 0)),
-                    None,
-                    None,
-                    "click",
+                    &serde_json::json!({ "element_token": token_for(second_id, 0) }),
                 )
                 .unwrap();
             assert!(matches!(

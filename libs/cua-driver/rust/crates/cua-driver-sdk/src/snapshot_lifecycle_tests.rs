@@ -1,5 +1,5 @@
 use super::{CuaDriver, DriverHostOptions};
-use cua_driver_core::element_token::{token_for, ResolvedElement, STALE_TOKEN_ERROR};
+use cua_driver_core::element_token::{token_for, ResolvedElement};
 use cua_driver_core::protocol::ToolResult;
 use cua_driver_core::snapshot_store::{register_runtime_store, SnapshotPayload, SnapshotStore};
 use cua_driver_core::tool::{
@@ -30,17 +30,17 @@ fn resolve<S: SnapshotPayload>(
     token: &str,
 ) -> Result<(u64, usize), String> {
     cache
-        .resolve_element_args(pid, None, Some(token), None, None, "click")
+        .resolve(pid, &serde_json::json!({ "element_token": token }))
         .map(|result| match result {
             ResolvedElement::Element {
-                window_id: Some(window),
+                window_id: window,
                 element_index,
                 ..
             } => (window, element_index),
             _ => panic!("expected element"),
         })
         .map_err(|error| {
-            error.structured_content.unwrap()["refusal"]["message"]
+            error.structured_content.unwrap()["refusal"]["code"]
                 .as_str()
                 .unwrap()
                 .to_owned()
@@ -220,7 +220,7 @@ async fn sdk_shutdown_drains_snapshot_publication_and_retires_the_result() {
         "closed runtime admitted another publisher"
     );
     assert!(!result.is_error);
-    assert_eq!(resolution, Err(STALE_TOKEN_ERROR.to_owned()));
+    assert_eq!(resolution, Err("stale_element_token".to_owned()));
 }
 
 #[tokio::test]
@@ -350,8 +350,8 @@ mod native {
     }
 
     fn resolve_native(token: &str) -> Result<(u64, usize), String> {
-        let cache =
-            current_runtime_store::<AxSnapshot>().ok_or_else(|| STALE_TOKEN_ERROR.to_owned())?;
+        let cache = current_runtime_store::<AxSnapshot>()
+            .ok_or_else(|| "stale_element_token".to_owned())?;
         resolve(&cache, 731_348, token)
     }
 
@@ -369,7 +369,7 @@ mod native {
         drop(driver);
         let retained_after_destroy = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
         drop(serial);
-        assert_eq!(retired, Err(STALE_TOKEN_ERROR.to_owned()));
+        assert_eq!(retired, Err("stale_element_token".to_owned()));
         assert_eq!(
             retained_after_destroy, base,
             "destroy must balance the native retain"
@@ -423,7 +423,7 @@ mod native {
         drop(driver);
         let retained_after_destroy = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
         drop(serial);
-        assert_eq!(retired, Err(STALE_TOKEN_ERROR.to_owned()));
+        assert_eq!(retired, Err("stale_element_token".to_owned()));
         assert_eq!(retained_after_destroy, base);
         assert_eq!(
             retained_after_eviction,

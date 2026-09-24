@@ -1,6 +1,4 @@
-use cua_driver_core::element_token::{
-    format_token, ResolvedElement, LRU_CAP_PER_PID, STALE_TOKEN_ERROR,
-};
+use cua_driver_core::element_token::{format_token, ResolvedElement, LRU_CAP_PER_PID};
 use cua_driver_core::snapshot_store::{
     register_runtime_store, retire_runtime_scope, SnapshotPayload, SnapshotStore,
 };
@@ -44,17 +42,13 @@ fn resolve<T: Clone + Send + Sync + 'static>(
     index: usize,
 ) -> Result<(u64, usize, T), String> {
     cache
-        .resolve_element_args(
+        .resolve(
             42,
-            None,
-            Some(&format_token(snapshot, index)),
-            None,
-            None,
-            "click",
+            &serde_json::json!({ "element_token": format_token(snapshot, index) }),
         )
         .map(|result| match result {
             ResolvedElement::Element {
-                window_id: Some(window),
+                window_id: window,
                 element_index,
                 element,
                 ..
@@ -62,7 +56,7 @@ fn resolve<T: Clone + Send + Sync + 'static>(
             _ => panic!("expected element"),
         })
         .map_err(|error| {
-            error.structured_content.unwrap()["refusal"]["message"]
+            error.structured_content.unwrap()["refusal"]["code"]
                 .as_str()
                 .unwrap()
                 .to_owned()
@@ -88,7 +82,7 @@ fn replacement_invalidates_every_old_member_and_admits_new_members() {
     for index in 0..2 {
         assert_eq!(
             resolve(&cache, first, index),
-            Err(STALE_TOKEN_ERROR.to_owned())
+            Err("stale_element_token".to_owned())
         );
         assert_eq!(resolve(&cache, second, index), Ok((7, index, index + 10)));
     }
@@ -103,7 +97,10 @@ fn resolving_does_not_change_publication_order_eviction() {
     }
     assert_eq!(resolve(&cache, first, 0), Ok((1, 0, 1)));
     let latest = cache.publish(42, LRU_CAP_PER_PID as u64 + 1, payload(vec![1]));
-    assert_eq!(resolve(&cache, first, 0), Err(STALE_TOKEN_ERROR.to_owned()));
+    assert_eq!(
+        resolve(&cache, first, 0),
+        Err("stale_element_token".to_owned())
+    );
     assert!(resolve(&cache, latest, 0).is_ok());
 }
 
@@ -119,14 +116,10 @@ fn clearing_one_runtime_preserves_other_runtime_same_window() {
     };
     let (first_cache, first) = make("invariant-a");
     let (second_cache, second) = make("invariant-b");
-    with_runtime_scope("invariant-b".into(), || {
-        assert!(resolve(&second_cache, first, 0)
-            .unwrap_err()
-            .contains("another runtime generation"));
-        assert!(resolve(&first_cache, first, 0)
-            .unwrap_err()
-            .contains("another runtime generation"));
-    });
+    assert_eq!(
+        resolve(&second_cache, first, 0),
+        Err("stale_element_token".to_owned())
+    );
     assert_eq!(retire_runtime_scope("invariant-a"), 1);
     assert_eq!(retire_runtime_scope("invariant-a"), 0);
     with_runtime_scope("invariant-a".into(), || {

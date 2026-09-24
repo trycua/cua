@@ -52,14 +52,14 @@ fn main() {
     );
     println!("Missing-direction err OK");
 
-    // element_index without window_id.
+    // A stale element_token without window_id.
     let r2 = req(
         &mut pipe,
-        r#"{"method":"call","name":"scroll","args":{"pid":1,"direction":"down","element_index":0}}"#,
+        r#"{"method":"call","name":"scroll","args":{"pid":1,"direction":"down","element_token":"s00000000:0"}}"#,
     );
     let e2 = extract_text(&serde_json::from_str(r2.trim()).unwrap());
     assert!(
-        e2.contains("window_id is required when element_index is used"),
+        e2.contains("element_token is stale"),
         "Element-without-window wording wrong: {e2:?}"
     );
     println!("Element-without-window err OK");

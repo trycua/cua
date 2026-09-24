@@ -76,21 +76,12 @@ impl Tool for ProbeTool {
                 }]
             }));
         }
-        let resolved = match self.state.cache.resolve_element_args(
-            PID,
-            args["element_index"].as_u64().map(|index| index as usize),
-            args["element_token"].as_str(),
-            args["snapshot_id"].as_str(),
-            Some(WINDOW),
-            "click",
-        ) {
+        let resolved = match self.state.cache.resolve(PID, &args) {
             Ok(resolved) => resolved,
             Err(refusal) => return refusal,
         };
         let ResolvedElement::Element {
-            window_id: Some(_),
-            element: revision,
-            ..
+            element: revision, ..
         } = resolved
         else {
             return ToolResult::error("test requires a snapshot-bound target");
@@ -241,7 +232,7 @@ async fn dispatch_stale_refusal_and_fresh_recovery_reach_the_expected_lookup() {
 }
 
 #[tokio::test]
-async fn dispatch_generation_refusal_precedes_native_payload_lookup() {
+async fn foreign_runtime_token_is_stale_before_native_payload_lookup() {
     let first = Fixture::new();
     let second = Fixture::new();
     let first_token = token(&first.read(1).await);
@@ -249,7 +240,7 @@ async fn dispatch_generation_refusal_precedes_native_payload_lookup() {
     let refused = second.click(&first_token).await;
     assert_eq!(
         refused.structured_content.as_ref().unwrap()["refusal"]["code"],
-        "generation_mismatch"
+        "stale_element_token"
     );
     assert!(second.state.observed.lock().unwrap().is_empty());
     first.click(&first_token).await;

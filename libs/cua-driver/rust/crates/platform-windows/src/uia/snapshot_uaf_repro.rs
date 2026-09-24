@@ -143,13 +143,9 @@ fn old_get_element_ptr(cache: &Snapshots, snapshot: u32, idx: usize) -> Option<u
 
 fn acquire(cache: &Snapshots, snapshot: u32, idx: usize) -> Option<RetainedElement> {
     match cache
-        .resolve_element_args(
+        .resolve(
             PID as i32,
-            None,
-            Some(&format_token(snapshot, idx)),
-            None,
-            Some(HWND),
-            "test",
+            &serde_json::json!({ "element_token": format_token(snapshot, idx) }),
         )
         .ok()?
     {
@@ -319,16 +315,6 @@ fn exact_snapshot_retains_matching_identity_and_geometry() {
     assert!(guard.focus_element().is_err());
     assert_eq!(guard.element_has_keyboard_focus(), None);
     assert_eq!(acquire(&cache, second, 0).unwrap().center, (0, 0));
-    assert!(cache
-        .resolve_element_args(
-            PID as i32,
-            None,
-            Some(&format_token(second, 0)),
-            None,
-            Some(HWND + 1),
-            "test",
-        )
-        .is_err());
     let cloned = guard.clone();
     drop(guard);
     unsafe { touch_vtable(cloned.as_ptr()) };

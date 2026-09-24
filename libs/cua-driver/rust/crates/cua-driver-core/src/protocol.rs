@@ -385,7 +385,7 @@ For non-GUI outcomes, prefer a client-provided app API/SDK, headless/background 
 
 On continuation/recent-work, when available, call `history_status`; if ready, make one bounded initial `history_query` before broad discovery; otherwise continue.
 
-For app/window outcomes, use the narrowest semantic Cua route first: `set_window_frame` plus `list_windows` readback for geometry, typed browser tools for supported page content, and clipboard tools for clipboard state. Then climb through background `element_index` ({tree_kind}), background pixels, foreground delivery, and desktop fallback. Never advance on transport success alone.
+For app/window outcomes, use the narrowest semantic Cua route first: `set_window_frame` plus `list_windows` readback for geometry, typed browser tools for supported page content, and clipboard tools for clipboard state. Then climb through background `element_token` ({tree_kind}), background pixels, foreground delivery, and desktop fallback. Never advance on transport success alone.
 
 Workflow per turn:
 0. `start_session` is optional. For multi-call work, prefer a short `session` label and repeat it on every call that accepts it. Unnamed calls use the transport's implicit session. Only `start_session` revives an ended name; `end_session` explicitly cleans up.
@@ -496,7 +496,7 @@ mod agent_instruction_tests {
         assert!(instructions.contains("has no shell"));
         assert!(
             instructions.find("client-provided app API/SDK")
-                < instructions.find("background `element_index`"),
+                < instructions.find("background `element_token`"),
             "semantic/headless operations must precede native UI dispatch"
         );
         assert!(

@@ -128,22 +128,9 @@ pub fn element_window_local_xy(
 ) -> Option<(u64, Option<(f64, f64)>)> {
     let cache = current_runtime_store::<UiaSnapshot>()?;
     let pid_u32 = u32::try_from(pid).ok()?;
-    let resolved = cache
-        .resolve_element_args(
-            pid_u32 as i32,
-            args.get("element_index")
-                .and_then(|value| value.as_u64())
-                .map(|value| value as usize),
-            args.get("element_token").and_then(|value| value.as_str()),
-            args.get("snapshot_id").and_then(|value| value.as_str()),
-            args.get("window_id").and_then(|value| value.as_u64()),
-            "recording",
-        )
-        .ok()?;
+    let resolved = cache.resolve(pid_u32 as i32, args).ok()?;
     let cua_driver_core::element_token::ResolvedElement::Element {
-        window_id: Some(window_id),
-        element,
-        ..
+        window_id, element, ..
     } = resolved
     else {
         return None;

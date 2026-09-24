@@ -633,7 +633,7 @@ impl Tool for GetWindowStateTool {
                 Always returns BOTH the element tree AND a screenshot — ground on \
                 both and cross-check (the tree lies on some surfaces). Choose the \
                 modality at ACTION time: an element ax action \
-                (element_index/element_token → accessibility rung) or an element px \
+                (element_token → accessibility rung) or an element px \
                 action (x,y → pixel rung off this screenshot). capture_mode is \
                 deprecated and ignored. On Wayland, where output capture cannot prove \
                 the requested surface's identity, the truthful tree is returned without \
@@ -3767,14 +3767,14 @@ impl Tool for ClickTool {
     fn def(&self) -> &ToolDef {
         CLICK_DEF.get_or_init(|| ToolDef {
             name: "click".into(),
-            description: "Click against a target pid. **Prefer `element_index` over pixel \
-                coordinates** — element_index works on backgrounded / hidden windows, surfaces \
+            description: "Click against a target pid. **Prefer `element_token` over pixel \
+                coordinates** — element_token works on backgrounded / hidden windows, surfaces \
                 a stable handle, and tells you what you're clicking via the cached AT-SPI \
                 element's role + label. Reach for `x, y` only when the target is a canvas / \
                 custom-drawn surface that doesn't appear in the AT-SPI tree.\n\n\
-                Provide either (window_id + x/y) or (pid + element_index). Routes via \
-                XSendEvent (no focus steal). element_index cache is scoped per (pid, \
-                window_id) and is replaced by the next get_window_state of the same window — \
+                Provide either (window_id + x/y) or (pid + element_token). Routes via \
+                XSendEvent (no focus steal). The token is stale once the next \
+                get_window_state of the same window replaces its snapshot — \
                 re-snapshot every turn before clicking.\n\n\
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords \
                 back to full-window space.\n\n\
@@ -3797,9 +3797,7 @@ impl Tool for ClickTool {
                     "window_id":{"type":"integer"},
                     "x":{"type":"number"},
                     "y":{"type":"number"},
-                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     "capture_id":{"type":"string","description":"Optional one-shot binding to the exact PNG returned by get_window_state or get_desktop_state. When present, x/y are interpreted in that capture and admitted before native dispatch."},
                     // Shape matches the shared button_schema() canon (string +
                     // [left,right,middle]); kept inline to carry the Linux/Wayland
@@ -3937,18 +3935,9 @@ impl Tool for ClickTool {
         // Surface 6: element_token / element_index precedence resolution.
         // We resolve before the legacy `opt_u64("element_index")` branch
         // so a token-only call (no integer arg) still takes the element path.
-        let element_token_arg = args.opt_str("element_token");
         let capture_id_arg = args.opt_str("capture_id");
         let window_id_arg = args.opt_u64("window_id");
-        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match self.state.snapshots.resolve_element_args(
-            pid as i32,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "click",
-        ) {
+        let resolved = match self.state.snapshots.resolve(pid as i32, &args) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -3960,7 +3949,7 @@ impl Tool for ClickTool {
         };
         let window_id_resolved: Option<u64> = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
-                window_id_arg.or_else(|| window_id.map(|v| v as u64))
+                Some(*window_id)
             }
             cua_driver_core::element_token::ResolvedElement::None => window_id_arg,
         };
@@ -4204,7 +4193,7 @@ impl Tool for ClickTool {
         // Coordinate-based path.
         let xid = match args.opt_u64("window_id") {
             Some(v) => v,
-            None => return ToolResult::error("Provide either element_index or window_id + x/y."),
+            None => return ToolResult::error("Provide either element_token or window_id + x/y."),
         };
         let from_zoom = args.bool_or("from_zoom", false);
         let mut x = args.f64_or("x", 0.0);
@@ -4575,10 +4564,8 @@ impl Tool for TypeTextTool {
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
                     "text":{"type":"string"},
-                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
-                    "x":{"type":"number","description":"Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_index) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click."},
+                    "x":{"type":"number","description":"Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_token) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click."},
                     "y":{"type":"number","description":"Screenshot-pixel Y of the field (see x)."},
                     "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
@@ -4628,17 +4615,7 @@ impl Tool for TypeTextTool {
         // cua_driver_core::text_sanitize docs for rationale.
         let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
-        // Surface 6: resolve element_token / element_index for the
-        // optional pre-typing focus glide below. The token also carries
-        // the window_id when supplied so the caller can omit window_id.
-        let resolved = match self.state.snapshots.resolve_element_args(
-            pid as i32,
-            args.opt_u64("element_index").map(|v| v as usize),
-            args.opt_str("element_token").as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            args.opt_u64("window_id"),
-            "type_text",
-        ) {
+        let resolved = match self.state.snapshots.resolve(pid as i32, &args) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -4647,10 +4624,10 @@ impl Tool for TypeTextTool {
                 element_index,
                 window_id,
                 ..
-            } => (Some(*element_index), window_id.map(|v| v as u64)),
+            } => (Some(*element_index), Some(*window_id)),
             cua_driver_core::element_token::ResolvedElement::None => (None, None),
         };
-        let xid_opt = args.opt_u64("window_id").or(resolved_window_id);
+        let xid_opt = resolved_window_id.or(args.opt_u64("window_id"));
 
         // Resolve XID: use window_id if given, else first window for pid.
         let xid = match xid_opt {
@@ -4721,7 +4698,7 @@ impl Tool for TypeTextTool {
         }
         if px.is_some() && resolved_elem_idx.is_some() {
             return ToolResult::error(
-                "Pass either element_index (ax) or x,y (px) to type_text, not both.",
+                "Pass either element_token (ax) or x,y (px) to type_text, not both.",
             );
         }
 
@@ -4855,7 +4832,7 @@ impl Tool for TypeTextTool {
         }
 
         // ── px form: focus by pixel-click, then type into the now-focused element ──
-        // Pass x,y (no element_index/token) for an *element px action*: pixel-click
+        // Pass x,y (no element_token) for an *element px action*: pixel-click
         // the field to give the renderer the real keyboard focus the AT-SPI path
         // can't, then fall through to the focused-element type path below (it
         // escalates AT-SPI → key events and lands once focused). Reuses ClickTool's
@@ -5293,10 +5270,8 @@ impl Tool for PressKeyTool {
                     "window_id":{"type":"integer"},
                     "key":{"type":"string"},
                     "modifiers":{"type":"array","items":{"type":"string"}},
-                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
-                    "x":{"type":"number","description":"Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_index."},
+                    "x":{"type":"number","description":"Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_token."},
                     "y":{"type":"number","description":"Screenshot-pixel Y (see x)."},
                     "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
@@ -5349,21 +5324,12 @@ impl Tool for PressKeyTool {
         };
         let mods: Vec<String> = args.str_array("modifiers");
 
-        // Surface 6: resolve the element token/index into both its owning
-        // window and exact child. Foreground delivery establishes child focus
-        // inside the verified top-level activation transaction; background
-        // XSendEvent retains the historical direct-window path.
-        let element_token_arg = args.opt_str("element_token");
+        // Resolve the element token into both its owning window and exact
+        // child. Foreground delivery establishes child focus inside the
+        // verified top-level activation transaction; background XSendEvent
+        // retains the historical direct-window path.
         let window_id_arg = args.opt_u64("window_id");
-        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match self.state.snapshots.resolve_element_args(
-            pid as i32,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "press_key",
-        ) {
+        let resolved = match self.state.snapshots.resolve(pid as i32, &args) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -5375,7 +5341,7 @@ impl Tool for PressKeyTool {
         };
         let xid_opt = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
-                window_id_arg.or_else(|| window_id.map(|v| v as u64))
+                Some(*window_id)
             }
             cua_driver_core::element_token::ResolvedElement::None => window_id_arg,
         };
@@ -5400,7 +5366,7 @@ impl Tool for PressKeyTool {
         // ── px form: pixel-click to focus, then the key goes to the focused element ──
         // Reuses click's translation + delivery_mode; after it, deliver via the plain
         // background path (the focus-click already handled fronting when fg). Pass x,y
-        // (no element_index) for Chromium/Electron surfaces the AX path can't focus.
+        // (no element_token) for Chromium/Electron surfaces the AX path can't focus.
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         if isolated_hyprland_background(delivery) {
             if xid_opt.is_none() {
@@ -5448,7 +5414,7 @@ impl Tool for PressKeyTool {
         }
         if px.is_some() && resolved_element_index.is_some() {
             return ToolResult::error(
-                "Pass either element_index (ax) or x,y (px) to press_key, not both.",
+                "Pass either element_token (ax) or x,y (px) to press_key, not both.",
             );
         }
 
@@ -5673,9 +5639,7 @@ impl Tool for HotkeyTool {
                     "window_id":{"type":"integer"},
                     "keys":{"type":"array","items":{"type":"string"},"minItems":2,
                         "description":"Modifier(s) + one non-modifier key, e.g. [\"ctrl\",\"c\"]."},
-                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     "x":{"type":"number","description":"Screenshot-pixel X — the element px action form: pixel-click there to focus, then send the combo (so e.g. Ctrl+V pastes into that field). Pass with y. Use for Chromium/Electron surfaces the background combo can't reach."},
                     "y":{"type":"number","description":"Screenshot-pixel Y (see x)."},
                     "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
@@ -5731,15 +5695,7 @@ impl Tool for HotkeyTool {
         }
         let pid = args.u64_or("pid", 0) as u32;
         let window_id_arg = args.opt_u64("window_id");
-        let element_index_arg = args.opt_u64("element_index").map(|value| value as usize);
-        let resolved = match self.state.snapshots.resolve_element_args(
-            pid as i32,
-            element_index_arg,
-            args.opt_str("element_token").as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "hotkey",
-        ) {
+        let resolved = match self.state.snapshots.resolve(pid as i32, &args) {
             Ok(resolved) => resolved,
             Err(error) => return error,
         };
@@ -5751,7 +5707,7 @@ impl Tool for HotkeyTool {
         };
         let xid_opt = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
-                window_id_arg.or_else(|| window_id.map(|value| value as u64))
+                Some(*window_id)
             }
             cua_driver_core::element_token::ResolvedElement::None => window_id_arg,
         };
@@ -5857,7 +5813,7 @@ impl Tool for HotkeyTool {
         }
         if px.is_some() && resolved_element_index.is_some() {
             return ToolResult::error(
-                "Pass either element_index (ax) or x,y (px) to hotkey, not both.",
+                "Pass either element_token (ax) or x,y (px) to hotkey, not both.",
             );
         }
 
@@ -6058,10 +6014,8 @@ impl Tool for SetValueTool {
                 "type":"object","required":["pid","value"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer"},
-                    "window_id":{"type":"integer","description":"Required when element_index is used; optional when element_token is supplied (the token carries it)."},
-                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                    "window_id":{"type":"integer","description":"Omit when element_token is supplied (the token carries it)."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                     "value":{"type":"string"}
                 },"additionalProperties":false
             }),
@@ -6079,33 +6033,23 @@ impl Tool for SetValueTool {
             Ok(v) => v,
             Err(e) => return e,
         };
-        // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match self.state.snapshots.resolve_element_args(
-            pid as i32,
-            args.opt_u64("element_index").map(|v| v as usize),
-            args.opt_str("element_token").as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            args.opt_u64("window_id"),
-            "set_value",
-        ) {
+        let resolved = match self.state.snapshots.resolve(pid as i32, &args) {
             Ok(r) => r,
             Err(e) => return e,
         };
-        let (idx, resolved_window_id) = match &resolved {
+        let (idx, xid) = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element {
                 element_index,
                 window_id,
                 ..
-            } => (*element_index, window_id.map(u64::from)),
-            cua_driver_core::element_token::ResolvedElement::None => return ToolResult::error(
-                "set_value requires element_index or element_token to address the target element.",
-            ),
+            } => (*element_index, *window_id),
+            cua_driver_core::element_token::ResolvedElement::None => {
+                return ToolResult::error(
+                    "set_value requires element_token to address the target element.",
+                )
+            }
         };
         let value_for_task = value.clone();
-        let xid = args
-            .opt_u64("window_id")
-            .or(resolved_window_id)
-            .unwrap_or(0);
         position_named_session_keyboard_cursor(&self.state, &args, pid, xid, Some(idx), None, true)
             .await;
         let result =
@@ -6228,11 +6172,9 @@ impl Tool for ScrollTool {
                     "by":{"type":"string","enum":["line","page"]},
                     "amount":{"type":"integer","minimum":1,"maximum":50},
                     "window_id":{"type":"integer"},
-                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                    "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
-                    "x":{"type":"number","description":"Window-local screenshot-pixel X of the scroll target. Pass with y and without element_index."},
-                    "y":{"type":"number","description":"Window-local screenshot-pixel Y of the scroll target. Pass with x and without element_index."},
+                    "x":{"type":"number","description":"Window-local screenshot-pixel X of the scroll target. Pass with y and without element_token."},
+                    "y":{"type":"number","description":"Window-local screenshot-pixel Y of the scroll target. Pass with x and without element_token."},
                     "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
@@ -6300,26 +6242,18 @@ impl Tool for ScrollTool {
             Ok(by) => by,
             Err(error) => return ToolResult::error(format!("Invalid scroll by: {error}")),
         };
-        // Surface 6: resolve element_token / element_index. The Linux
-        // scroll implementation today doesn't actually pre-focus the
-        // element (X11 scroll buttons go to the window root), but the
-        // token still needs to be accepted + validated so a stale
-        // token surfaces an error instead of silently no-op'ing.
-        let resolved = match self.state.snapshots.resolve_element_args(
-            pid as i32,
-            args.opt_u64("element_index").map(|v| v as usize),
-            args.opt_str("element_token").as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            args.opt_u64("window_id"),
-            "scroll",
-        ) {
+        // The Linux scroll implementation doesn't pre-focus the element (X11
+        // scroll buttons go to the window root), but the token still needs to
+        // be validated so a stale token surfaces an error instead of silently
+        // no-op'ing.
+        let resolved = match self.state.snapshots.resolve(pid as i32, &args) {
             Ok(r) => r,
             Err(e) => return e,
         };
         let xid_opt: Option<u64> = match &resolved {
-            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => window_id
-                .map(|v| v as u64)
-                .or_else(|| args.opt_u64("window_id")),
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
+                Some(*window_id)
+            }
             cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
         };
 
@@ -6367,7 +6301,7 @@ impl Tool for ScrollTool {
         };
         if pixel_target.is_some() && resolved_element_index.is_some() {
             return ToolResult::error(
-                "Pass either element_index (ax) or x,y (px) to scroll, not both.",
+                "Pass either element_token (ax) or x,y (px) to scroll, not both.",
             );
         }
 
@@ -6729,8 +6663,8 @@ impl Tool for DoubleClickTool {
     fn def(&self) -> &ToolDef {
         DCLICK_DEF.get_or_init(|| ToolDef {
             name: "double_click".into(),
-            description: "Double-click at (x,y) or an element_index (AT-SPI bounds) via XSendEvent. \
-                No focus steal. Provide either (window_id + x/y) or (pid + element_index). \
+            description: "Double-click at (x,y) or an element_token (AT-SPI bounds) via XSendEvent. \
+                No focus steal. Provide either (window_id + x/y) or (pid + element_token). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
@@ -6739,9 +6673,7 @@ impl Tool for DoubleClickTool {
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
                 "y":{"type":"number"},
-                "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
                 "delivery_mode": crate::input::delivery::delivery_mode_schema()
             },"additionalProperties":false}),
@@ -6778,15 +6710,7 @@ impl Tool for DoubleClickTool {
             .invoke(args)
             .await;
         }
-        // Surface 6: element_token / element_index precedence.
-        let resolved = match self.state.snapshots.resolve_element_args(
-            pid as i32,
-            args.opt_u64("element_index").map(|v| v as usize),
-            args.opt_str("element_token").as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            args.opt_u64("window_id"),
-            "double_click",
-        ) {
+        let resolved = match self.state.snapshots.resolve(pid as i32, &args) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -6797,9 +6721,9 @@ impl Tool for DoubleClickTool {
             cua_driver_core::element_token::ResolvedElement::None => None,
         };
         let window_id_resolved: Option<u64> = match &resolved {
-            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => args
-                .opt_u64("window_id")
-                .or_else(|| window_id.map(|v| v as u64)),
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
+                Some(*window_id)
+            }
             cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
         };
         if let Some(idx) = elem_idx_resolved {
@@ -6862,7 +6786,7 @@ impl Tool for DoubleClickTool {
         }
         let xid = match window_id_resolved {
             Some(v) => v,
-            None => return ToolResult::error("Provide either element_index or window_id + x/y."),
+            None => return ToolResult::error("Provide either element_token or window_id + x/y."),
         };
         let from_zoom = args.bool_or("from_zoom", false);
         let mut x = args.f64_or("x", 0.0);
@@ -6967,8 +6891,8 @@ impl Tool for RightClickTool {
     fn def(&self) -> &ToolDef {
         RCLICK_DEF.get_or_init(|| ToolDef {
             name: "right_click".into(),
-            description: "Right-click at (x,y) or an element_index (AT-SPI bounds) via XSendEvent. \
-                No focus steal. Provide either (window_id + x/y) or (pid + element_index). \
+            description: "Right-click at (x,y) or an element_token (AT-SPI bounds) via XSendEvent. \
+                No focus steal. Provide either (window_id + x/y) or (pid + element_token). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
@@ -6977,9 +6901,7 @@ impl Tool for RightClickTool {
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
                 "y":{"type":"number"},
-                "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "modifier": cua_driver_core::tool_schema::modifier_schema(),
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."},
                 "delivery_mode": crate::input::delivery::delivery_mode_schema()
@@ -7017,15 +6939,7 @@ impl Tool for RightClickTool {
             .invoke(args)
             .await;
         }
-        // Surface 6: element_token / element_index precedence.
-        let resolved = match self.state.snapshots.resolve_element_args(
-            pid as i32,
-            args.opt_u64("element_index").map(|v| v as usize),
-            args.opt_str("element_token").as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            args.opt_u64("window_id"),
-            "right_click",
-        ) {
+        let resolved = match self.state.snapshots.resolve(pid as i32, &args) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -7036,9 +6950,9 @@ impl Tool for RightClickTool {
             cua_driver_core::element_token::ResolvedElement::None => None,
         };
         let window_id_resolved: Option<u64> = match &resolved {
-            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => args
-                .opt_u64("window_id")
-                .or_else(|| window_id.map(|v| v as u64)),
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => {
+                Some(*window_id)
+            }
             cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
         };
         if let Some(idx) = elem_idx_resolved {
@@ -7101,7 +7015,7 @@ impl Tool for RightClickTool {
         }
         let xid = match window_id_resolved {
             Some(v) => v,
-            None => return ToolResult::error("Provide either element_index or window_id + x/y."),
+            None => return ToolResult::error("Provide either element_token or window_id + x/y."),
         };
         let from_zoom = args.bool_or("from_zoom", false);
         let mut x = args.f64_or("x", 0.0);
@@ -9703,7 +9617,6 @@ impl Tool for TypeTextCharsTool {
                     "window_id":{"type":"integer"},
                     "text":{"type":"string"},
                     "delay_ms":{"type":"integer","description":"Milliseconds between chars (default 30)."},
-                    "element_index": cua_driver_core::tool_schema::element_index_schema(),
                     "type_chars_only":{"type":"boolean","description":"Skip element focus, type directly. Default false."}
                 },"additionalProperties":false
             }),

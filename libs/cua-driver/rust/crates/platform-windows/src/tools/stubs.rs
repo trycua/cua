@@ -93,7 +93,7 @@ stub_tool!(
 );
 
 stub_tool!(get_window_state_m, GetWindowStateTool, "get_window_state",
-    "Always returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces). Choose the modality at ACTION time: an element ax action (element_index/element_token → accessibility rung) or an element px action (x,y → pixel rung off this screenshot). capture_mode is deprecated and ignored.",
+    "Always returns BOTH the element tree AND a screenshot — ground on both and cross-check (the tree lies on some surfaces). Choose the modality at ACTION time: an element ax action (element_token → accessibility rung) or an element px action (x,y → pixel rung off this screenshot). capture_mode is deprecated and ignored.",
     serde_json::json!({"type":"object","required":["pid","window_id"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"query":{"type":"string"},"capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),"include_screenshot":{"type":"boolean","description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."}},"additionalProperties":false}));
 
 stub_tool!(
@@ -112,16 +112,16 @@ stub_tool!(
     click_m,
     ClickTool,
     "click",
-    "Click at (x, y) or on an AX/UIA element by element_index + window_id.",
-    serde_json::json!({"type":"object","required":[],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"element_token": cua_driver_core::tool_schema::element_token_schema(),"snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),"x":{"type":"number"},"y":{"type":"number"},"button": cua_driver_core::tool_schema::button_schema(),"modifier": cua_driver_core::tool_schema::modifier_schema(),"from_zoom":{"type":"boolean"}},"additionalProperties":false})
+    "Click at (x, y) or on an AX/UIA element by element_token.",
+    serde_json::json!({"type":"object","required":[],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"element_token": cua_driver_core::tool_schema::element_token_schema(),"x":{"type":"number"},"y":{"type":"number"},"button": cua_driver_core::tool_schema::button_schema(),"modifier": cua_driver_core::tool_schema::modifier_schema(),"from_zoom":{"type":"boolean"}},"additionalProperties":false})
 );
 
 stub_tool!(
     double_click_m,
     DoubleClickTool,
     "double_click",
-    "Double-click at (x, y) or on an AX/UIA element by element_index + window_id.",
-    serde_json::json!({"type":"object","required":["pid"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema()},"additionalProperties":false})
+    "Double-click at (x, y) or on an AX/UIA element by element_token.",
+    serde_json::json!({"type":"object","required":["pid"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"window_id":{"type":"integer"},"element_token": cua_driver_core::tool_schema::element_token_schema()},"additionalProperties":false})
 );
 
 stub_tool!(
@@ -129,19 +129,19 @@ stub_tool!(
     RightClickTool,
     "right_click",
     "Right-click (AXShowMenu on element, or synthesized event at x,y).",
-    serde_json::json!({"type":"object","required":["pid"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"window_id":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"modifier": cua_driver_core::tool_schema::modifier_schema()},"additionalProperties":false})
+    serde_json::json!({"type":"object","required":["pid"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"element_token": cua_driver_core::tool_schema::element_token_schema(),"window_id":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"modifier": cua_driver_core::tool_schema::modifier_schema()},"additionalProperties":false})
 );
 
 stub_tool!(type_text_m, TypeTextTool, "type_text",
     "Insert text into the target pid via AXSelectedText or WM_CHAR. Falls back to CGEvent/keystrokes.",
-    serde_json::json!({"type":"object","required":["pid","text"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"text":{"type":"string"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"window_id":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"}},"additionalProperties":false}));
+    serde_json::json!({"type":"object","required":["pid","text"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"text":{"type":"string"},"element_token": cua_driver_core::tool_schema::element_token_schema(),"window_id":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"}},"additionalProperties":false}));
 
 stub_tool!(
     type_chars_m,
     TypeTextCharsTool,
     "type_text_chars",
     "Type text character-by-character with configurable per-character delay.",
-    serde_json::json!({"type":"object","required":["pid","text"],"properties":{"pid":{"type":"integer"},"text":{"type":"string"},"delay_ms":{"type":"integer"},"window_id":{"type":"integer"},"element_index":{"type":"integer"}},"additionalProperties":false})
+    serde_json::json!({"type":"object","required":["pid","text"],"properties":{"pid":{"type":"integer"},"text":{"type":"string"},"delay_ms":{"type":"integer"},"window_id":{"type":"integer"},"element_token": cua_driver_core::tool_schema::element_token_schema()},"additionalProperties":false})
 );
 
 stub_tool!(
@@ -149,7 +149,7 @@ stub_tool!(
     PressKeyTool,
     "press_key",
     "Press and release a single key delivered directly to the target pid. No focus steal.",
-    serde_json::json!({"type":"object","required":["pid","key"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"key":{"type":"string"},"modifiers":{"type":"array","items":{"type":"string"}},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"x":{"type":"number"},"y":{"type":"number"}},"additionalProperties":false})
+    serde_json::json!({"type":"object","required":["pid","key"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"key":{"type":"string"},"modifiers":{"type":"array","items":{"type":"string"}},"window_id":{"type":"integer"},"element_token": cua_driver_core::tool_schema::element_token_schema(),"x":{"type":"number"},"y":{"type":"number"}},"additionalProperties":false})
 );
 
 stub_tool!(
@@ -165,12 +165,12 @@ stub_tool!(
     SetValueTool,
     "set_value",
     "Set the value of an AX/UIA element (text field, dropdown, checkbox).",
-    serde_json::json!({"type":"object","required":["pid","window_id","element_index","value"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"value":{"type":"string"}},"additionalProperties":false})
+    serde_json::json!({"type":"object","required":["pid","value"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"element_token": cua_driver_core::tool_schema::element_token_schema(),"value":{"type":"string"}},"additionalProperties":false})
 );
 
 stub_tool!(scroll_m, ScrollTool, "scroll",
     "Scroll the target pid's focused region. direction required; by defaults to line, amount defaults to 3.",
-    serde_json::json!({"type":"object","required":["direction"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"direction":{"type":"string","enum":["up","down","left","right"]},"by":{"type":"string","enum":["line","page"]},"amount":{"type":"integer","minimum":1,"maximum":50},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema()},"additionalProperties":false}));
+    serde_json::json!({"type":"object","required":["direction"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"direction":{"type":"string","enum":["up","down","left","right"]},"by":{"type":"string","enum":["line","page"]},"amount":{"type":"integer","minimum":1,"maximum":50},"window_id":{"type":"integer"},"element_token": cua_driver_core::tool_schema::element_token_schema()},"additionalProperties":false}));
 
 stub_tool!(screenshot_m, ScreenshotTool, "screenshot",
     "Capture a screenshot. Without window_id captures the full display. Supports png and jpeg formats.",

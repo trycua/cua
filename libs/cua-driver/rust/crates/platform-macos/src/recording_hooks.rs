@@ -2,7 +2,6 @@ use crate::ax::bindings::{element_screen_center, AXUIElementRef};
 use crate::ax::snapshot::{AxSnapshot, Snapshots};
 use cua_driver_core::element_token::ResolvedElement;
 use cua_driver_core::snapshot_store::{current_runtime_store, register_runtime_store};
-use cua_driver_core::tool_args::ArgsExt;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -38,20 +37,9 @@ pub fn element_window_local_xy(
     capture_point: bool,
 ) -> Option<(u64, Option<(f64, f64)>)> {
     let cache = current_runtime_store::<AxSnapshot>()?;
-    let target = cache
-        .resolve_element_args(
-            i32::try_from(pid).ok()?,
-            args.opt_u64("element_index").map(|index| index as usize),
-            args.get("element_token").and_then(Value::as_str),
-            args.get("snapshot_id").and_then(Value::as_str),
-            args.opt_u64("window_id"),
-            "recording",
-        )
-        .ok()?;
+    let target = cache.resolve(i32::try_from(pid).ok()?, args).ok()?;
     let ResolvedElement::Element {
-        window_id: Some(window_id),
-        element,
-        ..
+        window_id, element, ..
     } = target
     else {
         return None;

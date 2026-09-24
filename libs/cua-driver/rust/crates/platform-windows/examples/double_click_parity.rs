@@ -77,7 +77,7 @@ fn main() {
     let v1: serde_json::Value = serde_json::from_str(r1.trim()).unwrap();
     let e1 = extract_text(&v1);
     assert!(
-        e1.contains("Provide element_index or (x, y) to address the double-click target"),
+        e1.contains("Provide element_token or (x, y) to address the double-click target"),
         "Missing-target wording wrong: {e1:?}"
     );
     println!("Missing-target err OK");
@@ -97,32 +97,32 @@ fn main() {
     );
     println!("Partial-xy err OK");
 
-    // 3. Both element_index AND xy.
+    // 3. A stale element_token AND xy.
     let r3 = req(
         &mut pipe,
         &format!(
-            r#"{{"method":"call","name":"double_click","args":{{"pid":{pid},"window_id":{wid},"element_index":0,"x":100,"y":100}}}}"#
+            r#"{{"method":"call","name":"double_click","args":{{"pid":{pid},"window_id":{wid},"element_token":"s00000000:0","x":100,"y":100}}}}"#
         ),
     );
     let v3: serde_json::Value = serde_json::from_str(r3.trim()).unwrap();
     let e3 = extract_text(&v3);
     assert!(
-        e3.contains("Provide either element_index or (x, y), not both"),
+        e3.contains("element_token is stale"),
         "Both-modes wording wrong: {e3:?}"
     );
     println!("Both-modes err OK");
 
-    // 4. element_index without window_id.
+    // 4. A stale element_token without window_id.
     let r4 = req(
         &mut pipe,
         &format!(
-            r#"{{"method":"call","name":"double_click","args":{{"pid":{pid},"element_index":0}}}}"#
+            r#"{{"method":"call","name":"double_click","args":{{"pid":{pid},"element_token":"s00000000:0"}}}}"#
         ),
     );
     let v4: serde_json::Value = serde_json::from_str(r4.trim()).unwrap();
     let e4 = extract_text(&v4);
     assert!(
-        e4.contains("window_id is required when element_index is used"),
+        e4.contains("element_token is stale"),
         "Element-without-window wording wrong: {e4:?}"
     );
     println!("Element-without-window err OK");

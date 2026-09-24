@@ -26,10 +26,11 @@ fn def() -> &'static ToolDef {
         description: "Walk a running app's AX tree and return BOTH a structured \
             `elements` array (preferred) AND a Markdown rendering of the same tree \
             (back-compat). Every actionable element is tagged with [element_index N] \
-            in the markdown and as `element_index` in the structured array — pass \
-            those indices to click, type_text, press_key, etc.\n\n\
+            in the markdown and as `element_index` in the structured array; pass \
+            each element's `element_token` to click, type_text, press_key, etc.\n\n\
             INVARIANT: call get_window_state once per turn per (pid, window_id) before any \
-            element-indexed action. The index map is replaced by the next snapshot.\n\n\
+            element action. The next snapshot of the window replaces this one, stales its \
+            element tokens, and lists the replaced ids in `invalidated_snapshot_ids`.\n\n\
             PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
             indexed row with `element_index`, `role`, `label`, `value` (the \
             element's text/AXValue when present — use it to verify what a field \
@@ -42,7 +43,7 @@ fn def() -> &'static ToolDef {
             both and cross-check (the tree lies on some surfaces: Electron \
             echo-confirms, Catalyst null values, virtualized off-viewport rows \
             with `h:1` frames). You choose the modality at ACTION time, not here: \
-            an element ax action (pass `element_index`/`element_token` → the \
+            an element ax action (pass `element_token` → the \
             accessibility rung) or an element px action (pass `x`,`y` → the pixel \
             rung, read straight off this screenshot). `capture_mode` is deprecated \
             and ignored. Pass `include_screenshot:false` to skip the grab and get \
@@ -1568,7 +1569,7 @@ mod tests {
             let idx = e["element_index"].as_u64().unwrap() as usize;
             let tok = e["element_token"].as_str().unwrap();
             let (resolved_idx, wid, _) = cache
-                .resolve_element_args(pid, None, Some(tok), None, None, "click")
+                .resolve(pid, &serde_json::json!({ "element_token": tok }))
                 .expect("token must resolve")
                 .into_parts(None);
             assert_eq!(wid, Some(9));

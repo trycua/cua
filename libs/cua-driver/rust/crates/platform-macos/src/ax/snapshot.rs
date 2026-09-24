@@ -81,13 +81,9 @@ mod tests {
 
     fn resolve(cache: &Snapshots, snapshot: u32, index: usize) -> Option<RetainedElement> {
         match cache
-            .resolve_element_args(
+            .resolve(
                 1,
-                None,
-                Some(&token_for(snapshot, index)),
-                None,
-                Some(2),
-                "click",
+                &serde_json::json!({ "element_token": token_for(snapshot, index) }),
             )
             .ok()?
         {

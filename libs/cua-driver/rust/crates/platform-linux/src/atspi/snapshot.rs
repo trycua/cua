@@ -63,7 +63,10 @@ mod tests {
         let id = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[node(11), node(7)]));
         for index in [7, 11] {
             let resolved = cache
-                .resolve_element_args(42, None, Some(&token_for(id, index)), None, None, "click")
+                .resolve(
+                    42,
+                    &serde_json::json!({ "element_token": token_for(id, index) }),
+                )
                 .unwrap();
             assert!(
                 matches!(resolved, ResolvedElement::Element { element, .. } if element.path == format!("/node/{index}"))
@@ -71,7 +74,10 @@ mod tests {
         }
         for index in [0, 1, 8, 999] {
             assert!(cache
-                .resolve_element_args(42, None, Some(&token_for(id, index)), None, None, "click")
+                .resolve(
+                    42,
+                    &serde_json::json!({ "element_token": token_for(id, index) })
+                )
                 .is_err());
         }
     }
@@ -100,10 +106,16 @@ mod tests {
         // to the replacement. The current token retains the replacement's own
         // object address for the X11 click resolver to match directly.
         assert!(cache
-            .resolve_element_args(42, None, Some(&token_for(observed, 5)), None, None, "click")
+            .resolve(
+                42,
+                &serde_json::json!({ "element_token": token_for(observed, 5) })
+            )
             .is_err());
         let current = cache
-            .resolve_element_args(42, None, Some(&token_for(current, 5)), None, None, "click")
+            .resolve(
+                42,
+                &serde_json::json!({ "element_token": token_for(current, 5) }),
+            )
             .unwrap();
         assert!(
             matches!(current, ResolvedElement::Element { element, .. } if element.path == "/node/replacement")
@@ -117,30 +129,32 @@ mod tests {
         let fresh = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[node(3)]));
         for index in [7, 11] {
             let refusal = cache
-                .resolve_element_args(42, None, Some(&token_for(old, index)), None, None, "click")
+                .resolve(
+                    42,
+                    &serde_json::json!({ "element_token": token_for(old, index) }),
+                )
                 .unwrap_err();
             assert_eq!(
                 refusal.structured_content.unwrap()["refusal"]["code"],
                 "stale_element_token"
             );
             assert!(cache
-                .resolve_element_args(
+                .resolve(
                     42,
-                    None,
-                    Some(&token_for(fresh, index)),
-                    None,
-                    None,
-                    "click"
+                    &serde_json::json!({ "element_token": token_for(fresh, index) })
                 )
                 .is_err());
         }
         let target = cache
-            .resolve_element_args(42, None, Some(&token_for(fresh, 3)), None, None, "click")
+            .resolve(
+                42,
+                &serde_json::json!({ "element_token": token_for(fresh, 3) }),
+            )
             .unwrap();
         assert!(matches!(
             target,
             ResolvedElement::Element {
-                window_id: Some(7),
+                window_id: 7,
                 element,
                 ..
             } if element.path == "/node/3"
@@ -154,25 +168,24 @@ mod tests {
         let low = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[node(7)]));
         let high = cache.publish(42, window, AtspiSnapshot::from_nodes(&[node(11)]));
         let target = cache
-            .resolve_element_args(
+            .resolve(
                 42,
-                None,
-                Some(&token_for(high, 11)),
-                None,
-                Some(window),
-                "click",
+                &serde_json::json!({ "element_token": token_for(high, 11) }),
             )
             .unwrap();
         assert!(
-            matches!(target, ResolvedElement::Element { window_id: Some(id), element, .. } if id == window && element.path == "/node/11")
+            matches!(target, ResolvedElement::Element { window_id, element, .. } if window_id == window && element.path == "/node/11")
         );
-        assert!(cache
-            .resolve_element_args(42, None, Some(&token_for(high, 11)), None, Some(7), "click")
-            .is_err());
         cache.remove(42, window);
-        assert!(cache
-            .resolve_element_args(42, None, Some(&token_for(low, 7)), None, Some(7), "click")
-            .is_ok());
+        assert!(matches!(
+            cache
+                .resolve(
+                    42,
+                    &serde_json::json!({ "element_token": token_for(low, 7) })
+                )
+                .unwrap(),
+            ResolvedElement::Element { window_id: 7, .. }
+        ));
     }
 
     #[test]
@@ -180,7 +193,10 @@ mod tests {
         let cache = Snapshots::new();
         let id = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[]));
         assert!(cache
-            .resolve_element_args(42, None, Some(&token_for(id, 0)), None, None, "click")
+            .resolve(
+                42,
+                &serde_json::json!({ "element_token": token_for(id, 0) })
+            )
             .is_err());
     }
 }

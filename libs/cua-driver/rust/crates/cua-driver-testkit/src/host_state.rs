@@ -1,13 +1,25 @@
 //! Per-daemon isolation from the developer's real per-user state.
 //!
-//! The driver resolves persistent state (Computer History admission, the
-//! `~/.cua-driver` config, telemetry markers, extension installs, release
+//! The driver resolves its own persistent state (Computer History admission,
+//! the `~/.cua-driver` config, telemetry markers, extension installs, release
 //! channel, libei restore tokens, ...) from `HOME`, the XDG base directories,
-//! and on Windows `USERPROFILE` / `APPDATA` / `LOCALAPPDATA`. A test-owned
-//! daemon that inherits those values reads whatever the developer's installed
-//! product left behind, so the same test can pass in CI and fail on a
-//! maintainer's machine (for example, a real `admission.json` that makes a
-//! debug daemon request History admission and exit before binding, #4094).
+//! and on Windows `LOCALAPPDATA` / `USERPROFILE`. A test-owned daemon that
+//! inherits those values reads whatever the developer's installed product left
+//! behind, so the same test can pass in CI and fail on a maintainer's machine
+//! (for example, a real `admission.json` that makes a debug daemon request
+//! History admission and exit before binding, #4094).
+//!
+//! Isolation is deliberately limited to the locations the driver derives its
+//! own state from. Locations the operating system uses to discover installed
+//! apps stay on the host, because tests launch real apps through the daemon:
+//!
+//! - Windows keeps `USERPROFILE` and `APPDATA`. The shell expands the per-user
+//!   known folders (Start Menu, `shell:AppsFolder`) through `%USERPROFILE%`,
+//!   and a redirected profile hides registered apps such as Microsoft Edge.
+//!   The driver's `USERPROFILE`-derived state goes through its own
+//!   `CUA_DRIVER_RS_HOME` override instead.
+//! - Linux pins `XDG_DATA_HOME` to the host data directory so user `.desktop`
+//!   entries remain discoverable after `HOME` moves.
 //!
 //! Every testkit spawner therefore points those variables at a fresh temporary
 //! directory owned by the spawned daemon. Callers keep full control:
@@ -28,23 +40,38 @@ use std::process::Command;
 /// consumed by the testkit and is not forwarded to the spawned driver.
 pub const SHARE_HOST_STATE: (&str, &str) = ("CUA_TESTKIT_SHARE_HOST_STATE", "1");
 
-/// Variables that locate per-user driver state on the current platform.
+/// Variables that locate per-user driver state on the current platform,
+/// relative to the isolated root.
 #[cfg(target_os = "windows")]
 const STATE_VARIABLES: &[(&str, &str)] = &[
     ("HOME", ""),
-    ("USERPROFILE", ""),
-    ("APPDATA", "AppData/Roaming"),
     ("LOCALAPPDATA", "AppData/Local"),
+    ("CUA_DRIVER_RS_HOME", ".cua-driver"),
 ];
 
 #[cfg(not(target_os = "windows"))]
 const STATE_VARIABLES: &[(&str, &str)] = &[
     ("HOME", ""),
     ("XDG_CONFIG_HOME", ".config"),
-    ("XDG_DATA_HOME", ".local/share"),
     ("XDG_STATE_HOME", ".local/state"),
-    ("XDG_CACHE_HOME", ".cache"),
 ];
+
+/// Host app-discovery locations that must survive the `HOME` redirect.
+fn host_discovery_env() -> Vec<(&'static str, PathBuf)> {
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let data_home = std::env::var_os("XDG_DATA_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
+            });
+        if let Some(data_home) = data_home {
+            return vec![("XDG_DATA_HOME", data_home)];
+        }
+    }
+    Vec::new()
+}
 
 /// A temporary per-user state root for one test-owned driver.
 ///
@@ -88,11 +115,13 @@ impl IsolatedStateRoot {
         self.dir.path()
     }
 
-    /// Per-user state variables pointing into this root.
+    /// Per-user state variables pointing into this root, plus any host
+    /// app-discovery location that must stay visible after `HOME` moves.
     pub fn env(&self) -> Vec<(&'static str, PathBuf)> {
         STATE_VARIABLES
             .iter()
             .map(|(name, relative)| (*name, self.dir.path().join(relative)))
+            .chain(host_discovery_env())
             .collect()
     }
 
@@ -156,6 +185,20 @@ mod tests {
             let value = value_of(&command, name).unwrap_or_else(|| panic!("{name} not set"));
             assert_eq!(Path::new(&value), root.path().join(relative));
             assert!(Path::new(&value).is_dir(), "{name} directory must exist");
+        }
+    }
+
+    #[test]
+    fn host_app_discovery_locations_are_not_redirected() {
+        let root = IsolatedStateRoot::new().expect("isolated root");
+        let env = root.env();
+        for name in ["USERPROFILE", "APPDATA", "XDG_DATA_HOME"] {
+            if let Some((_, value)) = env.iter().find(|(key, _)| *key == name) {
+                assert!(
+                    !value.starts_with(root.path()),
+                    "{name} locates installed apps and must stay on the host"
+                );
+            }
         }
     }
 

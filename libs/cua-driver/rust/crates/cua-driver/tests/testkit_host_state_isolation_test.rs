@@ -47,9 +47,7 @@ fn seed_admitted_host_home() -> tempfile::TempDir {
     // before any thread or child exists.
     std::env::set_var("HOME", home.path());
     if cfg!(target_os = "windows") {
-        std::env::set_var("USERPROFILE", home.path());
         std::env::set_var("LOCALAPPDATA", home.path().join("AppData").join("Local"));
-        std::env::set_var("APPDATA", home.path().join("AppData").join("Roaming"));
     } else if !cfg!(target_os = "macos") {
         std::env::set_var("XDG_STATE_HOME", home.path().join(".local").join("state"));
     }

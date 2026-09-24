@@ -517,15 +517,19 @@ fn protected_host_launch_refusal() -> ToolResult {
 
 // ── Blocking helpers ──────────────────────────────────────────────────────────
 
-/// Poll for the pid's layer-0 windows, retrying up to 5x100ms to absorb
+/// Poll for the pid's windows, retrying up to 5x100ms to absorb
 /// LaunchServices → WindowServer latency (mirrors the Swift reference).
+/// Every layer is enumerated so an accessory-only app still comes up
+/// window-ready; layer-0 windows win whenever the process has one.
 fn resolve_windows_for_pid(pid: i32) -> Vec<crate::windows::WindowInfo> {
     for attempt in 0..5 {
-        let found: Vec<_> = crate::windows::all_windows()
-            .into_iter()
-            .filter(|w| w.pid == pid && w.layer == 0)
-            .filter(|w| w.bounds.width > 1.0 && w.bounds.height > 1.0)
-            .collect();
+        let found = crate::windows::prefer_layer0(
+            crate::windows::enumerate_windows(launch_window_query(pid))
+                .windows
+                .into_iter()
+                .filter(|w| w.bounds.width > 1.0 && w.bounds.height > 1.0)
+                .collect(),
+        );
         if !found.is_empty() {
             return found;
         }
@@ -534,6 +538,10 @@ fn resolve_windows_for_pid(pid: i32) -> Vec<crate::windows::WindowInfo> {
         }
     }
     vec![]
+}
+
+fn launch_window_query(pid: i32) -> crate::windows::WindowQuery {
+    crate::windows::WindowQuery::for_pid(pid)
 }
 
 fn structured_launch_error(code: &str, message: String, details: serde_json::Value) -> ToolResult {
@@ -718,9 +726,9 @@ fn hex_value(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        contains_remote_debugging_flag, is_cua_driver_bundle_id, local_file_target,
-        normalize_launch_url, preflight_file_urls, response_identity, structured_launch_failure,
-        LaunchAppTool,
+        contains_remote_debugging_flag, is_cua_driver_bundle_id, launch_window_query,
+        local_file_target, normalize_launch_url, preflight_file_urls, response_identity,
+        structured_launch_failure, LaunchAppTool,
     };
     use cua_driver_core::tool::Tool;
     use serde_json::json;
@@ -844,6 +852,13 @@ mod tests {
             ),
             ("Example Editor".to_owned(), "com.example.Editor".to_owned())
         );
+    }
+
+    #[test]
+    fn launch_window_query_preserves_space_metadata() {
+        let query = launch_window_query(800);
+        assert_eq!(query.pid, Some(800));
+        assert_eq!(query.spaces, crate::windows::SpaceLookup::Resolve);
     }
 
     #[tokio::test]

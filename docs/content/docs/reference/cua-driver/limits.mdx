@@ -120,7 +120,9 @@ does not imply arbitrary raw background PX delivery on Wayland.
 
 ## Off-Space windows keep background input and hide the agent cursor
 
-**Behavior:** macOS omits windows on other Spaces from an application's `AXWindows` list. Cua Driver recovers the requested window by its exact CGWindowID, so `get_window_state`, element actions, and background pixel actions keep working while the window stays on its Space. The user's current Space, frontmost application, and keyboard focus do not change.
+**Behavior:** macOS omits windows on other Spaces from an application's `AXWindows` list. For AppKit windows, Cua Driver recovers the requested window by its exact CGWindowID, so `get_window_state`, element actions, and background pixel actions keep working while the window stays on its Space. The user's current Space, frontmost application, and keyboard focus do not change.
+
+**Scope:** recovery runs only for windows that WindowServer reports on another Space, and it probes the first 2,000 accessibility element ids of the application. A window whose element id is beyond that limit, such as a window created late in a long-running browser or Electron app, is not recovered; its request reports `ax_window_unresolved`. SwiftUI windows are recovered but expose little or no accessibility tree while off-Space; see [Off-Space SwiftUI windows strip their AX tree](#off-space-swiftui-windows-strip-their-ax-tree).
 
 **Agent cursor:** the overlay does not paint while an action targets a window on another Space, so the cursor never animates over the user's Space at that window's coordinates. It reappears with the next action on a current-Space window.
 

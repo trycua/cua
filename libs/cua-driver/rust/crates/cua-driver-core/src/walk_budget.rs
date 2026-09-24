@@ -29,10 +29,17 @@ impl WalkStop {
 
 /// Budget for one walk. Call [`WalkBudget::admit`] before visiting each node;
 /// a refused node is counted as discovered but not visited.
+///
+/// The clock starts at the first admitted node, so `timeout_ms` bounds the
+/// walk itself rather than the backend's setup (resolving the application and
+/// the target window, which on a freshly launched app can take most of a
+/// second on a slow host). Each backend bounds that setup separately with its
+/// own backstop past `timeout_ms`.
 #[derive(Debug)]
 pub struct WalkBudget {
-    started: Instant,
-    deadline: Instant,
+    /// Set by the first [`WalkBudget::admit`].
+    started: Option<Instant>,
+    timeout: Duration,
     timeout_ms: u64,
     max_elements: usize,
     visited: usize,
@@ -44,10 +51,9 @@ impl WalkBudget {
     /// A walk bounded by `timeout_ms` of wall-clock time and `max_elements`
     /// nodes.
     pub fn new(timeout_ms: u64, max_elements: usize) -> Self {
-        let started = Instant::now();
         Self {
-            started,
-            deadline: started + Duration::from_millis(timeout_ms),
+            started: None,
+            timeout: Duration::from_millis(timeout_ms),
             timeout_ms,
             max_elements,
             visited: 0,
@@ -66,10 +72,11 @@ impl WalkBudget {
     /// Admit one node for visiting. `false` means the walk must not visit it:
     /// a budget has run out, and the node is counted as pending.
     pub fn admit(&mut self) -> bool {
+        let started = *self.started.get_or_insert_with(Instant::now);
         if self.stop.is_none() {
             if self.visited >= self.max_elements {
                 self.stop = Some(WalkStop::NodeBudget);
-            } else if Instant::now() >= self.deadline {
+            } else if started.elapsed() >= self.timeout {
                 self.stop = Some(WalkStop::Timeout);
             }
         }
@@ -82,14 +89,10 @@ impl WalkBudget {
     }
 
     /// Whether the wall-clock budget has run out (for phases that cannot be
-    /// interrupted per node, e.g. deciding whether to retry a bulk fetch).
+    /// interrupted per node). Never true before the walk has started.
     pub fn expired(&self) -> bool {
-        Instant::now() >= self.deadline
-    }
-
-    /// Time left before the deadline (zero once it has passed).
-    pub fn remaining(&self) -> Duration {
-        self.deadline.saturating_duration_since(Instant::now())
+        self.started
+            .is_some_and(|started| started.elapsed() >= self.timeout)
     }
 
     /// Record that the walk ran out of time outside [`WalkBudget::admit`]
@@ -104,7 +107,9 @@ impl WalkBudget {
             stop: self.stop,
             nodes_visited: self.visited,
             nodes_pending: self.pending,
-            elapsed_ms: self.started.elapsed().as_millis() as u64,
+            elapsed_ms: self
+                .started
+                .map_or(0, |started| started.elapsed().as_millis() as u64),
         }
     }
 }
@@ -213,11 +218,20 @@ mod tests {
     #[test]
     fn expired_deadline_stops_with_timeout() {
         let mut budget = WalkBudget::new(0, 100);
-        assert!(budget.expired());
+        // Setup before the first node does not count against the budget.
+        assert!(!budget.expired());
         assert!(!budget.admit());
+        assert!(budget.expired());
         let outcome = budget.outcome();
         assert_eq!(outcome.reason(), Some("timeout"));
         assert_eq!((outcome.nodes_visited, outcome.nodes_pending), (0, 1));
+    }
+
+    #[test]
+    fn the_clock_starts_at_the_first_node() {
+        let mut budget = WalkBudget::new(50, 100);
+        std::thread::sleep(Duration::from_millis(80));
+        assert!(budget.admit(), "setup time must not exhaust the budget");
     }
 
     #[test]

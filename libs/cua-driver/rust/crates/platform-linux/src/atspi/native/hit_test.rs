@@ -202,6 +202,13 @@ pub fn point_ownership(
                     return Ok(PointOwnership::Owned);
                 }
                 let deepest = chain.last().expect("chain has more than one node");
+                // The toolkit stopped at one of the target's own containers
+                // (a web document answers with its `panel` / `filler`): it
+                // cannot resolve the point any deeper, which is not evidence
+                // that a different control owns it.
+                if is_ancestor_of(conn, &deepest.oref, &observed_raw).await {
+                    return Ok(PointOwnership::Unknown);
+                }
                 let owner = describe_node(deepest).await;
                 let observed_name = match call(accessible_for(conn, &observed_raw)).await {
                     Some(Ok(acc)) => call(acc.name())
@@ -230,6 +237,35 @@ pub fn point_ownership(
         || Ok(PointOwnership::Unknown),
     );
     result.unwrap_or(PointOwnership::Unknown)
+}
+
+/// Whether `ancestor` is on `node`'s parent chain (bounded).
+async fn is_ancestor_of(
+    conn: &AccessibilityConnection,
+    ancestor: &RawObjectRef,
+    node: &RawObjectRef,
+) -> bool {
+    let same = |a: &RawObjectRef, b: &RawObjectRef| a.name == b.name && a.path == b.path;
+    let mut current = node.clone();
+    for _ in 0..32 {
+        let Some(Ok(acc)) = call(accessible_for(conn, &current)).await else {
+            return false;
+        };
+        let Some(Ok(parent)) = call(acc.parent()).await else {
+            return false;
+        };
+        let Some(parent) = RawObjectRef::from_atspi(&parent) else {
+            return false;
+        };
+        if same(&parent, ancestor) {
+            return true;
+        }
+        if same(&parent, &current) {
+            return false;
+        }
+        current = parent;
+    }
+    false
 }
 
 #[cfg(test)]

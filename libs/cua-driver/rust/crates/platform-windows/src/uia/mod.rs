@@ -244,11 +244,10 @@ pub fn walk_tree_bounded(
     walk_tree_budgeted(hwnd, query, max_depth, &mut budget)
 }
 
-/// [`walk_tree_bounded`] under a caller's [`WalkBudget`]. The bulk
-/// `BuildUpdatedCache` fetch cannot be interrupted, so the budget is checked
-/// before each retry of it and per node of the cached (and MSAA) walk: a walk
-/// whose fetch outlasted the budget returns an empty, truncated tree. Read
-/// the outcome from `budget` afterwards.
+/// [`walk_tree_bounded`] under a caller's [`WalkBudget`], checked per node of
+/// the cached (and MSAA) walk. The bulk `BuildUpdatedCache` fetch before it is
+/// setup the budget does not cover; the caller's backstop bounds it. Read the
+/// outcome from `budget` afterwards.
 pub fn walk_tree_budgeted(
     hwnd: u64,
     query: Option<&str>,
@@ -386,7 +385,7 @@ unsafe fn walk_tree_unsafe(
                 Ok(e) => break e,
                 Err(e) => {
                     attempt += 1;
-                    if attempt >= MAX_ATTEMPTS || budget.expired() {
+                    if attempt >= MAX_ATTEMPTS {
                         return UiaTreeResult {
                             tree_markdown: format!(
                                 "BuildUpdatedCache failed after {attempt} attempts: {e}"

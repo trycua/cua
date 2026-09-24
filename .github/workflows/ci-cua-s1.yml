@@ -43,7 +43,9 @@ jobs:
           cache-dependency-glob: libs/cua-s1/python/uv.lock
 
       - name: Install test dependencies
-        run: uv sync --frozen --extra pdf --group test
+        run: |
+          uv lock --check
+          uv sync --frozen --extra pdf --group test
 
       - name: Check formatting and lint
         run: |
@@ -118,3 +120,25 @@ jobs:
           second_document = json.loads((root / "second/config.json").read_text(encoding="utf-8"))
           assert first_document == second_document
           PY
+
+      - name: Check four-b inference dependencies
+        run: |
+          uv sync --frozen --extra four-b --group test
+          uv run --frozen --extra four-b --group test python - <<'PY'
+          import torchvision
+          import transformers
+          from peft import PeftModel
+          from transformers import (
+              AutoModelForCausalLM,
+              AutoModelForImageTextToText,
+              AutoProcessor,
+              AutoTokenizer,
+          )
+          from transformers.models.qwen3_5 import modeling_qwen3_5
+          from transformers.utils import is_torchvision_available
+
+          assert transformers.__version__.startswith("5.")
+          assert is_torchvision_available()
+          assert all((torchvision, PeftModel, modeling_qwen3_5, AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor, AutoTokenizer))
+          PY
+          uv run --frozen --extra four-b --group test pytest -q tests/test_four_b.py

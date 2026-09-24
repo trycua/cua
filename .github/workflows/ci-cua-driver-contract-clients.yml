@@ -257,13 +257,14 @@ jobs:
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver-core --test contract_parity
 
-      - name: Test Python release packaging helpers
+      - name: Test Python release packaging helpers and binary wrapper
         working-directory: libs/cua-driver/python
         run: |
           python -m pip install pytest
           python -m pytest \
             tests/test_build_wheel.py \
             tests/test_compatibility_contract.py \
+            tests/test_wrapper.py \
             -q
 
       - name: Build and stage host-native UniFFI library

@@ -3,7 +3,7 @@ import os
 import subprocess
 
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 SIGNING_HELPER = SCRIPTS_DIR / "_local-signing.sh"
 
 
@@ -163,9 +163,7 @@ def test_installer_verifies_the_copied_designated_requirement() -> None:
 
 def test_local_installer_uses_a_separate_macos_identity() -> None:
     """Local rebuilds never replace or reset the release app identity (#2230)."""
-    script = (
-        Path(__file__).resolve().parents[2] / "scripts" / "_install-local-rust.sh"
-    ).read_text()
+    script = (SCRIPTS_DIR / "_install-local-rust.sh").read_text()
 
     assert 'APP_DEST="/Applications/CuaDriverLocal.app"' in script
     assert 'CFBundleIdentifier -string "com.trycua.driver.local"' in script
@@ -175,9 +173,7 @@ def test_local_installer_uses_a_separate_macos_identity() -> None:
 
 def test_unix_local_installer_uses_separate_paths_and_autostart() -> None:
     """Local install state, command, and service names coexist with release."""
-    script = (
-        Path(__file__).resolve().parents[2] / "scripts" / "_install-local-rust.sh"
-    ).read_text()
+    script = (SCRIPTS_DIR / "_install-local-rust.sh").read_text()
 
     assert 'HOME_DIR="${CUA_DRIVER_LOCAL_HOME:-$HOME/.cua-driver-local}"' in script
     assert "BIN_DIR/cua-driver-local" in script
@@ -188,9 +184,7 @@ def test_unix_local_installer_uses_separate_paths_and_autostart() -> None:
 
 def test_unix_local_installer_always_embeds_source_provenance() -> None:
     """Local builds derive Git provenance but preserve VM snapshot overrides."""
-    script = (
-        Path(__file__).resolve().parents[2] / "scripts" / "_install-local-rust.sh"
-    ).read_text()
+    script = (SCRIPTS_DIR / "_install-local-rust.sh").read_text()
 
     assert 'if [ -z "${CUA_DRIVER_SOURCE_SHA:-}" ]; then' in script
     assert "rev-parse --verify 'HEAD^{commit}'" in script
@@ -201,7 +195,7 @@ def test_unix_local_installer_always_embeds_source_provenance() -> None:
 
 def test_windows_local_installer_always_embeds_source_provenance() -> None:
     """The Windows developer installer follows the same provenance contract."""
-    script = (Path(__file__).resolve().parents[2] / "scripts" / "install-local.ps1").read_text()
+    script = (SCRIPTS_DIR / "install-local.ps1").read_text()
 
     assert "IsNullOrWhiteSpace($env:CUA_DRIVER_SOURCE_SHA)" in script
     assert "rev-parse --verify 'HEAD^{commit}'" in script
@@ -210,7 +204,7 @@ def test_windows_local_installer_always_embeds_source_provenance() -> None:
 
 
 def test_windows_local_installer_uses_separate_paths_and_autostart() -> None:
-    script = (Path(__file__).resolve().parents[2] / "scripts" / "install-local.ps1").read_text()
+    script = (SCRIPTS_DIR / "install-local.ps1").read_text()
 
     assert '$BinaryName  = "cua-driver-local.exe"' in script
     assert '"Programs\\Cua\\cua-driver-local\\bin"' in script
@@ -220,9 +214,8 @@ def test_windows_local_installer_uses_separate_paths_and_autostart() -> None:
 
 
 def test_release_installers_do_not_target_local_product_artifacts() -> None:
-    scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
     for name in ("_install-rust.sh", "install.ps1"):
-        script = (scripts_dir / name).read_text()
+        script = (SCRIPTS_DIR / name).read_text()
         assert "CuaDriverLocal" not in script
         assert ".cua-driver-local" not in script
         assert "cua-driver-local-serve" not in script

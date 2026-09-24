@@ -538,17 +538,7 @@ fn resolve_windows_for_pid(pid: i32) -> Vec<crate::windows::WindowInfo> {
 }
 
 fn rank_launch_windows(windows: &mut [crate::windows::WindowInfo]) {
-    windows.sort_by(|left, right| {
-        let left_titled = !left.title.trim().is_empty();
-        let right_titled = !right.title.trim().is_empty();
-        right_titled.cmp(&left_titled).then_with(|| {
-            let left_area = left.bounds.width * left.bounds.height;
-            let right_area = right.bounds.width * right.bounds.height;
-            right_area
-                .partial_cmp(&left_area)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-    });
+    windows.sort_by_key(|window| std::cmp::Reverse(!window.title.trim().is_empty()));
 }
 
 fn structured_launch_error(code: &str, message: String, details: serde_json::Value) -> ToolResult {
@@ -777,16 +767,16 @@ mod tests {
                 .iter()
                 .map(|window| window.window_id)
                 .collect::<Vec<_>>(),
-            vec![10166, 10169, 10174]
+            vec![10166, 10174, 10169]
         );
     }
 
     #[test]
-    fn launch_window_ranking_is_stable_for_equal_candidates() {
+    fn launch_window_ranking_preserves_window_server_order_within_groups() {
         let mut windows = vec![
-            window(3, "Third", 500.0, 400.0),
-            window(2, "Second", 500.0, 400.0),
-            window(1, "First", 500.0, 400.0),
+            window(3, "New small document", 300.0, 200.0),
+            window(2, "Old large document", 1200.0, 900.0),
+            window(1, "", 1920.0, 30.0),
         ];
 
         rank_launch_windows(&mut windows);

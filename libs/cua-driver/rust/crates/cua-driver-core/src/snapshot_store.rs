@@ -305,6 +305,15 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
         let Some(snapshot) = lane.iter().find(|snapshot| snapshot.id == snapshot_id) else {
             return Err(stale_token_refusal(pid, lane));
         };
+        if args["window_id"]
+            .as_u64()
+            .is_some_and(|window_id| window_id != snapshot.window_id)
+        {
+            return Err(refusal(
+                "conflicting_element_target",
+                "element_token conflicts with window_id".into(),
+            ));
+        }
         let element = snapshot.payload.retain(element_index).ok_or_else(|| {
             refusal(
                 "invalid_element_token",
@@ -435,6 +444,28 @@ mod tests {
         assert!(cache
             .resolve(1, &serde_json::json!({ "element_token": token_for(0, 0) }))
             .is_err());
+    }
+
+    #[test]
+    fn token_resolution_rejects_conflicting_windows() {
+        let cache = SnapshotStore::new();
+        let token = token_for(cache.publish(7, 42, Payload(vec![1])), 0);
+        let mut args = serde_json::json!({ "element_token": token });
+        for window_id in [None, Some(42)] {
+            if let Some(window_id) = window_id {
+                args["window_id"] = serde_json::json!(window_id);
+            }
+            assert!(matches!(
+                cache.resolve(7, &args).unwrap(),
+                ResolvedElement::Element { window_id: 42, .. }
+            ));
+        }
+        args["window_id"] = serde_json::json!(99);
+        let error = cache.resolve(7, &args).unwrap_err();
+        assert_eq!(
+            error.structured_content.unwrap()["refusal"]["code"],
+            "conflicting_element_target"
+        );
     }
 
     #[test]

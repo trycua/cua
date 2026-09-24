@@ -292,7 +292,7 @@ def release_manifest(bundle: Path, lock: dict[str, Any], target: str, version: s
         ))
     return {
         "schemaVersion": 1, "component": "cua-perception", "version": version,
-        "driverVersion": ">=0.29.0", "sourceSha": revision, "target": target_value,
+        "driverVersion": ">=0.28.2", "sourceSha": revision, "target": target_value,
         "protocol": {"name": "cua-perception-worker", "version": 1}, "artifacts": entries,
         "modelLedger": "model-ledger.json", "sourceLedger": "source-ledger.json",
         "suppliedVerification": {"health": "verification/health.json", "selfTest": "verification/self-test.json", "realParse": "verification/real-parse.json"},

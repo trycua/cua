@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "review-only-license-review-required",
+  "status": "maintainer-approved-agpl-distribution",
   "input": {
     "bundle_path": "source/upstream/omniparser-icon-detect-model.pt",
     "sha256": "dab3d4351ad00b035db829909a4db98354d5a90f6990e4ac00222a9a95d4bf57",

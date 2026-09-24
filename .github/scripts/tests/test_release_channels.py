@@ -345,10 +345,13 @@ def test_first_driver_nightly_ignores_perception_only_changes(
     monkeypatch: pytest.MonkeyPatch,
 ):
     source_sha = "c" * 40
+    # Release Please bumps this manifest, so read the current Driver release tag.
+    manifest = json.loads((ROOT / ".release-please-manifest.json").read_text())
+    driver_tag = f"cua-driver-rs-v{manifest['libs/cua-driver']}"
 
     def fake_git(_root, command, *args):
         if command == "rev-list":
-            assert args == ("-n", "1", "cua-driver-rs-v0.28.2")
+            assert args == ("-n", "1", driver_tag)
             return "b" * 40
         if command == "merge-base":
             return ""
@@ -359,7 +362,7 @@ def test_first_driver_nightly_ignores_perception_only_changes(
         release_channels.release_attribution,
         "commits_in_range",
         lambda _root, previous, _source, _paths, _excluded, _companions: (
-            [] if previous == "cua-driver-rs-v0.28.2" else [object()]
+            [] if previous == driver_tag else [object()]
         ),
     )
     plan = plan_nightly(

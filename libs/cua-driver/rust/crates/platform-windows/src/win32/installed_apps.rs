@@ -15,10 +15,12 @@
 //!    Application.Id.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc, OnceLock};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use cua_driver_core::single_flight::SingleFlight;
 use windows::core::{Interface, PCWSTR};
 use windows::Win32::Foundation::MAX_PATH;
 use windows::Win32::System::Com::{
@@ -258,128 +260,84 @@ enum UwpScanDeadlineError {
 /// retries fail fast instead of accumulating one blocked thread per
 /// `list_apps` call. Once a late worker returns, a short cooldown prevents a
 /// hot retry loop against a broken package repository or token context.
-struct UwpScanSingleFlight {
-    in_flight: AtomicBool,
-    cooldown_until_ms: AtomicU64,
-    cooldown_ms: u64,
+fn uwp_scan_single_flight() -> &'static Arc<SingleFlight> {
+    static GATE: OnceLock<Arc<SingleFlight>> = OnceLock::new();
+    GATE.get_or_init(|| Arc::new(SingleFlight::new(UWP_SCAN_RECOVERY_COOLDOWN)))
 }
 
-impl UwpScanSingleFlight {
-    const fn new(cooldown_ms: u64) -> Self {
-        Self {
-            in_flight: AtomicBool::new(false),
-            cooldown_until_ms: AtomicU64::new(0),
-            cooldown_ms,
-        }
-    }
+fn run_uwp_scan<T, F>(
+    gate: &Arc<SingleFlight>,
+    timeout: Duration,
+    f: F,
+) -> Result<T, UwpScanDeadlineError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    let Some(permit) = gate.try_acquire() else {
+        return Err(UwpScanDeadlineError::Busy);
+    };
+    let timed_out = permit.timeout_flag();
 
-    fn run<T, F>(self: &Arc<Self>, timeout: Duration, f: F) -> Result<T, UwpScanDeadlineError>
-    where
-        T: Send + 'static,
-        F: FnOnce() -> T + Send + 'static,
-    {
-        let now = uwp_scan_now_ms();
-        if now < self.cooldown_until_ms.load(Ordering::Acquire)
-            || self
-                .in_flight
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_err()
-        {
-            return Err(UwpScanDeadlineError::Busy);
-        }
-
-        let (tx, rx) = mpsc::channel();
-        let timed_out = Arc::new(AtomicBool::new(false));
-        let worker_timed_out = Arc::clone(&timed_out);
-        let worker_gate = Arc::clone(self);
-        let spawn = thread::Builder::new()
-            .name("cua-uwp-package-scan".to_owned())
-            .spawn(move || {
-                let _guard = UwpScanInFlightGuard {
-                    gate: worker_gate,
-                    timed_out: worker_timed_out,
-                };
-                let _ = tx.send(f());
-            });
-
-        if let Err(error) = spawn {
-            self.in_flight.store(false, Ordering::Release);
-            tracing::warn!(
-                target: "installed_apps",
-                "scan_uwp_packages: failed to start bounded WinRT worker: {error}"
-            );
-            return Err(UwpScanDeadlineError::Unavailable);
-        }
-
-        match rx.recv_timeout(timeout) {
-            Ok(result) => Ok(result),
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                timed_out.store(true, Ordering::Release);
-                // Arm the cooldown here as well as in the worker guard. The
-                // worker can return in the narrow interval between
-                // `recv_timeout` expiring and observing `timed_out`; recording
-                // it on the caller side ensures that race cannot immediately
-                // launch another package query.
-                self.cooldown_until_ms.store(
-                    uwp_scan_now_ms().saturating_add(self.cooldown_ms),
-                    Ordering::Release,
-                );
+    let (tx, rx) = mpsc::channel();
+    let spawn = thread::Builder::new()
+        .name("cua-uwp-package-scan".to_owned())
+        .spawn(move || {
+            let _ = tx.send(f());
+            if permit.timed_out() {
                 tracing::warn!(
                     target: "installed_apps",
-                    "scan_uwp_packages: current-user WinRT query exceeded {}ms; returning Start Menu apps without UWP results. No additional package worker will start until this query returns",
-                    timeout.as_millis()
+                    "scan_uwp_packages: timed-out WinRT query returned; cooling down before retry"
                 );
-                Err(UwpScanDeadlineError::Timeout)
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                tracing::warn!(
-                    target: "installed_apps",
-                    "scan_uwp_packages: bounded WinRT worker exited without a result"
-                );
-                Err(UwpScanDeadlineError::Unavailable)
-            }
-        }
+            // Dropping the permit arms the cooldown after a timeout and
+            // reopens the gate.
+            drop(permit);
+        });
+
+    if let Err(error) = spawn {
+        // The unspawned closure, and with it the permit, is already dropped,
+        // which reopened the gate.
+        tracing::warn!(
+            target: "installed_apps",
+            "scan_uwp_packages: failed to start bounded WinRT worker: {error}"
+        );
+        return Err(UwpScanDeadlineError::Unavailable);
     }
-}
 
-struct UwpScanInFlightGuard {
-    gate: Arc<UwpScanSingleFlight>,
-    timed_out: Arc<AtomicBool>,
-}
-
-impl Drop for UwpScanInFlightGuard {
-    fn drop(&mut self) {
-        if self.timed_out.load(Ordering::Acquire) {
-            self.gate.cooldown_until_ms.store(
-                uwp_scan_now_ms().saturating_add(self.gate.cooldown_ms),
-                Ordering::Release,
-            );
+    match rx.recv_timeout(timeout) {
+        Ok(result) => Ok(result),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            timed_out.store(true, Ordering::Release);
+            // Arm the cooldown here as well as when the permit drops. The
+            // worker can return in the narrow interval between `recv_timeout`
+            // expiring and observing `timed_out`; recording it on the caller
+            // side ensures that race cannot immediately launch another package
+            // query.
+            gate.arm_cooldown();
             tracing::warn!(
                 target: "installed_apps",
-                "scan_uwp_packages: timed-out WinRT query returned; cooling down for {}ms before retry",
-                self.gate.cooldown_ms
+                "scan_uwp_packages: current-user WinRT query exceeded {}ms; returning Start Menu apps without UWP results. No additional package worker will start until this query returns",
+                timeout.as_millis()
             );
+            Err(UwpScanDeadlineError::Timeout)
         }
-        self.gate.in_flight.store(false, Ordering::Release);
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            tracing::warn!(
+                target: "installed_apps",
+                "scan_uwp_packages: bounded WinRT worker exited without a result"
+            );
+            Err(UwpScanDeadlineError::Unavailable)
+        }
     }
-}
-
-fn uwp_scan_single_flight() -> &'static Arc<UwpScanSingleFlight> {
-    static GATE: OnceLock<Arc<UwpScanSingleFlight>> = OnceLock::new();
-    GATE.get_or_init(|| {
-        Arc::new(UwpScanSingleFlight::new(
-            UWP_SCAN_RECOVERY_COOLDOWN.as_millis() as u64,
-        ))
-    })
-}
-
-fn uwp_scan_now_ms() -> u64 {
-    static START: OnceLock<Instant> = OnceLock::new();
-    START.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
 fn scan_uwp_packages() -> Vec<InstalledApp> {
-    match uwp_scan_single_flight().run(UWP_SCAN_TIMEOUT, scan_uwp_packages_unbounded) {
+    match run_uwp_scan(
+        uwp_scan_single_flight(),
+        UWP_SCAN_TIMEOUT,
+        scan_uwp_packages_unbounded,
+    ) {
         Ok(packages) => packages,
         Err(UwpScanDeadlineError::Busy) => {
             tracing::debug!(
@@ -627,10 +585,11 @@ fn read_install_mtime(pkg: &windows::ApplicationModel::Package) -> Option<String
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+    use std::time::Instant;
 
     #[test]
     fn wedged_uwp_scan_has_bounded_worker_growth_and_recovers() {
-        let gate = Arc::new(UwpScanSingleFlight::new(40));
+        let gate = Arc::new(SingleFlight::new(Duration::from_millis(500)));
         let starts = Arc::new(AtomicUsize::new(0));
         let active = Arc::new(AtomicUsize::new(0));
         let max_active = Arc::new(AtomicUsize::new(0));
@@ -640,7 +599,7 @@ mod tests {
         let starts_for_worker = Arc::clone(&starts);
         let active_for_worker = Arc::clone(&active);
         let max_active_for_worker = Arc::clone(&max_active);
-        let first = gate.run(Duration::from_millis(20), move || {
+        let first = run_uwp_scan(&gate, Duration::from_millis(20), move || {
             starts_for_worker.fetch_add(1, Ordering::SeqCst);
             let now_active = active_for_worker.fetch_add(1, Ordering::SeqCst) + 1;
             max_active_for_worker.fetch_max(now_active, Ordering::SeqCst);
@@ -659,7 +618,7 @@ mod tests {
 
         for _ in 0..100 {
             assert_eq!(
-                gate.run(Duration::from_millis(20), || 99),
+                run_uwp_scan(&gate, Duration::from_millis(20), || 99),
                 Err(UwpScanDeadlineError::Busy)
             );
         }
@@ -670,18 +629,18 @@ mod tests {
             .send(())
             .expect("worker should still be listening");
         let wait_deadline = Instant::now() + Duration::from_secs(1);
-        while gate.in_flight.load(Ordering::Acquire) && Instant::now() < wait_deadline {
+        while gate.is_in_flight() && Instant::now() < wait_deadline {
             thread::yield_now();
         }
-        assert!(!gate.in_flight.load(Ordering::Acquire));
+        assert!(!gate.is_in_flight());
         assert_eq!(
-            gate.run(Duration::from_millis(20), || 99),
+            run_uwp_scan(&gate, Duration::from_millis(20), || 99),
             Err(UwpScanDeadlineError::Busy),
             "a late return should enter cooldown"
         );
 
-        thread::sleep(Duration::from_millis(50));
-        assert_eq!(gate.run(Duration::from_secs(1), || 42), Ok(42));
+        thread::sleep(Duration::from_millis(600));
+        assert_eq!(run_uwp_scan(&gate, Duration::from_secs(1), || 42), Ok(42));
         assert_eq!(max_active.load(Ordering::SeqCst), 1);
     }
 

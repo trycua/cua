@@ -478,14 +478,7 @@ pub(crate) const NO_CURSOR: &str = "";
 /// then the legacy `cursor_id` alias. A direct platform invocation that has no
 /// lifecycle metadata remains cursor-less.
 pub(crate) fn resolve_cursor_key(args: &Value) -> String {
-    for key in ["session", "_session_id", "cursor_id"] {
-        if let Some(v) = args.get(key).and_then(|v| v.as_str()) {
-            if !v.is_empty() {
-                return v.to_owned();
-            }
-        }
-    }
-    NO_CURSOR.to_owned()
+    cua_driver_core::tool_args::session_key(args).unwrap_or_else(|| NO_CURSOR.to_owned())
 }
 
 /// Returns `true` when a click/scroll invocation should take the **window-less
@@ -1010,9 +1003,7 @@ impl Tool for ListWindowsTool {
     }
 }
 
-fn z_index_from_front_to_back(total: usize, position: usize) -> usize {
-    total.saturating_sub(1).saturating_sub(position)
-}
+use cua_driver_core::window_target::z_index_from_front_to_back;
 
 #[cfg(test)]
 mod list_windows_z_index_tests;
@@ -1021,29 +1012,6 @@ mod list_windows_z_index_tests;
 mod get_window_state_actions_tests;
 
 // ── get_window_state ─────────────────────────────────────────────────────────
-
-/// Fold a per-call `max_dimension` cap with the configured
-/// `max_image_dimension` ceiling. `resize_png_if_needed` treats `0` as "no
-/// limit", so an unlimited ceiling defers to the per-call cap; otherwise the
-/// tighter (smaller, non-zero) of the two wins.
-fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
-    match per_call {
-        Some(md) if ceiling == 0 => md,
-        Some(md) => ceiling.min(md),
-        None => ceiling,
-    }
-}
-
-/// Resolve the screenshot size limit. The canonical per-call override wins
-/// outright, including `0` for native resolution. When omitted, preserve the
-/// configured ceiling and legacy `max_dimension` folding behavior.
-fn resolve_max_image_dimension(
-    configured: u32,
-    max_image_dimension: Option<u32>,
-    legacy_max_dimension: Option<u32>,
-) -> u32 {
-    max_image_dimension.unwrap_or_else(|| fold_max_dimension(configured, legacy_max_dimension))
-}
 
 /// Build a single structured element entry for `get_window_state`.
 /// Returns `None` when the node has no `element_index` (non-actionable rows).
@@ -1109,9 +1077,6 @@ pub struct GetWindowStateTool {
 }
 
 static GWS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
-
-#[cfg(test)]
-mod get_window_state_max_image_dimension_tests;
 
 /// Slack past `timeout_ms` before the walk task is abandoned.
 const UIA_WALK_BACKSTOP_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
@@ -1277,7 +1242,12 @@ impl Tool for GetWindowStateTool {
             .map(|v| v.max(1));
         let max_dim = {
             let cfg = self.state.config.read().unwrap();
-            resolve_max_image_dimension(cfg.max_image_dimension, max_image_dimension, max_dimension)
+            cua_driver_core::image_utils::ImageDimensionLimits {
+                configured: cfg.max_image_dimension,
+                legacy_max_dimension: max_dimension,
+                max_image_dimension,
+            }
+            .resolve()
         };
         // `capture_mode` is DEPRECATED and ignored — get_window_state always
         // returns BOTH the UIA tree and a screenshot now, so the agent grounds on
@@ -2057,11 +2027,6 @@ async fn restore_foreground_polling_best_effort(prior_foreground_addr: usize, sp
 pub struct LaunchAppTool;
 static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
-fn contains_remote_debugging_flag(value: &str) -> bool {
-    let lower = value.to_ascii_lowercase();
-    lower.contains("--remote-debugging-port") || lower.contains("--remote-debugging-pipe")
-}
-
 #[async_trait]
 impl Tool for LaunchAppTool {
     fn def(&self) -> &ToolDef {
@@ -2227,10 +2192,10 @@ impl Tool for LaunchAppTool {
             .chain(path_opt.as_deref())
             .chain(name_opt.as_deref())
             .chain(extra_args.iter().map(String::as_str))
-            .any(contains_remote_debugging_flag)
+            .any(cua_driver_core::launch_guard::contains_remote_debugging_flag)
         {
             return ToolResult::error(
-                "Chromium remote-debugging flags moved to browser_prepare so DevTools is never enabled on an unproven user profile",
+                cua_driver_core::launch_guard::REMOTE_DEBUGGING_LAUNCH_REFUSAL,
             );
         }
 
@@ -3031,27 +2996,23 @@ fn finish_pixel_uia_attempt(
         PointInvokeOutcome::Timeout => "timeout",
         PointInvokeOutcome::Unavailable => "unavailable",
     };
-    Some(
-        ToolResult::error(format!(
+    Some(cua_driver_core::delivery::background_unavailable_result(
+        format!(
             "UIA pixel click {status} for pid {pid}. No fallback input was sent. \
          The click effect is unknown; inspect the target state before another action. \
          If the provider does not recover, retry this action with delivery_mode:\"foreground\"."
-        ))
-        .with_structured(json!({
-            "code": "background_unavailable",
+        ),
+        "background_unavailable",
+        format!(
+            "the UIA provider is {status}; retry this action with delivery_mode:\"foreground\"."
+        ),
+        json!({
             "uia_status": status,
             "path": "ax",
             "verified": false,
             "effect": "unverifiable",
-            "suggestion": "Retry this action with delivery_mode:\"foreground\".",
-            "escalation": {
-                "recommended": "foreground",
-                "reason": format!(
-                    "the UIA provider is {status}; retry this action with delivery_mode:\"foreground\"."
-                ),
-            },
-        })),
-    )
+        }),
+    ))
 }
 
 enum BackgroundElementClick {
@@ -10250,9 +10211,6 @@ mod set_window_frame_geometry_tests;
 
 #[cfg(test)]
 mod desktop_scope_tests;
-
-#[cfg(test)]
-mod browser_launch_guard_tests;
 
 #[cfg(test)]
 mod pid_window_target_tests;

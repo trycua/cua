@@ -1151,11 +1151,12 @@ impl Tool for GetWindowStateTool {
         let explicit_max_image_dimension = max_image_dimension.is_some();
         let max_dim = {
             let cfg = self.state.config.read().unwrap();
-            crate::capture_action_frame::resolve_max_image_dimension(
-                cfg.max_image_dimension,
-                max_dimension,
+            cua_driver_core::image_utils::ImageDimensionLimits {
+                configured: cfg.max_image_dimension,
+                legacy_max_dimension: max_dimension,
                 max_image_dimension,
-            )
+            }
+            .resolve()
         };
         // `capture_mode` is DEPRECATED and ignored — get_window_state always
         // returns BOTH the AT-SPI tree and a screenshot now, so the agent grounds
@@ -1755,11 +1756,6 @@ mod get_window_state_actions_tests;
 pub struct LaunchAppTool;
 static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
-fn contains_remote_debugging_flag(value: &str) -> bool {
-    let lower = value.to_ascii_lowercase();
-    lower.contains("--remote-debugging-port") || lower.contains("--remote-debugging-pipe")
-}
-
 /// Spawn a launcher command line (an executable plus arguments, e.g. an XDG
 /// `Exec=` value with field codes stripped) in the background and return the
 /// child pid.
@@ -1921,10 +1917,10 @@ impl Tool for LaunchAppTool {
             .into_iter()
             .chain(name_opt.as_deref())
             .chain(additional_arguments.iter().map(String::as_str))
-            .any(contains_remote_debugging_flag)
+            .any(cua_driver_core::launch_guard::contains_remote_debugging_flag)
         {
             return ToolResult::error(
-                "Chromium remote-debugging flags moved to browser_prepare so DevTools is never enabled on an unproven user profile",
+                cua_driver_core::launch_guard::REMOTE_DEBUGGING_LAUNCH_REFUSAL,
             );
         }
 
@@ -14046,9 +14042,6 @@ pub fn build_registry_with_provider(
 
 #[cfg(test)]
 mod click_button_schema_tests;
-
-#[cfg(test)]
-mod browser_launch_guard_tests;
 
 #[cfg(test)]
 mod pid_window_target_tests;

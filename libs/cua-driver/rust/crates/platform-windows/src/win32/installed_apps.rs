@@ -616,7 +616,7 @@ mod tests {
 
     #[test]
     fn wedged_uwp_scan_has_bounded_worker_growth_and_recovers() {
-        let gate = Arc::new(SingleFlight::new(Duration::from_millis(40)));
+        let gate = Arc::new(SingleFlight::new(Duration::from_millis(500)));
         let starts = Arc::new(AtomicUsize::new(0));
         let active = Arc::new(AtomicUsize::new(0));
         let max_active = Arc::new(AtomicUsize::new(0));
@@ -666,7 +666,7 @@ mod tests {
             "a late return should enter cooldown"
         );
 
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(600));
         assert_eq!(run_uwp_scan(&gate, Duration::from_secs(1), || 42), Ok(42));
         assert_eq!(max_active.load(Ordering::SeqCst), 1);
     }

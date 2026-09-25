@@ -525,7 +525,7 @@ mod tests {
 
     #[tokio::test]
     async fn apps_folder_lookup_timeout_is_single_flight_and_recovers_after_cooldown() {
-        let gate = Arc::new(SingleFlight::new(Duration::from_millis(20)));
+        let gate = Arc::new(SingleFlight::new(Duration::from_millis(500)));
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let work_started = Arc::new(AtomicBool::new(false));
         let worker_started = Arc::clone(&work_started);
@@ -564,7 +564,7 @@ mod tests {
             Err(AppsFolderLookupError::Busy),
             "late worker completion must leave a recovery cooldown"
         );
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(600)).await;
         assert_eq!(
             run_apps_folder_lookup(&gate, Duration::from_millis(100), || 3_u8).await,
             Ok(3),

@@ -4,6 +4,7 @@ import importlib.util
 import json
 from dataclasses import asdict
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -68,6 +69,31 @@ def _write_foreground_evidence(trial: Path) -> None:
 
 
 class CompareDriversTests(unittest.TestCase):
+    def test_linux_root_gui_commands_disable_chromium_sandbox(self) -> None:
+        with (
+            patch.object(compare_drivers.sys, "platform", "linux"),
+            patch.object(compare_drivers.os, "geteuid", return_value=0),
+        ):
+            browser = compare_drivers._linux_root_gui_command(
+                ["/usr/bin/chromium", "https://example.test"], "browser"
+            )
+            electron = compare_drivers._linux_root_gui_command(
+                ["/usr/bin/npx", "electron", "."], "electron"
+            )
+
+        self.assertEqual(browser[1], "--no-sandbox")
+        self.assertEqual(electron[2], "--no-sandbox")
+
+    def test_non_root_gui_commands_are_unchanged(self) -> None:
+        command = ["/usr/bin/chromium", "https://example.test"]
+        with (
+            patch.object(compare_drivers.sys, "platform", "linux"),
+            patch.object(compare_drivers.os, "geteuid", return_value=1000),
+        ):
+            resolved = compare_drivers._linux_root_gui_command(command, "browser")
+
+        self.assertEqual(resolved, command)
+
     def test_codex_runtime_root_uses_cache_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             cache_home = Path(temporary) / "cache"
@@ -245,6 +271,26 @@ command = "unrelated"
         self.assertIn("final app inventory unavailable", report.detail)
         self.assertIsNone(observer.client)
 
+    def test_local_adapter_observer_uses_embedded_binary_version(self) -> None:
+        release = compare_drivers.DriverRelease(
+            version="3719.0.1",
+            root=Path("/release/3719.0.1"),
+            binary=Path("/release/3719.0.1/cua-driver"),
+            manifest=Path("/release/3719.0.1/release-manifest.json"),
+            binary_version="0.28.2",
+        )
+        adapters = (
+            SimpleNamespace(),
+            SimpleNamespace(command=Path("agent"), expected_digest="digest"),
+            SimpleNamespace(),
+            SimpleNamespace(),
+        )
+        with patch.object(compare_drivers, "local_adapters", return_value=adapters):
+            with compare_drivers._local_adapter_override(release, "socket", {}, {}):
+                _environment, _agent, observer, _evaluator = compare_drivers.engine.adapters()
+
+        self.assertEqual(observer.expected_version, "0.28.2")
+
     def test_wait_for_codex_stops_after_terminal_event_grace(self) -> None:
         process = SimpleNamespace(pid=123, returncode=None, poll=lambda: None)
         with (
@@ -276,8 +322,13 @@ command = "unrelated"
             with (
                 patch.object(
                     compare_drivers,
-                    "_windows_processes_for_path",
+                    "_linux_process_groups_for_path",
                     return_value=(202,),
+                ),
+                patch.object(
+                    compare_drivers,
+                    "_windows_processes_for_path",
+                    return_value=(303,),
                 ),
                 patch.object(compare_drivers, "_terminate_process_group") as terminate,
             ):
@@ -285,8 +336,24 @@ command = "unrelated"
 
         self.assertEqual(
             [call.args[0] for call in terminate.call_args_list],
-            [101, 202],
+            [101, 202, 303],
         )
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux /proc only")
+    def test_linux_process_group_discovery_tracks_trial_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            trial = Path(temporary)
+            process = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                cwd=trial,
+                start_new_session=True,
+            )
+            try:
+                groups = compare_drivers._linux_process_groups_for_path(trial)
+                self.assertIn(process.pid, groups)
+            finally:
+                process.terminate()
+                process.wait(timeout=5)
 
     def test_discovers_semver_releases_and_matching_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -578,21 +645,28 @@ command = "unrelated"
             artifacts.mkdir()
 
             def call(
-                tool: str, status: str = "completed", server: str = "cua"
+                tool: str,
+                status: str = "completed",
+                server: str = "cua",
+                effect: str | None = None,
             ) -> dict[str, object]:
+                item: dict[str, object] = {
+                    "type": "mcp_tool_call",
+                    "server": server,
+                    "tool": tool,
+                    "status": status,
+                }
+                if effect is not None:
+                    item["result"] = {"structured_content": {"effect": effect}}
                 return {
                     "type": "item.completed",
-                    "item": {
-                        "type": "mcp_tool_call",
-                        "server": server,
-                        "tool": tool,
-                        "status": status,
-                    },
+                    "item": item,
                 }
 
             events = [
                 call("get_window_state"),
                 call("click"),
+                call("browser_click", effect="refused"),
                 call("browser_click"),
                 call("scroll", status="failed"),
                 call("click", server="other"),
@@ -602,7 +676,23 @@ command = "unrelated"
                 encoding="utf-8",
             )
 
-            self.assertEqual(compare_drivers._codex_cua_metrics(trial), (4, 2))
+            recording = trial / "observer" / "cua-driver-recording" / "turn-00001"
+            recording.mkdir(parents=True)
+            (recording / "action.json").write_text(
+                json.dumps({"tool": "click", "result_error": False}),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(compare_drivers._codex_cua_metrics(trial), (5, 2))
+            self.assertEqual(
+                compare_drivers._recording_metrics(trial, 2),
+                {
+                    "recorded_cua_calls": 1,
+                    "recorded_input_actions": 1,
+                    "recording_input_actions_complete": False,
+                    "recording_detail": "recorded 1 of 2 successful input actions",
+                },
+            )
 
     def test_extracts_metrics_from_raw_trial(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -655,6 +745,17 @@ command = "unrelated"
                         "status": "completed",
                         "elapsed_ms": 1234,
                         "evaluation": {"passed": True, "score": 0.75},
+                        "participation": {
+                            "required": True,
+                            "status": "failed",
+                            "passed": False,
+                            "requirements": [
+                                {
+                                    "status": "unsatisfied",
+                                    "reason": "application identity unavailable",
+                                }
+                            ],
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -679,6 +780,13 @@ command = "unrelated"
             self.assertEqual(metrics.score, 0.75)
             self.assertEqual(metrics.cua_calls, 3)
             self.assertEqual(metrics.input_actions, 1)
+            self.assertTrue(metrics.participation_required)
+            self.assertEqual(metrics.participation_status, "failed")
+            self.assertFalse(metrics.participation_passed)
+            self.assertEqual(metrics.participation_detail, "application identity unavailable")
+            self.assertEqual(metrics.recorded_cua_calls, 3)
+            self.assertEqual(metrics.recorded_input_actions, 1)
+            self.assertTrue(metrics.recording_input_actions_complete)
             self.assertEqual(metrics.codex_tokens["input_tokens"], 12)
             self.assertEqual(metrics.codex_tokens["cache_read_tokens"], 7)
             self.assertEqual(metrics.codex_tokens["output_tokens"], 5)
@@ -918,10 +1026,10 @@ command = "unrelated"
         self.assertIn("Focus-drop Δ | Drag Δ | Cursor Δ | Disturbance Δ", markdown)
         self.assertIn("## Foreground Disturbance Availability", markdown)
         self.assertIn(
-            "| CDB-S01 | 0.22.2 | no | 0.5 | 100 | 10 | 4 | 1 | 1 | 1 | 3 | 100 | 60 | 20 | completed |",
+            "| CDB-S01 | 0.22.2 | view | no | — | 0.5 | 100 | 10 | 4 | — | 1 | 1 | 1 | 3 | 100 | 60 | 20 | completed | — |",
             markdown,
         )
-        self.assertIn("| 1 | 1 | 1 | 3 | -10 | 10 | -2 | improved |", markdown)
+        self.assertIn("| -10 | 10 | -2 | — | improved |", markdown)
 
     def test_foreground_disturbances_do_not_affect_comparison_signal(self) -> None:
         baseline = compare_drivers.TrialMetrics(
@@ -969,6 +1077,43 @@ command = "unrelated"
 
         self.assertEqual(comparison["delta"]["foreground_disturbances"], 100)
         self.assertEqual(comparison["signal"], "unchanged")
+
+    def test_required_participation_failure_makes_signal_incomplete(self) -> None:
+        baseline = compare_drivers.TrialMetrics(
+            "CDB-S01",
+            "0.22.2",
+            "a",
+            None,
+            True,
+            1.0,
+            100,
+            10,
+            4,
+            "completed",
+            participation_required=True,
+            participation_status="failed",
+            participation_passed=False,
+        )
+        candidate = compare_drivers.TrialMetrics(
+            "CDB-S01",
+            "0.23.2",
+            "b",
+            None,
+            True,
+            1.0,
+            100,
+            10,
+            4,
+            "completed",
+            participation_required=True,
+            participation_status="passed",
+            participation_passed=True,
+        )
+
+        self.assertEqual(
+            compare_drivers.compare_pair(baseline, candidate)["signal"],
+            "incomplete",
+        )
 
     def test_normalizes_single_and_comparison_release_selection(self) -> None:
         self.assertEqual(

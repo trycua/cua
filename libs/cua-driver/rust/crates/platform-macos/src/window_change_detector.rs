@@ -52,16 +52,6 @@ pub struct WindowEvent {
     pub title: String,
 }
 
-/// Categorical diff entry. We mirror Swift which only emits
-/// `WindowEvent` rows for *new* windows — closed/changed never appear
-/// in the result suffix — but keep them as enum variants for future
-/// extensibility and so unit tests can pin down the diff semantics.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WindowChange {
-    Opened(WindowEvent),
-    Closed { window_id: u32 },
-}
-
 /// State captured immediately before the action fires.
 ///
 /// Holds:
@@ -268,9 +258,8 @@ impl Snapshot {
             .unwrap_or_else(|_| Changes::no_change())
     }
 
-    /// Same as `detect()` but with configurable timing — exposed for
-    /// tests / callers that want a tighter or looser poll window.
-    pub fn detect_with(self, timeout: Duration, poll_interval: Duration) -> Changes {
+    /// Same as `detect()` but with configurable timing.
+    fn detect_with(self, timeout: Duration, poll_interval: Duration) -> Changes {
         let deadline = Instant::now() + timeout;
         loop {
             std::thread::sleep(poll_interval);
@@ -279,7 +268,6 @@ impl Snapshot {
                 .into_iter()
                 .filter(|w| w.layer == 0)
                 .collect();
-            let current_ids: HashSet<u32> = current.iter().map(|w| w.window_id).collect();
 
             let new_windows: Vec<WindowEvent> = current
                 .iter()
@@ -291,15 +279,6 @@ impl Snapshot {
                     title: w.title.clone(),
                 })
                 .collect();
-            // Diff the other direction too — keeps unit tests honest
-            // even though Swift's result_suffix only uses opened windows.
-            let _closed: Vec<u32> = self
-                .window_ids
-                .iter()
-                .copied()
-                .filter(|id| !current_ids.contains(id))
-                .collect();
-
             let current_front = apps::frontmost_pid();
             let foreground_changed = match (self.front_pid, current_front) {
                 (Some(orig), Some(cur)) => orig != cur,
@@ -317,44 +296,6 @@ impl Snapshot {
             }
         }
     }
-
-    // ── Internal helpers — also used by unit tests via the `pub(super)`
-    // path so the diff logic can be exercised without driving the live
-    // window enumerator. ────────────────────────────────────────────
-
-    /// Pure-function diff: given the snapshot's window-id set + a
-    /// list of currently-visible windows, return the (opened, closed)
-    /// classification.
-    ///
-    /// `#[allow(dead_code)]`: today only the `#[cfg(test)]` block below
-    /// constructs this — production callers `wait_for_window_change` /
-    /// `wait_for_window_close` keep the (opened, closed) split inline.
-    /// Kept `pub(crate)` because the doc comment near the top of this
-    /// `impl` block calls it out as the entry point for unit-testing the
-    /// diff logic without driving the live window enumerator.
-    #[allow(dead_code)]
-    pub(crate) fn diff(
-        snapshot_ids: &HashSet<u32>,
-        current: &[WindowInfo],
-    ) -> (Vec<WindowEvent>, Vec<u32>) {
-        let current_ids: HashSet<u32> = current.iter().map(|w| w.window_id).collect();
-        let opened: Vec<WindowEvent> = current
-            .iter()
-            .filter(|w| !snapshot_ids.contains(&w.window_id))
-            .map(|w| WindowEvent {
-                window_id: w.window_id,
-                pid: w.pid,
-                app_name: w.app_name.clone(),
-                title: w.title.clone(),
-            })
-            .collect();
-        let closed: Vec<u32> = snapshot_ids
-            .iter()
-            .copied()
-            .filter(|id| !current_ids.contains(id))
-            .collect();
-        (opened, closed)
-    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -362,65 +303,6 @@ impl Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::windows::WindowBounds;
-
-    fn win(id: u32, pid: i32, app: &str, title: &str) -> WindowInfo {
-        WindowInfo {
-            window_id: id,
-            pid,
-            app_name: app.into(),
-            title: title.into(),
-            bounds: WindowBounds {
-                x: 0.,
-                y: 0.,
-                width: 100.,
-                height: 100.,
-            },
-            layer: 0,
-            z_index: 0,
-            is_on_screen: true,
-            current_space_id: None,
-            on_current_space: None,
-            space_ids: None,
-        }
-    }
-
-    #[test]
-    fn diff_finds_opened_window() {
-        let snap: HashSet<u32> = [1, 2].into_iter().collect();
-        let cur = vec![
-            win(1, 100, "Safari", "Home"),
-            win(2, 100, "Safari", "Tab2"),
-            win(3, 101, "Mail", "Inbox"),
-        ];
-        let (opened, closed) = Snapshot::diff(&snap, &cur);
-        assert_eq!(opened.len(), 1);
-        assert_eq!(opened[0].window_id, 3);
-        assert_eq!(opened[0].app_name, "Mail");
-        assert_eq!(opened[0].title, "Inbox");
-        assert!(closed.is_empty());
-    }
-
-    #[test]
-    fn diff_finds_closed_window() {
-        let snap: HashSet<u32> = [1, 2, 3].into_iter().collect();
-        let cur = vec![win(1, 100, "Safari", "Home")];
-        let (opened, closed) = Snapshot::diff(&snap, &cur);
-        assert!(opened.is_empty());
-        assert_eq!(closed.len(), 2);
-        let closed_set: HashSet<u32> = closed.into_iter().collect();
-        assert!(closed_set.contains(&2));
-        assert!(closed_set.contains(&3));
-    }
-
-    #[test]
-    fn diff_no_change() {
-        let snap: HashSet<u32> = [1, 2].into_iter().collect();
-        let cur = vec![win(1, 100, "Safari", "A"), win(2, 100, "Safari", "B")];
-        let (opened, closed) = Snapshot::diff(&snap, &cur);
-        assert!(opened.is_empty());
-        assert!(closed.is_empty());
-    }
 
     #[test]
     fn changes_result_suffix_no_change_is_empty() {

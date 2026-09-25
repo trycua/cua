@@ -399,7 +399,7 @@ impl Tool for TypeTextTool {
         )
         .await;
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
+        let changes = super::finish_window_observation(snapshot).await;
 
         // Unwrap the delivery envelope: a structured refusal means no
         // actuator ran and the caller gets the exact reason.

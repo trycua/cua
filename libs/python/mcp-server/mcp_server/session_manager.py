@@ -228,23 +228,27 @@ class SessionManager:
                 session.is_shutting_down = True
                 return
 
-            # Actually cleanup the session
-            await self._force_cleanup_session(session_id)
+            # Actually cleanup the session (the lock is already held here)
+            await self._remove_session_locked(session_id)
 
     async def _force_cleanup_session(self, session_id: str) -> None:
         """Force cleanup a session regardless of active tasks."""
         async with self._session_lock:
-            if session_id not in self._sessions:
-                return
+            await self._remove_session_locked(session_id)
 
-            session = self._sessions[session_id]
-            logger.info(f"Cleaning up session: {session_id}")
+    async def _remove_session_locked(self, session_id: str) -> None:
+        """Release and remove a session. The caller must hold ``_session_lock``."""
+        if session_id not in self._sessions:
+            return
 
-            # Release computer back to pool
-            await self._computer_pool.release(session.computer)
+        session = self._sessions[session_id]
+        logger.info(f"Cleaning up session: {session_id}")
 
-            # Remove session
-            del self._sessions[session_id]
+        # Release computer back to pool
+        await self._computer_pool.release(session.computer)
+
+        # Remove session
+        del self._sessions[session_id]
 
     async def _cleanup_loop(self) -> None:
         """Background task to cleanup idle sessions."""

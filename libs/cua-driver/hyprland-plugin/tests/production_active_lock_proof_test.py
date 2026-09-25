@@ -10,10 +10,10 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 import production_active_lock_proof as proof
 import production_lock_refusal_proof as settled
-from production_lock_refusal_proof_test import plan as lock_plan
-from production_session_fault_proof_test import ACTIVE, CANCEL, PARTIAL, status, trace, retained_status, motion_gate
+from proof_fixtures import ACTIVE, CANCEL, PARTIAL, ink, inkscape_profile, lock_plan, motion_gate, retained_status, status, trace
 
 
 def plan():
@@ -37,7 +37,45 @@ def record():
         'gate_status': status(1, held=True), 'after': status(2)}
 
 
+def ready_fixture():
+    """An armed lock helper that reported ready and has not been asked to lock."""
+    fixture = object.__new__(proof.ActiveLockFixture)
+    fixture.child = Mock(stdin=io.BytesIO(), poll=Mock(return_value=None))
+    fixture.record = {'before': status(1), 'ready': {'event': 'ready', 'observed_ns': 1}}
+    fixture.config = {}
+    fixture.requested = False
+    fixture.check_targets = Mock()
+    fixture.check_binary = Mock()
+    fixture.check_running_binary = Mock()
+    fixture.locked = Mock()
+    fixture.event = Mock(return_value={'event': 'locked', 'observed_ns': 7_000_000})
+    return fixture
+
+
 class OracleTests(unittest.TestCase):
+    def test_inkscape_only_profile_reaches_the_shared_app_profile_gate(self):
+        candidate = {**inkscape_profile(plan()), 'recovery': {'pointer_stages': ['scroll_down', 'scroll_up']}}
+        proof.validate_plan(candidate)
+        candidate['agents'][0]['document'] = '/synthetic/private.svg'
+        with self.assertRaisesRegex(AssertionError, 'absolute synthetic SVG document'):
+            proof.validate_plan(candidate)
+
+    def test_scroll_recovery_uses_existing_pixel_and_semantic_oracle(self):
+        before, pixels = ink()
+        before.update(proof_image='synthetic.png', proof_observation_started_ns=1)
+        spec = {'app': 'inkscape', 'name': 'recovery', 'target': {'pid': 20, 'window_id': 200},
+                'pointer_stage': 'move_rectangle'}
+        with patch.object(proof, 'grounded_snapshot', return_value=before), \
+             patch.object(proof.pointer_grounding, 'read_pixels', return_value=pixels):
+            prepared = proof.prepare_recovery(Mock(), spec, ['scroll_down', 'scroll_up'])
+        self.assertIn(prepared['stage'], ('scroll_down', 'scroll_up'))
+        self.assertEqual(prepared['prepared_ns'], 1)
+        with self.assertRaises(AssertionError):
+            proof.pointer_grounding.verify(before, pixels, prepared['oracle'])
+        shift = -10 if prepared['stage'] == 'scroll_down' else 10
+        after, moved = ink(scroll_y=shift)
+        self.assertTrue(proof.pointer_grounding.verify(after, moved, prepared['oracle'])['verified'])
+
     def test_recovery_grounding_uses_original_snapshot_time_not_wrapper_clock(self):
         client = Mock()
         spec = plan()['agents'][0]
@@ -141,12 +179,9 @@ class OracleTests(unittest.TestCase):
                 proof.verify_cancelled(trace(ACTIVE + tail), record(), action())
 
     def test_incomplete_trace_rewritten_history_or_missing_held_prefix_fail(self):
-        for field, value in (('overflow', True), ('timed_out', True), ('hook', False),
-                             ('active', False), ('count', 100)):
-            page = trace(CANCEL)
-            page[field] = value
-            with self.subTest(field=field), self.assertRaises(AssertionError):
-                proof.verify_cancelled(page, record(), action())
+        # Page validity is owned by trace_interval (realapp TraceIntervalTests); one case proves wiring.
+        with self.assertRaisesRegex(AssertionError, 'dropped events'):
+            proof.verify_cancelled({**trace(CANCEL), 'overflow': True}, record(), action())
         for mutation in ('history', 'press', 'admitted', 'start'):
             candidate, page = record(), trace(CANCEL)
             if mutation == 'history':
@@ -221,21 +256,12 @@ class OracleTests(unittest.TestCase):
 
 
 class FixtureTests(unittest.TestCase):
-    def fixture(self):
-        fixture = object.__new__(proof.ActiveLockFixture)
-        fixture.child = Mock(stdin=io.BytesIO(), poll=Mock(return_value=None))
-        fixture.record = {'before': status(1), 'ready': {'event': 'ready', 'observed_ns': 1}}
-        fixture.config = {}
-        fixture.requested = False
-        fixture.check_targets = Mock()
-        fixture.check_binary = Mock()
-        fixture.check_running_binary = Mock()
-        fixture.locked = Mock()
-        fixture.event = Mock(return_value={'event': 'locked', 'observed_ns': 7_000_000})
-        return fixture
+    def test_active_fixture_reuses_the_settled_lock_restore_and_binary_checks(self):
+        self.assertIs(proof.ActiveLockFixture.restore, settled.LockFixture.restore)
+        self.assertIs(proof.ActiveLockFixture.check_running_binary, settled.LockFixture.check_running_binary)
 
     def test_injection_sends_one_lock_only_after_exact_identity_and_fresh_held_gate(self):
-        fixture = self.fixture()
+        fixture = ready_fixture()
         pending = Mock(done=Mock(return_value=False))
         with patch.object(proof, 'power'), \
              patch.object(proof, 'production_status', side_effect=[status(1, held=True), status(2)]), \
@@ -253,7 +279,7 @@ class FixtureTests(unittest.TestCase):
     def test_finished_stale_changed_identity_or_nonheld_drag_never_sends_lock(self):
         for failure in ('finished', 'stale_trace', 'stale_status', 'ready_expired',
                         'not_held', 'target', 'binary', 'running_binary', 'generation'):
-            fixture = self.fixture()
+            fixture = ready_fixture()
             pending = Mock(done=Mock(return_value=failure == 'finished'))
             gate = status(1, held=failure != 'not_held')
             if failure == 'generation':
@@ -278,7 +304,7 @@ class FixtureTests(unittest.TestCase):
             self.assertFalse(fixture.requested)
 
     def test_lost_lock_ack_keeps_requested_state_for_graceful_cleanup(self):
-        fixture = self.fixture()
+        fixture = ready_fixture()
         fixture.event.side_effect = TimeoutError('lost acknowledgement')
         with patch.object(proof, 'power'), \
              patch.object(proof, 'production_status', return_value=status(1, held=True)), \
@@ -289,11 +315,9 @@ class FixtureTests(unittest.TestCase):
         self.assertTrue(fixture.requested)
         self.assertEqual(fixture.child.stdin.getvalue(), b'LOCK\n')
         self.assertNotEqual(fixture.record.get('result'), 'acknowledged')
-        self.assertIs(proof.ActiveLockFixture.restore, settled.LockFixture.restore)
-        self.assertIs(proof.ActiveLockFixture.check_running_binary, settled.LockFixture.check_running_binary)
 
     def test_arm_does_not_lock_and_binds_running_helper_after_ready(self):
-        fixture = self.fixture()
+        fixture = ready_fixture()
         fixture.child = None
         child = Mock(pid=99)
         identity = {'pid': 99, 'uid': 1000, 'exe': '/test/session_lock_fixture', 'starttime': '1'}
@@ -507,28 +531,31 @@ class RunTests(unittest.TestCase):
         self.assertIn('failed-transition-trace.json', evidence)
 
 
-class RetainedPointerTests(unittest.TestCase):
     def test_full_retained_episode_checks_unlock_and_pre_recovery_presence(self):
-        result, evidence, events, clients = RunTests().episode(retained=True)
+        result, evidence, events, clients = self.episode(retained=True)
         self.assertEqual(result, 0, evidence['result.json'])
         self.assertEqual(evidence['result.json']['continuous_isolation_across_transitions'], 'unproven')
         self.assertLess(events.index('explicit_unlock'), events.index('launch_50'))
         for failure in ('unlock_leave', 'lost_presence'):
-            result, evidence, events, clients = RunTests().episode(failure, retained=True)
+            result, evidence, events, clients = self.episode(failure, retained=True)
             with self.subTest(failure=failure):
                 self.assertEqual(result, 1)
                 self.assertNotIn('launch_50', events)
                 self.assertEqual(evidence['result.json']['recovery']['result'], 'unproven')
 
+
+class RetainedPointerTests(unittest.TestCase):
     def test_active_lock_accepts_opt_in_motion_and_cleanup_only(self):
         value = plan()
         value['fault'].update(pointer_cleanup='retained_inert', min_motion_px=12.5)
         proof.validate_plan(value)
-        for change in ({'pointer_cleanup': 'unknown'}, {'extra': True},
-                       *({'min_motion_px': v} for v in (None, True, 0, -1, float('inf'), float('nan')))):
+        # Policy and threshold validity are owned by desktop_fault; one case each proves wiring.
+        for change, error in (({'pointer_cleanup': 'unknown'}, 'unknown pointer cleanup policy'),
+                              ({'extra': True}, 'unsupported fault option'),
+                              ({'min_motion_px': 0}, 'positive finite min_motion_px')):
             bad = deepcopy(value)
             bad['fault'].update(change)
-            with self.subTest(change=change), self.assertRaises(AssertionError):
+            with self.subTest(change=change), self.assertRaisesRegex(AssertionError, error):
                 proof.validate_plan(bad)
 
     def test_retained_cancellation_both_lanes_is_not_transition_isolation(self):
@@ -563,7 +590,7 @@ class RetainedPointerTests(unittest.TestCase):
 
     def test_motion_poll_preserves_short_ready_window_and_brackets_status(self):
         for failure in (None, 'insufficient', 'lane', 'stale'):
-            fixture = FixtureTests().fixture()
+            fixture = ready_fixture()
             fixture.config.update(pointer_cleanup='retained_inert', min_motion_px=12)
             fixture.record.update(pointer_cleanup='retained_inert', min_motion_px=12)
             value = record()

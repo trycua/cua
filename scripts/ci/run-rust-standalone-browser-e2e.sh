@@ -128,6 +128,7 @@ else
     standalone_browser_pointer_actions
     standalone_browser_prepare_isolated
     standalone_browser_roundtrip
+    standalone_browser_same_title_tabs
     standalone_browser_semantic_state
     standalone_browser_stale_ref
     standalone_browser_trust_gated_dom_click
@@ -140,7 +141,7 @@ failure_count=0
 for test_name in "${tests[@]}"; do
   echo "[RUN] ${test_name}"
   set +e
-  (cd "${RUST_ROOT}" && cargo test --release -p cua-driver \
+  (cd "${RUST_ROOT}" && cargo test --release -p cua-driver-e2e \
     ${CARGO_DRIVER_FEATURE_ARGS[@]+"${CARGO_DRIVER_FEATURE_ARGS[@]}"} \
     --test standalone_browser_behavior_test "${test_name}" -- \
     --ignored --exact --nocapture --test-threads=1) \

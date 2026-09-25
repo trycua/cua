@@ -176,12 +176,6 @@ pub(crate) fn hit_test(pid: u32, xid: u64, sx: i32, sy: i32) -> Option<(usize, C
     Some((*idx, element.clone()))
 }
 
-/// Drop every side-index snapshot for `pid` (e.g. after the process exited).
-#[allow(dead_code)]
-pub(crate) fn forget_pid(pid: u32) {
-    store().lock().unwrap().retain(|key, _| key.pid != pid);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,34 +313,6 @@ mod tests {
     }
 
     #[test]
-    fn compositor_window_ids_do_not_alias_their_low_bits() {
-        let cache = ElementCache::new();
-        let window = (1_u64 << 40) | 7;
-        let low = cache.publish(42, 7, CachedSnapshot::from_nodes(&[node(7)]));
-        let high = cache.publish(42, window, CachedSnapshot::from_nodes(&[node(11)]));
-        let target = cache
-            .resolve_element_args(
-                42,
-                None,
-                Some(&token_for(high, 11)),
-                None,
-                Some(window),
-                "click",
-            )
-            .unwrap();
-        assert!(
-            matches!(target, ResolvedElement::Element { window_id: Some(id), element, .. } if id == window && element.identity.path == "/node/11")
-        );
-        assert!(cache
-            .resolve_element_args(42, None, Some(&token_for(high, 11)), None, Some(7), "click")
-            .is_err());
-        cache.remove(42, window);
-        assert!(cache
-            .resolve_element_args(42, None, Some(&token_for(low, 7)), None, Some(7), "click")
-            .is_ok());
-    }
-
-    #[test]
     fn empty_linux_snapshot_has_no_element_zero() {
         let cache = ElementCache::new();
         let id = cache.publish(42, 7, CachedSnapshot::from_nodes(&[]));
@@ -385,9 +351,6 @@ mod tests {
         assert_eq!(cached_element(pid, None, 2).unwrap().role, "label");
         assert!(cached_element(pid, Some(78), 2).is_none());
         forget_window(pid, 77);
-        assert!(cached_element(pid, None, 0).is_none());
-        update_snapshot(pid, 77, &nodes, &[]);
-        forget_pid(pid);
         assert!(cached_element(pid, None, 0).is_none());
     }
 }

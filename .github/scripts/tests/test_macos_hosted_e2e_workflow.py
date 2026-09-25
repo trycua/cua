@@ -1,4 +1,8 @@
-"""Contract tests for the manually dispatched GitHub-hosted macOS E2E lane."""
+"""Contract tests for the GitHub-hosted macOS E2E lane.
+
+Maintainers dispatch it for pull request evidence, and the stable Cua Driver
+tag run calls it as an automatic release gate.
+"""
 
 import json
 import os
@@ -48,7 +52,15 @@ PROBE_REFUSALS = [
     ({"GITHUB_ACTIONS": ""}, "GITHUB_ACTIONS must be true"),
     ({"RUNNER_ENVIRONMENT": "self-hosted"}, "runner must be GitHub-hosted"),
     ({"CI": ""}, "CI must be true"),
-    ({"GITHUB_EVENT_NAME": "pull_request"}, "probe must be manually dispatched"),
+    ({"GITHUB_EVENT_NAME": "pull_request"}, "probe must be manually dispatched or run by a stable cua-driver-rs tag release gate"),
+    (
+        {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/main"},
+        "probe must be manually dispatched or run by a stable cua-driver-rs tag release gate",
+    ),
+    (
+        {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/tags/lume-v0.3.0"},
+        "probe must be manually dispatched or run by a stable cua-driver-rs tag release gate",
+    ),
     ({"CUA_E2E_SOURCE_SHA": "main"}, "source SHA must contain 40 hexadecimal characters"),
     (
         {"SSH_CONNECTION": "192.0.2.1 50000 192.0.2.2 22"},
@@ -66,8 +78,12 @@ def _run_probe(tmp_path: Path, env: dict[str, str]) -> tuple[subprocess.Complete
     return completed, artifact_dir
 
 
+def _refusal_id(row: tuple[dict[str, str], str]) -> str:
+    return ",".join(f"{key}={value or 'unset'}" for key, value in row[0].items())
+
+
 @pytest.mark.parametrize(
-    ("overrides", "message"), PROBE_REFUSALS, ids=[message for _, message in PROBE_REFUSALS]
+    ("overrides", "message"), PROBE_REFUSALS, ids=[_refusal_id(row) for row in PROBE_REFUSALS]
 )
 def test_hosted_macos_probe_refuses_outside_a_dispatched_hosted_run(
     tmp_path: Path, overrides: dict[str, str], message: str
@@ -83,11 +99,19 @@ def test_hosted_macos_probe_refuses_outside_a_dispatched_hosted_run(
     assert sorted(path.name for path in artifact_dir.iterdir()) == ["environment.json"]
 
 
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"GITHUB_EVENT_NAME": "workflow_dispatch"},
+        {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/tags/cua-driver-rs-v0.29.0"},
+    ],
+    ids=["workflow_dispatch", "stable-tag-push"],
+)
 def test_hosted_macos_probe_identity_gates_pass_for_a_dispatched_hosted_run(
-    tmp_path: Path,
+    tmp_path: Path, event: dict[str, str]
 ) -> None:
     """Control: the refusal rows fail only because of their one override."""
-    completed, _ = _run_probe(tmp_path, _hosted_env(tmp_path))
+    completed, _ = _run_probe(tmp_path, _hosted_env(tmp_path, **event))
 
     assert completed.returncode != 0
     for _, message in PROBE_REFUSALS:
@@ -96,7 +120,15 @@ def test_hosted_macos_probe_identity_gates_pass_for_a_dispatched_hosted_run(
 
 HOSTED_RUNNER_REFUSALS = [
     ({"GITHUB_ACTIONS": ""}, "requires GitHub Actions"),
-    ({"GITHUB_EVENT_NAME": "pull_request"}, "runs only from workflow_dispatch"),
+    ({"GITHUB_EVENT_NAME": "pull_request"}, "runs only from workflow_dispatch or a stable cua-driver-rs tag release gate"),
+    (
+        {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/main"},
+        "runs only from workflow_dispatch or a stable cua-driver-rs tag release gate",
+    ),
+    (
+        {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/tags/lume-v0.3.0"},
+        "runs only from workflow_dispatch or a stable cua-driver-rs tag release gate",
+    ),
     ({"RUNNER_ENVIRONMENT": "self-hosted"}, "requires a GitHub-hosted runner"),
     ({"RUNNER_OS": "Linux"}, "requires RUNNER_OS=macOS"),
     ({"ImageOS": "macos15"}, "requires the macos-26 runner image"),
@@ -136,7 +168,7 @@ def _run_hosted_runner(
 @pytest.mark.parametrize(
     ("overrides", "message"),
     HOSTED_RUNNER_REFUSALS,
-    ids=[message for _, message in HOSTED_RUNNER_REFUSALS],
+    ids=[_refusal_id(row) for row in HOSTED_RUNNER_REFUSALS],
 )
 def test_hosted_macos_runner_refuses_before_touching_signing_state(
     tmp_path: Path, overrides: dict[str, str], message: str
@@ -155,6 +187,7 @@ def test_hosted_macos_probe_is_manual_exact_sha_and_least_privilege() -> None:
 
     trigger = workflow.split("permissions:", 1)[0]
     assert "workflow_dispatch:" in trigger
+    assert "workflow_call:" in trigger
     assert "pull_request:" not in trigger
     assert "push:" not in trigger
     assert "source_sha:" in trigger
@@ -184,6 +217,15 @@ def test_hosted_macos_probe_is_manual_exact_sha_and_least_privilege() -> None:
     assert "live_jev_perception" not in workflow
     assert "authorized-live-jev-macos-evidence.yml" not in workflow
     assert "secrets: inherit" not in workflow
+    # A called workflow has no mode input; hosted jobs run unless lume is chosen.
+    assert workflow.count("    if: inputs.mode != 'lume'\n") == 2
+    assert "    if: ${{ always() && inputs.mode != 'lume' }}\n" in workflow
+    assert "    if: inputs.mode == 'lume'\n" in workflow
+    # Manual dispatches never queue into (and replace) a release-gate call.
+    assert (
+        "group: e2e-rust-macos-hosted-${{ github.event_name }}-${{ inputs.source_sha }}"
+        in workflow
+    )
 
     for action in ("actions/checkout", "actions/upload-artifact"):
         line = next(line for line in workflow.splitlines() if f"uses: {action}@" in line)

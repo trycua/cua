@@ -32,6 +32,10 @@
 //! workspace can override the paths with `CUA_TEST_DRIVER_BIN`,
 //! `CUA_TEST_APPS_ROOT`, and `CUA_TEST_WORKSPACE_ROOT`. These variables affect
 //! tests only; they are never read by the shipped driver.
+//!
+//! A missing driver binary normally makes spawn helpers return `None` so the
+//! test skips. CI jobs set `CUA_TEST_REQUIRE_DRIVER_BIN=1` to turn that skip
+//! into a panic, so a gate cannot pass without exercising the driver.
 
 pub mod ax;
 mod browser_fixture;
@@ -39,6 +43,7 @@ mod cli;
 mod daemon;
 mod driver;
 pub mod e2e;
+mod host_state;
 mod journal;
 mod mcp;
 pub mod observer;
@@ -52,9 +57,13 @@ mod windows_setup;
 pub use browser_fixture::BrowserFixtureServer;
 pub use cli::CliDriver;
 pub use driver::{BehaviorRecording, Driver};
+pub use host_state::{IsolatedStateRoot, SHARE_HOST_STATE};
 pub use journal::FixtureJournal;
 pub use mcp::McpDriver;
-pub use paths::{driver_binary, harness_app, workspace_root};
+pub use paths::{
+    driver_binary, driver_binary_required, ensure_driver_binary, harness_app, workspace_root,
+    REQUIRE_DRIVER_BIN_ENV,
+};
 pub use raw::RawDriver;
 pub use reaper::{spawn_in_job, ChildReaper};
 pub use response::ToolResponse;

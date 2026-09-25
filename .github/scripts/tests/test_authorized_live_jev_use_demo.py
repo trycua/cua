@@ -10,7 +10,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / ".github/workflows/authorized-live-jev-use-demo.yml"
 ORCHESTRATOR = (
-    ROOT / "libs/cua-driver/rust/crates/cua-driver/tests/authorized_live_jev_use_demo_test.rs"
+    ROOT / "libs/cua-driver/rust/crates/cua-driver-e2e/tests/authorized_live_jev_use_demo_test.rs"
 )
 EVIDENCE_README = ROOT / "libs/cua-driver/tests/perception-demo/README.md"
 

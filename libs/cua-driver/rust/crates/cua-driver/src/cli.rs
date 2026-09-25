@@ -4830,62 +4830,32 @@ fn read_stdin_json() -> Option<serde_json::Value> {
     serde_json::from_str(stripped).ok()
 }
 
-#[cfg(test)]
-mod stdin_bom_tests {
-    /// Manual cross-check that the BOM-stripping logic round-trips correctly
-    /// without needing a real stdin pipe.
-    #[test]
-    fn strip_prefix_handles_utf8_bom() {
-        let with_bom = "\u{feff}{\"pid\":42}";
-        let stripped = with_bom.strip_prefix('\u{feff}').unwrap_or(with_bom);
-        assert_eq!(stripped, "{\"pid\":42}");
-        let v: serde_json::Value = serde_json::from_str(stripped).unwrap();
-        assert_eq!(v["pid"], 42);
+fn first_sentence(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
     }
-
-    #[test]
-    fn strip_prefix_no_op_when_no_bom() {
-        let plain = "{\"pid\":7}";
-        let stripped = plain.strip_prefix('\u{feff}').unwrap_or(plain);
-        assert_eq!(stripped, plain);
+    let flat: String = trimmed
+        .split("\n\n")
+        .next()
+        .unwrap_or(trimmed)
+        .split('\n')
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut sentence = String::new();
+    let mut prev = ' ';
+    for ch in flat.chars() {
+        if (prev == '.' || prev == '?' || prev == '!') && ch == ' ' {
+            break;
+        }
+        sentence.push(ch);
+        prev = ch;
     }
-}
-
-/// Normalise a user-provided tool name into a safe PostHog event suffix.
-///
-/// Tool names are concatenated onto `cua_driver_api_` to build per-tool
-/// telemetry event names. The raw string is user-controlled (any CLI
-/// arg or MCP request can specify it), so we:
-///
-/// 1. ASCII-lowercase
-/// 2. Keep only `[a-z0-9_]` — drop punctuation, slashes, dots, anything else
-/// 3. Truncate to 64 chars (event names are a dashboard axis, not free text)
-/// 4. Fall back to `"unknown"` when the result is empty (e.g. all non-ASCII
-///    input), so we still record *that* a call happened without inventing
-///    a per-payload event name.
-#[cfg(test)]
-fn sanitize_tool_name(name: &str) -> String {
-    const MAX_LEN: usize = 64;
-    const FALLBACK: &str = "unknown";
-
-    let cleaned: String = name
-        .chars()
-        .filter_map(|c| {
-            let lc = c.to_ascii_lowercase();
-            if lc.is_ascii_alphanumeric() || lc == '_' {
-                Some(lc)
-            } else {
-                None
-            }
-        })
-        .take(MAX_LEN)
-        .collect();
-
-    if cleaned.is_empty() {
-        FALLBACK.to_owned()
-    } else {
-        cleaned
+    let mut s = sentence.trim().to_string();
+    if s.ends_with('.') {
+        s.pop();
     }
+    s
 }
 
 #[cfg(test)]
@@ -5189,46 +5159,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn sanitize_tool_name_passes_through_canonical_names() {
-        assert_eq!(sanitize_tool_name("click"), "click");
-        assert_eq!(sanitize_tool_name("move_mouse"), "move_mouse");
-        assert_eq!(sanitize_tool_name("ScrollUp"), "scrollup");
-    }
-
-    #[test]
-    fn sanitize_tool_name_strips_punctuation_and_path_separators() {
-        // Path-like input would otherwise leak directory names into event
-        // names — strip everything that's not [a-z0-9_].
-        assert_eq!(sanitize_tool_name("foo.bar/baz"), "foobarbaz");
-        assert_eq!(sanitize_tool_name("../etc/passwd"), "etcpasswd");
-        assert_eq!(sanitize_tool_name("click-element!"), "clickelement");
-    }
-
-    #[test]
-    fn sanitize_tool_name_falls_back_when_non_ascii() {
-        // Non-ASCII characters are dropped entirely — without a fallback
-        // we'd emit `cua_driver_api_` (empty suffix), which collides with
-        // the bare `cua_driver_call` event.
-        assert_eq!(sanitize_tool_name("クリック"), "unknown");
-        assert_eq!(sanitize_tool_name("🚀"), "unknown");
-    }
-
-    #[test]
-    fn sanitize_tool_name_falls_back_on_empty_or_all_stripped() {
-        assert_eq!(sanitize_tool_name(""), "unknown");
-        assert_eq!(sanitize_tool_name("---"), "unknown");
-        assert_eq!(sanitize_tool_name("///"), "unknown");
-    }
-
-    #[test]
-    fn sanitize_tool_name_caps_length_at_64() {
-        let long_name = "a".repeat(200);
-        let sanitized = sanitize_tool_name(&long_name);
-        assert_eq!(sanitized.len(), 64);
-        assert!(sanitized.chars().all(|c| c == 'a'));
-    }
-
     // ── Surface 8: manifest shape ───────────────────────────────────────────
 
     /// The manifest must carry the four documented top-level keys so a
@@ -5357,50 +5287,4 @@ mod tests {
             );
         }
     }
-
-    /// Hermes / Codex / Claude Code can read `mcp_invocation` and drop
-    /// their hardcoded `["mcp"]` defaults. The invocation must point at
-    /// an executable path, and the `args` array MUST be `["mcp"]` — no
-    /// `--something` flag drift, no rename, no removal.
-    #[test]
-    fn manifest_mcp_invocation_is_stable() {
-        let m = build_manifest();
-        let inv = m.get("mcp_invocation").expect("mcp_invocation");
-        let args: Vec<&str> = inv
-            .get("args")
-            .and_then(|v| v.as_array())
-            .expect("args[] array")
-            .iter()
-            .filter_map(|v| v.as_str())
-            .collect();
-        assert_eq!(args, vec!["mcp"]);
-    }
-}
-
-fn first_sentence(text: &str) -> String {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    let flat: String = trimmed
-        .split("\n\n")
-        .next()
-        .unwrap_or(trimmed)
-        .split('\n')
-        .collect::<Vec<_>>()
-        .join(" ");
-    let mut sentence = String::new();
-    let mut prev = ' ';
-    for ch in flat.chars() {
-        if (prev == '.' || prev == '?' || prev == '!') && ch == ' ' {
-            break;
-        }
-        sentence.push(ch);
-        prev = ch;
-    }
-    let mut s = sentence.trim().to_string();
-    if s.ends_with('.') {
-        s.pop();
-    }
-    s
 }

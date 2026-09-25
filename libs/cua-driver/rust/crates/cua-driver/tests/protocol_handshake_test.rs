@@ -1,77 +1,15 @@
-//! MCP JSON-RPC handshake + tools/list contract tests.
+//! MCP JSON-RPC tools/list roster and tool-error surface tests.
 //!
-//! initialize handshake, the registered-tools roster, per-tool capability
-//! claims, the capability/schema version envelope, and the unknown-tool /
-//! unknown-action error surfaces. Split out of the old monolithic
-//! `mcp_protocol_test.rs`; mac/windows pairs are merged into one fn that
-//! branches only where the platforms genuinely differ.
+//! The registered-tools roster and the unknown-tool / unknown-action error
+//! surfaces. The initialize envelope, version fields, and unknown-method error
+//! are owned by `compatibility_contract_test`; per-tool capability and
+//! annotation fields by `schema_consistency_test`. Split out of the old
+//! monolithic `mcp_protocol_test.rs`; mac/windows pairs are merged into one fn
+//! that branches only where the platforms genuinely differ.
 
 #![cfg(any(target_os = "macos", target_os = "windows"))]
 
 use cua_driver_testkit::RawDriver;
-
-#[test]
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-fn initialize_handshake() {
-    let Some(mut d) = RawDriver::spawn() else {
-        return;
-    };
-
-    // 1. Send initialize request.
-    d.send(&serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "initialize",
-        "params": {
-            "protocolVersion": "2024-11-05",
-            "clientInfo": { "name": "test-client", "version": "0.0.1" }
-        }
-    }));
-    let resp = d.recv();
-    assert_eq!(resp["jsonrpc"], "2.0");
-    assert_eq!(resp["id"], 1);
-    assert!(resp["result"]["protocolVersion"].is_string());
-    // The server reports "cua-driver" on every platform. (The old Windows
-    // mirror asserted a stale "cua-driver-rs"; it had never been run.)
-    assert_eq!(resp["result"]["serverInfo"]["name"], "cua-driver");
-
-    // 2. Send notifications/initialized (no response expected).
-    d.send(&serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "notifications/initialized"
-    }));
-
-    // 3. Request tool list.
-    d.send(&serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
-    let resp = d.recv();
-    assert_eq!(resp["id"], 2);
-    let tools = resp["result"]["tools"].as_array().expect("tools array");
-    assert!(!tools.is_empty(), "Should have at least one tool");
-
-    // Verify tool names match reference implementation.
-    let tool_names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
-    for expected in &[
-        "list_apps",
-        "list_windows",
-        "get_window_state",
-        "click",
-        "type_text",
-        "press_key",
-    ] {
-        assert!(
-            tool_names.contains(expected),
-            "Missing tool: {} (have: {:?})",
-            expected,
-            tool_names
-        );
-    }
-
-    // 4. Verify unknown method returns -32601.
-    d.send(&serde_json::json!({"jsonrpc": "2.0", "id": 3, "method": "unknown/method"}));
-    let resp = d.recv();
-    assert_eq!(resp["id"], 3);
-    assert_eq!(resp["error"]["code"], -32601);
-}
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -130,139 +68,6 @@ fn all_expected_tools_registered() {
             "Missing tool: {name}  (registered: {names:?})"
         );
     }
-}
-
-#[test]
-#[cfg(target_os = "macos")]
-fn tools_list_includes_per_tool_capabilities() {
-    //! Surface 4 contract (part 1): every entry in `tools/list` must
-    //! include a `capabilities` array of dotted-namespace tokens.
-    //! Downstream consumers (Hermes' cua_backend.py, Codex) dispatch
-    //! by capability instead of hardcoding tool names, so this is the
-    //! wire contract. Additive-only — existing keys must still be
-    //! present.
-    let Some(mut d) = RawDriver::spawn() else {
-        return;
-    };
-
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    d.recv();
-
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}));
-    let resp = d.recv();
-    let result = &resp["result"];
-
-    let tools = result["tools"].as_array().expect("tools array");
-    assert!(!tools.is_empty(), "tools array must be non-empty");
-
-    // Every entry has a `capabilities` array (may be empty for tools
-    // without a mapping in `default_capabilities_for`).
-    for tool in tools {
-        let name = tool["name"].as_str().unwrap_or("<no name>");
-        assert!(
-            tool["capabilities"].is_array(),
-            "tool {name:?} missing capabilities array: {tool:?}"
-        );
-    }
-
-    // Specifically: `click` claims input.pointer.click + .left, and
-    // `type_text` claims input.keyboard.type — these are the contracts
-    // Hermes' cua_backend.py is expected to route by.
-    let click = tools
-        .iter()
-        .find(|t| t["name"] == "click")
-        .expect("click tool must be registered");
-    let click_caps: Vec<&str> = click["capabilities"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|v| v.as_str())
-        .collect();
-    assert!(
-        click_caps.contains(&"input.pointer.click"),
-        "click missing input.pointer.click: {click_caps:?}"
-    );
-    assert!(
-        click_caps.contains(&"input.pointer.click.left"),
-        "click missing input.pointer.click.left: {click_caps:?}"
-    );
-
-    let type_text = tools
-        .iter()
-        .find(|t| t["name"] == "type_text")
-        .expect("type_text tool must be registered");
-    let tt_caps: Vec<&str> = type_text["capabilities"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|v| v.as_str())
-        .collect();
-    assert!(
-        tt_caps.contains(&"input.keyboard.type"),
-        "type_text missing input.keyboard.type: {tt_caps:?}"
-    );
-
-    // Regression guard for additive-only contract: every pre-existing
-    // top-level field on a tool entry must still be present.
-    for tool in tools {
-        let name = tool["name"].as_str().unwrap_or("<no name>");
-        assert!(tool["name"].is_string(), "{name}: name missing");
-        assert!(
-            tool["description"].is_string(),
-            "{name}: description missing"
-        );
-        assert!(
-            tool["inputSchema"].is_object(),
-            "{name}: inputSchema missing"
-        );
-        assert!(
-            tool["annotations"].is_object(),
-            "{name}: annotations missing"
-        );
-    }
-}
-
-#[test]
-#[cfg(target_os = "macos")]
-fn tools_list_includes_capability_and_schema_versions() {
-    //! Surface 4 contract (part 2): top-level `tools/list` response
-    //! must include `capability_version` and `schema_version` so
-    //! downstream consumers (Hermes' cua_backend.py, Codex) can gate
-    //! strict-vs-tolerant capability matching by version. Both pinned
-    //! at "1" on first ship.
-    let Some(mut d) = RawDriver::spawn() else {
-        return;
-    };
-
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    d.recv();
-
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}));
-    let resp = d.recv();
-    let result = &resp["result"];
-
-    // Both version fields default to "1" on first ship — the surface
-    // is brand new, so there's no pre-existing contract to bump.
-    assert_eq!(
-        result["capability_version"], "1",
-        "capability_version must default to \"1\" on first ship"
-    );
-    assert_eq!(
-        result["schema_version"], "1",
-        "schema_version must default to \"1\" on first ship"
-    );
-
-    // Additive guard: tools array must still be there alongside the
-    // new envelope keys — old consumers that only read `tools` keep
-    // working.
-    assert!(
-        result["tools"].is_array(),
-        "tools array must still be present alongside version envelope"
-    );
-    assert!(
-        !result["tools"].as_array().unwrap().is_empty(),
-        "tools array must be non-empty"
-    );
 }
 
 #[test]

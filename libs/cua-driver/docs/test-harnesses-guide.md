@@ -26,6 +26,11 @@ Windows: .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
 macOS:  libs/cua-driver/tests/runners/macos-lume/run-all.sh
 ```
 
+[`scripts/ci/README.md`](../../../scripts/ci/README.md#canonical-and-supporting-runners)
+lists every runner as canonical, scoped, or supporting. The Windows convenience
+wrapper in `tests/runners/windows/` and the legacy `tests/runners/windows-sandbox/`
+runner are supporting runners, not canonical entrypoints.
+
 The OS workflow may fan the complete matrix out into independent jobs for
 reporting and failure isolation. That is an execution detail; contributors
 should think of it as one canonical suite.
@@ -66,7 +71,11 @@ in the prepared native Hyprland desktop at the exact candidate SHA. Preserve
 the runner's required cells, assertions, and evidence checks. Record compositor
 and backend provenance; an X11 run does not establish native Hyprland coverage.
 Environment failures and failed cells remain failures, not permission to skip
-tests or change expected results.
+tests or change expected results. In the same desktop, also run
+`cargo test -p cua-driver-e2e --test hyprland_foreground_test -- --ignored --test-threads=1`
+and the same command for `hyprland_native_observation_test`. No automated lane
+runs these foreground-safety and exact-identity rows, so
+`tests/manual-e2e-allowlist.txt` records them as a manual native-Hyprland gate.
 
 Before launching the native Hyprland harness, apply this map-time rule in the
 disposable desktop's Lua configuration and reload it:
@@ -121,10 +130,10 @@ background qualification remains native Calc from `libreoffice-fresh 26.2.5-3`,
 Inkscape `1.4.4-6`, the plain compiled `evdev`/`pc105`/`us` keymap, and two
 seats. Chromium, Electron, and XWayland raw background input remain unqualified;
 semantic AT-SPI actions are separate.
-See [production proof preparation](../hyprland-plugin/tests/production-proof.md)
+See [production proof preparation](../hyprland-plugin/docs/production-proof.md)
 for the bounded plans and their limits.
 
-The explicit [Inkscape-only qualification profile](../hyprland-plugin/tests/production-inkscape-profile.md)
+The explicit [Inkscape-only qualification profile](../hyprland-plugin/docs/production-inkscape-profile.md)
 supports a bounded packaging candidate using exact Inkscape `1.4.4-6`, with
 independent native clients, two app lanes, separate SVG oracles, and third-owner
 capacity refusal. It preserves the default Calc/Inkscape profile and the native
@@ -146,7 +155,8 @@ cua/
 |-- libs/cua-driver/
 |   |-- rust/
 |   |   |-- crates/
-|   |   |   |-- cua-driver/          Rust driver and integration tests
+|   |   |   |-- cua-driver/          Rust driver and hermetic integration tests
+|   |   |   |-- cua-driver-e2e/      Desktop E2E suites the OS runners select
 |   |   |   |-- cua-driver-core/     Shared driver logic and unit tests
 |   |   |   |-- cua-driver-testkit/  Shared Rust E2E helpers and evidence capture
 |   |   |   |-- platform-linux/      Linux backend
@@ -214,7 +224,7 @@ These run without a repo-local GUI application and normally run without
 | `rust/crates/*/src/**`                 | Core driver, platform-independent logic, schemas, and helpers |
 | `protocol_*_test.rs`                   | MCP handshake, tool calls, sessions, media, and errors        |
 | `schema_*_test.rs`                     | Shared schema and backend consistency                         |
-| `transport_config_persistence_test.rs` | CLI/MCP configuration persistence                             |
+| `transport_config_persistence_test.rs` | CLI configuration persistence across processes                |
 | `protocol_element_token_test.rs`       | Element-token protocol behavior                               |
 
 These tests should be fast, deterministic, and safe to run on ordinary CI
@@ -223,15 +233,20 @@ reached an application.
 
 ### Harness E2E Tests
 
-These are Rust integration tests under:
+These are Rust integration tests in their own crate:
 
 ```text
-libs/cua-driver/rust/crates/cua-driver/tests/
+libs/cua-driver/rust/crates/cua-driver-e2e/tests/
 ```
 
-Most are marked `#[ignore]` because they require a desktop, built fixtures, and
-platform permissions. They are selected by the OS runner rather than the
-ordinary unit command.
+Hermetic protocol, CLI, and schema tests stay in
+`libs/cua-driver/rust/crates/cua-driver/tests/`. A test that needs a desktop,
+built fixtures, installed apps, or platform permissions belongs in
+`cua-driver-e2e`. Most E2E tests are marked `#[ignore]`; the OS runner selects
+them with `cargo test -p cua-driver-e2e --test <suite> -- --ignored`. The
+crate does not depend on the driver, so build `cua-driver` first or set
+`CUA_TEST_DRIVER_BIN`. Its few non-ignored tests are hermetic oracle and
+parser checks that ordinary CI runs with the driver's tests.
 
 The canonical E2E suite has two behavior owners:
 
@@ -302,6 +317,7 @@ the Lume gate runs after its repo-local matrix.
 | Native controls           | `harness_swiftui_test.rs`              | Repo-local SwiftUI app                  |
 | Installed app launch      | `installed_app_launch_macos_test.rs`   | Calculator and TextEdit                 |
 | Installed app AX delivery | `installed_app_textedit_macos_test.rs` | TextEdit                                |
+| Exact window activation   | `bring_to_front_macos_test.rs`         | Repo-local AppKit and SwiftUI apps      |
 | Capture contract          | `capture_contract_test.rs`             | Installed driver and macOS capture APIs |
 | Desktop scope             | `desktop_scope_macos_test.rs`          | macOS window and desktop scope          |
 | Standalone browsers       | `standalone_browser_behavior_test.rs`  | Installed Google Chrome and Edge        |
@@ -541,7 +557,7 @@ to give each behavior one clear owner and make cross-cutting evidence reusable.
 rust/crates/cua-driver-testkit/src/
 `-- observer.rs                     Cross-OS desktop-side-effect interface
 
-rust/crates/cua-driver/tests/
+rust/crates/cua-driver-e2e/tests/
 |-- cross_platform_behavior_test.rs Shared Electron/Tauri action matrix
 |-- harness_wpf_test.rs             Windows WPF action rows
 |-- harness_winui3_test.rs          Windows WinUI3 action rows
@@ -550,7 +566,9 @@ rust/crates/cua-driver/tests/
 |-- harness_swiftui_test.rs         macOS SwiftUI action rows
 |-- harness_gtk3_test.rs            Linux GTK3 action rows
 |-- capture_contract_test.rs        Tree and screenshot read contract
-|-- desktop_scope_<os>_test.rs      Window/desktop scope invariants
+`-- desktop_scope_<os>_test.rs      Window/desktop scope invariants
+
+rust/crates/cua-driver/tests/
 `-- protocol_*_test.rs              Protocol and schema tests
 ```
 
@@ -571,13 +589,53 @@ user-facing command; lane selectors are internal diagnostics.
 When adding a new scenario:
 
 1. Add or update the repo-local fixture and its external state marker.
-2. Add the Rust scenario under `rust/crates/cua-driver/tests/`.
+2. Add the Rust scenario under `rust/crates/cua-driver-e2e/tests/`.
 3. Declare AX/PX addressing, foreground/background delivery, scope, and oracle.
 4. Add the scenario to `docs/test-matrix.md` and this guide when it changes the
    cross-OS structure.
 5. Update only the OS runner selection when the test is platform-specific.
+   Every `#[ignore]` test must be selected by a runner or workflow, or listed
+   with a reason in `tests/manual-e2e-allowlist.txt`;
+   `.github/scripts/tests/test_cua_driver_e2e_inventory.py` enforces this.
 6. Run the smallest Rust test locally, then run the OS command before
    calling the matrix complete.
 
 The goal is one understandable Rust E2E model across platforms, with
 platform-specific harnesses where the OS genuinely differs.
+
+## Test Layout Conventions
+
+Rust tests in the driver workspace use one layout:
+
+| Test kind | Where it lives |
+| --- | --- |
+| Small unit suite | Inline `#[cfg(test)] mod tests { ... }` at the end of the module |
+| Large unit suite | `src/<module>/tests.rs`, declared as `#[cfg(test)] mod tests;` in `src/<module>.rs` |
+| Several suites for one large module | `src/<module>/<name>_tests.rs`, one `#[cfg(test)] mod <name>_tests;` each, for example `platform-{linux,windows}/src/tools/impl_/` |
+| Crate-root suites | `src/tests/`, for example `cua-driver-sdk/src/tests/` |
+| Integration test in `cua-driver` or its E2E suites | `tests/<subject>_test.rs`; shared helpers go in `tests/support/` |
+
+Moving a suite into its own file keeps its module path, so test names and
+CI filters stay the same. Prefer Rust's default module file lookup over
+`#[path]`. Other crates' `tests/` directories keep their existing names.
+
+Scripts and their tests live next to their owner:
+
+- Desktop runners and focused native gates live in `scripts/ci/<os>/`, for
+  example `scripts/ci/linux/run-mpx-recovery-e2e.py`.
+- Example code keeps its tests in a `tests/` directory beside it, for example
+  `libs/cua-driver/examples/agent-sdks/tests/`.
+- `libs/cua-driver/rust/test-apps/` is the staging directory for built
+  harness apps, not a test directory. The fixture build scripts `cd` into it,
+  so its tracked README and `.gitignore` must stay.
+
+Perception tests have three owners, and each tests different code:
+
+| Directory | Owns | Run by |
+| --- | --- | --- |
+| `libs/cua-driver/rust/crates/cua-perception/{src,tests}` | Rust perception engine and extension protocol | `ci-cua-perception-release.yml`, `ci-cua-driver-quick.yml` |
+| `libs/cua-driver/rust/crates/cua-perception/scripts/tests/` | Model artifact tooling and quality measurement scripts | `ci-cua-perception-release.yml` |
+| `libs/cua-driver/tests/perception-demo/` | Visual demo evidence sanitizing, caching, and envelopes | `ci-test-scripts.yml` |
+| `.github/scripts/tests/test_cua_perception_*.py`, `test_perception_release.py` | Perception release, review-trigger, and review-pipeline workflows and `.github/scripts` helpers | `ci-test-scripts.yml`, `ci-cua-perception-release.yml` |
+
+Add a perception test to the directory that owns the code it exercises.

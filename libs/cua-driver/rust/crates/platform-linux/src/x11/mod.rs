@@ -135,7 +135,9 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
             app_name,
             title,
             is_on_screen,
-            z_index: Some(z_index_from_bottom_to_top(z_index)),
+            // EWMH stacking lists are bottom-to-top, so the enumeration index
+            // already follows the shared "higher z_index is frontmost" contract.
+            z_index: Some(z_index),
             x,
             y,
             width: w,
@@ -144,10 +146,6 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
     }
 
     Ok(result)
-}
-
-fn z_index_from_bottom_to_top(position: usize) -> usize {
-    position
 }
 
 fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec<Window>> {
@@ -618,13 +616,6 @@ mod tests {
         assert!(fallback_window_is_listable(MapState::VIEWABLE));
         assert!(!fallback_window_is_listable(MapState::UNMAPPED));
         assert!(!fallback_window_is_listable(MapState::UNVIEWABLE));
-    }
-
-    #[test]
-    fn ewmh_bottom_to_top_order_normalizes_to_higher_is_frontmost() {
-        let indices: Vec<_> = (0..3).map(z_index_from_bottom_to_top).collect();
-        assert_eq!(indices, vec![0, 1, 2]);
-        assert!(indices[2] > indices[0]);
     }
 
     #[test]

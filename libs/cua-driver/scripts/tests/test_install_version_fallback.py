@@ -264,7 +264,7 @@ def test_windows_api_resolver_filters_drafts_but_accepts_stable_prereleases(
     source = _windows_source()
     functions = "\n\n".join(
         _extract_powershell_function(source, name)
-        for name in ("Get-GitHubApiHeaders", "Get-LatestVersionFromApi")
+        for name in ("Test-WithdrawnVersion", "Get-GitHubApiHeaders", "Get-LatestVersionFromApi")
     )
     result = _run_powershell(
         tmp_path,
@@ -303,7 +303,9 @@ def _extract_shell_function(source: str, name: str) -> str:
     return match.group(0)
 
 
-def _run_resolver(tmp_path: Path, releases_json: str, epilogue: str, strict: bool) -> str:
+def _run_resolver(
+    tmp_path: Path, releases_json: str, epilogue: str, strict: bool, withdrawn: str = ""
+) -> str:
     """Runs the real resolver function with curl shadowed by a shell function.
 
     A function shim beats a PATH shim here: it needs no exec bit and no PATH
@@ -321,6 +323,8 @@ def _run_resolver(tmp_path: Path, releases_json: str, epilogue: str, strict: boo
             REPO="trycua/cua"
             TAG_PREFIX="cua-driver-rs-v"
             curl() {{ cat "{fixture}"; }}
+            CUA_DRIVER_RS_WITHDRAWN_VERSIONS="{withdrawn}"
+            {is_withdrawn}
             {github_api_curl}
             {published_versions}
             {resolver}
@@ -331,6 +335,8 @@ def _run_resolver(tmp_path: Path, releases_json: str, epilogue: str, strict: boo
             # which -e would otherwise turn into an abort before the assertion.
             flags="e" if strict else "",
             fixture=fixture.as_posix(),
+            withdrawn=withdrawn,
+            is_withdrawn=_extract_shell_function(_unix_source(), "is_withdrawn_version"),
             github_api_curl=_extract_shell_function(_unix_source(), "github_api_curl"),
             published_versions=_extract_shell_function(
                 _unix_source(), "extract_published_release_versions"
@@ -777,3 +783,218 @@ def test_unix_non_fallback_download_failure_makes_zero_api_calls(
     )
     assert result.returncode == 1
     assert calls == ["download:1.2.3"]
+
+
+# ---------- Withdrawn releases ----------------------------------------------
+#
+# A withdrawn release (for example 0.28.3, whose macOS app was published
+# unsigned) stays published for audit but must never be selected. The
+# installers cannot read repository files at runtime, so each carries a baked
+# list that validate_release_versions.py keeps equal to
+# .github/release-state/cua-driver-rs-withdrawn-versions.
+
+
+@requires_posix_bash
+def test_unix_api_resolver_skips_withdrawn_releases(tmp_path: Path) -> None:
+    releases = """
+        [
+          {
+            "tag_name": "cua-driver-rs-v0.28.3",
+            "draft": false
+          },
+          {
+            "tag_name": "cua-driver-rs-v0.28.2",
+            "draft": false
+          }
+        ]
+        """
+    assert (
+        _run_resolver(tmp_path, releases, "resolve_latest_version_from_api", strict=True)
+        == "0.28.3"
+    )
+    assert (
+        _run_resolver(
+            tmp_path,
+            releases,
+            "resolve_latest_version_from_api",
+            strict=True,
+            withdrawn="0.28.1 0.28.3",
+        )
+        == "0.28.2"
+    )
+
+
+@requires_posix_bash
+def test_unix_api_resolver_fails_when_only_withdrawn_releases_remain(tmp_path: Path) -> None:
+    resolved = _run_resolver(
+        tmp_path,
+        '[\n  {\n    "tag_name": "cua-driver-rs-v0.28.3",\n    "draft": false\n  }\n]',
+        epilogue="if resolve_latest_version_from_api; then echo RESOLVED; else echo NOMATCH; fi",
+        strict=False,
+        withdrawn="0.28.3",
+    )
+    assert resolved == "NOMATCH"
+
+
+def _run_resolution_flow(
+    tmp_path: Path, *, pin: str = "", baked: str = "", withdrawn: str = ""
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    """Execute the installer's real release-tag resolution block."""
+    source = _unix_source()
+    start = source.index('if [[ -n "${CUA_DRIVER_RS_VERSION:-}" ]]; then\n    VERSION_SOURCE="pin"')
+    end = source.index('if [[ "$TAG" == "$NIGHTLY_TAG_PREFIX"* ]]; then', start)
+    calls = tmp_path / "resolution-calls"
+    calls.write_text("", encoding="utf-8")
+    script = tmp_path / "run-resolution.sh"
+    script.write_text(
+        textwrap.dedent(
+            f"""\
+            set -uo pipefail
+            REPO="trycua/cua"
+            TAG_PREFIX="cua-driver-rs-v"
+            NIGHTLY_TAG_PREFIX="nightly-cua-driver-rs-v"
+            SELECTED_CHANNEL="stable"
+            SELECTED_TAG_PREFIX="$TAG_PREFIX"
+            CUA_DRIVER_RS_VERSION="{pin}"
+            CUA_DRIVER_RS_BAKED_VERSION="{baked}"
+            CUA_DRIVER_RS_WITHDRAWN_VERSIONS="{withdrawn}"
+            log() {{ printf 'log: %s\\n' "$*" >&2; }}
+            err() {{ printf 'error: %s\\n' "$*" >&2; }}
+            resolve_latest_version_from_api() {{
+                printf 'api\\n' >> "{calls.as_posix()}"
+                printf '0.28.2'
+            }}
+            """
+        )
+        + _extract_shell_function(source, "is_withdrawn_version")
+        + "\n"
+        + _extract_shell_function(source, "resolve_explicit_release_tag")
+        + "\n"
+        + source[start:end]
+        + '\nprintf \'resolved:%s:%s\\n\' "$VERSION_SOURCE" "$TAG"\n',
+        encoding="utf-8",
+    )
+    result = subprocess.run(["bash", script.as_posix()], capture_output=True, text=True)
+    return result, calls.read_text(encoding="utf-8").splitlines()
+
+
+@requires_posix_bash
+def test_unix_installer_refuses_an_explicit_withdrawn_pin(tmp_path: Path) -> None:
+    result, calls = _run_resolution_flow(
+        tmp_path, pin="0.28.3", baked="0.28.2", withdrawn="0.28.3"
+    )
+    assert result.returncode == 1
+    assert "cua-driver-rs-v0.28.3 was withdrawn and must not be installed" in result.stderr
+    assert "resolved:" not in result.stdout
+    assert calls == []
+
+
+@requires_posix_bash
+def test_unix_installer_resolves_past_a_withdrawn_baked_version(tmp_path: Path) -> None:
+    result, calls = _run_resolution_flow(tmp_path, baked="0.28.3", withdrawn="0.28.3")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "resolved:api:cua-driver-rs-v0.28.2\n"
+    assert "baked release cua-driver-rs-v0.28.3 was withdrawn" in result.stderr
+    assert calls == ["api"]
+
+
+@requires_posix_bash
+def test_unix_installer_uses_an_eligible_baked_version_without_api(tmp_path: Path) -> None:
+    result, calls = _run_resolution_flow(tmp_path, baked="0.28.2", withdrawn="0.28.3")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "resolved:baked:cua-driver-rs-v0.28.2\n"
+    assert calls == []
+
+
+def test_unix_installer_fails_closed_on_macos_signature_failure() -> None:
+    """A bad signature never triggers an automatic downgrade to another release."""
+    source = _unix_source()
+    failure = source.index(
+        'err "downloaded CuaDriver.app failed signature verification; the installed app was not changed"'
+    )
+    exit_line = source.index("exit 1", failure)
+    between = source[failure:exit_line]
+    assert "resolve_latest_version_from_api" not in between
+    assert "download_release_tarball" not in between
+    assert "CUA_DRIVER_RS_VERSION=<x.y.z>" in between
+
+
+def test_windows_installer_rejects_withdrawn_pins_and_baked_versions() -> None:
+    source = _windows_source()
+    resolve = source[
+        source.index("function Resolve-Version") : source.index("# ---------- Download + extract")
+    ]
+    env_pin = resolve.index("$Script:CuaDriverRsVersionSource = 'env'")
+    release_pin = resolve.index("$Script:CuaDriverRsVersionSource = 'release-arg'")
+    assert resolve.index("Assert-NotWithdrawnPin $release") < env_pin
+    assert resolve.index("Assert-NotWithdrawnPin $release", env_pin) < release_pin
+    baked = resolve.index("$Script:CuaDriverRsVersionSource = 'baked'")
+    assert resolve.index("if (Test-WithdrawnVersion $v) {") < baked
+
+    api = source[
+        source.index("function Get-LatestVersionFromApi") : source.index(
+            "function Resolve-SelectedChannel"
+        )
+    ]
+    assert "Test-WithdrawnVersion $_.tag_name.Substring($selectedPrefix.Length)" in api
+
+
+@requires_powershell
+def test_windows_api_resolver_skips_withdrawn_releases(tmp_path: Path) -> None:
+    source = _windows_source()
+    functions = "\n\n".join(
+        _extract_powershell_function(source, name)
+        for name in ("Test-WithdrawnVersion", "Get-GitHubApiHeaders", "Get-LatestVersionFromApi")
+    )
+    result = _run_powershell(
+        tmp_path,
+        f"""
+$Repo = 'trycua/cua'
+$TagPrefix = 'cua-driver-rs-v'
+$Script:CuaDriverRsWithdrawnVersions = @('0.28.3')
+function Write-Step {{ param([string]$Message) }}
+function Write-WarningStep {{ param([string]$Message) }}
+function Invoke-RestMethod {{
+    param([string]$Uri, [hashtable]$Headers, [switch]$UseBasicParsing)
+    @(
+        [pscustomobject]@{{ tag_name = 'cua-driver-rs-v0.28.3'; draft = $false; prerelease = $true }}
+        [pscustomobject]@{{ tag_name = 'cua-driver-rs-v0.28.2'; draft = $false; prerelease = $true }}
+    )
+}}
+
+{functions}
+
+Get-LatestVersionFromApi
+""",
+    )
+    assert result.stdout.strip() == "0.28.2"
+
+
+@requires_powershell
+def test_windows_installer_refuses_an_explicit_withdrawn_pin(tmp_path: Path) -> None:
+    source = _windows_source()
+    functions = "\n\n".join(
+        _extract_powershell_function(source, name)
+        for name in ("Test-WithdrawnVersion", "Assert-NotWithdrawnPin")
+    )
+    script = tmp_path / "withdrawn-pin.ps1"
+    script.write_text(
+        f"""
+$Script:CuaDriverRsWithdrawnVersions = @('0.28.3')
+function Write-ErrorStep {{ param([string]$Message) [Console]::Error.WriteLine($Message) }}
+{functions}
+Assert-NotWithdrawnPin @{{ Version = '0.28.2'; Tag = 'cua-driver-rs-v0.28.2' }}
+Write-Output 'eligible'
+Assert-NotWithdrawnPin @{{ Version = '0.28.3'; Tag = 'cua-driver-rs-v0.28.3' }}
+Write-Output 'unreachable'
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [str(POWERSHELL), "-NoProfile", "-NonInteractive", "-File", str(script)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert result.stdout.split() == ["eligible"]
+    assert "cua-driver-rs-v0.28.3 was withdrawn" in result.stderr

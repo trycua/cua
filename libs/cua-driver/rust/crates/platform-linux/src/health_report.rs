@@ -50,9 +50,9 @@ impl HealthCheckProvider for LinuxHealthProvider {
 
     async fn run_check(&self, name: &str) -> CheckEntry {
         match name {
-            NAME_BINARY_VERSION => check_binary_version(),
+            NAME_BINARY_VERSION => CheckEntry::binary_version(),
             NAME_PLATFORM_SUPPORTED => check_platform_supported(),
-            NAME_SESSION_ACTIVE => check_session_active(),
+            NAME_SESSION_ACTIVE => CheckEntry::session_active(),
             NAME_BUNDLE_IDENTITY => skip_not_applicable(NAME_BUNDLE_IDENTITY),
             NAME_TCC_ACCESSIBILITY => skip_not_applicable(NAME_TCC_ACCESSIBILITY),
             NAME_TCC_SCREEN_RECORDING => skip_not_applicable(NAME_TCC_SCREEN_RECORDING),
@@ -69,13 +69,6 @@ impl HealthCheckProvider for LinuxHealthProvider {
 
 // ── Individual checks ────────────────────────────────────────────────────────
 
-pub(crate) fn check_binary_version() -> CheckEntry {
-    CheckEntry::pass(
-        NAME_BINARY_VERSION,
-        format!("cua-driver {}", env!("CARGO_PKG_VERSION")),
-    )
-}
-
 pub(crate) fn check_platform_supported() -> CheckEntry {
     let arch = arch_label();
     let os_version = os_release_pretty_name().unwrap_or_else(|| "Linux".to_owned());
@@ -86,10 +79,6 @@ pub(crate) fn check_platform_supported() -> CheckEntry {
             ..Default::default()
         },
     )
-}
-
-pub(crate) fn check_session_active() -> CheckEntry {
-    CheckEntry::pass(NAME_SESSION_ACTIVE, "MCP session is active.")
 }
 
 fn skip_not_applicable(name: &str) -> CheckEntry {
@@ -649,32 +638,6 @@ mod tests {
     use cua_driver_core::health_report::{CheckStatus, HealthReportTool};
     use cua_driver_core::tool::Tool;
     use std::sync::Arc;
-
-    #[test]
-    fn binary_version_always_passes() {
-        let entry = check_binary_version();
-        assert_eq!(entry.status, CheckStatus::Pass);
-        assert!(entry.message.contains("cua-driver "));
-    }
-
-    #[test]
-    fn session_active_passes() {
-        let entry = check_session_active();
-        assert_eq!(entry.status, CheckStatus::Pass);
-    }
-
-    #[test]
-    fn tcc_and_bundle_are_skipped_with_canonical_message() {
-        for name in [
-            NAME_TCC_ACCESSIBILITY,
-            NAME_TCC_SCREEN_RECORDING,
-            NAME_BUNDLE_IDENTITY,
-        ] {
-            let entry = skip_not_applicable(name);
-            assert_eq!(entry.status, CheckStatus::Skip, "{name} must be skipped");
-            assert_eq!(entry.message, "not applicable on Linux");
-        }
-    }
 
     #[test]
     fn wayland_backend_passes_on_non_wlroots_when_portal_libei_backend_is_reachable() {

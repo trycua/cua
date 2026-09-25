@@ -41,6 +41,17 @@ fn channel_cli_persists_and_reports_the_selected_channel() {
     );
     let status: serde_json::Value = serde_json::from_slice(&status.stdout).expect("status json");
     assert_eq!(status["selected_channel"], "nightly");
+
+    let restored = run(home.path(), &["channel", "set", "stable", "--json"]);
+    assert!(
+        restored.status.success(),
+        "{}",
+        String::from_utf8_lossy(&restored.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(home.path().join("release-channel")).expect("saved preference"),
+        "stable\n"
+    );
 }
 
 #[test]

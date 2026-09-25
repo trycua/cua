@@ -336,7 +336,22 @@ mod tests {
         // a predictable way — we accept that as a valid outcome rather
         // than failing the test, so the same suite runs green on both
         // dev boxes and headless CI runners.
-        match ui_automation_available() {
+        //
+        // Other tests in this crate (for example the health report) run the
+        // same probe concurrently through the process-wide UIA single-flight
+        // gate, which answers "busy" instead of queueing. Wait for the gate
+        // rather than treating a sibling test's probe as a failure.
+        let mut result = ui_automation_available();
+        for _ in 0..100 {
+            match &result {
+                Err(e) if e.contains("UI Automation is busy") => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    result = ui_automation_available();
+                }
+                _ => break,
+            }
+        }
+        match result {
             Ok(()) => {}
             Err(e) => {
                 let non_interactive =

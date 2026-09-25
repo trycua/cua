@@ -27,10 +27,17 @@ permissions:
   contents: read
   actions: read
 
+# Identical dispatches queue behind the running certification instead of
+# racing it. In-progress runs are never cancelled.
+concurrency:
+  group: e2e-rust-windows-${{ github.ref }}-${{ inputs.ref }}-${{ inputs.runner }}-${{ inputs.lane }}
+  cancel-in-progress: false
+
 jobs:
   source:
     name: "Resolve exact source"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
     steps:

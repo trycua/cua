@@ -21,10 +21,17 @@ permissions:
   contents: read
   pull-requests: read
 
+# In a reusable call, github.workflow names the caller, so each caller keeps
+# its own group.
+concurrency:
+  group: cua-driver-installer-compat-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   scope:
     name: Resolve installer compatibility scope
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       should_run: ${{ steps.scope.outputs.should_run }}
       versions: ${{ steps.versions.outputs.versions }}
@@ -94,6 +101,7 @@ jobs:
         os: [ubuntu-latest, macos-26, windows-latest]
         version: ${{ fromJSON(needs.scope.outputs.versions) }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     env:
       CUA_DRIVER_RS_VERSION: ${{ matrix.version }}
       CUA_DRIVER_RS_KEEP_VERSIONS: "0"
@@ -158,6 +166,7 @@ jobs:
     needs: [scope, install]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Report result
         run: |

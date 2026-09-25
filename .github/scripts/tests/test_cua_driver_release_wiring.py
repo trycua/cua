@@ -275,7 +275,8 @@ fi
         self.assertIn("5c625bfb5d1ff62eadeeb3772007f7f66fdcf071", workflow)
         self.assertIn("validate_release_please_tags.py --target HEAD", workflow)
         self.assertIn('-p cua-driver --precise "$DRIVER_VERSION"', workflow)
-        self.assertIn(
+        self.assertIn('--search "head:release-please--branches--"', workflow)
+        self.assertNotIn(
             "gh pr list --state open --base main --limit 100 --json number",
             workflow,
         )
@@ -296,6 +297,11 @@ fi
         )
         self.assertIn("sync_lume_release_docs.py", workflow)
         self.assertIn("chore(lume): synchronize release documentation", workflow)
+        self.assertIn(
+            "npx --yes pnpm@9.0.4 --dir docs install --frozen-lockfile --ignore-scripts",
+            workflow,
+        )
+        self.assertIn("runner.ts --library sandbox", workflow)
         self.assertNotIn("if: steps.release.outputs.prs_created == 'true'", workflow)
         self.assertNotIn("RELEASE_PRS: ${{ steps.release.outputs.prs }}", workflow)
 

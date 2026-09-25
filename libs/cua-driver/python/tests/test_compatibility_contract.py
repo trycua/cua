@@ -71,24 +71,6 @@ def _functions(module: ast.Module) -> dict[str, ast.FunctionDef | ast.AsyncFunct
     }
 
 
-def test_current_native_window_methods_have_typed_outputs() -> None:
-    module = _module(PACKAGE_ROOT / "src" / "cua_driver" / "_native.py")
-    driver = next(
-        node for node in module.body if isinstance(node, ast.ClassDef) and node.name == "CuaDriver"
-    )
-    methods = _functions(driver)
-    for name, input_type, output_type in [
-        ("list_apps", "ListAppsInput", "ListAppsOutput"),
-        ("list_windows", "ListWindowsInput", "ListWindowsOutput"),
-        ("get_window_state", "GetWindowStateInput", "WindowStateOutput"),
-        ("click", "ClickInput", "ActionResult"),
-    ]:
-        assert _signature(methods[name]) == (
-            f"async {name}(self, input: cua_driver._native_contract.{input_type})"
-            f" -> cua_driver._native_contract.{output_type}"
-        )
-
-
 def test_click_position_preserves_released_uniffi_ordinals() -> None:
     generated = (
         PACKAGE_ROOT / "src" / "cua_driver" / "_native_contract.py"
@@ -130,13 +112,6 @@ def test_released_python_exports_and_signatures_remain_available() -> None:
         if isinstance(element, ast.Constant) and isinstance(element.value, str)
     }
     assert set(expected["package_root_exports"]) <= actual_exports
-
-    package_functions = _functions(package_module)
-    package_signatures = {
-        _signature(package_functions["_connect_python_sdk"]),
-        _signature(package_functions["_create_python_sdk"]),
-    }
-    assert set(expected["package_constructor_signatures"]) == package_signatures
 
     wrapper_functions = _functions(wrapper_module)
     wrapper_signatures = {

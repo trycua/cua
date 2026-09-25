@@ -2781,12 +2781,9 @@ fn type_text_ax_result(pid: u32, text_len: usize, route: &str) -> ToolResult {
 /// own argv. Reads `/proc`; cheap and only invoked on the rare AT-SPI confirm.
 fn is_chromium_embedder(pid: u32) -> bool {
     fn argv_is_chromium_helper(p: u32) -> bool {
-        match fs::read(format!("/proc/{p}/cmdline")) {
-            Ok(raw) => String::from_utf8_lossy(&raw).split('\0').any(|arg| {
-                arg == "--type=renderer" || arg == "--type=zygote" || arg == "--type=gpu-process"
-            }),
-            Err(_) => false,
-        }
+        fs::read(format!("/proc/{p}/cmdline"))
+            .map(|raw| crate::at_point_policy::cmdline_is_chromium_helper(&raw))
+            .unwrap_or(false)
     }
     // Single-process / the embedder itself carrying a Chromium switch.
     if argv_is_chromium_helper(pid) {

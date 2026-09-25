@@ -3,6 +3,7 @@
 //! cua-driver-core's shared event-aware `CdpConnection` transport.
 
 use cua_driver_core::browser::cdp_ws::CdpConnection;
+use cua_driver_core::cdp::pick_page;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -415,7 +416,7 @@ impl CdpSession {
             .iter()
             .filter(|t| t.get("type").and_then(|v| v.as_str()) == Some("page"))
             .collect();
-        let target = pick_target(&pages, target_url_contains).ok_or_else(|| {
+        let target = pick_page(pages.iter().copied(), target_url_contains).ok_or_else(|| {
             anyhow::anyhow!("Target.getTargets returned no page target on port {port}")
         })?;
         let target_id = target
@@ -478,7 +479,7 @@ async fn ws_url_for_page_target(
         })
         .unwrap_or_default();
 
-    let target = pick_target(&pages, target_url_contains)
+    let target = pick_page(pages.iter().copied(), target_url_contains)
         .ok_or_else(|| anyhow::anyhow!("No page target found on port {port}"))?;
     let ws_url = target
         .get("webSocketDebuggerUrl")
@@ -495,39 +496,9 @@ async fn ws_url_for_page_target(
     Ok((ws_url, target_url))
 }
 
-/// Pick the unique page target whose `url` contains `hint`
-/// (case-insensitive), or the first page when no hint is given. Explicit
-/// hints fail closed when zero or multiple pages match. Shared by both
-/// discovery paths (classic `/json` and
-/// `Target.getTargets`) since a browser with more than one tab open is
-/// otherwise picked non-deterministically — CDP target ids carry no
-/// relationship to the caller's `window_id`.
-fn pick_target<'a>(
-    pages: &[&'a serde_json::Value],
-    hint: Option<&str>,
-) -> Option<&'a serde_json::Value> {
-    match hint {
-        None => pages.first().copied(),
-        Some(hint) => {
-            let hint_lower = hint.to_ascii_lowercase();
-            let mut matches = pages.iter().copied().filter(|target| {
-                target
-                    .get("url")
-                    .and_then(|value| value.as_str())
-                    .is_some_and(|url| url.to_ascii_lowercase().contains(&hint_lower))
-            });
-            let target = matches.next()?;
-            if matches.next().is_some() {
-                return None;
-            }
-            Some(target)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{pick_target, CdpSessionCache};
+    use super::CdpSessionCache;
     use futures_util::{SinkExt, StreamExt};
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
@@ -537,47 +508,6 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio_tungstenite::{accept_async, tungstenite::Message};
-
-    fn pages() -> Vec<serde_json::Value> {
-        vec![
-            serde_json::json!({ "type": "page", "url": "app://fixture/#window-a" }),
-            serde_json::json!({ "type": "page", "url": "app://fixture/#window-b" }),
-        ]
-    }
-
-    #[test]
-    fn explicit_target_hint_selects_one_page() {
-        let pages = pages();
-        let refs = pages.iter().collect::<Vec<_>>();
-        assert_eq!(
-            pick_target(&refs, Some("#WINDOW-B")).and_then(|target| target["url"].as_str()),
-            Some("app://fixture/#window-b")
-        );
-    }
-
-    #[test]
-    fn explicit_target_hint_never_falls_back() {
-        let pages = pages();
-        let refs = pages.iter().collect::<Vec<_>>();
-        assert!(pick_target(&refs, Some("#missing")).is_none());
-    }
-
-    #[test]
-    fn ambiguous_target_hint_fails_closed() {
-        let pages = pages();
-        let refs = pages.iter().collect::<Vec<_>>();
-        assert!(pick_target(&refs, Some("app://fixture/")).is_none());
-    }
-
-    #[test]
-    fn omitted_target_hint_keeps_legacy_first_page_behavior() {
-        let pages = pages();
-        let refs = pages.iter().collect::<Vec<_>>();
-        assert_eq!(
-            pick_target(&refs, None).and_then(|target| target["url"].as_str()),
-            Some("app://fixture/#window-a")
-        );
-    }
 
     #[tokio::test]
     async fn targeted_evaluate_reuses_browser_websocket() {

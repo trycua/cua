@@ -1,6 +1,13 @@
 name: "E2E: Rust standalone browsers"
 
 on:
+  # Stable Cua Driver tag runs call these suites as a release gate.
+  workflow_call:
+    inputs:
+      ref:
+        description: "Full 40-character commit SHA to certify"
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       ref:

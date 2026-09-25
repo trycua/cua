@@ -51,6 +51,38 @@ pub fn png_bytes_to_jpeg(png_bytes: &[u8], quality: u8) -> Result<Vec<u8>> {
 
 // ── Downscale ─────────────────────────────────────────────────────────────
 
+/// The screenshot long-edge limits that apply to one capture.
+///
+/// Fields are named because every source is a `u32` or `Option<u32>`, and
+/// positional arguments invite swapping the per-call override with the legacy
+/// cap.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImageDimensionLimits {
+    /// The session or global `max_image_dimension` ceiling. `0` means no limit.
+    pub configured: u32,
+    /// The legacy per-call `max_dimension` cap.
+    pub legacy_max_dimension: Option<u32>,
+    /// The canonical per-call `max_image_dimension` override.
+    pub max_image_dimension: Option<u32>,
+}
+
+impl ImageDimensionLimits {
+    /// Resolve the `max_dim` to pass to [`resize_png_if_needed`].
+    ///
+    /// The canonical per-call override wins outright, including `0` for native
+    /// resolution. Without it, the legacy cap folds with the configured
+    /// ceiling: an unlimited (`0`) ceiling defers to the cap, otherwise the
+    /// tighter of the two wins. Returns `0` only when nothing imposes a limit.
+    pub fn resolve(self) -> u32 {
+        self.max_image_dimension
+            .unwrap_or(match self.legacy_max_dimension {
+                Some(cap) if self.configured == 0 => cap,
+                Some(cap) => self.configured.min(cap),
+                None => self.configured,
+            })
+    }
+}
+
 /// Downscale `png_bytes` so neither dimension exceeds `max_dim`.
 ///
 /// `max_dim == 0` is treated as "no cap"; the original bytes are
@@ -293,6 +325,37 @@ pub fn encode_bgra_to_png(bgra: &[u8], w: u32, h: u32) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_dimension_override_wins_and_legacy_cap_folds_with_ceiling() {
+        // (configured, legacy max_dimension, max_image_dimension) -> max_dim
+        for (configured, legacy, canonical, expected) in [
+            // The canonical override wins outright, including 0 = native.
+            (1568, None, Some(800), 800),
+            (800, None, Some(1568), 1568),
+            (1568, None, Some(0), 0),
+            (1568, Some(400), Some(1200), 1200),
+            (1024, Some(512), Some(2048), 2048),
+            (1024, Some(512), Some(0), 0),
+            // Without it, the tighter non-zero cap wins.
+            (1024, Some(2048), None, 1024),
+            (4096, Some(512), None, 512),
+            (800, Some(1568), None, 800),
+            (1568, Some(800), None, 800),
+            // An unlimited (0) ceiling defers to the legacy cap.
+            (0, Some(768), None, 768),
+            // No per-call limit passes the ceiling through.
+            (1600, None, None, 1600),
+            (0, None, None, 0),
+        ] {
+            let limits = ImageDimensionLimits {
+                configured,
+                legacy_max_dimension: legacy,
+                max_image_dimension: canonical,
+            };
+            assert_eq!(limits.resolve(), expected, "{limits:?}");
+        }
+    }
 
     #[test]
     fn png_dimensions_round_trip() {

@@ -71,23 +71,23 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (protocol_handshake_test) failed" }
 
     Write-Host "`n[BUILD] cargo test --no-run (harness_wpf_test)..." -ForegroundColor Yellow
-    cargo test -p cua-driver --test harness_wpf_test --no-run
+    cargo test -p cua-driver-e2e --test harness_wpf_test --no-run
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_wpf_test) failed" }
 
     Write-Host "`n[BUILD] cargo test --no-run (harness_winui3_test)..." -ForegroundColor Yellow
-    cargo test -p cua-driver --test harness_winui3_test --no-run
+    cargo test -p cua-driver-e2e --test harness_winui3_test --no-run
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_winui3_test) failed" }
 
     Write-Host "`n[BUILD] cargo test --no-run (harness_web_test)..." -ForegroundColor Yellow
-    cargo test -p cua-driver --test harness_web_test --no-run
+    cargo test -p cua-driver-e2e --test harness_web_test --no-run
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (harness_web_test) failed" }
 
     Write-Host "`n[BUILD] cargo test --no-run (launch_windows_test)..." -ForegroundColor Yellow
-    cargo test -p cua-driver --test launch_windows_test --no-run
+    cargo test -p cua-driver-e2e --test launch_windows_test --no-run
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (launch_windows_test) failed" }
 
     Write-Host "`n[BUILD] cargo test --no-run (agent_cursor_windows_test)..." -ForegroundColor Yellow
-    cargo test -p cua-driver --test agent_cursor_windows_test --no-run
+    cargo test -p cua-driver-e2e --test agent_cursor_windows_test --no-run
     if ($LASTEXITCODE -ne 0) { throw "cargo test --no-run (agent_cursor_windows_test) failed" }
 
 } finally { Pop-Location }

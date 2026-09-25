@@ -397,6 +397,12 @@ fn default_returns_tree_and_screenshot() {
                 has_image(&resp),
                 "default response is missing its screenshot"
             );
+            #[cfg(target_os = "linux")]
+            assert_eq!(
+                resp.structured()["screenshot_frame_valid"],
+                true,
+                "a delivered Linux window screenshot must identify its frame as valid"
+            );
         },
     );
 }

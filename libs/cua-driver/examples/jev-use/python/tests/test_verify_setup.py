@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from verify_setup import BASE, fixture, runner_command, verify
+from verify_setup import BASE, acted_path, fixture, runner_command, verify
 
 
 CHILD = """
@@ -99,6 +99,89 @@ class VerifySetupTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('TYPESAFE_API_KEY', result.stderr)
             self.assertFalse(output.exists())
+
+
+    def write_log(self, directory, events):
+        log = Path(directory) / 'run.jsonl'
+        log.write_text(''.join(json.dumps(event) + '\n' for event in events))
+        return log
+
+    def submit_step(self, tool, status):
+        visual = {'status': status}
+        if status == 'ok':
+            visual.update(capture_id='capture-1', region_count=3)
+        return {'event': 'step', 'step': 2, 'candidate': 'submit-form', 'tool': tool, 'visual': visual}
+
+    def test_acted_path_reports_dom_and_visual_submissions(self):
+        type_step = {'event': 'step', 'step': 1, 'candidate': 'type-verification-value',
+                     'tool': 'browser_type', 'visual': {'status': 'not_installed', 'error_code': 'not_installed'}}
+        self.assertEqual(
+            acted_path([type_step, self.submit_step('browser_click', 'not_installed')]),
+            {'submit_tool': 'browser_click', 'acted_path': 'page_structure',
+             'visual_statuses': ['not_installed', 'not_installed']},
+        )
+        self.assertEqual(
+            acted_path([type_step, self.submit_step('click', 'ok')])['acted_path'], 'visual'
+        )
+        self.assertEqual(acted_path([type_step])['acted_path'], None)
+
+    def replay(self, events, *, submit=True, code='0', **options):
+        """Run a child that replays a JSONL log and optionally submits the token."""
+        child = (
+            "import sys\n"
+            "from pathlib import Path\n"
+            "from urllib.parse import urlencode\n"
+            "from urllib.request import Request, urlopen\n"
+            "url, source, log, submit, code = sys.argv[1:]\n"
+            "if submit == '1':\n"
+            "    urlopen(Request(url + 'submit', data=urlencode({'value': 'proof'}).encode()), timeout=2).close()\n"
+            "Path(log).write_text(Path(source).read_text())\n"
+            "raise SystemExit(int(code))\n"
+        )
+        with tempfile.TemporaryDirectory() as directory, \
+                fixture(visual=options.get('visual_fixture', False)) as url:
+            source = self.write_log(directory, events)
+            log = Path(directory) / 'out.jsonl'
+            command = [sys.executable, '-c', child, url, str(source), str(log), '1' if submit else '0', code]
+            return verify(command, url, 'proof', log, **options)
+
+    def verified(self, tool, status):
+        return [self.submit_step(tool, status), {'event': 'outcome', 'outcome': 'verified', 'token': 'proof'}]
+
+    def test_reports_page_structure_path(self):
+        result = self.replay(self.verified('browser_click', 'not_installed'))
+        self.assertEqual(result['acted_path'], 'page_structure')
+        self.assertEqual(result['submit_tool'], 'browser_click')
+
+    def test_required_visual_path_fails_when_dom_click_acted(self):
+        with self.assertRaisesRegex(RuntimeError, 'Visual path was required.*browser_click'):
+            self.replay(self.verified('browser_click', 'ok'), require_visual=True)
+
+    def test_required_visual_path_accepts_capture_bound_click(self):
+        result = self.replay(self.verified('click', 'ok'), require_visual=True, visual_fixture=True)
+        self.assertEqual(result['acted_path'], 'visual')
+        self.assertEqual(result['visual_statuses'], ['ok'])
+
+    def test_expected_visual_status_must_be_logged_on_every_step(self):
+        with self.assertRaisesRegex(RuntimeError, "visual status 'not_installed'"):
+            self.replay(self.verified('browser_click', 'error'), expect_visual_status='not_installed')
+
+    def test_visual_fixture_fallback_is_observable_and_never_claims_success(self):
+        events = [
+            {'event': 'step', 'step': 1, 'candidate': 'type-verification-value', 'tool': 'browser_type',
+             'visual': {'status': 'not_installed', 'error_code': 'not_installed'}},
+            {'event': 'step', 'step': 2, 'candidate': 'reobserve', 'tool': None,
+             'visual': {'status': 'not_installed', 'error_code': 'not_installed'}},
+            {'event': 'outcome', 'outcome': 'budget_exhausted', 'token': 'proof'},
+        ]
+        result = self.replay(events, submit=False, code='1', visual_fixture=True,
+                             expect_visual_status='not_installed')
+        self.assertEqual(result['outcome'], 'budget_exhausted')
+        self.assertIsNone(result['acted_path'])
+        self.assertEqual(result['observed'], {'submitted': None})
+        with self.assertRaisesRegex(RuntimeError, 'unexpected submission'):
+            self.replay(events, submit=True, code='1', visual_fixture=True,
+                        expect_visual_status='not_installed')
 
 
 if __name__ == '__main__':

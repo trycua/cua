@@ -39,5 +39,35 @@ class FixtureServerTest(unittest.TestCase):
             self.assertEqual(json.loads(response.read()), {"submitted": None})
 
 
+    def test_default_page_keeps_the_dom_submit_button(self) -> None:
+        with self.request("/") as response:
+            page = response.read().decode()
+        self.assertIn('<button type="submit">Submit</button>', page)
+
+
+class VisualFixtureServerTest(unittest.TestCase):
+    def test_visual_page_has_no_submit_button_and_still_submits(self) -> None:
+        server = FixtureServer(("127.0.0.1", 0), visual=True)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{server.server_port}"
+            with urlopen(f"{url}/", timeout=2) as response:
+                page = response.read().decode()
+            self.assertNotIn("<button", page)
+            self.assertIn('role="presentation"', page)
+            self.assertIn("requestSubmit()", page)
+            self.assertIn('aria-label="verification value"', page)
+            data = urlencode({"value": "proof"}).encode()
+            with urlopen(Request(f"{url}/submit", method="POST", data=data), timeout=2):
+                pass
+            with urlopen(f"{url}/state", timeout=2) as response:
+                self.assertEqual(json.loads(response.read()), {"submitted": "proof"})
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+
 if __name__ == "__main__":
     unittest.main()

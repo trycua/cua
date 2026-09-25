@@ -13,6 +13,8 @@ import {
 } from './core.js';
 import {
   Driver,
+  DriverToolError,
+  observeVisual,
   optionalVisualObservation,
   selectTabId,
   supportsCaptureBoundClick,
@@ -101,6 +103,30 @@ test('visual fixture builds a candidate without claiming interactivity', () => {
     capture_id: 'capture-submit',
     delivery_mode: 'background',
   });
+});
+
+test('submit path depends on the DOM button ref', () => {
+  const visual = parseVisualRegions(
+    fixture('parse-visual-regions-submit-v1.json'),
+    'capture-submit',
+    7,
+    9
+  );
+  const withRef = buildCandidates(snapshot('expected'), 'expected', visual, true);
+  assert.equal(withRef[0].id, 'submit-form');
+  assert.equal(withRef[0].tool, 'browser_click');
+  assert.equal(withRef[0].captureId, undefined);
+
+  const page = snapshot('expected');
+  page.refs = page.refs.slice(0, 1);
+  const withoutRef = buildCandidates(page, 'expected', visual, true);
+  assert.equal(withoutRef[0].id, 'submit-form');
+  assert.equal(withoutRef[0].tool, 'click');
+  assert.equal(withoutRef[0].captureId, 'capture-submit');
+  assert.deepEqual(
+    buildCandidates(page, 'expected', undefined, true).map((candidate) => candidate.id),
+    ['reobserve', 'abstain']
+  );
 });
 
 test('ambiguous visual regions offer only reobserve and abstain', () => {
@@ -341,6 +367,108 @@ test('visual tool is optional and uses the public contract when advertised', asy
       },
     },
   ]);
+});
+
+test('visual status is logged for ok, not_installed, and error', async () => {
+  const tools = new Set(['get_window_state', 'parse_visual_regions', 'click']);
+  const payload = fixture('parse-visual-regions-submit-v1.json');
+  function scripted(parseResult: unknown) {
+    const calls: string[] = [];
+    const client = {
+      callTool: async (request: { name: string }) => {
+        calls.push(request.name);
+        if (request.name === 'get_window_state') {
+          return { isError: false, structuredContent: { capture_id: 'capture-submit' } };
+        }
+        return parseResult;
+      },
+    };
+    return { driver: new Driver(client as never, 'jev-test'), calls };
+  }
+
+  const ok = await observeVisual(
+    scripted({ isError: false, structuredContent: payload }).driver,
+    7,
+    9,
+    tools,
+    true
+  );
+  assert.equal(ok.visual?.captureId, 'capture-submit');
+  assert.deepEqual(ok.status, {
+    status: 'ok',
+    capture_id: 'capture-submit',
+    region_count: ok.visual?.regions.length,
+  });
+
+  const notInstalled = await observeVisual(
+    scripted({ isError: true, structuredContent: { code: 'not_installed' }, content: [] }).driver,
+    7,
+    9,
+    tools,
+    true
+  );
+  assert.equal(notInstalled.visual, undefined);
+  assert.deepEqual(notInstalled.status, { status: 'not_installed', error_code: 'not_installed' });
+
+  const workerFailed = await observeVisual(
+    scripted({ isError: true, structuredContent: { code: 'worker_failed' }, content: [] }).driver,
+    7,
+    9,
+    tools,
+    true
+  );
+  assert.deepEqual(workerFailed.status, { status: 'error', error_code: 'worker_failed' });
+
+  const stalePayload = structuredClone(payload);
+  stalePayload.capture.capture_id = 'older-capture';
+  const stale = await observeVisual(
+    scripted({ isError: false, structuredContent: stalePayload }).driver,
+    7,
+    9,
+    tools,
+    true
+  );
+  assert.equal(stale.visual, undefined);
+  assert.deepEqual(stale.status, { status: 'error', error_code: 'capture_mismatch' });
+
+  const malformed = await observeVisual(
+    scripted({ isError: false, structuredContent: { ...payload, regions: 'bad' } }).driver,
+    7,
+    9,
+    tools,
+    true
+  );
+  assert.deepEqual(malformed.status, { status: 'error', error_code: 'invalid_visual_result' });
+
+  const uncoded = await observeVisual(
+    scripted({ isError: true, content: [] }).driver,
+    7,
+    9,
+    tools,
+    true
+  );
+  assert.deepEqual(uncoded.status, { status: 'error', error_code: 'driver_error' });
+
+  const idle = scripted({ isError: false, structuredContent: payload });
+  assert.deepEqual((await observeVisual(idle.driver, 7, 9, new Set(['click']), true)).status, {
+    status: 'unavailable',
+    error_code: 'tool_not_advertised',
+  });
+  assert.deepEqual((await observeVisual(idle.driver, 7, 9, tools, false)).status, {
+    status: 'unavailable',
+    error_code: 'capture_bound_click_unsupported',
+  });
+  assert.deepEqual(idle.calls, []);
+});
+
+test('driver errors carry the structured error code', async () => {
+  const client = {
+    callTool: async () => ({ isError: true, structuredContent: { code: 'not_installed' }, content: [] }),
+  };
+  await assert.rejects(
+    () => new Driver(client as never, 'jev-test').call('parse_visual_regions', {}),
+    (error: unknown) => error instanceof DriverToolError && error.code === 'not_installed'
+  );
 });
 
 test('capture-bound click requires capture_id in the advertised schema', () => {

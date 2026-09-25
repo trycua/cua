@@ -89,6 +89,32 @@ class CoreTest(unittest.TestCase):
             },
         )
 
+    def test_submit_path_depends_on_the_dom_button_ref(self) -> None:
+        payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
+        visual = parse_visual_regions(
+            payload,
+            expected_capture_id="capture-submit",
+            expected_pid=7,
+            expected_window_id=9,
+        )
+        with_ref = build_candidates(
+            self.snapshot("expected"), "expected", visual, capture_bound_click=True
+        )
+        self.assertEqual(with_ref[0].id, "submit-form")
+        self.assertEqual(with_ref[0].tool, "browser_click")
+        self.assertIsNone(with_ref[0].capture_id)
+
+        page = self.snapshot("expected")
+        page["refs"] = page["refs"][:1]
+        without_ref = build_candidates(page, "expected", visual, capture_bound_click=True)
+        self.assertEqual(without_ref[0].id, "submit-form")
+        self.assertEqual(without_ref[0].tool, "click")
+        self.assertEqual(without_ref[0].capture_id, "capture-submit")
+        self.assertEqual(
+            [candidate.id for candidate in build_candidates(page, "expected", None, capture_bound_click=True)],
+            ["reobserve", "abstain"],
+        )
+
     def test_visual_ambiguity_offers_only_reserved_candidates(self) -> None:
         payload = json.loads((FIXTURES / "parse-visual-regions-ambiguous-v1.json").read_text())
         for region in payload["regions"]:

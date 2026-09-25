@@ -62,7 +62,9 @@ class VisualObservation:
 
 
 class VisualObservationError(ValueError):
-    pass
+    def __init__(self, message: str, code: str = "invalid_visual_result") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def _nonempty(value: Any) -> str:
@@ -94,7 +96,9 @@ def parse_visual_regions(
         raise VisualObservationError("unsupported visual region schema")
     capture = payload.get("capture")
     if not isinstance(capture, dict) or capture.get("capture_id") != expected_capture_id:
-        raise VisualObservationError("visual result is stale or capture-mismatched")
+        raise VisualObservationError(
+            "visual result is stale or capture-mismatched", code="capture_mismatch"
+        )
     source = capture.get("source")
     if (
         not isinstance(source, dict)
@@ -102,7 +106,9 @@ def parse_visual_regions(
         or source.get("pid") != expected_pid
         or source.get("window_id") != expected_window_id
     ):
-        raise VisualObservationError("visual result has a mismatched window target")
+        raise VisualObservationError(
+            "visual result has a mismatched window target", code="capture_mismatch"
+        )
     screenshot = capture.get("screenshot")
     if not isinstance(screenshot, dict) or screenshot.get("mime_type") != "image/png":
         raise VisualObservationError("visual result has invalid screenshot provenance")

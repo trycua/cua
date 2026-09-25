@@ -13,6 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core import build_candidates, validate_choice
 from run import (
     Driver,
+    DriverToolError,
+    observe_visual,
     optional_visual_observation,
     select_tab_id,
     supports_capture_bound_click,
@@ -92,6 +94,97 @@ class DriverAdapterTest(unittest.IsolatedAsyncioTestCase):
                 )
             ],
         )
+
+    async def test_visual_status_is_logged_for_ok_not_installed_and_error(self) -> None:
+        tools = {"get_window_state", "parse_visual_regions", "click"}
+        payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
+
+        class ScriptedSession(FakeSession):
+            def __init__(self, parse_result) -> None:
+                super().__init__()
+                self.parse_result = parse_result
+
+            async def call_tool(self, name, arguments):
+                self.calls.append((name, arguments))
+                if name == "get_window_state":
+                    return SimpleNamespace(
+                        isError=False, structuredContent={"capture_id": "capture-submit"}
+                    )
+                return self.parse_result
+
+        ok = SimpleNamespace(isError=False, structuredContent=payload)
+        visual, status = await observe_visual(
+            Driver(ScriptedSession(ok), "jev-test"), 7, 9, tools, True
+        )
+        self.assertEqual(visual.capture_id, "capture-submit")
+        self.assertEqual(
+            status,
+            {"status": "ok", "capture_id": "capture-submit", "region_count": len(visual.regions)},
+        )
+
+        not_installed = SimpleNamespace(
+            isError=True,
+            structuredContent={"code": "not_installed", "message": "extension missing"},
+            content=[{"text": "not installed"}],
+        )
+        visual, status = await observe_visual(
+            Driver(ScriptedSession(not_installed), "jev-test"), 7, 9, tools, True
+        )
+        self.assertIsNone(visual)
+        self.assertEqual(status, {"status": "not_installed", "error_code": "not_installed"})
+
+        worker_failed = SimpleNamespace(
+            isError=True,
+            structuredContent={"code": "worker_failed"},
+            content=[{"text": "worker crashed"}],
+        )
+        visual, status = await observe_visual(
+            Driver(ScriptedSession(worker_failed), "jev-test"), 7, 9, tools, True
+        )
+        self.assertIsNone(visual)
+        self.assertEqual(status, {"status": "error", "error_code": "worker_failed"})
+
+        stale = json.loads(json.dumps(payload))
+        stale["capture"]["capture_id"] = "older-capture"
+        visual, status = await observe_visual(
+            Driver(
+                ScriptedSession(SimpleNamespace(isError=False, structuredContent=stale)),
+                "jev-test",
+            ),
+            7,
+            9,
+            tools,
+            True,
+        )
+        self.assertIsNone(visual)
+        self.assertEqual(status, {"status": "error", "error_code": "capture_mismatch"})
+
+        uncoded = SimpleNamespace(isError=True, structuredContent=None, content=[])
+        _, status = await observe_visual(
+            Driver(ScriptedSession(uncoded), "jev-test"), 7, 9, tools, True
+        )
+        self.assertEqual(status, {"status": "error", "error_code": "driver_error"})
+
+        session = FakeSession()
+        _, status = await observe_visual(Driver(session, "jev-test"), 7, 9, {"click"}, True)
+        self.assertEqual(status, {"status": "unavailable", "error_code": "tool_not_advertised"})
+        _, status = await observe_visual(Driver(session, "jev-test"), 7, 9, tools, False)
+        self.assertEqual(
+            status,
+            {"status": "unavailable", "error_code": "capture_bound_click_unsupported"},
+        )
+        self.assertEqual(session.calls, [])
+
+    async def test_driver_error_carries_the_structured_error_code(self) -> None:
+        class FailingSession(FakeSession):
+            async def call_tool(self, name, arguments):
+                return SimpleNamespace(
+                    isError=True, structuredContent={"code": "not_installed"}, content=[]
+                )
+
+        with self.assertRaises(DriverToolError) as raised:
+            await Driver(FailingSession(), "jev-test").call("parse_visual_regions", {})
+        self.assertEqual(raised.exception.code, "not_installed")
 
     def test_capture_bound_click_requires_advertised_capture_id_schema(self) -> None:
         self.assertFalse(

@@ -223,6 +223,11 @@ jobs:
           cd libs/cua-driver/examples/jev-use
           uv run python verify_mcp_tools.py
           uv run --frozen python verify_setup.py --typescript --output-dir "$proof"
+          # Visual-path fixture: Submit has no DOM button ref. Without the
+          # cua-perception extension, both runners must log not_installed on
+          # every step, fall back to the page-structure path, and never submit.
+          uv run --frozen python verify_setup.py --typescript --visual-fixture \
+            --expect-visual-status not_installed --output-dir "$proof/visual-fixture"
           SH
           # This focused recipe E2E reuses the repository's supported X11 stack.
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
@@ -241,8 +246,22 @@ jobs:
               ("python", "mock", "verified"), ("typescript", "mock", "verified")
           }
           assert all(item["observed"] == {"submitted": "jev-guide-mock"} for item in summary["checks"])
+          assert all(item["acted_path"] == "page_structure" for item in summary["checks"])
+          assert all(item["submit_tool"] == "browser_click" for item in summary["checks"])
+          assert all(item["visual_statuses"] for item in summary["checks"])
+          visual = json.loads((root / "visual-fixture" / "summary.json").read_text())
+          assert visual["complete"] is True
+          assert visual["fixture"] == "visual"
+          assert visual["expected_visual_status"] == "not_installed"
+          assert {(item["language"], item["outcome"]) for item in visual["checks"]} == {
+              ("python", "budget_exhausted"), ("typescript", "budget_exhausted")
+          }
+          for item in visual["checks"]:
+              assert item["acted_path"] is None and item["submit_tool"] is None
+              assert item["observed"] == {"submitted": None}
+              assert item["visual_statuses"] and set(item["visual_statuses"]) == {"not_installed"}
           forbidden = ("typesafe_api_key", "authorization", "environment", "image_base64", "screenshot")
-          for path in root.iterdir():
+          for path in [*root.iterdir(), *(root / "visual-fixture").iterdir()]:
               if path.name == "summary.json" or path.suffix == ".jsonl":
                   text = path.read_text().lower()
                   assert not any(value in text for value in forbidden), path
@@ -255,5 +274,7 @@ jobs:
           path: |
             ${{ runner.temp }}/jev-use-mock-proof/summary.json
             ${{ runner.temp }}/jev-use-mock-proof/*.jsonl
+            ${{ runner.temp }}/jev-use-mock-proof/visual-fixture/summary.json
+            ${{ runner.temp }}/jev-use-mock-proof/visual-fixture/*.jsonl
           if-no-files-found: error
           retention-days: 14

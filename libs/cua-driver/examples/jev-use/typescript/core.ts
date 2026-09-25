@@ -52,6 +52,16 @@ export type VisualObservation = Readonly<{
   regions: readonly VisualRegion[];
 }>;
 
+export class VisualObservationError extends Error {
+  constructor(
+    message: string,
+    readonly code: string = 'invalid_visual_result'
+  ) {
+    super(message);
+    this.name = 'VisualObservationError';
+  }
+}
+
 function record(value: unknown, message: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(message);
   return value as Record<string, unknown>;
@@ -92,7 +102,10 @@ export function parseVisualRegions(
   if (root.schema !== 'cua.visual_regions_v1') throw new Error('unsupported visual region schema');
   const capture = record(root.capture, 'visual result has no capture provenance');
   if (capture.capture_id !== expectedCaptureId) {
-    throw new Error('visual result is stale or capture-mismatched');
+    throw new VisualObservationError(
+      'visual result is stale or capture-mismatched',
+      'capture_mismatch'
+    );
   }
   const source = record(capture.source, 'visual result has no capture source');
   if (
@@ -100,7 +113,10 @@ export function parseVisualRegions(
     source.pid !== expectedPid ||
     source.window_id !== expectedWindowId
   ) {
-    throw new Error('visual result has a mismatched window target');
+    throw new VisualObservationError(
+      'visual result has a mismatched window target',
+      'capture_mismatch'
+    );
   }
   const screenshot = record(capture.screenshot, 'visual result has no screenshot provenance');
   if (screenshot.mime_type !== 'image/png') {

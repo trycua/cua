@@ -62,6 +62,14 @@ def reset_fixture(fixture_url: str) -> None:
             raise RuntimeError(f"fixture reset failed: HTTP {response.status}")
 
 
+class DriverToolError(RuntimeError):
+    """A Driver tool returned an error result, optionally with a stable error code."""
+
+    def __init__(self, message: str, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class Driver:
     def __init__(self, session: ClientSession, label: str) -> None:
         self.session = session
@@ -70,7 +78,12 @@ class Driver:
     async def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         result = await self.session.call_tool(name, {**arguments, "session": self.label})
         if result.isError:
-            raise RuntimeError(f"{name} failed: {result.content}")
+            structured = getattr(result, "structuredContent", None)
+            code = structured.get("code") if isinstance(structured, dict) else None
+            raise DriverToolError(
+                f"{name} failed: {getattr(result, 'content', None)}",
+                code if isinstance(code, str) and code else None,
+            )
         data = result.structuredContent
         if not isinstance(data, dict):
             raise RuntimeError(f"{name} returned no structured result")
@@ -91,17 +104,41 @@ def supports_capture_bound_click(tools: list[Any]) -> bool:
     return False
 
 
-async def optional_visual_observation(
+def visual_status(
+    status: str,
+    *,
+    error_code: str | None = None,
+    visual: VisualObservation | None = None,
+) -> dict[str, Any]:
+    """Build the redacted per-step visual record written to the JSONL log.
+
+    It never contains screenshots, screenshot references, region text, or secrets.
+    """
+    record: dict[str, Any] = {"status": status}
+    if error_code:
+        record["error_code"] = error_code
+    if visual is not None:
+        record["capture_id"] = visual.capture_id
+        record["region_count"] = len(visual.regions)
+    return record
+
+
+async def observe_visual(
     driver: Driver,
     pid: int,
     window_id: int,
     available_tools: set[str],
     capture_bound_click: bool,
-) -> VisualObservation | None:
-    if not capture_bound_click or not {"get_window_state", "parse_visual_regions"}.issubset(
-        available_tools
-    ):
-        return None
+) -> tuple[VisualObservation | None, dict[str, Any]]:
+    """Take an optional visual observation and report what happened.
+
+    Failures never stop the run: the caller continues on the page-structure path,
+    but the returned status makes the fallback observable.
+    """
+    if not capture_bound_click:
+        return None, visual_status("unavailable", error_code="capture_bound_click_unsupported")
+    if not {"get_window_state", "parse_visual_regions"}.issubset(available_tools):
+        return None, visual_status("unavailable", error_code="tool_not_advertised")
     try:
         capture = await driver.call(
             "get_window_state",
@@ -113,7 +150,7 @@ async def optional_visual_observation(
         )
         capture_id = capture.get("capture_id")
         if not isinstance(capture_id, str):
-            return None
+            return None, visual_status("error", error_code="capture_missing")
         result = await driver.call(
             "parse_visual_regions",
             {
@@ -121,14 +158,34 @@ async def optional_visual_observation(
                 "options": {"kinds": ["text", "icon"], "min_confidence": 0.8, "max_regions": 100},
             },
         )
-        return parse_visual_regions(
+        visual = parse_visual_regions(
             result,
             expected_capture_id=capture_id,
             expected_pid=pid,
             expected_window_id=window_id,
         )
-    except (RuntimeError, VisualObservationError, KeyError, TypeError):
-        return None
+    except DriverToolError as error:
+        if error.code == "not_installed":
+            return None, visual_status("not_installed", error_code="not_installed")
+        return None, visual_status("error", error_code=error.code or "driver_error")
+    except VisualObservationError as error:
+        return None, visual_status("error", error_code=error.code)
+    except (RuntimeError, KeyError, TypeError):
+        return None, visual_status("error", error_code="driver_error")
+    return visual, visual_status("ok", visual=visual)
+
+
+async def optional_visual_observation(
+    driver: Driver,
+    pid: int,
+    window_id: int,
+    available_tools: set[str],
+    capture_bound_click: bool,
+) -> VisualObservation | None:
+    visual, _ = await observe_visual(
+        driver, pid, window_id, available_tools, capture_bound_click
+    )
+    return visual
 
 
 async def wait_for_window(driver: Driver, pid: int) -> dict[str, Any]:
@@ -203,7 +260,7 @@ async def run(args: argparse.Namespace) -> str:
                         "snapshot_format": "semantic_v2",
                     },
                 )
-                visual = await optional_visual_observation(
+                visual, visual_record = await observe_visual(
                     driver,
                     pid,
                     int(window["window_id"]),
@@ -217,7 +274,10 @@ async def run(args: argparse.Namespace) -> str:
                     capture_bound_click=capture_bound_click,
                 )
                 if not candidates:
-                    write_event(log_path, {"event": "outcome", "outcome": "abstained", "step": step})
+                    write_event(
+                        log_path,
+                        {"event": "outcome", "outcome": "abstained", "step": step, "visual": visual_record},
+                    )
                     return "abstained"
 
                 if args.provider == "mock":
@@ -247,6 +307,8 @@ async def run(args: argparse.Namespace) -> str:
                         "decision_ms": decision_ms,
                         "action_ms": 0.0,
                         "dry_run": args.dry_run,
+                        "tool": None,
+                        "visual": visual_record,
                     }
                     history.append(event)
                     write_event(log_path, event)
@@ -261,6 +323,7 @@ async def run(args: argparse.Namespace) -> str:
                             "step": step,
                             "confidence": confidence,
                             "probabilities": probabilities,
+                            "visual": visual_record,
                         },
                     )
                     return "abstained"
@@ -279,6 +342,8 @@ async def run(args: argparse.Namespace) -> str:
                                 "step": step,
                                 "phase": "action",
                                 "error": type(error).__name__,
+                                "tool": candidate.tool,
+                                "visual": visual_record,
                             },
                         )
                         return "unknown"
@@ -294,6 +359,8 @@ async def run(args: argparse.Namespace) -> str:
                     "decision_ms": decision_ms,
                     "action_ms": action_ms,
                     "dry_run": args.dry_run,
+                    "tool": candidate.tool,
+                    "visual": visual_record,
                 }
                 history.append(event)
                 write_event(log_path, event)

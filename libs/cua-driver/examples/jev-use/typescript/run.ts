@@ -14,6 +14,7 @@ import {
   type Outcome,
   type VisualObservation,
 } from './core.js';
+import { driverEnvironment } from './driver_env.js';
 import { chooseLive, chooseMockAdapter } from './jev_adapter.js';
 
 type Arguments = {
@@ -170,6 +171,7 @@ async function run(args: Arguments): Promise<Outcome> {
   const transport = new StdioClientTransport({
     command: process.env.CUA_DRIVER_BIN ?? 'cua-driver',
     args: ['mcp'],
+    env: driverEnvironment(),
   });
   const client = new Client({ name: 'cua-driver-jev-use-example', version: '0.1.0' });
   const history: Record<string, unknown>[] = [];

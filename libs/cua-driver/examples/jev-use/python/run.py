@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from driver_env import driver_environment
 from core import (
     VisualObservation,
     VisualObservationError,
@@ -160,7 +161,9 @@ async def run(args: argparse.Namespace) -> str:
         log_path.write_text("", encoding="utf-8")
     reset_fixture(args.fixture_url)
 
-    params = StdioServerParameters(command=os.getenv("CUA_DRIVER_BIN", "cua-driver"), args=["mcp"])
+    params = StdioServerParameters(
+        command=os.getenv("CUA_DRIVER_BIN", "cua-driver"), args=["mcp"], env=driver_environment()
+    )
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()

@@ -477,13 +477,50 @@ def spdx_id(value: str) -> str:
     return "SPDXRef-" + re.sub(r"[^A-Za-z0-9.-]", "-", value)
 
 
+# Cua-authored ledger documents copied to the archive root beside the artifacts.
+STAGED_LEDGERS = {"modelLedger": "modelLedger.json", "sourceLedger": "sourceLedger.json"}
+CUA_METADATA_LICENSE = "MIT"
+
+
 def generated_documents(
-    manifest: Mapping[str, Any], executed_evidence: Mapping[str, Any]
+    manifest: Mapping[str, Any], executed_evidence: Mapping[str, Any], payload_root: Path
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     artifacts = sorted(manifest["artifacts"], key=lambda item: (item["kind"], item["name"]))
     namespace_seed = sha256(
         f"{manifest['sourceSha']}:{manifest['target']['triple']}:{manifest['version']}".encode()
     ).hexdigest()
+    # SBOM file entries use the exact archive paths produced by package_candidate.
+    # extension.json and metadata/* are deliberately absent: they are generated after
+    # (or contain) this SBOM, so describing them here would be circular. extension.json
+    # binds every other staged file, including metadata/sbom.spdx.json, by SHA-256.
+    sbom_files = [
+        {
+            "fileName": f"./{staged_artifact_path(item).as_posix()}",
+            "SPDXID": spdx_id(f"File-{item['kind']}-{item['name']}"),
+            "checksums": [{"algorithm": "SHA256", "checksumValue": item["sha256"]}],
+            "licenseConcluded": item["license"]["spdx"],
+            "licenseInfoInFiles": [item["license"]["spdx"]],
+            "copyrightText": "NOASSERTION",
+        }
+        for item in artifacts
+    ]
+    for field, staged_name in STAGED_LEDGERS.items():
+        if not manifest.get(field):
+            continue
+        sbom_files.append({
+            "fileName": f"./{staged_name}",
+            "SPDXID": spdx_id(f"File-ledger-{staged_name}"),
+            "checksums": [{
+                "algorithm": "SHA256",
+                "checksumValue": file_digest(confined_file(payload_root, str(manifest[field]))),
+            }],
+            "licenseConcluded": CUA_METADATA_LICENSE,
+            "licenseInfoInFiles": [CUA_METADATA_LICENSE],
+            "copyrightText": "NOASSERTION",
+        })
+    package_license = " AND ".join(
+        sorted({entry["licenseConcluded"] for entry in sbom_files})
+    )
     sbom = {
         "spdxVersion": "SPDX-2.3",
         "dataLicense": "CC0-1.0",
@@ -498,29 +535,19 @@ def generated_documents(
                 "versionInfo": manifest["version"],
                 "downloadLocation": "NOASSERTION",
                 "filesAnalyzed": True,
-                "licenseConcluded": "NOASSERTION",
-                "licenseDeclared": "NOASSERTION",
+                "licenseConcluded": package_license,
+                "licenseDeclared": package_license,
                 "copyrightText": "NOASSERTION",
             }
         ],
-        "files": [
-            {
-                "fileName": f"./{KIND_DIRECTORIES[item['kind']]}/{item['name']}",
-                "SPDXID": spdx_id(f"File-{item['kind']}-{item['name']}"),
-                "checksums": [{"algorithm": "SHA256", "checksumValue": item["sha256"]}],
-                "licenseConcluded": item["license"]["spdx"],
-                "licenseInfoInFiles": [item["license"]["spdx"]],
-                "copyrightText": "NOASSERTION",
-            }
-            for item in artifacts
-        ],
+        "files": sbom_files,
         "relationships": [
             {
                 "spdxElementId": "SPDXRef-Package-cua-perception",
                 "relationshipType": "CONTAINS",
-                "relatedSpdxElement": spdx_id(f"File-{item['kind']}-{item['name']}"),
+                "relatedSpdxElement": entry["SPDXID"],
             }
-            for item in artifacts
+            for entry in sbom_files
         ],
     }
     provenance = {
@@ -588,14 +615,15 @@ def extension_manifest(stage: Path, manifest: Mapping[str, Any], payload_root: P
             "conversion_sha256": item["sha256"],
             "license_file": notice_bindings[item["license"]["notice"]],
         })
+    identities = component_identities(manifest, payload_root, model_entries)
     components = [
         {
             "name": item["name"],
-            "version": manifest["version"],
+            "version": identities[item["name"]][0],
             "license": item["license"]["spdx"],
             "notice": f"notices/{Path(item['license']['notice']).name}",
             "source_uri": item["license"]["source"],
-            "source_revision": manifest["sourceSha"],
+            "source_revision": identities[item["name"]][1],
             "notice_file": notice_bindings[item["license"]["notice"]],
         }
         for item in artifacts
@@ -632,6 +660,63 @@ def extension_manifest(stage: Path, manifest: Mapping[str, Any], payload_root: P
             "--extension-version", manifest["version"],
         ],
     }
+
+
+def component_identities(
+    manifest: Mapping[str, Any],
+    payload_root: Path,
+    model_entries: Mapping[str, Mapping[str, Any]],
+) -> dict[str, tuple[str, str]]:
+    """Return (version, source_revision) for each non-notice component.
+
+    Third-party components report their upstream identity; Cua-built items keep the
+    extension version and the Cua source commit.
+    """
+    artifacts = manifest["artifacts"]
+    cua_identity = (manifest["version"], manifest["sourceSha"])
+    source_ledger = read_json(confined_file(payload_root, str(manifest["sourceLedger"])))
+    source_entries = {entry["artifact"]: entry for entry in source_ledger["sources"]}
+    cua_source = corresponding_source_artifact(manifest)["name"]
+    identities: dict[str, tuple[str, str]] = {}
+    for item in artifacts:
+        kind = item["kind"]
+        if kind == "notice":
+            continue
+        if kind == "model":
+            revision = str(model_entries[item["name"]]["revision"])
+            identities[item["name"]] = (revision, revision)
+        elif kind == "dictionary":
+            repository = item["license"]["source"]
+            revisions = {
+                str(model_entries[model["name"]]["revision"])
+                for model in artifacts
+                if model["kind"] == "model" and model["license"]["source"] == repository
+            }
+            if len(revisions) != 1:
+                raise CandidateError(
+                    f"dictionary {item['name']} must share exactly one model revision from "
+                    f"{repository}; found {sorted(revisions)}"
+                )
+            revision = revisions.pop()
+            identities[item["name"]] = (revision, revision)
+        elif kind == "runtime":
+            model_manifest = next(entry for entry in artifacts if entry["kind"] == "model-manifest")
+            document = read_json(confined_file(payload_root, model_manifest["path"]))
+            version = str(document.get("onnx_runtime", {}).get("version", "")).strip()
+            if not version:
+                raise CandidateError("model-manifest.json does not declare onnx_runtime.version")
+            identities[item["name"]] = (version, f"v{version}")
+        elif kind == "source" and item["name"] != cua_source:
+            entry = source_entries.get(item["name"])
+            revision = str(entry.get("revision", "")).strip() if entry else ""
+            if not revision:
+                raise CandidateError(f"source ledger lacks a revision for {item['name']}")
+            identities[item["name"]] = (revision, revision)
+        else:
+            # worker, model-manifest, the Cua source archive, supplied verification
+            # reports, review recordings, and other Cua-authored items.
+            identities[item["name"]] = cua_identity
+    return identities
 
 
 def validate_extension_manifest_bindings(extension: Mapping[str, Any]) -> None:
@@ -799,11 +884,11 @@ def package_candidate(
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(confined_file(payload_root, item["path"]), destination)
             destination.chmod(0o755 if item["kind"] in {"worker", "runtime"} else 0o644)
-        for field in ("modelLedger", "sourceLedger"):
-            if field in manifest:
-                shutil.copyfile(confined_file(payload_root, manifest[field]), stage / f"{field}.json")
+        for field, staged_name in STAGED_LEDGERS.items():
+            if manifest.get(field):
+                shutil.copyfile(confined_file(payload_root, manifest[field]), stage / staged_name)
 
-        sbom, provenance = generated_documents(manifest, executed_evidence)
+        sbom, provenance = generated_documents(manifest, executed_evidence, payload_root)
         runtime = runtime_contract(manifest)
         canonical_json(stage / "metadata/artifact-manifest.json", manifest)
         canonical_json(stage / "metadata/sbom.spdx.json", sbom)

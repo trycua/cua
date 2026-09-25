@@ -59,9 +59,17 @@ jobs:
       matrix:
         include:
           - name: compositor build
-            attribute: cua-compositor-build
+            attributes: cua-compositor-build
           - name: Rust unit tests
-            attribute: cua-driver-linux-rust-unit
+            attributes: cua-driver-linux-rust-unit
+          # Both policy VMs boot the cua-driver package derivation. Building
+          # them in the same job as the package compiles the workspace once
+          # and reuses it from the local store, instead of once per job.
+          - name: driver package and policy VMs
+            attributes: >-
+              cua-driver-build
+              cua-driver-policy-yaml
+              cua-driver-policy-rego
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install Nix
@@ -69,7 +77,7 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
-      # Shares built store paths between jobs and workflow runs through the GitHub
+      # Shares built store paths between workflow runs through the GitHub
       # Actions cache. Pull requests read main's entries but write only to
       # their own ref scope, so they cannot poison main.
       - name: Cache Nix store paths
@@ -78,69 +86,11 @@ jobs:
           use-flakehub: disabled
           diagnostic-endpoint: ""
       - name: Build ${{ matrix.name }}
-        run: >-
-          nix build
-          .#checks.x86_64-linux.${{ matrix.attribute }}
-          --no-link --print-build-logs --show-trace
-
-  driver-package:
-    name: Nix / driver package
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Install Nix
-        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-      # Shares built store paths between jobs and workflow runs through the GitHub
-      # Actions cache. Pull requests read main's entries but write only to
-      # their own ref scope, so they cannot poison main.
-      - name: Cache Nix store paths
-        uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
-        with:
-          use-flakehub: disabled
-          diagnostic-endpoint: ""
-      - name: Build driver package
-        run: >-
-          nix build
-          .#checks.x86_64-linux.cua-driver-build
-          --no-link --print-build-logs --show-trace
-
-  # The policy VM checks boot the same cua-driver derivation that
-  # driver-package builds. Running them after it lets them substitute that
-  # store path from the cache instead of compiling the workspace again.
-  policy-vm:
-    name: Nix / ${{ matrix.name }}
-    needs: driver-package
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: YAML policy VM
-            attribute: cua-driver-policy-yaml
-          - name: Rego policy VM
-            attribute: cua-driver-policy-rego
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - name: Install Nix
-        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-      # Shares built store paths between jobs and workflow runs through the GitHub
-      # Actions cache. Pull requests read main's entries but write only to
-      # their own ref scope, so they cannot poison main.
-      - name: Cache Nix store paths
-        uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
-        with:
-          use-flakehub: disabled
-          diagnostic-endpoint: ""
-      - name: Build ${{ matrix.name }}
-        run: >-
-          nix build
-          .#checks.x86_64-linux.${{ matrix.attribute }}
-          --no-link --print-build-logs --show-trace
+        env:
+          ATTRIBUTES: ${{ matrix.attributes }}
+        run: |
+          targets=()
+          for attribute in $ATTRIBUTES; do
+            targets+=(".#checks.x86_64-linux.${attribute}")
+          done
+          nix build "${targets[@]}" --no-link --print-build-logs --show-trace

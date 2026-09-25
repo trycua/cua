@@ -330,8 +330,8 @@ impl ToolOutput for SetAgentCursorThemeOutput {}
 pub struct GetAgentCursorStateOutput {
     pub session: String,
     pub enabled: bool,
-    /// Last placed position of the session cursor, or `null` until the cursor
-    /// first moves. The key is always present.
+    // Wire contract: the key is always present, and its value is `null` until
+    // the session cursor first moves.
     #[schemars(required, schema_with = "nullable_cursor_point_schema")]
     pub position: Option<CursorPointOutput>,
     pub theme: CursorThemeOutput,

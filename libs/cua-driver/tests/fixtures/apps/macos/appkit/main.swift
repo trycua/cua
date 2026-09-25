@@ -392,9 +392,6 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
 
     @objc private func onCheckbox(_ sender: NSButton) {
         checkStateLabel.stringValue = "agreed=\(sender.state == .on)"
-        // With a document attached, the same press also carries the dirty bit,
-        // so a test can flip it through a real AX action that needs no window
-        // activation and no new control in the pinned layout.
         if documentAttached {
             setDocumentEdited(sender.state == .on)
         }

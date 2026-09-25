@@ -662,9 +662,6 @@ fn set_document_edited(driver: &mut McpDriver, pid: u32, wid: u64, edited: bool)
         response.text()
     );
 
-    // The press is delivered to the app's main thread, so give the flip a
-    // bounded window instead of one immediate snapshot; the returned snapshot
-    // is the one the caller asserts on, so a flip that never lands still fails.
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     loop {
         let snapshot = snapshot_elements(driver, pid, wid);

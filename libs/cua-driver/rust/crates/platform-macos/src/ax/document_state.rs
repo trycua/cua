@@ -78,8 +78,6 @@ mod tests {
     impl FakeApp {
         fn record(&self, attribute: &'static str, deadline: &Deadline) {
             self.calls.borrow_mut().push(attribute);
-            // Mirrors the AX reader: whatever the deadline hands over is what
-            // AXUIElementSetMessagingTimeout would receive for this request.
             if let Some(seconds) = deadline.messaging_timeout_seconds() {
                 self.timeouts.borrow_mut().push(seconds);
             }
@@ -139,9 +137,6 @@ mod tests {
             stalls: true,
             ..FakeApp::default()
         };
-        // Smaller than one request, so the deadline is already gone when the
-        // first one returns: a shape that retried every attribute would record
-        // three calls and cost three stalls.
         let budget = STALL / 2;
 
         let started = Instant::now();

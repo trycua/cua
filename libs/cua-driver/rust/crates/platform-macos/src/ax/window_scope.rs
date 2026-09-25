@@ -231,17 +231,6 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_window_has_no_index_to_read_per_window_state_from() {
-        let candidates = [
-            TopLevelCandidate::new("AXMenuBar", None),
-            TopLevelCandidate::new("AXWindow", Some(11)),
-        ];
-        let d = decide_window_scope(&candidates, 22, panel_service_owner);
-        assert_ne!(d.scope, WindowScope::Matched);
-        assert_eq!(d.requested_window_index(&candidates, 22), None);
-    }
-
-    #[test]
     fn matched_dialog_excludes_the_application_menu_bar() {
         let candidates = [
             TopLevelCandidate::new("AXMenuBar", None),

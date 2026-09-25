@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-cua-driver-valgrind-${{ github.workflow }}-${{ github.ref }}
+  group: ci-cua-driver-valgrind-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:

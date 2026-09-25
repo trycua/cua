@@ -81,6 +81,10 @@ on:
       - "libs/lume/src/Main.swift"
       - "scripts/docs-generators/config.json"
 
+concurrency:
+  group: ci-test-scripts-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   windows-uninstall:
     runs-on: windows-latest
@@ -97,6 +101,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code

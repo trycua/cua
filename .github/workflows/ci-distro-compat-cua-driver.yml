@@ -57,6 +57,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-distro-compat-cua-driver-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   # ── Resolve the binary version to test ───────────────────────────────────────
   # Fetch the latest published cua-driver-rs release tag so individual matrix
@@ -68,6 +72,7 @@ jobs:
       github.event_name != 'release' ||
       startsWith(github.event.release.tag_name, 'cua-driver-rs-v')
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       version: ${{ steps.pick.outputs.version }}
       binary_url: ${{ steps.pick.outputs.binary_url }}
@@ -149,6 +154,7 @@ jobs:
     # Don't block the PR if no release binary exists yet.
     continue-on-error: true
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       # The released binary's smoke commands must never create client telemetry
       # or installation markers from a CI runner. Set both names during the
@@ -291,6 +297,7 @@ jobs:
     needs: [resolve-version, distro-smoke]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Check results
         run: |

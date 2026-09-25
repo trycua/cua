@@ -471,8 +471,9 @@ fi
         verify_public = workflow.index(
             "- name: Verify the release and every staged asset are public", publish
         )
+        bake_job = workflow.index("  advance-installer-version:", verify_public)
         app_token = workflow.index(
-            "- name: Generate post-publication GitHub App token", verify_public
+            "- name: Generate post-publication GitHub App token", bake_job
         )
         advance = workflow.index(
             "- name: Advance public installer version on main", app_token
@@ -484,7 +485,8 @@ fi
         self.assertLess(staged_shell, staged_powershell)
         self.assertLess(staged_powershell, publish)
         self.assertLess(publish, verify_public)
-        self.assertLess(verify_public, app_token)
+        self.assertLess(verify_public, bake_job)
+        self.assertLess(bake_job, app_token)
         self.assertLess(app_token, advance)
         self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
         self.assertIn("path: release-control", workflow)
@@ -847,7 +849,8 @@ fi
         self.assertIn(
             "[build-linux, build-windows, build-macos-universal, "
             "verify-windows-node-runtime, "
-            "verify-release-artifacts, verify-mcp-client-discovery, build-hyprland-plugin-source]",
+            "verify-release-artifacts, verify-mcp-client-discovery, build-hyprland-plugin-source, "
+            "verify-macos-release-signatures, verify-windows-release-signatures]",
             workflow,
         )
 

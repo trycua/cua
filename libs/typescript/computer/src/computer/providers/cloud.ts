@@ -156,6 +156,8 @@ export class CloudComputer extends BaseComputer {
       this.iface = undefined;
     }
 
+    await this.telemetry.shutdown();
+
     this.initialized = false;
     this.logger.info('Disconnected from cloud computer');
   }

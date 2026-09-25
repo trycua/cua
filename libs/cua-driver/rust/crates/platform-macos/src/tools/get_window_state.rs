@@ -588,11 +588,8 @@ impl Tool for GetWindowStateTool {
             _ => elements_json,
         };
         let filtered_element_count = elements_json.len();
-        // The structured array intentionally contains only actionable nodes,
-        // and AX child reads can fail independently of the element/depth caps.
-        // Until the walker exposes a proof over the projected search domain,
-        // absence must remain unknown rather than being claimed complete.
-        let elements_complete = false;
+        let elements_complete =
+            elements_are_complete(scope_matched, tree_result.as_ref().map(|r| r.truncated));
 
         let mut structured = serde_json::json!({
             "window_id": window_id,
@@ -613,6 +610,10 @@ impl Tool for GetWindowStateTool {
         }
         if let Some(r) = tree_result.as_ref() {
             r.walk.apply(&mut structured);
+            if let (Some(gap), false) = (r.gap, r.walk.truncated()) {
+                structured["truncated"] = serde_json::json!(true);
+                structured["truncation_reason"] = serde_json::json!(gap);
+            }
         }
         // Surface 6: an opaque snapshot identifier consumers can log
         // alongside the per-element tokens for debug correlation. Same value
@@ -865,6 +866,14 @@ fn derive_label(node: &crate::ax::tree::AXNode) -> Option<String> {
                 .filter(|hint| !hint.trim().is_empty())
         })
         .or_else(|| node.identifier.clone())
+}
+
+/// Whether `elements` may promise that a control absent from it is absent
+/// from the window: only a resolved window scope and a walk that gave nothing
+/// up can. A `query` projects an already-complete domain, so a filtered array
+/// stays complete for that query.
+fn elements_are_complete(scope_matched: bool, walk_truncated: Option<bool>) -> bool {
+    scope_matched && walk_truncated == Some(false)
 }
 
 /// Render the actionable nodes from the AX walk into the
@@ -1548,5 +1557,26 @@ mod tests {
             "observation-only entries must not emit unregistered element_token: {}",
             entries[0]
         );
+    }
+
+    #[test]
+    fn completeness_is_promised_only_for_a_resolved_window_and_a_whole_walk() {
+        assert!(elements_are_complete(true, Some(false)));
+        assert!(!elements_are_complete(true, Some(true)));
+        assert!(!elements_are_complete(true, None));
+        assert!(!elements_are_complete(false, Some(false)));
+    }
+
+    #[test]
+    fn a_walk_that_cannot_read_the_app_never_promises_a_complete_element_set() {
+        let walk = crate::ax::tree::walk_tree_bounded(i32::MAX, Some(123), None, 20, 5);
+        assert!(walk.truncated);
+        assert_eq!(walk.gap, Some("child_list_unreadable"));
+        let scope = walk.window_scope.as_ref().expect("window_id was requested");
+        assert!(!scope.is_matched());
+        assert!(!elements_are_complete(
+            scope.is_matched(),
+            Some(walk.truncated)
+        ));
     }
 }

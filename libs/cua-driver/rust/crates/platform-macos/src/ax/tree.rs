@@ -137,10 +137,16 @@ fn is_addressable(actions_present: bool, value_settable: bool, enabled: Option<b
 pub struct TreeWalkResult {
     pub tree_markdown: String,
     pub nodes: Vec<AXNode>,
-    /// True when the walk was cut short by its node or time budget.
+    /// True when the walk did not enumerate its whole scope: the node or time
+    /// budget or the depth cap stopped it, or a child list could not be read.
+    /// `false` means every child of every visited node was seen, so a control
+    /// missing from `nodes` is missing from the window.
     pub truncated: bool,
     /// Why and where the walk stopped (see [`cua_driver_core::walk_budget`]).
     pub walk: WalkOutcome,
+    /// What the walk gave up that its budget does not record: `depth_limit`
+    /// or `child_list_unreadable`. `None` when nothing beyond the budget.
+    pub gap: Option<&'static str>,
     /// Whether the requested `window_id` actually resolved to an AX surface,
     /// and if not, why. `None` when no `window_id` was requested.
     ///
@@ -215,6 +221,7 @@ pub fn walk_tree_budgeted(
     let mut lines: Vec<(usize, String)> = Vec::new(); // (depth, line)
     let mut index_counter = 0usize;
     let mut window_scope: Option<WindowScope> = None;
+    let mut gaps = WalkGaps::default();
 
     unsafe {
         let app_elem = AXUIElementCreateApplication(pid);
@@ -222,8 +229,9 @@ pub fn walk_tree_budgeted(
             return TreeWalkResult {
                 tree_markdown: String::new(),
                 nodes,
-                truncated: false,
+                truncated: true,
                 walk: budget.outcome(),
+                gap: Some(WalkGaps::UNREADABLE),
                 // No application AX element at all, so a requested window
                 // certainly did not resolve.
                 window_scope: window_id.map(|_| WindowScope::AxUnresolved { ax_window_count: 0 }),
@@ -245,7 +253,8 @@ pub fn walk_tree_budgeted(
         // Union AXChildren + AXWindows — the only way to see background windows.
         // AXChildren omits windows when the app isn't frontmost (AppKit limitation).
         // AXWindows returns the window list regardless of activation state.
-        let from_children = copy_children(app_elem);
+        let (from_children, root_hid_descendants) = copy_children_checked(app_elem);
+        gaps.unreadable |= root_hid_descendants;
         // A requested window on another Space is absent from AXWindows; the
         // `_including` variant recovers it by exact CGWindowID.
         let from_windows = match window_id {
@@ -323,6 +332,7 @@ pub fn walk_tree_budgeted(
                 &mut lines,
                 &mut index_counter,
                 &mut budget,
+                &mut gaps,
                 max_depth,
             );
         }
@@ -346,14 +356,50 @@ pub fn walk_tree_budgeted(
     if let Some(note) = walk.note() {
         tree_markdown.push('\n');
         tree_markdown.push_str(&note);
+    } else if gaps.depth_limit {
+        tree_markdown.push_str(&format!(
+            "\n⚠️  AX tree truncated at its depth-{max_depth} limit. Element indices above \
+             are still valid. Use pixel clicks for elements not visible in this partial tree."
+        ));
+    } else if gaps.unreadable {
+        tree_markdown.push_str(
+            "\n⚠️  AX tree is partial: an element's child list could not be read, so an \
+             unknown part of this window is missing. Element indices above are still \
+             valid. Use pixel clicks for elements not visible in this partial tree.",
+        );
     }
 
     TreeWalkResult {
         tree_markdown,
         nodes,
-        truncated: walk.truncated(),
+        truncated: walk.truncated() || gaps.reason().is_some(),
         walk,
+        gap: gaps.reason(),
         window_scope,
+    }
+}
+
+/// What a walk gave up beyond its node and time budget.
+#[derive(Default)]
+struct WalkGaps {
+    /// The depth cap stopped a subtree.
+    depth_limit: bool,
+    /// An `AXChildren` read hid descendants; see [`copy_children_checked`].
+    unreadable: bool,
+}
+
+impl WalkGaps {
+    const DEPTH_LIMIT: &'static str = "depth_limit";
+    const UNREADABLE: &'static str = "child_list_unreadable";
+
+    fn reason(&self) -> Option<&'static str> {
+        if self.depth_limit {
+            Some(Self::DEPTH_LIMIT)
+        } else if self.unreadable {
+            Some(Self::UNREADABLE)
+        } else {
+            None
+        }
     }
 }
 
@@ -367,9 +413,11 @@ unsafe fn walk_element(
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
     budget: &mut WalkBudget,
+    gaps: &mut WalkGaps,
     max_depth: usize,
 ) {
     if depth > max_depth {
+        gaps.depth_limit = true;
         return;
     }
     // Node and time budget: a refused node is counted as discovered but not
@@ -391,7 +439,8 @@ unsafe fn walk_element(
         // Still recurse — children may be interesting. Layout containers
         // collapse, so children inherit the parent's depth AND the same
         // parent_index (no actionable node was emitted here).
-        let children = copy_children(element);
+        let (children, hid_descendants) = copy_children_checked(element);
+        gaps.unreadable |= hid_descendants;
         for child in children {
             walk_element(
                 child,
@@ -402,6 +451,7 @@ unsafe fn walk_element(
                 lines,
                 counter,
                 budget,
+                gaps,
                 max_depth,
             );
             CFRelease(child as CFTypeRef);
@@ -458,7 +508,8 @@ unsafe fn walk_element(
     let is_actionable = is_addressable(!actions.is_empty(), value_settable, enabled);
 
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
-        let children = copy_children(element);
+        let (children, hid_descendants) = copy_children_checked(element);
+        gaps.unreadable |= hid_descendants;
         for child in children {
             walk_element(
                 child,
@@ -469,6 +520,7 @@ unsafe fn walk_element(
                 lines,
                 counter,
                 budget,
+                gaps,
                 max_depth,
             );
             CFRelease(child as CFTypeRef);
@@ -568,7 +620,8 @@ unsafe fn walk_element(
     lines.push((depth, line));
     nodes.push(node);
 
-    let children = copy_children(element);
+    let (children, hid_descendants) = copy_children_checked(element);
+    gaps.unreadable |= hid_descendants;
     for child in children {
         walk_element(
             child,
@@ -579,6 +632,7 @@ unsafe fn walk_element(
             lines,
             counter,
             budget,
+            gaps,
             max_depth,
         );
         CFRelease(child as CFTypeRef);

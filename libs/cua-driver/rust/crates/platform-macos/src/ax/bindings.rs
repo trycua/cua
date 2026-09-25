@@ -528,20 +528,37 @@ pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
 ///
 /// `element` must be valid, and the caller must release every returned element.
 pub unsafe fn copy_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {
+    copy_children_checked(element).0
+}
+
+/// [`copy_children`], plus whether the read hid children rather than proving
+/// there are none.
+///
+/// An element with no children answers with an empty array, with
+/// `kAXErrorAttributeUnsupported`, or with `kAXErrorNoValue`. Every other
+/// outcome leaves an unknown number of descendants unseen.
+///
+/// # Safety
+///
+/// `element` must be valid, and the caller must release every returned element.
+pub unsafe fn copy_children_checked(element: AXUIElementRef) -> (Vec<AXUIElementRef>, bool) {
     let attr = CFStr::new("AXChildren");
     let mut value: CFTypeRef = std::ptr::null();
     let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
-    if err != kAXErrorSuccess || value.is_null() {
-        return vec![];
+    if err != kAXErrorSuccess {
+        return (vec![], children_read_hid_descendants(err));
+    }
+    if value.is_null() {
+        return (vec![], true);
     }
     let cf_array_type_id = CFArray::<CFTypeRef>::type_id();
     if core_foundation::base::CFGetTypeID(value) != cf_array_type_id {
         CFRelease(value);
-        return vec![];
+        return (vec![], true);
     }
     let arr = CFArray::<CFTypeRef>::wrap_under_create_rule(value as _);
     let ax_type_id = AXUIElementGetTypeID();
-    (0..arr.len())
+    let children: Vec<AXUIElementRef> = (0..arr.len())
         .filter_map(|i| {
             let item = *arr.get(i)?;
             if core_foundation::base::CFGetTypeID(item) == ax_type_id {
@@ -552,7 +569,18 @@ pub unsafe fn copy_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {
                 None
             }
         })
-        .collect()
+        .collect();
+    let dropped = children.len() as isize != arr.len();
+    (children, dropped)
+}
+
+/// Whether an `AXChildren` error code leaves the child list unknown, as
+/// opposed to establishing that the element has no children.
+fn children_read_hid_descendants(err: AXError) -> bool {
+    !matches!(
+        err,
+        kAXErrorSuccess | kAXErrorAttributeUnsupported | kAXErrorNoValue
+    )
 }
 
 /// Copy an AX element-valued attribute. The returned element is retained and
@@ -958,5 +986,29 @@ mod tests {
         let false_result = unsafe { coerce_stringish_value(false_value.as_CFTypeRef()) }.unwrap();
         assert_eq!(false_result.string_value, None);
         assert_eq!(false_result.state_value, "0");
+    }
+
+    /// An element that reports no children is not the same as an element
+    /// whose children could not be read: only the second leaves a window
+    /// partially enumerated.
+    #[test]
+    fn an_unsupported_child_list_is_not_a_hidden_one() {
+        for reports_none in [
+            kAXErrorSuccess,
+            kAXErrorAttributeUnsupported,
+            kAXErrorNoValue,
+        ] {
+            assert!(
+                !children_read_hid_descendants(reports_none),
+                "{reports_none}"
+            );
+        }
+        for hides in [
+            kAXErrorFailure,
+            kAXErrorInvalidUIElement,
+            kAXErrorAPIDisabled,
+        ] {
+            assert!(children_read_hid_descendants(hides), "{hides}");
+        }
     }
 }

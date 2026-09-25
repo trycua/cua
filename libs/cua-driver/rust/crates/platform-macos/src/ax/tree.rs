@@ -357,6 +357,18 @@ pub fn walk_tree_budgeted(
 }
 
 #[allow(clippy::too_many_arguments)]
+static DIAG_4126_LINES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn diag_4126(line: String) {
+    use std::io::Write;
+    if DIAG_4126_LINES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) > 3000 {
+        return;
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/cua-diag-4125.log") {
+        let _ = writeln!(f, "[diag-4126w] {line}");
+    }
+}
+
 unsafe fn walk_element(
     element: AXUIElementRef,
     depth: usize,
@@ -391,6 +403,9 @@ unsafe fn walk_element(
         // collapse, so children inherit the parent's depth AND the same
         // parent_index (no actionable node was emitted here).
         let children = copy_children(element);
+        if !in_web_content {
+            diag_4126(format!("group depth={depth} role={role} children={} visited={}", children.len(), budget.visited_count()));
+        }
         for child in children {
             walk_element(
                 child,
@@ -429,6 +444,9 @@ unsafe fn walk_element(
     let help = copy_string_attr(element, "AXHelp").filter(|h| !h.trim().is_empty());
     let actions = copy_action_names(element);
 
+    if role == "AXWebArea" || (!in_web_content && depth <= 3) {
+        diag_4126(format!("node depth={depth} role={role} title={title:?} desc={description:?} actions={}", actions.len()));
+    }
     let visible_title = title.as_deref().unwrap_or("").trim().to_owned();
     let visible_description = description.as_deref().unwrap_or("").trim().to_owned();
     let visible_value = value.as_deref().unwrap_or("").trim().to_owned();

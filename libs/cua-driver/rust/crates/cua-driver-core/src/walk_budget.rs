@@ -71,6 +71,10 @@ impl WalkBudget {
 
     /// Admit one node for visiting. `false` means the walk must not visit it:
     /// a budget has run out, and the node is counted as pending.
+    pub fn visited_count(&self) -> usize {
+        self.visited
+    }
+
     pub fn admit(&mut self) -> bool {
         let started = *self.started.get_or_insert_with(Instant::now);
         if self.stop.is_none() {

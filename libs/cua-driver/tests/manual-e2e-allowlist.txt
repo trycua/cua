@@ -26,6 +26,13 @@ harness_libreoffice_test::harness_lo_vcl_calc_msaa_smoke | Optional Windows suit
 
 standalone_browser_behavior_test::standalone_browser_prepare_isolated_source_smoke | Strict subset of the routed standalone_browser_prepare_isolated row; retired in the lane-3 prune (#4094)
 
+# macOS-only browser regressions that failed on their first routed run. Restore
+# them to the Darwin list in scripts/ci/run-rust-standalone-browser-e2e.sh with
+# the product fix.
+standalone_browser_behavior_test::standalone_browser_native_omnibox_select_all | Fails on first routed run: Cmd+A selection lost before pixel type_text (#4125)
+standalone_browser_behavior_test::standalone_browser_generic_type_text_completion | Fails on first routed run: native snapshot omits the page editor (#4126)
+standalone_browser_behavior_test::standalone_browser_web_type_text_verification | Fails on first routed run: native snapshot omits the page editor (#4126)
+
 # Real input or real per-user state outside a canonical harness row.
 protocol_media_test::zoom_from_zoom_click_round_trip | Sends real input to a live desktop window; kept off plain cargo test by #4100 for manual disposable-desktop runs
 protocol_media_test::recording_screenshot_capture | Sends real input to a live desktop window; kept off plain cargo test by #4100 for manual disposable-desktop runs

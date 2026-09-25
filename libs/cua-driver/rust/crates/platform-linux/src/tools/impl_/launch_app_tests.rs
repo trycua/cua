@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::installed_apps::InstalledApp;
 

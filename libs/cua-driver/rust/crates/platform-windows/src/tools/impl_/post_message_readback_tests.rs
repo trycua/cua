@@ -1,4 +1,3 @@
-
 use super::{changed_contains_post_message_result, post_message_readback_observed};
 
 #[test]

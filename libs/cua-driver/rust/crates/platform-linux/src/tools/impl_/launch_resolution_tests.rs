@@ -1,4 +1,3 @@
-
 use super::*;
 
 fn window(class: &str) -> crate::x11::WindowInfo {

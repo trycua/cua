@@ -1,4 +1,3 @@
-
 use super::{GetWindowStateTool, ToolState};
 use cua_driver_core::tool::Tool;
 

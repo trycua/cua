@@ -1,4 +1,3 @@
-
 use super::{
     choose_keyboard_cursor_target, cursor_control_scope, named_session_cursor_key,
     reveal_pointer_action_for, CursorControlScope, ToolState,

@@ -1,4 +1,3 @@
-
 use super::resolve_max_image_dimension;
 
 #[test]

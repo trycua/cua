@@ -1,4 +1,3 @@
-
 use super::{finish_pixel_uia_attempt, posted_pixel_click_result};
 use crate::uia::windows_enum::PointInvokeOutcome;
 use cua_driver_core::action_record::{

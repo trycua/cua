@@ -1,4 +1,3 @@
-
 use super::{focus_by_pixel_click_args, ToolState, ZoomTool};
 use cua_driver_core::tool::Tool;
 

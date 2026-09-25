@@ -1,4 +1,3 @@
-
 use super::{resolve_cursor_key, NO_CURSOR};
 use serde_json::json;
 

@@ -1,4 +1,3 @@
-
 use super::{chromium_background_must_refuse, maps_indicate_gtk, ClickTool};
 use cua_driver_core::tool::Tool;
 

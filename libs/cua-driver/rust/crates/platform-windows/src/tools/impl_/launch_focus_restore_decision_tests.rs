@@ -1,4 +1,3 @@
-
 use super::{
     first_unopened_shell_url_index, should_restore_foreground_after_launch, LaunchTargetShape,
 };

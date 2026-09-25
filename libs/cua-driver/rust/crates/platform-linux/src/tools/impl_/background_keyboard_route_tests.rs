@@ -1,4 +1,3 @@
-
 use super::{element_needs_real_click, split_key_combo, wm_chord_kind, WmChord};
 
 #[test]

@@ -1,4 +1,3 @@
-
 use super::{capture_admission_error, normalize_desktop_capture_for_action_frame};
 
 fn png(width: u32, height: u32) -> Vec<u8> {

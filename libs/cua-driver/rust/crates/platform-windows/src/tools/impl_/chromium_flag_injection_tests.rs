@@ -1,4 +1,3 @@
-
 use super::{inject_chromium_anti_throttling_flags, is_chromium_browser_target};
 
 #[test]

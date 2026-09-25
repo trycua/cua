@@ -1,4 +1,3 @@
-
 use super::*;
 use cua_driver_core::window_target::{resolve_pid_window_target, PidWindowTargetResolution};
 

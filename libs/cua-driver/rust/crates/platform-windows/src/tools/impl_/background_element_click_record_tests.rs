@@ -1,4 +1,3 @@
-
 use super::{background_element_click_result, ActionTransport};
 
 #[test]

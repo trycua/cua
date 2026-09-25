@@ -1,4 +1,3 @@
-
 use super::press_key_chord;
 
 #[test]

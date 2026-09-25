@@ -1,4 +1,3 @@
-
 use super::{megapixel_long_edge_cap, WINDOW_SCREENSHOT_MAX_PIXELS};
 
 #[test]

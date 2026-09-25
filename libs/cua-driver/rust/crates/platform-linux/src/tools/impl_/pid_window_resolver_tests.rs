@@ -1,4 +1,3 @@
-
 use super::*;
 
 fn win(xid: u64, z: Option<usize>, on_screen: bool, w: u32, h: u32) -> crate::x11::WindowInfo {

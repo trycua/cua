@@ -1,4 +1,3 @@
-
 use super::ClickTool;
 use cua_driver_core::tool::Tool;
 

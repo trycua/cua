@@ -2,6 +2,7 @@
   "bots": [
     "dependabot[bot]",
     "github-actions[bot]",
+    "claude",
     "copilot",
     "release-please[bot]",
     "renovate[bot]",

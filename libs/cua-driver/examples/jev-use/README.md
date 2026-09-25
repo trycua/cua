@@ -65,6 +65,14 @@ Chromium-based browser that Cua Driver can prepare. Python with `uv` supplies
 the fixture and Python agent. Node.js 22 or later and npm are needed only for
 the optional TypeScript agent.
 
+The agents start `cua-driver mcp` with the MCP SDK's minimal default
+environment plus the desktop-session variables (`DISPLAY`, `WAYLAND_DISPLAY`,
+`XAUTHORITY`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`,
+`AT_SPI_BUS_ADDRESS`, `XDG_SESSION_TYPE`, `XDG_CURRENT_DESKTOP`) and any
+`CUA_DRIVER_*` variables. Other variables, including `TYPESAFE_API_KEY`, are
+not passed to the Driver. On Linux, run the agents from the logged-in desktop
+session so those variables are set.
+
 From this directory, install the locked Python dependencies:
 
 ```bash

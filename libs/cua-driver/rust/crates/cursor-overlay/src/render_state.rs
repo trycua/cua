@@ -163,12 +163,20 @@ impl RenderStateCore {
     /// The default theme levitates through the shared float motion (the
     /// resting "bob"), and a custom theme may loop a multi-frame animation for
     /// its current action. Both are part of the cursor's visual identity, so
-    /// every platform must keep delivering frames while this holds. Reduced
-    /// motion freezes both (no bob, still frame), a hidden, unplaced, faded,
-    /// or off-workspace cursor paints nothing, and a single-frame custom theme
+    /// every platform must keep delivering frames while this holds.
+    ///
+    /// Resting motion is bounded by idle hide: the cursor levitates while its
+    /// idle-hide countdown runs and stops when the fade hides it. A cursor
+    /// configured never to hide (`idle_hide_ms == 0`) rests still, so the
+    /// overlay can stop rendering once activity settles; a full-output
+    /// redraw per frame on Wayland, or a layered-window upload on Windows,
+    /// must not run for as long as the cursor stays on screen. Reduced motion
+    /// freezes both (no bob, still frame), a hidden, unplaced, faded, or
+    /// off-workspace cursor paints nothing, and a single-frame custom theme
     /// has nothing to animate.
     pub fn has_resting_motion(&self) -> bool {
         if !self.is_revealed()
+            || self.motion.idle_hide_ms <= 0.0
             || self.pinned_target_off_workspace
             || self.visual.reduced_motion == crate::ReducedMotion::On
         {

@@ -586,12 +586,13 @@ mod tests {
     }
 
     // The resting bob is painted by every adapter through `paint_cursor`, so a
-    // visible resting cursor must keep receiving frames on every platform.
+    // visible resting cursor must keep receiving frames on every platform
+    // until its idle fade hides it.
     #[test]
     fn a_visible_resting_cursor_keeps_ticking_for_its_resting_motion() {
         let mut map = map();
         let core = placed(&mut map, DEFAULT_CURSOR_KEY);
-        core.motion.idle_hide_ms = 0.0;
+        core.motion.idle_hide_ms = 20_000.0;
         settle(core);
         assert!(core.has_resting_motion());
         assert!(map.needs_frame_tick());
@@ -612,7 +613,7 @@ mod tests {
     fn resting_motion_stops_for_reduced_motion_hidden_and_faded_cursors() {
         let mut map = map();
         let core = placed(&mut map, DEFAULT_CURSOR_KEY);
-        core.motion.idle_hide_ms = 0.0;
+        core.motion.idle_hide_ms = 20_000.0;
         assert!(core.needs_frame_tick());
 
         core.visual.reduced_motion = ReducedMotion::On;
@@ -630,6 +631,24 @@ mod tests {
 
         core.idle_alpha = 0.0;
         assert!(!core.needs_frame_tick());
+    }
+
+    // A never-hiding cursor stays on screen indefinitely, so its resting
+    // motion would keep the overlay rendering forever. It rests still and the
+    // overlay quiesces, which the hosted Wayland CPU certification enforces.
+    #[test]
+    fn a_never_hiding_cursor_rests_still_so_the_overlay_quiesces() {
+        let mut map = map();
+        let core = placed(&mut map, DEFAULT_CURSOR_KEY);
+        core.motion.idle_hide_ms = 0.0;
+        settle(core);
+        for _ in 0..600 {
+            core.tick_motion(1.0 / 60.0);
+        }
+        assert!(core.is_revealed());
+        assert!(!core.has_resting_motion());
+        assert!(!map.needs_frame_tick());
+        assert_eq!(map.idle_fade_wait(), None);
     }
 
     #[test]

@@ -1579,6 +1579,21 @@ mod tests {
         assert!(!any_core_needs_frame_tick(&cores));
     }
 
+    // Mirrors the hosted `wayland_overlay_quiesces_and_recovers_after_capture_
+    // and_cursor_activity` certification: a never-hiding cursor rests still,
+    // so the overlay parks on topology maintenance instead of redrawing.
+    #[test]
+    fn never_hiding_resting_overlay_parks_on_maintenance() {
+        let mut core = positioned_core();
+        core.motion.idle_hide_ms = 0.0;
+        let cores = CursorMap::from([("cursor-a".to_owned(), core)]);
+        assert!(!any_core_needs_frame_tick(&cores));
+        assert_eq!(
+            next_wait(&cores, false, false),
+            WlWait::Maintenance(TOPOLOGY_MAINTENANCE_INTERVAL)
+        );
+    }
+
     #[test]
     fn first_positioned_command_seeds_inside_the_output_frame() {
         let mut render = WlRenderMap::new(CursorConfig::default(), ());

@@ -1256,19 +1256,17 @@ mod tests {
         assert!(!map.cursors.contains_key("sessA"));
     }
 
-    // Before the shared predicate, a settled macOS cursor with idle hide
-    // disabled stopped receiving frames and its resting bob froze.
     #[test]
-    fn resting_cursor_keeps_ticking_even_without_idle_hide() {
+    fn resting_cursor_floats_until_idle_hide_and_never_hide_parks() {
         let mut map = empty_map();
         let cursor = placed(&mut map, "sessA");
-        cursor.core.motion.idle_hide_ms = 0.0;
+        cursor.core.motion.idle_hide_ms = 20_000.0;
         assert!(cursor.core.has_resting_motion());
         assert!(map.needs_frame_tick());
 
         let cursor = map.cursors.get_mut("sessA").unwrap();
-        cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
-        assert!(!map.needs_frame_tick());
+        cursor.core.motion.idle_hide_ms = 0.0;
+        assert!(!map.needs_frame_tick(), "a never-hiding cursor rests still");
     }
 
     #[test]

@@ -13,8 +13,9 @@ idle pointer, with its action-specific motion layered on top. The pointer and
 semantic mark therefore move as one visual unit.
 The macOS, Windows, X11, and Wayland overlays keep rendering frames while a
 visible cursor rests, so the levitation continues until the idle fade hides it.
-Reduced-motion mode removes this shared movement and lets the overlay stop
-rendering while the cursor is still. The anonymous/default cursor
+A cursor set never to hide (`idle_hide_ms` 0) rests still instead, so the
+overlay stops rendering once activity settles. Reduced-motion mode removes this
+shared movement and lets the overlay stop rendering while the cursor is still. The anonymous/default cursor
 uses Cua blue. Named sessions receive a stable fill
 from the built-in session palette, so concurrent agents remain visually
 distinct.

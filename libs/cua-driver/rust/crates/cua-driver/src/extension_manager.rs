@@ -812,7 +812,6 @@ fn run_inner(args: &[String]) -> Result<()> {
             None => print_infos(&store, REGISTRY, json),
         },
         "install" | "update" => {
-            ensure_mutations_supported()?;
             let id = required_id(id, subcommand)?;
             let entry = registry_entry(id)?;
             let source = resolve_install_source(entry, &parsed, &store)?;
@@ -842,7 +841,6 @@ fn run_inner(args: &[String]) -> Result<()> {
             Ok(())
         }
         "remove" => {
-            ensure_mutations_supported()?;
             let id = required_id(id, "remove")?;
             let entry = registry_entry(id)?;
             store.remove(entry)?;
@@ -991,10 +989,6 @@ fn parse_command(args: &[String]) -> Result<ParsedCommand> {
         self_test,
         json,
     })
-}
-
-fn ensure_mutations_supported() -> Result<()> {
-    Ok(())
 }
 
 fn required_id<'a>(id: Option<&'a str>, command: &str) -> Result<&'a str> {
@@ -5855,11 +5849,6 @@ mod tests {
             let args = args.into_iter().map(str::to_owned).collect::<Vec<_>>();
             assert!(parse_command(&args).is_err(), "accepted {args:?}");
         }
-    }
-
-    #[test]
-    fn mutation_platform_contract_is_explicit() {
-        assert!(ensure_mutations_supported().is_ok());
     }
 
     #[test]

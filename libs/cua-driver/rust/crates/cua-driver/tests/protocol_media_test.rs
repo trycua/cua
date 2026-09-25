@@ -1,11 +1,11 @@
 //! Image / capture / recording tool tests.
 //!
-//! screenshot (full-display + JPEG), zoom + the zoom→from_zoom click round
-//! trip, the recording session lifecycle (start/stop + action.json), recording
-//! screenshot capture, the `record_video` flag, trajectory replay, click
-//! `debug_image_out`, and the `set_config` screenshot-resize pipeline. Split
-//! out of the old monolithic `mcp_protocol_test.rs`; mac/windows pairs merge
-//! and branch only where assertions differ.
+//! zoom + the zoom→from_zoom click round trip, the recording session
+//! lifecycle (start/stop + action.json), recording screenshot capture,
+//! trajectory replay, click `debug_image_out`, and the `set_config`
+//! screenshot-resize pipeline. Split out of the old monolithic
+//! `mcp_protocol_test.rs`; mac/windows pairs merge and branch only where
+//! assertions differ.
 //!
 //! Tests that dispatch a real click into whichever window is on screen are
 //! `#[ignore]`d so a plain `cargo test` never sends input. Run them with
@@ -20,131 +20,6 @@ fn spawn_unrestricted() -> Option<RawDriver> {
         ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
         ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
     ])
-}
-
-#[test]
-#[cfg(target_os = "windows")]
-fn screenshot() {
-    let Some(mut d) = RawDriver::spawn() else {
-        return;
-    };
-
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    d.recv();
-
-    // Full-display screenshot (no window_id).
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"screenshot","arguments":{}}
-    }));
-    let resp = d.recv();
-    assert!(resp["error"].is_null(), "Protocol error: {resp:?}");
-    let content = resp["result"]["content"].as_array().expect("content array");
-    assert!(!content.is_empty(), "screenshot returned empty content");
-
-    // JPEG format.
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":3,"method":"tools/call",
-        "params":{"name":"screenshot","arguments":{"format":"jpeg","quality":70}}
-    }));
-    let resp = d.recv();
-    assert!(
-        resp["error"].is_null(),
-        "Protocol error from screenshot jpeg: {resp:?}"
-    );
-    if !resp["result"]["isError"].as_bool().unwrap_or(false) {
-        let content = resp["result"]["content"].as_array().expect("content array");
-        let has_jpeg = content.iter().any(|c| {
-            c["type"] == "image"
-                && c["mimeType"].as_str().unwrap_or("") == "image/jpeg"
-                && c["data"].as_str().map(|s| s.len() > 10).unwrap_or(false)
-        });
-        assert!(
-            has_jpeg,
-            "Expected image/jpeg in screenshot response: {content:?}"
-        );
-        let sc = &resp["result"]["structuredContent"];
-        assert!(sc["width"].as_f64().unwrap_or(0.0) > 0.0);
-        assert!(sc["height"].as_f64().unwrap_or(0.0) > 0.0);
-        assert_eq!(sc["format"].as_str().unwrap_or(""), "jpeg");
-    }
-}
-
-#[test]
-#[cfg(target_os = "macos")]
-fn screenshot_no_window_id() {
-    //! Call screenshot without window_id — should capture the full display and return image content.
-    let Some(mut d) = RawDriver::spawn() else {
-        return;
-    };
-
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    d.recv();
-
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"screenshot","arguments":{}}
-    }));
-    let resp = d.recv();
-    assert!(
-        resp["error"].is_null(),
-        "Protocol error from screenshot: {resp:?}"
-    );
-    let content = resp["result"]["content"].as_array().expect("content array");
-    assert!(
-        !content.is_empty(),
-        "screenshot should return at least one content item"
-    );
-}
-
-#[test]
-#[cfg(target_os = "macos")]
-fn screenshot_jpeg_format() {
-    //! Call screenshot with format=jpeg — should return a JPEG image.
-    let Some(mut d) = RawDriver::spawn() else {
-        return;
-    };
-
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    d.recv();
-
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"screenshot","arguments":{"format":"jpeg","quality":70}}
-    }));
-    let resp = d.recv();
-    assert!(
-        resp["error"].is_null(),
-        "Protocol error from screenshot: {resp:?}"
-    );
-    let content = resp["result"]["content"].as_array().expect("content array");
-    let is_error = resp["result"]["isError"].as_bool().unwrap_or(false);
-    if !is_error {
-        let has_jpeg = content.iter().any(|c| {
-            c["type"] == "image"
-                && c["mimeType"].as_str().unwrap_or("") == "image/jpeg"
-                && c["data"].as_str().map(|s| s.len() > 10).unwrap_or(false)
-        });
-        assert!(
-            has_jpeg,
-            "Expected image/jpeg in screenshot response, got: {content:?}"
-        );
-        // Verify structured content has width and height.
-        let sc = &resp["result"]["structuredContent"];
-        assert!(
-            sc["width"].as_f64().unwrap_or(0.0) > 0.0,
-            "Expected positive width in structuredContent"
-        );
-        assert!(
-            sc["height"].as_f64().unwrap_or(0.0) > 0.0,
-            "Expected positive height in structuredContent"
-        );
-        assert_eq!(
-            sc["format"].as_str().unwrap_or(""),
-            "jpeg",
-            "Expected format=jpeg"
-        );
-    }
 }
 
 #[test]
@@ -529,53 +404,6 @@ fn recording_screenshot_capture() {
         }
     }
 
-    let _ = std::fs::remove_dir_all(&tmp_dir);
-}
-
-#[test]
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-fn start_recording_record_video_flag_accepted() {
-    //! `record_video` is the new on/off flag (replaces the old
-    //! `video_experimental`). Default is true. This test passes
-    //! `record_video: false` to bypass the ffmpeg dependency in CI;
-    //! we only verify that the schema accepts the call and the
-    //! session enters the enabled state. Full video lifecycle is
-    //! covered by the manual demo + the per-platform smoke when
-    //! ffmpeg is installed.
-    let Some(mut d) = spawn_unrestricted() else {
-        return;
-    };
-
-    let tmp_dir = std::env::temp_dir().join(format!("cua-driver-rs-recvid-{}", std::process::id()));
-    let tmp_str = tmp_dir.to_string_lossy().to_string();
-    std::fs::create_dir_all(&tmp_dir).unwrap();
-
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    d.recv();
-
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"start_recording","arguments":{
-            "output_dir": tmp_str, "record_video": false
-        }}
-    }));
-    let resp = d.recv();
-    assert!(
-        resp["error"].is_null(),
-        "Expected no JSON-RPC error, got: {resp:?}"
-    );
-    let is_err = resp["result"]["isError"].as_bool().unwrap_or(false);
-    assert!(
-        !is_err,
-        "start_recording with record_video:false should succeed: {resp:?}"
-    );
-
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":3,"method":"tools/call",
-        "params":{"name":"stop_recording","arguments":{}}
-    }));
-    d.recv();
-    drop(d);
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
 

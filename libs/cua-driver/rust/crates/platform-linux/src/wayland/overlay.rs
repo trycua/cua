@@ -26,7 +26,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, Sender};
-use cursor_overlay::{CursorConfig, CursorKey, OverlayCommand, OverlayMsg, RenderStateCore};
+use cursor_overlay::{
+    CursorConfig, CursorKey, CursorMap, MsgOutcome, OverlayCommand, OverlayMsg, RenderStateCore,
+    ScreenFrame,
+};
 use wayland_client::{
     globals::{registry_queue_init, GlobalListContents},
     protocol::{
@@ -198,12 +201,11 @@ struct OverlayState {
     /// recurring full-output SHM redraws.
     initialized_outputs: HashSet<u32>,
     topology_dirty: bool,
-    /// Keyed render cores mirror the X11 native overlay contract. Removing a
-    /// named key records it in `ended`, so already-queued late commands cannot
-    /// recreate a cursor after end_session.
-    cores: HashMap<CursorKey, RenderStateCore>,
-    template: CursorConfig,
-    ended: HashSet<CursorKey>,
+    /// The shared keyed render map (`cursor_overlay::RenderMap`) gives this
+    /// backend the same lifecycle as every other platform: removing a named
+    /// key tombstones it, so already-queued late commands cannot recreate a
+    /// cursor after end_session.
+    render: WlRenderMap,
     /// In-flight wl_shm buffers awaiting `wl_buffer.release` from the
     /// compositor. Keyed by `WlBuffer` object id; value is the
     /// `(mmap ptr, mmap size, memfd fd)` triple that must be unmapped +
@@ -332,10 +334,6 @@ impl Drop for OverlayState {
 
 impl OverlayState {
     fn new(template: CursorConfig) -> Self {
-        let mut cores = HashMap::new();
-        // Match the X11 contract: the compatibility/default slot preserves the
-        // launch-time cursor id, while lazily-created named slots override it.
-        cores.insert("default".to_owned(), RenderStateCore::new(template.clone()));
         Self {
             compositor: None,
             shm: None,
@@ -345,37 +343,25 @@ impl OverlayState {
             painted_outputs: HashSet::new(),
             initialized_outputs: HashSet::new(),
             topology_dirty: false,
-            cores,
-            template,
-            ended: HashSet::new(),
+            // The default slot preserves the launch-time cursor id, while
+            // lazily-created named slots take their key as the id.
+            render: WlRenderMap::new(template, ()),
             pending_buffers: HashMap::new(),
         }
     }
 }
 
-fn render_core_for_key(template: &CursorConfig, key: &str) -> RenderStateCore {
-    let mut config = template.clone();
-    config.cursor_id = key.to_owned();
-    RenderStateCore::new(config)
-}
+type WlRenderMap = cursor_overlay::RenderMap<RenderStateCore>;
 
+/// Apply one keyed command. A never-shown cursor is first seeded near its
+/// target (clamped into `frame`, the union of the configured outputs) so a
+/// spring animation begins on screen, as on every other platform.
 fn apply_keyed_command(
-    cores: &mut HashMap<CursorKey, RenderStateCore>,
-    template: &CursorConfig,
-    ended: &HashSet<CursorKey>,
+    render: &mut WlRenderMap,
+    frame: Option<ScreenFrame>,
     key: CursorKey,
     cmd: OverlayCommand,
 ) -> bool {
-    if ended.contains(&key) {
-        tracing::debug!(key = %key, cmd = ?cmd, "wayland overlay: command dropped — key was ended");
-        return false;
-    }
-
-    let core = cores
-        .entry(key.clone())
-        .or_insert_with(|| render_core_for_key(template, &key));
-    // Seed from the off-screen sentinel near the first targeted action so a
-    // spring animation begins on-screen. This mirrors the X11 renderer.
     let seed_target = match &cmd {
         OverlayCommand::MoveTo { x, y, .. }
         | OverlayCommand::SnapTo { x, y, .. }
@@ -383,40 +369,44 @@ fn apply_keyed_command(
         _ => None,
     };
     if let Some((target_x, target_y)) = seed_target {
-        if core.pos.0 < -50.0 {
-            const SEED_OFFSET: f64 = 140.0;
-            core.pos = (
-                (target_x - SEED_OFFSET).max(2.0),
-                (target_y - SEED_OFFSET).max(2.0),
-            );
-        }
+        render.seed_start_if_sentinel(&key, target_x, target_y, frame);
     }
 
     let disabling = matches!(&cmd, OverlayCommand::SetEnabled(false));
-    let dirty = core.apply_command_base(cmd, false, false);
+    let outcome = render.apply_command(key, cmd);
     if disabling {
-        quiesce_hidden(core);
+        if let Some(key) = outcome.applied_key() {
+            if let Some(core) = render.cursors.get_mut(key) {
+                quiesce_hidden(core);
+            }
+        }
     }
-    dirty
+    outcome.is_dirty()
 }
 
-fn remove_keyed_core(
-    cores: &mut HashMap<CursorKey, RenderStateCore>,
-    ended: &mut HashSet<CursorKey>,
-    key: CursorKey,
-) -> bool {
-    if key == "default" {
-        return false;
-    }
-    let removed = cores.remove(&key).is_some();
-    ended.insert(key);
-    removed
+fn remove_keyed_core(render: &mut WlRenderMap, key: CursorKey) -> bool {
+    matches!(
+        render.remove(key),
+        MsgOutcome::Removed { existed: true, .. }
+    )
 }
 
-fn revive_key(ended: &mut HashSet<CursorKey>, key: CursorKey) {
-    if key != "default" {
-        ended.remove(&key);
-    }
+fn revive_key(render: &mut WlRenderMap, key: CursorKey) {
+    render.revive(key);
+}
+
+/// Bounding frame of every configured output, for seeding.
+fn output_frame(state: &OverlayState) -> Option<ScreenFrame> {
+    ScreenFrame::union(state.outputs.iter().filter_map(|(&id, output)| {
+        output.layout(id).map(|layout| {
+            ScreenFrame::new(
+                f64::from(layout.origin_x),
+                f64::from(layout.origin_y),
+                f64::from(layout.width),
+                f64::from(layout.height),
+            )
+        })
+    }))
 }
 
 fn dbg(msg: &str) {
@@ -478,7 +468,7 @@ fn frame_plan(
 }
 
 fn visible_cores_for_output<'a>(
-    cores: &'a HashMap<CursorKey, RenderStateCore>,
+    cores: &'a CursorMap<RenderStateCore>,
     layouts: &[OutputLayout],
     output_id: u32,
 ) -> Vec<(&'a CursorKey, &'a RenderStateCore)> {
@@ -565,10 +555,10 @@ fn wait_for_renderer_command(
         match command {
             WlOverlayCmd::Shutdown => return None,
             WlOverlayCmd::Remove(key) => {
-                remove_keyed_core(&mut state.cores, &mut state.ended, key);
+                remove_keyed_core(&mut state.render, key);
             }
-            WlOverlayCmd::Revive(key) => revive_key(&mut state.ended, key),
-            WlOverlayCmd::Cmd { ref key, ref cmd } if !state.ended.contains(key) => {
+            WlOverlayCmd::Revive(key) => revive_key(&mut state.render, key),
+            WlOverlayCmd::Cmd { ref key, ref cmd } if !state.render.ended.contains(key) => {
                 if matches!(
                     cmd,
                     OverlayCommand::MoveTo { .. }
@@ -577,13 +567,7 @@ fn wait_for_renderer_command(
                 ) {
                     return Some(command);
                 }
-                apply_keyed_command(
-                    &mut state.cores,
-                    &state.template,
-                    &state.ended,
-                    key.clone(),
-                    cmd.clone(),
-                );
+                apply_keyed_command(&mut state.render, None, key.clone(), cmd.clone());
             }
             WlOverlayCmd::Cmd { .. } => {}
         }
@@ -665,7 +649,11 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
     let mut frame_tick_needed = false;
     let mut startup_command = Some(first_command);
     loop {
-        let wait = next_wait(&state.cores, frame_tick_needed, state.topology_dirty);
+        let wait = next_wait(
+            &state.render.cursors,
+            frame_tick_needed,
+            state.topology_dirty,
+        );
         let wake = startup_command
             .take()
             .map(WlWake::Command)
@@ -683,6 +671,7 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
         let mut dirty = false;
         let mut shutdown = false;
         let mut pending = first_cmd;
+        let frame = output_frame(&state);
         loop {
             let received = pending.take().map(Ok).unwrap_or_else(|| rx.try_recv());
             match received {
@@ -691,19 +680,13 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                     break;
                 }
                 Ok(WlOverlayCmd::Cmd { key, cmd }) => {
-                    dirty |= apply_keyed_command(
-                        &mut state.cores,
-                        &state.template,
-                        &state.ended,
-                        key,
-                        cmd,
-                    );
+                    dirty |= apply_keyed_command(&mut state.render, frame, key, cmd);
                 }
                 Ok(WlOverlayCmd::Remove(key)) => {
-                    dirty |= remove_keyed_core(&mut state.cores, &mut state.ended, key);
+                    dirty |= remove_keyed_core(&mut state.render, key);
                 }
                 Ok(WlOverlayCmd::Revive(key)) => {
-                    revive_key(&mut state.ended, key);
+                    revive_key(&mut state.render, key);
                 }
                 Err(crossbeam_channel::TryRecvError::Empty) => break,
                 Err(crossbeam_channel::TryRecvError::Disconnected) => {
@@ -722,21 +705,22 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
         if let Some(timeout_kind) = timed_out {
             match timeout_kind {
                 WlWait::Frame => {
-                    tick_all_cores(&mut state.cores, elapsed.min(0.05));
+                    tick_all_cores(&mut state.render.cursors, elapsed.min(0.05));
                     dirty = true;
                 }
                 WlWait::Deadline(_) => {
-                    tick_all_cores(&mut state.cores, elapsed);
+                    tick_all_cores(&mut state.render.cursors, elapsed);
                     dirty = true;
                 }
                 WlWait::Maintenance(_) => {
                     let before: HashMap<CursorKey, f64> = state
-                        .cores
+                        .render
+                        .cursors
                         .iter()
                         .map(|(key, core)| (key.clone(), core.idle_alpha))
                         .collect();
-                    tick_all_cores(&mut state.cores, elapsed);
-                    dirty |= state.cores.iter().any(|(key, core)| {
+                    tick_all_cores(&mut state.render.cursors, elapsed);
+                    dirty |= state.render.cursors.iter().any(|(key, core)| {
                         before
                             .get(key)
                             .is_none_or(|alpha| *alpha != core.idle_alpha)
@@ -752,7 +736,7 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                 }
             }
         }
-        let next_frame_tick_needed = any_core_needs_frame_tick(&state.cores);
+        let next_frame_tick_needed = any_core_needs_frame_tick(&state.render.cursors);
         if dirty || frame_tick_needed || next_frame_tick_needed {
             redraw(&mut state, &shm, &qh)?;
             // Flush the committed frame and dispatch wl_buffer.release before
@@ -803,7 +787,7 @@ fn wait_for_work(rx: &Receiver<WlOverlayCmd>, wait: WlWait) -> WlWake {
 const TOPOLOGY_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
 
 fn next_wait(
-    cores: &HashMap<CursorKey, RenderStateCore>,
+    cores: &CursorMap<RenderStateCore>,
     frame_tick_needed: bool,
     topology_dirty: bool,
 ) -> WlWait {
@@ -819,46 +803,28 @@ fn next_wait(
     }
 }
 
-fn any_core_needs_frame_tick(cores: &HashMap<CursorKey, RenderStateCore>) -> bool {
+fn any_core_needs_frame_tick(cores: &CursorMap<RenderStateCore>) -> bool {
     cores.values().any(needs_frame_tick)
 }
 
-fn earliest_idle_fade_wait(cores: &HashMap<CursorKey, RenderStateCore>) -> Option<Duration> {
-    cores.values().filter_map(idle_fade_wait).min()
+fn earliest_idle_fade_wait(cores: &CursorMap<RenderStateCore>) -> Option<Duration> {
+    cores
+        .values()
+        .filter_map(RenderStateCore::idle_fade_wait)
+        .min()
 }
 
-fn tick_all_cores(cores: &mut HashMap<CursorKey, RenderStateCore>, dt: f64) {
+fn tick_all_cores(cores: &mut CursorMap<RenderStateCore>, dt: f64) {
     for core in cores.values_mut() {
         core.tick_motion(dt);
     }
 }
 
+/// The shared frame-tick predicate, including resting motion (the float bob),
+/// gated on a shown, placed cursor: a hidden cursor's motion is quiesced by
+/// [`quiesce_hidden`] and never repaints a layer surface.
 fn needs_frame_tick(core: &RenderStateCore) -> bool {
-    if !core.visible || core.pos.0 < -100.0 {
-        return false;
-    }
-    let fade_start = core.motion.idle_hide_ms / 1000.0;
-    core.path.is_some()
-        || core.spring.is_some()
-        || core.click_t.is_some()
-        || core.session_badge_needs_frame_tick()
-        || (core.motion.idle_hide_ms > 0.0
-            && core.idle_secs >= fade_start
-            && core.idle_alpha >= 0.004)
-}
-
-fn idle_fade_wait(core: &RenderStateCore) -> Option<Duration> {
-    if !core.visible
-        || core.pos.0 < -100.0
-        || core.motion.idle_hide_ms <= 0.0
-        || core.path.is_some()
-        || core.spring.is_some()
-        || core.click_t.is_some()
-    {
-        return None;
-    }
-    let remaining = core.motion.idle_hide_ms / 1000.0 - core.idle_secs;
-    (remaining.is_finite() && remaining > 0.0).then(|| Duration::from_secs_f64(remaining))
+    core.visible && core.pos.0 >= -100.0 && core.needs_frame_tick()
 }
 
 fn quiesce_hidden(core: &mut RenderStateCore) {
@@ -893,7 +859,8 @@ fn redraw(
         .filter_map(|(&id, output)| output.layout(id))
         .collect();
     let cursor_positions = state
-        .cores
+        .render
+        .cursors
         .values()
         .filter(|core| core.visible && core.pos.0 >= -100.0 && core.idle_alpha >= 0.004)
         .map(|core| core.pos);
@@ -966,7 +933,7 @@ fn redraw_output(
     {
         // HashMap iteration is intentionally normalized by key so overlapping
         // named cursors composite deterministically from frame to frame.
-        for (_, core) in visible_cores_for_output(&state.cores, layouts, target.id) {
+        for (_, core) in visible_cores_for_output(&state.render.cursors, layouts, target.id) {
             cursor_overlay::paint_cursor(
                 &mut pm,
                 core,
@@ -1458,7 +1425,7 @@ mod tests {
         ];
         let mut core = positioned_core();
         core.pos = (400.0, 300.0);
-        let cores = HashMap::from([("session".to_owned(), core)]);
+        let cores = CursorMap::from([("session".to_owned(), core)]);
 
         assert_eq!(select_output(&layouts, 400.0, 300.0).unwrap().id, 4);
         assert_eq!(visible_cores_for_output(&cores, &layouts, 4).len(), 1);
@@ -1564,7 +1531,7 @@ mod tests {
     fn fresh_sentinel_overlay_uses_only_topology_maintenance() {
         let layouts = three_monitor_layout();
         let core = RenderStateCore::new(CursorConfig::default());
-        let cores = HashMap::from([("default".to_owned(), core)]);
+        let cores = CursorMap::from([("default".to_owned(), core)]);
         assert_eq!(
             next_wait(&cores, false, false),
             WlWait::Maintenance(TOPOLOGY_MAINTENANCE_INTERVAL)
@@ -1585,10 +1552,11 @@ mod tests {
     }
 
     #[test]
-    fn stable_visible_overlay_sleeps_until_idle_fade_deadline() {
+    fn stable_reduced_motion_overlay_sleeps_until_idle_fade_deadline() {
         let mut core = positioned_core();
+        core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
         core.idle_secs = 0.25;
-        let cores = HashMap::from([("cursor-a".to_owned(), core)]);
+        let cores = CursorMap::from([("cursor-a".to_owned(), core)]);
         assert_eq!(
             next_wait(&cores, false, false),
             WlWait::Deadline(Duration::from_millis(750))
@@ -1596,12 +1564,46 @@ mod tests {
         assert!(!any_core_needs_frame_tick(&cores));
     }
 
+    // Before the shared predicate, a settled Wayland cursor slept until its
+    // idle-fade deadline and its resting bob froze mid-swing.
+    #[test]
+    fn stable_visible_overlay_keeps_frame_cadence_for_resting_motion() {
+        let mut core = positioned_core();
+        core.idle_secs = 0.25;
+        assert!(core.has_resting_motion());
+        let mut cores = CursorMap::from([("cursor-a".to_owned(), core)]);
+        assert_eq!(next_wait(&cores, false, false), WlWait::Frame);
+
+        // Hidden cursors never tick, even with resting motion enabled.
+        cores.get_mut("cursor-a").unwrap().visible = false;
+        assert!(!any_core_needs_frame_tick(&cores));
+    }
+
+    #[test]
+    fn first_positioned_command_seeds_inside_the_output_frame() {
+        let mut render = WlRenderMap::new(CursorConfig::default(), ());
+        let frame = Some(ScreenFrame::new(0.0, 0.0, 1920.0, 1080.0));
+        assert!(apply_keyed_command(
+            &mut render,
+            frame,
+            "session-a".to_owned(),
+            OverlayCommand::MoveTo {
+                x: 50.0,
+                y: 50.0,
+                end_heading_radians: 0.0,
+            },
+        ));
+        let core = &render.cursors["session-a"];
+        assert_eq!(core.pos, (2.0, 2.0));
+        assert!(core.path.is_some());
+    }
+
     #[test]
     fn animation_and_fade_use_frame_cadence() {
         let mut core = positioned_core();
         core.click_t = Some(0.0);
         assert!(needs_frame_tick(&core));
-        let mut cores = HashMap::from([("cursor-a".to_owned(), core)]);
+        let mut cores = CursorMap::from([("cursor-a".to_owned(), core)]);
         assert_eq!(next_wait(&cores, false, false), WlWait::Frame);
 
         let core = cores.get_mut("cursor-a").unwrap();
@@ -1621,7 +1623,7 @@ mod tests {
         assert!(core.click_t.is_none());
         assert!(core.path.is_none());
         assert!(core.spring.is_none());
-        let cores = HashMap::from([("cursor-a".to_owned(), core)]);
+        let cores = CursorMap::from([("cursor-a".to_owned(), core)]);
         assert_eq!(
             next_wait(&cores, false, false),
             WlWait::Maintenance(TOPOLOGY_MAINTENANCE_INTERVAL)
@@ -1672,8 +1674,8 @@ mod tests {
 
         let mut state = OverlayState::new(CursorConfig::default());
         assert!(wait_for_renderer_command(&rx, &mut state).is_none());
-        assert!(state.ended.contains("session-a"));
-        assert!(!state.cores.contains_key("session-a"));
+        assert!(state.render.ended.contains("session-a"));
+        assert!(!state.render.cursors.contains_key("session-a"));
         assert!(state.outputs.is_empty());
     }
 
@@ -1741,7 +1743,7 @@ mod tests {
                 ..
             })
         ));
-        let core = state.cores.get("session-a").unwrap();
+        let core = state.render.cursors.get("session-a").unwrap();
         assert_eq!(core.session_label.as_deref(), Some("Synthetic session"));
         assert!(core.pos.0 < -50.0);
         assert!(state.outputs.is_empty());
@@ -1772,8 +1774,8 @@ mod tests {
             wait_for_renderer_command(&rx, &mut state),
             Some(WlOverlayCmd::Cmd { key, .. }) if key == "session-a"
         ));
-        assert!(!state.ended.contains("session-a"));
-        assert!(state.ended.contains("session-b"));
+        assert!(!state.render.ended.contains("session-a"));
+        assert!(state.render.ended.contains("session-b"));
         // Startup must not consume the later Remove or reorder it behind the
         // stale command. The active loop receives both in their original order.
         assert!(matches!(
@@ -1801,25 +1803,13 @@ mod tests {
             panic!("fresh session should start the renderer");
         };
         assert_eq!(key, "session-b");
-        assert!(apply_keyed_command(
-            &mut state.cores,
-            &state.template,
-            &state.ended,
-            key,
-            cmd,
-        ));
-        assert!(state.cores.contains_key("session-b"));
+        assert!(apply_keyed_command(&mut state.render, None, key, cmd,));
+        assert!(state.render.cursors.contains_key("session-b"));
         let WlOverlayCmd::Cmd { key, cmd } = snap_command("session-a") else {
             unreachable!();
         };
-        assert!(!apply_keyed_command(
-            &mut state.cores,
-            &state.template,
-            &state.ended,
-            key,
-            cmd,
-        ));
-        assert!(!state.cores.contains_key("session-a"));
+        assert!(!apply_keyed_command(&mut state.render, None, key, cmd,));
+        assert!(!state.render.cursors.contains_key("session-a"));
     }
 
     #[test]
@@ -1842,13 +1832,10 @@ mod tests {
 
     #[test]
     fn named_cursors_render_on_independent_outputs_and_removal_clears_only_one() {
-        let template = CursorConfig::default();
-        let mut cores = HashMap::new();
-        let mut ended = HashSet::new();
+        let mut render = WlRenderMap::new(CursorConfig::default(), ());
         assert!(apply_keyed_command(
-            &mut cores,
-            &template,
-            &ended,
+            &mut render,
+            None,
             "session-a".to_owned(),
             OverlayCommand::SnapTo {
                 x: 100.0,
@@ -1857,9 +1844,8 @@ mod tests {
             },
         ));
         assert!(apply_keyed_command(
-            &mut cores,
-            &template,
-            &ended,
+            &mut render,
+            None,
             "session-b".to_owned(),
             OverlayCommand::SnapTo {
                 x: 2500.0,
@@ -1867,19 +1853,19 @@ mod tests {
                 heading_radians: None,
             },
         ));
-        assert_eq!(cores["session-a"].cfg.cursor_id, "session-a");
-        assert_eq!(cores["session-b"].cfg.cursor_id, "session-b");
+        assert_eq!(render.cursors["session-a"].cfg.cursor_id, "session-a");
+        assert_eq!(render.cursors["session-b"].cfg.cursor_id, "session-b");
 
         let layouts = three_monitor_layout();
         assert_eq!(
-            visible_cores_for_output(&cores, &layouts, 1)
+            visible_cores_for_output(&render.cursors, &layouts, 1)
                 .into_iter()
                 .map(|(key, _)| key.as_str())
                 .collect::<Vec<_>>(),
             vec!["session-a"]
         );
         assert_eq!(
-            visible_cores_for_output(&cores, &layouts, 2)
+            visible_cores_for_output(&render.cursors, &layouts, 2)
                 .into_iter()
                 .map(|(key, _)| key.as_str())
                 .collect::<Vec<_>>(),
@@ -1889,21 +1875,17 @@ mod tests {
             &layouts,
             &HashSet::new(),
             &initialized(&layouts),
-            cores.values().map(|core| core.pos),
+            render.cursors.values().map(|core| core.pos),
         );
         assert_eq!(painted, HashSet::from([1, 2]));
         assert_eq!(targets, vec![FrameTarget { id: 1 }, FrameTarget { id: 2 }]);
 
-        assert!(remove_keyed_core(
-            &mut cores,
-            &mut ended,
-            "session-a".to_owned()
-        ));
-        assert!(!cores.contains_key("session-a"));
-        assert!(cores.contains_key("session-b"));
-        assert!(visible_cores_for_output(&cores, &layouts, 1).is_empty());
+        assert!(remove_keyed_core(&mut render, "session-a".to_owned()));
+        assert!(!render.cursors.contains_key("session-a"));
+        assert!(render.cursors.contains_key("session-b"));
+        assert!(visible_cores_for_output(&render.cursors, &layouts, 1).is_empty());
         assert_eq!(
-            visible_cores_for_output(&cores, &layouts, 2)
+            visible_cores_for_output(&render.cursors, &layouts, 2)
                 .into_iter()
                 .map(|(key, _)| key.as_str())
                 .collect::<Vec<_>>(),
@@ -1913,16 +1895,15 @@ mod tests {
             &layouts,
             &painted,
             &initialized(&layouts),
-            cores.values().map(|core| core.pos),
+            render.cursors.values().map(|core| core.pos),
         );
         assert_eq!(selected, HashSet::from([2]));
         assert_eq!(targets, vec![FrameTarget { id: 1 }, FrameTarget { id: 2 }]);
 
         // A queued command cannot resurrect an ended named session.
         assert!(!apply_keyed_command(
-            &mut cores,
-            &template,
-            &ended,
+            &mut render,
+            None,
             "session-a".to_owned(),
             OverlayCommand::SnapTo {
                 x: 200.0,
@@ -1930,14 +1911,13 @@ mod tests {
                 heading_radians: None,
             },
         ));
-        assert!(!cores.contains_key("session-a"));
+        assert!(!render.cursors.contains_key("session-a"));
 
-        revive_key(&mut ended, "session-a".to_owned());
-        assert!(!ended.contains("session-a"));
+        revive_key(&mut render, "session-a".to_owned());
+        assert!(!render.ended.contains("session-a"));
         assert!(apply_keyed_command(
-            &mut cores,
-            &template,
-            &ended,
+            &mut render,
+            None,
             "session-a".to_owned(),
             OverlayCommand::SnapTo {
                 x: 200.0,
@@ -1945,18 +1925,20 @@ mod tests {
                 heading_radians: None,
             },
         ));
-        assert!(cores.contains_key("session-a"));
+        assert!(render.cursors.contains_key("session-a"));
     }
 
     #[test]
     fn named_cursors_schedule_animation_and_idle_deadlines_independently() {
         let mut idle = positioned_core();
+        idle.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
         idle.idle_secs = 0.25;
         let mut animated = positioned_core();
+        animated.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
         animated.motion.idle_hide_ms = 4_000.0;
         animated.click_t = Some(0.0);
         let mut cores =
-            HashMap::from([("idle".to_owned(), idle), ("animated".to_owned(), animated)]);
+            CursorMap::from([("idle".to_owned(), idle), ("animated".to_owned(), animated)]);
 
         assert_eq!(next_wait(&cores, false, false), WlWait::Frame);
         cores.get_mut("animated").unwrap().click_t = None;
@@ -1964,22 +1946,6 @@ mod tests {
             next_wait(&cores, false, false),
             WlWait::Deadline(Duration::from_millis(750))
         );
-    }
-
-    #[test]
-    fn default_cursor_is_not_removed_or_marked_ended() {
-        let mut cores = HashMap::from([(
-            "default".to_owned(),
-            RenderStateCore::new(CursorConfig::default()),
-        )]);
-        let mut ended = HashSet::new();
-        assert!(!remove_keyed_core(
-            &mut cores,
-            &mut ended,
-            "default".to_owned()
-        ));
-        assert!(cores.contains_key("default"));
-        assert!(!ended.contains("default"));
     }
 
     #[test]

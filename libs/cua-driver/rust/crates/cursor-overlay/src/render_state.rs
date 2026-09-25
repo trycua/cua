@@ -152,8 +152,82 @@ impl RenderStateCore {
         }
     }
 
-    fn cursor_is_revealed(&self) -> bool {
+    /// Whether the cursor currently paints pixels: user-visible, placed on
+    /// screen (not the `(-200, -200)` sentinel), and not fully idle-faded.
+    pub fn is_revealed(&self) -> bool {
         self.visible && self.pos.0 >= -100.0 && self.idle_alpha >= 0.004
+    }
+
+    /// Whether a revealed cursor keeps changing pixels while it rests.
+    ///
+    /// The default theme levitates through the shared float motion (the
+    /// resting "bob"), and a custom theme may loop a multi-frame animation for
+    /// its current action. Both are part of the cursor's visual identity, so
+    /// every platform must keep delivering frames while this holds. Reduced
+    /// motion freezes both (no bob, still frame), a hidden, unplaced, faded,
+    /// or off-workspace cursor paints nothing, and a single-frame custom theme
+    /// has nothing to animate.
+    pub fn has_resting_motion(&self) -> bool {
+        if !self.is_revealed()
+            || self.pinned_target_off_workspace
+            || self.visual.reduced_motion == crate::ReducedMotion::On
+        {
+            return false;
+        }
+        match self.theme.as_deref() {
+            // The defensive no-theme fallback paints the embedded default.
+            None => true,
+            Some(theme) if theme.id == crate::DEFAULT_THEME_ID => true,
+            Some(theme) => theme
+                .animation_for_action(self.visual.resolved_action)
+                .is_some_and(|animation| animation.frames.len() > 1),
+        }
+    }
+
+    /// Whether the idle-hide fade (the 180 ms alpha ramp after
+    /// `motion.idle_hide_ms` of inactivity) is currently animating.
+    pub fn idle_fade_in_progress(&self) -> bool {
+        self.motion.idle_hide_ms > 0.0
+            && self.visible
+            && self.pos.0 >= -100.0
+            && self.idle_secs >= self.motion.idle_hide_ms / 1000.0
+            && self.idle_alpha >= 0.004
+    }
+
+    /// The shared frame-tick predicate: true while the next tick can change
+    /// this cursor's pixels, so the platform render loop must run at frame
+    /// cadence. It covers an in-flight glide, spring settle, click pulse,
+    /// session-badge or semantic-action animation, resting motion
+    /// ([`Self::has_resting_motion`]), and the idle fade. A brand-new sentinel
+    /// cursor, a fully faded cursor, and a reduced-motion cursor waiting out
+    /// its opaque idle-hide delay are quiescent; platforms advance that
+    /// countdown with [`Self::idle_fade_wait`] or their own slow heartbeat.
+    pub fn needs_frame_tick(&self) -> bool {
+        self.path.is_some()
+            || self.spring.is_some()
+            || self.click_t.is_some()
+            || self.session_badge_needs_frame_tick()
+            || self.has_resting_motion()
+            || self.idle_fade_in_progress()
+    }
+
+    /// Time until the idle fade starts for a placed, visible, settled cursor,
+    /// so a parked render loop can wake exactly when pixels begin to change.
+    /// `None` when idle hide is off, the cursor is moving or not shown, or
+    /// the fade has already started.
+    pub fn idle_fade_wait(&self) -> Option<std::time::Duration> {
+        if !self.visible
+            || self.pos.0 < -100.0
+            || self.motion.idle_hide_ms <= 0.0
+            || self.path.is_some()
+            || self.spring.is_some()
+            || self.click_t.is_some()
+        {
+            return None;
+        }
+        let remaining = self.motion.idle_hide_ms / 1000.0 - self.idle_secs;
+        (remaining.is_finite() && remaining > 0.0)
+            .then(|| std::time::Duration::from_secs_f64(remaining))
     }
 
     fn reveal_session_badge(&mut self) {
@@ -191,12 +265,12 @@ impl RenderStateCore {
     }
 
     pub fn session_badge_is_visible(&self) -> bool {
-        self.cursor_is_revealed()
+        self.is_revealed()
             && (self.session_badge_alpha() > 0.001 || self.session_badge_chip_alpha() > 0.001)
     }
 
     pub fn session_badge_needs_frame_tick(&self) -> bool {
-        self.cursor_is_revealed()
+        self.is_revealed()
             && ((self.session_label.is_some()
                 && self.session_badge_secs < SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS)
                 || self.badge_modifier_fade_secs.is_some()
@@ -208,7 +282,7 @@ impl RenderStateCore {
     /// from [`Self::session_badge_needs_frame_tick`]: a faded badge needs hover
     /// hit-testing, not continuous 60 fps repainting.
     pub fn session_badge_needs_hover_poll(&self) -> bool {
-        self.session_label.is_some() && self.cursor_is_revealed()
+        self.session_label.is_some() && self.is_revealed()
     }
 
     /// Update hover state from a platform-native hardware pointer sample.
@@ -561,7 +635,7 @@ impl RenderStateCore {
                 y,
                 end_heading_radians,
             } => {
-                let reveal_badge = !self.cursor_is_revealed();
+                let reveal_badge = !self.is_revealed();
                 // Apply click offset (16 pt along end_heading) before planning,
                 // matching Swift `moveTo(point:endAngleRadians:)`:
                 //   tx = clickPoint.x + cos(endAngle) * clickOffset
@@ -605,7 +679,7 @@ impl RenderStateCore {
                 y,
                 heading_radians,
             } => {
-                let reveal_badge = !self.cursor_is_revealed();
+                let reveal_badge = !self.is_revealed();
                 self.pos = (x, y);
                 if let Some(heading) = heading_radians {
                     self.heading = heading;
@@ -630,7 +704,7 @@ impl RenderStateCore {
                 true
             }
             OverlayCommand::ClickPulse { x, y } => {
-                let reveal_badge = !self.cursor_is_revealed();
+                let reveal_badge = !self.is_revealed();
                 if click_pulse_sentinel_only {
                     // macOS: only snap position on first placement (sentinel state).
                     // After that the cursor stays where the animation landed.
@@ -1012,7 +1086,7 @@ mod session_badge_and_action_tests {
 
         core.tick_motion(2.0);
 
-        assert!(core.cursor_is_revealed());
+        assert!(core.is_revealed());
         assert_eq!(core.pos, (40.0, 60.0));
         assert_eq!(core.idle_alpha, 1.0);
     }

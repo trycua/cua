@@ -24,6 +24,7 @@ need a separately qualified oracle. A lock request fails preflight, never
 becomes a skipped/passing row. Portable tests are not native certification.
 """
 import argparse
+from harness_paths import harness_file  # Also puts tests/ helpers on sys.path.
 from production_app_smoke import add_provenance_arguments
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -576,10 +577,10 @@ def run(args):
         validate_plan(plan)
         fault = SessionFault(plan, args)
         origin = provenance(args, plan)
-        for name in ('production_session_fault_proof.py', 'production_session_fault_proof_test.py',
+        for name in ('production_session_fault_proof.py', 'production_session_fault_proof_test.py', 'proof_fixtures.py',
                      'production_desktop_fault_proof.py', 'production_geometry_fault_proof.py',
                      'production_cancel_proof.py', 'desktop_faults.py'):
-            path = Path(__file__).with_name(name)
+            path = harness_file(name)
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
         save('provenance.json', origin)
         spec = plan['agents'][0]

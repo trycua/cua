@@ -21,6 +21,7 @@ import time
 import xml.etree.ElementTree as ET
 import zipfile
 
+from harness_paths import harness_file  # Also puts tests/ helpers on sys.path.
 from production_mcp import DirectMCP
 
 
@@ -58,7 +59,7 @@ def package_owner(path, package):
     assert path.resolve(strict=True) == path, 'noncanonical package executable'
     assert path.is_file() and path.stat().st_mode & 0o111, 'package executable is not executable'
     assert read(['pacman', '-Qqo', str(path)]) == package, 'noncanonical package owner'
-    assert read(['pacman', '-Q', package]) == f'{package} {PACKAGES[package]}'
+    assert read(['pacman', '-Q', package]) == f'{package} {PACKAGES[package]}', 'package is not the qualified version'
     return digest(path)
 
 
@@ -226,7 +227,7 @@ def provenance(args, app_profile=None):
     save_json(args.evidence, 'plugin-enabled-option.json', enabled)
     require_enabled_plugin(enabled)
     files = {'driver': args.driver, 'plugin': plugin,
-             **{name: Path(__file__).with_name(name) for name in
+             **{name: harness_file(name) for name in
                 ('production_app_smoke.py', 'production_mcp.py', 'driver_input_live.py')}}
     return {**product, 'harness': harness, 'artifact': artifact,
             'source_versions': {

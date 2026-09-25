@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import subprocess
 
+import harness_paths  # noqa: F401  Puts tests/ helpers on sys.path.
 from driver_input_live import MCP
 
 

@@ -1,6 +1,7 @@
 //! TextEdit background-delivery integration check for macOS.
 //!
-//! Covers the `{path, verified}` structured outcome on a real Cocoa app.
+//! Covers the accessibility route and confirmed value read-back on a real
+//! Cocoa app, then reads the editor back through a fresh snapshot.
 //!
 //! The schema contract lives in `protocol_schema_test.rs`. This installed-app
 //! check runs in the canonical logged-in macOS desktop lane.
@@ -24,6 +25,15 @@ fn background_type_on_native_cocoa_is_ax_verified() {
     use cua_driver_testkit::{Driver, McpDriver};
 
     let cell_id = "macos-textedit-type-text-ax-background";
+    // TextEdit may restore an earlier unsaved document, so the read-back
+    // oracle needs text that no earlier run could have left behind.
+    let marker = format!(
+        "ladder{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after the Unix epoch")
+            .as_nanos()
+    );
     let case = CaseSpec::delivered(
         cell_id,
         "textedit",
@@ -104,7 +114,7 @@ fn background_type_on_native_cocoa_is_ax_verified() {
                     serde_json::json!({
                         "pid": pid, "window_id": wid, "element_index": el,
                         "snapshot_id": snapshot_id,
-                        "text": "ladder", "delivery_mode": "background"
+                        "text": marker, "delivery_mode": "background"
                     }),
                 )
             },
@@ -129,6 +139,34 @@ fn background_type_on_native_cocoa_is_ax_verified() {
             "confirmed actions must expose publishable evidence: {}",
             typed.text()
         );
+        // The driver's own read-back is not the oracle. Take a fresh snapshot
+        // and require the editor to hold the typed text.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let state = driver.call(
+                "get_window_state",
+                serde_json::json!({ "pid": pid, "window_id": wid, "capture_mode": "ax" }),
+            );
+            let landed = state.structured()["elements"]
+                .as_array()
+                .is_some_and(|elements| {
+                    elements.iter().any(|element| {
+                        element["role"] == "AXTextArea"
+                            && element["value"]
+                                .as_str()
+                                .is_some_and(|value| value.contains(&marker))
+                    })
+                });
+            if landed {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "TextEdit's AXTextArea never held {marker:?} after a confirmed write:\n{}",
+                state.text()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
         passed.push(OracleKind::AxState);
         Observation::delivered(passed, Default::default())
     });

@@ -50,6 +50,10 @@ on:
       - "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json"
       - "libs/cua-driver/tests/fixtures/apps/cross-platform/tauri/build.sh"
       - "libs/cua-driver/tests/runners/macos-lume/**"
+      - "libs/cua-driver/tests/runners/windows/**"
+      # The E2E inventory test checks every runner against the ignored tests.
+      - "libs/cua-driver/tests/manual-e2e-allowlist.txt"
+      - "scripts/ci/**"
       - "scripts/ci/macos/**"
       - "libs/cua-driver/tests/perception-demo/**"
       # Release-wiring, channel, and installer tests read these inputs.

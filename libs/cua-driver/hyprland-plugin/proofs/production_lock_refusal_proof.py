@@ -18,6 +18,7 @@ No product wake/unlock policy, replay, source fixture edit, or native setup.
 Portable tests are orchestration checks, never native certification.
 """
 import argparse
+from harness_paths import harness_file  # Also puts tests/ helpers on sys.path.
 from production_app_smoke import add_provenance_arguments
 import hashlib
 import json
@@ -376,10 +377,11 @@ def run(args):
         validate_plan(plan)
         fixture = LockFixture(plan, args)
         origin = provenance(args, plan)
-        for name in (Path(__file__).name, 'production_lock_refusal_proof_test.py', 'session_lock_fixture.c',
+        for name in (Path(__file__).name, 'production_lock_refusal_proof_test.py', 'proof_fixtures.py',
+                     'session_lock_fixture.c',
                      'production_session_fault_proof.py', 'production_desktop_fault_proof.py',
                      'desktop_faults.py', 'production_cancel_proof.py'):
-            path = Path(__file__).with_name(name)
+            path = harness_file(name)
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
         origin['lock_fixture'] = plan['lock_fixture']
         save('provenance.json', origin)

@@ -12,6 +12,8 @@ on:
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-macos/**"
+      - "libs/cua-driver/rust/crates/cua-driver/tests/**"
+      - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
       - ".github/workflows/ci-rust-macos.yml"
   push:
     branches: [main]
@@ -25,6 +27,8 @@ on:
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-macos/**"
+      - "libs/cua-driver/rust/crates/cua-driver/tests/**"
+      - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
       - ".github/workflows/ci-rust-macos.yml"
   workflow_dispatch:
 
@@ -62,3 +66,13 @@ jobs:
       - name: Run cua-driver-core unit tests on macOS
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver-core --lib
+      # Desktop-bound cua-driver integration tests are #[ignore] and run in the
+      # Lume harness. The hermetic tests compiled only into macOS-gated
+      # binaries have no other runner: the harness's own FIFO backpressure
+      # self-tests and the standalone-browser command builders.
+      - name: Run hermetic macOS-only cua-driver integration tests
+        working-directory: libs/cua-driver/rust
+        run: >-
+          cargo test --locked -p cua-driver
+          --test harness_appkit_test
+          --test standalone_browser_behavior_test

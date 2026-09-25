@@ -56,7 +56,7 @@ notes and the supplemental lease probe do not change either executable.
 
 ## Application and isolation evidence
 
-[`driver_input_live.py`](driver_input_live.py) connected through a real Driver
+[`driver_input_live.py`](../tests/driver_input_live.py) connected through a real Driver
 MCP process to an unrestricted test service. Both
 [GTK3 drawing-area fixtures](../../tests/fixtures/apps/linux/isolated-input/main.py)
 had empty actionable accessibility trees; AT-SPI actions could not substitute
@@ -65,7 +65,7 @@ fixtures.
 
 Each action had a fresh Cua window snapshot before and after. Independent
 application event journals and Wayland wire logs supplied the behavior oracle.
-The primary-seat adversary was [`primary_grab.c`](primary_grab.c), which held
+The primary-seat adversary was [`primary_grab.c`](../tests/primary_grab.c), which held
 the foreground left button through a virtual pointer. It was not a physical
 mouse test. Background delivery used only the Driver MCP input route.
 
@@ -95,11 +95,11 @@ test grant, and only the public grant entered the guest.
   `primary_seat`, and 23 shared `action_record` tests.
 - All 24 Python operator, transport, and nested-lifecycle helper tests passed
   on the host with the optional cryptography dependency available.
-- [`input_transport_test.py`](input_transport_test.py) passed against the final
+- [`input_transport_test.py`](../tests/input_transport_test.py) passed against the final
   module: missing, malformed, and forged grants; replayed grants before and
   after Stop; replayed action sequences; NaN, infinity, negative, and
   out-of-bounds coordinates. Exactly one valid fixture click was dispatched.
-- [`input_lease_live.py`](input_lease_live.py) separately proved that expiry
+- [`input_lease_live.py`](../tests/input_lease_live.py) separately proved that expiry
   refused further input and reconnect produced a fresh challenge, rejected
   the old connection's grant, and required fresh approval. These probes did
   not exercise cancellation while input was held.

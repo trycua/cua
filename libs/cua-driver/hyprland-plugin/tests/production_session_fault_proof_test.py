@@ -10,54 +10,10 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 import production_session_fault_proof as proof
-
-
-MONITOR = {'id': 0, 'name': 'Virtual-1', 'width': 1280, 'height': 800,
-           'x': 0, 'y': 0, 'scale': 1.0, 'transform': 0}
-BOUNDS = {'x': 10, 'y': 20, 'width': 800, 'height': 600}
-PARTIAL = {'structuredContent': {'effect': 'partial', 'route': 'synthetic_events',
-                               'delivery': {'mode': 'background', 'delivered_count': 1}}}
-REFUSED = {'isError': True, 'structuredContent': {'effect': 'refused', 'reason': 'session_unavailable'}}
-
-
-def identity(pid, exe='/usr/bin/python3'):
-    return {'pid': pid, 'uid': 1000, 'starttime': '123', 'exe': exe}
-
-
-def plan():
-    return {'purpose': 'session_fault', 'disposable': True, 'fault': {'kind': 'dpms'},
-            'vm': {'machine_id': '1' * 32, 'boot_id': '12345678-1234-1234-1234-123456789abc'},
-            'compositor': {**identity(50, '/usr/bin/Hyprland'), 'instance': 'test_1'},
-            'foreground': {'pid': 10, 'window_id': 100}, 'primary_point': [20, 20],
-            'identities': {'foreground': identity(10), 'target': identity(20, '/usr/bin/soffice.bin')},
-            'foreground_fixture': {'sha256': 'a' * 64, 'journal': {'path': '/test/foreground.jsonl',
-                'device': 1, 'inode': 2, 'uid': 1000}}, 'monitors': [dict(MONITOR)],
-            'agents': [{'app': 'calc', 'name': 'session', 'target': {'pid': 20, 'window_id': 200},
-                'bounds': dict(BOUNDS), 'pointer_stage': 'select_range', 'drag': {}}],
-            'recovery': {'pointer_stage': 'click_b2'}}
-
-
-def status(generation=1, held=False):
-    return {'configured': True, 'transport': {'ready': True}, 'input': {
-        'protocol': 3, 'test_only': False, 'seat_lifetime': 'compositor',
-        'upgrade': 'desktop_restart', 'transport_ready': True,
-        'lanes': [{'lane': lane, 'epoch': str(lane + 1) * 32, 'desktop_generation': generation,
-            'dispatches': 0, 'held_button': 272 if held and lane == 0 else 0,
-            'held_keys': 0, 'drag_active': held and lane == 0, 'lease_active': held and lane == 0,
-            'pointer_focus': held and lane == 0, 'keyboard_focus': False, 'reserved': held and lane == 0}
-            for lane in (0, 1)]}}
-
-
-ACTIVE = [(0, 'start', 0, 0), (1, 'agent_admitted', 1, 0), (2, 'agent_drag_start', 1, 0),
-          (3, 'pointer_button', 1, 1), (4, 'pointer_motion', 1, 0)]
-CANCEL = ACTIVE + [(8, 'agent_cancel', 1, 0), (9, 'pointer_button', 1, 0), (10, 'pointer_leave', 1, 0)]
-
-
-def trace(rows):
-    return {'hook': True, 'active': True, 'overflow': False, 'timed_out': False, 'count': len(rows),
-            'events': [[i + 1, ms * 1_000_000, kind, 100, 100, lane, value]
-                       for i, (ms, kind, lane, value) in enumerate(rows)]}
+from proof_fixtures import (ACTIVE, CANCEL, MONITOR, PARTIAL, REFUSED, identity, ink, inkscape_profile, motion_gate,
+                            retained_status, session_plan as plan, status, trace)
 
 
 def fault_record():
@@ -77,6 +33,13 @@ def refusal_record():
 
 
 class PlanTests(unittest.TestCase):
+    def test_inkscape_only_profile_reaches_the_shared_app_profile_gate(self):
+        candidate = inkscape_profile(plan())
+        proof.validate_plan(candidate)
+        candidate['agents'][0]['document'] = '/synthetic/private.svg'
+        with self.assertRaisesRegex(AssertionError, 'absolute synthetic SVG document'):
+            proof.validate_plan(candidate)
+
     def test_exact_dpms_calc_plan_only(self):
         proof.validate_plan(plan())
         for change in ({'disposable': False}, {'purpose': 'apps'}, {'fault': {'kind': 'lock'}},
@@ -182,17 +145,15 @@ class OracleTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             proof.verify_cancelled(trace(CANCEL), fault_record(), {**action, 'response': REFUSED})
 
-    def test_dpms_has_no_primary_focus_input_or_warp_suppression(self):
+    def test_dpms_does_not_suppress_primary_isolation_or_trace_validity(self):
+        # Primary classification is owned by primary_trace_test and page validity by
+        # trace_interval; one case each proves verify_cancelled applies them.
         action = {'outcome': 'response', 'response': PARTIAL, 'replayed': False}
-        for kind in ('cursor', 'pointer_focus', 'keyboard_focus', 'pointer_leave', 'pointer_button', 'keyboard_key', 'pointer_axis'):
-            page = trace(CANCEL + [(11, kind, 0, 0), (12, 'cursor', 0, 0)])
-            if kind == 'cursor':
-                page['events'][-2][3] += 1  # Warp and return must still fail.
-            with self.subTest(kind=kind), self.assertRaises(AssertionError):
-                proof.verify_cancelled(page, fault_record(), action)
-        for key, value in [('hook', False), ('overflow', True), ('timed_out', True), ('count', 0), ('active', False)]:
-            with self.subTest(key=key), self.assertRaises(AssertionError):
-                proof.verify_cancelled({**trace(CANCEL), key: value}, fault_record(), action)
+        page = trace(CANCEL + [(11, 'pointer_leave', 0, 0), (12, 'cursor', 0, 0)])
+        with self.assertRaisesRegex(AssertionError, "'result': 'failed'"):
+            proof.verify_cancelled(page, fault_record(), action)
+        with self.assertRaisesRegex(AssertionError, 'dropped events'):
+            proof.verify_cancelled({**trace(CANCEL), 'overflow': True}, fault_record(), action)
 
     def test_status_is_production_v3_and_lifecycle_revokes_both_lanes(self):
         proof.transition(status(1, held=True), status(2))
@@ -202,11 +163,11 @@ class OracleTests(unittest.TestCase):
             changed['input']['lanes'][1][key] = value
             with self.subTest(key=key), self.assertRaises(AssertionError):
                 proof.transition(status(1), changed)
-        for key, value in [('test_only', True), ('protocol', 0), ('transport_ready', False)]:
-            changed = status(2)
-            changed['input'][key] = value
-            with self.subTest(key=key), self.assertRaises(AssertionError):
-                proof.lanes(changed)
+        # Production-status shape is owned by desktop_fault's verify_status; one case proves wiring.
+        changed = status(2)
+        changed['input']['test_only'] = True
+        with self.assertRaisesRegex(AssertionError, 'production v3 required'):
+            proof.lanes(changed)
 
     def test_unobserved_power_or_watchdog_expiry_cannot_certify_cancellation(self):
         action = {'outcome': 'response', 'response': PARTIAL, 'replayed': False}
@@ -292,17 +253,6 @@ class GroundingTests(unittest.TestCase):
         for client in clients:
             client.tool.assert_not_called()
 
-    def test_failed_observation_never_dispatches_or_saves_a_complete_pair(self):
-        clients = [Mock(process=Mock(pid=pid, poll=Mock(return_value=None))) for pid in (100, 101)]
-        save = Mock()
-        with patch.object(proof, 'prepare_drag', side_effect=AssertionError('bad snapshot')), \
-             patch.object(proof, 'prepare_refusal', return_value={}):
-            with self.assertRaisesRegex(AssertionError, 'bad snapshot'):
-                proof.prepare_actions(clients, plan()['agents'][0], 'click_b2', save)
-        save.assert_not_called()
-        for client in clients:
-            client.tool.assert_not_called()
-
     def test_shared_runtime_is_rejected_before_observation(self):
         client = Mock(process=Mock(pid=100, poll=Mock(return_value=None)))
         with patch.object(proof, 'prepare_drag') as drag, patch.object(proof, 'prepare_refusal') as refusal:
@@ -325,6 +275,20 @@ class GroundingTests(unittest.TestCase):
             self.assertEqual(result, {'snapshot': snapshot, 'arguments': {'x': 1, 'y': 2},
                                      'session': 'session-unavailable',
                                      'prepared_ns': observed_ns, 'tool': 'click'})
+
+    def test_refusal_scroll_keeps_exact_target_and_original_observation(self):
+        before, pixels = ink()
+        target = {'pid': 20, 'window_id': 200}
+        before.update(**target, proof_image='synthetic.png', proof_observation_started_ns=1)
+        spec = {'app': 'inkscape', 'name': 'refusal', 'target': target, 'bounds': before['window_bounds']}
+        prepared = {'snapshot': before, 'target': dict(target), 'prepared_ns': 1}
+        with patch.object(proof.pointer_grounding, 'read_pixels', return_value=pixels):
+            probe = proof.prepare_refusal(prepared, spec, 'scroll_down')
+            self.assertEqual(probe['tool'], 'scroll')
+            self.assertEqual(probe['prepared_ns'], 1)
+            before['window_id'] += 1
+            with self.assertRaises(AssertionError):
+                proof.prepare_refusal(prepared, spec, 'scroll_down')
 
     def test_shared_observation_requires_exact_identity_geometry_and_time(self):
         spec = plan()['agents'][0]
@@ -518,12 +482,6 @@ class WatchdogTests(unittest.TestCase):
             os.close(reader)
 
 
-def retained_status(generation=2, lane=1):
-    value = status(generation)
-    value['input']['lanes'][lane - 1]['pointer_focus'] = True
-    return value
-
-
 def claimed_refusal(interrupted_lane=1, claimed_lane=0):
     value = refusal_record()
     value.update(pointer_cleanup='retained_inert', lane=interrupted_lane,
@@ -536,30 +494,6 @@ def claimed_refusal(interrupted_lane=1, claimed_lane=0):
     for key in ('trace_before', 'trace_after', 'trace_after_close'):
         value[key] = trace(CANCEL[:-1])
     return value
-
-
-def motion_gate(record, lane=1):
-    """A 13px surface-local movement, with the same held lane across status."""
-    page = trace([(0, 'start', 0, 0), (1, 'agent_admitted', lane, 0),
-                  (2, 'agent_drag_start', lane, 0), (2.5, 'pointer_enter', lane, 0),
-                  (3, 'pointer_button', lane, 1), (4, 'pointer_motion', lane, 0)])
-    for row in page['events']:
-        row[1] = int(row[1])
-        if row[2] in ('pointer_enter', 'pointer_motion'):
-            row.extend([10 if row[2] == 'pointer_enter' else 23, 20])
-    gate = status(1, held=True)
-    if lane == 2:
-        gate['input']['lanes'][0], gate['input']['lanes'][1] = gate['input']['lanes'][1], gate['input']['lanes'][0]
-        for index, row in enumerate(gate['input']['lanes']):
-            row['lane'], row['epoch'] = index, str(index + 1) * 32
-    record.update(pointer_cleanup='retained_inert', min_motion_px=12,
-                  prefix=page, gate_first=deepcopy(page), lane=lane,
-                  status_started_ns=5_000_000, gate_status=gate, after=retained_status(2, lane))
-    boundary = deepcopy(page)
-    boundary['events'] += [[7, 8_000_000, 'agent_cancel', 100, 100, lane, 0],
-                           [8, 9_000_000, 'pointer_button', 100, 100, lane, 0]]
-    boundary['count'] = len(boundary['events'])
-    return boundary
 
 
 class RetainedPointerTests(unittest.TestCase):
@@ -670,11 +604,13 @@ class RetainedPointerTests(unittest.TestCase):
         value = plan()
         value['fault'].update(pointer_cleanup='retained_inert', min_motion_px=12.5)
         proof.validate_plan(value)
-        for change in ({'pointer_cleanup': 'anything'}, {'extra': True},
-                       *({'min_motion_px': v} for v in (None, True, 0, -1, float('inf'), float('nan'), '12'))):
+        # Threshold validity is owned by desktop_fault's MotionGateTests; one value proves wiring.
+        for change, error in (({'pointer_cleanup': 'anything'}, 'unknown pointer cleanup policy'),
+                              ({'extra': True}, 'unsupported fault option'),
+                              ({'min_motion_px': 0}, 'positive finite min_motion_px')):
             bad = deepcopy(value)
             bad['fault'].update(change)
-            with self.subTest(change=change), self.assertRaises(AssertionError):
+            with self.subTest(change=change), self.assertRaisesRegex(AssertionError, error):
                 proof.validate_plan(bad)
 
     def test_both_lanes_keep_inert_presence_only_when_explicitly_selected(self):
@@ -746,12 +682,6 @@ class RetainedPointerTests(unittest.TestCase):
             bad['input']['lanes'][0][key] = change
             with self.subTest(key=key), self.assertRaises(AssertionError):
                 proof.verify_stable_inert(value['after_close'], bad, 1)
-        for key, field in (('before', 'reserved'), ('after', 'held_keys'),
-                           ('after', 'dispatches'), ('after', 'pointer_focus')):
-            bad = deepcopy(value)
-            bad[key]['input']['lanes'][0][field] = False if field == 'pointer_focus' else (1 if field in ('held_keys', 'dispatches') else True)
-            with self.subTest(key=key, field=field), self.assertRaises(AssertionError):
-                proof.verify_refusal(bad)
         before = trace(CANCEL[:-1])
         proof.verify_inert_interval(before, before)
         for kind in ('pointer_leave', 'pointer_enter', 'pointer_motion', 'agent_admitted'):

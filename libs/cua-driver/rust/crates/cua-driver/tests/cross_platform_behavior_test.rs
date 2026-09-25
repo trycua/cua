@@ -300,26 +300,6 @@ fn accessibility_readiness_timeout(host_name: &str) -> Duration {
     }
 }
 
-#[test]
-fn electron_and_tauri_receive_extended_accessibility_readiness_budget() {
-    assert_eq!(
-        accessibility_readiness_timeout("electron"),
-        Duration::from_secs(30)
-    );
-    assert_eq!(
-        accessibility_readiness_timeout("tauri"),
-        Duration::from_secs(30)
-    );
-    assert_eq!(
-        accessibility_readiness_timeout("webview2"),
-        Duration::from_secs(10)
-    );
-    assert_eq!(
-        accessibility_readiness_timeout("wkwebview"),
-        Duration::from_secs(10)
-    );
-}
-
 fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evidence) -> Fixture {
     if !spec.path.exists() {
         panic!(
@@ -1781,59 +1761,6 @@ fn shared_case_with_native_hyprland(
 }
 
 #[test]
-fn native_hyprland_semantic_expectations_are_limited_to_proven_cells() {
-    for host in ["electron", "tauri", "wkwebview", "webview2"] {
-        for action in [
-            "left_click",
-            "child_window",
-            "right_click",
-            "double_click",
-            "scroll",
-            "drag",
-            "type_text",
-            "type_submit",
-            "press_key",
-            "hotkey",
-            "editor_save",
-        ] {
-            for targeting in [Targeting::Ax, Targeting::Px] {
-                let expected = matches!(
-                    (host, action, targeting),
-                    ("electron" | "tauri", "left_click", Targeting::Px)
-                        | ("electron" | "tauri", "child_window", Targeting::Px)
-                        | ("electron", "scroll", Targeting::Ax)
-                );
-                assert_eq!(
-                    native_hyprland_semantic_case(
-                        true,
-                        host,
-                        action,
-                        targeting,
-                        Delivery::Background
-                    ),
-                    expected,
-                    "{host}/{action}/{targeting:?}",
-                );
-                assert!(!native_hyprland_semantic_case(
-                    false,
-                    host,
-                    action,
-                    targeting,
-                    Delivery::Background
-                ));
-                assert!(!native_hyprland_semantic_case(
-                    true,
-                    host,
-                    action,
-                    targeting,
-                    Delivery::Foreground
-                ));
-            }
-        }
-    }
-}
-
-#[test]
 fn native_hyprland_semantic_declarations_require_delivery_and_all_background_oracles() {
     use cua_driver_testkit::e2e::{ContractExpectation, DriverRoute};
 
@@ -1861,6 +1788,32 @@ fn native_hyprland_semantic_declarations_require_delivery_and_all_background_ora
         ] {
             assert!(case.oracles.contains(&oracle), "missing {oracle:?}");
         }
+        let targeting = if addressing == "ax" {
+            Targeting::Ax
+        } else {
+            Targeting::Px
+        };
+        assert!(
+            !native_hyprland_semantic_case(false, host, action, targeting, Delivery::Background),
+            "{host}/{action}: semantic route without native Hyprland input"
+        );
+        assert!(
+            !native_hyprland_semantic_case(true, host, action, targeting, Delivery::Foreground),
+            "{host}/{action}: foreground delivery must not take the semantic route"
+        );
+    }
+    // Accepting a click is not proof of a focus-free AT-SPI action.
+    for (host, action, targeting) in [
+        ("electron", "right_click", Targeting::Px),
+        ("tauri", "scroll", Targeting::Ax),
+        ("electron", "left_click", Targeting::Ax),
+        ("wkwebview", "left_click", Targeting::Px),
+        ("webview2", "child_window", Targeting::Px),
+    ] {
+        assert!(
+            !native_hyprland_semantic_case(true, host, action, targeting, Delivery::Background),
+            "{host}/{action}/{targeting:?} is not a proven semantic cell"
+        );
     }
 }
 

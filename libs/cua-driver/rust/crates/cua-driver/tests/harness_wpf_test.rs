@@ -1908,6 +1908,21 @@ fn harness_wpf_invoke_menu_live_path() {
                 }),
             );
             assert!(refused.is_error(), "missing menu path was accepted");
+            // Only the missing leaf may refuse; a pid, window, or activation
+            // failure would share the code but name a different cause.
+            assert_eq!(
+                refused.structured()["refusal"]["code"],
+                "menu_path_unavailable",
+                "{}",
+                refused.raw
+            );
+            assert!(
+                refused.structured()["refusal"]["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("path segment 2 was not found")),
+                "{}",
+                refused.raw
+            );
             assert!(snapshot(driver, pid, wid)
                 .tree_text()
                 .contains("menu_action=none"));

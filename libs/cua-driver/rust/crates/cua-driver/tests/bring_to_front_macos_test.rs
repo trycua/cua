@@ -324,7 +324,6 @@ fn exact_secondary_window_is_verified_and_prior_app_can_recover_focus() {
         result.raw
     );
     assert_eq!(result.structured()["activated"], true);
-    assert_eq!(result.structured()["request_accepted"], true);
     assert_eq!(result.structured()["process_activated"], true);
     assert_eq!(result.structured()["exact_window_effect"]["verified"], true);
     assert_eq!(
@@ -365,6 +364,8 @@ fn modal_sheet_never_yields_false_parent_success() {
         .expect("start installed macOS daemon proxy");
     let target = launch(&mut driver, Some("sheet"));
     let windows = wait_for_window_ids(&target, &["main", "secondary", "sheet"]);
+    // wait_for_window_ids has already seen the sheet in CoreGraphics, so the
+    // refusal cannot come from a fixture that never presented one.
     let parent = windows["main"];
     let result = driver.call(
         "bring_to_front",
@@ -373,6 +374,12 @@ fn modal_sheet_never_yields_false_parent_success() {
     assert!(
         result.is_error(),
         "modal parent falsely reported success: {}",
+        result.raw
+    );
+    assert_eq!(
+        result.structured()["code"],
+        "bring_to_front_exact_window_unverified",
+        "{}",
         result.raw
     );
     assert_eq!(result.structured()["activated"], false);

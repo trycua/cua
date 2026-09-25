@@ -73,6 +73,10 @@ cua-driver set_agent_cursor_theme \
 cua-driver get_agent_cursor_state '{"session":"demo"}'
 ```
 
+`get_agent_cursor_state` always includes `position`. It is `null` until the
+session cursor first moves, then `{"x": ..., "y": ...}` where the platform
+tracks session cursor placement.
+
 `set_agent_cursor_motion` changes only movement physics and visibility timing.
 It does not change artwork. The removed `set_agent_cursor_style` operation and
 its `cursor_id`, shape, color, label, size, opacity, image-path, gradient, and

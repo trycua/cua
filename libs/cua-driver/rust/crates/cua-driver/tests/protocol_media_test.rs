@@ -25,8 +25,11 @@ fn spawn_unrestricted() -> Option<RawDriver> {
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn zoom_tool_returns_jpeg() {
-    //! Call zoom on a visible window and verify the result contains a JPEG image.
-    //! Skips gracefully if no windows are visible (headless environment).
+    //! Snapshot a visible window, zoom into it, and verify the result contains
+    //! a JPEG image. `zoom` crops the screenshot this session last captured, so
+    //! each attempt first takes a `get_window_state` screenshot on the same
+    //! connection. Skips gracefully if no windows are visible (headless
+    //! environment).
     let Some(mut d) = RawDriver::spawn() else {
         return;
     };
@@ -50,28 +53,51 @@ fn zoom_tool_returns_jpeg() {
     let mut tried = 0usize;
     let mut zoom_errors: Vec<String> = Vec::new();
     let mut successful_without_jpeg = false;
+    let error_text = |r: &serde_json::Value| {
+        r["result"]["content"]
+            .as_array()
+            .and_then(|items| items.iter().find_map(|c| c["text"].as_str()))
+            .unwrap_or("<no error text>")
+            .to_owned()
+    };
     for win in windows.iter().take(5) {
-        let Some(wid) = win["window_id"].as_u64() else {
+        let (Some(wid), Some(pid)) = (win["window_id"].as_u64(), win["pid"].as_u64()) else {
             continue;
         };
         tried += 1;
+        let request_id = 2 + 2 * tried as u64;
+
+        // zoom crops this session's latest screenshot of the window.
+        d.send(&serde_json::json!({
+            "jsonrpc":"2.0","id": request_id,"method":"tools/call",
+            "params":{"name":"get_window_state","arguments":{
+                "pid": pid,
+                "window_id": wid,
+                "include_screenshot": true,
+                "include_accessibility_tree": false
+            }}
+        }));
+        let snapshot = d.recv();
+        if snapshot["result"]["isError"].as_bool().unwrap_or(false) {
+            zoom_errors.push(format!(
+                "window_id={wid}: get_window_state: {}",
+                error_text(&snapshot)
+            ));
+            continue;
+        }
 
         d.send(&serde_json::json!({
-            "jsonrpc":"2.0","id": 2 + tried as u64,"method":"tools/call",
+            "jsonrpc":"2.0","id": request_id + 1,"method":"tools/call",
             "params":{"name":"zoom","arguments":{
                 "window_id": wid,
+                "pid": pid,
                 "x1": 0, "y1": 0, "x2": 100, "y2": 100
             }}
         }));
         let r = d.recv();
         if r["result"]["isError"].as_bool().unwrap_or(false) {
             // This window might be off-screen or not capturable — try the next.
-            let text = r["result"]["content"]
-                .as_array()
-                .and_then(|items| items.iter().find_map(|c| c["text"].as_str()))
-                .unwrap_or("<no error text>")
-                .to_owned();
-            zoom_errors.push(format!("window_id={wid}: {text}"));
+            zoom_errors.push(format!("window_id={wid}: zoom: {}", error_text(&r)));
             continue;
         }
         let content = r["result"]["content"].as_array().expect("content array");
@@ -107,13 +133,17 @@ fn zoom_tool_returns_jpeg() {
         eprintln!("No on-screen windows found — skipping zoom test");
         return;
     }
+    // A screenshot-only get_window_state that produces no content means the
+    // window capture itself failed, the same condition zoom reports as
+    // `screencapture failed`.
     if !found_jpeg
         && !successful_without_jpeg
         && cfg!(target_os = "macos")
         && !zoom_errors.is_empty()
-        && zoom_errors
-            .iter()
-            .all(|e| e.contains("screencapture failed"))
+        && zoom_errors.iter().all(|e| {
+            e.contains("screencapture failed")
+                || e.contains("neither AX tree nor screenshot succeeded")
+        })
     {
         eprintln!(
             "No visible windows were capturable by the raw unbundled test process — skipping zoom test. \

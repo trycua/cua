@@ -327,6 +327,14 @@ are required:
 The existing helper-owner/session/UID checks remain mandatory. The implementation
 must not assume the monotonic numeric token alone is globally unique or durable.
 
+Reuse the shared
+[coordinate contract](3550-hyprland-isolated-input.md#target-identity-and-coordinates):
+convert from the actual capture's crop, scale, and transform to declared
+surface-local coordinates, and validate geometry at dispatch. Reject non-finite,
+out-of-bounds, or stale coordinates instead of clamping or treating them as
+desktop coordinates. A new action after staleness requires a fresh capture;
+this does not authorize replay of an uncertain action.
+
 ### 5. Target-input transaction
 
 The Rust adapter gains a target-input transaction abstraction conceptually like:
@@ -466,9 +474,10 @@ additional delivery alongside a partial count; do not invent a new public enum
 value or discard uncertainty to fit an existing field. The current public
 `ActionDelivery` has no field for an unknown remainder alongside
 `delivered_count`; a reviewed, lossless shared-schema mapping or extension with
-Rust/Python/TypeScript/CLI/MCP parity coverage is required before multi-frame
-input with uncertain progress is enabled. Prose-only `summary` is not a
-machine-readable substitute.
+Rust/Python/TypeScript/CLI/MCP parity coverage is required for every outcome an
+operation can produce before that operation is enabled, including a lost final
+reply for a click or key press. Prose-only `summary` is not a machine-readable
+substitute for delivery uncertainty.
 
 Target loss, generation change, capability loss, and cancellation after dispatch
 must not collapse into an ordinary `target_identity_stale` refusal. Keep their
@@ -786,6 +795,8 @@ Cover at least:
 - workspace and geometry changes;
 - stale screenshot coordinates after target movement or resize, with no
   reinterpretation onto the new geometry;
+- capture crop/scale/transform conversion and rejection of non-finite or
+  out-of-bounds coordinates without clamping;
 - target loss before mutation;
 - unsupported operation capability.
 

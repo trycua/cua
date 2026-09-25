@@ -3,7 +3,7 @@ title: Target-addressable KWin input delivery for KDE/Wayland
 authors:
   - netbospl
 created: 2026-09-01
-last_updated: 2026-09-24
+last_updated: 2026-09-25
 status: review
 discussion: https://github.com/trycua/cua/issues/3506
 rfc_pr: https://github.com/trycua/cua/pull/3507
@@ -361,6 +361,37 @@ but activation is not the safety guarantee. The guarantee is that each accepted
 event is associated with the bound target and current generation at delivery
 time, after the Driver has admitted the action. A dispatched event cannot be
 undone by a later failure, cancellation, or loss of acknowledgement.
+
+#### Scheduling and lifecycle invalidation
+
+Follow the shared
+[scheduling and cancellation baseline](3550-hyprland-isolated-input.md#scheduling-replay-and-cancellation):
+bound payloads, queue depth, parsing work, action duration, and cancellation work.
+Drag and typing must yield between bounded compositor event-loop steps; no
+blocking input loop may prevent KWin from processing cancellation or user input.
+Publish and test these limits before enabling mutation.
+
+Order operations per connection and reject conflicting mutations across
+connections, including operations on windows sharing a Wayland client when
+their input state cannot be isolated. Increasing sequences prevent replay;
+they do not by themselves prevent interleaved gestures or held-key conflicts.
+Cancellation is idempotent and owner-scoped: one Driver runtime cannot cancel
+another runtime's work.
+
+Close admission and invalidate queued/active transactions on expiry, owner
+disconnect or runtime/session termination, target destruction, user interaction
+with the target client, keymap change, screen lock, DPMS-off, session switch,
+helper disable/unload, or compositor restart. Observe these transitions even
+when lock/unlock or off/on occurs between dispatch steps; a later matching
+snapshot must not revive revoked authority. Geometry changes abort affected
+gestures without recomputing a path. Apply section 5's partial/unknown result
+and target-bound cleanup rules; if the original target is gone, discard
+operation-owned state without sending cleanup input to another target.
+
+Qualify cancellation through each exposed Driver transport separately. A
+queued public stop request is not evidence of immediate cancellation; report
+measured stop latency and compositor stalls without claiming that Stop undoes
+delivery.
 
 #### Operation identity and replay ownership
 
@@ -790,6 +821,15 @@ Explicitly trigger:
 - target replacement with possible PID reuse;
 - another window of the same process becoming active;
 - policy/lifecycle invalidation or generation loss during a multi-frame operation.
+
+Also exercise queue/payload limits and long-action cancellation without starving
+the compositor event loop; competing connections targeting shared input state;
+and owner-scoped cancellation that leaves another runtime unaffected. Trigger
+lock/unlock and DPMS off/on entirely between dispatch steps, session and keymap
+changes, and owner disconnect with held input. Prove old transactions remain
+invalid after recovery and cleanup never targets a replacement window. Record
+stop latency for each supported public transport rather than inferring it from
+the helper's cancellation acknowledgement.
 
 For every unsafe case, acceptance requires:
 

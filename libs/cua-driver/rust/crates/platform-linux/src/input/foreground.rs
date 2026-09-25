@@ -879,14 +879,9 @@ mod tests {
 
     #[test]
     fn unavailable_display_is_structured() {
-        // Force a failing connect regardless of the host environment.
-        let prior = std::env::var_os("DISPLAY");
-        std::env::set_var("DISPLAY", ":9999999");
+        let display = crate::test_env::unreachable_x11_display();
         let result = with_x11_foreground_opts(0x1234, ForegroundOptions::pointer(), || Ok(()));
-        match prior {
-            Some(v) => std::env::set_var("DISPLAY", v),
-            None => std::env::remove_var("DISPLAY"),
-        }
+        drop(display);
         let error = result.err().expect("connect must fail");
         assert!(error_code(&error).is_some(), "{error}");
     }

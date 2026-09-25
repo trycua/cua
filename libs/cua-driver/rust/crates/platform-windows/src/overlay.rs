@@ -1402,20 +1402,6 @@ struct WinZOrderEnforcer {
     hwnd_isize: isize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WinZOrderPlacement {
-    AboveTarget,
-    ForceFrontNonTopmost,
-}
-
-fn win_z_order_placement(has_live_target: bool) -> WinZOrderPlacement {
-    if has_live_target {
-        WinZOrderPlacement::AboveTarget
-    } else {
-        WinZOrderPlacement::ForceFrontNonTopmost
-    }
-}
-
 /// Of the given window ids, return the one highest in the current z-order (the
 /// first encountered walking top→bottom), or `None` if none are present. Used to
 /// pick the single window the overlay should pin just above so it covers every
@@ -1480,11 +1466,8 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
             //      pitfall macOS / Linux dodge by virtue of their explicit
             //      `orderWindow:above:` / `StackMode::ABOVE` APIs.
             //
-            match (
-                win_z_order_placement(pinned_target.is_some()),
-                pinned_target,
-            ) {
-                (WinZOrderPlacement::AboveTarget, Some(target)) => {
+            match pinned_target {
+                Some(target) => {
                     // Preserve the target-bound contract: normalize out of the
                     // topmost band, then insert exactly one slot above target.
                     let _ = SetWindowPos(
@@ -1512,7 +1495,7 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
                             | SWP_NOOWNERZORDER,
                     );
                 }
-                (WinZOrderPlacement::ForceFrontNonTopmost, None) => {
+                None => {
                     // HWND_TOP is subject to the foreground lock and can leave
                     // the overlay in a stale ordinary-band slot. A temporary
                     // topmost transition is lock-free; immediately demoting it
@@ -1527,7 +1510,6 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
                     let _ = SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags);
                     let _ = SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, flags);
                 }
-                _ => unreachable!("z-order placement must match target liveness"),
             }
 
             let _ = target;
@@ -1550,15 +1532,6 @@ mod tests {
     fn keyed_render_state_carries_the_session_color_identity() {
         let state = render_state_for_key(&CursorConfig::default(), "session-blueprint");
         assert_eq!(state.core.cfg.cursor_id, "session-blueprint");
-    }
-
-    #[test]
-    fn windows_z_order_branch_tracks_live_target_presence() {
-        assert_eq!(win_z_order_placement(true), WinZOrderPlacement::AboveTarget);
-        assert_eq!(
-            win_z_order_placement(false),
-            WinZOrderPlacement::ForceFrontNonTopmost
-        );
     }
 
     fn empty_map() -> RenderMap {

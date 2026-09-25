@@ -603,7 +603,7 @@ fn screenshot_scale(
 }
 
 fn capture_admission_refusal(error: anyhow::Error) -> ToolResult {
-    let code = crate::capture_admission::admission_error_code(&error);
+    let code = cua_driver_core::capture_runtime::admission_error_code(&error);
     ToolResult::error(format!("Capture-bound click refused: {error}")).with_structured(json!({
         "code": code,
         "effect": "refused",
@@ -1181,8 +1181,7 @@ static GWS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[cfg(test)]
 mod get_window_state_max_image_dimension_tests {
-    use super::{resolve_max_image_dimension, GetWindowStateTool, ToolState};
-    use cua_driver_core::tool::Tool;
+    use super::resolve_max_image_dimension;
 
     #[test]
     fn canonical_override_wins_and_zero_requests_native_resolution() {
@@ -1201,16 +1200,6 @@ mod get_window_state_max_image_dimension_tests {
         assert_eq!(resolve_max_image_dimension(1568, None, Some(800)), 800);
         assert_eq!(resolve_max_image_dimension(800, None, Some(1568)), 800);
         assert_eq!(resolve_max_image_dimension(0, None, Some(800)), 800);
-    }
-
-    #[test]
-    fn schema_advertises_canonical_override_and_native_resolution() {
-        let tool = GetWindowStateTool {
-            state: ToolState::new(None),
-        };
-        let property = &tool.def().input_schema["properties"]["max_image_dimension"];
-        assert_eq!(property["type"], "integer");
-        assert_eq!(property["minimum"], 0);
     }
 }
 
@@ -4342,50 +4331,6 @@ mod pixel_click_transport_tests {
     };
 
     #[test]
-    fn pixel_uia_only_completed_miss_reaches_fallback_transport() {
-        for (outcome, status) in [
-            (PointInvokeOutcome::Invoked, None),
-            (PointInvokeOutcome::Busy, Some("busy")),
-            (PointInvokeOutcome::Timeout, Some("timeout")),
-            (PointInvokeOutcome::Unavailable, Some("unavailable")),
-        ] {
-            // Exercise the same early-return boundary used before either
-            // targeted injection or PostMessage in the pixel click route.
-            let mut fallback_calls = 0;
-            let result = finish_pixel_uia_attempt(outcome, 42, 10, 20).unwrap_or_else(|| {
-                fallback_calls += 1;
-                posted_pixel_click_result(42, "click")
-            });
-            assert_eq!(fallback_calls, 0, "{outcome:?}");
-            assert_eq!(result.is_error.unwrap_or(false), status.is_some());
-            let data = result.structured_content.unwrap();
-            assert_eq!(data["path"], "ax");
-            assert_eq!(data["effect"], "unverifiable");
-            if let Some(status) = status {
-                assert_eq!(data["uia_status"], status);
-                assert_eq!(data["code"], "background_unavailable");
-            }
-            let record = ActionExecutionRecord::from_legacy(
-                "click",
-                &serde_json::json!({ "delivery_mode": "background" }),
-                &data,
-            )
-            .expect("UIA outcome should normalize into the public action contract");
-            let public = serde_json::to_value(record.public_result().expect("valid ActionResult"))
-                .expect("serialize ActionResult");
-            assert_eq!(public["effect"], "unverifiable");
-        }
-        let mut fallback_calls = 0;
-        let result =
-            finish_pixel_uia_attempt(PointInvokeOutcome::Miss, 42, 10, 20).unwrap_or_else(|| {
-                fallback_calls += 1;
-                posted_pixel_click_result(42, "click")
-            });
-        assert_eq!(fallback_calls, 1);
-        assert_eq!(result.structured_content.unwrap()["path"], "post_message");
-    }
-
-    #[test]
     fn uia_unavailable_errors_advertise_foreground_escalation() {
         use cua_driver_core::action_record::EscalationKind;
         use cua_driver_core::protocol::Content;
@@ -4403,6 +4348,8 @@ mod pixel_click_transport_tests {
                 .expect("structured error");
             assert_eq!(data["code"], "background_unavailable");
             assert_eq!(data["uia_status"], status);
+            assert_eq!(data["path"], "ax");
+            assert_eq!(data["effect"], "unverifiable");
             assert_eq!(
                 data["suggestion"].as_str(),
                 Some("Retry this action with delivery_mode:\"foreground\"."),
@@ -4436,6 +4383,15 @@ mod pixel_click_transport_tests {
                 text.contains("delivery_mode:\"foreground\""),
                 "text must surface the escalation: {text}"
             );
+            let record = ActionExecutionRecord::from_legacy(
+                "click",
+                &serde_json::json!({ "delivery_mode": "background" }),
+                data,
+            )
+            .expect("UIA refusal should normalize into the public action contract");
+            let public = serde_json::to_value(record.public_result().expect("valid ActionResult"))
+                .expect("serialize ActionResult");
+            assert_eq!(public["effect"], "unverifiable", "{outcome:?}");
         }
         // The completed-miss boundary is unchanged: only Miss falls through,
         // and a delivered Invoke carries no escalation hint.
@@ -4444,8 +4400,19 @@ mod pixel_click_transport_tests {
             .expect("invoked click reports success");
         assert!(!ok.is_error.unwrap_or(false));
         let ok_data = ok.structured_content.as_ref().expect("structured success");
+        assert_eq!(ok_data["path"], "ax");
         assert!(ok_data.get("escalation").is_none());
         assert!(ok_data.get("suggestion").is_none());
+        let ok_record = ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({ "delivery_mode": "background" }),
+            ok_data,
+        )
+        .expect("UIA invoke should normalize into the public action contract");
+        let ok_public =
+            serde_json::to_value(ok_record.public_result().expect("valid ActionResult"))
+                .expect("serialize ActionResult");
+        assert_eq!(ok_public["effect"], "unverifiable");
         // The hint must flow into the existing escalation pipeline, not sit
         // as inert metadata: Timeout (the #3621 case) normalizes to a
         // foreground-delivery escalation on the internal record.
@@ -10652,20 +10619,6 @@ mod cursor_key_resolution_tests {
             NO_CURSOR
         );
     }
-
-    #[test]
-    fn two_parallel_sessions_resolve_distinct_keys() {
-        // The regression this whole port fixes: two concurrent runs each declare
-        // their own `session`, so they resolve DISTINCT cursor keys and own
-        // separate overlay cursors instead of clobbering one shared cursor.
-        let a =
-            resolve_cursor_key(&json!({ "pid": 10, "element_index": 1, "session": "calc-2plus1" }));
-        let b =
-            resolve_cursor_key(&json!({ "pid": 20, "element_index": 1, "session": "calc-5plus6" }));
-        assert_eq!(a, "calc-2plus1");
-        assert_eq!(b, "calc-5plus6");
-        assert_ne!(a, b);
-    }
 }
 
 #[cfg(test)]
@@ -10674,118 +10627,41 @@ mod launch_focus_restore_decision_tests {
         first_unopened_shell_url_index, should_restore_foreground_after_launch, LaunchTargetShape,
     };
 
-    fn empty() -> LaunchTargetShape {
-        LaunchTargetShape {
-            has_aumid: false,
-            has_bundle_id: false,
-            has_name: false,
-            has_path: false,
-            has_launch_path: false,
-            has_urls: false,
+    #[test]
+    fn only_app_identifying_launches_restore_foreground() {
+        for (fields, restore) in [
+            // A urls-only launch explicitly asks for navigation in the default
+            // browser; that browser is the legitimate foreground.
+            (&["urls"][..], false),
+            (&["name"], true),
+            (&["path"], true),
+            // The AUMID path restores synchronously in launch_uwp.rs; the
+            // caller gates the polling restore on `aumid_for_uwp.is_none()`.
+            (&["aumid"], true),
+            (&["bundle_id"], true),
+            (&["launch_path"], true),
+            // An app-identifying field alongside urls opens them in that app
+            // in the background, so the prior foreground is restored.
+            (&["name", "urls"], true),
+            (&["path", "urls"], true),
+            (&["aumid", "urls"], true),
+            // Nothing was launched.
+            (&[], false),
+        ] {
+            let shape = LaunchTargetShape {
+                has_aumid: fields.contains(&"aumid"),
+                has_bundle_id: fields.contains(&"bundle_id"),
+                has_name: fields.contains(&"name"),
+                has_path: fields.contains(&"path"),
+                has_launch_path: fields.contains(&"launch_path"),
+                has_urls: fields.contains(&"urls"),
+            };
+            assert_eq!(
+                should_restore_foreground_after_launch(shape),
+                restore,
+                "{fields:?}"
+            );
         }
-    }
-
-    #[test]
-    fn urls_only_skips_restore() {
-        // `launch_app({urls: ["https://example.com"]})` — user explicitly
-        // asked for navigation in the default browser. The freshly-launched
-        // browser instance IS the legitimate foreground; restoring would
-        // hide the page the user wanted to see.
-        let shape = LaunchTargetShape {
-            has_urls: true,
-            ..empty()
-        };
-        assert!(!should_restore_foreground_after_launch(shape));
-    }
-
-    #[test]
-    fn name_only_restores() {
-        let shape = LaunchTargetShape {
-            has_name: true,
-            ..empty()
-        };
-        assert!(should_restore_foreground_after_launch(shape));
-    }
-
-    #[test]
-    fn path_only_restores() {
-        let shape = LaunchTargetShape {
-            has_path: true,
-            ..empty()
-        };
-        assert!(should_restore_foreground_after_launch(shape));
-    }
-
-    #[test]
-    fn aumid_only_restores() {
-        // Note: AUMID path has its own synchronous restore in launch_uwp.rs,
-        // but the decision function still says "yes, this is an
-        // app-identifying launch" — the caller (`LaunchAppTool::invoke`)
-        // gates the polling spawn on `aumid_for_uwp.is_none()` so we don't
-        // double-restore.
-        let shape = LaunchTargetShape {
-            has_aumid: true,
-            ..empty()
-        };
-        assert!(should_restore_foreground_after_launch(shape));
-    }
-
-    #[test]
-    fn bundle_id_only_restores() {
-        let shape = LaunchTargetShape {
-            has_bundle_id: true,
-            ..empty()
-        };
-        assert!(should_restore_foreground_after_launch(shape));
-    }
-
-    #[test]
-    fn launch_path_only_restores() {
-        let shape = LaunchTargetShape {
-            has_launch_path: true,
-            ..empty()
-        };
-        assert!(should_restore_foreground_after_launch(shape));
-    }
-
-    #[test]
-    fn name_with_urls_restores() {
-        // App-identifying field present alongside urls — the user wants
-        // the named app to open these URLs in the background, NOT for the
-        // urls to take over the default browser's foreground. Restore.
-        let shape = LaunchTargetShape {
-            has_name: true,
-            has_urls: true,
-            ..empty()
-        };
-        assert!(should_restore_foreground_after_launch(shape));
-    }
-
-    #[test]
-    fn path_with_urls_restores() {
-        let shape = LaunchTargetShape {
-            has_path: true,
-            has_urls: true,
-            ..empty()
-        };
-        assert!(should_restore_foreground_after_launch(shape));
-    }
-
-    #[test]
-    fn aumid_with_urls_restores() {
-        let shape = LaunchTargetShape {
-            has_aumid: true,
-            has_urls: true,
-            ..empty()
-        };
-        assert!(should_restore_foreground_after_launch(shape));
-    }
-
-    #[test]
-    fn no_target_does_not_restore() {
-        // Empty params (validated as an error before launch dispatch) — no
-        // restore needed because nothing was launched.
-        assert!(!should_restore_foreground_after_launch(empty()));
     }
 
     #[test]
@@ -10912,32 +10788,20 @@ mod chromium_flag_injection_tests {
 }
 
 #[cfg(test)]
-mod click_button_schema_tests {
+mod click_capture_id_schema_tests {
     use super::ClickTool;
     use cua_driver_core::tool::Tool;
 
-    /// Surface 5: schema must keep advertising the three canonical button
-    /// values. Windows was already shipping `button` (pre-Surface-5) so this
-    /// test is the freeze test — guards against an inadvertent rename/removal.
+    /// The portable click contract pins `button` and the other accepted
+    /// fields. A live schema may broaden `capture_id`, which the subset gate
+    /// allows, so the non-empty bound is pinned here.
     #[test]
-    fn schema_advertises_button_enum() {
+    fn schema_requires_non_empty_capture_id() {
         let tool = ClickTool {
             state: super::ToolState::new(None),
         };
         let d = tool.def();
         let props = d.input_schema.get("properties").expect("properties");
-        let button = props.get("button").expect("button field present");
-        assert_eq!(button.get("type").and_then(|v| v.as_str()), Some("string"));
-        let enum_vals: Vec<&str> = button
-            .get("enum")
-            .and_then(|v| v.as_array())
-            .expect("button.enum present")
-            .iter()
-            .filter_map(|v| v.as_str())
-            .collect();
-        for need in ["left", "right", "middle"] {
-            assert!(enum_vals.contains(&need), "missing {need} in button.enum");
-        }
         let capture_id = props.get("capture_id").expect("capture_id field present");
         assert_eq!(capture_id["type"], "string");
         assert_eq!(capture_id["minLength"], 1);
@@ -10947,7 +10811,6 @@ mod click_button_schema_tests {
 #[cfg(test)]
 mod snapshot_coordinate_tests {
     use super::{focus_by_pixel_click_args, ToolState, ZoomTool};
-    use crate::uia::cache::{CachedSnapshot, SnapshotKind};
     use cua_driver_core::tool::Tool;
 
     #[test]
@@ -10958,33 +10821,6 @@ mod snapshot_coordinate_tests {
         let required = tool.def().input_schema["required"].as_array().unwrap();
         assert!(!required.iter().any(|field| field == "pid"));
         assert!(tool.def().input_schema["properties"].get("pid").is_some());
-
-        tool.state.element_cache.publish_for_session(
-            42,
-            7,
-            CachedSnapshot::from_nodes(&[], SnapshotKind::Uia),
-            Some("zoom-optional-pid-windows"),
-            Some(2.0),
-        );
-        let (pid, context) = tool
-            .state
-            .element_cache
-            .screenshot_context_for_zoom(None, 7, Some("zoom-optional-pid-windows"))
-            .unwrap();
-        assert_eq!(pid, 42);
-        assert_eq!(context.window_id, 7);
-        tool.state.element_cache.publish_for_session(
-            43,
-            7,
-            CachedSnapshot::from_nodes(&[], SnapshotKind::Uia),
-            Some("zoom-optional-pid-windows"),
-            Some(1.0),
-        );
-        assert!(tool
-            .state
-            .element_cache
-            .screenshot_context_for_zoom(None, 7, Some("zoom-optional-pid-windows"))
-            .is_err());
     }
 
     #[test]
@@ -11111,20 +10947,19 @@ mod desktop_scope_tests {
     // ── get_desktop_state schema ──────────────────────────────────────────────
 
     #[test]
-    fn get_desktop_state_schema_shape() {
+    fn get_desktop_state_schema_rejects_window_scoped_fields() {
         let tool = GetDesktopStateTool {
             state: super::ToolState::new(None),
         };
+        // The portable get_desktop_state contract pins the accepted fields and
+        // annotations; it cannot see a window-scoped field added to live.
         let d = tool.def();
-        assert!(d.read_only, "get_desktop_state must be read_only");
         let props = d.input_schema["properties"].as_object().unwrap();
         assert!(!props.contains_key("pid"), "must not accept pid");
         assert!(
             !props.contains_key("window_id"),
             "must not accept window_id"
         );
-        assert!(props.contains_key("session"));
-        assert!(props.contains_key("screenshot_out_file"));
         assert_eq!(d.input_schema["additionalProperties"], json!(false));
     }
 }

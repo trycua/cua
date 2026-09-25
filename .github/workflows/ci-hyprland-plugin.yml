@@ -40,7 +40,7 @@ jobs:
           echo "$RUNNER_TEMP/hyprland-plugin-tools/bin" >> "$GITHUB_PATH"
       - name: Check helper syntax
         run: |
-          python3 -c 'import ast; from pathlib import Path; [ast.parse(p.read_text()) for p in Path("tests").glob("*.py")]'
+          python3 -c 'import ast; from pathlib import Path; [ast.parse(p.read_text()) for d in ("proofs", "tests") for p in Path(d).glob("*.py")]'
           bash -n packaging/arch/PKGBUILD
           bash -n packaging/release/PKGBUILD.in
       - name: Check lifecycle runner cleanup

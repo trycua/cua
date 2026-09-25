@@ -116,26 +116,6 @@ fn tap_steps(keycode: u8, needs_shift: bool, shift: Option<u16>, steps: &mut Vec
     }
 }
 
-/// Plan the evdev transitions that type `text` under `mapping`. Characters
-/// with no keycode in the map are returned in the second tuple element (the
-/// caller may remap a spare keycode for them or report them as skipped).
-pub(super) fn plan_text(
-    mapping: &GetKeyboardMappingReply,
-    shift_x_keycode: Option<u8>,
-    text: &str,
-) -> (Vec<KeyStep>, Vec<char>) {
-    let shift = shift_x_keycode.and_then(evdev_code_for_x_keycode);
-    let mut steps = Vec::with_capacity(text.len() * 2);
-    let mut missing = Vec::new();
-    for ch in text.chars() {
-        match char_to_keycode_shift(mapping, keysym_for_char(ch)) {
-            Some((keycode, needs_shift)) => tap_steps(keycode, needs_shift, shift, &mut steps),
-            None => missing.push(ch),
-        }
-    }
-    (steps, missing)
-}
-
 /// Plan the evdev transitions that type `text` under `mapping`, resolving
 /// characters missing from the keymap through `remap` (a spare-keycode
 /// allocator) INLINE, one character at a time, so a mixed-script string
@@ -807,7 +787,7 @@ mod tests {
 
     #[test]
     fn text_plan_taps_keys_and_wraps_shifted_glyphs_in_shift() {
-        let (steps, missing) = plan_text(&mapping(), Some(50), "a!\n");
+        let (steps, missing) = plan_text_with_fallback(&mapping(), Some(50), "a!\n", |_| None);
         assert!(missing.is_empty());
         assert_eq!(
             steps,
@@ -825,17 +805,10 @@ mod tests {
     }
 
     #[test]
-    fn text_plan_reports_characters_the_keymap_lacks() {
-        let (steps, missing) = plan_text(&mapping(), Some(50), "aé€");
-        assert_eq!(steps.len(), 2);
-        assert_eq!(missing, vec!['é', '€']);
-    }
-
-    #[test]
     fn text_plan_without_a_shift_keycode_types_the_unshifted_level() {
         // No Shift in the modifier map: the keycode is still tapped (the
         // server types the base glyph) rather than the character being lost.
-        let (steps, _) = plan_text(&mapping(), None, "A");
+        let (steps, _) = plan_text_with_fallback(&mapping(), None, "A", |_| None);
         assert_eq!(steps, vec![step(30, true), step(30, false)]);
     }
 

@@ -703,6 +703,37 @@ mod tests {
     use crate::snapshot_test_support::Payload;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    fn publish(cache: &ElementCacheCore<Payload>, pid: i32, window: u64, count: usize) -> u32 {
+        cache.publish(pid, window, Payload((0..count).collect()))
+    }
+
+    fn resolve(
+        cache: &ElementCacheCore<Payload>,
+        pid: i32,
+        token: &str,
+    ) -> Result<(u64, usize), String> {
+        cache
+            .resolve_element_args(pid, None, Some(token), None, None, "click")
+            .map(|result| match result {
+                ResolvedElement::Element {
+                    window_id: Some(window),
+                    element_index,
+                    element,
+                    ..
+                } => {
+                    assert_eq!(element, element_index);
+                    (window, element_index)
+                }
+                _ => panic!("expected element"),
+            })
+            .map_err(|error| {
+                error.structured_content.unwrap()["refusal"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            })
+    }
+
     #[test]
     fn publish_then_resolve_returns_projection() {
         let cache = ElementCacheCore::new();
@@ -712,16 +743,159 @@ mod tests {
             .unwrap();
         assert!(matches!(
             result,
-            ResolvedElement::Element { element: 30, .. }
+            ResolvedElement::Element {
+                window_id: Some(7),
+                element_index: 2,
+                element: 30,
+                ..
+            }
         ));
     }
 
     #[test]
-    fn miss_returns_refusal() {
-        let cache = ElementCacheCore::<Payload>::new();
-        assert!(cache
-            .resolve_element_args(1, None, Some(&token_for(0, 0)), None, None, "click")
+    fn resolve_with_unknown_pid_returns_stale_error() {
+        assert_eq!(
+            resolve(&ElementCacheCore::new(), 999, &token_for(0x1234, 0)),
+            Err(STALE_TOKEN_ERROR.into())
+        );
+    }
+
+    #[test]
+    fn resolve_with_bad_format_returns_invalid_error() {
+        let cache = ElementCacheCore::new();
+        publish(&cache, 10, 1, 1);
+        assert!(resolve(&cache, 10, "garbage")
+            .unwrap_err()
+            .contains("invalid format"));
+    }
+
+    #[test]
+    fn out_of_range_index_returns_actionable_error() {
+        let cache = ElementCacheCore::new();
+        let id = publish(&cache, 11, 1, 3);
+        assert!(resolve(&cache, 11, &token_for(id, 7))
+            .unwrap_err()
+            .contains("out of range"));
+    }
+
+    #[test]
+    fn snapshots_for_different_windows_share_the_bounded_lru() {
+        let cache = ElementCacheCore::new();
+        let first = publish(&cache, 12, 1, 5);
+        let second = publish(&cache, 12, 2, 5);
+        assert_eq!(resolve(&cache, 12, &token_for(first, 0)), Ok((1, 0)));
+        assert_eq!(resolve(&cache, 12, &token_for(second, 0)), Ok((2, 0)));
+    }
+
+    #[test]
+    fn tokens_in_different_pids_dont_collide() {
+        let cache = ElementCacheCore::new();
+        let first = publish(&cache, 100, 11, 3);
+        let second = publish(&cache, 200, 22, 3);
+        assert_eq!(resolve(&cache, 100, &token_for(first, 0)), Ok((11, 0)));
+        assert_eq!(resolve(&cache, 200, &token_for(second, 0)), Ok((22, 0)));
+        assert_eq!(
+            resolve(&cache, 200, &token_for(first, 0)),
+            Err(STALE_TOKEN_ERROR.into())
+        );
+    }
+
+    #[test]
+    fn clear_then_register_starts_clean() {
+        let cache = ElementCacheCore::new();
+        let first = publish(&cache, 1, 1, 1);
+        assert_eq!(cache.clear(), 1);
+        assert_eq!(cache.clear(), 0);
+        assert_eq!(
+            resolve(&cache, 1, &token_for(first, 0)),
+            Err(STALE_TOKEN_ERROR.into())
+        );
+        let second = publish(&cache, 1, 1, 1);
+        assert_eq!(resolve(&cache, 1, &token_for(second, 0)), Ok((1, 0)));
+    }
+
+    #[test]
+    fn bare_element_index_is_refused() {
+        assert!(ElementCacheCore::<Payload>::new()
+            .resolve_element_args(1, Some(7), None, None, Some(99), "click")
             .is_err());
+    }
+
+    #[test]
+    fn element_token_alone_resolves_to_same_action() {
+        let cache = ElementCacheCore::new();
+        let id = publish(&cache, 1, 555, 4);
+        let resolved = cache
+            .resolve_element_args(1, None, Some(&token_for(id, 2)), None, None, "click")
+            .unwrap();
+        assert!(matches!(
+            resolved,
+            ResolvedElement::Element {
+                window_id: Some(555),
+                element_index: 2,
+                via_token: true,
+                element: 2
+            }
+        ));
+    }
+
+    #[test]
+    fn conflicting_token_and_index_are_refused() {
+        let cache = ElementCacheCore::new();
+        let id = publish(&cache, 1, 777, 5);
+        assert!(cache
+            .resolve_element_args(1, Some(99), Some(&token_for(id, 3)), None, None, "click")
+            .is_err());
+    }
+
+    #[test]
+    fn snapshot_id_and_index_resolve_safely() {
+        let cache = ElementCacheCore::new();
+        let id = publish(&cache, 1, 888, 5);
+        let result = cache
+            .resolve_element_args(
+                1,
+                Some(2),
+                None,
+                Some(&format!("s{id:08x}")),
+                Some(888),
+                "click",
+            )
+            .unwrap();
+        assert!(matches!(
+            result,
+            ResolvedElement::Element {
+                window_id: Some(888),
+                element_index: 2,
+                via_token: false,
+                element: 2
+            }
+        ));
+    }
+
+    #[test]
+    fn token_only_stale_returns_error_not_silent_fallback_to_integer() {
+        let result = ElementCacheCore::<Payload>::new()
+            .resolve_element_args(
+                1,
+                Some(0),
+                Some(&token_for(0xdead, 0)),
+                None,
+                Some(1),
+                "click",
+            )
+            .unwrap_err();
+        assert!(result.is_error.unwrap_or(false));
+    }
+
+    #[test]
+    fn neither_returns_none() {
+        assert!(matches!(
+            ElementCacheCore::<Payload>::new()
+                .resolve_element_args(1, None, None, None, None, "click")
+                .unwrap(),
+            ResolvedElement::None
+        ));
     }
 
     #[test]
@@ -1442,10 +1616,5 @@ mod tests {
             }
             assert_eq!(retire_runtime_scope("snapshot-weak-discovery"), 0);
         });
-    }
-
-    #[test]
-    fn default_impl_matches_new() {
-        let _cache: ElementCacheCore<Payload> = ElementCacheCore::default();
     }
 }

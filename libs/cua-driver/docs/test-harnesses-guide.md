@@ -121,10 +121,10 @@ background qualification remains native Calc from `libreoffice-fresh 26.2.5-3`,
 Inkscape `1.4.4-6`, the plain compiled `evdev`/`pc105`/`us` keymap, and two
 seats. Chromium, Electron, and XWayland raw background input remain unqualified;
 semantic AT-SPI actions are separate.
-See [production proof preparation](../hyprland-plugin/tests/production-proof.md)
+See [production proof preparation](../hyprland-plugin/docs/production-proof.md)
 for the bounded plans and their limits.
 
-The explicit [Inkscape-only qualification profile](../hyprland-plugin/tests/production-inkscape-profile.md)
+The explicit [Inkscape-only qualification profile](../hyprland-plugin/docs/production-inkscape-profile.md)
 supports a bounded packaging candidate using exact Inkscape `1.4.4-6`, with
 independent native clients, two app lanes, separate SVG oracles, and third-owner
 capacity refusal. It preserves the default Calc/Inkscape profile and the native
@@ -214,7 +214,7 @@ These run without a repo-local GUI application and normally run without
 | `rust/crates/*/src/**`                 | Core driver, platform-independent logic, schemas, and helpers |
 | `protocol_*_test.rs`                   | MCP handshake, tool calls, sessions, media, and errors        |
 | `schema_*_test.rs`                     | Shared schema and backend consistency                         |
-| `transport_config_persistence_test.rs` | CLI/MCP configuration persistence                             |
+| `transport_config_persistence_test.rs` | CLI configuration persistence across processes                |
 | `protocol_element_token_test.rs`       | Element-token protocol behavior                               |
 
 These tests should be fast, deterministic, and safe to run on ordinary CI

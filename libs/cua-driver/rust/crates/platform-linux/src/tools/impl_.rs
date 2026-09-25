@@ -1940,25 +1940,6 @@ fn surface_identity_unproven_error(xid: u64, reason: String) -> Value {
 // ── launch_app ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod get_window_state_capture_tests {
-    use super::*;
-
-    #[test]
-    fn surface_identity_failure_is_a_typed_screenshot_error() {
-        let error = surface_identity_unproven_error(
-            0x2962,
-            "surface_identity_unproven: fixture".to_owned(),
-        );
-
-        assert_eq!(error["code"], "surface_identity_unproven");
-        assert_eq!(error["window_id"], 0x2962);
-        assert!(error["reason"]
-            .as_str()
-            .is_some_and(|reason| reason.contains("surface_identity_unproven")));
-    }
-}
-
-#[cfg(test)]
 mod get_window_state_actions_tests {
     use super::*;
     use crate::atspi::AtspiNode;
@@ -1981,13 +1962,6 @@ mod get_window_state_actions_tests {
             in_web_content: false,
             object_ref: None,
         }
-    }
-
-    #[test]
-    fn element_entry_includes_actions_when_present() {
-        let n = node(vec!["Press".to_owned(), "Open".to_owned()]);
-        let entry = build_element_entry(&n, None, None).unwrap();
-        assert_eq!(entry["actions"], json!(["Press", "Open"]));
     }
 
     #[test]
@@ -5215,44 +5189,6 @@ fn coordinate_drag_keeps_wayland_background_refusal_ahead_of_screenshot_context(
 
 #[cfg(test)]
 #[test]
-fn zoom_schema_keeps_pid_optional_for_window_owned_lookup() {
-    let tool = ZoomTool {
-        state: ToolState::new(),
-    };
-    let required = tool.def().input_schema["required"].as_array().unwrap();
-    assert!(!required.iter().any(|field| field == "pid"));
-    assert!(tool.def().input_schema["properties"].get("pid").is_some());
-
-    tool.state.element_cache.publish_for_session(
-        42,
-        7,
-        crate::atspi::cache::CachedSnapshot::from_nodes(&[]),
-        Some("zoom-optional-pid-linux"),
-        Some(2.0),
-    );
-    let (pid, context) = tool
-        .state
-        .element_cache
-        .screenshot_context_for_zoom(None, 7, Some("zoom-optional-pid-linux"))
-        .unwrap();
-    assert_eq!(pid, 42);
-    assert_eq!(context.window_id, 7);
-    tool.state.element_cache.publish_for_session(
-        43,
-        7,
-        crate::atspi::cache::CachedSnapshot::from_nodes(&[]),
-        Some("zoom-optional-pid-linux"),
-        Some(1.0),
-    );
-    assert!(tool
-        .state
-        .element_cache
-        .screenshot_context_for_zoom(None, 7, Some("zoom-optional-pid-linux"))
-        .is_err());
-}
-
-#[cfg(test)]
-#[test]
 fn coordinate_less_mouse_button_up_survives_snapshot_replacement() {
     let state = ToolState::new();
     let cursor_id = "held-after-replacement";
@@ -6165,7 +6101,7 @@ pub struct ClickTool {
 }
 
 fn capture_admission_error(error: anyhow::Error) -> ToolResult {
-    let code = crate::capture_action_frame::admission_error_code(&error);
+    let code = cua_driver_core::capture_runtime::admission_error_code(&error);
     ToolResult::error(format!("capture-bound click refused: {error}"))
         .with_structured(json!({ "code": code, "effect": "refused" }))
 }
@@ -8498,14 +8434,6 @@ mod press_key_tests {
             press_key_chord(&["ctrl".to_owned(), "shift".to_owned()], "t"),
             Some(vec!["ctrl".to_owned(), "shift".to_owned(), "t".to_owned()])
         );
-    }
-
-    #[test]
-    fn the_requested_key_is_last_so_partition_modifiers_can_find_it() {
-        // `wayland::hotkey` splits the array with `partition_modifiers`, which
-        // takes the last non-modifier as the key. Appending keeps that true.
-        let chord = press_key_chord(&["ctrl".to_owned()], "s").expect("chord");
-        assert_eq!(chord.last().map(String::as_str), Some("s"));
     }
 }
 

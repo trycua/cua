@@ -59,15 +59,17 @@ jobs:
       matrix:
         include:
           - name: compositor build
-            attribute: cua-compositor-build
-          - name: driver package
-            attribute: cua-driver-build
+            attributes: cua-compositor-build
           - name: Rust unit tests
-            attribute: cua-driver-linux-rust-unit
-          - name: YAML policy VM
-            attribute: cua-driver-policy-yaml
-          - name: Rego policy VM
-            attribute: cua-driver-policy-rego
+            attributes: cua-driver-linux-rust-unit
+          # Both policy VMs boot the cua-driver package derivation. Building
+          # them in the same job as the package compiles the workspace once
+          # and reuses it from the local store, instead of once per job.
+          - name: driver package and policy VMs
+            attributes: >-
+              cua-driver-build
+              cua-driver-policy-yaml
+              cua-driver-policy-rego
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install Nix
@@ -75,8 +77,20 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+      # Shares built store paths between workflow runs through the GitHub
+      # Actions cache. Pull requests read main's entries but write only to
+      # their own ref scope, so they cannot poison main.
+      - name: Cache Nix store paths
+        uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7 # v15
+        with:
+          use-flakehub: disabled
+          diagnostic-endpoint: ""
       - name: Build ${{ matrix.name }}
-        run: >-
-          nix build
-          .#checks.x86_64-linux.${{ matrix.attribute }}
-          --no-link --print-build-logs --show-trace
+        env:
+          ATTRIBUTES: ${{ matrix.attributes }}
+        run: |
+          targets=()
+          for attribute in $ATTRIBUTES; do
+            targets+=(".#checks.x86_64-linux.${attribute}")
+          done
+          nix build "${targets[@]}" --no-link --print-build-logs --show-trace

@@ -208,32 +208,6 @@ async fn window_observation_is_advertised_and_dispatches_without_changing_result
 }
 
 #[tokio::test]
-async fn window_observation_rejects_local_paths_and_private_fields_before_dispatch() {
-    let executor = FakeExecutor::new(Value::Null, false);
-    let receiver = DriverEnvelopeReceiver::new(executor.clone());
-    for name in ["list_windows", "get_window_state"] {
-        for (field, value) in [
-            ("screenshot_out_file", json!("/tmp/receiver-test.png")),
-            ("image_path", json!("/tmp/receiver-test.png")),
-            ("file_path", json!("/tmp/receiver-test.txt")),
-            ("_session_id", json!("untrusted")),
-            ("_permission_mode", json!("unrestricted")),
-            ("_private", Value::Null),
-        ] {
-            let mut arguments = json!({"pid": 42, "window_id": 7});
-            arguments[field] = value;
-            let mut envelope = request("rejected-observation");
-            envelope.name = Some(name.into());
-            envelope.arguments = Some(arguments);
-            let response = receiver.exchange(receiver.generation(), envelope).await;
-            assert_refusal(&response, "invalid_request", true);
-        }
-    }
-    assert_eq!(executor.count(), 0);
-    assert!(receiver.state.lock().unwrap().requests.is_empty());
-}
-
-#[tokio::test]
 async fn preserves_native_tool_error_code_and_message() {
     let executor = FakeExecutor::new(Value::Null, false);
     let error = DriverError::Tool {
@@ -273,17 +247,22 @@ async fn invalid_envelopes_never_reach_executor() {
     for id in ["", "bad/id"] {
         invalid.push(request(id));
     }
-    for arguments in [
-        json!({"_session_id": "untrusted"}),
-        json!({"_permission_mode": "unrestricted"}),
-        json!({"screenshot_out_file": "/tmp/receiver-test.png"}),
-        json!({"image_path": "/tmp/receiver-test.png"}),
-        json!({"file_path": "/tmp/receiver-test.txt"}),
-        json!(["not", "an", "object"]),
-    ] {
-        let mut envelope = request("arguments");
-        envelope.arguments = Some(arguments);
-        invalid.push(envelope);
+    // Argument checks are tool-independent; window observation shares them.
+    for name in ["click", "list_windows", "get_window_state"] {
+        for arguments in [
+            json!({"_session_id": "untrusted"}),
+            json!({"_permission_mode": "unrestricted"}),
+            json!({"_private": null}),
+            json!({"screenshot_out_file": "/tmp/receiver-test.png"}),
+            json!({"image_path": "/tmp/receiver-test.png"}),
+            json!({"file_path": "/tmp/receiver-test.txt"}),
+            json!(["not", "an", "object"]),
+        ] {
+            let mut envelope = request("arguments");
+            envelope.name = Some(name.into());
+            envelope.arguments = Some(arguments);
+            invalid.push(envelope);
+        }
     }
     for name in [
         "execute_shell",

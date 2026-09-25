@@ -15,7 +15,7 @@ use std::process::{ChildStdin, ChildStdout, Command, Stdio};
 use serde_json::Value;
 
 use crate::daemon::TestDaemon;
-use crate::paths::driver_binary;
+use crate::paths::{driver_binary, ensure_driver_binary};
 use crate::reaper::{spawn_in_job, ChildReaper};
 
 /// A spawned cua-driver with raw stdio access and no handshake performed.
@@ -37,7 +37,8 @@ impl RawDriver {
 
     /// Spawn the driver with piped stdio. Returns `None` (with a skip eprintln)
     /// if the binary isn't built — callers early-return so an un-built binary
-    /// skips rather than fails.
+    /// skips rather than fails, unless `CUA_TEST_REQUIRE_DRIVER_BIN=1` makes a
+    /// missing binary panic.
     pub fn spawn() -> Option<Self> {
         Self::spawn_daemon_backed(driver_binary(), false, &[])
     }
@@ -72,8 +73,7 @@ impl RawDriver {
         overlay_enabled: bool,
         env: &[(&str, &str)],
     ) -> Option<Self> {
-        if !bin.exists() {
-            eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
+        if !ensure_driver_binary(&bin) {
             return None;
         }
         let mut reaper = ChildReaper::new();
@@ -121,8 +121,7 @@ impl RawDriver {
 
     fn spawn_direct_with_args(args: &[&str]) -> Option<Self> {
         let bin = driver_binary();
-        if !bin.exists() {
-            eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
+        if !ensure_driver_binary(&bin) {
             return None;
         }
         let mut reaper = ChildReaper::new();

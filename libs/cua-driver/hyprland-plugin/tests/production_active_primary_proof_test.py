@@ -8,9 +8,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 import production_active_primary_proof as proof
-from production_primary_conflict_proof_test import plan as settled_plan
-from production_session_fault_proof_test import ACTIVE, CANCEL, PARTIAL, status, trace
+from proof_fixtures import ACTIVE, CANCEL, PARTIAL, inkscape_profile, primary_conflict_plan as settled_plan, status, trace
 
 
 def plan():
@@ -49,6 +49,13 @@ def action():
 
 
 class OracleTests(unittest.TestCase):
+    def test_inkscape_only_profile_reaches_the_shared_app_profile_gate(self):
+        candidate = {**inkscape_profile(plan()), 'recovery': {'pointer_stages': ['scroll_down', 'scroll_up']}}
+        proof.validate_plan(candidate)
+        candidate['agents'][0]['document'] = '/synthetic/private.svg'
+        with self.assertRaisesRegex(AssertionError, 'absolute synthetic SVG document'):
+            proof.validate_plan(candidate)
+
     def test_parked_foreground_accepts_new_observation_time_only(self):
         before = {'kind': 'state', 'time': 10, 'clicks': 2, 'keys': '',
                   'scroll': 0, 'motion': 4, 'held': False}
@@ -99,26 +106,21 @@ class OracleTests(unittest.TestCase):
                 self.verify(fault=fault)
 
     def test_raw_primary_transition_is_never_filtered_or_relabelled_as_isolation(self):
-        for kind in ('cursor', 'pointer_focus', 'keyboard_focus', 'pointer_button', 'keyboard_key'):
-            page = boundary()
-            row = [len(page['events']) + 1, 13_000_000, kind, 100, 100, 0, 0]
-            if kind == 'cursor':
-                row[3] += 10
-            page['events'].append(row)
-            page['count'] += 1
-            original = deepcopy(page)
-            result = proof.transition_evidence(page)
-            self.assertEqual(result['raw_primary_analysis']['result'], 'failed')
-            self.assertEqual(result['continuous_primary_isolation'], 'unproven')
-            self.assertEqual(page, original)
-            self.assertEqual(self.verify(page=page)['result'], 'verified')
+        # Which primary rows fail is primary_trace_test's contract; this one keeps the raw result.
+        page = boundary()
+        page['events'].append([len(page['events']) + 1, 13_000_000, 'keyboard_focus', 100, 100, 0, 0])
+        page['count'] += 1
+        original = deepcopy(page)
+        result = proof.transition_evidence(page)
+        self.assertEqual(result['raw_primary_analysis']['result'], 'failed')
+        self.assertEqual(result['continuous_primary_isolation'], 'unproven')
+        self.assertEqual(page, original)
+        self.assertEqual(self.verify(page=page)['result'], 'verified')
 
     def test_incomplete_trace_bad_history_and_preexisting_primary_changes_fail(self):
-        for field, value in (('overflow', True), ('hook', False), ('timed_out', True), ('active', False), ('count', 99)):
-            page = boundary()
-            page[field] = value
-            with self.subTest(field=field), self.assertRaises(AssertionError):
-                self.verify(page=page)
+        # Page validity is owned by trace_interval (realapp TraceIntervalTests); one case proves wiring.
+        with self.assertRaisesRegex(AssertionError, 'dropped events'):
+            self.verify(page={**boundary(), 'overflow': True})
         page = boundary()
         page['events'][0][1] += 1
         with self.assertRaises(AssertionError):
@@ -220,12 +222,12 @@ class OracleTests(unittest.TestCase):
         candidate = plan()
         candidate['fault']['min_motion_px'] = 12
         proof.validate_plan(candidate)
-        for value in (True, 0, -1, float('inf'), float('nan'), '12'):
-            with self.subTest(value=value), self.assertRaises(AssertionError):
-                proof.validate_plan({**candidate, 'fault': {'kind': 'primary_hover', 'min_motion_px': value}})
+        # Threshold validity is owned by desktop_fault's MotionGateTests; one value proves wiring.
+        with self.assertRaisesRegex(AssertionError, 'positive finite min_motion_px'):
+            proof.validate_plan({**candidate, 'fault': {'kind': 'primary_hover', 'min_motion_px': 0}})
         fault = record()
         fault.update(min_motion_px=12, gate_first=deepcopy(fault['prefix']))
-        with self.assertRaises(AssertionError):
+        with self.assertRaisesRegex(AssertionError, 'motion gate requires surface coordinates'):
             self.verify(fault=fault)
 
     def test_two_sample_path_requires_both_exact_observed_movements(self):
@@ -264,14 +266,6 @@ class OracleTests(unittest.TestCase):
                 bad_fault['intermediate']['x'] += 1
             with self.subTest(mutation=mutation), self.assertRaises(AssertionError):
                 self.verify(page=bad_page, fault=bad_fault)
-
-    def test_recovery_chooses_effective_stage_from_current_selection(self):
-        before = {'snapshot_id': 'new-after-cancellation'}
-        for b2, stage in ((True, 'click_a1'), (False, 'click_b2')):
-            with patch.object(proof.pointer_grounding, 'rows', return_value=['fresh']), \
-                 patch.object(proof.pointer_grounding, 'calc_formula_selection', return_value=b2) as selection:
-                self.assertEqual(proof.recovery_stage(before), stage)
-                selection.assert_called_once_with(before, ['fresh'], 'B2')
 
     def test_invalid_plan_writes_failed_evidence_without_native_actions(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -313,16 +307,13 @@ class OracleTests(unittest.TestCase):
         runtime = {'pid': 102, 'directory': str(Path.cwd())}
         previous = {'snapshot_id': 's00000001', 'proof_runtime': {**runtime, 'pid': 101},
             'proof_image': 'previous.png', 'proof_observation_started_ns': 10, 'proof_observation_finished_ns': 20}
-        for failure in (None, 'cached', 'same_snapshot', 'same_artifact', 'dead'):
+        # Freshness rules are owned by cancel's ObservationTests; one stale case proves wiring.
+        for failure in (None, 'cached'):
             observed = {**previous, 'proof_runtime': runtime, 'proof_image': 'fresh.png',
                 'proof_observation_started_ns': 40, 'proof_observation_finished_ns': 50}
             if failure == 'cached':
                 observed.update(proof_observation_started_ns=10, proof_observation_finished_ns=20)
-            elif failure == 'same_snapshot':
-                observed = dict(previous)
-            elif failure == 'same_artifact':
-                observed['proof_image'] = previous['proof_image']
-            client = Mock(directory=Path.cwd(), process=Mock(pid=102, poll=Mock(return_value=0 if failure == 'dead' else None)))
+            client = Mock(directory=Path.cwd(), process=Mock(pid=102, poll=Mock(return_value=None)))
             with self.subTest(failure=failure), \
                  patch.object(proof, 'grounded_snapshot', return_value=observed), \
                  patch.object(proof.time, 'monotonic_ns', side_effect=[30, 60]), \

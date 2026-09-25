@@ -232,25 +232,6 @@ mod tests {
         assert!(entry.message.contains("cua-driver "));
     }
 
-    #[test]
-    fn session_active_passes() {
-        let entry = check_session_active();
-        assert_eq!(entry.status, CheckStatus::Pass);
-    }
-
-    #[test]
-    fn tcc_and_bundle_are_skipped_with_canonical_message() {
-        for name in [
-            NAME_TCC_ACCESSIBILITY,
-            NAME_TCC_SCREEN_RECORDING,
-            NAME_BUNDLE_IDENTITY,
-        ] {
-            let entry = skip_not_applicable(name);
-            assert_eq!(entry.status, CheckStatus::Skip, "{name} must be skipped");
-            assert_eq!(entry.message, "not applicable on Windows");
-        }
-    }
-
     // End-to-end through the dispatcher: every Windows canonical name
     // appears in the response, in declared order. Run on every host so
     // CI matrices that don't target Windows still verify the schema
@@ -286,6 +267,7 @@ mod tests {
             .iter()
             .map(|c| (c["name"].as_str().unwrap(), c))
             .collect();
+        assert_eq!(by_name[NAME_SESSION_ACTIVE]["status"], "pass");
         for name in [
             NAME_TCC_ACCESSIBILITY,
             NAME_TCC_SCREEN_RECORDING,

@@ -1810,11 +1810,6 @@ mod tests {
     }
 
     #[test]
-    fn hid_only_post_mode_is_distinct_from_routed_background() {
-        assert_ne!(MousePostMode::Both, MousePostMode::HidOnly);
-    }
-
-    #[test]
     fn foreground_drag_plan_keeps_a_drag_sample_for_zero_steps() {
         let events = foreground_drag_events(1.0, 2.0, 3.0, 4.0, 0);
         assert_eq!(events.len(), 4);

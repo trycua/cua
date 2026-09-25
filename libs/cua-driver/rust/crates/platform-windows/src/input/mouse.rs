@@ -1077,7 +1077,7 @@ mod nc_hit_tests {
 
 #[cfg(test)]
 mod wheel_tests {
-    use super::{posted_press_message, wheel_mouse_data, WHEEL_DELTA};
+    use super::{posted_press_message, wheel_mouse_data};
     use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONDBLCLK, WM_LBUTTONDOWN};
 
     #[test]
@@ -1101,28 +1101,17 @@ mod wheel_tests {
     }
 
     #[test]
-    fn wheel_data_up_is_positive_one_notch() {
-        // +1 tick (up / right) → +WHEEL_DELTA, bit-cast to u32.
-        assert_eq!(wheel_mouse_data(1), WHEEL_DELTA as u32);
-        assert_eq!(wheel_mouse_data(1), 120u32);
-    }
-
-    #[test]
-    fn wheel_data_down_is_negative_one_notch() {
-        // -1 tick (down / left) → -WHEEL_DELTA, bit-cast: 0xFFFFFF88.
-        assert_eq!(wheel_mouse_data(-1), (-WHEEL_DELTA) as u32);
-        assert_eq!(wheel_mouse_data(-1), 0xFFFF_FF88);
-    }
-
-    #[test]
-    fn wheel_data_scales_with_ticks() {
-        assert_eq!(wheel_mouse_data(3), (3 * WHEEL_DELTA) as u32);
-        assert_eq!(wheel_mouse_data(3), 360u32);
-        assert_eq!(wheel_mouse_data(-3) as i32, -360);
-    }
-
-    #[test]
-    fn wheel_data_zero_is_zero() {
-        assert_eq!(wheel_mouse_data(0), 0);
+    fn wheel_data_is_signed_wheel_delta_per_tick_bit_cast_to_u32() {
+        // +ticks scroll up / right; -ticks down / left. The signed notch count
+        // is carried as a two's-complement u32 in `mouseData`.
+        for (ticks, expected) in [
+            (0, 0u32),
+            (1, 120),
+            (3, 360),
+            (-1, 0xFFFF_FF88),
+            (-3, 0xFFFF_FE98),
+        ] {
+            assert_eq!(wheel_mouse_data(ticks), expected, "ticks={ticks}");
+        }
     }
 }

@@ -782,17 +782,6 @@ fn parse_netstat_loopback_listeners(text: &str, allowed_pids: &[u32]) -> Vec<(u1
     listeners
 }
 
-#[cfg(test)]
-fn parse_netstat_loopback_ports(text: &str, allowed_pids: &[u32]) -> Vec<u16> {
-    let mut ports = parse_netstat_loopback_listeners(text, allowed_pids)
-        .into_iter()
-        .map(|(port, _owner_pid)| port)
-        .collect::<Vec<_>>();
-    ports.sort_unstable();
-    ports.dedup();
-    ports
-}
-
 fn system_directory_path() -> Result<PathBuf, BrowserRefusal> {
     let mut buffer = [0u16; 32768];
     let length = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
@@ -2195,19 +2184,12 @@ mod tests {
   TCP    127.0.0.1:9222       0.0.0.0:0       LISTENING       42\n\
   TCP    0.0.0.0:9333         0.0.0.0:0       LISTENING       43\n\
   TCP    [::1]:9444           [::]:0          LISTENING       43\n\
+  TCP    127.0.0.1:9666       127.0.0.1:50000 ESTABLISHED     42\n\
   TCP    127.0.0.1:9555       0.0.0.0:0       LISTENING       7\n";
         assert_eq!(
-            parse_netstat_loopback_ports(input, &[42, 43]),
-            vec![9222, 9444]
+            parse_netstat_loopback_listeners(input, &[42, 43]),
+            vec![(9222, 42), (9444, 43)]
         );
-    }
-
-    #[test]
-    fn netstat_parser_rejects_unrelated_process_trees() {
-        let input = "\
-  TCP    127.0.0.1:9222       0.0.0.0:0       LISTENING       42\n\
-  TCP    127.0.0.1:9555       0.0.0.0:0       LISTENING       99\n";
-        assert_eq!(parse_netstat_loopback_ports(input, &[42, 43]), vec![9222]);
     }
 
     #[test]

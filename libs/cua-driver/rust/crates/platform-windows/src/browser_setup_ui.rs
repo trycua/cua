@@ -37,6 +37,21 @@ fn release_nodes(nodes: &[UiaNode]) {
     }
 }
 
+/// Browser chrome only: tab strip, toolbar, omnibox, and the active tab's
+/// `Document` node without its renderer-owned descendants. Tab topology and
+/// the committed setup URL are native facts, so reading them must not depend
+/// on the page renderer answering UIA (#4121).
+fn native_nodes(hwnd: u64) -> Result<Vec<UiaNode>, BrowserRefusal> {
+    crate::uia::walk_native_tree(hwnd).map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            format!(
+                "the approved browser window's native accessibility tree was unavailable: {error}"
+            ),
+        )
+    })
+}
+
 fn unique_web_actionable(
     nodes: &[UiaNode],
     control_type: &str,
@@ -176,9 +191,14 @@ fn stable_native_tab_count(hwnd: u64, initial_count: usize) -> Result<usize, Bro
     let mut previous = initial_count;
     loop {
         std::thread::sleep(Duration::from_millis(100));
-        let tree = crate::uia::walk_tree(hwnd, None);
-        let current = native_tab_count(&tree.nodes);
-        release_nodes(&tree.nodes);
+        let current = match native_nodes(hwnd) {
+            Ok(nodes) => {
+                let current = native_tab_count(&nodes);
+                release_nodes(&nodes);
+                current
+            }
+            Err(_) => 0,
+        };
         if current > 0 && current == previous {
             return Ok(current);
         }
@@ -210,6 +230,13 @@ fn setup_page_proven(nodes: &[UiaNode], descriptor: &BrowserSetupDescriptor) -> 
         .filter(|node| node.control_type == "Document" && !node.in_web_content)
         .count();
     exact_url_count == 1 && document_count == 1
+}
+
+/// Whether the setup flow must read renderer-owned nodes before it acts: only
+/// when the committed active tab is already the exact setup page, whose
+/// checkbox lives in web content. Every other page is left unread (#4121).
+fn needs_setup_page_renderer(native: &[UiaNode], descriptor: &BrowserSetupDescriptor) -> bool {
+    setup_page_proven(native, descriptor)
 }
 
 fn exact_setup_checkbox(
@@ -428,9 +455,11 @@ impl SetupUiHandle {
         if !self.opened_setup_page {
             return Ok(None);
         }
-        let tree = crate::uia::walk_tree(self.hwnd, None);
-        let proven = setup_page_proven(&tree.nodes, self.descriptor);
-        release_nodes(&tree.nodes);
+        let proven = native_nodes(self.hwnd).is_ok_and(|nodes| {
+            let proven = setup_page_proven(&nodes, self.descriptor);
+            release_nodes(&nodes);
+            proven
+        });
         if !proven {
             let error = refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -454,9 +483,11 @@ impl SetupUiHandle {
         if !self.opened_setup_page {
             return None;
         }
-        let tree = crate::uia::walk_tree(self.hwnd, None);
-        let proven = setup_page_proven(&tree.nodes, self.descriptor);
-        release_nodes(&tree.nodes);
+        let proven = native_nodes(self.hwnd).is_ok_and(|nodes| {
+            let proven = setup_page_proven(&nodes, self.descriptor);
+            release_nodes(&nodes);
+            proven
+        });
         Some(
             proven
                 && crate::input::keyboard::send_key_synthesized(self.hwnd, "w", &["ctrl"]).is_ok(),
@@ -510,8 +541,19 @@ fn set_remote_debugging(
     descriptor: &'static BrowserSetupDescriptor,
     desired_enabled: bool,
 ) -> Result<SetupUiHandle, BrowserRefusal> {
-    let initial = crate::uia::walk_tree(hwnd, None);
-    let initial_checkbox = exact_setup_checkbox(&initial.nodes, descriptor);
+    let initial_native = native_nodes(hwnd)?;
+    let setup_page_active = needs_setup_page_renderer(&initial_native, descriptor);
+    let initial_tab_count = native_tab_count(&initial_native);
+    release_nodes(&initial_native);
+    // Only the setup page's own checkbox needs renderer-owned nodes. Any other
+    // active page is left unread, so an unresponsive renderer cannot stall
+    // setup or cleanup before the dedicated setup tab exists.
+    let initial = if setup_page_active {
+        crate::uia::walk_tree(hwnd, None).nodes
+    } else {
+        Vec::new()
+    };
+    let initial_checkbox = exact_setup_checkbox(&initial, descriptor);
     let mut handle = match initial_checkbox {
         Ok(Some(_)) => SetupUiHandle {
             hwnd,
@@ -524,8 +566,7 @@ fn set_remote_debugging(
             enable_attempted: false,
         },
         Ok(None) => {
-            let initial_tab_count = native_tab_count(&initial.nodes);
-            release_nodes(&initial.nodes);
+            release_nodes(&initial);
             let tab_count_before = stable_native_tab_count(hwnd, initial_tab_count)?;
 
             let mut handle = SetupUiHandle {
@@ -538,11 +579,14 @@ fn set_remote_debugging(
                 injected_global_input: false,
                 enable_attempted: false,
             };
-            let tab_tree = crate::uia::walk_tree(hwnd, None);
-            let new_tab_button = match exact_native_new_tab_button(&tab_tree.nodes) {
+            let tab_tree = match native_nodes(hwnd) {
+                Ok(nodes) => nodes,
+                Err(error) => return Err(handle.abort(error)),
+            };
+            let new_tab_button = match exact_native_new_tab_button(&tab_tree) {
                 Ok(Some(element)) => element,
                 Ok(None) => {
-                    release_nodes(&tab_tree.nodes);
+                    release_nodes(&tab_tree);
                     return Err(handle.abort(refusal(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
                         format!(
@@ -552,25 +596,25 @@ fn set_remote_debugging(
                     )));
                 }
                 Err(error) => {
-                    release_nodes(&tab_tree.nodes);
+                    release_nodes(&tab_tree);
                     return Err(handle.abort(error));
                 }
             };
             if let Err(error) = unsafe { invoke(new_tab_button, "native new-tab button") } {
-                release_nodes(&tab_tree.nodes);
+                release_nodes(&tab_tree);
                 return Err(handle.abort(error));
             }
-            release_nodes(&tab_tree.nodes);
+            release_nodes(&tab_tree);
             handle.opened_setup_page = true;
 
             let deadline = Instant::now() + Duration::from_secs(3);
             let mut created = loop {
-                let tree = crate::uia::walk_tree(hwnd, None);
-                let tab_count_after = native_tab_count(&tree.nodes);
+                let tree = native_nodes(hwnd).unwrap_or_default();
+                let tab_count_after = native_tab_count(&tree);
                 if tab_count_after == tab_count_before + 1 {
                     break tree;
                 }
-                release_nodes(&tree.nodes);
+                release_nodes(&tree);
                 if Instant::now() >= deadline {
                     return Err(handle.abort(refusal(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -582,10 +626,10 @@ fn set_remote_debugging(
                 }
                 std::thread::sleep(Duration::from_millis(100));
             };
-            let omnibox = match unique_native_actionable(&created.nodes, "Edit", "set_value") {
+            let omnibox = match unique_native_actionable(&created, "Edit", "set_value") {
                 Ok(Some(element)) => element,
                 Ok(None) => {
-                    release_nodes(&created.nodes);
+                    release_nodes(&created);
                     return Err(handle.abort(refusal(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
                         format!(
@@ -595,40 +639,42 @@ fn set_remote_debugging(
                     )));
                 }
                 Err(error) => {
-                    release_nodes(&created.nodes);
+                    release_nodes(&created);
                     return Err(handle.abort(error));
                 }
             };
             if let Err(error) = unsafe { set_value(omnibox, descriptor.setup_url) } {
-                release_nodes(&created.nodes);
+                release_nodes(&created);
                 return Err(handle.abort(error));
             }
-            release_nodes(&created.nodes);
-            created = crate::uia::walk_tree(hwnd, None);
-            let refreshed_omnibox =
-                match unique_native_actionable(&created.nodes, "Edit", "set_value") {
-                    Ok(Some(element))
-                        if created.nodes.iter().any(|node| {
-                            node.element_ptr == element
-                                && node.value.as_deref().is_some_and(|value| {
-                                    value.trim().eq_ignore_ascii_case(descriptor.setup_url)
-                                })
-                        }) =>
-                    {
-                        element
-                    }
-                    Ok(_) => {
-                        release_nodes(&created.nodes);
-                        return Err(handle.abort(refusal(
-                            BrowserRefusalCode::BrowserWrongTargetRefused,
-                            "the unique native address field did not retain the exact setup URL",
-                        )));
-                    }
-                    Err(error) => {
-                        release_nodes(&created.nodes);
-                        return Err(handle.abort(error));
-                    }
-                };
+            release_nodes(&created);
+            created = match native_nodes(hwnd) {
+                Ok(nodes) => nodes,
+                Err(error) => return Err(handle.abort(error)),
+            };
+            let refreshed_omnibox = match unique_native_actionable(&created, "Edit", "set_value") {
+                Ok(Some(element))
+                    if created.iter().any(|node| {
+                        node.element_ptr == element
+                            && node.value.as_deref().is_some_and(|value| {
+                                value.trim().eq_ignore_ascii_case(descriptor.setup_url)
+                            })
+                    }) =>
+                {
+                    element
+                }
+                Ok(_) => {
+                    release_nodes(&created);
+                    return Err(handle.abort(refusal(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        "the unique native address field did not retain the exact setup URL",
+                    )));
+                }
+                Err(error) => {
+                    release_nodes(&created);
+                    return Err(handle.abort(error));
+                }
+            };
             if let Err(error) = confirm_setup_navigation(
                 hwnd,
                 refreshed_omnibox,
@@ -636,19 +682,19 @@ fn set_remote_debugging(
                 &mut handle.injected_global_input,
                 &mut handle.focused_setup_address_field,
             ) {
-                release_nodes(&created.nodes);
+                release_nodes(&created);
                 return Err(handle.abort(error));
             }
-            release_nodes(&created.nodes);
+            release_nodes(&created);
             handle
         }
         Err(error) => {
-            release_nodes(&initial.nodes);
+            release_nodes(&initial);
             return Err(error);
         }
     };
     if !handle.opened_setup_page {
-        release_nodes(&initial.nodes);
+        release_nodes(&initial);
     }
 
     let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
@@ -996,6 +1042,168 @@ mod tests {
             exact_native_new_tab_button(&[first, first_close, second, second_close, new_tab,])
                 .unwrap(),
             Some(30)
+        );
+    }
+
+    /// Native Edge 153.0.4234.48 chrome captured on hosted Windows while the
+    /// fixture renderer stopped answering UIA during `end_session` (#4121).
+    fn edge_153_native_chrome(url: &str, document: &str) -> Vec<UiaNode> {
+        let mut rows = Vec::new();
+        let mut push = |control_type: &str,
+                        name: &str,
+                        value: Option<&str>,
+                        actions: &[&str],
+                        depth: usize,
+                        ptr: usize,
+                        rect: Option<(i32, i32, i32, i32)>| {
+            let mut row = node(control_type, name, value, actions);
+            row.depth = depth;
+            row.element_ptr = ptr;
+            row.element_index = (!actions.is_empty()).then_some(ptr);
+            row.rect = rect;
+            rows.push(row);
+        };
+        push(
+            "Window",
+            "cua-driver Web Harness - Profile 1 - Microsoft Edge",
+            None,
+            &[],
+            0,
+            1,
+            None,
+        );
+        push(
+            "Pane",
+            "cua-driver Web Harness - Microsoft Edge",
+            None,
+            &[],
+            1,
+            2,
+            None,
+        );
+        push(
+            "Button",
+            "Minimize",
+            None,
+            &["invoke"],
+            5,
+            3,
+            Some((794, 41, 840, 80)),
+        );
+        push(
+            "Button",
+            "Maximize",
+            None,
+            &["invoke"],
+            5,
+            4,
+            Some((840, 41, 886, 80)),
+        );
+        push(
+            "Button",
+            "Close",
+            None,
+            &["invoke"],
+            5,
+            5,
+            Some((886, 41, 932, 80)),
+        );
+        push("ToolBar", "App bar", None, &[], 6, 6, None);
+        push(
+            "Button",
+            "Back",
+            None,
+            &["invoke"],
+            7,
+            7,
+            Some((52, 84, 84, 116)),
+        );
+        push(
+            "Button",
+            "Refresh",
+            None,
+            &["invoke"],
+            7,
+            8,
+            Some((88, 84, 120, 116)),
+        );
+        push(
+            "Edit",
+            "Address and search bar",
+            Some(url),
+            &["expand", "set_value", "text"],
+            8,
+            9,
+            Some((152, 88, 689, 112)),
+        );
+        push(
+            "Document",
+            document,
+            None,
+            &["set_value", "text", "scroll"],
+            7,
+            10,
+            Some((48, 127, 932, 672)),
+        );
+        push("Tab", "Tab bar", None, &[], 5, 11, None);
+        push(
+            "Button",
+            "Search tabs",
+            None,
+            &["expand"],
+            6,
+            12,
+            Some((52, 40, 84, 76)),
+        );
+        push(
+            "TabItem",
+            "cua-driver Web Harness - Memory usage - 26.6 MB",
+            None,
+            &["select"],
+            8,
+            13,
+            Some((80, 40, 336, 81)),
+        );
+        push(
+            "Button",
+            "Close tab",
+            None,
+            &["invoke"],
+            9,
+            14,
+            Some((304, 52, 320, 68)),
+        );
+        push(
+            "Button",
+            "New Tab",
+            None,
+            &["invoke"],
+            6,
+            15,
+            Some((332, 40, 364, 81)),
+        );
+        rows
+    }
+
+    #[test]
+    fn edge_153_cleanup_uses_native_chrome_without_reading_the_page_renderer() {
+        let edge = existing_profile_setup_descriptor(BrowserProduct::MicrosoftEdge).unwrap();
+        let fixture = edge_153_native_chrome("127.0.0.1:58963/fixture", "cua-driver Web Harness");
+        assert!(
+            !needs_setup_page_renderer(&fixture, edge),
+            "an unrelated active page must not require renderer-owned nodes"
+        );
+        assert_eq!(native_tab_count(&fixture), 1);
+        assert_eq!(exact_native_new_tab_button(&fixture).unwrap(), Some(15));
+        assert_eq!(
+            unique_native_actionable_with_focus(&fixture, "Edit", "set_value", |_| false).unwrap(),
+            Some(9)
+        );
+
+        let setup = edge_153_native_chrome(edge.setup_url, edge.page_titles[0]);
+        assert!(
+            needs_setup_page_renderer(&setup, edge),
+            "the committed setup page still requires its renderer-owned checkbox"
         );
     }
 }

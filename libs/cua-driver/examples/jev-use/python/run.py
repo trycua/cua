@@ -200,19 +200,28 @@ async def run(args: argparse.Namespace) -> str:
                         "snapshot_format": "semantic_v2",
                     },
                 )
-                visual = await optional_visual_observation(
-                    driver,
-                    pid,
-                    int(window["window_id"]),
-                    available_tools,
-                    capture_bound_click,
-                )
                 candidates = build_candidates(
                     snapshot,
                     token,
-                    visual,
+                    None,
                     capture_bound_click=capture_bound_click,
                 )
+                visual = None
+                if not any(candidate.tool is not None for candidate in candidates):
+                    visual = await optional_visual_observation(
+                        driver,
+                        pid,
+                        int(window["window_id"]),
+                        available_tools,
+                        capture_bound_click,
+                    )
+                    if visual is not None:
+                        candidates = build_candidates(
+                            snapshot,
+                            token,
+                            visual,
+                            capture_bound_click=capture_bound_click,
+                        )
                 if not candidates:
                     write_event(log_path, {"event": "outcome", "outcome": "abstained", "step": step})
                     return "abstained"

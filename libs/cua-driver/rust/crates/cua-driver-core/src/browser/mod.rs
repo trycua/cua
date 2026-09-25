@@ -40,6 +40,7 @@ pub mod cdp_ws;
 pub mod download;
 pub mod engine;
 mod grant;
+mod keyed_gates;
 #[cfg(test)]
 pub(crate) mod mock_cdp;
 mod mutation;

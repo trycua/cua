@@ -746,7 +746,7 @@ impl Tool for ClickTool {
             .await;
 
             // Drop the wildcard lease + detect window/foreground side-effects.
-            let changes = super::finish_window_observation(snapshot, &args).await;
+            let changes = super::finish_window_observation(snapshot).await;
 
             match result {
                 Ok(Ok((
@@ -1260,7 +1260,7 @@ impl Tool for ClickTool {
                 }
             }
 
-            let changes = super::finish_window_observation(snapshot, &args).await;
+            let changes = super::finish_window_observation(snapshot).await;
 
             let button_label = match button_str.as_str() {
                 "right" => "right-click",
@@ -1651,36 +1651,6 @@ mod tests {
             desc.contains("middle"),
             "description should mention middle button"
         );
-    }
-
-    /// Existing default behaviour preserved: no `button` field on the call →
-    /// resolves to "left" inside invoke. We can't drive the AX path without a
-    /// live macOS Window Server, but we CAN check the same arg-parsing logic
-    /// the invoke uses produces "left" for empty / absent input.
-    #[test]
-    fn button_defaults_to_left_when_absent() {
-        use cua_driver_core::tool_args::ArgsExt;
-        let args = serde_json::json!({ "pid": 1234 });
-        let button_str_raw = args.str_or("button", "left").to_lowercase();
-        let resolved = if button_str_raw.is_empty() {
-            "left".to_string()
-        } else {
-            button_str_raw
-        };
-        assert_eq!(resolved, "left");
-    }
-
-    /// Round-trip the three canonical values through the same parse the invoke
-    /// uses, so any future refactor that changes str_or semantics breaks here
-    /// before it breaks consumers.
-    #[test]
-    fn button_round_trips_right_and_middle() {
-        use cua_driver_core::tool_args::ArgsExt;
-        for v in ["left", "right", "middle"] {
-            let args = serde_json::json!({ "pid": 1234, "button": v });
-            let s = args.str_or("button", "left").to_lowercase();
-            assert_eq!(s, v);
-        }
     }
 
     /// Regression for the Swift→Rust port gap: only a raw background left

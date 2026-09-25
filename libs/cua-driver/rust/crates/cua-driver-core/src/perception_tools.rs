@@ -781,7 +781,8 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let python = crate::perception_client::fixture_python_config().unwrap();
-        let interpreter = python.interpreter;
+        // The sandbox only grants exec on the canonical interpreter.
+        let interpreter = std::fs::canonicalize(&python.interpreter).unwrap();
 
         let service = Arc::new(CaptureService::default());
         let (capture_id, binding) = capture(&service);

@@ -166,8 +166,12 @@ capture_command_output() {
 
 [[ "$(uname -s)" == Darwin ]] || fail "requires macOS"
 [[ "${GITHUB_ACTIONS:-}" == true ]] || fail "requires GitHub Actions"
-[[ "${GITHUB_EVENT_NAME:-}" == workflow_dispatch ]] \
-  || fail "runs only from workflow_dispatch"
+# Manual dispatch, or the stable Cua Driver tag release gate. Pull request
+# events never seed hosted TCC state.
+if [[ "${GITHUB_EVENT_NAME:-}" != workflow_dispatch ]]; then
+  [[ "${GITHUB_EVENT_NAME:-}" == push && "${GITHUB_REF:-}" == refs/tags/cua-driver-rs-v* ]] \
+    || fail "runs only from workflow_dispatch or a stable cua-driver-rs tag release gate"
+fi
 [[ "${RUNNER_ENVIRONMENT:-}" == github-hosted ]] \
   || fail "requires a GitHub-hosted runner"
 [[ "${RUNNER_OS:-}" == macOS ]] || fail "requires RUNNER_OS=macOS"

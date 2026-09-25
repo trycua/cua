@@ -14,7 +14,7 @@ class AuthorizedWorkflowTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
     def test_actions_are_pinned_to_commits(self) -> None:
-        action_refs = re.findall(r"^\s*- uses: [^@\s]+@([^\s]+)", self.workflow, re.MULTILINE)
+        action_refs = re.findall(r"^\s*(?:-\s+)?uses:\s*[^@\s]+@([^\s]+)", self.workflow, re.MULTILINE)
         self.assertTrue(action_refs)
         self.assertTrue(all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in action_refs))
 

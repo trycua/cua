@@ -142,6 +142,24 @@ coordinates. Do not remove `capture_id` and retry an expired, stale, retired,
 or mismatched capture as an unbound coordinate click. Do not reuse the capture
 for a second action.
 
+A refused capture-bound `click` returns `effect:"refused"` and one of these
+`code` values on macOS, Windows, and Linux:
+
+| Code                          | Cause                                                                     |
+| ----------------------------- | ------------------------------------------------------------------------- |
+| `capture_id_invalid`          | The capture ID is malformed.                                              |
+| `capture_not_found`           | The capture is unknown, already consumed, or its session was retired.     |
+| `capture_expired`             | The capture outlived its lifetime.                                        |
+| `capture_generation_mismatch` | The capture belongs to another runtime or session generation.             |
+| `capture_target_mismatch`     | The click names a different target than the capture.                      |
+| `capture_coordinate_invalid`  | The point is outside the capture or cannot be mapped to a finite action point. |
+| `capture_frame_mismatch`      | The live target's action frame changed size since the capture.            |
+
+Driver can also refuse before admission when it cannot inspect the live target.
+Windows and Linux report that as `capture_action_refused`; macOS reports a
+changed or unreadable live window as `capture_target_mismatch`. Every refusal
+means the click was not dispatched. Capture again before retrying.
+
 Parsing a window does not make its pixel input background-safe. Driver applies
 the platform's normal background route, and `background_unavailable` does not
 authorize a foreground retry. `delivery_mode:"foreground"` and desktop input

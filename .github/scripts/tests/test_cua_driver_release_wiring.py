@@ -275,7 +275,8 @@ fi
         self.assertIn("5c625bfb5d1ff62eadeeb3772007f7f66fdcf071", workflow)
         self.assertIn("validate_release_please_tags.py --target HEAD", workflow)
         self.assertIn('-p cua-driver --precise "$DRIVER_VERSION"', workflow)
-        self.assertIn(
+        self.assertIn('--search "head:release-please--branches--"', workflow)
+        self.assertNotIn(
             "gh pr list --state open --base main --limit 100 --json number",
             workflow,
         )
@@ -296,6 +297,11 @@ fi
         )
         self.assertIn("sync_lume_release_docs.py", workflow)
         self.assertIn("chore(lume): synchronize release documentation", workflow)
+        self.assertIn(
+            "npx --yes pnpm@9.0.4 --dir docs install --frozen-lockfile --ignore-scripts",
+            workflow,
+        )
+        self.assertIn("runner.ts --library sandbox", workflow)
         self.assertNotIn("if: steps.release.outputs.prs_created == 'true'", workflow)
         self.assertNotIn("RELEASE_PRS: ${{ steps.release.outputs.prs }}", workflow)
 
@@ -465,8 +471,9 @@ fi
         verify_public = workflow.index(
             "- name: Verify the release and every staged asset are public", publish
         )
+        bake_job = workflow.index("  advance-installer-version:", verify_public)
         app_token = workflow.index(
-            "- name: Generate post-publication GitHub App token", verify_public
+            "- name: Generate post-publication GitHub App token", bake_job
         )
         advance = workflow.index(
             "- name: Advance public installer version on main", app_token
@@ -478,7 +485,8 @@ fi
         self.assertLess(staged_shell, staged_powershell)
         self.assertLess(staged_powershell, publish)
         self.assertLess(publish, verify_public)
-        self.assertLess(verify_public, app_token)
+        self.assertLess(verify_public, bake_job)
+        self.assertLess(bake_job, app_token)
         self.assertLess(app_token, advance)
         self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
         self.assertIn("path: release-control", workflow)
@@ -685,14 +693,14 @@ fi
         self.assertIn("https://cua.ai/driver/install.ps1", windows_skill)
         self.assertNotIn("/releases/latest/download/install.ps1", windows_skill)
 
-    def test_driver_cd_can_recover_an_existing_tag_with_cross_targets(self) -> None:
+    def test_driver_cd_builds_the_exact_tag_with_cross_targets(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
 
-        immutable_ref = (
-            "github.event_name == 'workflow_dispatch' && inputs.publish && "
-            "format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref"
-        )
-        self.assertEqual(workflow.count(immutable_ref), 7)
+        # Every candidate build checks out the tag (or the nightly source ref);
+        # there is no dispatch path that retargets an older tag for publication.
+        self.assertEqual(workflow.count("ref: ${{ inputs.source_ref || github.ref }}"), 6)
+        self.assertNotIn("inputs.publish", workflow)
+        self.assertNotIn("format('refs/tags/cua-driver-rs-v{0}', inputs.version)", workflow)
         self.assertIn(
             "name: Ensure Rust target is installed\n"
             "        working-directory: libs/cua-driver/rust",
@@ -704,7 +712,6 @@ fi
             "            aarch64-apple-darwin x86_64-apple-darwin",
             workflow,
         )
-        self.assertIn("inputs.publish == true", workflow)
         self.assertIn('--tag "${{ steps.version.outputs.tag }}"', workflow)
         self.assertIn('--sha "${{ steps.version.outputs.sha }}"', workflow)
 
@@ -800,16 +807,69 @@ fi
         self.assertIn("  id-token: write\n", workflow)
         self.assertIn("uses: ./.github/workflows/cd-rust-cua-driver.yml", workflow)
 
-    def test_driver_tag_build_cannot_publish_before_manual_e2e_gate(self) -> None:
+    def test_driver_tag_push_publishes_only_after_automatic_e2e_gate(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
-        self.assertIn(
-            "if: github.event_name == 'workflow_dispatch' && inputs.publish == true",
-            workflow,
+        tag_push = (
+            "github.event_name == 'push' && "
+            "startsWith(github.ref, 'refs/tags/cua-driver-rs-v')"
         )
-        self.assertNotIn(
-            "if: startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.publish == true",
-            workflow,
-        )
+
+        # No manual publish input or dispatch path exists.
+        dispatch = workflow.split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertNotIn("publish:", dispatch)
+        self.assertNotIn("inputs.publish", workflow)
+        self.assertNotIn("publish recovery", workflow.lower())
+
+        # The Release Please tag push calls every canonical hosted E2E suite
+        # against the exact tag SHA, after the attribution preflight.
+        gates = {
+            "e2e-linux": ("e2e-rust-linux.yml", "ref: ${{ github.sha }}"),
+            "e2e-windows": ("e2e-rust-windows.yml", "ref: ${{ github.sha }}"),
+            "e2e-macos": ("e2e-rust-macos.yml", "source_sha: ${{ github.sha }}"),
+            "e2e-standalone-browsers": (
+                "e2e-rust-standalone-browsers.yml",
+                "ref: ${{ github.sha }}",
+            ),
+        }
+        for job, (called, sha_input) in gates.items():
+            block = workflow.split(f"\n  {job}:\n", 1)[1].split("\n\n", 1)[0]
+            self.assertIn("    needs: release-attribution-preflight\n", block)
+            self.assertIn(f"    if: {tag_push}\n", block)
+            self.assertIn(f"    uses: ./.github/workflows/{called}\n", block)
+            self.assertIn(sha_input, block)
+            self.assertIn("      actions: read\n", block)
+            self.assertNotIn("secrets", block)
+            called_workflow = self.read(f".github/workflows/{called}")
+            trigger = called_workflow.split("\npermissions:", 1)[0]
+            self.assertIn("  workflow_call:\n", trigger)
+            self.assertIn("  workflow_dispatch:\n", trigger)
+
+        # The release job runs on that same tag push only after every build,
+        # release check, and E2E gate succeeds (no always() bypass).
+        release = workflow.split("\n  release:\n", 1)[1]
+        needs, steps = release.split("    steps:\n", 1)
+        for job in (
+            "build-linux",
+            "build-windows",
+            "build-macos-universal",
+            "verify-windows-node-runtime",
+            "verify-release-artifacts",
+            "verify-mcp-client-discovery",
+            "build-hyprland-plugin-source",
+            *gates,
+        ):
+            self.assertIn(f"      - {job}\n", needs)
+        self.assertIn(f"    if: {tag_push}\n", needs)
+        self.assertNotIn("always()", needs)
+        self.assertIn("ref: ${{ github.ref }}", steps)
+        self.assertIn('if [[ "$SHA" != "$GITHUB_SHA" ]]; then', steps)
+
+        # E2E evidence shares the run, so release-bound downloads are scoped.
+        self.assertIn('pattern: "{cua-driver-rs-*,cua-hyprland-plugin-source}"', steps)
+        verify = workflow.split("\n  verify-release-artifacts:\n", 1)[1].split(
+            "\n  verify-mcp-client-discovery:\n", 1
+        )[0]
+        self.assertIn("pattern: cua-driver-rs-*", verify)
 
         linux = self.read(".github/workflows/e2e-rust-linux.yml")
         self.assertIn('name: "Linux / install-local.sh smoke"', linux)
@@ -839,9 +899,17 @@ fi
         self.assertIn("verify_cua_driver_release_archives.py", workflow)
         self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
         self.assertIn(
-            "[build-linux, build-windows, build-macos-universal, "
-            "verify-windows-node-runtime, "
-            "verify-release-artifacts, verify-mcp-client-discovery, build-hyprland-plugin-source]",
+            "    needs:\n"
+            "      - build-linux\n"
+            "      - build-windows\n"
+            "      - build-macos-universal\n"
+            "      - verify-windows-node-runtime\n"
+            "      - verify-release-artifacts\n"
+            "      - verify-mcp-client-discovery\n"
+            "      - build-hyprland-plugin-source\n"
+            "      - verify-macos-release-signatures\n"
+            "      - verify-windows-release-signatures\n"
+            "      - e2e-linux\n",
             workflow,
         )
 

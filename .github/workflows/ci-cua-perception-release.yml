@@ -82,6 +82,7 @@ jobs:
             .github/scripts/tests/test_release_channels.py \
             .github/scripts/tests/test_resolve_release_please_request.py \
             .github/scripts/tests/test_merge_release_please_manifests.py \
+            libs/cua-driver/rust/crates/cua-perception/scripts/tests/test_artifact_tooling.py \
             libs/cua-driver/rust/crates/cua-perception/scripts/tests/test_measure_quality.py \
             libs/cua-driver/rust/crates/cua-perception/scripts/tests/test_quality_runner.py
       - name: Prove Driver dependency graph excludes Perception

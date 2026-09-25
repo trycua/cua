@@ -51,6 +51,17 @@ fn registered_tool_contracts_match_on_active_backend() {
     let mut violations: Vec<String> = Vec::new();
     for tool in tools {
         let name = tool["name"].as_str().unwrap_or("<unnamed>");
+        // Consumers route by capability token and read annotations, so every
+        // entry carries both, even when the capability list is empty.
+        if !tool["capabilities"].is_array() {
+            violations.push(format!("{name}: capabilities array is missing"));
+        }
+        if !tool["annotations"].is_object() {
+            violations.push(format!("{name}: annotations object is missing"));
+        }
+        if !tool["description"].is_string() {
+            violations.push(format!("{name}: description is missing"));
+        }
         match tool.pointer("/risk/class").and_then(|value| value.as_str()) {
             Some("unclassified") => {
                 violations.push(format!("{name}: risk class is unclassified"));

@@ -47,7 +47,7 @@ These run without the repo-local GUI applications:
 | MCP and CLI boundary | `rust/crates/cua-driver/tests/protocol_*` | Handshake, tool registration, tool calls, media, sessions, and errors |
 | Lifecycle sessions and target migration | Core `session`, `session_tools`, `action_target`, and compatibility `capture_scope` tests plus `session_capture_scope_test.rs` | One implicit session per transport, five-minute idle policy, in-flight and exact-once cleanup, owner-scoped inspection and revival, per-call target validation, and legacy capture-scope compatibility |
 | Tool-contract gate | `schema_consistency_test.rs` | Shared tool schema parity and reviewed risk metadata across OS backends |
-| Configuration transport | `transport_config_persistence_test.rs` | CLI and MCP configuration persistence |
+| Configuration transport | `transport_config_persistence_test.rs` | CLI configuration persistence across daemon-backed processes |
 | Token and protocol surfaces | `protocol_element_token_test.rs`, related tests | JSON-RPC-visible contract behavior |
 | Permission modes and policy startup | `permission_policy_startup_test.rs`, `daemon_required_test.rs`, core `authorization`, `policy`, and `session_manifest` tests | Fail-before-bind policy loading, managed/user intersection, immutable standard/autonomous/unrestricted startup, danger acknowledgement, admin disable, deny-by-default manifests, and canonical daemon dispatch |
 | Protected browser grants | Core `consent`, `browser::grant`, `browser::engine`, and `browser::v2_tests` | Exact request digests, provider authentication seam and deadline, persistent-indicator activation, Stop/session teardown, forged legacy artifact refusal, exact PID/window manifest scope, and the live-origin decision path used before mutation |
@@ -70,7 +70,7 @@ Source:
 - `tests/fixtures/shared/web/index.html`
 - `tests/fixtures/apps/cross-platform/electron/`
 - `tests/fixtures/apps/cross-platform/tauri/`
-- `rust/crates/cua-driver/tests/cross_platform_behavior_test.rs`
+- `rust/crates/cua-driver-e2e/tests/cross_platform_behavior_test.rs`
 
 The shared harness exposes deterministic external markers for these actions:
 

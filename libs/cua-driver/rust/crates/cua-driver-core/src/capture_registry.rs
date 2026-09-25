@@ -488,6 +488,55 @@ pub enum CaptureActionError {
     NativeActionFrameMismatch,
 }
 
+/// Wire code for a capture ID that does not parse.
+pub const CAPTURE_ID_INVALID_CODE: &str = "capture_id_invalid";
+
+/// Wire code for a capture-bound action refusal with no more specific cause.
+pub const CAPTURE_ACTION_REFUSED_CODE: &str = "capture_action_refused";
+
+impl CaptureIdParseError {
+    /// Stable structured `code` reported by every platform adapter.
+    pub const fn wire_code(&self) -> &'static str {
+        CAPTURE_ID_INVALID_CODE
+    }
+}
+
+impl CaptureLookupError {
+    /// Stable structured `code` reported by every platform adapter.
+    pub const fn wire_code(&self) -> &'static str {
+        match self {
+            Self::Unknown => "capture_not_found",
+            Self::Expired => "capture_expired",
+            Self::GenerationMismatch => "capture_generation_mismatch",
+            Self::TargetMismatch => "capture_target_mismatch",
+        }
+    }
+}
+
+impl CaptureActionError {
+    /// Stable structured `code` reported by every platform adapter when
+    /// capture-bound action admission refuses. Adapters must not remap it.
+    pub const fn wire_code(&self) -> &'static str {
+        match self {
+            Self::Lookup(lookup) => lookup.wire_code(),
+            Self::InvalidScreenshotPoint | Self::InvalidMappedPoint => "capture_coordinate_invalid",
+            Self::NativeActionFrameMismatch => "capture_frame_mismatch",
+        }
+    }
+}
+
+/// Maps an adapter's admission failure to its shared wire code. Parse and
+/// admission errors keep their core code; any other failure is a generic
+/// capture-bound action refusal.
+pub fn admission_error_code(error: &anyhow::Error) -> &'static str {
+    if let Some(parse) = error.downcast_ref::<CaptureIdParseError>() {
+        return parse.wire_code();
+    }
+    error
+        .downcast_ref::<CaptureActionError>()
+        .map_or(CAPTURE_ACTION_REFUSED_CODE, CaptureActionError::wire_code)
+}
+
 #[derive(Clone)]
 struct StoredCapture {
     id: CaptureId,
@@ -1870,6 +1919,51 @@ mod tests {
                 .unwrap()
                 .session_generation(),
             1
+        );
+    }
+
+    #[test]
+    fn capture_refusals_have_one_wire_code_table() {
+        for (error, code) in [
+            (
+                CaptureActionError::Lookup(CaptureLookupError::Unknown),
+                "capture_not_found",
+            ),
+            (
+                CaptureActionError::Lookup(CaptureLookupError::Expired),
+                "capture_expired",
+            ),
+            (
+                CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch),
+                "capture_generation_mismatch",
+            ),
+            (
+                CaptureActionError::Lookup(CaptureLookupError::TargetMismatch),
+                "capture_target_mismatch",
+            ),
+            (
+                CaptureActionError::InvalidScreenshotPoint,
+                "capture_coordinate_invalid",
+            ),
+            (
+                CaptureActionError::InvalidMappedPoint,
+                "capture_coordinate_invalid",
+            ),
+            (
+                CaptureActionError::NativeActionFrameMismatch,
+                "capture_frame_mismatch",
+            ),
+        ] {
+            assert_eq!(error.wire_code(), code);
+            assert_eq!(admission_error_code(&anyhow::Error::new(error)), code);
+        }
+        assert_eq!(
+            admission_error_code(&anyhow::Error::new(CaptureIdParseError::InvalidFormat)),
+            "capture_id_invalid"
+        );
+        assert_eq!(
+            admission_error_code(&anyhow::anyhow!("live target unavailable")),
+            "capture_action_refused"
         );
     }
 }

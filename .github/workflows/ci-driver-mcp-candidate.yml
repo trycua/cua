@@ -51,6 +51,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: mcp-candidate
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |

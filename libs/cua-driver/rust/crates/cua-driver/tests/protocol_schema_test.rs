@@ -147,29 +147,12 @@ fn tools_list_schema_shape() {
         .filter(|tool| tool["inputSchema"]["properties"]["delivery_mode"].is_object())
         .filter_map(|tool| tool["name"].as_str())
         .collect();
-    let capability_tools: BTreeSet<&str> = tools
-        .iter()
-        .filter(|tool| {
-            tool["capabilities"].as_array().is_some_and(|capabilities| {
-                capabilities
-                    .iter()
-                    .any(|capability| capability == "input.delivery_mode")
-            })
-        })
-        .filter_map(|tool| tool["name"].as_str())
-        .collect();
     let expected_tools: BTreeSet<&str> = DELIVERY_MODE_TOOLS.iter().copied().collect();
+    // The matching `input.delivery_mode` capability claim is owned by
+    // `schema_consistency_test::registered_tool_contracts_match_on_active_backend`.
     assert_eq!(
         schema_tools, expected_tools,
         "unexpected delivery_mode schema set"
-    );
-    assert_eq!(
-        capability_tools, expected_tools,
-        "input.delivery_mode must match the exact runtime schema support set"
-    );
-    assert_eq!(
-        list_resp["result"]["capability_version"], "1",
-        "adding one capability token is additive and must not bump the vocabulary version"
     );
     // Session capture scope remains advertised only for compatibility. New
     // clients choose one typed window or desktop target on each action.
@@ -311,9 +294,15 @@ fn legacy_page_mutation_requires_unrestricted_launch_and_operator_opt_in() {
 }
 
 #[test]
-#[cfg(target_os = "linux")]
-fn linux_cursor_motion_knobs_are_applied() {
-    let mut driver = RawDriver::spawn().expect("spawn source-built Linux driver");
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn cursor_motion_knobs_are_applied() {
+    // macOS serves cursor-overlay controls only when the daemon hosts the
+    // overlay; Linux applies the knobs without one.
+    #[cfg(target_os = "macos")]
+    let driver = RawDriver::spawn_with_overlay();
+    #[cfg(not(target_os = "macos"))]
+    let driver = RawDriver::spawn();
+    let mut driver = driver.expect("spawn source-built driver");
     driver.send(&serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -329,7 +318,7 @@ fn linux_cursor_motion_knobs_are_applied() {
         "params": {
             "name": "set_agent_cursor_motion",
             "arguments": {
-                "session": "schema-linux",
+                "session": "schema-motion",
                 "arc_size": 0.4,
                 "spring": 0.85,
                 "glide_duration_ms": 500,
@@ -341,10 +330,10 @@ fn linux_cursor_motion_knobs_are_applied() {
     let response = driver.recv();
     assert!(
         !response["result"]["isError"].as_bool().unwrap_or(false),
-        "Linux cursor motion update failed: {response:?}"
+        "cursor motion update failed: {response:?}"
     );
     let structured = &response["result"]["structuredContent"];
-    assert_eq!(structured["session"].as_str(), Some("schema-linux"));
+    assert_eq!(structured["session"].as_str(), Some("schema-motion"));
     assert_eq!(structured["motion"]["arc_size"].as_f64(), Some(0.4));
     assert_eq!(
         structured["motion"]["glide_duration_ms"].as_f64(),

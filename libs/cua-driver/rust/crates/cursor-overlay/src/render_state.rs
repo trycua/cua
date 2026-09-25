@@ -1124,36 +1124,53 @@ mod session_badge_and_action_tests {
     }
 
     #[test]
-    fn movement_preserves_the_active_semantic_action() {
-        let mut core = RenderStateCore::new(CursorConfig::default());
-        core.pos = (20.0, 20.0);
-        core.apply_command_base(
-            OverlayCommand::BeginAction {
-                action: CursorAction::Text,
-                delivery: None,
-                target: Some(TargetModifier::Ax),
-            },
-            false,
-            false,
-        );
-        core.apply_command_base(
-            OverlayCommand::MoveTo {
-                x: 200.0,
-                y: 100.0,
-                end_heading_radians: 0.0,
-            },
-            false,
-            false,
-        );
-        assert_eq!(core.visual.resolved_action, CursorAction::Text);
-        assert_eq!(core.visual.target, Some(TargetModifier::Ax));
-        core.apply_command_base(
-            OverlayCommand::ClickPulse { x: 200.0, y: 100.0 },
-            false,
-            false,
-        );
-        assert_eq!(core.visual.resolved_action, CursorAction::Text);
-        assert_eq!(core.visual.target, Some(TargetModifier::Ax));
+    fn movement_and_click_pulse_preserve_the_active_semantic_context() {
+        // Text keeps its action through a pulse; Click re-begins itself and
+        // must carry the declared delivery and target across that restart.
+        for action in [CursorAction::Text, CursorAction::Click] {
+            let mut core = RenderStateCore::new(CursorConfig::default());
+            core.pos = (20.0, 20.0);
+            core.apply_command_base(
+                OverlayCommand::BeginAction {
+                    action,
+                    delivery: Some(DeliveryModifier::Background),
+                    target: Some(TargetModifier::Ax),
+                },
+                false,
+                false,
+            );
+            core.apply_command_base(
+                OverlayCommand::MoveTo {
+                    x: 200.0,
+                    y: 100.0,
+                    end_heading_radians: 0.0,
+                },
+                false,
+                false,
+            );
+            assert_eq!(core.visual.resolved_action, action);
+            assert_eq!(
+                (core.visual.delivery, core.visual.target),
+                (Some(DeliveryModifier::Background), Some(TargetModifier::Ax)),
+                "{action:?} after move"
+            );
+            core.apply_command_base(
+                OverlayCommand::ClickPulse { x: 200.0, y: 100.0 },
+                false,
+                false,
+            );
+            assert_eq!(core.visual.resolved_action, action);
+            assert_eq!(
+                (core.visual.delivery, core.visual.target),
+                (Some(DeliveryModifier::Background), Some(TargetModifier::Ax)),
+                "{action:?} after click pulse"
+            );
+            assert_eq!(
+                core.badge_modifiers,
+                Some((Some(DeliveryModifier::Background), Some(TargetModifier::Ax))),
+                "{action:?} badge context"
+            );
+        }
     }
 
     #[test]
@@ -1222,33 +1239,6 @@ mod session_badge_and_action_tests {
         );
         assert_eq!(core.badge_modifier_fade_secs, None);
         assert_eq!(core.session_badge_chip_alpha(), 1.0);
-    }
-
-    #[test]
-    fn click_pulse_preserves_declared_context_until_the_action_fades() {
-        let mut core = RenderStateCore::new(CursorConfig::default());
-        core.apply_command_base(
-            OverlayCommand::BeginAction {
-                action: CursorAction::Click,
-                delivery: Some(DeliveryModifier::Background),
-                target: Some(TargetModifier::Ax),
-            },
-            false,
-            false,
-        );
-        core.apply_command_base(
-            OverlayCommand::ClickPulse { x: 40.0, y: 60.0 },
-            false,
-            false,
-        );
-        assert_eq!(
-            (core.visual.delivery, core.visual.target),
-            (Some(DeliveryModifier::Background), Some(TargetModifier::Ax))
-        );
-        assert_eq!(
-            core.badge_modifiers,
-            Some((Some(DeliveryModifier::Background), Some(TargetModifier::Ax)))
-        );
     }
 }
 

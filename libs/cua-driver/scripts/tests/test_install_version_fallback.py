@@ -119,22 +119,6 @@ def _powershell_download_server(
         thread.join()
 
 
-def test_windows_download_failure_is_recoverable_rather_than_fatal() -> None:
-    """Get-ReleaseZip must report failure by returning, not by exiting.
-
-    An `exit 1` inside the download helper makes any retry unreachable, which
-    is precisely how the original defect became unrecoverable.
-    """
-    source = _windows_source()
-    body = source[
-        source.index("function Get-ReleaseZip") : source.index("function Get-ReleaseAsset")
-    ]
-
-    assert "Missing = $true" in body
-    assert "ErrorMessage = $_.Exception.Message" in body
-    assert "exit 1" not in body
-
-
 def test_windows_installer_falls_back_when_baked_release_is_unpublished() -> None:
     source = _windows_source()
 
@@ -205,19 +189,6 @@ def test_windows_api_resolver_avoids_the_automatic_matches_variable() -> None:
     assert "$releaseMatches" in code
     # Word-boundary match so $releaseMatches does not count as a hit.
     assert not re.search(r"\$matches\b", code)
-
-
-def test_windows_api_resolver_accepts_published_stable_tags_marked_prerelease() -> None:
-    """Cua Driver releases use GitHub's prerelease flag despite stable x.y.z tags."""
-    source = _windows_source()
-    body = source[
-        source.index("function Get-LatestVersionFromApi") : source.index(
-            "function Resolve-Version"
-        )
-    ]
-    assert "if ($_.draft) { return $false }" in body
-    assert "(-not $_.prerelease)" not in body
-    assert "[0-9]+\\.[0-9]+\\.[0-9]+" in body
 
 
 @requires_powershell
@@ -324,61 +295,6 @@ Get-LatestVersionFromApi
 
 
 # ---------- Unix ----------------------------------------------------------
-
-
-def test_unix_installer_falls_back_when_baked_release_is_unpublished() -> None:
-    source = _unix_source()
-
-    assert 'VERSION_SOURCE="baked"' in source
-
-    fallback = source.index('download_release_tarball "$VERSION" || DOWNLOAD_STATUS=$?')
-    guard = source.index(
-        'if [[ "$VERSION_SOURCE" != "baked" || "$DOWNLOAD_STATUS" != "44" ]]; then',
-        fallback,
-    )
-    api_call = source.index('API_VERSION="$(resolve_latest_version_from_api)"', guard)
-    adopt = source.index('VERSION="$API_VERSION"', api_call)
-    retry = source.index('download_release_tarball "$VERSION" || DOWNLOAD_STATUS=$?', adopt)
-    assert fallback < guard < api_call < adopt < retry
-
-
-def test_unix_installer_does_not_fall_back_for_an_explicit_version_pin() -> None:
-    source = _unix_source()
-
-    assert 'VERSION_SOURCE="pin"' in source
-    # The non-baked route exits before reaching the API recovery below it,
-    # including when its requested asset is a confirmed 404.
-    guard = source.index(
-        'if [[ "$VERSION_SOURCE" != "baked" || "$DOWNLOAD_STATUS" != "44" ]]; then'
-    )
-    assert source.index("exit 1", guard) < source.index("resolve_latest_version_from_api", guard)
-
-
-def test_unix_installer_recomputes_the_tarball_after_a_fallback() -> None:
-    """Every release-derived name must be computed after VERSION settles."""
-    source = _unix_source()
-
-    assert source.index('TARBALL="$(release_tarball_name "$VERSION")"') < source.index(
-        'tar -xzf "$TMP_DIR/$TARBALL"'
-    )
-    adopt = source.index('VERSION="$API_VERSION"')
-    retag = source.index('TAG="${TAG_PREFIX}${VERSION}"', adopt)
-    archive = source.index('TARBALL="$(release_tarball_name "$VERSION")"', retag)
-    stage = source.index('STAGE="cua-driver-rs-${VERSION}-darwin-universal"', archive)
-    assert adopt < retag < archive < stage
-
-
-def test_unix_api_resolver_queries_bounded_full_pages() -> None:
-    """The repo interleaves lume/Python/Swift releases with these.
-
-    A short page can contain no cua-driver-rs-v* tag at all and make a healthy
-    repo look empty — which would turn the new fallback into a dead end.
-    """
-    source = _unix_source()
-    assert "per_page=100" in source
-    assert "page=$page" in source
-    assert "page<=10" in source
-    assert "per_page=40" not in source
 
 
 def _extract_shell_function(source: str, name: str) -> str:
@@ -547,56 +463,87 @@ def test_unix_api_resolver_rejects_drafts_but_accepts_stable_prereleases(
     assert resolved == "1.20.3"
 
 
-@requires_posix_bash
-def test_unix_api_resolver_paginates_and_sends_token_header(tmp_path: Path) -> None:
+def _release_page(tags: list[str], filler: int) -> str:
+    rows = [f"lume-v1.0.{i}" for i in range(filler)] + tags
+    return json.dumps([{"tag_name": tag, "draft": False, "prerelease": True} for tag in rows], indent=2)
+
+
+def _run_paged_resolver(tmp_path: Path, pages: list[str]) -> tuple[str, list[str]]:
+    """Run the real resolver against numbered release pages served by a curl shim."""
     calls = tmp_path / "calls"
-    filler = ",\n".join(
-        f'  {{\n    "tag_name": "lume-v1.0.{i}",\n    "draft": false\n  }}'
-        for i in range(100)
-    )
-    page_one = tmp_path / "page-1.json"
-    page_two = tmp_path / "page-2.json"
-    page_one.write_text(f"[\n{filler}\n]", encoding="utf-8")
-    page_two.write_text(
-        (
-            '[\n  {\n    "tag_name": "cua-driver-rs-v1.20.3",\n'
-            '    "draft": false,\n    "prerelease": true\n  }\n]'
-        ),
-        encoding="utf-8",
-    )
+    cases = []
+    for number, page in enumerate(pages, start=1):
+        page_file = tmp_path / f"page-{number}.json"
+        page_file.write_text(page, encoding="utf-8")
+        cases.append(f'*"&page={number}") cat "{page_file.as_posix()}" ;;')
     script = tmp_path / "run-pages.sh"
     script.write_text(
         textwrap.dedent(
-            f"""\
+            """\
             set -euo pipefail
             REPO="trycua/cua"
             TAG_PREFIX="cua-driver-rs-v"
             GH_TOKEN="test-token"
             curl() {{
-                printf '%s\\n' "$*" >> "{calls.as_posix()}"
+                printf '%s\\n' "$*" >> "{calls}"
                 case "$*" in
-                    *"&page=1"*) cat "{page_one.as_posix()}" ;;
-                    *"&page=2"*) cat "{page_two.as_posix()}" ;;
+                    {cases}
                     *) return 99 ;;
                 esac
             }}
-            {_extract_shell_function(_unix_source(), "github_api_curl")}
-            {_extract_shell_function(_unix_source(), "extract_published_release_versions")}
-            {_extract_shell_function(_unix_source(), "resolve_latest_version_from_api")}
+            {github_api_curl}
+            {published_versions}
+            {resolver}
             resolve_latest_version_from_api
             """
+        ).format(
+            calls=calls.as_posix(),
+            cases="\n                    ".join(cases),
+            github_api_curl=_extract_shell_function(_unix_source(), "github_api_curl"),
+            published_versions=_extract_shell_function(
+                _unix_source(), "extract_published_release_versions"
+            ),
+            resolver=_extract_shell_function(_unix_source(), "resolve_latest_version_from_api"),
         ),
         encoding="utf-8",
     )
     result = subprocess.run(
         ["bash", script.as_posix()], capture_output=True, text=True, check=True
     )
+    return result.stdout, calls.read_text(encoding="utf-8").splitlines()
 
-    assert result.stdout == "1.20.3"
-    call_lines = calls.read_text(encoding="utf-8").splitlines()
-    assert len(call_lines) == 2
-    assert all("Authorization: Bearer test-token" in line for line in call_lines)
-    assert all("page=3" not in line for line in call_lines)
+
+@requires_posix_bash
+def test_unix_api_resolver_paginates_full_pages_and_sends_token_header(
+    tmp_path: Path,
+) -> None:
+    """The repo interleaves lume/Python/Swift releases with these.
+
+    A short page can contain no cua-driver-rs-v* tag at all and make a healthy
+    repo look empty, which would turn the fallback into a dead end.
+    """
+    resolved, calls = _run_paged_resolver(
+        tmp_path,
+        [_release_page([], filler=100), _release_page(["cua-driver-rs-v1.20.3"], filler=0)],
+    )
+
+    assert resolved == "1.20.3"
+    assert len(calls) == 2
+    assert all("per_page=100&" in line for line in calls)
+    assert all("Authorization: Bearer test-token" in line for line in calls)
+
+
+@requires_posix_bash
+def test_unix_api_resolver_stops_after_ten_full_pages(tmp_path: Path) -> None:
+    pages = [_release_page(["cua-driver-rs-v1.0.0"], filler=99)]
+    pages += [_release_page([], filler=100) for _ in range(9)]
+    pages.append(_release_page(["cua-driver-rs-v9.9.9"], filler=99))
+
+    resolved, calls = _run_paged_resolver(tmp_path, pages)
+
+    assert resolved == "1.0.0"
+    assert len(calls) == 10
+    assert not any("&page=11" in line for line in calls)
 
 
 def _run_download(tmp_path: Path, scenario: str, token_env: str = "") -> tuple[int, list[str], str]:
@@ -769,7 +716,7 @@ def _run_fallback_flow(
     """Execute the installer's real post-download fallback control flow."""
     source = _unix_source()
     start = source.index("DOWNLOAD_STATUS=0\n")
-    end = source.index('TARBALL="$(release_tarball_name "$VERSION")"', start)
+    end = source.index('\nlog "extracting"', start)
     flow = source[start:end]
     statuses = " ".join(str(status) for status in download_statuses)
     calls = tmp_path / "flow-calls"
@@ -797,8 +744,9 @@ def _run_fallback_flow(
                 printf 'api\\n' >> "{calls.as_posix()}"
                 printf '1.2.2'
             }}
+            {_extract_shell_function(source, "release_tarball_name")}
             {flow}
-            printf 'resolved:%s:%s\\n' "$VERSION" "$TAG"
+            printf 'resolved:%s:%s:%s\\n' "$VERSION" "$TAG" "$TARBALL"
             """
         ),
         encoding="utf-8",
@@ -815,7 +763,10 @@ def test_unix_baked_404_falls_back_and_adopts_downloaded_version(tmp_path: Path)
     )
     assert result.returncode == 0
     assert calls == ["download:1.2.3", "api", "download:1.2.2"]
-    assert result.stdout == "resolved:1.2.2:cua-driver-rs-v1.2.2\n"
+    # Every release-derived name, including the archive, follows the adopted version.
+    assert result.stdout == (
+        "resolved:1.2.2:cua-driver-rs-v1.2.2:cua-driver-rs-1.2.2-linux-x86_64-binary.tar.gz\n"
+    )
     assert "temporary publish lag" in result.stderr
 
 

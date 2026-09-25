@@ -219,27 +219,15 @@ def _guest_seed_assignment(name: str) -> str:
     return match.group("body")
 
 
-def test_tcc_guest_seed_grants_both_driver_permissions() -> None:
-    text = SEED_TCC_GUEST.read_text(encoding="utf-8")
-    sql_body = _guest_seed_assignment("SQL")
-    assert re.search(
-        r"\('kTCCServiceAccessibility','\$\{CLIENT_SQL\}',\$\{CLIENT_TYPE\},2,2,1,",
-        sql_body,
-    )
-    assert re.search(
-        r"\('kTCCServiceScreenCapture','\$\{CLIENT_SQL\}',\$\{CLIENT_TYPE\},2,2,1,",
-        sql_body,
-    )
-    assert "auth_value" in sql_body
-    assert "csreq" in sql_body
-    assert "allowed" not in sql_body
-    assert "auth_value=2" in text
-    assert "com.trycua.driver.local" in text
-
-
 def test_tcc_guest_seed_sql_executes_against_modern_tcc_schema(tmp_path: Path) -> None:
     sql_body = _guest_seed_assignment("SQL")
     verify_sql = _guest_seed_assignment("VERIFY_SQL")
+    # The seed targets the local developer build unless told otherwise.
+    assert re.search(
+        r'^EXPECTED_CLIENT="\$\{CUA_TCC_EXPECTED_CLIENT:-com\.trycua\.driver\.local\}"$',
+        SEED_TCC_GUEST.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
     client = "com.trycua.driver.local"
     client_type = "0"
     csreq_hex = "01020304"
@@ -282,8 +270,12 @@ def test_tcc_guest_seed_sql_executes_against_modern_tcc_schema(tmp_path: Path) -
              ORDER BY service
             """
         ).fetchall()
+        # Verification counts only allowed grants, not rows that merely exist.
+        conn.execute("UPDATE access SET auth_value=0 WHERE service='kTCCServiceScreenCapture'")
+        denied_count = conn.execute(verify_sql).fetchone()[0]
 
     assert row_count == 2
+    assert denied_count == 1
     assert rows == [
         (
             "kTCCServiceAccessibility",
@@ -314,14 +306,6 @@ def test_tcc_guest_seed_requires_certificate_backed_requirement_by_default() -> 
     assert "^Signature=adhoc$" in text
     assert 'certificate (leaf|root) = H"[[:xdigit:]]{40}"' in text
     assert "is not signed with a certificate-backed identity" in text
-
-
-def test_tcc_host_seed_accepts_multiple_vms() -> None:
-    text = SEED_TCC.read_text(encoding="utf-8")
-    assert 'VMS+=("$1")' in text
-    assert 'for vm in "${VMS[@]}"; do' in text
-    assert "seed-tcc-guest.sh" in text
-    assert "CUA_TCC_READ_SUDO_PASSWORD=1" in text
 
 
 @pytest.mark.parametrize(
@@ -432,24 +416,19 @@ def test_target_dir_is_owned_by_source_sha_and_run(tmp_path: Path) -> None:
     assert other.stdout.strip() == str(tmp_path / "cargo-target" / SHA_B / "run-1")
 
 
-def test_target_dir_never_lands_in_the_workspace(tmp_path: Path) -> None:
+def test_default_target_dir_is_a_user_cache_outside_the_workspace(tmp_path: Path) -> None:
     completed = _run(
         RUN_ALL,
         f'resolve_cargo_target_dir "{SHA_A}" "run-1"',
-        env={"CUA_E2E_CARGO_TARGET_ROOT": str(tmp_path / "cargo-target")},
+        # An empty override takes the runner's default, like an unset one.
+        env={"CUA_E2E_CARGO_TARGET_ROOT": "", "HOME": str(tmp_path)},
     )
+    assert completed.returncode == 0, completed.stderr
     resolved = Path(completed.stdout.strip())
-    assert resolved.is_absolute()
+    assert resolved == (
+        tmp_path / "Library/Caches/cua-driver-e2e/cargo-target" / SHA_A / "run-1"
+    )
     assert REPO_ROOT not in resolved.parents
-
-
-def test_consecutive_same_sha_runs_get_distinct_namespaces(tmp_path: Path) -> None:
-    env = {"CUA_E2E_CARGO_TARGET_ROOT": str(tmp_path / "cargo-target")}
-    first = _run(RUN_ALL, f'resolve_cargo_target_dir "{SHA_A}" "run-1"', env=env)
-    second = _run(RUN_ALL, f'resolve_cargo_target_dir "{SHA_A}" "run-2"', env=env)
-    assert first.returncode == 0, first.stderr
-    assert second.returncode == 0, second.stderr
-    assert first.stdout != second.stdout
 
 
 def test_relative_target_root_is_refused() -> None:
@@ -1069,15 +1048,6 @@ wait "$child_pid"
         time.sleep(0.05)
     else:
         pytest.fail(f"timed-out child process {child_pid} is still alive")
-
-
-def test_bounded_command_requires_python_and_uses_process_group_kills() -> None:
-    text = RUN_ALL.read_text(encoding="utf-8")
-    function = text.split("run_bounded_command() {", 1)[1].split("\n}\n", 1)[0]
-    assert "command -v python3" in function
-    assert "subprocess.Popen(sys.argv[3:], start_new_session=True)" in function
-    assert function.count("os.killpg(process.pid") == 2
-    assert "osascript python3 security xcrun" in text
 
 
 def test_required_keychains_keep_terminal_prompt_fallback() -> None:

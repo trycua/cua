@@ -92,6 +92,217 @@ use a vision backbone:
 uv sync --project libs/cua-s1/python --extra nano-vision
 ```
 
+## Get the weights and run inference
+
+This section is the reproducible path from a clean checkout to one Cua-S1-4B
+decision on a checked-in fixture. All published Cua-S1 artifacts are public on
+Hugging Face and download without a token.
+
+### Pinned artifacts
+
+Pin every download to the commit SHA below. A branch name such as `main` can
+move; these revisions are the ones the commands and measurements in this
+section were verified against on 2026-09-25.
+
+| Artifact          | Hugging Face repository                                                   | Revision (commit SHA)                      | Pairs with                              | Download size                             | Declared license                             |
+| ----------------- | ------------------------------------------------------------------------- | ------------------------------------------ | --------------------------------------- | ----------------------------------------- | -------------------------------------------- |
+| Base model        | [`Qwen/Qwen3.5-4B`](https://huggingface.co/Qwen/Qwen3.5-4B)               | `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a` | Base for both 4B adapters               | 9.34 GB (two safetensors shards, 9.32 GB) | Apache-2.0 (Qwen's model card and `LICENSE`) |
+| `cua-s1-4b-0.2`   | [`cua-ai/cua-s1-4b-0.2`](https://huggingface.co/cua-ai/cua-s1-4b-0.2)     | `16818868b0cc7813808aae4e87b417657046ab79` | `Qwen/Qwen3.5-4B` at the revision above | 187 MB                                    | Apache-2.0 (adapter only)                    |
+| `cua-s1-4b-0.1`   | [`cua-ai/cua-s1-4b-0.1`](https://huggingface.co/cua-ai/cua-s1-4b-0.1)     | `88d8b8a90c2da4470d005cc23ec8665a6442ebe1` | `Qwen/Qwen3.5-4B` at the revision above | 272 MB                                    | None declared on Hugging Face                |
+| `cua-s1-nano-0.1` | [`cua-ai/cua-s1-nano-0.1`](https://huggingface.co/cua-ai/cua-s1-nano-0.1) | `1f93fd0fdcbe33740334948f967dff9f6c8e9f34` | Standalone (no base model)              | 6.9 MB                                    | None declared on Hugging Face                |
+| `cua-s1-forms`    | [`cua-ai/cua-s1-forms`](https://huggingface.co/cua-ai/cua-s1-forms)       | `f54adbf447f4ca6ec259f529ee3f2e3e09f8cc71` | Standalone (no base model)              | 2.8 MB (safetensors pair only)            | MIT                                          |
+
+Layouts and loaders:
+
+- Both 4B repositories contain two PEFT adapters, `text/` and `multimodal/`,
+  each with `adapter_config.json` and `adapter_model.safetensors`. Both
+  adapter configurations name `Qwen/Qwen3.5-4B` as the base (LoRA rank 16).
+  Pass the repository root as the adapter path; `cua_s1.four_b.FourBModel`
+  selects the subdirectory for its `modality`. `cua-s1-4b-0.1` also carries a
+  root-level `adapter_model.safetensors` that is byte-identical to its
+  `text/` adapter.
+- `cua-s1-nano-0.1` contains `text/` and `multimodal/` checkpoints
+  (`model.safetensors` plus `config.json`, 855,296 parameters each). Load a
+  subdirectory with `cua_s1.nano.load_nano_checkpoint`. The multimodal
+  checkpoint also needs a frozen vision backbone from the `nano-vision` extra.
+- `cua-s1-forms` contains a `tinyx` checkpoint (`cua-s1-forms.safetensors`
+  plus `cua-s1-forms.json`, 706,048 parameters). Load it with
+  `cua_s1.model.load_checkpoint`. The repository also ships a pickle
+  `cua-s1-forms.pt`, which `cua_s1` refuses to load by design (see #3977);
+  exclude it from downloads.
+- The Apache-2.0 license on `cua-s1-4b-0.2` covers only the adapter. The base
+  model is governed by its own license and is downloaded from Qwen's
+  repository, not redistributed by Cua. At the pinned revisions,
+  `cua-s1-4b-0.1` and `cua-s1-nano-0.1` declare no license and ship no model
+  card; no license grant for those weights is documented here.
+
+### Hardware
+
+The 4B base weights are stored in 16-bit precision and occupy 9.32 GB, so the
+loaded model needs more than that in RAM, unified memory, or GPU memory before
+activations. An 8 GB host or guest cannot run Cua-S1-4B inference, which
+includes the default 8 GB macOS guests used for desktop E2E. Plan for at least
+16 GB of free memory. That figure is an estimate from the weight size; peak
+memory has not been measured.
+
+The only measured 4B runs so far used one Apple M1 Ultra host with 128 GB of
+unified memory, macOS 26, Python 3.12, torch 2.14.0, and Transformers 5.17.0
+from the `four-b` lock, with `HF_DEACTIVATE_ASYNC_LOAD=1` (see
+[Known local issues](#known-local-issues)). Each decision is one forward pass;
+times are medians of five warm calls:
+
+| Adapter and modality       | Device and dtype  | Load time | 3-candidate fixture | 12-region, 8-candidate request |
+| -------------------------- | ----------------- | --------- | ------------------- | ------------------------------ |
+| `cua-s1-4b-0.2` text       | `mps`, `float16`  | 16.3 s    | 1.07 s              | 2.83 s                         |
+| `cua-s1-4b-0.2` text       | `mps`, `bfloat16` | 6.8 s     | 1.23 s              | not run                        |
+| `cua-s1-4b-0.2` multimodal | `mps`, `float16`  | 4.8 s     | 5.55 s              | 5.81 s                         |
+
+Load times depend on whether the weights were already in the operating-system
+file cache; the multimodal row loaded after the text rows. CPU and CUDA latency have not been measured. Qwen3.5 logs that it falls back
+to reference PyTorch kernels because `causal_conv1d` and
+`flash-linear-attention` are not installed; both are CUDA-oriented packages.
+A cold command-line invocation spends most of its wall time loading the
+model, so a live loop should keep one process and its `FourBModel` resident.
+
+### 1. Create the pinned environment
+
+From the repository root, create the inference environment from the
+checked-in lock on Python 3.11, 3.12, or 3.13 (change `--python` as needed):
+
+```bash
+uv sync --frozen --project libs/cua-s1/python --python 3.12 \
+  --extra four-b --extra pdf --group test
+```
+
+The lock resolves torch 2.14.0, Transformers 5.17.0, PEFT 0.21.0, and
+torchvision 0.29.0. The `pdf` extra is included so that the full unit suite
+passes in the same environment. The `four-b` extra cannot share an
+environment with `nano-vision`, `four-b-train`, `four-b-rl`, or `all`.
+
+Confirm the environment without loading any model weights:
+
+```bash
+uv run --frozen --project libs/cua-s1/python --extra four-b --extra pdf --group test \
+  pytest libs/cua-s1/python/tests
+```
+
+### 2. Download the weights
+
+The `hf` command-line tool is installed with `huggingface_hub`, which the
+`four-b` environment already contains. Choose a models directory with at
+least 10 GB free:
+
+```bash
+HF=libs/cua-s1/python/.venv/bin/hf
+S1_MODELS="$HOME/cua-s1-models"
+
+"$HF" download Qwen/Qwen3.5-4B \
+  --revision 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a \
+  --local-dir "$S1_MODELS/Qwen3.5-4B"
+"$HF" download cua-ai/cua-s1-4b-0.2 \
+  --revision 16818868b0cc7813808aae4e87b417657046ab79 \
+  --local-dir "$S1_MODELS/cua-s1-4b-0.2"
+```
+
+Download the other checkpoints the same way as needed:
+
+```bash
+"$HF" download cua-ai/cua-s1-4b-0.1 \
+  --revision 88d8b8a90c2da4470d005cc23ec8665a6442ebe1 \
+  --local-dir "$S1_MODELS/cua-s1-4b-0.1"
+"$HF" download cua-ai/cua-s1-nano-0.1 \
+  --revision 1f93fd0fdcbe33740334948f967dff9f6c8e9f34 \
+  --local-dir "$S1_MODELS/cua-s1-nano-0.1"
+"$HF" download cua-ai/cua-s1-forms \
+  --revision f54adbf447f4ca6ec259f529ee3f2e3e09f8cc71 \
+  --exclude "*.pt" \
+  --local-dir "$S1_MODELS/cua-s1-forms"
+```
+
+Add `--dry-run` to any command to list the files and total size without
+downloading. The equivalent Python call is
+`huggingface_hub.snapshot_download(repo_id, revision=<sha>, local_dir=<dir>)`.
+
+### 3. Run the smoke decision
+
+The [jev-use closed-candidate chooser](../cua-driver/examples/jev-use/decision-models.md)
+loads Cua-S1-4B from local directories. It reads four environment variables:
+
+| Variable             | Required | Default   | Meaning                                                              |
+| -------------------- | -------- | --------- | -------------------------------------------------------------------- |
+| `S1_BASE_MODEL_PATH` | Yes      | None      | Local directory containing `Qwen/Qwen3.5-4B`                         |
+| `S1_ADAPTER_PATH`    | Yes      | None      | Local adapter root, such as `cua-s1-4b-0.2`                          |
+| `S1_DEVICE`          | No       | `cpu`     | Torch device passed to Transformers, such as `cpu`, `cuda`, or `mps` |
+| `S1_DTYPE`           | No       | `float16` | Torch dtype name, such as `float16`, `bfloat16`, or `float32`        |
+
+The chooser always uses the text adapter. It rejects paths that are not
+existing directories and never downloads weights itself.
+
+From the repository root, run the verifier. It pipes the checked-in
+`fixtures/jev-choice-request-v1.json` request to `choose_decision.py` with the
+same Python interpreter, validates the response, and prints a summary:
+
+```bash
+export S1_BASE_MODEL_PATH="$S1_MODELS/Qwen3.5-4B"
+export S1_ADAPTER_PATH="$S1_MODELS/cua-s1-4b-0.2"
+export S1_DEVICE=cpu S1_DTYPE=float16   # on Apple silicon: S1_DEVICE=mps S1_DTYPE=bfloat16
+
+libs/cua-s1/python/.venv/bin/python \
+  libs/cua-driver/examples/jev-use/verify_decision_cli.py --model s1
+```
+
+Expected output on success:
+
+```text
+{"model": "cua-s1-4b-local", "kind": "selected", "selected_id": "submit-form"}
+```
+
+The verifier exits nonzero if the response is not a `cua.decision_choice_v1`
+object, names a different `capture_id`, omits or adds a candidate, or selects
+anything other than `submit-form`. To check the checked-in negative fixture,
+add `--fixture negative --expected-id abstain`.
+
+To see the full response, run the chooser directly:
+
+```bash
+libs/cua-s1/python/.venv/bin/python \
+  libs/cua-driver/examples/jev-use/python/choose_decision.py --model s1 \
+  < libs/cua-driver/examples/jev-use/fixtures/jev-choice-request-v1.json
+```
+
+It prints one JSON object with this shape; the probabilities are
+model-dependent:
+
+```text
+{"schema":"cua.decision_choice_v1","kind":"selected","capture_id":"capture-fixture-1","selected_id":"submit-form","model":"cua-s1-4b-local","confidence":0.97,"probabilities":{"submit-form":0.97,"reobserve":0.02,"abstain":0.01},"reason":null}
+```
+
+`kind` is one of `selected`, `reobserve`, `abstain`, or `error`. The
+`probabilities` keys are exactly the request's candidate IDs. `model` is
+`cua-s1-4b-local` for every adapter, so record the adapter revision
+separately. Replace `--model s1` with `--model mock` in either command to
+check the plumbing without weights.
+
+This smoke proves that the environment, pinned weights, and chooser load and
+produce a valid decision. It is not a quality measurement: on the same
+positive fixture, the base model without an adapter also selected
+`submit-form`, and `cua-s1-4b-0.1` abstained. See the
+[model card](MODEL_CARD.md#verification-scope-and-known-failure-modes) for
+the recorded results and limits.
+
+### Known local issues
+
+- On Apple silicon, `S1_DEVICE=mps S1_DTYPE=float16` crashed with
+  `SIGSEGV` or hung during weight loading in six of six runs with
+  Transformers 5.17.0 and torch 2.14.0. The crash occurs in Transformers'
+  concurrent weight-loading path. Use `S1_DTYPE=bfloat16`, or set
+  `HF_DEACTIVATE_ASYNC_LOAD=1` before loading with `float16`; both loaded
+  reliably in the recorded runs. `cpu` with `float16` or `float32` also
+  loaded.
+- The chooser supports at most 26 candidates, including `reobserve` and
+  `abstain`. A larger request returns `kind: "error"` with
+  `reason: "option_limit"`.
+
 ## Safety boundary
 
 Planning and execution are separate. The optional runtime defaults to a dry
@@ -138,12 +349,12 @@ entry.
 
 ## Checkpoints
 
-| Checkpoint | Scope | Status |
-| --- | --- | --- |
-| `cua-s1-form-v0` | Form-oriented computer-use research (finetuned, text-only variant of `cua-s1-nano-0.1`) | Profile defined; weights not distributed |
-| `cua-s1-nano-0.1` | General closed-option GUI decision research (element + action selection) | Profile defined; weights at [`cua-ai/cua-s1-nano-0.1`](https://huggingface.co/cua-ai/cua-s1-nano-0.1) |
-| `cua-s1-4b-0.1` | General computer-use element/action decisions (LoRA on frozen `Qwen/Qwen3.5-4B`), text and multimodal (screenshot) input | Profile defined; adapter weights at [`cua-ai/cua-s1-4b-0.1`](https://huggingface.co/cua-ai/cua-s1-4b-0.1) |
-| `cua-s1-4b-0.2` | General computer-use element/action decisions (LoRA on frozen `Qwen/Qwen3.5-4B`), text and multimodal (screenshot) input, plus agentic multi-step rollouts in live GUI environments | Profile defined; adapter weights at [`cua-ai/cua-s1-4b-0.2`](https://huggingface.co/cua-ai/cua-s1-4b-0.2) |
+| Checkpoint        | Scope                                                                                                                                                                               | Status                                                                                                                                                                             |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cua-s1-form-v0`  | Form-oriented computer-use research (finetuned, text-only variant of `cua-s1-nano-0.1`)                                                                                             | Profile defined; a related `tinyx` form checkpoint is published at [`cua-ai/cua-s1-forms`](https://huggingface.co/cua-ai/cua-s1-forms) (see [Pinned artifacts](#pinned-artifacts)) |
+| `cua-s1-nano-0.1` | General closed-option GUI decision research (element + action selection)                                                                                                            | Profile defined; weights at [`cua-ai/cua-s1-nano-0.1`](https://huggingface.co/cua-ai/cua-s1-nano-0.1)                                                                              |
+| `cua-s1-4b-0.1`   | General computer-use element/action decisions (LoRA on frozen `Qwen/Qwen3.5-4B`), text and multimodal (screenshot) input                                                            | Profile defined; adapter weights at [`cua-ai/cua-s1-4b-0.1`](https://huggingface.co/cua-ai/cua-s1-4b-0.1)                                                                          |
+| `cua-s1-4b-0.2`   | General computer-use element/action decisions (LoRA on frozen `Qwen/Qwen3.5-4B`), text and multimodal (screenshot) input, plus agentic multi-step rollouts in live GUI environments | Profile defined; adapter weights at [`cua-ai/cua-s1-4b-0.2`](https://huggingface.co/cua-ai/cua-s1-4b-0.2)                                                                          |
 
 Do not assume that results transfer across applications, operating systems,
 languages, layouts, accessibility settings, or task distributions.

@@ -26,6 +26,11 @@ Windows: .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
 macOS:  libs/cua-driver/tests/runners/macos-lume/run-all.sh
 ```
 
+[`scripts/ci/README.md`](../../../scripts/ci/README.md#canonical-and-supporting-runners)
+lists every runner as canonical, scoped, or supporting. The Windows convenience
+wrapper in `tests/runners/windows/` and the legacy `tests/runners/windows-sandbox/`
+runner are supporting runners, not canonical entrypoints.
+
 The OS workflow may fan the complete matrix out into independent jobs for
 reporting and failure isolation. That is an execution detail; contributors
 should think of it as one canonical suite.

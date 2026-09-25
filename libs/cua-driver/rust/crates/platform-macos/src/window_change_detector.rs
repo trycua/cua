@@ -509,6 +509,16 @@ mod tests {
         assert_eq!(changes.result_suffix(), "");
     }
 
+    /// The other half of the pair above: a poll that ran is `polled` whether
+    /// or not anything opened before its deadline, so a skipped poll never
+    /// reads as a quiet one.
+    #[test]
+    fn a_poll_that_ran_is_polled_even_when_it_times_out() {
+        let snap = WindowChangeDetector::snapshot(None);
+        let changes = snap.detect_bounded(observation_bounds_from(Some("30"), Some("10")));
+        assert!(changes.polled);
+    }
+
     /// Regression: `snapshot(prior_front)` must store the caller's
     /// captured front pid verbatim (rather than re-reading it inside
     /// the function and racing with concurrent activations).

@@ -6176,7 +6176,8 @@ impl Tool for SetValueTool {
                     "pid":{"type":"integer","description":"Target process ID."},
                     "window_id":{"type":"integer","description":"HWND of the window. Omit when element_token is supplied (the token carries it)."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                    "value":{"type":"string","description":"New value. UIA will coerce to the element's native type."}
+                    "value":{"type":"string","description":"New value. UIA will coerce to the element's native type."},
+                    "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
             // Swift: idempotent: true (setting same value twice is idempotent).

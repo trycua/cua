@@ -102,7 +102,7 @@ through the core keyboard (`path: "xtest_core_grab"`, the result names the
 popup and states that the core focus and active window were verified
 unchanged), or — when another application holds the core focus — are refused
 with `code: "popup_keyboard_grab"` and a hint: dismiss the popup (click
-outside it, or click one of its rows by element_index after
+outside it, or click one of its rows by element_token after
 `get_window_state(pid, window_id=<popup>)`) and retry. Typing an absolute path
 into a Qt file dialog opens its completer after the first `/`; prefer
 `set_value` on the "File name" field, which writes the path in one go.

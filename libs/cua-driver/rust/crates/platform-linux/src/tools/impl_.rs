@@ -1097,7 +1097,7 @@ impl WindowOverlays {
             parts.push(format!(
                 "popup (window_id {id}, bounds x={} y={} {}x{}) is open: call \
                  get_window_state(pid={pid}, window_id={id}) to index its items and click them \
-                 by element_index.",
+                 by element_token.",
                 popup["bounds"]["x"],
                 popup["bounds"]["y"],
                 popup["bounds"]["width"],
@@ -1197,7 +1197,8 @@ impl Tool for GetWindowStateTool {
                 structured `elements` array (preferred) AND a Markdown rendering of \
                 the same tree (back-compat). Every actionable element is tagged \
                 with [element_index N] in the markdown and as `element_index` in \
-                the structured array.\n\n\
+                the structured array; pass each element's `element_token` to \
+                `click`, `type_text`, `set_value`, etc.\n\n\
                 PREFERRED CONSUMERS read `structuredContent.elements` (one entry \
                 per indexed row with `element_index`, `role`, `label`, `value`, \
                 `enabled`, `selected`, `actions` (names of AT-SPI actions exposed \
@@ -1252,7 +1253,7 @@ impl Tool for GetWindowStateTool {
                 right_click that opened one names it in its result (`popup: \
                 {window_id, bounds, title}`); pass that window_id here to walk the \
                 popup's own AT-SPI toplevel so its menu items get element indices \
-                (then click them by element_index). Omitting window_id while a popup \
+                (then click them by element_token). Omitting window_id while a popup \
                 of this pid is open walks that popup.".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
@@ -1349,7 +1350,7 @@ impl Tool for GetWindowStateTool {
         // returns BOTH the AT-SPI tree and a screenshot now, so the agent grounds
         // on both and cross-checks (the tree lies often enough that a grounding
         // screenshot should always be present). The modality is chosen at action
-        // time: an element ax action (element_index) or element px action (x,y).
+        // time: an element ax action (element_token) or element px action (x,y).
         // We don't even read the arg; it stays in the schema only so old callers
         // don't trip additionalProperties:false.
         let query = args.opt_str("query");
@@ -1610,7 +1611,7 @@ impl Tool for GetWindowStateTool {
                     } else if !tr.bounds_complete {
                         header.push_str(
                             "⚠️ bounds phase ran out of time: some elements have no frame \
-                             (element_index clicks still work; pixel targeting may not). \
+                             (element_token clicks still work; pixel targeting may not). \
                              Retry with a larger timeout_ms if you need frames.\n",
                         );
                     }
@@ -3008,7 +3009,7 @@ fn apply_foreground_report(v: &mut Value, report: &crate::input::ForegroundRepor
 /// executed at window-local (0, 0) — the top-left corner, i.e. the File menu.
 fn invalid_pointer_arguments(tool: &str, detail: &str) -> ToolResult {
     let accepted = [
-        "pid + element_index (or element_token) from get_window_state",
+        "pid + element_token from get_window_state",
         "pid/window_id + x + y (window-local pixels of window_id; coordinate_frame:\"desktop\" for screen pixels)",
         "x + y + scope:\"desktop\" (screen pixels, no pid)",
     ];
@@ -3033,7 +3034,7 @@ fn require_point_args(tool: &str, args: &Value) -> Option<ToolResult> {
         (true, true) => None,
         (false, false) => Some(invalid_pointer_arguments(
             tool,
-            "no element_index/element_token and no x/y were given (a `target_id` is not an \
+            "no element_token and no x/y were given (a `target_id` is not an \
              element handle)",
         )),
         (true, false) => Some(invalid_pointer_arguments(tool, "x was given without y")),
@@ -4078,7 +4079,7 @@ impl PointerRoute {
                 text.push_str(&format!(
                     " {} opened (popup: window_id={}, bounds x={} y={} {}x{}); call \
                      get_window_state(pid={}, window_id={}) to index its items and click them \
-                     by element_index, or click(window_id={}, x, y) with popup-local pixels.",
+                     by element_token, or click(window_id={}, x, y) with popup-local pixels.",
                     popup.describe(),
                     popup.window,
                     popup.x,
@@ -4322,7 +4323,7 @@ fn linux_input_error(error: anyhow::Error) -> ToolResult {
             "The point is under window {}{}{}, which belongs to a different application, so \
              a background pointer press there would hit that window instead of the target; \
              no input was sent. Either act on that window (pass its window_id{} and click / \
-             press keys there, or dismiss it), click the target by element_index (an AT-SPI \
+             press keys there, or dismiss it), click the target by element_token (an AT-SPI \
              action that needs no pointer), or pick a point of the target that is not \
              covered (list_windows gives bounds and z_index).",
             occluded.covering_window,
@@ -4358,7 +4359,7 @@ fn linux_input_error(error: anyhow::Error) -> ToolResult {
              grab drops keys from the virtual keyboard, and the core keyboard would go to the \
              focused application instead. Dismiss the popup first (click outside it, or \
              click an item in it with pid/window_id={}), or click the popup's item by \
-             element_index after get_window_state(pid={}, window_id={}); then retry.",
+             element_token after get_window_state(pid={}, window_id={}); then retry.",
             grab.pid,
             grab.popup.describe(),
             grab.popup.window,
@@ -4404,7 +4405,7 @@ fn linux_input_error(error: anyhow::Error) -> ToolResult {
         }));
     }
     if let Some(failed) = error.downcast_ref::<BackgroundPointerFailed>() {
-        let hint = "Click by element_index (AT-SPI action) or retry with \
+        let hint = "Click by element_token (AT-SPI action) or retry with \
              delivery_mode:\"foreground\".";
         return ToolResult::error(format!("{failed}. {hint}")).with_structured(json!({
             "code": "background_pointer_failed",
@@ -7440,7 +7441,7 @@ impl Tool for ClickTool {
                 );
                 let hint = "No accessible control covers this point and the toolkit drops \
                      synthetic pointer events, so a background pixel click here would \
-                     change nothing. Use get_window_state and click by element_index \
+                     change nothing. Use get_window_state and click by element_token \
                      (AT-SPI action), or retry with delivery_mode='foreground'.";
                 refusal
                     .content
@@ -9350,7 +9351,8 @@ impl Tool for SetValueTool {
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer","description":"Omit when element_token is supplied (the token carries it)."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                    "value":{"type":["string","number"],"description":"New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back."}
+                    "value":{"type":["string","number"],"description":"New value. Written through AT-SPI EditableText/Value when the element exposes them; otherwise (GTK2 spin scales, VCL spin buttons) the field is clicked with the session's real pointer, its text selected and replaced through the virtual keyboard and committed with Tab, then read back."},
+                    "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -9425,22 +9427,24 @@ impl Tool for SetValueTool {
                 "{ax_error}; the keyboard fallback needs {}",
                 if wayland {
                     "an X11 session"
-                } else if delivery.is_foreground() {
-                    "an X11 session"
                 } else {
                     "the focus-free real-input route (a writable /dev/uinput), or delivery_mode:\"foreground\""
                 }
             );
+            let mut structured = json!({
+                "code": "set_value_unavailable",
+                "detail": detail,
+                "effect": "none",
+            });
+            // Only X11 can run the foreground keyboard fallback.
+            if !wayland {
+                structured["escalation"] = json!({ "recommended": "foreground", "reason": "click the field and type the value with delivery_mode:\"foreground\"" });
+            }
             return ToolResult::error(format!(
                 "set_value: element [{idx}] has no accessibility write route and no keyboard \
                  fallback is available: {detail}."
             ))
-            .with_structured(json!({
-                "code": "set_value_unavailable",
-                "detail": detail,
-                "effect": "none",
-                "escalation": { "recommended": "foreground", "reason": "click the field and type the value with delivery_mode:\"foreground\"" },
-            }));
+            .with_structured(structured);
         }
         let value_for_keys = value.clone();
         let typed = spawn_blocking_bounded(

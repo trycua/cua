@@ -503,6 +503,7 @@ For free-form text entry that the target accepts via keystrokes only, prefer `ty
 
 **Arguments:**
 
+- `delivery_mode` (string, optional): Input delivery mode. 'background' (default) never swaps foreground: it routes through UIA Invoke / PostMessage and the window is never raised. For targets whose input stack silently drops posted events (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) the tool returns a structured background_unavailable error rather than fronting. 'foreground' is the explicit escalation: a brief SetForegroundWindow swap + SendInput, restoring the prior foreground afterward. IMPORTANT: 'background' is not a hint to weigh — it is the mandatory first attempt. Do NOT pass 'foreground' preemptively because a target 'looks like' GTK/Chromium/Electron; the DRIVER decides when background is impossible and tells you so via a background_unavailable error (or a verified no-op). Only THEN re-issue the same action with 'foreground'. The lists above are the driver's detectors, not a checklist for you to front on a guess — fronting up-front needlessly steals the user's focus and is a bug, not a shortcut. Matches the macOS delivery_mode surface.
 - `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.
 - `pid` (integer, required): Target process ID.
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
@@ -1161,6 +1162,7 @@ Parse one immutable registered capture into model-neutral text and icon regions.
 
 - `capture_id` (string, required)
 - `options` (object, optional): Optional, model-neutral controls for one bounded parse. default: `{}`
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ```json
 {"capture_id":"example"}

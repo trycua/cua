@@ -196,17 +196,89 @@ impl ToolDef {
     }
 }
 
+/// First argument name absent from the tool's advertised closed schema.
+/// Pure so registry conformance can be checked without executing tools.
+pub fn unknown_argument(def: &ToolDef, args: &Value) -> Option<String> {
+    let schema = advertised_runtime_input_schema(&def.name, &def.input_schema);
+    if schema["additionalProperties"] != false {
+        return None;
+    }
+    let properties = schema.get("properties").and_then(Value::as_object);
+    args.as_object()?
+        .keys()
+        .find(|name| !properties.is_some_and(|properties| properties.contains_key(*name)))
+        .cloned()
+}
+
+/// A small value the schema accepts: required fields only, the first
+/// enum/branch, and bounds-respecting numbers.
+fn schema_sample(schema: &Value) -> Option<Value> {
+    let Some(object) = schema.as_object() else {
+        return schema
+            .as_bool()
+            .filter(|allowed| *allowed)
+            .map(|_| Value::from("x"));
+    };
+    if let Some(value) = object.get("const") {
+        return Some(value.clone());
+    }
+    if let Some(Value::Array(options)) = object.get("enum") {
+        return options.first().cloned();
+    }
+    for key in ["oneOf", "anyOf"] {
+        if let Some(Value::Array(branches)) = object.get(key) {
+            return branches.iter().find_map(schema_sample);
+        }
+    }
+    let kind = match object.get("type") {
+        Some(Value::Array(kinds)) => kinds.iter().find_map(Value::as_str),
+        Some(Value::String(kind)) => Some(kind.as_str()),
+        _ => None,
+    };
+    match kind {
+        Some("string") => {
+            let length = object.get("minLength").and_then(Value::as_u64).unwrap_or(1);
+            Some(Value::from("x".repeat(length.max(1) as usize)))
+        }
+        Some("integer") => Some(Value::from(
+            object.get("minimum").and_then(Value::as_i64).unwrap_or(1),
+        )),
+        Some("number") => Some(Value::from(
+            object.get("minimum").and_then(Value::as_f64).unwrap_or(1.0),
+        )),
+        Some("boolean") => Some(Value::Bool(true)),
+        Some("array") => {
+            let item = schema_sample(object.get("items").unwrap_or(&Value::Bool(true)))?;
+            let count = object.get("minItems").and_then(Value::as_u64).unwrap_or(1);
+            Some(Value::Array(vec![item; count.max(1) as usize]))
+        }
+        Some("object") | None => {
+            let mut out = serde_json::Map::new();
+            let properties = object.get("properties").and_then(Value::as_object);
+            for field in object
+                .get("required")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                let field_schema = properties.and_then(|properties| properties.get(field))?;
+                out.insert(field.to_owned(), schema_sample(field_schema)?);
+            }
+            Some(Value::Object(out))
+        }
+        _ => None,
+    }
+}
+
 fn advertised_runtime_input_schema(tool_name: &str, schema: &Value) -> Value {
     let mut schema = schema.clone();
     let closed = schema["additionalProperties"] == false;
     let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) else {
         return schema;
     };
-    if closed
-        && cua_driver_contract::tool_contract(tool_name).is_none_or(|contract| {
-            contract.schema_mode != cua_driver_contract::SchemaMode::CanonicalRuntime
-        })
-    {
+    // Dispatch reads `session` for every tool, so every closed schema must admit it.
+    if closed {
         properties
             .entry("session")
             .or_insert_with(crate::tool_schema::session_schema);
@@ -913,6 +985,53 @@ impl ToolRegistry {
         *self.replay_registry.lock().unwrap() = Arc::downgrade(self);
     }
 
+    /// Registered tools whose advertised input schema disagrees with the
+    /// dispatch argument check. Open schemas bypass that check, so each must
+    /// be named in `open`.
+    pub fn input_conformance_violations(&self, open: &[&str]) -> Vec<String> {
+        let mut violations = Vec::new();
+        for name in &self.order {
+            let def = self.tools[name].def();
+            let schema = advertised_runtime_input_schema(name, &def.input_schema);
+            if schema["additionalProperties"] != false {
+                if !open.contains(&name.as_str()) {
+                    violations.push(format!("{name}: input schema is not closed"));
+                }
+                continue;
+            }
+            if schema.pointer("/properties/session").is_none() {
+                violations.push(format!("{name}: input schema does not accept `session`"));
+            }
+            let Some(minimal) = schema_sample(&schema) else {
+                violations.push(format!(
+                    "{name}: no valid call can be generated from its schema"
+                ));
+                continue;
+            };
+            let mut calls = vec![minimal.clone()];
+            for (field, field_schema) in schema["properties"].as_object().into_iter().flatten() {
+                if minimal.get(field).is_none() {
+                    if let Some(value) = schema_sample(field_schema) {
+                        let mut call = minimal.clone();
+                        call[field] = value;
+                        calls.push(call);
+                    }
+                }
+            }
+            for call in calls {
+                if let Some(argument) = unknown_argument(def, &call) {
+                    violations.push(format!("{name}: advertised call {call} refused {argument}"));
+                }
+            }
+            let mut unknown = minimal;
+            unknown["unadvertised_argument"] = Value::Bool(true);
+            if unknown_argument(def, &unknown).is_none() {
+                violations.push(format!("{name}: an unadvertised argument was accepted"));
+            }
+        }
+        violations
+    }
+
     pub fn tools_list(&self) -> Value {
         let list: Vec<Value> = self
             .order
@@ -1117,17 +1236,7 @@ impl ToolRegistry {
         // Normalize deprecated public argument spellings before any policy,
         // consent, recording, or implementation layer interprets the call.
         normalize_delivery_mode_args(tool.def(), &mut args);
-        let schema = advertised_runtime_input_schema(resolved_name, &tool.def().input_schema);
-        let unknown_argument = args.as_object().and_then(|arguments| {
-            let properties = schema.get("properties").and_then(Value::as_object);
-            arguments
-                .keys()
-                .find(|name| {
-                    schema["additionalProperties"] == false
-                        && !properties.is_some_and(|properties| properties.contains_key(*name))
-                })
-                .cloned()
-        });
+        let unknown_argument = unknown_argument(tool.def(), &args);
         if let Err(result) = crate::action_target::normalize_action_target(resolved_name, &mut args)
         {
             return result;

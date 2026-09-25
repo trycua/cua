@@ -742,6 +742,31 @@ mod tests {
     }
 
     #[test]
+    fn every_registered_tool_schema_matches_the_dispatch_argument_check() {
+        let registry = build_registry(&RuntimeOptions::embedded(false));
+        // These schemas declare `additionalProperties: true`.
+        let open = [
+            "get_browser_state",
+            "browser_prepare",
+            "browser_navigate",
+            "browser_click",
+            "browser_type",
+            "browser_dialog",
+            "browser_set_input_files",
+            "browser_download",
+            "browser_pointer",
+            "start_session",
+            "escalate_session",
+            "get_session",
+            "list_sessions",
+            "get_session_state",
+            "end_session",
+        ];
+        let violations = registry.input_conformance_violations(&open);
+        assert!(violations.is_empty(), "{violations:#?}");
+    }
+
+    #[test]
     fn canonical_inventory_advertises_unavailable_perception_tool() {
         let inventory = tool_inventory(RuntimeOptions::embedded(false));
         let tools = inventory["tools"].as_array().unwrap();

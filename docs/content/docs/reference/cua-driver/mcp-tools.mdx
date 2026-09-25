@@ -263,7 +263,7 @@ from_zoom: set true after a zoom call to auto-translate zoom-image pixel coordin
 - `capture_id` (string, optional): Optional immutable source capture ID returned by get_window_state or get_desktop_state. With x,y, Driver atomically admits and consumes that exact capture before dispatch; stale, mismatched, or out-of-bounds captures are refused without fallback.
 - `count` (integer, optional): Click count (pixel path only). Default 1.
 - `debug_image_out` (string, optional): Optional file path. When set on a pixel-addressed click, captures a fresh screenshot, draws a red crosshair at (x, y), and writes the PNG. Use to verify coordinate spaces. Requires window_id; incompatible with from_zoom.
-- `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": perform the AX action or post the CGEvent without fronting. "foreground": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. Modified clicks require "foreground" so macOS observes physical modifier-key state. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_index) → snapshot → background pixel (x/y) → snapshot → delivery_mode:"foreground".
+- `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": perform the AX action or post the CGEvent without fronting. "foreground": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. Modified clicks require "foreground" so macOS observes physical modifier-key state. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_token) → snapshot → background pixel (x/y) → snapshot → delivery_mode:"foreground".
 - `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.
 - `from_zoom` (boolean, optional): When true, x and y are in the last zoom image for this pid; driver translates back to full-window coordinates.
 - `modifier` (array of string, optional): Modifier keys: cmd, shift, option/alt, ctrl.
@@ -1099,6 +1099,7 @@ Parse one immutable registered capture into model-neutral text and icon regions.
 
 - `capture_id` (string, required)
 - `options` (object, optional): Optional, model-neutral controls for one bounded parse. default: `{}`
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ```json
 {"capture_id":"example"}

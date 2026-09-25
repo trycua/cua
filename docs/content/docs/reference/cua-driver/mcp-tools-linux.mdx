@@ -64,7 +64,7 @@ List top-level windows. Each record includes z_index (integer or null; higher va
 
 ### `get_window_state`
 
-Walk a running app's AT-SPI tree and return BOTH a structured `elements` array (preferred) AND a Markdown rendering of the same tree (back-compat). Every actionable element is tagged with [element_index N] in the markdown and as `element_index` in the structured array.
+Walk a running app's AT-SPI tree and return BOTH a structured `elements` array (preferred) AND a Markdown rendering of the same tree (back-compat). Every actionable element is tagged with [element_index N] in the markdown and as `element_index` in the structured array; pass each element's `element_token` to `click`, `type_text`, `set_value`, etc.
 
 PREFERRED CONSUMERS read `structuredContent.elements` (one entry per indexed row with `element_index`, `role`, `label`, `value`, `enabled`, `selected`, `actions` (names of AT-SPI actions exposed by the element, omitted when empty), `frame: {x,y,w,h}` when AT-SPI reports usable bounds, `parent_index`, `depth`). The markdown `tree_markdown` stays available and unchanged in shape for existing text-parsing callers — but new fields will only be added to the structured side. Set `query` to project BOTH representations to matching rows plus their ancestor chain while preserving original indices. `total_element_count` reports the complete snapshot and `returned_element_count` reports the projection.
 
@@ -78,7 +78,7 @@ TIME BUDGET: `timeout_ms` (default 1000) bounds the whole AT-SPI walk. Large app
 
 SCREENSHOT SCALE: the screenshot is delivered at or below 1.15 megapixels (long edge &lt;= max_image_dimension, 1568 by default), because larger images are downsized before a model reads them and its pixel coordinates would then be uniformly short. Element `screenshot_frame`s and x/y for the pointer tools are pixels of the delivered screenshot (`frame` stays in screen coordinates, as on every platform); `frame_scale` &lt; 1 reports the downsizing. An explicit per-call `max_image_dimension` (0 = native) replaces this cap.
 
-POPUP MENUS: a context menu / popover / combo list is an override-redirect window that list_windows never shows. A click or right_click that opened one names it in its result (`popup: {window_id, bounds, title}`); pass that window_id here to walk the popup's own AT-SPI toplevel so its menu items get element indices (then click them by element_index). Omitting window_id while a popup of this pid is open walks that popup.
+POPUP MENUS: a context menu / popover / combo list is an override-redirect window that list_windows never shows. A click or right_click that opened one names it in its result (`popup: {window_id, bounds, title}`); pass that window_id here to walk the popup's own AT-SPI toplevel so its menu items get element indices (then click them by element_token). Omitting window_id while a popup of this pid is open walks that popup.
 
 **Arguments:**
 
@@ -421,6 +421,7 @@ Set value of an AT-SPI element via SetValue action.
 
 **Arguments:**
 
+- `delivery_mode` (string, optional): Input delivery mode. 'background' (default) never activates or raises the target window. On X11 it injects via XTEST / the XInput2 master pointer (no focus steal). On Wayland it goes through libei + xdg-desktop-portal, which injects to the compositor's input focus — Wayland's security model has no per-window background targeting, so a specific non-focused window cannot be aimed at; when no libei backend is available the tool returns a structured background_unavailable error. 'foreground' is the explicit escalation: activate the target (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then restore the prior active window — a brief focus swap unless the target was already active. Matches the macOS / Windows delivery_mode surface. default: `"background"`
 - `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.
 - `pid` (integer, required)
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
@@ -1118,6 +1119,7 @@ Parse one immutable registered capture into model-neutral text and icon regions.
 
 - `capture_id` (string, required)
 - `options` (object, optional): Optional, model-neutral controls for one bounded parse. default: `{}`
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
 
 ```json
 {"capture_id":"example"}

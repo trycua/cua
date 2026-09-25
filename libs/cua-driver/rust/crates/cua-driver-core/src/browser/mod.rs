@@ -35,6 +35,7 @@
 //! is re-proven before any mutation; frames whose identity or
 //! capability cannot be proven are omitted or refused, never guessed.
 
+mod adapter_support;
 pub mod binding;
 pub mod cdp_ws;
 pub mod download;
@@ -56,6 +57,9 @@ pub mod types;
 #[cfg(test)]
 mod v2_tests;
 
+pub use adapter_support::{
+    is_firefox, loopback_websocket_port, parse_devtools_active_port, BrowserCursorTracker,
+};
 pub use engine::BrowserEngine;
 pub use platform::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,

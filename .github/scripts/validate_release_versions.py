@@ -59,6 +59,22 @@ def driver_installer_versions(root: Path) -> dict[str, str]:
     }
 
 
+def driver_withdrawn_versions(root: Path) -> dict[str, str]:
+    """Releases that must never be installed, baked, or certified."""
+    path = root / ".github/release-state/cua-driver-rs-withdrawn-versions"
+    if not path.exists():
+        return {}
+    withdrawn: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        version, _, reason = line.partition("#")
+        version = version.strip()
+        if not version:
+            continue
+        stable_version_tuple(version)
+        withdrawn[version] = reason.strip() or "withdrawn"
+    return withdrawn
+
+
 def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
     base = root / "libs/cua-driver"
     docs = root / "docs/content/docs/reference/cua-driver"
@@ -178,6 +194,12 @@ def validate(root: Path, product: str) -> None:
         installers = driver_installer_versions(root)
         installer_version = next(iter(installers.values()))
         require_equal("Cua Driver baked installers", installer_version, installers)
+        withdrawn = driver_withdrawn_versions(root)
+        if installer_version in withdrawn:
+            raise VersionError(
+                f"Cua Driver baked installers advertise withdrawn release {installer_version}: "
+                f"{withdrawn[installer_version]}"
+            )
         if stable_version_tuple(installer_version) > stable_version_tuple(expected):
             raise VersionError(
                 f"Cua Driver baked installers advertise {installer_version}, "

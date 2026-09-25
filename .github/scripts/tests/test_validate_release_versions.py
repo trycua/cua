@@ -182,3 +182,28 @@ def test_driver_validation_rejects_installer_version_ahead_of_source(tmp_path: P
 
     with pytest.raises(VersionError, match="ahead of source release"):
         validate(tmp_path, "driver")
+
+
+def test_withdrawn_release_can_never_be_baked(tmp_path: Path):
+    copy_release_sources(tmp_path)
+    published = (
+        tmp_path / ".github/release-state/cua-driver-rs-published-version"
+    ).read_text().strip()
+    withdrawn = tmp_path / ".github/release-state/cua-driver-rs-withdrawn-versions"
+    validate(tmp_path, "driver")
+    withdrawn.write_text(f"{published} # unsigned macOS app\n", encoding="utf-8")
+    with pytest.raises(VersionError, match=rf"withdrawn release {re.escape(published)}: unsigned macOS app"):
+        validate(tmp_path, "driver")
+
+
+def test_checked_in_withdrawn_versions_are_exact_and_explained():
+    path = REPO_ROOT / ".github/release-state/cua-driver-rs-withdrawn-versions"
+    entries = [
+        line for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert entries
+    for line in entries:
+        version, _, reason = line.partition("#")
+        assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version.strip())
+        assert reason.strip(), f"withdrawn {version.strip()} needs a reason"

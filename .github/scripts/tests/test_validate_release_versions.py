@@ -5,7 +5,13 @@ import shutil
 
 import pytest
 
-from validate_release_versions import VersionError, main, validate
+from validate_release_versions import (
+    VersionError,
+    driver_installer_withdrawn_versions,
+    driver_withdrawn_versions,
+    main,
+    validate,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -20,9 +26,8 @@ def copy_release_sources(destination: Path) -> None:
         relative = Path("libs/python/cua-sandbox") / filename
         (destination / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(REPO_ROOT / relative, destination / relative)
-    release_state = ".github/release-state/cua-driver-rs-published-version"
-    (destination / release_state).parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy(REPO_ROOT / release_state, destination / release_state)
+    release_state = ".github/release-state"
+    shutil.copytree(REPO_ROOT / release_state, destination / release_state)
     for relative in ("libs/cua-driver", "libs/lume"):
         source = REPO_ROOT / relative
         target = destination / relative
@@ -207,3 +212,56 @@ def test_checked_in_withdrawn_versions_are_exact_and_explained():
         version, _, reason = line.partition("#")
         assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version.strip())
         assert reason.strip(), f"withdrawn {version.strip()} needs a reason"
+
+
+def test_installer_withdrawn_lists_mirror_release_state():
+    listed = sorted(driver_withdrawn_versions(REPO_ROOT))
+    baked = driver_installer_withdrawn_versions(REPO_ROOT)
+    assert "0.28.3" in listed
+    assert baked == {
+        "scripts/_install-rust.sh": listed,
+        "scripts/install.ps1": listed,
+    }
+
+
+@pytest.mark.parametrize(
+    ("relative", "old", "new"),
+    [
+        (
+            "libs/cua-driver/scripts/_install-rust.sh",
+            'CUA_DRIVER_RS_WITHDRAWN_VERSIONS="0.28.3"',
+            'CUA_DRIVER_RS_WITHDRAWN_VERSIONS=""',
+        ),
+        (
+            "libs/cua-driver/scripts/install.ps1",
+            "$Script:CuaDriverRsWithdrawnVersions = @('0.28.3')",
+            "$Script:CuaDriverRsWithdrawnVersions = @('0.28.3', '0.28.1')",
+        ),
+    ],
+)
+def test_installer_withdrawn_list_drift_fails(tmp_path: Path, relative: str, old: str, new: str):
+    copy_release_sources(tmp_path)
+    path = tmp_path / relative
+    source = path.read_text(encoding="utf-8-sig")
+    assert old in source
+    path.write_text(source.replace(old, new), encoding="utf-8")
+    with pytest.raises(VersionError, match="withdraws"):
+        validate(tmp_path, "driver")
+
+
+def test_release_state_withdrawal_without_installer_update_fails(tmp_path: Path):
+    copy_release_sources(tmp_path)
+    withdrawn = tmp_path / ".github/release-state/cua-driver-rs-withdrawn-versions"
+    withdrawn.write_text(
+        withdrawn.read_text(encoding="utf-8") + "0.1.0 # test withdrawal\n", encoding="utf-8"
+    )
+    with pytest.raises(VersionError, match=r"withdraws \['0.28.3'\], but"):
+        validate(tmp_path, "driver")
+
+
+def test_malformed_withdrawn_version_fails(tmp_path: Path):
+    copy_release_sources(tmp_path)
+    withdrawn = tmp_path / ".github/release-state/cua-driver-rs-withdrawn-versions"
+    withdrawn.write_text("v0.28.3 # prefixed\n", encoding="utf-8")
+    with pytest.raises(VersionError, match="exact stable"):
+        validate(tmp_path, "driver")

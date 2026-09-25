@@ -298,8 +298,10 @@ pub(crate) async fn finish_window_observation(
 
 /// px-focus for the keyboard family (type_text / press_key / hotkey): focus the
 /// element at (x,y) before a keystroke — the *element px action* form of a
-/// keyboard tool. Prefer non-destructive AX focus so an existing selection is
-/// retained; the foreground rung falls back to a real pixel click when needed.
+/// keyboard tool. When the exact window's focused element already covers the
+/// point, nothing is clicked, so a Cmd+A selection survives a follow-up
+/// type_text or Cmd+V. Otherwise prefer non-destructive AX focus; the
+/// foreground rung falls back to a real pixel click when needed.
 /// Reuses ClickTool's exact coordinate translation and delivery mode.
 /// `Ok(())` on success; `Err(ToolResult)` short-circuits the caller.
 #[allow(clippy::too_many_arguments)]
@@ -332,6 +334,14 @@ pub(crate) async fn focus_by_pixel(
                 )
                 .await?;
         }
+    }
+    // The requested field may already hold keyboard focus, for example after
+    // a pixel hotkey Cmd+A. Any focus action is then redundant, and the real
+    // click fallback would be destructive: Chromium's omnibox hit-tests to an
+    // enclosing AXGroup that rejects AXFocused, so the fallback click moved
+    // the caret and dropped the selection (#4125).
+    if focused_element_holds_point(pid, window_id, x, y, true).await {
+        return Ok(());
     }
     if let Some(ref s) = session {
         click_args["session"] = serde_json::json!(s);
@@ -414,6 +424,21 @@ pub(crate) async fn focus_by_pixel(
 /// conservative direction: an unprovable focus escalates to the stronger rung
 /// rather than being reported as success.
 async fn pixel_focus_landed(pid: i32, window_id: Option<u32>, x: f64, y: f64) -> bool {
+    focused_element_holds_point(pid, window_id, x, y, false).await
+}
+
+/// Whether the application's focused element covers the window-local pixel
+/// `(x, y)` of `window_id`. With `require_window`, the focused element must
+/// also belong to that exact window, so focus held by a same-process sibling
+/// window that overlaps the point never counts as the requested target.
+/// Unprovable answers are `false`.
+async fn focused_element_holds_point(
+    pid: i32,
+    window_id: Option<u32>,
+    x: f64,
+    y: f64,
+    require_window: bool,
+) -> bool {
     let Some(wid) = window_id else {
         return false;
     };
@@ -427,11 +452,16 @@ async fn pixel_focus_landed(pid: i32, window_id: Option<u32>, x: f64, y: f64) ->
                 return false;
             };
             let rect = crate::ax::bindings::element_screen_rect(focused);
+            let focused_window = if require_window {
+                crate::ax::exact_target::element_window_id(focused)
+            } else {
+                Some(wid)
+            };
             core_foundation::base::CFRelease(focused as core_foundation::base::CFTypeRef);
             let Some(rect) = rect else {
                 return false;
             };
-            point_within_rect(rect, screen_x, screen_y)
+            focused_window == Some(wid) && point_within_rect(rect, screen_x, screen_y)
         }
     })
     .await

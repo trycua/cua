@@ -136,6 +136,10 @@ else
     standalone_browser_upload
     standalone_browser_window_collision
   )
+  if [[ "${HOST_OS}" == Darwin ]]; then
+    # macOS-only native-chrome keyboard regressions.
+    tests+=(standalone_browser_native_omnibox_select_all)
+  fi
 fi
 failure_count=0
 for test_name in "${tests[@]}"; do

@@ -430,5 +430,4 @@ fn now_ms() -> u128 {
 }
 
 #[cfg(test)]
-#[path = "remote_receiver_tests.rs"]
 mod tests;

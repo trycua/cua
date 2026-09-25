@@ -807,5 +807,4 @@ fn strict_json(text: &str) -> Result<Value, String> {
 }
 
 #[cfg(test)]
-#[path = "remote_mcp_tests.rs"]
 mod tests;

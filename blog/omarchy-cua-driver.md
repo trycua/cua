@@ -1,4 +1,4 @@
-# Building Background Computer Use into Hyprland
+# A Compositor-Native Approach to Background Computer Use
 
 _Published on September 25, 2026 by Francesco Bonacci_
 

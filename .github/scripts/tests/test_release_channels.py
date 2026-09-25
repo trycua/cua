@@ -299,6 +299,32 @@ def test_plan_builds_only_for_declared_relevant_changes(monkeypatch: pytest.Monk
     assert plan["attributionBaseTag"] == plan["previousNightlyTag"]
 
 
+def _record_change_detection(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
+    """Record change-detection calls and report no Driver-owned commits.
+
+    Whether a commit is Perception-only is owned by commits_in_range and tested
+    against a real repository in test_release_attribution.py; these plan tests
+    prove the registry's exclusions reach it and that an empty result skips.
+    """
+    calls: list[tuple] = []
+
+    def commits_in_range(_root, previous, source, paths, excluded, companions):
+        calls.append((previous, source, paths, excluded, companions))
+        return []
+
+    monkeypatch.setattr(release_channels.release_attribution, "commits_in_range", commits_in_range)
+    return calls
+
+
+def _assert_driver_change_detection_excludes_perception(call: tuple) -> None:
+    _, _, paths, excluded, companions = call
+    assert "libs/cua-driver" in paths
+    assert "libs/cua-driver/rust/crates/cua-perception" in excluded
+    assert {"libs/cua-driver/rust/Cargo.toml", "libs/cua-driver/rust/Cargo.lock"} <= set(
+        companions
+    )
+
+
 def test_driver_plan_ignores_perception_only_changes(monkeypatch: pytest.MonkeyPatch):
     previous_sha = "b" * 40
     source_sha = "c" * 40
@@ -311,17 +337,7 @@ def test_driver_plan_ignores_perception_only_changes(monkeypatch: pytest.MonkeyP
         raise AssertionError((command, args))
 
     monkeypatch.setattr(release_channels, "_git", fake_git)
-    monkeypatch.setattr(
-        release_channels.release_attribution,
-        "commits_in_range",
-        lambda _root, _previous, _source, paths, excluded, companions: (
-            []
-            if "libs/cua-driver" in paths
-            and "libs/cua-driver/rust/crates/cua-perception" in excluded
-            and "libs/cua-driver/rust/Cargo.toml" in companions
-            else [object()]
-        ),
-    )
+    calls = _record_change_detection(monkeypatch)
     plan = plan_nightly(
         "cua-driver-rs",
         source_sha,
@@ -339,6 +355,9 @@ def test_driver_plan_ignores_perception_only_changes(monkeypatch: pytest.MonkeyP
     )
     assert plan["shouldBuild"] is False
     assert plan["reason"] == "component-unchanged"
+    assert len(calls) == 1
+    assert calls[0][:2] == ("nightly-cua-driver-rs-v0.19.4-nightly.20260811.41", source_sha)
+    _assert_driver_change_detection_excludes_perception(calls[0])
 
 
 def test_first_driver_nightly_ignores_perception_only_changes(
@@ -358,13 +377,7 @@ def test_first_driver_nightly_ignores_perception_only_changes(
         raise AssertionError((command, args))
 
     monkeypatch.setattr(release_channels, "_git", fake_git)
-    monkeypatch.setattr(
-        release_channels.release_attribution,
-        "commits_in_range",
-        lambda _root, previous, _source, _paths, _excluded, _companions: (
-            [] if previous == driver_tag else [object()]
-        ),
-    )
+    calls = _record_change_detection(monkeypatch)
     plan = plan_nightly(
         "cua-driver-rs",
         source_sha,
@@ -376,6 +389,10 @@ def test_first_driver_nightly_ignores_perception_only_changes(
     )
     assert plan["shouldBuild"] is False
     assert plan["reason"] == "component-unchanged"
+    # With no earlier nightly, change detection starts at the current stable tag.
+    assert len(calls) == 1
+    assert calls[0][:2] == (driver_tag, source_sha)
+    _assert_driver_change_detection_excludes_perception(calls[0])
 
 
 def test_plan_holds_before_build_for_unresolved_attribution(

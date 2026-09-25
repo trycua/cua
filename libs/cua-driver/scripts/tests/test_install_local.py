@@ -12,6 +12,8 @@ INSTALL_LOCAL = Path(__file__).resolve().parents[1] / "_install-local-rust.sh"
 LOCAL_SIGNING = INSTALL_LOCAL.with_name("_local-signing.sh")
 DISPATCHER = INSTALL_LOCAL.with_name("install-local.sh")
 WINDOWS_INSTALL_LOCAL = INSTALL_LOCAL.with_name("install-local.ps1")
+POST_INSTALL_HINTS = INSTALL_LOCAL.with_name("post-install-hints.txt")
+MIGRATION_WARNING = "Existing MCP clients configured for 'cua-driver' will not use this local build."
 SKILL_PACK = INSTALL_LOCAL.parents[1] / "rust/Skills/cua-driver"
 
 
@@ -29,6 +31,19 @@ def test_local_installers_stage_the_canonical_skill_pack() -> None:
         "WINDOWS.md",
         "LINUX.md",
     }
+
+
+def test_windows_local_install_reports_missing_release_cli_without_aliasing_it() -> None:
+    """Windows twin of the Unix migration note asserted by the real install run below."""
+    installer = WINDOWS_INSTALL_LOCAL.read_text(encoding="utf-8-sig")
+
+    hints = installer.index("$hintsRaw -replace")
+    warning = installer.index("if (-not (Test-Path -LiteralPath $releaseBinary -PathType Leaf))")
+    assert hints < warning
+    assert MIGRATION_WARNING in installer[warning:]
+    assert "$installedBinary mcp-config --client codex" in installer[warning:]
+    assert "irm https://cua.ai/driver/install.ps1 | iex" in installer[warning:]
+    assert "New-Item -ItemType SymbolicLink" not in installer[warning:]
 
 
 def _write_executable(path: Path, body: str) -> None:
@@ -117,6 +132,7 @@ def test_installer_stages_binary_from_custom_cargo_target(
     rust_dir.mkdir()
     shutil.copy2(INSTALL_LOCAL, scripts_dir / INSTALL_LOCAL.name)
     shutil.copy2(LOCAL_SIGNING, scripts_dir / LOCAL_SIGNING.name)
+    shutil.copy2(POST_INSTALL_HINTS, scripts_dir / POST_INSTALL_HINTS.name)
 
     wayland_helper = fixture_root / "wayland-helper/winrects@cua"
     wayland_helper.mkdir(parents=True)
@@ -183,11 +199,13 @@ esac
         cwd=fixture_root,
         env=env,
         text=True,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         check=False,
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
+    output = result.stdout
+    assert result.returncode == 0, output
     assert (custom_target / "release/cua-driver").read_text() == "fresh custom target\n"
     assert (
         custom_target / "release/cua-cursor-theme"
@@ -201,6 +219,18 @@ esac
     ).read_text() == '{"version":5}\n'
     assert (installed_helper / "metadata.json").read_text() == '{"version":5}\n'
     assert (installed_helper / "extension.js").read_text() == "// semantic cursor v5\n"
+
+    # No published CLI exists here, so the installer explains the migration
+    # after the shared hints instead of aliasing the local build to it.
+    release_bin = install_bin / "cua-driver"
+    assert not release_bin.exists() and not release_bin.is_symlink()
+    hints = output.index(f"{install_bin}/cua-driver-local list-tools")
+    note = output.index(f"the published cua-driver CLI is not installed at {release_bin}")
+    assert hints < note
+    migration = output[note:]
+    assert MIGRATION_WARNING in migration
+    assert f"{install_bin}/cua-driver-local mcp-config --client codex" in migration
+    assert "https://cua.ai/driver/install.sh" in migration
 
 
 def _linux_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:

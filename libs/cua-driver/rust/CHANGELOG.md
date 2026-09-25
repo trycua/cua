@@ -6,6 +6,27 @@
 
 * **cua-driver:** deliver X11 key-down before the tap delay and finish background keyboard delivery before closing the input connection.
 
+## [0.29.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.28.4...cua-driver-rs-v0.29.0) (2026-09-25)
+
+
+### Features
+
+* **cua-driver:** let embedding hosts bound the post-action window observation ([#3929](https://github.com/trycua/cua/issues/3929)) ([1435052](https://github.com/trycua/cua/commit/1435052d6aacecb9f9514d06bf2c11bf202520eb)), closes [#3928](https://github.com/trycua/cua/issues/3928) [#4094](https://github.com/trycua/cua/issues/4094)
+
+
+### Bug Fixes
+
+* **cua-driver:** install the last signed macOS release ([#4150](https://github.com/trycua/cua/issues/4150)) ([fb7e972](https://github.com/trycua/cua/commit/fb7e9726d4ca2d9fe8b84f28b4db7c38d7fbc186))
+* **cua-driver:** keep page results whose title suffix only resembles a browser name ([#4103](https://github.com/trycua/cua/issues/4103)) ([2743728](https://github.com/trycua/cua/commit/27437286e634d0ac420336bb65c438b47436c8ca)), closes [#4094](https://github.com/trycua/cua/issues/4094)
+* **cua-driver:** keep the resting agent cursor animating on every platform ([#4131](https://github.com/trycua/cua/issues/4131)) ([7b4b595](https://github.com/trycua/cua/commit/7b4b595ef88dd3556e9e2649c903ae5fbdd15cb8))
+* **cua-driver:** match the Chromium 153 Windows remote-debugging consent prompt ([#4145](https://github.com/trycua/cua/issues/4145)) ([47b0e89](https://github.com/trycua/cua/commit/47b0e89c43f38c0d395143ee10e587a0273817ab)), closes [#4121](https://github.com/trycua/cua/issues/4121) [#4094](https://github.com/trycua/cua/issues/4094)
+* **cua-driver:** refuse to publish or bake an unsigned macOS release ([#4151](https://github.com/trycua/cua/issues/4151)) ([102a6c7](https://github.com/trycua/cua/commit/102a6c76a884dafd5c251d2e6ccc12df63afa77b)), closes [#4109](https://github.com/trycua/cua/issues/4109) [#4094](https://github.com/trycua/cua/issues/4094)
+* **cua-driver:** report agent cursor state before the cursor first moves ([#4123](https://github.com/trycua/cua/issues/4123)) ([3dbe331](https://github.com/trycua/cua/commit/3dbe331f12e8caa8615950903ee974bb3338737a))
+* **cua-driver:** report background_unavailable for Sway pixel scroll ([#4143](https://github.com/trycua/cua/issues/4143)) ([fe17a96](https://github.com/trycua/cua/commit/fe17a960cdd09e931437cf051b1ebeade15eca27)), closes [#4138](https://github.com/trycua/cua/issues/4138) [#4094](https://github.com/trycua/cua/issues/4094)
+* **cua-driver:** report the same capture refusal codes on every platform ([#4111](https://github.com/trycua/cua/issues/4111)) ([8946c6d](https://github.com/trycua/cua/commit/8946c6d4987181ae65e66c5a101e4030113a75a9)), closes [#4094](https://github.com/trycua/cua/issues/4094)
+* **cua-driver:** share browser DevTools parsing in core ([#4128](https://github.com/trycua/cua/issues/4128)) ([3fdb979](https://github.com/trycua/cua/commit/3fdb979a514613d5dbecd1ca7d58f90fea9667d9)), closes [#4094](https://github.com/trycua/cua/issues/4094)
+* **cua-driver:** share delivery mode and admission helpers in core ([#4139](https://github.com/trycua/cua/issues/4139)) ([4a64cb4](https://github.com/trycua/cua/commit/4a64cb46f4be4458e2b1383ca1983260a609f46a))
+
 ## [0.28.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.28.3...cua-driver-rs-v0.28.4) (2026-09-24)
 
 

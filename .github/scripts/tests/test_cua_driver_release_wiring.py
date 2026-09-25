@@ -297,6 +297,11 @@ fi
         )
         self.assertIn("sync_lume_release_docs.py", workflow)
         self.assertIn("chore(lume): synchronize release documentation", workflow)
+        self.assertIn(
+            "npx --yes pnpm@9.0.4 --dir docs install --frozen-lockfile --ignore-scripts",
+            workflow,
+        )
+        self.assertIn("runner.ts --library sandbox", workflow)
         self.assertNotIn("if: steps.release.outputs.prs_created == 'true'", workflow)
         self.assertNotIn("RELEASE_PRS: ${{ steps.release.outputs.prs }}", workflow)
 

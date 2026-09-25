@@ -3831,6 +3831,20 @@ fn coordinate_drag_context(
     resolve_context()
 }
 
+/// Pixel scroll shares click and drag's refusal order: an unsupported native
+/// background delivery must report `background_unavailable` before the
+/// screenshot frame is consulted, because native Wayland may legitimately
+/// withhold the screenshot (`surface_identity_unproven`) that the frame needs.
+fn coordinate_scroll_scale(
+    native_refusal: Option<ToolResult>,
+    resolve_scale: impl FnOnce() -> Result<f64, ToolResult>,
+) -> Result<f64, ToolResult> {
+    if let Some(refusal) = native_refusal {
+        return Err(refusal);
+    }
+    resolve_scale()
+}
+
 /// Chromium's X11 renderer drops synthetic input sent to an occluded,
 /// unfocused toplevel. Returning success here would be a silent loss, so all
 /// input tools expose the same typed refusal and leave foreground activation
@@ -5184,6 +5198,54 @@ fn coordinate_drag_keeps_wayland_background_refusal_ahead_of_screenshot_context(
     assert!(
         !resolved.load(Ordering::SeqCst),
         "drag snapshot context must not be consulted before the native refusal"
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn coordinate_scroll_keeps_wayland_background_refusal_ahead_of_screenshot_context() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let resolved = AtomicBool::new(false);
+    let native_refusal = crate::input::delivery::background_unavailable_error(
+        crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+    );
+    let result = coordinate_scroll_scale(Some(native_refusal), || {
+        resolved.store(true, Ordering::SeqCst);
+        Err(ToolResult::error(
+            "screenshot context must not be consulted",
+        ))
+    })
+    .expect_err("unsupported Wayland background delivery must refuse pixel scroll");
+
+    assert_eq!(
+        result.structured_content.as_ref().unwrap()["code"],
+        "background_unavailable"
+    );
+    assert!(
+        !resolved.load(Ordering::SeqCst),
+        "scroll snapshot context must not be consulted before the native refusal"
+    );
+    assert_eq!(coordinate_scroll_scale(None, || Ok(1.5)).unwrap(), 1.5);
+
+    let source = include_str!("impl_.rs");
+    let invoke = source
+        .rsplit_once("impl Tool for ScrollTool {")
+        .unwrap()
+        .1
+        .split_once("async fn invoke")
+        .unwrap()
+        .1;
+    let (before_scale, _) = invoke
+        .split_once("coordinate_scroll_scale(native_refusal")
+        .expect("pixel scroll must resolve its frame through the refusal-first helper");
+    assert!(
+        before_scale.contains("unavailable_wayland_focused_input_background(delivery, true)"),
+        "pixel scroll must compute the native Wayland refusal before its frame"
+    );
+    assert!(
+        !before_scale.contains("screenshot_scale("),
+        "pixel scroll must not consult the screenshot frame before the native refusal"
     );
 }
 
@@ -9870,6 +9932,8 @@ impl Tool for ScrollTool {
             }
         };
 
+        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        let isolated_background = isolated_hyprland_background(delivery);
         let pixel_target = match (
             args.get("x").and_then(|value| value.as_f64()),
             args.get("y").and_then(|value| value.as_f64()),
@@ -9892,7 +9956,13 @@ impl Tool for ScrollTool {
                 // Pixel targets use the latest screenshot's coordinate frame.
                 // Apply the same buffer-to-window ratio as click/drag before
                 // positioning either the agent cursor or the input device.
-                let ratio = match screenshot_scale(&self.state, &args, pid, Some(xid)) {
+                // An unsupported native background delivery refuses first.
+                let native_refusal = (!isolated_background)
+                    .then(|| unavailable_wayland_focused_input_background(delivery, true))
+                    .flatten();
+                let ratio = match coordinate_scroll_scale(native_refusal, || {
+                    screenshot_scale(&self.state, &args, pid, Some(xid))
+                }) {
                     Ok(ratio) => ratio,
                     Err(refusal) => return refusal,
                 };
@@ -9931,8 +10001,6 @@ impl Tool for ScrollTool {
             }
         }
 
-        let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
-        let isolated_background = isolated_hyprland_background(delivery);
         if !isolated_background {
             if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
                 return refusal;

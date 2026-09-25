@@ -26,10 +26,11 @@ CD = REPO_ROOT / ".github/workflows/cd-rust-cua-driver.yml"
 SIGNATURES = REPO_ROOT / ".github/workflows/cua-driver-release-signatures.yml"
 SELF_TEST = REPO_ROOT / ".github/workflows/ci-cua-driver-release-signatures.yml"
 DO_NOTARIZE = "${{ startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.notarize == true }}"
-CAN_PUBLISH = (
-    "${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) "
-    "|| (github.event_name == 'workflow_dispatch' && inputs.publish == true) }}"
-)
+# Only the Release Please tag push can publish; there is no manual publish input.
+TAG_PUSH = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')"
+CAN_PUBLISH = "${{ " + TAG_PUSH + " }}"
+E2E_GATES = {"e2e-linux", "e2e-windows", "e2e-macos", "e2e-standalone-browsers"}
+SIGNATURE_GATES = {"verify-macos-release-signatures", "verify-windows-release-signatures"}
 STATUS_OVERRIDES = ("always()", "failure()", "cancelled()", "!cancelled()")
 
 
@@ -104,11 +105,10 @@ def test_publishing_without_notarization_fails_before_any_build(cd: dict) -> Non
 def test_every_publishing_path_is_a_notarized_path(cd: dict) -> None:
     """The release job's trigger must imply CAN_PUBLISH, which implies DO_NOTARIZE via the guard."""
     release = cd["jobs"]["release"]
-    condition = release["if"]
-    assert condition in (
-        "github.event_name == 'workflow_dispatch' && inputs.publish == true",
-        "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')",
-    )
+    assert release["if"] == TAG_PUSH
+    dispatch = cd[True]["workflow_dispatch"]["inputs"]
+    assert "publish" not in dispatch
+    assert "inputs.publish" not in CD.read_text(encoding="utf-8")
     guard = release["steps"][0]
     assert guard["name"] == "Refuse to publish unverified or unnotarized artifacts"
     assert guard["env"]["DO_NOTARIZE"] == DO_NOTARIZE
@@ -136,11 +136,9 @@ def test_signature_jobs_verify_exact_candidate_archives(cd: dict) -> None:
 
 def test_release_job_needs_signature_verification(cd: dict) -> None:
     release = cd["jobs"]["release"]
-    assert {
-        "verify-release-artifacts",
-        "verify-macos-release-signatures",
-        "verify-windows-release-signatures",
-    } <= needs(release)
+    assert {"verify-release-artifacts"} | SIGNATURE_GATES | E2E_GATES <= needs(release)
+    for gate in E2E_GATES:
+        assert cd["jobs"][gate]["if"] == TAG_PUSH
     assert not any(override in release["if"] for override in STATUS_OVERRIDES)
     publish = step(release, "Publish the verified Release Please draft")
     assert release["steps"].index(step(release, "Refuse to publish unverified or unnotarized artifacts")) < release["steps"].index(publish)

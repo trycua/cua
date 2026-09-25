@@ -568,7 +568,7 @@ GitHub release: draft
 Target SHA: the merged release pull request commit
 ```
 
-The Cua Driver CD workflow starts from the tag and builds immutable candidate artifacts, but a tag push cannot publish the draft. A maintainer first dispatches the Linux, Windows, and macOS interactive E2E matrices against that exact tag SHA; the Linux and Windows matrices also exercise `install-local.sh` and `install-local.ps1` in isolated namespaces, while the canonical macOS Lume matrix installs through `install-local.sh` under the stable TCC identity. Only after that evidence passes does a `workflow_dispatch` with `publish: true` rebuild the same tag, upload the release assets, and finalize the draft. The attribution check confirms `@alice` as the pull request author and `@bob` as the linked issue reporter.
+The tag push starts the Cua Driver CD workflow, which builds the release artifacts from the exact tagged commit. The same run then calls the canonical Linux, Windows, macOS hosted, and standalone-browser E2E suites against that tag SHA; the Linux and Windows matrices also exercise `install-local.sh` and `install-local.ps1` in isolated namespaces. When the builds, the release artifact checks, and every E2E suite pass, the run's release job uploads the assets and publishes the draft. Nobody dispatches a workflow to publish. The attribution check confirms `@alice` as the pull request author and `@bob` as the linked issue reporter.
 
 #### Final GitHub release body
 
@@ -840,9 +840,9 @@ The cloud repository should consume the release manifest only after the core wor
 
 ### Publication
 
-1. Let the tag-triggered CD workflow build candidate artifacts from the exact tagged commit; it must not publish the draft.
-2. Dispatch the canonical interactive E2E matrices with the full tag SHA. Require the Linux shared, native, capture, and `install-local.sh` lanes; the Windows interactive lanes on a GUI runner plus the hosted `install-local.ps1` lane; and the macOS Lume matrix, which includes its own signed `install-local.sh` and TCC checks.
-3. After those runs pass, dispatch the Cua Driver CD workflow for the immutable version with `publish: true`.
+1. Let the tag-triggered CD workflow build candidate artifacts from the exact tagged commit.
+2. In that same run, call the canonical E2E workflows with the tag SHA: the Linux shared, native, capture, and `install-local.sh` lanes; the Windows interactive lanes plus the `install-local.ps1` lane on the GitHub-hosted runner; the macOS hosted matrix; and the standalone-browser suites. The macOS Lume matrix stays pre-merge evidence and is not part of this automatic gate.
+3. Run the release job on the tag push only after the builds, the release artifact checks, and every E2E suite pass. No maintainer dispatch is required.
 4. List GitHub releases, include drafts, and match the unique draft by `tag_name`; retain its release ID and upload URL.
 5. Upload packages and checksums by release ID without writing the body, changing the draft flag, or creating a second release. Remove `softprops/action-gh-release` from these two CD paths unless a pinned version is fixture-proven to reuse the same draft safely.
 6. Attach the attribution manifest and optional visual to the same release ID.

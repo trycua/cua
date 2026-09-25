@@ -168,6 +168,18 @@ the tested SHA*, not a certification result or a waiver of the complete stable
 candidate matrix. Keep the earlier exact-SHA result and account for each
 subsequent change in the PR review record.
 
+### Automatic release gate
+
+Stable Cua Driver releases need no manual E2E or publish dispatch. The
+`cua-driver-rs-v*` tag that Release Please creates starts
+`.github/workflows/cd-rust-cua-driver.yml`, which calls the Linux, Windows,
+hosted macOS, and standalone-browser E2E workflows through `workflow_call`
+against the exact tag SHA. The draft release is published only when those
+suites, the builds, and the release artifact checks pass. Nightly builds skip
+this gate. The logged-in macOS Lume matrix is not part of the automatic gate;
+it remains pre-merge evidence. Manual dispatch of the same workflows stays the
+way to certify a pull request candidate.
+
 ### Quick development feedback
 
 `CI: Cua Driver quick feedback (non-certifying)` runs on relevant pull requests

@@ -18,6 +18,7 @@ isolation, and a freshly grounded new-runtime recovery. Portable tests are
 synthetic orchestration evidence, not native or physical-hardware proof.
 """
 import argparse
+from harness_paths import harness_file  # Also puts tests/ helpers on sys.path.
 from production_app_smoke import add_provenance_arguments
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
@@ -320,7 +321,7 @@ def run(args):
         origin = provenance(args, plan)
         for name in ('production_geometry_fault_proof.py', 'production_geometry_fault_proof_test.py', 'proof_fixtures.py',
                      'production_cancel_proof.py'):
-            path = Path(__file__).with_name(name)
+            path = harness_file(name)
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
         save('provenance.json', origin)
         def launch(name):

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 import production_geometry_fault_proof as proof
 from proof_fixtures import (ACTIVE, BOUNDS, CANCEL, DELIVERED, PARTIAL, action, client, geometry_plan as plan,
                             inkscape_profile, trace)

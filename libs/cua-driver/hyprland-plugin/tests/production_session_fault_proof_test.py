@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 import production_session_fault_proof as proof
 from proof_fixtures import (ACTIVE, CANCEL, MONITOR, PARTIAL, REFUSED, identity, ink, inkscape_profile, motion_gate,
                             retained_status, session_plan as plan, status, trace)

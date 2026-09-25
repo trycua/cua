@@ -8,6 +8,7 @@ Neither a primary grab nor a trace spans the real 60-second input-peer expiry.
 No transport reset, test input packet, timeout override, or action retry is used.
 """
 import argparse
+from harness_paths import harness_file  # Also puts tests/ helpers on sys.path.
 from production_app_smoke import add_provenance_arguments
 import hashlib
 import json
@@ -290,7 +291,7 @@ def run(args):
         origin = provenance(args, plan)
         for name in ('production_idle_reconnect_proof.py', 'production_idle_reconnect_proof_test.py', 'proof_fixtures.py',
                      'production_cancel_proof.py'):
-            path = Path(__file__).with_name(name)
+            path = harness_file(name)
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
         save('provenance.json', origin)
         spec = plan['agents'][0]

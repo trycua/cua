@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 from production_cancel_proof import (
     GROUNDING_DISPATCH_RESERVE_NS, MAX_GROUNDING_AGE_NS, POINTER_SNAPSHOT_LIMITS, PROFILE,
     active_drags, call_drag, close_owned, grounded_snapshot,

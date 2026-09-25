@@ -31,6 +31,7 @@ DPMS and lock are deliberately unsupported here. Portable tests prepare
 this proof; only execution on the exact native candidate can certify a row.
 """
 import argparse
+from harness_paths import harness_file  # Also puts tests/ helpers on sys.path.
 from production_app_smoke import add_provenance_arguments
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -666,7 +667,7 @@ def run(args):
         for name in ('production_desktop_fault_proof.py', 'production_desktop_fault_proof_test.py', 'proof_fixtures.py',
                      'production_geometry_fault_proof.py', 'production_cancel_proof.py',
                      'input_config_toggle.py', 'desktop_faults.py'):
-            path = Path(__file__).with_name(name)
+            path = harness_file(name)
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': digest(path.read_bytes())}
         save('provenance.json', origin)
         fault = ConfigFault(plan, args.evidence)

@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 import production_active_lock_proof as proof
 import production_lock_refusal_proof as settled
 from proof_fixtures import ACTIVE, CANCEL, PARTIAL, ink, inkscape_profile, lock_plan, motion_gate, retained_status, status, trace

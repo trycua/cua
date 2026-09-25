@@ -15,6 +15,7 @@ import unittest
 from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
+import proofs_path
 from primary_observer import (MAX_BYTES, MAX_INTERVAL_NS, PrimaryObserver, analyze, journal_rows,
                               primary_wire_state, sync_barrier, verify_negative_control, wire_rows)
 from production_realapp_proof import run
@@ -263,7 +264,7 @@ class ObserverAnalysisTests(unittest.TestCase):
 
 class ObserverFileTests(unittest.TestCase):
     def test_optimized_fixture_execution_is_refused(self):
-        fixture = Path(__file__).with_name('primary_observer_fixture.py')
+        fixture = proofs_path.PROOFS / 'primary_observer_fixture.py'
         optimized = subprocess.run([sys.executable, '-O', str(fixture), '--help'], text=True,
                                    capture_output=True, timeout=5)
         self.assertNotEqual(optimized.returncode, 0)

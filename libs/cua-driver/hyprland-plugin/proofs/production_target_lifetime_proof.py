@@ -33,6 +33,7 @@ gate requires all reservations released before recovery; input authority and
 held input must be gone in every cleanup sample.
 """
 import argparse
+from harness_paths import harness_file  # Also puts tests/ helpers on sys.path.
 from production_app_smoke import add_provenance_arguments
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
@@ -475,7 +476,7 @@ def run(args):
         origin['ownership'] = {key: plan[key] for key in ('vm', 'compositor', 'processes', 'recovery')}
         for name in ('production_target_lifetime_proof.py', 'production_target_lifetime_proof_test.py',
                      'proof_fixtures.py'):
-            path = Path(__file__).with_name(name)
+            path = harness_file(name)
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
         save('provenance.json', origin)
         for name, spec in (('target', fault.spec), ('replacement', fault.fresh)):

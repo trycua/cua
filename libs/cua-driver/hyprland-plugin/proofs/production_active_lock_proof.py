@@ -17,6 +17,7 @@ No native setup, authentication, product changes, or full-matrix certification.
 Portable tests exercise orchestration and failure oracles, not native behavior.
 """
 import argparse
+from harness_paths import harness_file  # Also puts tests/ helpers on sys.path.
 from production_app_smoke import add_provenance_arguments
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
@@ -298,7 +299,7 @@ def run(args):
                      'production_lock_refusal_proof.py', 'production_lock_refusal_proof_test.py', 'proof_fixtures.py',
                      'session_lock_fixture.c', 'production_session_fault_proof.py',
                      'production_desktop_fault_proof.py', 'production_cancel_proof.py', 'desktop_faults.py'):
-            path = Path(__file__).with_name(name)
+            path = harness_file(name)
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
         origin['lock_fixture'] = plan['lock_fixture']
         save('provenance.json', origin)

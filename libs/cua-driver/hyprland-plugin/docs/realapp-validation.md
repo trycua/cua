@@ -48,7 +48,7 @@ no host installation, Fleet image publication, merge, or release occurred.
 
 ## What the tests measure
 
-[`realapp_proof.py`](realapp_proof.py) runs reviewed, deterministic plans through
+[`realapp_proof.py`](../tests/realapp_proof.py) runs reviewed, deterministic plans through
 two separate MCP processes. Each owns a private lifecycle, an independently
 leased synthetic seat, and a visible agent cursor. Public session labels are
 not credentials. An external operator signs short-lived grants bound to the
@@ -67,12 +67,12 @@ numeric value of Calc cell B3 and a predeclared translation range for Inkscape's
 `agent-shape` rectangle, with unchanged width and height. Before/after files are
 retained. A successful transport response or cursor animation is not task proof.
 
-[`primary_grab.c`](primary_grab.c) supplies an independent virtual primary
+[`primary_grab.c`](../tests/primary_grab.c) supplies an independent virtual primary
 pointer, holding the foreground button throughout the measurement. The moving
 case commands a loop inside that window. This is not a physical mouse or a
 human gameplay test.
 
-[`primary_trace.py`](primary_trace.py) analyzes event-level compositor
+[`primary_trace.py`](../tests/primary_trace.py) analyzes event-level compositor
 instrumentation, not periodic screenshots alone. It requires a complete,
 ordered trace with working hooks, start/stop markers, and no overflow or
 timeout. Incomplete telemetry is inconclusive. The checks cover:
@@ -142,7 +142,7 @@ ffmpeg -v error -i recording.mp4 -fps_mode passthrough -enc_time_base demux -f n
 - Native Rust tests passed: 43 common runtime-isolation, four window-target,
   seven `hyprland_input`, three `experimental_`, and two `primary_seat` tests.
 - All 36 Python helper tests passed with the cryptography dependency available.
-- The final module passed [`nested_lifecycle.py`](nested_lifecycle.py): two
+- The final module passed [`nested_lifecycle.py`](../tests/nested_lifecycle.py): two
   owned nested compositors, six discovery mutation refusals per start, clean
   restart, old socket/connection closure, fresh socket/epoch, sibling liveness,
   and clean shutdown. The parent module was not reloaded by this test.

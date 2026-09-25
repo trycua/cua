@@ -93,7 +93,7 @@ Run only after the native environment and plan are authorized and prepared.
 Substitute the reviewed paths and exact candidate SHA:
 
 ```text
-python3 libs/cua-driver/hyprland-plugin/tests/production_cancel_proof.py \
+python3 libs/cua-driver/hyprland-plugin/proofs/production_cancel_proof.py \
   --source <checkout> --source-sha <candidate-sha> \
   --driver <driver> --plugin <loaded-trace-plugin-file> \
   --primary-grab <primary-grab> --foreground-journal <fixture-journal> \

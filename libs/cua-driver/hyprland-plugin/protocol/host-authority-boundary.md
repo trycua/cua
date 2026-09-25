@@ -86,7 +86,7 @@ continuous foreground-isolation evidence. The adapter tests additionally
 cover distinct protocol negotiation, exact operation binding, compositor lane
 allocation, and owned-session cleanup.
 
-The [production proof harness](../tests/production-proof.md) uses two direct
+The [production proof harness](../docs/production-proof.md) uses two direct
 Driver MCP processes with no signer. Native acceptance still requires saved
 application outputs, continuous primary-input and held-state oracles, a
 warp-and-return negative control, cancellation/fault coverage, and exact-source

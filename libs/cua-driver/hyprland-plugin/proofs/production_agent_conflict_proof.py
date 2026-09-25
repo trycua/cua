@@ -27,6 +27,7 @@ same-process sibling-window claims and other-lane recovery are UNPROVEN here.
 Portable tests are preparation only; native execution is a separate gate.
 """
 import argparse
+from harness_paths import harness_file  # Also puts tests/ helpers on sys.path.
 from production_app_smoke import add_provenance_arguments
 import hashlib
 import json
@@ -260,7 +261,7 @@ def run(args):
         for name in (Path(__file__).name, 'production_agent_conflict_proof_test.py', 'proof_fixtures.py',
                      'production_primary_conflict_proof.py', 'desktop_faults.py', 'production_cancel_proof.py',
                      'production_desktop_fault_proof.py', 'production_geometry_fault_proof.py'):
-            path = Path(__file__).with_name(name)
+            path = harness_file(name)
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
         origin['ownership'] = {'vm': plan['vm'], 'compositor': plan['compositor'], 'processes': plan['processes']}
         save('provenance.json', origin)

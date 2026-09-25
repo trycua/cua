@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 import production_agent_conflict_proof as proof
 from proof_fixtures import BOUNDS, DELIVERED, VM, client, conflict_trace as trace, identity, status
 

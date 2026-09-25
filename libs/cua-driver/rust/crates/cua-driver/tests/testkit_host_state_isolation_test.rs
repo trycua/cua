@@ -10,6 +10,11 @@
 //! This binary contains exactly one test so it can safely point its own
 //! `HOME` (and the platform state variables) at a temporary directory before
 //! any daemon starts. The real user's files are never touched.
+//!
+//! Windows is excluded: its History root derives from `LOCALAPPDATA`, which the
+//! testkit must leave on the host because `shell:AppsFolder` app resolution
+//! depends on it (see `cua-driver-testkit/src/host_state.rs`).
+#![cfg(not(target_os = "windows"))]
 
 use std::path::{Path, PathBuf};
 
@@ -19,8 +24,6 @@ use cua_driver_testkit::{driver_binary, CliDriver, McpDriver, RawDriver, SHARE_H
 fn history_roots(home: &Path) -> Vec<PathBuf> {
     let base = if cfg!(target_os = "macos") {
         home.join("Library").join("Application Support")
-    } else if cfg!(target_os = "windows") {
-        home.join("AppData").join("Local")
     } else {
         home.join(".local").join("state")
     };
@@ -46,9 +49,7 @@ fn seed_admitted_host_home() -> tempfile::TempDir {
     // Only this single-test binary's process environment changes; it runs
     // before any thread or child exists.
     std::env::set_var("HOME", home.path());
-    if cfg!(target_os = "windows") {
-        std::env::set_var("LOCALAPPDATA", home.path().join("AppData").join("Local"));
-    } else if !cfg!(target_os = "macos") {
+    if !cfg!(target_os = "macos") {
         std::env::set_var("XDG_STATE_HOME", home.path().join(".local").join("state"));
     }
     home

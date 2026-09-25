@@ -13,11 +13,15 @@
 //! own state from. Locations the operating system uses to discover installed
 //! apps stay on the host, because tests launch real apps through the daemon:
 //!
-//! - Windows keeps `USERPROFILE` and `APPDATA`. The shell expands the per-user
-//!   known folders (Start Menu, `shell:AppsFolder`) through `%USERPROFILE%`,
-//!   and a redirected profile hides registered apps such as Microsoft Edge.
-//!   The driver's `USERPROFILE`-derived state goes through its own
-//!   `CUA_DRIVER_RS_HOME` override instead.
+//! - Windows keeps `USERPROFILE`, `APPDATA`, and `LOCALAPPDATA`. The in-process
+//!   `shell:AppsFolder` enumeration depends on `LOCALAPPDATA` (a redirected
+//!   value makes Microsoft Edge unresolvable, `0x80070002`), and the shell
+//!   expands per-user known folders through `%USERPROFILE%`. The driver's
+//!   `USERPROFILE`-derived state goes through its own `CUA_DRIVER_RS_HOME`
+//!   override instead. Known limitation: the Windows Computer History root
+//!   (`%LOCALAPPDATA%\cua-driver\computer-history`) has no separate driver
+//!   override, so a Windows host with History admitted still leaks into test
+//!   daemons.
 //! - Linux pins `XDG_DATA_HOME` to the host data directory so user `.desktop`
 //!   entries remain discoverable after `HOME` moves.
 //!
@@ -43,11 +47,7 @@ pub const SHARE_HOST_STATE: (&str, &str) = ("CUA_TESTKIT_SHARE_HOST_STATE", "1")
 /// Variables that locate per-user driver state on the current platform,
 /// relative to the isolated root.
 #[cfg(target_os = "windows")]
-const STATE_VARIABLES: &[(&str, &str)] = &[
-    ("HOME", ""),
-    ("LOCALAPPDATA", "AppData/Local"),
-    ("CUA_DRIVER_RS_HOME", ".cua-driver"),
-];
+const STATE_VARIABLES: &[(&str, &str)] = &[("HOME", ""), ("CUA_DRIVER_RS_HOME", ".cua-driver")];
 
 #[cfg(not(target_os = "windows"))]
 const STATE_VARIABLES: &[(&str, &str)] = &[
@@ -192,7 +192,7 @@ mod tests {
     fn host_app_discovery_locations_are_not_redirected() {
         let root = IsolatedStateRoot::new().expect("isolated root");
         let env = root.env();
-        for name in ["USERPROFILE", "APPDATA", "XDG_DATA_HOME"] {
+        for name in ["USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_DATA_HOME"] {
             if let Some((_, value)) = env.iter().find(|(key, _)| *key == name) {
                 assert!(
                     !value.starts_with(root.path()),

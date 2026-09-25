@@ -521,12 +521,13 @@ fn protected_host_launch_refusal() -> ToolResult {
 /// LaunchServices → WindowServer latency (mirrors the Swift reference).
 fn resolve_windows_for_pid(pid: i32) -> Vec<crate::windows::WindowInfo> {
     for attempt in 0..5 {
-        let found: Vec<_> = crate::windows::all_windows()
+        let mut found: Vec<_> = crate::windows::all_windows()
             .into_iter()
             .filter(|w| w.pid == pid && w.layer == 0)
             .filter(|w| w.bounds.width > 1.0 && w.bounds.height > 1.0)
             .collect();
         if !found.is_empty() {
+            rank_launch_windows(&mut found);
             return found;
         }
         if attempt < 4 {
@@ -534,6 +535,10 @@ fn resolve_windows_for_pid(pid: i32) -> Vec<crate::windows::WindowInfo> {
         }
     }
     vec![]
+}
+
+fn rank_launch_windows(windows: &mut [crate::windows::WindowInfo]) {
+    windows.sort_by_key(|window| std::cmp::Reverse(!window.title.trim().is_empty()));
 }
 
 fn structured_launch_error(code: &str, message: String, details: serde_json::Value) -> ToolResult {
@@ -719,12 +724,71 @@ fn hex_value(byte: u8) -> Option<u8> {
 mod tests {
     use super::{
         contains_remote_debugging_flag, is_cua_driver_bundle_id, local_file_target,
-        normalize_launch_url, preflight_file_urls, response_identity, structured_launch_failure,
-        LaunchAppTool,
+        normalize_launch_url, preflight_file_urls, rank_launch_windows, response_identity,
+        structured_launch_failure, LaunchAppTool,
     };
     use cua_driver_core::tool::Tool;
     use serde_json::json;
     use std::path::PathBuf;
+
+    fn window(window_id: u32, title: &str, width: f64, height: f64) -> crate::windows::WindowInfo {
+        crate::windows::WindowInfo {
+            window_id,
+            pid: 42,
+            app_name: "Calculator".to_owned(),
+            title: title.to_owned(),
+            bounds: crate::windows::WindowBounds {
+                x: 0.0,
+                y: 0.0,
+                width,
+                height,
+            },
+            layer: 0,
+            z_index: window_id as usize,
+            is_on_screen: true,
+            current_space_id: None,
+            on_current_space: None,
+            space_ids: None,
+        }
+    }
+
+    #[test]
+    fn launch_windows_prefer_titled_document_windows_over_chrome_strips() {
+        let mut windows = vec![
+            window(10174, "", 1470.0, 33.0),
+            window(10169, "", 1920.0, 30.0),
+            window(10166, "Calculator", 674.0, 408.0),
+        ];
+
+        rank_launch_windows(&mut windows);
+
+        assert_eq!(
+            windows
+                .iter()
+                .map(|window| window.window_id)
+                .collect::<Vec<_>>(),
+            vec![10166, 10174, 10169]
+        );
+    }
+
+    #[test]
+    fn launch_window_ranking_preserves_window_server_order_within_groups() {
+        let mut windows = vec![
+            window(3, "New small document", 300.0, 200.0),
+            window(2, "Old large document", 1200.0, 900.0),
+            window(1, "", 1920.0, 30.0),
+        ];
+
+        rank_launch_windows(&mut windows);
+
+        assert_eq!(
+            windows
+                .iter()
+                .map(|window| window.window_id)
+                .collect::<Vec<_>>(),
+            vec![3, 2, 1]
+        );
+    }
 
     #[test]
     fn local_file_target_treats_plain_paths_as_files() {

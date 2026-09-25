@@ -1,6 +1,24 @@
 name: "E2E: Rust Windows interactive"
 
 on:
+  # Stable Cua Driver tag runs call this matrix as a release gate. Keep the
+  # inputs in sync with workflow_dispatch; only `inputs.*` is read below.
+  workflow_call:
+    inputs:
+      ref:
+        description: "Full 40-character commit SHA to certify"
+        required: true
+        type: string
+      runner:
+        description: "Runner label; release gates use the GitHub-hosted default"
+        required: false
+        type: string
+        default: "windows-latest"
+      lane:
+        description: "Diagnostic lane; release gates use all"
+        required: false
+        type: string
+        default: all
   workflow_dispatch:
     inputs:
       ref:
@@ -318,6 +336,8 @@ jobs:
       - name: Download lane results
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4
         with:
+          # Release gates share the caller's run; skip its build artifacts.
+          pattern: rust-windows-*
           path: artifacts
       - name: Publish matrix summary
         shell: bash
@@ -458,7 +478,8 @@ jobs:
     # policy check below additionally refuses to certify an Azure RDP parity
     # replay: per scripts/ci/README.md that replay is not itself a source of
     # behavioral truth, only the GitHub-hosted preflighted-interactive lane is.
-    if: success() && github.event_name == 'workflow_dispatch' && inputs.lane == 'all'
+    # Manual dispatches and release-gate calls certify the same matrix.
+    if: success() && inputs.lane == 'all'
     needs: [source, shared, native, capture, installer]
     name: "Windows / canonical certification"
     runs-on: ubuntu-latest

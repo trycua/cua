@@ -12,7 +12,7 @@
 //!   * `capture_mode:"vision"` (deprecated) → IGNORED; still returns both.
 //!
 //! Run explicitly:
-//!   cargo test -p cua-driver --test capture_contract_test -- --ignored --nocapture --test-threads=1
+//!   cargo test -p cua-driver-e2e --test capture_contract_test -- --ignored --nocapture --test-threads=1
 
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 

@@ -169,7 +169,18 @@ def test_macos_direct_lume_registration_is_manual_and_not_pr_event_chained() -> 
     _, workflow = load_workflow(TRIGGER)
     assert "macos" not in workflow["jobs"]
     entry_text, entry_workflow = load_workflow(MACOS_ENTRY)
-    assert set(triggers(entry_workflow)) == {"workflow_dispatch"}
+    entry_triggers = triggers(entry_workflow)
+    assert set(entry_triggers) == {"workflow_dispatch", "workflow_call"}
+    # The release-gate call exposes only the hosted source SHA; direct Lume
+    # registration stays a manual dispatch.
+    assert set(entry_triggers["workflow_call"]["inputs"]) == {"source_sha"}
+    assert entry_workflow["jobs"]["register-lume"]["if"] == "inputs.mode == 'lume'"
+    callers = sorted(
+        path.name
+        for path in (ROOT / ".github/workflows").glob("*.yml")
+        if "uses: ./.github/workflows/e2e-rust-macos.yml" in path.read_text(encoding="utf-8")
+    )
+    assert callers == ["cd-rust-cua-driver.yml"]
     assert "pull_request:" not in entry_text and "pull_request_target" not in entry_text
     assert "live-jev-perception" not in entry_workflow["jobs"]
     assert "authorized-live-jev-macos-evidence.yml" not in entry_text

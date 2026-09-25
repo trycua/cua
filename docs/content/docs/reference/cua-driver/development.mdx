@@ -15,14 +15,15 @@ they stay close to implementation changes.
 | `libs/cua-driver/typescript` | Rust-backed TypeScript SDK plus Node and Electron embedded-host adapters |
 | `libs/cua-driver/python` | Python package wrapper around the driver binary |
 | `libs/cua-driver/tests/fixtures` | Source-built GUI harness apps and shared fixtures |
-| `libs/cua-driver/rust/crates/cua-driver/tests` | Rust integration tests for the driver and GUI harnesses |
+| `libs/cua-driver/rust/crates/cua-driver/tests` | Hermetic Rust integration tests for the driver |
+| `libs/cua-driver/rust/crates/cua-driver-e2e/tests` | Desktop E2E suites for the GUI harnesses |
 | `libs/cua-driver/scripts` | Install, uninstall, local build, and VM sync helpers |
 
 ## Contributor Entry Points
 
 - `libs/cua-driver/README.md` gives the repo-local overview.
 - `libs/cua-driver/rust/README.md` maps the Cargo workspace and test classes.
-- `libs/cua-driver/rust/crates/cua-driver/tests/README.md` explains Rust test naming and ignored GUI lanes.
+- `libs/cua-driver/rust/crates/cua-driver-e2e/tests/README.md` explains the desktop E2E suites and ignored GUI lanes.
 - `libs/cua-driver/tests/fixtures/README.md` explains source-built harness apps and staged outputs.
 - `libs/cua-driver/scripts/README.md` explains install and VM sync helpers.
 

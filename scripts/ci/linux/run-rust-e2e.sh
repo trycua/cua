@@ -178,7 +178,7 @@ run_report() {
 
 echo "[PREFLIGHT] Linux desktop, fixture, AX, capture, and video"
 set +e
-(cd "${RUST_ROOT}" && cargo test -p cua-driver \
+(cd "${RUST_ROOT}" && cargo test -p cua-driver-e2e \
   "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
   --test e2e_environment_preflight_test -- \
   --ignored --exact canonical_e2e_environment_is_ready --nocapture --test-threads=1) \
@@ -256,7 +256,7 @@ run_computer_history_gate() {
   fi
 
   run_test computer-history-encrypted-lifecycle \
-    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+    cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test computer_history_cross_platform_test -- \
       --ignored --exact encrypted_history_survives_restart_and_cryptographically_purges \
       --nocapture --test-threads=1
@@ -280,12 +280,12 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
     cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test private_worker_test -- --test-threads=1
   run_test shared-behavior-matrix \
-    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+    cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test cross_platform_behavior_test -- \
       --ignored --exact shared_web_action_matrix_is_state_verified \
       --nocapture --test-threads=1
   run_test embedded-browser-routes \
-    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+    cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test cross_platform_behavior_test -- \
       --ignored --exact embedded_browser_routes_are_exact_or_refused \
       --nocapture --test-threads=1
@@ -294,12 +294,12 @@ fi
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
   if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
     run_test wayland-overlay-idle-no-overlay \
-      cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
         --test wayland_overlay_idle_test -- \
         --ignored --exact no_overlay_flag_never_starts_wayland_overlay_thread \
         --nocapture --test-threads=1
     run_test wayland-overlay-idle-recovery \
-      cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
         --test wayland_overlay_idle_test -- \
         --ignored --exact wayland_overlay_quiesces_and_recovers_after_capture_and_cursor_activity \
         --nocapture --test-threads=1
@@ -322,16 +322,16 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     echo "[LIMITATION] wayland-overlay-idle: ${limitation}"
   fi
   run_test agent-cursor-showcase \
-    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+    cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test agent_cursor_showcase_test -- \
       --ignored --nocapture --test-threads=1
   run_test gtk3-native-harness \
-    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+    cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test harness_gtk3_test -- \
       --ignored --nocapture --test-threads=1
   if [[ -z "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]]; then
     run_test gtk4-target-selection \
-      cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
         --test harness_gtk4_test -- \
         --ignored --nocapture --test-threads=1
   else
@@ -356,11 +356,11 @@ fi
 
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
   run_test capture-contract \
-    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+    cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test capture_contract_test -- \
       --ignored --nocapture --test-threads=1
   run_test desktop-scope \
-    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+    cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test desktop_scope_linux_test -- \
       --ignored --nocapture --test-threads=1
 fi

@@ -19,27 +19,27 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("needs: release-attribution-preflight", self.job)
         self.assertIn(
             "    if: >-\n"
-            "      inputs.channel != 'nightly' &&\n"
-            "      (startsWith(github.ref, 'refs/tags/cua-driver-rs-v') ||\n"
-            "       (github.event_name == 'workflow_dispatch' && inputs.publish == true))",
+            "      github.event_name == 'push' &&\n"
+            "      startsWith(github.ref, 'refs/tags/cua-driver-rs-v')\n",
             self.job,
         )
-        # Every publishing dispatch runs the source job. Manual build-only and
-        # nightly invocations skip both publication and this stable source job.
+        # The stable tag push is the only publishing run and always runs the
+        # source job. Manual build-only and nightly invocations skip both.
         needs, steps = self.release.split("    steps:\n", 1)
-        self.assertIn("build-hyprland-plugin-source]", needs)
-        self.assertIn("if: github.event_name == 'workflow_dispatch' && inputs.publish == true", needs)
+        self.assertIn("      - build-hyprland-plugin-source\n", needs)
+        self.assertIn(
+            "if: github.event_name == 'push' && "
+            "startsWith(github.ref, 'refs/tags/cua-driver-rs-v')",
+            needs,
+        )
+        self.assertNotIn("inputs.publish", self.workflow)
         self.assertNotIn("always()", needs)
         self.assertIn('if [[ "$SHA" != "$TAG_SHA" ]]; then', steps)
         self.assertIn("python3 .github/scripts/validate_release_versions.py --product driver", steps)
 
     def test_source_override_is_checked_and_assets_remain_namespaced(self):
         self.assertIn("fetch-depth: 0", self.job)
-        self.assertIn(
-            "ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && "
-            "inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}",
-            self.job,
-        )
+        self.assertIn("ref: ${{ inputs.source_ref || github.ref }}", self.job)
         self.assertIn('--repo . --revision "$(git rev-parse HEAD)"', self.job)
         self.assertIn('--driver-version "$VERSION" --release-assets', self.job)
         self.assertIn("path: plugin-release-assets/*.tar.gz", self.job)
@@ -54,7 +54,7 @@ class WorkflowTest(unittest.TestCase):
     def test_downloaded_plugin_assets_are_verified_before_checksums_and_publication(self):
         verify = self.release.index("- name: Verify staged plugin source assets")
         checksums = self.release.index("- name: Generate SHA256 checksums")
-        self.assertLess(self.release.index("- name: Download all artifacts"), verify)
+        self.assertLess(self.release.index("- name: Download candidate release artifacts"), verify)
         self.assertLess(verify, checksums)
         step = self.release[verify:checksums]
         self.assertIn('test "${#PLUGIN_ASSETS[@]}" -eq 2', step)

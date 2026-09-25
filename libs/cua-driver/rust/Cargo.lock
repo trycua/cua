@@ -1206,7 +1206,6 @@ dependencies = [
  "base64",
  "cap-fs-ext",
  "cap-std",
- "core-foundation",
  "cua-driver-contract",
  "cua-driver-core",
  "cua-driver-sdk",
@@ -1215,7 +1214,6 @@ dependencies = [
  "embed-resource",
  "flate2",
  "fs2",
- "futures-util",
  "httparse",
  "image",
  "jsonschema",
@@ -1233,7 +1231,6 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
- "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
  "ureq",
@@ -1296,6 +1293,32 @@ dependencies = [
  "windows 0.58.0",
  "zeroize",
  "zune-core",
+]
+
+[[package]]
+name = "cua-driver-e2e"
+version = "0.28.4"
+dependencies = [
+ "base64",
+ "core-foundation",
+ "cua-driver-contract",
+ "cua-driver-core",
+ "cua-driver-sdk",
+ "cua-driver-testkit",
+ "cursor-overlay",
+ "futures-util",
+ "image",
+ "jsonschema",
+ "libc",
+ "platform-linux",
+ "platform-windows",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "windows 0.61.3",
 ]
 
 [[package]]
@@ -1374,6 +1397,7 @@ dependencies = [
  "cua-driver-contract",
  "fontdue",
  "image",
+ "indexmap",
  "postcard",
  "serde",
  "serde_json",
@@ -3523,7 +3547,6 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.2",
  "image",
- "indexmap",
  "libc",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
@@ -3558,7 +3581,6 @@ dependencies = [
  "cursor-overlay",
  "getrandom 0.4.2",
  "image",
- "indexmap",
  "keyring",
  "pip-preview",
  "serde",

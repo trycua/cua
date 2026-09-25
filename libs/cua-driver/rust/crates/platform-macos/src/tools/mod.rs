@@ -150,37 +150,14 @@ pub use cua_driver_core::element_cache::{
     SnapshotBoundZoomContext as ZoomContext, SnapshotBoundZoomRegistry as ZoomRegistry,
 };
 
-/// Input delivery modality — the agent-selected rung of the best-effort-background
-/// ladder, passed per call (never a stored/config setting).
+/// The shared per-call delivery mode; see [`cua_driver_core::delivery`].
 ///
-/// - `Background` (default): post synthetic input to the pid without fronting.
-/// - `Foreground`: briefly front the target window, act, then restore the prior
-///   frontmost (see [`crate::input::skylight::with_foreground_assist`]). The
-///   agent's vision-driven last resort — and the only way `click` reaches a
-///   foreground rung. Orthogonal to addressing (`element_index` vs `x/y`, which
-///   selects AX vs pixel).
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum DeliveryMode {
-    #[default]
-    Background,
-    Foreground,
-}
-
-impl DeliveryMode {
-    /// Parse the per-call `delivery_mode` argument. Anything other than an
-    /// explicit case-insensitive `"foreground"` resolves to `Background` — the
-    /// correct default, so an omitted/garbage value never silently fronts.
-    pub fn parse(arg: Option<&str>) -> Self {
-        match arg {
-            Some(s) if s.eq_ignore_ascii_case("foreground") => Self::Foreground,
-            _ => Self::Background,
-        }
-    }
-
-    pub fn is_foreground(self) -> bool {
-        matches!(self, Self::Foreground)
-    }
-}
+/// On macOS, `Foreground` briefly fronts the target window, acts, then
+/// restores the prior frontmost (see
+/// [`crate::input::skylight::with_foreground_assist`]). It is the only way
+/// `click` reaches a foreground rung and is orthogonal to addressing
+/// (`element_index` vs `x/y`, which selects AX vs pixel).
+pub use cua_driver_core::delivery::DeliveryMode;
 
 /// Convert a pure background-input refusal into the structured refusal result
 /// shape shared by exact-target tools: `code`, `effect: "refused"`, the

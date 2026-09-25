@@ -1969,6 +1969,8 @@ fn run_native_omnibox_select_all(spec: &BrowserSpec) {
         );
         assert!(!seeded.is_error(), "seed native omnibox: {}", seeded.raw);
         wait_for_native_omnibox_value(&mut fixture, initial);
+        // Seeding is fixture setup; the behavior under test starts at Cmd+A.
+        fixture.driver.start_behavior_recording();
 
         let selected = fixture.driver.call(
             "hotkey",

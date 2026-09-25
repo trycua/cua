@@ -8,6 +8,11 @@
 //! one fn and branch only where the platforms differ (list_apps `apps` vs
 //! `processes`, get_config platform string, check_permissions keys, type_text
 //! target app, hotkey modifier, etc.).
+//!
+//! Tests that dispatch real input (scroll, type_text, hotkey, press_key,
+//! click, set_value) target whichever window is on screen, so they are
+//! `#[ignore]`d and never run under a plain `cargo test`. Run them with
+//! `--ignored` only on a disposable desktop.
 
 #![cfg(any(target_os = "macos", target_os = "windows"))]
 
@@ -490,6 +495,7 @@ fn get_window_state_returns_both_with_opt_out() {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "sends real input to a live desktop window; run with --ignored only on a disposable desktop"]
 fn scroll_tool() {
     //! scroll with direction=down, by=line, amount=1 against the first available window.
     //! Verifies the tool is accepted and returns content, not a protocol error.
@@ -539,6 +545,7 @@ fn scroll_tool() {
 
 #[test]
 #[cfg(target_os = "macos")]
+#[ignore = "sends real input to a live desktop window; run with --ignored only on a disposable desktop"]
 fn type_text_tool() {
     //! Opens TextEdit (or reuses it if already running) and types a short string via type_text.
     //! Skips gracefully if TextEdit is not available or has no window.
@@ -606,6 +613,7 @@ fn type_text_tool() {
 
 #[test]
 #[cfg(target_os = "windows")]
+#[ignore = "sends real input to a live desktop window; run with --ignored only on a disposable desktop"]
 fn type_text_notepad() {
     //! Launch Notepad, type a short string via type_text. Skips if Notepad unavailable.
     let Some(mut d) = spawn_unrestricted() else {
@@ -673,6 +681,7 @@ fn type_text_notepad() {
 
 #[test]
 #[cfg(target_os = "macos")]
+#[ignore = "sends real input to a live desktop window; run with --ignored only on a disposable desktop"]
 fn type_text_chars_tool() {
     //! Verify type_text_chars with delay_ms is accepted without error (dry-run via TextEdit or
     //! a pid that accepts WM_CHAR). We just verify the tool responds with a non-error.
@@ -754,6 +763,7 @@ fn type_text_chars_tool() {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "sends real input to a live desktop window; run with --ignored only on a disposable desktop"]
 fn hotkey_keys_array() {
     //! Verify hotkey accepts a keys array without a protocol error.
     let Some(mut d) = spawn_unrestricted() else {
@@ -803,6 +813,7 @@ fn hotkey_keys_array() {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "sends real input to a live desktop window; run with --ignored only on a disposable desktop"]
 fn press_key_harmless() {
     //! press_key with a harmless key (F24 — virtually no app responds to it) sent to the
     //! first available window. Just verifies the tool doesn't return a protocol error.
@@ -844,6 +855,7 @@ fn press_key_harmless() {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "sends real input to a live desktop window; run with --ignored only on a disposable desktop"]
 fn click_pixel_path() {
     //! click at window-local (5, 5) — title bar area, safe to click without disrupting UI.
     //! Verifies the pixel-coordinate path for click works without a protocol error.
@@ -884,6 +896,7 @@ fn click_pixel_path() {
 
 #[test]
 #[cfg(target_os = "windows")]
+#[ignore = "sends real input to a live desktop window; run with --ignored only on a disposable desktop"]
 fn double_click_and_right_click() {
     let Some(mut d) = spawn_unrestricted() else {
         return;
@@ -936,6 +949,7 @@ fn double_click_and_right_click() {
 
 #[test]
 #[cfg(target_os = "macos")]
+#[ignore = "sends real input to a live desktop window; run with --ignored only on a disposable desktop"]
 fn double_click_and_right_click_pixel_path() {
     //! double_click and right_click at title-bar coords — verifies both tools accept pixel path.
     let Some(mut d) = spawn_unrestricted() else {
@@ -997,6 +1011,7 @@ fn double_click_and_right_click_pixel_path() {
 
 #[test]
 #[cfg(target_os = "macos")]
+#[ignore = "sends real input to a live desktop window; run with --ignored only on a disposable desktop"]
 fn set_value_via_element_index() {
     //! get_window_state on TextEdit → find a text-area element → set_value on it.
     //! Skips gracefully if TextEdit is not available.

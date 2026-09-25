@@ -6,6 +6,10 @@
 //! `debug_image_out`, and the `set_config` screenshot-resize pipeline. Split
 //! out of the old monolithic `mcp_protocol_test.rs`; mac/windows pairs merge
 //! and branch only where assertions differ.
+//!
+//! Tests that dispatch a real click into whichever window is on screen are
+//! `#[ignore]`d so a plain `cargo test` never sends input. Run them with
+//! `--ignored` only on a disposable desktop.
 
 #![cfg(any(target_os = "macos", target_os = "windows"))]
 
@@ -252,6 +256,7 @@ fn zoom_tool_returns_jpeg() {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "sends real input to a live desktop window; run with --ignored only on a disposable desktop"]
 fn zoom_from_zoom_click_round_trip() {
     //! Verify the zoom → from_zoom click pipeline:
     //! 1. click(from_zoom=true) with no zoom context returns the expected error.
@@ -421,6 +426,7 @@ fn recording_session() {
 
 #[test]
 #[cfg(target_os = "macos")]
+#[ignore = "sends real input to a live desktop window; run with --ignored only on a disposable desktop"]
 fn recording_screenshot_capture() {
     //! When recording is active and a tool call includes a window_id, a screenshot.png
     //! should appear alongside action.json in the turn folder.
@@ -627,6 +633,7 @@ fn replay_trajectory() {
 
 #[test]
 #[cfg(target_os = "macos")]
+#[ignore = "sends real input to a live desktop window; run with --ignored only on a disposable desktop"]
 fn click_debug_image_out() {
     //! click with debug_image_out writes a PNG crosshair file and then proceeds.
     //! Verifies the debug capture path works end-to-end.

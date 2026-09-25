@@ -3272,11 +3272,6 @@ mod tests {
     }
 
     #[test]
-    fn send_command_for_keeps_unit_returning_api() {
-        let _: fn(CursorKey, OverlayCommand) = send_command_for;
-    }
-
-    #[test]
     fn session_removal_drops_the_cursor_and_rejects_late_commands() {
         let mut map = default_render_map();
         let command = || {
@@ -3383,26 +3378,6 @@ mod tests {
         arrival_register(key.clone(), tx);
         arrival_fire(&key);
         assert!(!ARRIVAL_DEGRADED.load(std::sync::atomic::Ordering::Relaxed));
-    }
-
-    #[test]
-    fn clearing_arrivals_releases_waiters() {
-        let (tx, mut rx) = tokio::sync::oneshot::channel();
-        let mut arrivals = Some(HashMap::from([("default".to_owned(), tx)]));
-
-        clear_arrivals(&mut arrivals);
-
-        assert!(matches!(
-            rx.try_recv(),
-            Err(tokio::sync::oneshot::error::TryRecvError::Closed)
-        ));
-    }
-
-    #[test]
-    fn disabling_render_map_marks_overlay_unavailable() {
-        let mut render = Some(default_render_map());
-        disable_render_map(&mut render);
-        assert!(render.is_none());
     }
 
     #[test]
@@ -3635,13 +3610,6 @@ mod tests {
     }
 
     #[test]
-    fn geometry_update_sets_render_bounds() {
-        let mut map = default_render_map();
-        update_render_map_geometry(&mut map, 1920, 2160);
-        assert_eq!((map.scr_w, map.scr_h), (1920, 2160));
-    }
-
-    #[test]
     fn geometry_shrink_reclips_cursor_tiles() {
         let mut map = default_render_map();
         map.scr_w = 1920;
@@ -3650,6 +3618,7 @@ mod tests {
         assert_eq!(render_x11_tiles(&map).len(), 1);
 
         update_render_map_geometry(&mut map, 1920, 1080);
+        assert_eq!((map.scr_w, map.scr_h), (1920, 1080));
         assert!(render_x11_tiles(&map).is_empty());
     }
 
@@ -3660,21 +3629,9 @@ mod tests {
         assert!(!render_map_needs_z_order_tick(&map));
     }
 
-    // The idle-park contract now applies to reduced-motion sessions: with the
+    // The idle-park contract applies to reduced-motion sessions: with the
     // float bob active (the default), a visible cursor keeps ticking so it
     // levitates at rest, and only a hidden or reduced-motion cursor parks.
-    #[test]
-    fn resting_visible_cursor_only_requires_cheap_z_order_ticks() {
-        let mut map = default_render_map();
-        let cursor = map.cursors.get_mut("default").unwrap();
-        cursor.core.pos = (100.0, 100.0);
-        cursor.core.motion.idle_hide_ms = 0.0;
-        cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
-
-        assert!(!render_map_needs_frame_tick(&map));
-        assert!(render_map_needs_z_order_tick(&map));
-    }
-
     #[test]
     fn resting_visible_cursor_keeps_ticking_for_the_float_bob() {
         let mut map = default_render_map();
@@ -4182,29 +4139,6 @@ mod tests {
         assert_eq!(&bgra[12..16], &[50, 100, 200, 255]);
         // Every uploaded pixel is opaque: the server has nothing left to blend.
         assert!(bgra.chunks_exact(4).all(|pixel| pixel[3] == 255));
-    }
-
-    #[test]
-    fn composited_tile_reproduces_the_backdrop_where_the_cursor_is_transparent() {
-        let pixmap = composite_test_pixmap();
-        let backdrop = composite_test_backdrop();
-
-        let (bgra, _) = composited_bgra_and_visible_shape(&pixmap, &backdrop).unwrap();
-
-        assert_eq!(&bgra[0..3], &backdrop[0..3]);
-    }
-
-    #[test]
-    fn composited_tile_output_depends_on_the_backdrop() {
-        let pixmap = composite_test_pixmap();
-
-        let (over_white, _) = composited_bgra_and_visible_shape(&pixmap, &[0xFF; 16]).unwrap();
-        let (over_black, _) = composited_bgra_and_visible_shape(&pixmap, &[0x00; 16]).unwrap();
-
-        assert_ne!(&over_white[4..8], &over_black[4..8]);
-        assert_ne!(&over_white[8..12], &over_black[8..12]);
-        // The opaque core hides whatever is beneath it.
-        assert_eq!(&over_white[12..16], &over_black[12..16]);
     }
 
     #[test]

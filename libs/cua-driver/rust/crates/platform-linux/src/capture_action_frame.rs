@@ -1,7 +1,6 @@
 use cua_driver_core::capture_runtime::{
-    CaptureActionError, CaptureActionRequest, CaptureIdParseError, CaptureLookupError,
-    CapturePublication, CaptureService, CaptureTarget, EncodedScreenshotDimensions,
-    NativeActionDimensions, ScreenshotToActionTransform,
+    CaptureActionRequest, CapturePublication, CaptureService, CaptureTarget,
+    EncodedScreenshotDimensions, NativeActionDimensions, ScreenshotToActionTransform,
 };
 use serde_json::Value;
 
@@ -206,27 +205,6 @@ fn select_desktop_action_dimensions(
     Ok(dimensions)
 }
 
-pub(crate) fn admission_error_code(error: &anyhow::Error) -> &'static str {
-    if error.downcast_ref::<CaptureIdParseError>().is_some() {
-        return "capture_id_invalid";
-    }
-    match error.downcast_ref::<CaptureActionError>() {
-        Some(CaptureActionError::Lookup(CaptureLookupError::Unknown)) => "capture_not_found",
-        Some(CaptureActionError::Lookup(CaptureLookupError::Expired)) => "capture_expired",
-        Some(CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch)) => {
-            "capture_generation_mismatch"
-        }
-        Some(CaptureActionError::Lookup(CaptureLookupError::TargetMismatch)) => {
-            "capture_target_mismatch"
-        }
-        Some(
-            CaptureActionError::InvalidScreenshotPoint | CaptureActionError::InvalidMappedPoint,
-        ) => "capture_coordinate_invalid",
-        Some(CaptureActionError::NativeActionFrameMismatch) => "capture_frame_mismatch",
-        None => "capture_action_refused",
-    }
-}
-
 pub fn admit_window_click(
     service: &CaptureService,
     args: &Value,
@@ -270,6 +248,7 @@ pub fn retire_runtime(service: &CaptureService) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cua_driver_core::capture_runtime::admission_error_code;
     use sha2::{Digest, Sha256};
 
     fn png(width: u32, height: u32, value: u8) -> Vec<u8> {
@@ -448,42 +427,6 @@ mod tests {
             admit_desktop(&service, &call_args, &id, (2.0, 1.5), (8, 6)).unwrap(),
             (4.0, 3.0)
         );
-    }
-
-    #[test]
-    fn capture_action_refusals_have_stable_specific_codes() {
-        for (error, code) in [
-            (
-                CaptureActionError::Lookup(CaptureLookupError::Unknown),
-                "capture_not_found",
-            ),
-            (
-                CaptureActionError::Lookup(CaptureLookupError::Expired),
-                "capture_expired",
-            ),
-            (
-                CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch),
-                "capture_generation_mismatch",
-            ),
-            (
-                CaptureActionError::Lookup(CaptureLookupError::TargetMismatch),
-                "capture_target_mismatch",
-            ),
-            (
-                CaptureActionError::InvalidScreenshotPoint,
-                "capture_coordinate_invalid",
-            ),
-            (
-                CaptureActionError::InvalidMappedPoint,
-                "capture_coordinate_invalid",
-            ),
-            (
-                CaptureActionError::NativeActionFrameMismatch,
-                "capture_frame_mismatch",
-            ),
-        ] {
-            assert_eq!(admission_error_code(&anyhow::Error::new(error)), code);
-        }
     }
 
     #[test]

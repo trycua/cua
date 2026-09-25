@@ -675,11 +675,12 @@ mod tests {
             },
             ..matched_facts()
         };
-        let reason = reason_of(decide_background_input(
-            TARGET,
-            &facts,
-            BackgroundAction::WindowPointer,
-        ));
+        let refused = decide_background_input(TARGET, &facts, BackgroundAction::WindowPointer);
+        assert_eq!(
+            code_of(refused.clone()),
+            refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW
+        );
+        let reason = reason_of(refused);
         assert!(reason.contains("window 701"), "{reason}");
         assert!(reason.contains("pid 43"), "{reason}");
         assert!(
@@ -694,11 +695,12 @@ mod tests {
             element: ElementAncestry::OutsideUnacquirableSurface,
             ..matched_facts()
         };
-        let reason = reason_of(decide_background_input(
-            TARGET,
-            &facts,
-            BackgroundAction::AxSemantic,
-        ));
+        let refused = decide_background_input(TARGET, &facts, BackgroundAction::AxSemantic);
+        assert_eq!(
+            code_of(refused.clone()),
+            refusal_codes::ELEMENT_OUTSIDE_TARGET_WINDOW
+        );
+        let reason = reason_of(refused);
         assert!(reason.contains("sheet or panel"), "{reason}");
         assert!(
             !reason.contains("acquire that window id"),

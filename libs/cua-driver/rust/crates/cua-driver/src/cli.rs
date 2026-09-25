@@ -3197,6 +3197,69 @@ pub fn run_permissions_cmd(subcommand: &str, json: bool) {
 /// Report the CuaDriver daemon's TCC status — reliably, or not at all.
 ///
 /// macOS attributes Accessibility / Screen-Recording to the *responsible
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UnknownPermissionsStatus {
+    pub daemon_running: bool,
+    pub status: &'static str,
+    pub reason: String,
+    pub explanation: String,
+    pub remediation: String,
+}
+
+impl UnknownPermissionsStatus {
+    pub fn json_payload(&self) -> serde_json::Value {
+        serde_json::json!({
+            "daemon_running": self.daemon_running,
+            "status": self.status,
+            "reason": self.reason,
+        })
+    }
+}
+
+pub(crate) fn unknown_permissions_status(
+    is_listening: bool,
+    app_name: &str,
+    cli_name: &str,
+    bundle_id: &str,
+) -> UnknownPermissionsStatus {
+    if is_listening {
+        UnknownPermissionsStatus {
+            daemon_running: true,
+            status: "unknown",
+            reason: format!(
+                "{app_name} daemon is listening, but its real TCC status is not yet available. \
+                 Run `{cli_name} permissions grant` to grant + verify."
+            ),
+            explanation: format!(
+                "{app_name} daemon is running, but its real TCC status is pending or not yet verified."
+            ),
+            remediation: format!(
+                "  → Run `{cli_name} permissions grant` to grant + verify and re-run this command."
+            ),
+        }
+    } else {
+        UnknownPermissionsStatus {
+            daemon_running: false,
+            status: "unknown",
+            reason: format!(
+                "no {app_name} daemon is running under the driver's own identity \
+                 ({bundle_id}), so its real TCC status can't be read from this \
+                 process. Run `{cli_name} permissions grant` to grant + verify."
+            ),
+            explanation: format!(
+                "No {app_name} daemon is running under the driver's own identity ({bundle_id}), \
+                 so its real TCC status can't be read.\n\
+                 (A status check from this terminal would report the terminal's grants, not the \
+                 driver's.)"
+            ),
+            remediation: format!(
+                "  → Run `{cli_name} permissions grant` to grant + verify, or start the daemon\n    \
+                 (`open -n -g -a {app_name} --args serve`) and re-run this command."
+            ),
+        }
+    }
+}
+
 /// process*, so the ONLY process that can read `com.trycua.driver`'s real
 /// grants is the daemon running as its own responsible process. When the
 /// daemon is up we query it and report its
@@ -3249,25 +3312,9 @@ fn run_permissions_status(json: bool) {
     let Some(structured) = daemon_status else {
         // No reliable answer. Emit NO accessibility/screen_recording booleans —
         // nothing downstream can misread a false `granted: true`.
-        let message = if is_listening {
-            format!(
-                "{app_name} daemon is listening, but its real TCC status is not yet available. \
-                 Run `{cli_name} permissions grant` to grant + verify and re-run this command."
-            )
-        } else {
-            format!(
-                "No {app_name} daemon is running under the driver's own identity ({bundle_id}), \
-                 so its real TCC status can't be read from this process. \
-                 Run `{cli_name} permissions grant` to grant + verify, or start the daemon \
-                 (`open -n -g -a {app_name} --args serve`) and re-run this command."
-            )
-        };
+        let unknown = unknown_permissions_status(is_listening, &app_name, &cli_name, &bundle_id);
         if json {
-            let payload = serde_json::json!({
-                "daemon_running": is_listening,
-                "status": "unknown",
-                "reason": message,
-            });
+            let payload = unknown.json_payload();
             println!(
                 "{}",
                 serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string())
@@ -3276,14 +3323,19 @@ fn run_permissions_status(json: bool) {
         }
         println!("Accessibility:    ❓ unknown");
         println!("Screen Recording: ❓ unknown");
-        println!("{message}");
+        println!("{}", unknown.explanation);
+        println!("{}", unknown.remediation);
         return;
     };
 
     if json {
+        let mut out = structured.clone();
+        if let Some(map) = out.as_object_mut() {
+            map.insert("daemon_running".into(), serde_json::json!(true));
+        }
         println!(
             "{}",
-            serde_json::to_string_pretty(&structured).unwrap_or_else(|_| structured.to_string())
+            serde_json::to_string_pretty(&out).unwrap_or_else(|_| out.to_string())
         );
         return;
     }
@@ -5231,6 +5283,38 @@ mod tests {
             .filter_map(|v| v.as_str())
             .collect();
         assert_eq!(args, vec!["mcp"]);
+    }
+
+    #[test]
+    fn unknown_permissions_status_listening_reports_daemon_running_without_start_remedy() {
+        let status =
+            unknown_permissions_status(true, "CuaDriver", "cua-driver", "com.trycua.driver");
+        assert!(status.daemon_running);
+        assert_eq!(status.status, "unknown");
+        assert_eq!(status.json_payload()["daemon_running"], true);
+        assert_eq!(status.json_payload()["status"], "unknown");
+        // Remediation must NOT suggest starting the daemon because it is already listening
+        assert!(!status.reason.contains("open -n -g -a"));
+        assert!(!status.reason.contains("start the daemon"));
+        assert!(!status.remediation.contains("open -n -g -a"));
+        assert!(!status.remediation.contains("start the daemon"));
+        assert!(status.remediation.contains("permissions grant"));
+    }
+
+    #[test]
+    fn unknown_permissions_status_not_listening_reports_daemon_not_running_with_start_remedy() {
+        let status =
+            unknown_permissions_status(false, "CuaDriver", "cua-driver", "com.trycua.driver");
+        assert!(!status.daemon_running);
+        assert_eq!(status.status, "unknown");
+        assert_eq!(status.json_payload()["daemon_running"], false);
+        assert_eq!(status.json_payload()["status"], "unknown");
+        // Remediation MUST suggest starting the daemon when not listening
+        assert!(status.reason.contains("no CuaDriver daemon is running"));
+        assert!(status.remediation.contains("start the daemon"));
+        assert!(status
+            .remediation
+            .contains("open -n -g -a CuaDriver --args serve"));
     }
 }
 

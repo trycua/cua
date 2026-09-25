@@ -145,6 +145,25 @@ fn native_setup_page_committed(
     !omnibox_focused
 }
 
+fn diag_setup_4121(pid: i32, window_id: u32, tree: &TreeWalkResult, descriptor: &BrowserSetupDescriptor, committed: bool, tag: &str) {
+    use std::io::Write;
+    let nodes = &tree.nodes;
+    let urls = nodes.iter().filter(|n| n.role == "AXTextField" && field_equals(n, "Address and search bar")).map(|n| n.value.clone()).collect::<Vec<_>>();
+    let tabs = nodes.iter().filter(|n| n.role == "AXRadioButton").map(|n| (n.title.clone(), n.selected)).collect::<Vec<_>>();
+    let webareas = nodes.iter().filter(|n| n.role == "AXWebArea").map(|n| n.title.clone()).collect::<Vec<_>>();
+    let proven = native_setup_page_proven(nodes, descriptor);
+    let committed_now = native_setup_page_committed(pid, nodes, descriptor);
+    let ax_cb = exact_setup_checkbox(tree, descriptor).map(|o| o.is_some()).map_err(|e| e.message);
+    let px = exact_pixel_setup_checkbox(pid, tree, window_id, descriptor, committed).map(|o| o.map(|c| (c.state == CheckboxState::On, c.screen_x, c.screen_y))).map_err(|e| e.message);
+    let line = format!(
+        "[diag-4121] {tag} pid={pid} wid={window_id} nodes={} trunc={} nav_committed={committed} proven={proven} committed_now={committed_now} ax_cb={ax_cb:?} px={px:?} urls={urls:?} tabs={tabs:?} webareas={webareas:?} frontmost={:?}",
+        nodes.len(), tree.truncated, crate::apps::frontmost_pid()
+    );
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/cua-diag-4125.log") {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 fn exact_setup_checkbox(
     tree: &TreeWalkResult,
     descriptor: &BrowserSetupDescriptor,
@@ -1489,8 +1508,13 @@ fn set_remote_debugging(
     }
 
     let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
+    let mut diag_next = Instant::now();
     loop {
         let tree = walk_tree(pid, Some(window_id), None);
+        if Instant::now() >= diag_next {
+            diag_next = Instant::now() + Duration::from_millis(1000);
+            diag_setup_4121(pid, window_id, &tree, descriptor, handle.setup_navigation_committed, &format!("loop desired={desired_enabled} enable_attempted={} px_attempted={}", handle.enable_attempted, handle.pixel_checkbox_fallback_attempted));
+        }
         let checkbox = exact_setup_checkbox(&tree, descriptor);
         match checkbox {
             Ok(Some(element)) => {

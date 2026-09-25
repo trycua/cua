@@ -73,6 +73,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: arch-pacman
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build exact candidate and native package tests
         working-directory: libs/cua-driver/rust
         run: |
@@ -121,6 +122,7 @@ jobs:
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           workspaces: "libs/cua-driver/rust -> target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update

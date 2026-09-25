@@ -34,6 +34,36 @@ fn field_equals(node: &AXNode, expected: &str) -> bool {
     .any(|value| value.trim().eq_ignore_ascii_case(expected))
 }
 
+/// Whether a native tab's accessible name belongs to the page titled
+/// `title`. Chromium names a tab after its page and can later append
+/// ` - <status>` segments, such as a memory-usage readout, once the tab has
+/// loaded. Those segments are appended asynchronously, so an exact-name
+/// proof that passed at first stops matching a few seconds later (#4121).
+/// Only that separator-delimited suffix is accepted, never a prefix or an
+/// arbitrary substring.
+fn tab_name_matches_title(node: &AXNode, title: &str) -> bool {
+    let title = title.trim();
+    if title.is_empty() {
+        return false;
+    }
+    [
+        node.title.as_deref(),
+        node.value.as_deref(),
+        node.description.as_deref(),
+        node.help.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .any(|name| {
+        name.eq_ignore_ascii_case(title)
+            || name
+                .get(..title.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(title))
+                && name[title.len()..].starts_with(" - ")
+    })
+}
+
 fn has_action(node: &AXNode, action: &str) -> bool {
     node.actions.iter().any(|value| value == action)
 }
@@ -107,7 +137,7 @@ fn native_setup_page_proven(nodes: &[AXNode], descriptor: &BrowserSetupDescripto
                 && descriptor
                     .page_titles
                     .iter()
-                    .any(|title| field_equals(node, title))
+                    .any(|title| tab_name_matches_title(node, title))
         })
         .count();
     let omnibox_popup_open = nodes
@@ -1844,6 +1874,47 @@ mod tests {
                 .code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
+    }
+
+    #[test]
+    fn setup_tab_proof_survives_chromium_status_suffixes_only() {
+        // Hosted macOS Chrome 153 renamed the selected setup tab a few seconds
+        // after load, while the local-network alert delayed confirmation
+        // (#4121). The exact-name proof then never matched again.
+        let omnibox = node(
+            "AXTextField",
+            Some("Address and search bar"),
+            Some(chrome().setup_url),
+            &["AXPress"],
+        );
+        let tab_named = |name: &str| {
+            let mut tab = node("AXRadioButton", None, Some("1"), &["AXPress"]);
+            tab.description = Some(name.to_owned());
+            tab.selected = Some(true);
+            tab
+        };
+        let title = chrome().page_titles[0];
+        for name in [
+            title.to_owned(),
+            format!("{title} - Memory usage - 38.3 MB"),
+            format!("{title} - Speicherverbrauch – 38,3 MB"),
+        ] {
+            assert!(
+                native_setup_page_proven(&[omnibox.clone(), tab_named(&name)], chrome()),
+                "{name:?} must still prove the selected setup tab"
+            );
+        }
+        for name in [
+            format!("{title}X"),
+            format!("{title}- Memory usage"),
+            format!("Other {title}"),
+            format!("x - {title}"),
+        ] {
+            assert!(
+                !native_setup_page_proven(&[omnibox.clone(), tab_named(&name)], chrome()),
+                "{name:?} must not prove the selected setup tab"
+            );
+        }
     }
 
     #[test]

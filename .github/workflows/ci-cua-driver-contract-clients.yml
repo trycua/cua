@@ -394,8 +394,8 @@ jobs:
         run: |
           python -m py_compile \
             claude_agent.py codex_agent.py fixture_server.py \
-            native_driver.py native_tools.py test_fixture_server.py
-          python -m unittest test_fixture_server.py -v
+            native_driver.py native_tools.py tests/test_fixture_server.py
+          python -m unittest tests.test_fixture_server -v
           python -c "import claude_agent_sdk, openai_codex, cua_driver"
 
       - name: Install agent SDK example dependencies

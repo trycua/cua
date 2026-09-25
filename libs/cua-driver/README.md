@@ -105,11 +105,12 @@ reference](https://cua.ai/docs/reference/cua-driver/permission-modes).
 | `contract/`                     | Experimental generated SDK contract and fixtures                       |
 | `typescript/`                   | Generated TypeScript SDK                                               |
 | `tests/fixtures/`               | Source-built GUI harness apps and shared fixtures                      |
-| `rust/crates/cua-driver/tests/` | Rust integration tests for the driver and GUI harnesses                |
+| `rust/crates/cua-driver/tests/` | Hermetic Rust integration tests for the driver                         |
+| `rust/crates/cua-driver-e2e/tests/` | Desktop E2E suites for the GUI harnesses                       |
 | `scripts/`                      | Install, uninstall, local build, and VM sync helpers                   |
 | `docs/`                         | Small repo-local specs that are not part of the hosted docs site       |
 
-Start with `rust/README.md`, `rust/crates/cua-driver/tests/README.md`, and
+Start with `rust/README.md`, `rust/crates/cua-driver-e2e/tests/README.md`, and
 `tests/fixtures/README.md` when changing driver behavior or tests.
 
 The contract-first SDK architecture is documented in

@@ -321,29 +321,6 @@ pub(crate) fn check_update_state_with_ownership(no_cache: bool, managed: bool) -
     }
 }
 
-/// Mark `version` as dismissed so the banner stops nagging the user about
-/// this specific release. They will see the next banner the moment a
-/// strictly-newer tag ships.
-///
-/// Idempotent. Failures (no HOME, IO error) are logged via
-/// `tracing::debug!` and silently dropped — dismissal is a UX nicety, not
-/// a correctness boundary.
-///
-/// Exposed publicly so a future interactive prompt (TUI, GUI helper) can
-/// wire it in without re-implementing the persistence layer. No call site
-/// in the current binary — the banner today is informational only.
-#[allow(dead_code)]
-pub fn dismiss_version(version: &str) {
-    let mut cache = read_cache().unwrap_or_default();
-    if !cache.dismissed_versions.iter().any(|v| v == version) {
-        cache.dismissed_versions.push(version.to_owned());
-    }
-    if let Err(e) = write_cache(&cache) {
-        tracing::debug!(target: "cua_driver::version_check",
-                        "failed to persist dismissal: {e}");
-    }
-}
-
 // ── Core logic (testable seam) ───────────────────────────────────────────
 
 /// Inner routine wired up by [`maybe_announce_update`].
@@ -437,8 +414,8 @@ fn run_check_and_announce_with_ownership<F, W>(
         }
     };
 
-    // Re-read dismissals: dismiss_version may have run between our cache
-    // load and now (e.g. on a separately-spawned task in the same process).
+    // Re-read dismissals: another writer may have updated the cache between
+    // our load and now.
     let dismissed = read_cache()
         .map(|c| c.dismissed_versions)
         .unwrap_or(cached.dismissed_versions);
@@ -1095,33 +1072,6 @@ mod tests {
             assert!(legacy_cache.is_file());
             let preserved = std::fs::read_to_string(legacy_cache).unwrap();
             assert_eq!(preserved, legacy_json);
-        });
-    }
-
-    #[test]
-    fn dismissed_versions_persist_across_writes() {
-        let _g = ENV_LOCK.lock().unwrap();
-        with_isolated_home(|_| {
-            // First dismissal.
-            dismiss_version("0.1.4");
-            let after_first = read_cache().expect("cache after first");
-            assert_eq!(after_first.dismissed_versions, vec!["0.1.4".to_owned()]);
-
-            // Second dismissal of a different version appends, doesn't replace.
-            dismiss_version("0.1.5");
-            let after_second = read_cache().expect("cache after second");
-            assert_eq!(
-                after_second.dismissed_versions,
-                vec!["0.1.4".to_owned(), "0.1.5".to_owned()],
-            );
-
-            // Re-dismissing an already-dismissed version is idempotent.
-            dismiss_version("0.1.4");
-            let after_dup = read_cache().expect("cache after dup");
-            assert_eq!(
-                after_dup.dismissed_versions,
-                vec!["0.1.4".to_owned(), "0.1.5".to_owned()],
-            );
         });
     }
 

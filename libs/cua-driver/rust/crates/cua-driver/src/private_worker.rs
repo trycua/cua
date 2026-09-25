@@ -335,13 +335,3 @@ fn write_response(writer: &mut impl Write, response: &ChannelResponse) -> anyhow
     writer.flush()?;
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::requested_generation;
-
-    #[test]
-    fn ordinary_process_is_not_a_private_worker() {
-        assert!(requested_generation().is_none());
-    }
-}

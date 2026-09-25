@@ -214,7 +214,7 @@ These run without a repo-local GUI application and normally run without
 | `rust/crates/*/src/**`                 | Core driver, platform-independent logic, schemas, and helpers |
 | `protocol_*_test.rs`                   | MCP handshake, tool calls, sessions, media, and errors        |
 | `schema_*_test.rs`                     | Shared schema and backend consistency                         |
-| `transport_config_persistence_test.rs` | CLI/MCP configuration persistence                             |
+| `transport_config_persistence_test.rs` | CLI configuration persistence across processes                |
 | `protocol_element_token_test.rs`       | Element-token protocol behavior                               |
 
 These tests should be fast, deterministic, and safe to run on ordinary CI

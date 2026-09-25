@@ -3,7 +3,7 @@ title: Target-addressable KWin input delivery for KDE/Wayland
 authors:
   - netbospl
 created: 2026-09-01
-last_updated: 2026-09-25
+last_updated: 2026-09-26
 status: review
 discussion: https://github.com/trycua/cua/issues/3506
 rfc_pr: https://github.com/trycua/cua/pull/3507
@@ -322,6 +322,10 @@ are required:
 - screenshot-derived coordinates are bound to the target geometry/capture
   state and checked at dispatch; a moved or resized window must not silently
   reinterpret old coordinates, even when its identity is unchanged;
+- hit-testing remains within a certified surface tree for the selected target.
+  Popup, modal, and subsurface roles require explicit compatibility evidence;
+  refuse an uncertified role rather than routing input to a popup or another
+  top-level surface;
 - duplicate or ambiguous identities refuse rather than selecting a best match.
 
 The existing helper-owner/session/UID checks remain mandatory. The implementation
@@ -798,6 +802,10 @@ Cover at least:
 - capture crop/scale/transform conversion and rejection of non-finite or
   out-of-bounds coordinates without clamping;
 - target loss before mutation;
+- popup/modal/subsurface routing: prove events remain in the certified target
+  surface tree when a popup appears or changes between frames; otherwise refuse
+  before dispatch or preserve partial/unknown delivery, with no input to a
+  different top-level window;
 - unsupported operation capability.
 
 ### Policy and transport-ownership tests

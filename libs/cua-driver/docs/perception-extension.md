@@ -106,6 +106,15 @@ registry, so a later process cannot resolve its `capture_id`.
 5. Reobserve after every action attempt. Never remove `capture_id` and retry an
    expired, stale, retired, or mismatched capture as an unbound click.
 
+Capture-bound click refusals use one shared code table on every platform,
+owned by `CaptureActionError::wire_code` in `cua-driver-core`:
+`capture_id_invalid`, `capture_not_found`, `capture_expired`,
+`capture_generation_mismatch`, `capture_target_mismatch`,
+`capture_coordinate_invalid`, and `capture_frame_mismatch`. Live-target
+inspection failures before admission remain adapter-owned
+(`capture_action_refused` on Windows and Linux, `capture_target_mismatch` on
+macOS).
+
 A capture-bound click consumes the capture before native dispatch. At most one
 action may derive from a capture. Capture again after an action, timeout,
 unknown result, resize, move, scroll, navigation, display-layout change, or

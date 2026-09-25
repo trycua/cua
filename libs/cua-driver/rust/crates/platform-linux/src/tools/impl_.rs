@@ -6165,7 +6165,7 @@ pub struct ClickTool {
 }
 
 fn capture_admission_error(error: anyhow::Error) -> ToolResult {
-    let code = crate::capture_action_frame::admission_error_code(&error);
+    let code = cua_driver_core::capture_runtime::admission_error_code(&error);
     ToolResult::error(format!("capture-bound click refused: {error}"))
         .with_structured(json!({ "code": code, "effect": "refused" }))
 }

@@ -603,7 +603,7 @@ fn screenshot_scale(
 }
 
 fn capture_admission_refusal(error: anyhow::Error) -> ToolResult {
-    let code = crate::capture_admission::admission_error_code(&error);
+    let code = cua_driver_core::capture_runtime::admission_error_code(&error);
     ToolResult::error(format!("Capture-bound click refused: {error}")).with_structured(json!({
         "code": code,
         "effect": "refused",

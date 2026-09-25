@@ -116,7 +116,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: [shared, native, capture, browser]
+        lane: [browser]
     env:
       CUA_E2E_SOURCE_SHA: ${{ inputs.source_sha }}
       CUA_E2E_WORKFLOW_SHA: ${{ github.sha }}

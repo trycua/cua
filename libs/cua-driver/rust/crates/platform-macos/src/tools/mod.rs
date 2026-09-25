@@ -296,6 +296,59 @@ pub(crate) async fn finish_window_observation(
     snapshot.detect_async().await
 }
 
+
+/// TEMPORARY #4125 diagnostic (scratch branch only).
+pub(crate) async fn diag_focus_4125(tag: String, pid: i32, window_id: Option<u32>, x: f64, y: f64) {
+    let _ = tokio::task::spawn_blocking(move || {
+        use std::io::Write;
+        let mut line = format!("[diag-4125] {tag} pid={pid} wid={window_id:?} px=({x:.1},{y:.1})");
+        let screen = window_id.and_then(|wid| px_frame::resolve_window_px_frame(wid).ok()).map(|f| {
+            let (sx, sy, _, _) = f.to_screen(x, y);
+            (sx, sy)
+        });
+        line.push_str(&format!(" screen={screen:?}"));
+        unsafe {
+            use crate::ax::bindings as b;
+            let describe = |e: b::AXUIElementRef| -> String {
+                format!(
+                    "role={:?} sub={:?} desc={:?} rect={:?} focusedAttr={:?} valueLen={:?} selText={:?}",
+                    b::copy_string_attr(e, "AXRole"),
+                    b::copy_string_attr(e, "AXSubrole"),
+                    b::copy_string_attr(e, "AXDescription"),
+                    b::element_screen_rect(e),
+                    b::copy_bool_attr(e, "AXFocused"),
+                    b::copy_string_attr(e, "AXValue").map(|v| v.chars().count()),
+                    b::copy_string_attr(e, "AXSelectedText"),
+                )
+            };
+            match b::focused_element_of_pid(pid) {
+                Some(f) => {
+                    line.push_str(&format!(" | focused: {}", describe(f)));
+                    if let Some((sx, sy)) = screen {
+                        if let Some(h) = b::element_at_screen_position(pid, sx, sy) {
+                            line.push_str(&format!(
+                                " | hit: {} equalFocused={}",
+                                describe(h),
+                                core_foundation::base::CFEqual(h as _, f as _) != 0
+                            ));
+                            core_foundation::base::CFRelease(h as _);
+                        } else {
+                            line.push_str(" | hit: none");
+                        }
+                    }
+                    core_foundation::base::CFRelease(f as _);
+                }
+                None => line.push_str(" | focused: none"),
+            }
+        }
+        line.push_str(&format!(" frontmost={:?}", crate::apps::frontmost_pid()));
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/cua-diag-4125.log") {
+            let _ = writeln!(f, "{line}");
+        }
+    })
+    .await;
+}
+
 /// px-focus for the keyboard family (type_text / press_key / hotkey): focus the
 /// element at (x,y) before a keystroke — the *element px action* form of a
 /// keyboard tool. Prefer non-destructive AX focus so an existing selection is
@@ -344,11 +397,13 @@ pub(crate) async fn focus_by_pixel(
     }
     let click_tool = click::ClickTool::new(state.clone());
     let click = click_tool.invoke(click_args);
+    diag_focus_4125("enter".into(), pid, window_id, x, y).await;
     let focus = if let Some(lease) = mutation_lease {
         crate::background_mutation::with_held_lease(lease.pid, click).await
     } else {
         click.await
     };
+    diag_focus_4125(format!("after-ax-focus is_error={:?} text={:?}", focus.is_error, focus.content.first().map(|c| format!("{c:?}").chars().take(160).collect::<String>())), pid, window_id, x, y).await;
     if focus.is_error != Some(true) {
         // AXFocused is non-destructive: unlike a second real click, it keeps a
         // Cmd+A selection intact before a follow-up type_text or Cmd+V.
@@ -359,7 +414,9 @@ pub(crate) async fn focus_by_pixel(
         // whenever the click was a silent no-op — advancing on transport
         // success alone, which is exactly what the ladder forbids. Confirm the
         // focus actually moved before claiming this rung worked.
-        if !foreground || pixel_focus_landed(pid, window_id, x, y).await {
+        let landed = pixel_focus_landed(pid, window_id, x, y).await;
+        diag_focus_4125(format!("landed={landed} fg={foreground}"), pid, window_id, x, y).await;
+        if !foreground || landed {
             return Ok(());
         }
     } else if !foreground {
@@ -397,6 +454,7 @@ pub(crate) async fn focus_by_pixel(
     }
     // Brief settle so the renderer registers focus before the keystrokes.
     tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    diag_focus_4125("after-real-click".into(), pid, window_id, x, y).await;
     Ok(())
 }
 

@@ -467,6 +467,9 @@ impl Tool for HotkeyTool {
         )
         .await;
 
+        if let (Some(cx), Some(cy)) = (px, py) {
+            super::diag_focus_4125("after-hotkey".into(), pid, window_id, cx, cy).await;
+        }
         let changes = super::finish_window_observation(snapshot).await;
 
         match result {

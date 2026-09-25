@@ -64,6 +64,34 @@ fn tab_name_matches_title(node: &AXNode, title: &str) -> bool {
     })
 }
 
+/// How long the omnibox may take to apply queued setup keystrokes.
+const TYPED_URL_SETTLE_TIMEOUT: Duration = Duration::from_millis(1500);
+
+/// Poll `read` until it returns exactly `expected` (trimmed, ASCII
+/// case-insensitive) or `timeout` elapses. On timeout, returns the last value
+/// observed so the refusal can say how far the field got.
+fn await_exact_value(
+    mut read: impl FnMut() -> Option<String>,
+    expected: &str,
+    timeout: Duration,
+    poll: Duration,
+) -> Result<(), Option<String>> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let value = read();
+        if value
+            .as_deref()
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case(expected))
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(value);
+        }
+        std::thread::sleep(poll);
+    }
+}
+
 fn has_action(node: &AXNode, action: &str) -> bool {
     node.actions.iter().any(|value| value == action)
 }
@@ -1481,16 +1509,23 @@ fn set_remote_debugging(
                                 crate::input::keyboard::press_key_global("a", &["cmd"])?;
                                 std::thread::sleep(Duration::from_millis(30));
                                 crate::input::keyboard::type_text(pid, descriptor.setup_url)?;
-                                std::thread::sleep(Duration::from_millis(100));
-                                let typed_exact_value = unsafe {
-                                    copy_string_attr(omnibox as AXUIElementRef, "AXValue")
-                                }
-                                .is_some_and(|value| {
-                                    value.trim().eq_ignore_ascii_case(descriptor.setup_url)
-                                });
-                                if !typed_exact_value {
+                                // The omnibox applies queued keystrokes
+                                // asynchronously; a single fixed-delay read
+                                // can observe a prefix of the URL. Poll the
+                                // exact value within a bound before refusing.
+                                let typed = await_exact_value(
+                                    || unsafe {
+                                        copy_string_attr(omnibox as AXUIElementRef, "AXValue")
+                                    },
+                                    descriptor.setup_url,
+                                    TYPED_URL_SETTLE_TIMEOUT,
+                                    Duration::from_millis(50),
+                                );
+                                if let Err(observed) = typed {
                                     anyhow::bail!(
-                                        "trusted setup typing did not retain the fixed URL"
+                                        "trusted setup typing did not retain the fixed URL (observed {} of {} characters)",
+                                        observed.map_or(0, |value| value.trim().chars().count()),
+                                        descriptor.setup_url.chars().count()
                                     );
                                 }
                                 crate::input::keyboard::press_key_global("return", &[])?;
@@ -1874,6 +1909,31 @@ mod tests {
                 .code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
+    }
+
+    #[test]
+    fn typed_setup_url_is_confirmed_after_late_keystrokes_but_never_a_different_value() {
+        let url = "edge://inspect/#remote-debugging";
+        let mut reads = ["edge://ins", "edge://inspect/#remote", url].into_iter();
+        assert_eq!(
+            await_exact_value(
+                || reads.next().map(str::to_owned),
+                url,
+                Duration::from_secs(1),
+                Duration::from_millis(1),
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            await_exact_value(
+                || Some(format!("{url}x")),
+                url,
+                Duration::from_millis(20),
+                Duration::from_millis(1),
+            ),
+            Err(Some(format!("{url}x")))
+        );
+        assert!(TYPED_URL_SETTLE_TIMEOUT < EXISTING_PROFILE_SETUP_READY_TIMEOUT);
     }
 
     #[test]

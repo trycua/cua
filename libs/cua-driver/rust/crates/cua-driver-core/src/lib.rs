@@ -89,6 +89,7 @@ pub mod session_tools;
 pub(crate) mod snapshot_test_support;
 pub mod socket_io;
 pub mod text_sanitize;
+pub mod timestamp;
 pub mod tool;
 pub mod tool_args;
 pub mod tool_schema;

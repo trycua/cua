@@ -423,25 +423,12 @@ fn process_identity(pid: i64) -> Result<(u64, Option<String>), BrowserRefusal> {
             format!("browser process {pid} is no longer available"),
         )
     })?;
-    let tail = stat
-        .rsplit_once(')')
-        .map(|(_, tail)| tail.trim())
-        .ok_or_else(|| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not parse process identity for pid {pid}"),
-            )
-        })?;
-    let started = tail
-        .split_whitespace()
-        .nth(19)
-        .and_then(|value| value.parse::<u64>().ok())
-        .ok_or_else(|| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not parse process start time for pid {pid}"),
-            )
-        })?;
+    let started = crate::proc_fs::process_start_time_from_stat(&stat).ok_or_else(|| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not parse process start time for pid {pid}"),
+        )
+    })?;
     let executable = std::fs::read_link(format!("/proc/{pid}/exe"))
         .ok()
         .map(|path| path.to_string_lossy().into_owned());

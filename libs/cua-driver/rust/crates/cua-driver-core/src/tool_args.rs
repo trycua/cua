@@ -110,14 +110,55 @@ pub fn sanitize_reserved_args(args: &mut Value) {
 /// anonymous calls. Mirrors the cursor/mouse-hold isolation convention so new
 /// per-call state (e.g. desktop screenshot scale) doesn't invent its own.
 pub fn resolve_session_key(args: &Value) -> String {
-    for key in ["session", "_session_id", "cursor_id"] {
-        if let Some(v) = args.get(key).and_then(Value::as_str) {
-            if !v.is_empty() {
-                return v.to_owned();
-            }
+    session_key(args).unwrap_or_else(|| "default".to_owned())
+}
+
+/// The first non-empty of `session`, the proxy-minted `_session_id`, and the
+/// legacy `cursor_id`, or `None` for an anonymous call. Callers pick their own
+/// anonymous fallback: [`resolve_session_key`] uses a shared `"default"`
+/// bucket, and the Windows cursor key stays cursor-less.
+pub fn session_key(args: &Value) -> Option<String> {
+    ["session", "_session_id", "cursor_id"]
+        .into_iter()
+        .filter_map(|key| args.get(key).and_then(Value::as_str))
+        .find(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+#[cfg(test)]
+mod session_key_tests {
+    use super::{resolve_session_key, session_key};
+    use serde_json::json;
+
+    #[test]
+    fn session_then_implicit_session_then_legacy_cursor_id() {
+        for (args, expected) in [
+            (json!({}), None),
+            (json!({ "pid": 1 }), None),
+            (json!({ "session": "research-run" }), Some("research-run")),
+            (json!({ "_session_id": "mcp-1-2" }), Some("mcp-1-2")),
+            (json!({ "cursor_id": "user-handle" }), Some("user-handle")),
+            (
+                json!({ "session": "s1", "_session_id": "implicit", "cursor_id": "c1" }),
+                Some("s1"),
+            ),
+            (
+                json!({ "_session_id": "implicit", "cursor_id": "c1" }),
+                Some("implicit"),
+            ),
+            // Empty and non-string values fall through to the next source.
+            (json!({ "session": "", "cursor_id": "c1" }), Some("c1")),
+            (json!({ "session": 7, "_session_id": "mcp" }), Some("mcp")),
+            (json!({ "session": "", "cursor_id": "" }), None),
+        ] {
+            assert_eq!(session_key(&args).as_deref(), expected, "{args}");
+            assert_eq!(
+                resolve_session_key(&args),
+                expected.unwrap_or("default"),
+                "{args}"
+            );
         }
     }
-    "default".to_owned()
 }
 
 #[cfg(test)]

@@ -173,6 +173,48 @@ to the configured provider is appropriate.
 The repository's credential-free checks do not establish live Jev behavior.
 Record live verification separately when you run it with a valid key.
 
+## Jev backends: mock, TypeSafe, OpenJev, local
+
+`python/jev_backends.py` and `typescript/jev_backends.ts` generalize the
+runner's provider boundary beyond the TypeSafe SDK. Four backends share one
+validated System One wire shape (`POST {base}/v1/systemone` with
+`{state, model, questions}`):
+
+| Backend | Source | Credential |
+| --- | --- | --- |
+| `mock` | deterministic local chooser (default) | none |
+| `typesafe` | TypeSafe cloud | `JEV_API_KEY` or `TYPESAFE_API_KEY` |
+| `openjev` | configured System One-compatible endpoint | optional |
+| `local` | local Jev, default `http://127.0.0.1:8787` | none |
+
+Select a backend with `--provider` or `JEV_BACKEND`. When neither is set the
+runner stays on `mock`; the command-line flag overrides the environment.
+`live` remains a deprecated alias for `typesafe`. An explicit unknown
+`JEV_BACKEND` is rejected rather than silently becoming mock.
+
+```bash
+export JEV_BACKEND=local
+export JEV_BASE_URL=http://127.0.0.1:8787
+export JEV_MODEL=jev-latest
+export JEV_TIMEOUT_MS=2500
+uv run python/run.py
+```
+
+The local backend accepts only HTTP loopback URLs. Remote URLs cannot embed
+credentials, and a configured API key is sent only to HTTPS; keyless OpenJev
+endpoints may still use an explicitly configured HTTP URL. HTTP redirects are
+refused so a validated loopback or credential destination cannot redirect the
+request elsewhere. Jev keys are read from environment variables only, never a
+command-line flag. Missing credentials or base URLs, timeouts, HTTP errors, and
+malformed model output return a machine-readable skipped decision and the
+runner abstains for that step.
+
+Choice output is fail-closed before it becomes an action ID: probability keys
+must exactly match the candidate table, values must be finite and in `[0,1]`,
+probability mass must be approximately one, and the selected ID must be the
+argmax. The runner still resolves that ID back to the locally constructed,
+snapshot-bound candidate before Cua Driver receives an action.
+
 ## Use the bounded chooser CLI
 
 Applications that already own capture, candidate construction, execution, and

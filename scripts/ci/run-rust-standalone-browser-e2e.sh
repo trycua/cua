@@ -128,6 +128,7 @@ else
     standalone_browser_pointer_actions
     standalone_browser_prepare_isolated
     standalone_browser_roundtrip
+    standalone_browser_same_title_tabs
     standalone_browser_semantic_state
     standalone_browser_stale_ref
     standalone_browser_trust_gated_dom_click

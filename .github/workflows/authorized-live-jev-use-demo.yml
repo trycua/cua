@@ -498,9 +498,8 @@ jobs:
               return matches[0]
           window_test = resolve("authorized_visual_only_window_demo")
           desktop_test = resolve("authorized_visual_only_primary_desktop_demo")
-          negative_test = resolve("authorized_live_jev_no_matching_action_control")
           with pathlib.Path(os.environ["GITHUB_ENV"]).open("a") as stream:
-              stream.write(f"CUA_CANDIDATE_TEST_BINARY={binary}\nCUA_CANDIDATE_TEST_BINARY_SHA256={hashlib.sha256(binary.read_bytes()).hexdigest()}\nCUA_CANDIDATE_WINDOW_TEST={window_test}\nCUA_CANDIDATE_DESKTOP_TEST={desktop_test}\nCUA_CANDIDATE_NEGATIVE_TEST={negative_test}\n")
+              stream.write(f"CUA_CANDIDATE_TEST_BINARY={binary}\nCUA_CANDIDATE_TEST_BINARY_SHA256={hashlib.sha256(binary.read_bytes()).hexdigest()}\nCUA_CANDIDATE_WINDOW_TEST={window_test}\nCUA_CANDIDATE_DESKTOP_TEST={desktop_test}\n")
           '@ | python - $messages
           if ($LASTEXITCODE -ne 0) { throw 'candidate test binary measurement failed' }
       - name: Verify Linux X11 desktop survived setup steps

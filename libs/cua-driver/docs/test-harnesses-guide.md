@@ -66,7 +66,11 @@ in the prepared native Hyprland desktop at the exact candidate SHA. Preserve
 the runner's required cells, assertions, and evidence checks. Record compositor
 and backend provenance; an X11 run does not establish native Hyprland coverage.
 Environment failures and failed cells remain failures, not permission to skip
-tests or change expected results.
+tests or change expected results. In the same desktop, also run
+`cargo test -p cua-driver --test hyprland_foreground_test -- --ignored --test-threads=1`
+and the same command for `hyprland_native_observation_test`. No automated lane
+runs these foreground-safety and exact-identity rows, so
+`tests/manual-e2e-allowlist.txt` records them as a manual native-Hyprland gate.
 
 Before launching the native Hyprland harness, apply this map-time rule in the
 disposable desktop's Lua configuration and reload it:
@@ -121,10 +125,10 @@ background qualification remains native Calc from `libreoffice-fresh 26.2.5-3`,
 Inkscape `1.4.4-6`, the plain compiled `evdev`/`pc105`/`us` keymap, and two
 seats. Chromium, Electron, and XWayland raw background input remain unqualified;
 semantic AT-SPI actions are separate.
-See [production proof preparation](../hyprland-plugin/tests/production-proof.md)
+See [production proof preparation](../hyprland-plugin/docs/production-proof.md)
 for the bounded plans and their limits.
 
-The explicit [Inkscape-only qualification profile](../hyprland-plugin/tests/production-inkscape-profile.md)
+The explicit [Inkscape-only qualification profile](../hyprland-plugin/docs/production-inkscape-profile.md)
 supports a bounded packaging candidate using exact Inkscape `1.4.4-6`, with
 independent native clients, two app lanes, separate SVG oracles, and third-owner
 capacity refusal. It preserves the default Calc/Inkscape profile and the native
@@ -302,6 +306,7 @@ the Lume gate runs after its repo-local matrix.
 | Native controls           | `harness_swiftui_test.rs`              | Repo-local SwiftUI app                  |
 | Installed app launch      | `installed_app_launch_macos_test.rs`   | Calculator and TextEdit                 |
 | Installed app AX delivery | `installed_app_textedit_macos_test.rs` | TextEdit                                |
+| Exact window activation   | `bring_to_front_macos_test.rs`         | Repo-local AppKit and SwiftUI apps      |
 | Capture contract          | `capture_contract_test.rs`             | Installed driver and macOS capture APIs |
 | Desktop scope             | `desktop_scope_macos_test.rs`          | macOS window and desktop scope          |
 | Standalone browsers       | `standalone_browser_behavior_test.rs`  | Installed Google Chrome and Edge        |
@@ -576,6 +581,9 @@ When adding a new scenario:
 4. Add the scenario to `docs/test-matrix.md` and this guide when it changes the
    cross-OS structure.
 5. Update only the OS runner selection when the test is platform-specific.
+   Every `#[ignore]` test must be selected by a runner or workflow, or listed
+   with a reason in `tests/manual-e2e-allowlist.txt`;
+   `.github/scripts/tests/test_cua_driver_e2e_inventory.py` enforces this.
 6. Run the smallest Rust test locally, then run the OS command before
    calling the matrix complete.
 

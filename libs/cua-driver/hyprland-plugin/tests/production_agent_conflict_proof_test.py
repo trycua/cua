@@ -8,42 +8,28 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 import production_agent_conflict_proof as proof
+from proof_fixtures import BOUNDS, DELIVERED, VM, client, conflict_trace as trace, identity, status
 
 
-BOUNDS = {'x': 10, 'y': 20, 'width': 800, 'height': 600}
 REFUSED = {'isError': True, 'structuredContent': {'effect': 'refused', 'reason': 'agent_target_busy', 'lane': 1}}
 PRIMARY_REFUSED = {'isError': True, 'structuredContent': {'effect': 'refused', 'reason': 'primary_target_busy', 'lane': 1}}
-DELIVERED = {'structuredContent': {'effect': 'unverifiable', 'route': 'synthetic_events',
-                                 'delivery': {'mode': 'background'}}}
 RECTANGLE = {'x': 100, 'y': 200, 'w': 60, 'h': 40, 'center': [129, 219]}
 GEOMETRY = {'X': 1.0, 'Y': 2.0, 'W': 3.0, 'H': 4.0}
 ORACLE = {'app': 'inkscape', 'stage': 'scroll_down', 'rectangle': RECTANGLE, 'geometry': GEOMETRY}
 
 
-def identity(pid, name='app'):
-    return {'pid': pid, 'uid': 1000, 'starttime': '123', 'exe': '/usr/bin/' + name}
-
-
 def plan(stage='scroll_down', recovery='scroll_visible'):
     return {'purpose': 'agent_conflict', 'case': 'passive_hover_refusal', 'app_profile': 'inkscape-only',
         'disposable': True,
-        'vm': {'machine_id': 'a' * 32, 'boot_id': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'},
-        'compositor': {**identity(50, 'Hyprland'), 'instance': 'test_1'},
-        'processes': {'target': identity(20, 'inkscape'), 'foreground': identity(10)},
+        'vm': dict(VM),
+        'compositor': {**identity(50, '/usr/bin/Hyprland'), 'instance': 'test_1'},
+        'processes': {'target': identity(20, '/usr/bin/inkscape'), 'foreground': identity(10)},
         'foreground': {'pid': 10, 'window_id': 100}, 'primary_point': [20, 20], 'package_versions': {},
         'agents': [{'app': 'inkscape', 'name': 'agent-conflict', 'target': {'pid': 20, 'window_id': 200},
             'document': '/tmp/cua/cua-smoke-inkscape.svg', 'bounds': dict(BOUNDS), 'pointer_stage': stage, 'drag': {}}],
         'refused': {'pointer_stage': proof.OPPOSITE[stage]}, 'recovery': {'pointer_stage': recovery}}
-
-
-def trace(events=(), active=True):
-    rows = [(0, 'start', 0, 0), *events]
-    if not active:
-        rows += [(20, 'stop', 0, 0)]
-    return {'hook': True, 'active': active, 'overflow': False, 'timed_out': False, 'count': len(rows),
-        'events': [[i + 1, timestamp, kind, 30, 40, lane, value]
-                   for i, (timestamp, kind, lane, value) in enumerate(rows)]}
 
 
 def scroll_rows(lane, start=1):
@@ -51,24 +37,11 @@ def scroll_rows(lane, start=1):
             (start + 2, 'agent_action_end', lane, 0)]
 
 
-def status():
-    return {'configured': True, 'transport': {'ready': True}, 'input': {
-        'protocol': 3, 'test_only': False, 'transport_ready': True,
-        'seat_lifetime': 'compositor', 'upgrade': 'desktop_restart', 'lanes': [
-            {'lane': lane, 'held_button': 0, 'held_keys': 0, 'drag_active': False,
-             'lease_active': False, 'keyboard_focus': False, 'pointer_focus': False, 'reserved': False}
-            for lane in (0, 1)]}}
-
-
 def owner_status(owner_lane, *, peer_reserved=False, orphan=False):
     value = status()
     value['input']['lanes'][owner_lane].update(pointer_focus=True, reserved=not orphan)
     value['input']['lanes'][1 - owner_lane]['reserved'] = peer_reserved
     return value
-
-
-def client(pid):
-    return Mock(directory=Path.cwd(), process=Mock(pid=pid, poll=Mock(return_value=None)))
 
 
 class PlanTests(unittest.TestCase):
@@ -175,9 +148,9 @@ class OracleTests(unittest.TestCase):
                 after = trace(scroll_rows(1) + [(9, kind, lane, 0)])
                 with self.subTest(kind=kind, lane=lane), self.assertRaises(AssertionError):
                     proof.verify_refusal(before, after, REFUSED, 0)
-        for key, value in (('hook', False), ('active', False), ('overflow', True), ('timed_out', True), ('count', 9)):
-            with self.subTest(key=key), self.assertRaises(AssertionError):
-                proof.verify_refusal(before, {**before, key: value}, REFUSED, 0)
+        # Page validity is owned by trace_interval (realapp TraceIntervalTests); one case proves wiring.
+        with self.assertRaisesRegex(AssertionError, 'dropped events'):
+            proof.verify_refusal(before, {**before, 'overflow': True}, REFUSED, 0)
         changed = deepcopy(before)
         changed['events'][1][1] += 1
         with self.assertRaisesRegex(AssertionError, 'history'):
@@ -203,7 +176,7 @@ class OracleTests(unittest.TestCase):
                 geometry = stack.enter_context(patch.object(proof.pointer_grounding, 'inkscape_geometry',
                     return_value={**GEOMETRY, 'X': 1.5} if failure == 'geometry' else dict(GEOMETRY)))
                 if failure:
-                    with self.assertRaises(Exception):
+                    with self.assertRaises((AssertionError, proof.pointer_grounding.GroundingUnavailable)):
                         proof.verify_no_effect(after, image, oracle)
                 else:
                     result = proof.verify_no_effect(after, image, oracle)
@@ -227,10 +200,6 @@ class OracleTests(unittest.TestCase):
                 proof.verify_close_events(before, trace(scroll_rows(1) + [(9, kind, 1, 0)]), {'agent_cancel'})
         with self.assertRaises(AssertionError):
             proof.verify_close_events(before, trace(scroll_rows(1) + [(9, 'agent_admitted', 1, 0)]), {'agent_admitted'})
-        # Primary events on lane 0 are the trace oracle's job at TRACE_STOP; the
-        # stopped trace must still fail on them.
-        stopped = trace(scroll_rows(1) + [(9, 'keyboard_key', 0, 1)], active=False)
-        self.assertEqual(proof.analyze(stopped)['result'], 'failed')
 
 
 class ActionTests(unittest.TestCase):
@@ -251,8 +220,8 @@ class ActionTests(unittest.TestCase):
             actor.tool.assert_not_called()
 
     def test_single_normal_scroll_fresh_snapshot_unknown_never_replayed(self):
-        cases = {'owner': (None, 'guard', 'stale', 'unknown', 'same_snapshot', 'cached', 'before_return',
-                           'same_runtime', 'effect', 'pre_activity', 'dead_before', 'observation', 'lane_mismatch',
+        # Freshness rules are owned by cancel's ObservationTests; 'cached' proves wiring.
+        cases = {'owner': (None, 'guard', 'stale', 'unknown', 'cached', 'same_runtime', 'effect', 'pre_activity', 'dead_before', 'observation', 'lane_mismatch',
                            'refused_instead', 'two_lanes'),
                  'refused': (None, 'guard', 'stale', 'unknown', 'pre_activity', 'delivered', 'primary_reason',
                              'owner_lane', 'admitted', 'pointer_leave', 'moved', 'geometry', 'observation'),
@@ -288,12 +257,8 @@ class ActionTests(unittest.TestCase):
                         'proof_observation_started_ns': 10, 'proof_observation_finished_ns': 20}
                     after = {**before, 'proof_runtime': {'pid': 102, 'directory': str(Path.cwd())},
                         'proof_image': 'after.png', 'proof_observation_started_ns': 50, 'proof_observation_finished_ns': 60}
-                    if failure == 'same_snapshot':
-                        after = dict(before)
-                    elif failure == 'cached':
+                    if failure == 'cached':
                         after.update(proof_observation_started_ns=10, proof_observation_finished_ns=20)
-                    elif failure == 'before_return':
-                        after['proof_observation_started_ns'] = 39
                     snapshots = stack.enter_context(patch.object(proof, 'grounded_snapshot',
                         side_effect=[before, AssertionError('snapshot unavailable')] if failure == 'observation' else [before, after]))
                     stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=

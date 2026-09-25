@@ -752,6 +752,9 @@ fn profile_entries(root: &Path) -> HashSet<std::ffi::OsString> {
         .collect()
 }
 
+// Standalone browser E2E observes host-owned browser profiles and download
+// directories that must stay visible to sandboxed browser packages, so these
+// daemons deliberately share the runner's per-user state.
 fn spawn_driver(label: &str) -> McpDriver {
     #[cfg(target_os = "macos")]
     let driver = McpDriver::spawn_macos_daemon_proxy_named(label);
@@ -763,6 +766,7 @@ fn spawn_driver(label: &str) -> McpDriver {
             label,
             &[
                 ("SWAYSOCK", "/dev/null/cua-e2e-withheld"),
+                cua_driver_testkit::SHARE_HOST_STATE,
                 ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
                 ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
             ],
@@ -771,6 +775,7 @@ fn spawn_driver(label: &str) -> McpDriver {
         McpDriver::spawn_named_with_env(
             label,
             &[
+                cua_driver_testkit::SHARE_HOST_STATE,
                 ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
                 ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
             ],
@@ -780,6 +785,7 @@ fn spawn_driver(label: &str) -> McpDriver {
     let driver = McpDriver::spawn_named_with_env(
         label,
         &[
+            cua_driver_testkit::SHARE_HOST_STATE,
             ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
             ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
         ],
@@ -792,6 +798,7 @@ fn spawn_standard_driver(label: &str) -> McpDriver {
     McpDriver::spawn_named_with_env(
         label,
         &[
+            cua_driver_testkit::SHARE_HOST_STATE,
             ("CUA_DRIVER_PERMISSION_MODE", "standard"),
             ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "0"),
         ],

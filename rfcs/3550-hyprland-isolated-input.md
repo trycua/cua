@@ -591,7 +591,7 @@ cleanup. Retain focused proof of the supported operations and two-lane behavior
 being promoted. An uninstrumented smoke without plugin transport attribution
 cannot prove continuous isolation, and an all-refusal canonical result cannot
 replace positive delivery evidence. The
-[production proof guide](../libs/cua-driver/hyprland-plugin/tests/production-proof.md)
+[production proof guide](../libs/cua-driver/hyprland-plugin/docs/production-proof.md)
 documents the bounded plans and their limits.
 
 Three whole repetitions of the long Python Calc/Inkscape plan, including 34

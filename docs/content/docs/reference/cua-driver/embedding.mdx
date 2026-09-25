@@ -138,6 +138,28 @@ Destroy the SDK client and call `await embedded.stop()` from every orderly shutd
   The host refuses regular files, symlinks, and live listeners and only removes
   the endpoint identity owned by the matching generation.
 
+## Post-action window observation
+
+After each input action, the driver watches the window list to report a menu,
+dialog, or new window the action opened. For an action that opens nothing, the
+wait lasts 1000 ms on macOS and 800 ms for Linux X11 foreground delivery. A host
+that observes its target continuously can shorten it by setting these variables
+in the daemon's launch environment. Tool arguments cannot change them.
+
+| Variable                              | Meaning                                         | Accepted values                                        |
+| ------------------------------------- | ----------------------------------------------- | ------------------------------------------------------ |
+| `CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS` | Longest wait after each action. `0` skips it.   | 0 to 10000 ms. Unset or unparsable keeps the default. |
+| `CUA_DRIVER_WINDOW_CHANGE_POLL_MS`    | Interval between reads during the wait.         | 5 to 1000 ms, and never longer than the wait.          |
+
+On macOS, the wait also holds the lease that reactivates the previously
+frontmost app when another app steals focus. A shorter wait shortens that
+protection, and `0` releases it as soon as the action returns. Windows that
+appear after the wait are not reported. On Linux X11, a foreground action can
+report `effect: "confirmed"` only when a window change occurs within the wait.
+Windows ignores both variables because it does not run this wait. See
+[`EMBEDDING.md`](https://github.com/trycua/cua/blob/main/libs/cua-driver/rust/Skills/cua-driver/EMBEDDING.md#bounding-the-post-action-window-observation)
+for the full tradeoffs.
+
 ## Host requirements
 
 - Spawn `cua-driver serve --embedded` directly from your app, for example with `Process` / `NSTask`, `posix_spawn`, or `fork` / `exec`.

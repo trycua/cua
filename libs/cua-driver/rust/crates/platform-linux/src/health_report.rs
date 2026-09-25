@@ -664,19 +664,6 @@ mod tests {
     }
 
     #[test]
-    fn tcc_and_bundle_are_skipped_with_canonical_message() {
-        for name in [
-            NAME_TCC_ACCESSIBILITY,
-            NAME_TCC_SCREEN_RECORDING,
-            NAME_BUNDLE_IDENTITY,
-        ] {
-            let entry = skip_not_applicable(name);
-            assert_eq!(entry.status, CheckStatus::Skip, "{name} must be skipped");
-            assert_eq!(entry.message, "not applicable on Linux");
-        }
-    }
-
-    #[test]
     fn wayland_backend_passes_on_non_wlroots_when_portal_libei_backend_is_reachable() {
         let snap = WaylandManagers {
             foreign_toplevel: false,

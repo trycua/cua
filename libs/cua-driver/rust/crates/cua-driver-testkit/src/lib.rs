@@ -43,6 +43,7 @@ mod cli;
 mod daemon;
 mod driver;
 pub mod e2e;
+mod host_state;
 mod journal;
 mod mcp;
 pub mod observer;
@@ -56,6 +57,7 @@ mod windows_setup;
 pub use browser_fixture::BrowserFixtureServer;
 pub use cli::CliDriver;
 pub use driver::{BehaviorRecording, Driver};
+pub use host_state::{IsolatedStateRoot, SHARE_HOST_STATE};
 pub use journal::FixtureJournal;
 pub use mcp::McpDriver;
 pub use paths::{

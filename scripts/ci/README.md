@@ -347,3 +347,65 @@ an interactive desktop. The workflow also accepts a runner label so maintainers
 can replay the same command on an Azure VM with an active RDP session for
 environment parity; that replay is not a separate test definition or source of
 behavioral truth.
+
+## Cua Driver release safety
+
+The canonical installers (`https://cua.ai/driver/install.sh` and `install.ps1`) install the version baked into them on `main`. If that version is broken, every fresh install breaks. This happened with 0.28.3: its macOS app was published unsigned, and the installer correctly refused it (#4109).
+
+A stable release has exactly one path to users, and nobody dispatches anything along it:
+
+1. Merging the Release Please pull request creates the `cua-driver-rs-v*` tag and a draft release.
+2. The tag push runs `.github/workflows/cd-rust-cua-driver.yml`. It builds every artifact, runs the Linux, Windows, hosted macOS, and standalone-browser E2E gates against the tag SHA, and verifies the candidate signatures.
+3. `release` publishes the draft only after all of those pass.
+4. The published assets are verified again. Only then does `advance-installer-version` bake the new version into the installers on `main`.
+
+These gates stop a broken release from being published or baked:
+
+| Gate | Where | Blocks |
+| --- | --- | --- |
+| Notarization is required to publish | the first preflight step, the macOS build, and the `release` job | any tag build that has macOS notarization disabled |
+| Candidate signatures | `verify-macos-release-signatures` and `verify-windows-release-signatures`, both required by `release` alongside the E2E gates | uploading archives whose `CuaDriver.app` is not Developer ID signed by `YCK386LBJ7`, not accepted as `Notarized Developer ID`, or not stapled, or whose Windows binaries lack a valid, timestamped Authenticode signature from Cua AI, Inc. |
+| Published-release verification | `verify-published-signatures` and `verify-published-installers`, both required by `advance-installer-version` | baking a version whose public assets fail the same signature checks, or that the canonical installers cannot install on macOS, Linux, or Windows |
+| Withdrawn versions | `.github/release-state/cua-driver-rs-withdrawn-versions` | baking, certifying, or installing a listed version |
+| Installer canary | `.github/workflows/monitor-branded-installers.yml` | nothing, but it opens or updates a `bug` issue within six hours when a default install fails |
+
+Every gate is a required `needs:` with no `always()` bypass. A failed gate therefore leaves the draft unpublished, or the installers on the previous version. To recover a flaky gate, re-run the failed jobs of the tag run. That re-runs the push event; it is not a publish dispatch. Don't publish, upload, or edit release assets by hand to work around a failed gate. Fix the cause and ship a new release.
+
+### Withdrawn versions
+
+The withdrawn list has one `x.y.z # reason` entry per line. The installers can't read repository files when they run through `curl | bash` or `irm | iex`, so each one carries a copy of the list:
+- `CUA_DRIVER_RS_WITHDRAWN_VERSIONS` in `libs/cua-driver/scripts/_install-rust.sh`
+- `$Script:CuaDriverRsWithdrawnVersions` in `libs/cua-driver/scripts/install.ps1`
+
+`validate_release_versions.py` fails if either copy differs from the file, or if the baked version is withdrawn.
+
+The installers treat a withdrawn version this way:
+- **Pin:** an explicit pin is refused.
+- **API resolution:** withdrawn versions are skipped.
+- **Stale baked value:** an installer copy that still bakes a withdrawn version prints a warning and resolves the newest eligible release instead.
+
+A macOS signature failure always fails closed. The installer never downgrades to another release on its own.
+
+To check a published release on a Mac:
+
+```bash
+gh release download cua-driver-rs-v0.28.2 --repo trycua/cua --dir /tmp/cua-release \
+  --pattern 'cua-driver-rs-0.28.2-darwin-*.tar.gz'
+python3 .github/scripts/verify_cua_driver_release_signatures.py macos \
+  --artifacts /tmp/cua-release --version 0.28.2
+```
+
+To check Windows, run the `windows` subcommand on a Windows machine.
+
+### Runbook: roll the installers back to the last good release
+
+Use this runbook when the canary issue opens, or when users report that default installs fail. #4150 is the worked example.
+
+1. **Confirm the failure.** Read the canary run. Then run the verifier above against the baked version (`.github/release-state/cua-driver-rs-published-version`).
+2. **Choose the rollback version.** Pick the newest earlier release that passes the verifier on macOS and Windows and whose installer-compatibility run passes. List assets with `gh release view cua-driver-rs-v<version> --json assets`.
+3. **Open a `fix(cua-driver): ...` pull request** that makes these changes:
+   - Add the bad version with its reason and issue link to `.github/release-state/cua-driver-rs-withdrawn-versions`, and to both installer copies of the list.
+   - Set `CUA_DRIVER_RS_BAKED_VERSION` in `_install-rust.sh`, `$Script:CuaDriverRsBakedVersion` in `install.ps1`, and `.github/release-state/cua-driver-rs-published-version` to the rollback version. The three must agree.
+   - Run `python3 .github/scripts/validate_release_versions.py --product driver` and `python3 -m pytest libs/cua-driver/scripts/tests/test_install_version_fallback.py`.
+4. **Merge it.** The branded endpoints serve `main`. The canary runs on the push, so compare its installed version with the rollback version. To recheck the public one-liners after the endpoints refresh, dispatch `Monitor branded installer endpoints`.
+5. **Ship the fix as a new Release Please release.** Its tag run bakes the installers forward automatically once the published assets pass verification. Leave the withdrawn release and its assets in place for audit.

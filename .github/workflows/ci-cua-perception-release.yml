@@ -5,11 +5,15 @@ on:
     paths:
       - ".github/releases/**"
       - ".github/scripts/perception_release.py"
+      - ".github/scripts/perception_release_install_check.py"
+      - ".github/scripts/tests/test_cua_perception_release_workflow.py"
+      - ".github/scripts/tests/test_perception_release_install_check.py"
       - ".github/scripts/verify_cua_driver_release_archives.py"
       - ".github/scripts/tests/test_cua_driver_default_distribution.py"
       - ".github/scripts/tests/test_cua_perception_release_topology.py"
       - ".github/scripts/tests/test_verify_cua_driver_release_archives.py"
       - ".github/workflows/cd-cua-perception-candidate.yml"
+      - ".github/workflows/cd-cua-perception.yml"
       - ".github/workflows/cd-rust-cua-driver.yml"
       - ".github/workflows/ci-cua-perception-release.yml"
       - ".github/workflows/release-please.yml"
@@ -23,10 +27,14 @@ on:
     paths:
       - ".github/releases/**"
       - ".github/scripts/perception_release.py"
+      - ".github/scripts/perception_release_install_check.py"
+      - ".github/scripts/tests/test_cua_perception_release_workflow.py"
+      - ".github/scripts/tests/test_perception_release_install_check.py"
       - ".github/scripts/verify_cua_driver_release_archives.py"
       - ".github/scripts/tests/test_cua_driver_default_distribution.py"
       - ".github/scripts/tests/test_verify_cua_driver_release_archives.py"
       - ".github/workflows/cd-cua-perception-candidate.yml"
+      - ".github/workflows/cd-cua-perception.yml"
       - ".github/workflows/cd-rust-cua-driver.yml"
       - ".github/workflows/ci-cua-perception-release.yml"
       - "libs/cua-driver/rust/crates/cua-perception/**"
@@ -84,6 +92,8 @@ jobs:
           python3 -m pytest \
             .github/scripts/tests/test_cua_driver_default_distribution.py \
             .github/scripts/tests/test_cua_perception_release_topology.py \
+            .github/scripts/tests/test_cua_perception_release_workflow.py \
+            .github/scripts/tests/test_perception_release_install_check.py \
             .github/scripts/tests/test_verify_cua_driver_release_archives.py \
             .github/scripts/tests/test_release_channels.py \
             .github/scripts/tests/test_resolve_release_please_request.py \

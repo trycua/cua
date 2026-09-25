@@ -16,12 +16,13 @@
       "nightlyTagPrefix": "nightly-cua-perception-v",
       "versionAuthorityFile": "libs/cua-driver/rust/crates/cua-perception/VERSION",
       "changelog": "libs/cua-driver/rust/crates/cua-perception/CHANGELOG.md",
-      "builderWorkflow": ".github/workflows/cd-cua-perception-candidate.yml",
+      "builderWorkflow": ".github/workflows/cd-cua-perception.yml",
       "changeDetectionPaths": [
         "libs/cua-driver/rust/crates/cua-perception",
         ".github/releases/cua-perception",
         ".github/scripts/perception_release.py",
-        ".github/workflows/cd-cua-perception-candidate.yml"
+        ".github/workflows/cd-cua-perception-candidate.yml",
+        ".github/workflows/cd-cua-perception.yml"
       ],
       "buildVersionSites": [
         {

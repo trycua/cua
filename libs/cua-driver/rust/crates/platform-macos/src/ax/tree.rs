@@ -12,6 +12,7 @@
 //! - Tree is walked depth-first; element_index is assigned in DFS order.
 
 use super::bindings::*;
+use super::row_collapse::collapse_offscreen_rows;
 use super::window_scope::{decide_window_scope, TopLevelCandidate, WindowScope};
 use core_foundation::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
 use cua_driver_core::walk_budget::{WalkBudget, WalkOutcome};
@@ -147,6 +148,9 @@ pub struct TreeWalkResult {
     /// What the walk gave up that its budget does not record: `depth_limit`
     /// or `child_list_unreadable`. `None` when nothing beyond the budget.
     pub gap: Option<&'static str>,
+    /// Rows scrolling containers hold but were not read because they are
+    /// neither visible nor selected.
+    pub collapsed_rows: usize,
     /// Whether the requested `window_id` actually resolved to an AX surface,
     /// and if not, why. `None` when no `window_id` was requested.
     ///
@@ -232,6 +236,7 @@ pub fn walk_tree_budgeted(
                 truncated: true,
                 walk: budget.outcome(),
                 gap: Some(WalkGaps::UNREADABLE),
+                collapsed_rows: 0,
                 // No application AX element at all, so a requested window
                 // certainly did not resolve.
                 window_scope: window_id.map(|_| WindowScope::AxUnresolved { ax_window_count: 0 }),
@@ -369,12 +374,22 @@ pub fn walk_tree_budgeted(
         );
     }
 
+    if gaps.collapsed_rows > 0 {
+        tree_markdown.push_str(&format!(
+            "\n{} row(s) are scrolled out of view and were not read. \
+             Scroll, or use the window's own search, to bring a row into view \
+             before acting on it.",
+            gaps.collapsed_rows
+        ));
+    }
+
     TreeWalkResult {
         tree_markdown,
         nodes,
         truncated: walk.truncated() || gaps.reason().is_some(),
         walk,
         gap: gaps.reason(),
+        collapsed_rows: gaps.collapsed_rows,
         window_scope,
     }
 }
@@ -386,6 +401,9 @@ struct WalkGaps {
     depth_limit: bool,
     /// An `AXChildren` read hid descendants; see [`copy_children_checked`].
     unreadable: bool,
+    /// Rows a scrolling container reported as neither visible nor selected,
+    /// left unread.
+    collapsed_rows: usize,
 }
 
 impl WalkGaps {
@@ -400,6 +418,55 @@ impl WalkGaps {
         } else {
             None
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn walk_children(
+    element: AXUIElementRef,
+    role: &str,
+    child_depth: usize,
+    parent_index: Option<usize>,
+    in_web_content: bool,
+    nodes: &mut Vec<AXNode>,
+    lines: &mut Vec<(usize, String)>,
+    counter: &mut usize,
+    budget: &mut WalkBudget,
+    gaps: &mut WalkGaps,
+    max_depth: usize,
+) {
+    let collapsed = collapse_offscreen_rows(element, role);
+    let (children, hid_descendants) = copy_children_checked(element);
+    gaps.unreadable |= hid_descendants;
+    for child in children {
+        if collapsed.as_ref().is_some_and(|rows| rows.hides(child)) {
+            CFRelease(child as CFTypeRef);
+            continue;
+        }
+        walk_element(
+            child,
+            child_depth,
+            parent_index,
+            in_web_content,
+            nodes,
+            lines,
+            counter,
+            budget,
+            gaps,
+            max_depth,
+        );
+        CFRelease(child as CFTypeRef);
+    }
+    if let Some(rows) = collapsed {
+        gaps.collapsed_rows += rows.count();
+        lines.push((
+            child_depth,
+            format!(
+                "- {} of {} rows are scrolled out of view and were not read",
+                rows.count(),
+                rows.total()
+            ),
+        ));
     }
 }
 
@@ -439,23 +506,19 @@ unsafe fn walk_element(
         // Still recurse — children may be interesting. Layout containers
         // collapse, so children inherit the parent's depth AND the same
         // parent_index (no actionable node was emitted here).
-        let (children, hid_descendants) = copy_children_checked(element);
-        gaps.unreadable |= hid_descendants;
-        for child in children {
-            walk_element(
-                child,
-                depth,
-                parent_index,
-                in_web_content,
-                nodes,
-                lines,
-                counter,
-                budget,
-                gaps,
-                max_depth,
-            );
-            CFRelease(child as CFTypeRef);
-        }
+        walk_children(
+            element,
+            &role,
+            depth,
+            parent_index,
+            in_web_content,
+            nodes,
+            lines,
+            counter,
+            budget,
+            gaps,
+            max_depth,
+        );
         return;
     }
 
@@ -508,23 +571,19 @@ unsafe fn walk_element(
     let is_actionable = is_addressable(!actions.is_empty(), value_settable, enabled);
 
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
-        let (children, hid_descendants) = copy_children_checked(element);
-        gaps.unreadable |= hid_descendants;
-        for child in children {
-            walk_element(
-                child,
-                depth + 1,
-                parent_index,
-                in_web_content,
-                nodes,
-                lines,
-                counter,
-                budget,
-                gaps,
-                max_depth,
-            );
-            CFRelease(child as CFTypeRef);
-        }
+        walk_children(
+            element,
+            &role,
+            depth + 1,
+            parent_index,
+            in_web_content,
+            nodes,
+            lines,
+            counter,
+            budget,
+            gaps,
+            max_depth,
+        );
         return;
     }
 
@@ -620,23 +679,19 @@ unsafe fn walk_element(
     lines.push((depth, line));
     nodes.push(node);
 
-    let (children, hid_descendants) = copy_children_checked(element);
-    gaps.unreadable |= hid_descendants;
-    for child in children {
-        walk_element(
-            child,
-            depth + 1,
-            next_parent,
-            in_web_content,
-            nodes,
-            lines,
-            counter,
-            budget,
-            gaps,
-            max_depth,
-        );
-        CFRelease(child as CFTypeRef);
-    }
+    walk_children(
+        element,
+        &role,
+        depth + 1,
+        next_parent,
+        in_web_content,
+        nodes,
+        lines,
+        counter,
+        budget,
+        gaps,
+        max_depth,
+    );
 }
 
 fn is_web_content_role(role: &str) -> bool {

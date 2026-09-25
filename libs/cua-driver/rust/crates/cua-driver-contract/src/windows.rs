@@ -309,6 +309,8 @@ pub struct WindowStateOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elements_complete: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collapsed_rows: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub degraded: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub degraded_reason: Option<String>,

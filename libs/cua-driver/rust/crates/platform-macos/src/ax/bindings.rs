@@ -522,6 +522,49 @@ pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
     }
 }
 
+/// # Safety
+///
+/// `element` must be valid, and the caller must release every returned element.
+pub unsafe fn copy_element_array_attr(
+    element: AXUIElementRef,
+    attr_name: &str,
+) -> Option<Vec<AXUIElementRef>> {
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    if core_foundation::base::CFGetTypeID(value) != CFArray::<CFTypeRef>::type_id() {
+        CFRelease(value);
+        return None;
+    }
+    let arr = CFArray::<CFTypeRef>::wrap_under_create_rule(value as _);
+    let ax_type_id = AXUIElementGetTypeID();
+    Some(
+        (0..arr.len())
+            .filter_map(|i| {
+                let item = *arr.get(i)?;
+                if core_foundation::base::CFGetTypeID(item) == ax_type_id {
+                    CFRetain(item);
+                    Some(item as AXUIElementRef)
+                } else {
+                    None
+                }
+            })
+            .collect(),
+    )
+}
+
+/// # Safety
+///
+/// Each element must be owned by the caller exactly once.
+pub unsafe fn release_all(elements: Vec<AXUIElementRef>) {
+    for element in elements {
+        CFRelease(element as CFTypeRef);
+    }
+}
+
 /// Get the children of an AX element.
 ///
 /// # Safety
@@ -757,30 +800,7 @@ pub unsafe fn ax_get_window_id(element: AXUIElementRef) -> Option<u32> {
 ///
 /// `element` must be valid, and the caller must release every returned element.
 pub unsafe fn copy_ax_windows(element: AXUIElementRef) -> Vec<AXUIElementRef> {
-    let attr = CFStr::new("AXWindows");
-    let mut value: CFTypeRef = std::ptr::null();
-    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
-    if err != kAXErrorSuccess || value.is_null() {
-        return vec![];
-    }
-    let cf_array_type_id = CFArray::<CFTypeRef>::type_id();
-    if core_foundation::base::CFGetTypeID(value) != cf_array_type_id {
-        CFRelease(value);
-        return vec![];
-    }
-    let arr = CFArray::<CFTypeRef>::wrap_under_create_rule(value as _);
-    let ax_type_id = AXUIElementGetTypeID();
-    (0..arr.len())
-        .filter_map(|i| {
-            let item = *arr.get(i)?;
-            if core_foundation::base::CFGetTypeID(item) == ax_type_id {
-                CFRetain(item);
-                Some(item as AXUIElementRef)
-            } else {
-                None
-            }
-        })
-        .collect()
+    copy_element_array_attr(element, "AXWindows").unwrap_or_default()
 }
 
 /// Highest AX element id probed when looking for an off-Space window.

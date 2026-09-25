@@ -16,15 +16,8 @@ hyprland_foreground_test::foreground_drag_focus_loss_does_not_release_into_same_
 hyprland_native_observation_test::native_window_capture_and_background_ax_keep_exact_identity | Manual native-Hyprland gate: needs a live Hyprland compositor; exact-identity capture and owner-mismatch refusals
 
 # Optional external-app suite: the canonical Windows image has no LibreOffice.
-harness_libreoffice_test::harness_lo_vcl_all_toolbar_split_buttons_expose_expand | Optional Windows suite that needs LibreOffice Writer installed; under review in the lane-3 prune (#4094)
-harness_libreoffice_test::harness_lo_vcl_font_color_split_button_exposes_expand | Optional Windows suite that needs LibreOffice Writer installed; under review in the lane-3 prune (#4094)
 harness_libreoffice_test::harness_lo_vcl_font_color_expand_opens_picker | Optional Windows suite that needs LibreOffice Writer installed; under review in the lane-3 prune (#4094)
-harness_libreoffice_test::harness_lo_vcl_modal_input_roundtrip_works | Optional Windows suite that needs LibreOffice Writer installed; under review in the lane-3 prune (#4094)
-harness_libreoffice_test::harness_lo_vcl_color_pick_green_end_to_end | Optional Windows suite that needs LibreOffice Writer installed; under review in the lane-3 prune (#4094)
-harness_libreoffice_test::harness_lo_vcl_recovery_dialog_walks_via_msaa | Optional Windows suite that needs LibreOffice Writer installed; under review in the lane-3 prune (#4094)
-harness_libreoffice_test::harness_lo_vcl_calc_msaa_smoke | Optional Windows suite that needs LibreOffice Calc installed; under review in the lane-3 prune (#4094)
 
-standalone_browser_behavior_test::standalone_browser_prepare_isolated_source_smoke | Strict subset of the routed standalone_browser_prepare_isolated row; retired in the lane-3 prune (#4094)
 
 # macOS-only browser regressions that failed on their first routed run. Restore
 # them to the Darwin list in scripts/ci/run-rust-standalone-browser-e2e.sh with

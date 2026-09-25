@@ -292,17 +292,34 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
 fi
 
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
-  run_test wayland-overlay-idle-no-overlay \
-    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
-      --test wayland_overlay_idle_test -- \
-      --ignored --exact no_overlay_flag_never_starts_wayland_overlay_thread \
-      --nocapture --test-threads=1
   if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    run_test wayland-overlay-idle-no-overlay \
+      cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+        --test wayland_overlay_idle_test -- \
+        --ignored --exact no_overlay_flag_never_starts_wayland_overlay_thread \
+        --nocapture --test-threads=1
     run_test wayland-overlay-idle-recovery \
       cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
         --test wayland_overlay_idle_test -- \
         --ignored --exact wayland_overlay_quiesces_and_recovers_after_capture_and_cursor_activity \
         --nocapture --test-threads=1
+  else
+    # X11 never starts the Wayland layer-shell overlay thread, so its absence
+    # there proves nothing about --no-overlay. Record the limitation instead
+    # of reporting a vacuous pass.
+    limitation="The Wayland overlay lifecycle cases need a native Wayland session; X11 cannot start the layer-shell overlay thread."
+    jq -n \
+      --arg reason "${limitation}" \
+      '{
+        schema: "cua-e2e-limitation-v1",
+        platform: "linux",
+        display_server: "x11",
+        harness: "wayland-overlay",
+        test: "wayland-overlay-idle",
+        status: "not_applicable",
+        reason: $reason
+      }' > "${ARTIFACT_DIR}/wayland-overlay-idle-limitation.json"
+    echo "[LIMITATION] wayland-overlay-idle: ${limitation}"
   fi
   run_test agent-cursor-showcase \
     cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \

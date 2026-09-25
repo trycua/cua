@@ -130,9 +130,9 @@ These suites are Rust source-of-truth coverage for real installed apps, but they
 are not part of the canonical run-all path because they depend on software or
 desktop state outside the repo-local fixtures:
 
-- `harness_libreoffice_test.rs`: Windows LibreOffice Writer/Calc. Requires
-  LibreOffice installed, or `LO_SWRITER_EXE` / `LO_SCALC_EXE` pointing at the
-  executables.
+- `harness_libreoffice_test.rs`: Windows LibreOffice Writer, the only coverage
+  of the SAL/VCL MSAA fallback. Requires LibreOffice installed, or
+  `LO_SWRITER_EXE` pointing at `swriter.exe`; it fails when Writer is missing.
 - `installed_app_launch_macos_test.rs`: macOS Calculator/TextEdit launch focus
   checks. Requires a logged-in GUI session and usable System Events scripting.
 - `installed_app_textedit_macos_test.rs`: real TextEdit background AX write and

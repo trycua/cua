@@ -90,6 +90,12 @@ fn assert_idle_tick_bound(pid: u32, tid: u32, window: Duration, bound: u64) {
 #[test]
 #[ignore]
 fn no_overlay_flag_never_starts_wayland_overlay_thread() {
+    // Outside native Wayland the thread can never start, so its absence would
+    // pass for an unrelated reason. The Linux runner records an X11 limitation.
+    assert!(
+        std::env::var_os("WAYLAND_DISPLAY").is_some(),
+        "this negative control needs a native Wayland session"
+    );
     let Some(mut driver) = RawDriver::spawn_with_env(&[
         ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
         ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),

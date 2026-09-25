@@ -123,7 +123,16 @@ fn native_window_capture_and_background_ax_keep_exact_identity() {
             "pid": foreground.pid, "window_id": target.native_id,
         }),
     );
-    assert!(wrong_owner.is_error());
+    // platform-linux get_window_state refuses a foreign-owned window with an
+    // untyped stale-target error; match its cause, not just any error.
+    assert!(
+        wrong_owner.is_error()
+            && wrong_owner
+                .text()
+                .contains("is stale or no longer running; refresh list_windows"),
+        "{}",
+        wrong_owner.raw
+    );
     let fresh = snapshot(&mut driver, target);
     let token = fresh.structured()["elements"]
         .as_array()
@@ -138,8 +147,17 @@ fn native_window_capture_and_background_ax_keep_exact_identity() {
             "pid": target.pid, "window_id": foreground.native_id, "element_token": token,
         }),
     );
-    assert!(conflict.is_error());
+    assert!(conflict.is_error(), "{}", conflict.raw);
+    assert_eq!(
+        conflict.structured()["refusal"]["code"],
+        "conflicting_element_target",
+        "{}",
+        conflict.raw
+    );
     assert!(snapshot(&mut driver, target)
         .tree_text()
         .contains("counter=1"));
+    assert!(snapshot(&mut driver, foreground)
+        .tree_text()
+        .contains("counter=0"));
 }

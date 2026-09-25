@@ -10779,32 +10779,20 @@ mod chromium_flag_injection_tests {
 }
 
 #[cfg(test)]
-mod click_button_schema_tests {
+mod click_capture_id_schema_tests {
     use super::ClickTool;
     use cua_driver_core::tool::Tool;
 
-    /// Surface 5: schema must keep advertising the three canonical button
-    /// values. Windows was already shipping `button` (pre-Surface-5) so this
-    /// test is the freeze test — guards against an inadvertent rename/removal.
+    /// The portable click contract pins `button` and the other accepted
+    /// fields. A live schema may broaden `capture_id`, which the subset gate
+    /// allows, so the non-empty bound is pinned here.
     #[test]
-    fn schema_advertises_button_enum() {
+    fn schema_requires_non_empty_capture_id() {
         let tool = ClickTool {
             state: super::ToolState::new(None),
         };
         let d = tool.def();
         let props = d.input_schema.get("properties").expect("properties");
-        let button = props.get("button").expect("button field present");
-        assert_eq!(button.get("type").and_then(|v| v.as_str()), Some("string"));
-        let enum_vals: Vec<&str> = button
-            .get("enum")
-            .and_then(|v| v.as_array())
-            .expect("button.enum present")
-            .iter()
-            .filter_map(|v| v.as_str())
-            .collect();
-        for need in ["left", "right", "middle"] {
-            assert!(enum_vals.contains(&need), "missing {need} in button.enum");
-        }
         let capture_id = props.get("capture_id").expect("capture_id field present");
         assert_eq!(capture_id["type"], "string");
         assert_eq!(capture_id["minLength"], 1);

@@ -17,7 +17,7 @@
 //! proves capture policy is isolated per session rather than process-global.
 //!
 //! All tests are `#[ignore]` (need a real desktop session). Run explicitly:
-//!   cargo test -p cua-driver --test desktop_scope_windows_test -- --ignored --nocapture --test-threads=1
+//!   cargo test -p cua-driver-e2e --test desktop_scope_windows_test -- --ignored --nocapture --test-threads=1
 
 #![cfg(target_os = "windows")]
 

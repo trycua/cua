@@ -1,4 +1,8 @@
-"""Contract tests for the manually dispatched GitHub-hosted macOS E2E lane."""
+"""Contract tests for the GitHub-hosted macOS E2E lane.
+
+Maintainers dispatch it for pull request evidence, and the stable Cua Driver
+tag run calls it as an automatic release gate.
+"""
 
 from pathlib import Path
 
@@ -15,6 +19,7 @@ def test_hosted_macos_probe_is_manual_exact_sha_and_least_privilege() -> None:
 
     trigger = workflow.split("permissions:", 1)[0]
     assert "workflow_dispatch:" in trigger
+    assert "workflow_call:" in trigger
     assert "pull_request:" not in trigger
     assert "push:" not in trigger
     assert "source_sha:" in trigger
@@ -44,6 +49,15 @@ def test_hosted_macos_probe_is_manual_exact_sha_and_least_privilege() -> None:
     assert "live_jev_perception" not in workflow
     assert "authorized-live-jev-macos-evidence.yml" not in workflow
     assert "secrets: inherit" not in workflow
+    # A called workflow has no mode input; hosted jobs run unless lume is chosen.
+    assert workflow.count("    if: inputs.mode != 'lume'\n") == 2
+    assert "    if: ${{ always() && inputs.mode != 'lume' }}\n" in workflow
+    assert "    if: inputs.mode == 'lume'\n" in workflow
+    # Manual dispatches never queue into (and replace) a release-gate call.
+    assert (
+        "group: e2e-rust-macos-hosted-${{ github.event_name }}-${{ inputs.source_sha }}"
+        in workflow
+    )
 
     for action in ("actions/checkout", "actions/upload-artifact"):
         line = next(line for line in workflow.splitlines() if f"uses: {action}@" in line)
@@ -89,7 +103,8 @@ def test_hosted_macos_probe_fails_closed_before_gui_capture() -> None:
     for requirement in (
         'GITHUB_ACTIONS:-}" == true',
         'RUNNER_ENVIRONMENT:-}" == github-hosted',
-        'GITHUB_EVENT_NAME:-}" == workflow_dispatch',
+        'GITHUB_EVENT_NAME:-}" != workflow_dispatch',
+        '"${GITHUB_EVENT_NAME:-}" == push && "${GITHUB_REF:-}" == refs/tags/cua-driver-rs-v*',
         "current user must be runner",
         "console user must be runner",
         "SSH sessions cannot seed or certify hosted TCC state",
@@ -146,7 +161,8 @@ def test_hosted_macos_runner_is_strict_and_uses_the_canonical_matrix() -> None:
 
     for requirement in (
         'GITHUB_ACTIONS:-}" == true',
-        'GITHUB_EVENT_NAME:-}" == workflow_dispatch',
+        'GITHUB_EVENT_NAME:-}" != workflow_dispatch',
+        '"${GITHUB_EVENT_NAME:-}" == push && "${GITHUB_REF:-}" == refs/tags/cua-driver-rs-v*',
         'RUNNER_ENVIRONMENT:-}" == github-hosted',
         'ImageOS:-}" == macos26',
         'CURRENT_USER}" == runner',

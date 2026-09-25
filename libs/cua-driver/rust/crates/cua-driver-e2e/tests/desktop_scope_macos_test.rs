@@ -16,7 +16,7 @@
 //!
 //! #[ignore] (needs a real desktop session + TCC Accessibility + the AppKit
 //! harness). Run:
-//!   cargo test -p cua-driver --test desktop_scope_macos_test -- --ignored --nocapture --test-threads=1
+//!   cargo test -p cua-driver-e2e --test desktop_scope_macos_test -- --ignored --nocapture --test-threads=1
 
 #![cfg(target_os = "macos")]
 

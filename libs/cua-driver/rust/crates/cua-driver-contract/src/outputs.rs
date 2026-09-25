@@ -330,7 +330,9 @@ impl ToolOutput for SetAgentCursorThemeOutput {}
 pub struct GetAgentCursorStateOutput {
     pub session: String,
     pub enabled: bool,
-    #[schemars(required)]
+    // Wire contract: the key is always present, and its value is `null` until
+    // the session cursor first moves.
+    #[schemars(required, schema_with = "nullable_cursor_point_schema")]
     pub position: Option<CursorPointOutput>,
     pub theme: CursorThemeOutput,
     pub visual_state: CursorVisualOutput,
@@ -666,6 +668,11 @@ fn platform_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
 
 fn nullable_string_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({ "anyOf": [{ "type": "string" }, { "type": "null" }] })
+}
+
+fn nullable_cursor_point_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let point = generator.subschema_for::<CursorPointOutput>();
+    schemars::json_schema!({ "anyOf": [point, { "type": "null" }] })
 }
 
 fn nullable_escalation_reason_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {

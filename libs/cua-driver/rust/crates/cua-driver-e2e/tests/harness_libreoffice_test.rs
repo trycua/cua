@@ -14,7 +14,7 @@
 //!
 //! Run on an image with LibreOffice installed (override the path with
 //! `LO_SWRITER_EXE`):
-//!   cargo test -p cua-driver --test harness_libreoffice_test -- --ignored --nocapture
+//!   cargo test -p cua-driver-e2e --test harness_libreoffice_test -- --ignored --nocapture
 
 #![cfg(target_os = "windows")]
 

@@ -33,9 +33,11 @@
 //! the module is `#[cfg(target_os = "windows")]`-gated at the crate
 //! root.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, OnceLock, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use cua_driver_core::single_flight::SingleFlight;
 
 use windows::core::{Interface, GUID, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::HWND;
@@ -275,104 +277,47 @@ pub enum AppsFolderLookupError {
 /// returns. Retries therefore fail fast instead of accumulating abandoned
 /// Tokio blocking workers. Once a late worker returns, a short cooldown keeps
 /// a hot retry loop from immediately entering the same unhealthy shell broker.
-struct AppsFolderLookupSingleFlight {
-    in_flight: AtomicBool,
-    cooldown_until_ms: AtomicU64,
-    cooldown_ms: u64,
+fn apps_folder_lookup_gate() -> &'static Arc<SingleFlight> {
+    static GATE: OnceLock<Arc<SingleFlight>> = OnceLock::new();
+    GATE.get_or_init(|| Arc::new(SingleFlight::new(APPS_FOLDER_LOOKUP_RECOVERY_COOLDOWN)))
 }
 
-impl AppsFolderLookupSingleFlight {
-    const fn new(cooldown_ms: u64) -> Self {
-        Self {
-            in_flight: AtomicBool::new(false),
-            cooldown_until_ms: AtomicU64::new(0),
-            cooldown_ms,
-        }
-    }
+async fn run_apps_folder_lookup<T, F>(
+    gate: &Arc<SingleFlight>,
+    timeout: Duration,
+    work: F,
+) -> Result<T, AppsFolderLookupError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    let Some(permit) = gate.try_acquire() else {
+        return Err(AppsFolderLookupError::Busy);
+    };
+    let timed_out = permit.timeout_flag();
+    let worker = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    });
 
-    async fn run<T, F>(
-        self: &Arc<Self>,
-        timeout: Duration,
-        work: F,
-    ) -> Result<T, AppsFolderLookupError>
-    where
-        T: Send + 'static,
-        F: FnOnce() -> T + Send + 'static,
-    {
-        let now = apps_folder_lookup_now_ms();
-        if now < self.cooldown_until_ms.load(Ordering::Acquire)
-            || self
-                .in_flight
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_err()
-        {
-            return Err(AppsFolderLookupError::Busy);
-        }
-
-        let timed_out = Arc::new(AtomicBool::new(false));
-        let worker_timed_out = Arc::clone(&timed_out);
-        let worker_gate = Arc::clone(self);
-        let worker = tokio::task::spawn_blocking(move || {
-            let _guard = AppsFolderLookupInFlightGuard {
-                gate: worker_gate,
-                timed_out: worker_timed_out,
-            };
-            work()
-        });
-
-        match tokio::time::timeout(timeout, worker).await {
-            Ok(Ok(result)) => Ok(result),
-            Ok(Err(error)) => {
-                tracing::warn!(
-                    target: "launch_uwp",
-                    "shell:AppsFolder lookup worker failed: {error}"
-                );
-                Err(AppsFolderLookupError::Unavailable)
-            }
-            Err(_) => {
-                timed_out.store(true, Ordering::Release);
-                // Also arm the cooldown on the caller side. The worker can
-                // return between the deadline firing and observing
-                // `timed_out`; recording it here closes that race.
-                self.cooldown_until_ms.store(
-                    apps_folder_lookup_now_ms().saturating_add(self.cooldown_ms),
-                    Ordering::Release,
-                );
-                Err(AppsFolderLookupError::Timeout)
-            }
-        }
-    }
-}
-
-struct AppsFolderLookupInFlightGuard {
-    gate: Arc<AppsFolderLookupSingleFlight>,
-    timed_out: Arc<AtomicBool>,
-}
-
-impl Drop for AppsFolderLookupInFlightGuard {
-    fn drop(&mut self) {
-        if self.timed_out.load(Ordering::Acquire) {
-            self.gate.cooldown_until_ms.store(
-                apps_folder_lookup_now_ms().saturating_add(self.gate.cooldown_ms),
-                Ordering::Release,
+    match tokio::time::timeout(timeout, worker).await {
+        Ok(Ok(result)) => Ok(result),
+        Ok(Err(error)) => {
+            tracing::warn!(
+                target: "launch_uwp",
+                "shell:AppsFolder lookup worker failed: {error}"
             );
+            Err(AppsFolderLookupError::Unavailable)
         }
-        self.gate.in_flight.store(false, Ordering::Release);
+        Err(_) => {
+            timed_out.store(true, Ordering::Release);
+            // Also arm the cooldown on the caller side. The worker can
+            // return between the deadline firing and observing
+            // `timed_out`; recording it here closes that race.
+            gate.arm_cooldown();
+            Err(AppsFolderLookupError::Timeout)
+        }
     }
-}
-
-fn apps_folder_lookup_gate() -> &'static Arc<AppsFolderLookupSingleFlight> {
-    static GATE: OnceLock<Arc<AppsFolderLookupSingleFlight>> = OnceLock::new();
-    GATE.get_or_init(|| {
-        Arc::new(AppsFolderLookupSingleFlight::new(
-            APPS_FOLDER_LOOKUP_RECOVERY_COOLDOWN.as_millis() as u64,
-        ))
-    })
-}
-
-fn apps_folder_lookup_now_ms() -> u64 {
-    static START: OnceLock<Instant> = OnceLock::new();
-    START.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
 fn cache() -> &'static RwLock<Option<Vec<AppsFolderEntry>>> {
@@ -384,11 +329,12 @@ fn cache() -> &'static RwLock<Option<Vec<AppsFolderEntry>>> {
 pub async fn resolve_apps_folder_target_by_name_bounded(
     display_name: String,
 ) -> Result<Option<AppsFolderLaunchTarget>, AppsFolderLookupError> {
-    let result = apps_folder_lookup_gate()
-        .run(APPS_FOLDER_LOOKUP_TIMEOUT, move || {
-            resolve_apps_folder_target_by_name(&display_name)
-        })
-        .await;
+    let result = run_apps_folder_lookup(
+        apps_folder_lookup_gate(),
+        APPS_FOLDER_LOOKUP_TIMEOUT,
+        move || resolve_apps_folder_target_by_name(&display_name),
+    )
+    .await;
     match result {
         Err(AppsFolderLookupError::Timeout) => tracing::warn!(
             target: "launch_uwp",
@@ -574,22 +520,23 @@ fn pwstr_to_string_and_free(p: PWSTR) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicU64};
+    use std::time::Instant;
 
     #[tokio::test]
     async fn apps_folder_lookup_timeout_is_single_flight_and_recovers_after_cooldown() {
-        let gate = Arc::new(AppsFolderLookupSingleFlight::new(20));
+        let gate = Arc::new(SingleFlight::new(Duration::from_millis(500)));
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let work_started = Arc::new(AtomicBool::new(false));
         let worker_started = Arc::clone(&work_started);
 
         let started = Instant::now();
-        let first = gate
-            .run(Duration::from_millis(100), move || {
-                worker_started.store(true, Ordering::Release);
-                release_rx.recv().expect("release timed-out lookup worker");
-                1_u8
-            })
-            .await;
+        let first = run_apps_folder_lookup(&gate, Duration::from_millis(100), move || {
+            worker_started.store(true, Ordering::Release);
+            release_rx.recv().expect("release timed-out lookup worker");
+            1_u8
+        })
+        .await;
         assert_eq!(first, Err(AppsFolderLookupError::Timeout));
         assert!(started.elapsed() < Duration::from_secs(1));
         assert!(work_started.load(Ordering::Acquire));
@@ -597,30 +544,29 @@ mod tests {
         let retry_count = Arc::new(AtomicU64::new(0));
         for _ in 0..100 {
             let retry_count = Arc::clone(&retry_count);
-            let retry = gate
-                .run(Duration::from_millis(10), move || {
-                    retry_count.fetch_add(1, Ordering::AcqRel);
-                })
-                .await;
+            let retry = run_apps_folder_lookup(&gate, Duration::from_millis(10), move || {
+                retry_count.fetch_add(1, Ordering::AcqRel);
+            })
+            .await;
             assert_eq!(retry, Err(AppsFolderLookupError::Busy));
         }
         assert_eq!(retry_count.load(Ordering::Acquire), 0);
 
         release_tx.send(()).expect("release first lookup");
         let worker_deadline = Instant::now() + Duration::from_secs(1);
-        while gate.in_flight.load(Ordering::Acquire) && Instant::now() < worker_deadline {
+        while gate.is_in_flight() && Instant::now() < worker_deadline {
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
-        assert!(!gate.in_flight.load(Ordering::Acquire));
+        assert!(!gate.is_in_flight());
 
         assert_eq!(
-            gate.run(Duration::from_millis(10), || 2_u8).await,
+            run_apps_folder_lookup(&gate, Duration::from_millis(10), || 2_u8).await,
             Err(AppsFolderLookupError::Busy),
             "late worker completion must leave a recovery cooldown"
         );
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(600)).await;
         assert_eq!(
-            gate.run(Duration::from_millis(100), || 3_u8).await,
+            run_apps_folder_lookup(&gate, Duration::from_millis(100), || 3_u8).await,
             Ok(3),
             "lookup should recover after the cooldown"
         );

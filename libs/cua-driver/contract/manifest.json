@@ -1007,21 +1007,28 @@
             "type": "object"
           },
           "position": {
-            "properties": {
-              "x": {
-                "format": "double",
-                "type": "number"
+            "anyOf": [
+              {
+                "properties": {
+                  "x": {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  "y": {
+                    "format": "double",
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "type": "object"
               },
-              "y": {
-                "format": "double",
-                "type": "number"
+              {
+                "type": "null"
               }
-            },
-            "required": [
-              "x",
-              "y"
-            ],
-            "type": "object"
+            ]
           },
           "session": {
             "type": "string"

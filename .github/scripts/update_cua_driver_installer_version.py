@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 from typing import Sequence
 
+from validate_release_versions import VersionError, read_withdrawn_versions
+
 
 class InstallerVersionError(RuntimeError):
     """Raised when installer version state cannot be updated safely."""
@@ -73,9 +75,22 @@ def update_installer_versions(
     version: str,
     *,
     state_path: Path | None = None,
+    withdrawn_path: Path | None = None,
     allow_newer: bool = False,
 ) -> tuple[Path, ...]:
     requested = version_tuple(version)
+    if withdrawn_path is not None:
+        if not withdrawn_path.is_file():
+            raise InstallerVersionError(f"withdrawn-versions file {withdrawn_path} does not exist")
+        try:
+            withdrawn = read_withdrawn_versions(withdrawn_path)
+        except VersionError as error:
+            raise InstallerVersionError(f"invalid {withdrawn_path}: {error}") from error
+        if version in withdrawn:
+            raise InstallerVersionError(
+                f"refusing to bake withdrawn release {version} into the installers: "
+                f"{withdrawn[version]}"
+            )
     current = {
         shell_path: read_version(shell_path, SHELL_VERSION),
         powershell_path: read_version(powershell_path, POWERSHELL_VERSION),
@@ -120,6 +135,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="published-version state file to update with the public installers",
     )
     parser.add_argument(
+        "--withdrawn-path",
+        type=Path,
+        help="withdrawn-versions file; refuse to bake any version it lists",
+    )
+    parser.add_argument(
         "--allow-newer",
         action="store_true",
         help="leave a newer, already-published baked version unchanged",
@@ -132,6 +152,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.powershell_path,
             args.version,
             state_path=args.state_path,
+            withdrawn_path=args.withdrawn_path,
             allow_newer=args.allow_newer,
         )
     except (InstallerVersionError, OSError) as error:

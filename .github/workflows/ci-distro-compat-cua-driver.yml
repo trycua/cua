@@ -42,9 +42,10 @@ on:
     paths:
       - ".github/workflows/ci-distro-compat-cua-driver.yml"
   release:
-    # The Cua Driver release train separates immutable tag creation from an
-    # explicitly dispatched publication step. Wait for publication so the
-    # released-binary matrix never races a draft release.
+    # Release Please creates the Cua Driver tag and a draft release; the
+    # tag-triggered CD run publishes that draft only after its builds and
+    # E2E gates pass. Wait for publication so the released-binary matrix
+    # never races a draft release.
     types: [published]
   workflow_dispatch:
     inputs:

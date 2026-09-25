@@ -140,27 +140,6 @@ fn def() -> &'static ToolDef {
     })
 }
 
-/// Fold a per-call `max_dimension` cap with the session/global
-/// `max_image_dimension` ceiling. `resize_png_if_needed` treats `0` as "no
-/// limit", so when the ceiling is unlimited the per-call cap stands alone;
-/// otherwise the tighter (smaller, non-zero) of the two wins. Returns `0` only
-/// when neither imposes a limit.
-fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
-    match per_call {
-        Some(md) if ceiling == 0 => md,
-        Some(md) => ceiling.min(md),
-        None => ceiling,
-    }
-}
-
-fn resolve_max_dimension(
-    configured: u32,
-    legacy_cap: Option<u32>,
-    per_call_override: Option<u32>,
-) -> u32 {
-    per_call_override.unwrap_or_else(|| fold_max_dimension(configured, legacy_cap))
-}
-
 fn chromium_browser_window(pid: i32) -> bool {
     let identity = format!(
         "{} {}",
@@ -375,7 +354,12 @@ impl Tool for GetWindowStateTool {
         // The portable `max_image_dimension` is an explicit per-call override,
         // including 0 for native resolution. Without it, preserve the existing
         // configured ceiling and legacy `max_dimension` tighter-cap behavior.
-        let max_dim = resolve_max_dimension(effective_max_dim, max_dimension, max_image_dimension);
+        let max_dim = cua_driver_core::image_utils::ImageDimensionLimits {
+            configured: effective_max_dim,
+            legacy_max_dimension: max_dimension,
+            max_image_dimension,
+        }
+        .resolve();
         // Returns the exact delivered PNG bytes, optional file path, delivered
         // and native dimensions, the WindowServer bounds it was validated
         // against, and the raw capture's backing scale.
@@ -1130,31 +1114,6 @@ mod window_scope_contract_tests {
                 && d.description.contains("include_screenshot:false"),
             "description must document the both-false error"
         );
-    }
-
-    /// The per-call `max_dimension` folds with the session/global ceiling: the
-    /// tighter non-zero cap wins, an unlimited (0) ceiling defers to the
-    /// per-call cap, and absent inputs pass the ceiling through unchanged.
-    #[test]
-    fn max_dimension_folds_tighter_cap() {
-        // Ceiling wins when it is tighter than the per-call cap.
-        assert_eq!(fold_max_dimension(1024, Some(2048)), 1024);
-        // Per-call wins when it is tighter than the ceiling.
-        assert_eq!(fold_max_dimension(4096, Some(512)), 512);
-        // Unlimited ceiling (0) defers entirely to the per-call cap.
-        assert_eq!(fold_max_dimension(0, Some(768)), 768);
-        // No per-call cap → the ceiling passes through (0 stays unlimited).
-        assert_eq!(fold_max_dimension(1600, None), 1600);
-        assert_eq!(fold_max_dimension(0, None), 0);
-    }
-
-    #[test]
-    fn max_image_dimension_explicit_override_wins() {
-        assert_eq!(resolve_max_dimension(1024, None, Some(2048)), 2048);
-        assert_eq!(resolve_max_dimension(1024, Some(512), Some(2048)), 2048);
-        assert_eq!(resolve_max_dimension(1024, Some(512), Some(0)), 0);
-        assert_eq!(resolve_max_dimension(1024, Some(512), None), 512);
-        assert_eq!(resolve_max_dimension(1024, None, None), 1024);
     }
 }
 

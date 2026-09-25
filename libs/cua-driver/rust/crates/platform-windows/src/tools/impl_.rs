@@ -478,14 +478,7 @@ pub(crate) const NO_CURSOR: &str = "";
 /// then the legacy `cursor_id` alias. A direct platform invocation that has no
 /// lifecycle metadata remains cursor-less.
 pub(crate) fn resolve_cursor_key(args: &Value) -> String {
-    for key in ["session", "_session_id", "cursor_id"] {
-        if let Some(v) = args.get(key).and_then(|v| v.as_str()) {
-            if !v.is_empty() {
-                return v.to_owned();
-            }
-        }
-    }
-    NO_CURSOR.to_owned()
+    cua_driver_core::tool_args::session_key(args).unwrap_or_else(|| NO_CURSOR.to_owned())
 }
 
 /// Returns `true` when a click/scroll invocation should take the **window-less
@@ -1010,109 +1003,15 @@ impl Tool for ListWindowsTool {
     }
 }
 
-fn z_index_from_front_to_back(total: usize, position: usize) -> usize {
-    total.saturating_sub(1).saturating_sub(position)
-}
+use cua_driver_core::window_target::z_index_from_front_to_back;
 
 #[cfg(test)]
-mod list_windows_z_index_tests {
-    use super::{exact_window_ownership_result, z_index_from_front_to_back};
-
-    #[test]
-    fn enum_windows_front_to_back_order_normalizes_to_higher_is_frontmost() {
-        let indices: Vec<_> = (0..3)
-            .map(|position| z_index_from_front_to_back(3, position))
-            .collect();
-        assert_eq!(indices, vec![2, 1, 0]);
-        assert!(indices[0] > indices[2]);
-    }
-
-    #[test]
-    fn explicit_pid_hwnd_guard_refuses_wrong_or_stale_owners() {
-        assert!(exact_window_ownership_result(42, 7, Some(42)).is_ok());
-
-        let wrong = exact_window_ownership_result(42, 7, Some(99)).unwrap_err();
-        assert_eq!(wrong.is_error, Some(true));
-        assert_eq!(
-            wrong.structured_content.as_ref().unwrap()["code"],
-            "window_target_mismatch"
-        );
-        assert_eq!(wrong.structured_content.as_ref().unwrap()["owner_pid"], 99);
-
-        let stale = exact_window_ownership_result(42, 7, None).unwrap_err();
-        assert_eq!(
-            stale.structured_content.as_ref().unwrap()["code"],
-            "window_target_not_found"
-        );
-    }
-}
+mod list_windows_z_index_tests;
 
 #[cfg(test)]
-mod get_window_state_actions_tests {
-    use super::*;
-    use crate::uia::UiaNode;
-
-    fn node(actions: Vec<String>) -> UiaNode {
-        UiaNode {
-            element_index: Some(1),
-            control_type: "Button".to_owned(),
-            name: Some("OK".to_owned()),
-            value: None,
-            automation_id: None,
-            help_text: None,
-            actions,
-            enabled: Some(true),
-            selected: None,
-            element_ptr: 0,
-            center_x: 0,
-            center_y: 0,
-            rect: None,
-            msaa_role: None,
-            depth: 0,
-            parent_element_index: None,
-            in_web_content: false,
-        }
-    }
-
-    #[test]
-    fn element_entry_includes_actions_when_present() {
-        let n = node(vec!["invoke".to_owned(), "toggle".to_owned()]);
-        let entry = build_element_entry(&n, None).unwrap();
-        assert_eq!(entry["actions"], json!(["invoke", "toggle"]));
-    }
-
-    #[test]
-    fn element_entry_omits_actions_when_empty() {
-        let n = node(Vec::new());
-        let entry = build_element_entry(&n, None).unwrap();
-        assert!(entry.get("actions").is_none());
-    }
-}
+mod get_window_state_actions_tests;
 
 // ── get_window_state ─────────────────────────────────────────────────────────
-
-/// Fold a per-call `max_dimension` cap with the configured
-/// `max_image_dimension` ceiling. `resize_png_if_needed` treats `0` as "no
-/// limit", so an unlimited ceiling defers to the per-call cap; otherwise the
-/// tighter (smaller, non-zero) of the two wins.
-fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
-    match per_call {
-        Some(md) if ceiling == 0 => md,
-        Some(md) => ceiling.min(md),
-        None => ceiling,
-    }
-}
-
-/// Resolve the screenshot size limit. The canonical per-call override wins
-/// outright, including `0` for native resolution. When omitted, preserve the
-/// configured ceiling and legacy `max_dimension` folding behavior.
-fn resolve_max_image_dimension(
-    configured: u32,
-    max_image_dimension: Option<u32>,
-    legacy_max_dimension: Option<u32>,
-) -> u32 {
-    max_image_dimension.unwrap_or_else(|| fold_max_dimension(configured, legacy_max_dimension))
-}
 
 /// Build a single structured element entry for `get_window_state`.
 /// Returns `None` when the node has no `element_index` (non-actionable rows).
@@ -1178,30 +1077,6 @@ pub struct GetWindowStateTool {
 }
 
 static GWS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
-
-#[cfg(test)]
-mod get_window_state_max_image_dimension_tests {
-    use super::resolve_max_image_dimension;
-
-    #[test]
-    fn canonical_override_wins_and_zero_requests_native_resolution() {
-        assert_eq!(resolve_max_image_dimension(1568, None, None), 1568);
-        assert_eq!(resolve_max_image_dimension(1568, Some(800), None), 800);
-        assert_eq!(resolve_max_image_dimension(800, Some(1568), None), 1568);
-        assert_eq!(resolve_max_image_dimension(1568, Some(0), None), 0);
-        assert_eq!(
-            resolve_max_image_dimension(1568, Some(1200), Some(400)),
-            1200
-        );
-    }
-
-    #[test]
-    fn omitted_canonical_override_preserves_legacy_folding() {
-        assert_eq!(resolve_max_image_dimension(1568, None, Some(800)), 800);
-        assert_eq!(resolve_max_image_dimension(800, None, Some(1568)), 800);
-        assert_eq!(resolve_max_image_dimension(0, None, Some(800)), 800);
-    }
-}
 
 /// Slack past `timeout_ms` before the walk task is abandoned.
 const UIA_WALK_BACKSTOP_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
@@ -1367,7 +1242,12 @@ impl Tool for GetWindowStateTool {
             .map(|v| v.max(1));
         let max_dim = {
             let cfg = self.state.config.read().unwrap();
-            resolve_max_image_dimension(cfg.max_image_dimension, max_image_dimension, max_dimension)
+            cua_driver_core::image_utils::ImageDimensionLimits {
+                configured: cfg.max_image_dimension,
+                legacy_max_dimension: max_dimension,
+                max_image_dimension,
+            }
+            .resolve()
         };
         // `capture_mode` is DEPRECATED and ignored — get_window_state always
         // returns BOTH the UIA tree and a screenshot now, so the agent grounds on
@@ -2147,11 +2027,6 @@ async fn restore_foreground_polling_best_effort(prior_foreground_addr: usize, sp
 pub struct LaunchAppTool;
 static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
-fn contains_remote_debugging_flag(value: &str) -> bool {
-    let lower = value.to_ascii_lowercase();
-    lower.contains("--remote-debugging-port") || lower.contains("--remote-debugging-pipe")
-}
-
 #[async_trait]
 impl Tool for LaunchAppTool {
     fn def(&self) -> &ToolDef {
@@ -2317,10 +2192,10 @@ impl Tool for LaunchAppTool {
             .chain(path_opt.as_deref())
             .chain(name_opt.as_deref())
             .chain(extra_args.iter().map(String::as_str))
-            .any(contains_remote_debugging_flag)
+            .any(cua_driver_core::launch_guard::contains_remote_debugging_flag)
         {
             return ToolResult::error(
-                "Chromium remote-debugging flags moved to browser_prepare so DevTools is never enabled on an unproven user profile",
+                cua_driver_core::launch_guard::REMOTE_DEBUGGING_LAUNCH_REFUSAL,
             );
         }
 
@@ -3121,27 +2996,23 @@ fn finish_pixel_uia_attempt(
         PointInvokeOutcome::Timeout => "timeout",
         PointInvokeOutcome::Unavailable => "unavailable",
     };
-    Some(
-        ToolResult::error(format!(
+    Some(cua_driver_core::delivery::background_unavailable_result(
+        format!(
             "UIA pixel click {status} for pid {pid}. No fallback input was sent. \
          The click effect is unknown; inspect the target state before another action. \
          If the provider does not recover, retry this action with delivery_mode:\"foreground\"."
-        ))
-        .with_structured(json!({
-            "code": "background_unavailable",
+        ),
+        "background_unavailable",
+        format!(
+            "the UIA provider is {status}; retry this action with delivery_mode:\"foreground\"."
+        ),
+        json!({
             "uia_status": status,
             "path": "ax",
             "verified": false,
             "effect": "unverifiable",
-            "suggestion": "Retry this action with delivery_mode:\"foreground\".",
-            "escalation": {
-                "recommended": "foreground",
-                "reason": format!(
-                    "the UIA provider is {status}; retry this action with delivery_mode:\"foreground\"."
-                ),
-            },
-        })),
-    )
+        }),
+    ))
 }
 
 enum BackgroundElementClick {
@@ -4323,207 +4194,10 @@ impl Tool for ClickTool {
 }
 
 #[cfg(test)]
-mod pixel_click_transport_tests {
-    use super::{finish_pixel_uia_attempt, posted_pixel_click_result};
-    use crate::uia::windows_enum::PointInvokeOutcome;
-    use cua_driver_core::action_record::{
-        ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
-    };
-
-    #[test]
-    fn uia_unavailable_errors_advertise_foreground_escalation() {
-        use cua_driver_core::action_record::EscalationKind;
-        use cua_driver_core::protocol::Content;
-        for (outcome, status) in [
-            (PointInvokeOutcome::Busy, "busy"),
-            (PointInvokeOutcome::Timeout, "timeout"),
-            (PointInvokeOutcome::Unavailable, "unavailable"),
-        ] {
-            let result = finish_pixel_uia_attempt(outcome, 7, 3, 4)
-                .expect("unavailable UIA must stop the route without fallback");
-            assert!(result.is_error.unwrap_or(false), "{outcome:?}");
-            let data = result
-                .structured_content
-                .as_ref()
-                .expect("structured error");
-            assert_eq!(data["code"], "background_unavailable");
-            assert_eq!(data["uia_status"], status);
-            assert_eq!(data["path"], "ax");
-            assert_eq!(data["effect"], "unverifiable");
-            assert_eq!(
-                data["suggestion"].as_str(),
-                Some("Retry this action with delivery_mode:\"foreground\"."),
-                "{outcome:?}"
-            );
-            assert_eq!(
-                data["escalation"]["recommended"].as_str(),
-                Some("foreground"),
-                "{outcome:?}"
-            );
-            let reason = data["escalation"]["reason"]
-                .as_str()
-                .expect("escalation reason");
-            assert!(
-                reason.contains(status),
-                "reason must name the UIA status: {reason}"
-            );
-            assert!(
-                reason.contains("delivery_mode:\"foreground\""),
-                "reason must name the next rung: {reason}"
-            );
-            let text = match &result.content[0] {
-                Content::Text { text, .. } => text,
-                _ => panic!("expected text content for {outcome:?}"),
-            };
-            assert!(
-                text.contains("No fallback input was sent"),
-                "text must keep the no-replay guarantee: {text}"
-            );
-            assert!(
-                text.contains("delivery_mode:\"foreground\""),
-                "text must surface the escalation: {text}"
-            );
-            let record = ActionExecutionRecord::from_legacy(
-                "click",
-                &serde_json::json!({ "delivery_mode": "background" }),
-                data,
-            )
-            .expect("UIA refusal should normalize into the public action contract");
-            let public = serde_json::to_value(record.public_result().expect("valid ActionResult"))
-                .expect("serialize ActionResult");
-            assert_eq!(public["effect"], "unverifiable", "{outcome:?}");
-        }
-        // The completed-miss boundary is unchanged: only Miss falls through,
-        // and a delivered Invoke carries no escalation hint.
-        assert!(finish_pixel_uia_attempt(PointInvokeOutcome::Miss, 7, 3, 4).is_none());
-        let ok = finish_pixel_uia_attempt(PointInvokeOutcome::Invoked, 7, 3, 4)
-            .expect("invoked click reports success");
-        assert!(!ok.is_error.unwrap_or(false));
-        let ok_data = ok.structured_content.as_ref().expect("structured success");
-        assert_eq!(ok_data["path"], "ax");
-        assert!(ok_data.get("escalation").is_none());
-        assert!(ok_data.get("suggestion").is_none());
-        let ok_record = ActionExecutionRecord::from_legacy(
-            "click",
-            &serde_json::json!({ "delivery_mode": "background" }),
-            ok_data,
-        )
-        .expect("UIA invoke should normalize into the public action contract");
-        let ok_public =
-            serde_json::to_value(ok_record.public_result().expect("valid ActionResult"))
-                .expect("serialize ActionResult");
-        assert_eq!(ok_public["effect"], "unverifiable");
-        // The hint must flow into the existing escalation pipeline, not sit
-        // as inert metadata: Timeout (the #3621 case) normalizes to a
-        // foreground-delivery escalation on the internal record.
-        let timeout_data = finish_pixel_uia_attempt(PointInvokeOutcome::Timeout, 7, 3, 4)
-            .expect("timeout stops the route")
-            .structured_content
-            .expect("structured error");
-        let timeout_record = ActionExecutionRecord::from_legacy(
-            "click",
-            &serde_json::json!({ "delivery_mode": "background" }),
-            &timeout_data,
-        )
-        .expect("UIA timeout should normalize into the public action contract");
-        assert_eq!(
-            timeout_record.escalation.map(|escalation| escalation.kind),
-            Some(EscalationKind::RetryWithForegroundDelivery)
-        );
-    }
-
-    #[test]
-    fn post_message_pixel_click_reports_synthetic_transport() {
-        let result = posted_pixel_click_result(42, "click");
-        let structured = result
-            .structured_content
-            .as_ref()
-            .expect("posted click should expose legacy transport metadata");
-        assert_eq!(structured["path"], "post_message");
-
-        let record = ActionExecutionRecord::from_legacy(
-            "click",
-            &serde_json::json!({ "delivery_mode": "background" }),
-            structured,
-        )
-        .expect("posted click should normalize into the public action contract");
-        assert_eq!(record.transport, ActionTransport::WindowsPostMessage);
-        assert_eq!(record.requested_delivery, RequestedDelivery::Background);
-        assert_eq!(record.actual_delivery, Some(ActualDelivery::Background));
-
-        let public = serde_json::to_value(record.public_result().expect("valid ActionResult"))
-            .expect("serialize ActionResult");
-        assert_eq!(public["route"], "synthetic_events");
-        assert_eq!(public["delivery"]["mode"], "background");
-    }
-}
+mod pixel_click_transport_tests;
 
 #[cfg(test)]
-mod background_element_click_record_tests {
-    use super::{background_element_click_result, ActionTransport};
-
-    #[test]
-    fn raw_fallback_reports_its_physical_transport() {
-        for (transport, path) in [
-            (ActionTransport::WindowsTargetedInjection, "pixel"),
-            (ActionTransport::WindowsPostMessage, "post_message"),
-        ] {
-            let result = background_element_click_result(
-                "physical fallback".into(),
-                transport,
-                vec![ActionTransport::WindowsUiaInvoke],
-            );
-            assert_eq!(result.structured_content.as_ref().unwrap()["path"], path);
-            let record = result.action_record.unwrap();
-            assert_eq!(record.transport, transport);
-            let truth = record.debug_json();
-            assert_ne!(truth["route"], "accessibility");
-            assert_eq!(
-                record.attempts[0].transport,
-                ActionTransport::WindowsUiaInvoke
-            );
-            assert_eq!(record.fallbacks[0].to, transport);
-        }
-    }
-
-    #[test]
-    fn failed_provider_calls_disqualify_single_action_marker_exemption() {
-        let result = background_element_click_result(
-            "semantic success after provider failure".into(),
-            ActionTransport::WindowsUiaToggle,
-            vec![ActionTransport::WindowsUiaInvoke],
-        );
-        let record = result.action_record.unwrap();
-        assert_eq!(record.transport, ActionTransport::WindowsUiaToggle);
-        assert_eq!(record.attempts.len(), 1);
-        assert_eq!(record.fallbacks.len(), 1);
-        assert_eq!(record.fallbacks[0].from, ActionTransport::WindowsUiaInvoke);
-        assert_eq!(record.fallbacks[0].to, ActionTransport::WindowsUiaToggle);
-        // Point-free recording requires an empty fallback journal.
-        assert!(!record.debug_json()["fallbacks"]
-            .as_array()
-            .unwrap()
-            .is_empty());
-    }
-
-    #[test]
-    fn single_provider_success_has_no_invented_attempts() {
-        for transport in [
-            ActionTransport::WindowsUiaInvoke,
-            ActionTransport::WindowsUiaToggle,
-            ActionTransport::WindowsUiaSelection,
-            ActionTransport::WindowsUiaExpandCollapse,
-        ] {
-            let result =
-                background_element_click_result("semantic success".into(), transport, vec![]);
-            assert_eq!(result.structured_content.as_ref().unwrap()["path"], "ax");
-            let record = result.action_record.unwrap();
-            assert_eq!(record.transport, transport);
-            assert!(record.attempts.is_empty());
-            assert!(record.fallbacks.is_empty());
-        }
-    }
-}
+mod background_element_click_record_tests;
 
 // ── type_text ─────────────────────────────────────────────────────────────────
 
@@ -5296,55 +4970,7 @@ fn changed_contains_post_message_result(text_len: usize) -> serde_json::Value {
 }
 
 #[cfg(test)]
-mod post_message_readback_tests {
-    use super::{changed_contains_post_message_result, post_message_readback_observed};
-
-    #[test]
-    fn observes_only_a_changed_value_containing_the_requested_text() {
-        assert!(post_message_readback_observed(
-            Some("prefix"),
-            Some("prefixhello"),
-            "hello"
-        ));
-        assert!(!post_message_readback_observed(None, None, "hello"));
-        assert!(!post_message_readback_observed(
-            Some("hello"),
-            Some("hello"),
-            "hello"
-        ));
-        assert!(!post_message_readback_observed(
-            Some(""),
-            Some("h"),
-            "hello"
-        ));
-        assert!(!post_message_readback_observed(
-            Some("before"),
-            Some("different"),
-            "hello"
-        ));
-    }
-
-    #[test]
-    fn changed_contains_remains_unverifiable_without_retry_escalation() {
-        let result = changed_contains_post_message_result(5);
-        assert_eq!(result["effect"], "unverifiable");
-        assert_eq!(result["verify"], "changed_contains");
-        assert_eq!(result["verified"], false);
-        assert!(result.get("escalation").is_none());
-
-        let record = cua_driver_core::action_record::ActionExecutionRecord::from_legacy(
-            "type_text",
-            &serde_json::json!({"delivery_mode": "background"}),
-            &result,
-        )
-        .expect("changed-and-contains PostMessage result should normalize");
-        let public = serde_json::to_value(record.public_result().expect("valid ActionResult"))
-            .expect("serialize ActionResult");
-        assert_eq!(public["effect"], "unverifiable");
-        assert!(public.get("escalation").is_none());
-        assert!(public.get("evidence").is_none());
-    }
-}
+mod post_message_readback_tests;
 
 fn classify_value_write_readback(
     value: Option<&str>,
@@ -10566,510 +10192,28 @@ pub fn build_registry_with_provider(
 }
 
 #[cfg(test)]
-mod cursor_key_resolution_tests {
-    use super::{resolve_cursor_key, NO_CURSOR};
-    use serde_json::json;
-
-    #[test]
-    fn direct_platform_call_without_lifecycle_resolves_to_no_cursor() {
-        // No session/cursor_id → NO_CURSOR (""): the action still runs but no
-        // cursor is shown. Canonical core dispatch injects `_session_id` before
-        // real platform calls.
-        assert_eq!(resolve_cursor_key(&json!({})), NO_CURSOR);
-        assert_eq!(resolve_cursor_key(&json!({ "pid": 1 })), NO_CURSOR);
-        assert_eq!(
-            resolve_cursor_key(&json!({ "_session_id": "mcp-1-2" })),
-            "mcp-1-2"
-        );
-    }
-
-    #[test]
-    fn explicit_session_owns_a_cursor() {
-        assert_eq!(
-            resolve_cursor_key(&json!({ "session": "research-run" })),
-            "research-run"
-        );
-    }
-
-    #[test]
-    fn cursor_id_is_a_legacy_alias_and_session_wins() {
-        assert_eq!(
-            resolve_cursor_key(&json!({ "cursor_id": "user-handle" })),
-            "user-handle"
-        );
-        assert_eq!(
-            resolve_cursor_key(&json!({ "session": "s1", "cursor_id": "c1" })),
-            "s1"
-        );
-        assert_eq!(
-            resolve_cursor_key(&json!({ "_session_id": "implicit", "cursor_id": "c1" })),
-            "implicit"
-        );
-    }
-
-    #[test]
-    fn empty_strings_fall_through_to_no_cursor() {
-        // An empty `session` falls through to `cursor_id`; both empty → NO_CURSOR.
-        assert_eq!(
-            resolve_cursor_key(&json!({ "session": "", "cursor_id": "c1" })),
-            "c1"
-        );
-        assert_eq!(
-            resolve_cursor_key(&json!({ "session": "", "cursor_id": "" })),
-            NO_CURSOR
-        );
-    }
-}
+mod cursor_key_resolution_tests;
 
 #[cfg(test)]
-mod launch_focus_restore_decision_tests {
-    use super::{
-        first_unopened_shell_url_index, should_restore_foreground_after_launch, LaunchTargetShape,
-    };
-
-    #[test]
-    fn only_app_identifying_launches_restore_foreground() {
-        for (fields, restore) in [
-            // A urls-only launch explicitly asks for navigation in the default
-            // browser; that browser is the legitimate foreground.
-            (&["urls"][..], false),
-            (&["name"], true),
-            (&["path"], true),
-            // The AUMID path restores synchronously in launch_uwp.rs; the
-            // caller gates the polling restore on `aumid_for_uwp.is_none()`.
-            (&["aumid"], true),
-            (&["bundle_id"], true),
-            (&["launch_path"], true),
-            // An app-identifying field alongside urls opens them in that app
-            // in the background, so the prior foreground is restored.
-            (&["name", "urls"], true),
-            (&["path", "urls"], true),
-            (&["aumid", "urls"], true),
-            // Nothing was launched.
-            (&[], false),
-        ] {
-            let shape = LaunchTargetShape {
-                has_aumid: fields.contains(&"aumid"),
-                has_bundle_id: fields.contains(&"bundle_id"),
-                has_name: fields.contains(&"name"),
-                has_path: fields.contains(&"path"),
-                has_launch_path: fields.contains(&"launch_path"),
-                has_urls: fields.contains(&"urls"),
-            };
-            assert_eq!(
-                should_restore_foreground_after_launch(shape),
-                restore,
-                "{fields:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn named_app_launch_forwards_every_url() {
-        assert_eq!(first_unopened_shell_url_index(true), 0);
-    }
-
-    #[test]
-    fn urls_only_launch_does_not_reopen_primary_url() {
-        assert_eq!(first_unopened_shell_url_index(false), 1);
-    }
-}
+mod launch_focus_restore_decision_tests;
 
 #[cfg(test)]
-mod chromium_flag_injection_tests {
-    use super::{inject_chromium_anti_throttling_flags, is_chromium_browser_target};
-
-    #[test]
-    fn detects_bare_browser_names() {
-        for name in [
-            "msedge", "chrome", "brave", "opera", "vivaldi", "chromium", "thorium", "iridium",
-            "browser", "arc",
-        ] {
-            assert!(is_chromium_browser_target(name), "{name} should match");
-            assert!(
-                is_chromium_browser_target(&format!("{name}.exe")),
-                "{name}.exe should match"
-            );
-            // Case-insensitive.
-            assert!(
-                is_chromium_browser_target(&name.to_uppercase()),
-                "uppercase {name} should match"
-            );
-        }
-    }
-
-    #[test]
-    fn detects_full_paths() {
-        assert!(is_chromium_browser_target(
-            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-        ));
-        assert!(is_chromium_browser_target(
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-        ));
-        // Forward slashes too (some shells write paths that way).
-        assert!(is_chromium_browser_target(
-            r"C:/Program Files/Google/Chrome/Application/chrome.exe"
-        ));
-    }
-
-    #[test]
-    fn detects_launch_path_with_trailing_args() {
-        // Round-tripped launch_path from list_apps with shortcut arguments.
-        assert!(is_chromium_browser_target(
-            r#""C:\Program Files\Google\Chrome\Application\chrome.exe" --profile-directory="Profile 2""#
-        ));
-    }
-
-    #[test]
-    fn does_not_match_non_chromium_apps() {
-        for name in ["firefox", "notepad", "explorer", "code", "soffice"] {
-            assert!(!is_chromium_browser_target(name), "{name} should NOT match");
-            assert!(
-                !is_chromium_browser_target(&format!("{name}.exe")),
-                "{name}.exe should NOT match"
-            );
-        }
-        // Empty target.
-        assert!(!is_chromium_browser_target(""));
-    }
-
-    #[test]
-    fn injects_three_flags_into_empty_args() {
-        let mut args: Vec<String> = vec![];
-        inject_chromium_anti_throttling_flags(&mut args);
-        assert!(args.contains(&"--disable-features=CalculateNativeWinOcclusion".to_string()));
-        assert!(args.contains(&"--disable-backgrounding-occluded-windows".to_string()));
-        assert!(args.contains(&"--disable-renderer-backgrounding".to_string()));
-        assert_eq!(args.len(), 3);
-    }
-
-    #[test]
-    fn merges_into_existing_disable_features_list() {
-        let mut args = vec!["--disable-features=Foo,Bar".to_string()];
-        inject_chromium_anti_throttling_flags(&mut args);
-        // Should NOT have two --disable-features= entries.
-        let dfe: Vec<_> = args
-            .iter()
-            .filter(|a| a.starts_with("--disable-features="))
-            .collect();
-        assert_eq!(dfe.len(), 1);
-        assert!(dfe[0].contains("CalculateNativeWinOcclusion"));
-        assert!(dfe[0].contains("Foo"));
-        assert!(dfe[0].contains("Bar"));
-    }
-
-    #[test]
-    fn idempotent_when_all_flags_already_present() {
-        let mut args = vec![
-            "--disable-features=CalculateNativeWinOcclusion".to_string(),
-            "--disable-backgrounding-occluded-windows".to_string(),
-            "--disable-renderer-backgrounding".to_string(),
-        ];
-        let before = args.clone();
-        inject_chromium_anti_throttling_flags(&mut args);
-        assert_eq!(args, before, "must not duplicate flags");
-    }
-
-    #[test]
-    fn preserves_user_url_argument_after_flags() {
-        let mut args = vec!["file:///C:/test_page.html".to_string()];
-        inject_chromium_anti_throttling_flags(&mut args);
-        // URL must still be present.
-        assert!(args.iter().any(|a| a == "file:///C:/test_page.html"));
-        // All three flags now in args.
-        assert!(args
-            .iter()
-            .any(|a| a == "--disable-features=CalculateNativeWinOcclusion"));
-        assert!(args
-            .iter()
-            .any(|a| a == "--disable-backgrounding-occluded-windows"));
-        assert!(args.iter().any(|a| a == "--disable-renderer-backgrounding"));
-    }
-}
+mod chromium_flag_injection_tests;
 
 #[cfg(test)]
-mod click_capture_id_schema_tests {
-    use super::ClickTool;
-    use cua_driver_core::tool::Tool;
-
-    /// The portable click contract pins `button` and the other accepted
-    /// fields. A live schema may broaden `capture_id`, which the subset gate
-    /// allows, so the non-empty bound is pinned here.
-    #[test]
-    fn schema_requires_non_empty_capture_id() {
-        let tool = ClickTool {
-            state: super::ToolState::new(None),
-        };
-        let d = tool.def();
-        let props = d.input_schema.get("properties").expect("properties");
-        let capture_id = props.get("capture_id").expect("capture_id field present");
-        assert_eq!(capture_id["type"], "string");
-        assert_eq!(capture_id["minLength"], 1);
-    }
-}
+mod click_capture_id_schema_tests;
 
 #[cfg(test)]
-mod snapshot_coordinate_tests {
-    use super::{focus_by_pixel_click_args, ToolState, ZoomTool};
-    use cua_driver_core::tool::Tool;
-
-    #[test]
-    fn schema_keeps_pid_optional_for_window_owned_lookup() {
-        let tool = ZoomTool {
-            state: ToolState::new(None),
-        };
-        let required = tool.def().input_schema["required"].as_array().unwrap();
-        assert!(!required.iter().any(|field| field == "pid"));
-        assert!(tool.def().input_schema["properties"].get("pid").is_some());
-    }
-
-    #[test]
-    fn press_key_native_element_focus_skips_second_screenshot_scaling() {
-        let native = focus_by_pixel_click_args(
-            42,
-            Some(7),
-            120.0,
-            80.0,
-            false,
-            None,
-            Some("client-a".to_owned()),
-            false,
-            true,
-        );
-        assert_eq!(native["_native_coordinates"], true);
-
-        let screenshot = focus_by_pixel_click_args(
-            42,
-            Some(7),
-            60.0,
-            40.0,
-            false,
-            None,
-            Some("client-a".to_owned()),
-            false,
-            false,
-        );
-        assert!(screenshot.get("_native_coordinates").is_none());
-    }
-}
+mod snapshot_coordinate_tests;
 
 #[cfg(test)]
-mod set_window_frame_geometry_tests {
-    use super::outer_frame_for_visible_request;
-
-    #[test]
-    fn compensates_for_invisible_resize_borders() {
-        assert_eq!(
-            outer_frame_for_visible_request(
-                (65, 52, 872, 626),
-                (40, 40, 886, 633),
-                (47, 40, 872, 626),
-            )
-            .unwrap(),
-            (58, 52, 886, 633)
-        );
-    }
-
-    #[test]
-    fn leaves_outer_request_unchanged_when_dwm_bounds_are_unavailable() {
-        assert_eq!(
-            outer_frame_for_visible_request(
-                (-25, 10, 640, 480),
-                (20, 30, 800, 600),
-                (20, 30, 800, 600),
-            )
-            .unwrap(),
-            (-25, 10, 640, 480)
-        );
-    }
-}
+mod set_window_frame_geometry_tests;
 
 #[cfg(test)]
-mod desktop_scope_tests {
-    use super::{is_windowless_desktop_action, GetDesktopStateTool};
-    use cua_driver_core::tool::Tool;
-    use serde_json::json;
-
-    // ── is_windowless_desktop_action ──────────────────────────────────────────
-
-    #[test]
-    fn windowless_true_for_xy_under_desktop_scope_click_shape() {
-        // Click arg shape: {x, y}.
-        assert!(is_windowless_desktop_action(
-            &json!({"x": 10, "y": 20, "scope": "desktop"})
-        ));
-    }
-
-    #[test]
-    fn windowless_true_for_xy_under_desktop_scope_scroll_shape() {
-        // Scroll arg shape: {direction, x, y}.
-        assert!(is_windowless_desktop_action(&json!({
-            "direction": "down", "x": 10, "y": 20, "scope": "desktop"
-        })));
-    }
-
-    #[test]
-    fn windowless_false_when_pid_present() {
-        assert!(!is_windowless_desktop_action(&json!({
-            "x": 10, "y": 20, "pid": 5, "scope": "desktop"
-        })));
-    }
-
-    #[test]
-    fn windowless_false_when_window_id_present() {
-        assert!(!is_windowless_desktop_action(&json!({
-            "x": 10, "y": 20, "window_id": 99, "scope": "desktop"
-        })));
-    }
-
-    #[test]
-    fn windowless_false_under_window_scope() {
-        assert!(!is_windowless_desktop_action(&json!({
-            "x": 10, "y": 20, "scope": "window"
-        })));
-    }
-
-    #[test]
-    fn windowless_false_when_xy_missing() {
-        assert!(!is_windowless_desktop_action(
-            &json!({"x": 10, "scope": "desktop"})
-        ));
-        assert!(!is_windowless_desktop_action(
-            &json!({"y": 20, "scope": "desktop"})
-        ));
-        assert!(!is_windowless_desktop_action(&json!({"scope": "desktop"})));
-        // Non-numeric x/y must not qualify.
-        assert!(!is_windowless_desktop_action(&json!({
-            "x": "10", "y": "20", "scope": "desktop"
-        })));
-    }
-
-    // ── get_desktop_state schema ──────────────────────────────────────────────
-
-    #[test]
-    fn get_desktop_state_schema_rejects_window_scoped_fields() {
-        let tool = GetDesktopStateTool {
-            state: super::ToolState::new(None),
-        };
-        // The portable get_desktop_state contract pins the accepted fields and
-        // annotations; it cannot see a window-scoped field added to live.
-        let d = tool.def();
-        let props = d.input_schema["properties"].as_object().unwrap();
-        assert!(!props.contains_key("pid"), "must not accept pid");
-        assert!(
-            !props.contains_key("window_id"),
-            "must not accept window_id"
-        );
-        assert_eq!(d.input_schema["additionalProperties"], json!(false));
-    }
-}
+mod desktop_scope_tests;
 
 #[cfg(test)]
-mod browser_launch_guard_tests {
-    use super::contains_remote_debugging_flag;
-
-    #[test]
-    fn rejects_all_chromium_remote_debugging_spellings() {
-        assert!(contains_remote_debugging_flag("--remote-debugging-port=0"));
-        assert!(contains_remote_debugging_flag("--REMOTE-DEBUGGING-PIPE"));
-        assert!(contains_remote_debugging_flag(
-            r#"C:\Program Files\Chrome\chrome.exe --remote-debugging-port 9222"#
-        ));
-        assert!(!contains_remote_debugging_flag(
-            r#"--user-data-dir=C:\Temp\profile"#
-        ));
-    }
-}
+mod pid_window_target_tests;
 
 #[cfg(test)]
-mod pid_window_target_tests {
-    use super::*;
-    use cua_driver_core::window_target::{resolve_pid_window_target, PidWindowTargetResolution};
-
-    fn window(hwnd: u64, pid: u32) -> crate::win32::WindowInfo {
-        crate::win32::WindowInfo {
-            hwnd,
-            pid,
-            title: format!("Document {hwnd}"),
-            x: 0,
-            y: 0,
-            width: 640,
-            height: 480,
-            is_on_screen: true,
-            minimized: false,
-        }
-    }
-
-    #[test]
-    fn same_pid_sibling_windows_are_ambiguous() {
-        let candidates =
-            window_target_candidates_for_pid([window(7, 42), window(8, 42), window(9, 99)], 42);
-        assert!(matches!(
-            resolve_pid_window_target(candidates),
-            PidWindowTargetResolution::Ambiguous(windows)
-                if windows.iter().map(|window| window.window_id).collect::<Vec<_>>() == [7, 8]
-        ));
-    }
-}
-
-#[cfg(test)]
-mod value_write_readback_tests {
-    use super::{classify_value_write_readback, value_write_structured_result};
-
-    #[test]
-    fn confirms_when_the_expected_value_replaces_the_prior_value() {
-        assert_eq!(
-            classify_value_write_readback(Some("beforeinserted"), "before", "beforeinserted"),
-            "confirmed"
-        );
-    }
-
-    #[test]
-    fn treats_stale_or_unreadable_value_as_pending() {
-        assert_eq!(
-            classify_value_write_readback(Some("old value"), "old value", "old valueinserted"),
-            "pending"
-        );
-        assert_eq!(
-            classify_value_write_readback(None, "old value", "old valueinserted"),
-            "pending"
-        );
-    }
-
-    #[test]
-    fn deferred_publication_remains_unverifiable_without_retry_escalation() {
-        let result = value_write_structured_result(8, "pending", false);
-        assert_eq!(result["effect"], "unverifiable");
-        assert_eq!(result["verify"], "pending");
-        assert_eq!(result["verified"], false);
-        assert!(result.get("escalation").is_none());
-
-        let record = cua_driver_core::action_record::ActionExecutionRecord::from_legacy(
-            "type_text",
-            &serde_json::json!({"delivery_mode": "background"}),
-            &result,
-        )
-        .expect("deferred ValuePattern result should normalize");
-        let public = serde_json::to_value(record.public_result().expect("valid ActionResult"))
-            .expect("serialize ActionResult");
-        assert_eq!(public["effect"], "unverifiable");
-        assert!(public.get("escalation").is_none());
-        assert!(public.get("evidence").is_none());
-    }
-
-    #[test]
-    fn does_not_confirm_when_stale_value_contains_the_typed_text() {
-        assert_eq!(
-            classify_value_write_readback(Some("10.00"), "10.00", "10.000"),
-            "pending"
-        );
-    }
-
-    #[test]
-    fn does_not_confirm_an_empty_write() {
-        assert_eq!(
-            classify_value_write_readback(Some("unchanged"), "unchanged", "unchanged"),
-            "pending"
-        );
-    }
-}
+mod value_write_readback_tests;

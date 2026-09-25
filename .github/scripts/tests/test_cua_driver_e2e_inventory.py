@@ -16,7 +16,10 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-TEST_ROOT = REPO_ROOT / "libs/cua-driver/rust/crates/cua-driver/tests"
+CRATES_ROOT = REPO_ROOT / "libs/cua-driver/rust/crates"
+# Desktop E2E suites live in their own crate; hermetic protocol and CLI tests
+# stay with the driver. Both can hold ignored tests.
+TEST_PACKAGES = ("cua-driver", "cua-driver-e2e")
 ALLOWLIST = REPO_ROOT / "libs/cua-driver/tests/manual-e2e-allowlist.txt"
 
 # Canonical runners and the workflows that call them. The Windows Sandbox
@@ -65,14 +68,24 @@ def _ignored_in_source(text: str) -> list[str]:
     return names
 
 
+def package_test_binaries() -> dict[str, set[str]]:
+    """Map each test package to the integration-test binaries it owns."""
+    return {
+        package: {path.stem for path in (CRATES_ROOT / package / "tests").glob("*.rs")}
+        for package in TEST_PACKAGES
+    }
+
+
 def _test_binary_sources() -> dict[str, list[Path]]:
     """Map each integration-test binary to the source files it compiles."""
     binaries: dict[str, list[Path]] = {}
-    for path in sorted(TEST_ROOT.glob("*.rs")):
-        sources = [path]
-        for relative in PATH_MOD_RE.findall(path.read_text(encoding="utf-8")):
-            sources.append((path.parent / relative).resolve())
-        binaries[path.stem] = sources
+    for package in TEST_PACKAGES:
+        for path in sorted((CRATES_ROOT / package / "tests").glob("*.rs")):
+            assert path.stem not in binaries, f"test binary {path.stem} exists in two packages"
+            sources = [path]
+            for relative in PATH_MOD_RE.findall(path.read_text(encoding="utf-8")):
+                sources.append((path.parent / relative).resolve())
+            binaries[path.stem] = sources
     return binaries
 
 
@@ -162,6 +175,58 @@ def test_allowlist_entries_are_live_and_still_manual() -> None:
             routed.append(f"{binary}::{name} ({', '.join(runners)})")
     assert not stale, "Allowlisted tests are no longer ignored tests:\n  " + "\n  ".join(stale)
     assert not routed, "Allowlisted tests are routed; drop them:\n  " + "\n  ".join(routed)
+
+
+PACKAGE_TEST_RE = re.compile(
+    r"(?:-p|--package)\W+(cua-driver(?:-e2e)?)(?![A-Za-z0-9_-])"
+)
+# A workflow step or YAML key also ends a package reference.
+STEP_BOUNDARY_RE = re.compile(r"\n\s*-\s|\n\s*[A-Za-z_-]+:\s")
+TEST_FLAG_RE = re.compile(rf'--test(?:\s+"?|=|",\s*")({IDENT})')
+
+
+def package_test_references(text: str) -> list[tuple[str, str]]:
+    """Return `(package, binary)` for each `-p <package> ... --test <binary>`."""
+    references = []
+    for match in PACKAGE_TEST_RE.finditer(text):
+        rest = text[match.end() :]
+        ends = [
+            found.start()
+            for found in (
+                COMMAND_BOUNDARY_RE.search(rest),
+                STEP_BOUNDARY_RE.search(rest),
+                PACKAGE_TEST_RE.search(rest),
+            )
+            if found
+        ]
+        command = rest[: min(ends)] if ends else rest
+        references.extend((match.group(1), name) for name in TEST_FLAG_RE.findall(command))
+    return references
+
+
+def test_runner_test_targets_exist_in_the_named_package() -> None:
+    """A runner that names the wrong package fails in Cargo, not in review."""
+    owned = package_test_binaries()
+    wrong = sorted(
+        f"{path}: -p {package} --test {binary}"
+        for path, text in runner_texts().items()
+        for package, binary in package_test_references(text)
+        if binary not in owned[package]
+    )
+    assert not wrong, "Runners name test binaries their package lacks:\n  " + "\n  ".join(wrong)
+
+
+def test_package_reference_detection_is_scoped_to_one_command() -> None:
+    runner = (
+        'cargo test -p cua-driver-e2e "${ARGS[@]}" \\\n  --test harness_gtk3_test -- --ignored\n'
+        'cargo test -p cua-driver --test protocol_schema_test\n'
+        '"test", "-p", "cua-driver-e2e", "--test", "capture_contract_test", "--",\n'
+    )
+    assert package_test_references(runner) == [
+        ("cua-driver-e2e", "harness_gtk3_test"),
+        ("cua-driver", "protocol_schema_test"),
+        ("cua-driver-e2e", "capture_contract_test"),
+    ]
 
 
 def test_inventory_expands_macro_rows_and_support_modules() -> None:

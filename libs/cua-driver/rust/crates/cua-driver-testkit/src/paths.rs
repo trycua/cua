@@ -2,8 +2,9 @@
 //! `CARGO_MANIFEST_DIR`.
 //!
 //! When an integration test runs, Cargo sets `CARGO_MANIFEST_DIR` to the crate
-//! under test (`crates/cua-driver`), so `workspace_root()` resolves the same
-//! whether called from the test or from here.
+//! under test (`crates/cua-driver` or `crates/cua-driver-e2e`). Both sit two
+//! levels below the workspace root, so `workspace_root()` resolves the same
+//! from either crate or from here.
 
 use std::path::{Path, PathBuf};
 

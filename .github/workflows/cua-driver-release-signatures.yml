@@ -1,0 +1,146 @@
+name: "Release gate: Cua Driver signatures"
+
+# Verifies that Cua Driver release archives carry the signatures the operating
+# systems require, on the same kind of runner an end user has:
+#
+#   macOS    every CuaDriver.app is Developer ID signed by the pinned team,
+#            accepted by Gatekeeper as "Notarized Developer ID", and stapled;
+#            bare Mach-O binaries carry the same hardened-runtime signature.
+#   Windows  every PE file in every zip has a valid, timestamped Authenticode
+#            signature from Cua AI, Inc.
+#
+# Callers:
+#   cd-rust-cua-driver.yml   `source: artifacts` before the release job
+#                            uploads anything, and `source: release` against
+#                            the published assets before the installers bake
+#                            the new version.
+#   ci-cua-driver-release-signatures.yml
+#                            self-test against a known signed and a known
+#                            unsigned published release.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Exact Cua Driver version whose archives are verified"
+        required: true
+        type: string
+      source:
+        description: "artifacts (this workflow run) or release (published GitHub release assets)"
+        required: false
+        default: artifacts
+        type: string
+      verify_macos:
+        required: false
+        default: true
+        type: boolean
+      verify_windows:
+        required: false
+        default: true
+        type: boolean
+      expect_macos:
+        description: "pass, or fail for a negative control"
+        required: false
+        default: pass
+        type: string
+      expect_windows:
+        description: "pass, or fail for a negative control"
+        required: false
+        default: pass
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS notarization (${{ inputs.version }}, expect ${{ inputs.expect_macos }})
+    if: inputs.verify_macos
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Download candidate darwin archives
+        if: inputs.source == 'artifacts'
+        uses: actions/download-artifact@v4
+        with:
+          name: cua-driver-rs-darwin
+          path: signature-artifacts
+      - name: Download published darwin archives
+        if: inputs.source == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          gh release download "cua-driver-rs-v${VERSION}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir signature-artifacts \
+            --pattern "cua-driver-rs-${VERSION}-darwin-*.tar.gz" \
+            --pattern "*.pkg" \
+            --pattern "*.dmg"
+      - name: Verify macOS signatures, notarization, and stapling
+        env:
+          VERSION: ${{ inputs.version }}
+          EXPECT: ${{ inputs.expect_macos }}
+        run: |
+          set -euo pipefail
+          ls -l signature-artifacts
+          ANNOTATE=()
+          if [[ "$EXPECT" == "fail" ]]; then ANNOTATE=(--no-annotations); fi
+          STATUS=0
+          python3 .github/scripts/verify_cua_driver_release_signatures.py macos \
+            --artifacts signature-artifacts \
+            --version "$VERSION" \
+            --team-id YCK386LBJ7 \
+            ${ANNOTATE[@]+"${ANNOTATE[@]}"} || STATUS=$?
+          bash .github/scripts/expect_verification_result.sh "$EXPECT" "$STATUS" "macOS signatures for $VERSION"
+
+  windows:
+    name: Windows Authenticode (${{ inputs.version }}, expect ${{ inputs.expect_windows }})
+    if: inputs.verify_windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Download candidate Windows archives
+        if: inputs.source == 'artifacts'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cua-driver-rs-windows-*
+          path: signature-artifacts
+      - name: Download published Windows archives
+        if: inputs.source == 'release'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          gh release download "cua-driver-rs-v${VERSION}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir signature-artifacts \
+            --pattern "cua-driver-rs-${VERSION}-windows-*.zip"
+      - name: Verify Windows Authenticode signatures
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          EXPECT: ${{ inputs.expect_windows }}
+        run: |
+          set -euo pipefail
+          ls -lR signature-artifacts
+          ANNOTATE=()
+          if [[ "$EXPECT" == "fail" ]]; then ANNOTATE=(--no-annotations); fi
+          STATUS=0
+          python .github/scripts/verify_cua_driver_release_signatures.py windows \
+            --artifacts signature-artifacts \
+            --version "$VERSION" \
+            --signer "Cua AI, Inc." \
+            ${ANNOTATE[@]+"${ANNOTATE[@]}"} || STATUS=$?
+          bash .github/scripts/expect_verification_result.sh "$EXPECT" "$STATUS" "Windows signatures for $VERSION"

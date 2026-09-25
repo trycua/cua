@@ -87,6 +87,27 @@ environment prerequisites, and evidence authority.
 Do not assume that GitHub-hosted Windows runs in Session 0. Keep the hosted Linux
 X11 gate, Nix source checks, and compositor-specific Wayland lanes separate.
 
+## Cua Driver test ownership
+
+These rules come from the #4094 test audit.
+
+- Give each contract one owner test, at the strongest boundary that can
+  observe it. Delete weaker duplicates instead of keeping parallel copies.
+- Do not add test-only switches, environment hooks, or injectors to shipped
+  code. Test through the public interface or a real seam.
+- Plain `cargo test` must be hermetic: no real input, clipboard, window, or
+  per-user host state. Use the testkit's isolated home. Clipboard round trips
+  need an explicit `CUA_TEST_ALLOW_CLIPBOARD=1` opt-in.
+- Put desktop-bound suites in `cua-driver-e2e` or mark them `#[ignore]`. A
+  canonical runner must select every ignored test, or
+  `libs/cua-driver/tests/manual-e2e-allowlist.txt` must list it with a reason;
+  `.github/scripts/tests/test_cua_driver_e2e_inventory.py` enforces this.
+- CI runs whole crates or test binaries, not hand-maintained module filters,
+  so a new test module cannot be silently left out.
+- A negative test asserts the exact refusal code or error, not just failure.
+- When pruning or merging tests, mutation-check the keeper: break the
+  behavior and confirm the remaining test fails.
+
 ## Pull request titles and component releases
 
 Follow the [release-title rules](CONTRIBUTING.md#agent-assisted-contributions)

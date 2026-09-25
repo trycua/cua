@@ -234,6 +234,22 @@ class OracleTests(unittest.TestCase):
 
 
 class ActionTests(unittest.TestCase):
+    def test_grounding_without_observation_timestamp_fails_closed_before_input(self):
+        spec = {**plan()['agents'][0], 'pointer_stage': 'scroll_down'}
+        for value in (None, True, 0, -1, '10'):
+            before = {'snapshot_id': 's00000001', 'proof_image': 'before.png'}
+            if value is not None:
+                before['proof_observation_started_ns'] = value
+            actor = Mock()
+            with self.subTest(value=value), \
+                 patch.object(proof, 'grounded_snapshot', return_value=before), \
+                 patch.object(proof.time, 'monotonic_ns', return_value=1_000), \
+                 patch.object(proof.pointer_grounding, 'read_pixels') as pixels, \
+                 self.assertRaisesRegex(AssertionError, 'invalid observation timestamp'):
+                proof.ground(actor, spec)
+            pixels.assert_not_called()
+            actor.tool.assert_not_called()
+
     def test_single_normal_scroll_fresh_snapshot_unknown_never_replayed(self):
         cases = {'owner': (None, 'guard', 'stale', 'unknown', 'same_snapshot', 'cached', 'before_return',
                            'same_runtime', 'effect', 'pre_activity', 'dead_before', 'observation', 'lane_mismatch',
@@ -281,7 +297,7 @@ class ActionTests(unittest.TestCase):
                     snapshots = stack.enter_context(patch.object(proof, 'grounded_snapshot',
                         side_effect=[before, AssertionError('snapshot unavailable')] if failure == 'observation' else [before, after]))
                     stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=
-                        [5, proof.MAX_GROUNDING_AGE_NS + 11] if failure == 'stale' else [5, 30, 40, 70]))
+                        [proof.MAX_GROUNDING_AGE_NS + 11] if failure == 'stale' else [30, 40, 70]))
                     stack.enter_context(patch.object(proof.pointer_grounding, 'read_pixels', return_value='pixels'))
                     resolved = 'scroll_up' if spec['pointer_stage'] == 'scroll_visible' else spec['pointer_stage']
                     choose = stack.enter_context(patch.object(proof.pointer_grounding, 'visible_inkscape_scroll_stage',

@@ -512,13 +512,6 @@ mod tests {
         ]
     }
 
-    fn parse_args(v: Value) -> (BTreeSet<String>, BTreeSet<String>) {
-        (
-            parse_string_set(v.get("include")),
-            parse_string_set(v.get("skip")),
-        )
-    }
-
     // ── select_checks ────────────────────────────────────────────────
 
     #[test]
@@ -746,12 +739,5 @@ mod tests {
                 || description.contains(r#"schema_version: "1""#),
             "schema_version=1 must be documented in the tool description"
         );
-    }
-
-    // Belt-and-suspenders use of `parse_args` — keeps the helper
-    // exercised in case future tests reach for it.
-    #[test]
-    fn parse_args_compiles() {
-        let _ = parse_args(json!({ "include": ["x"], "skip": ["y"] }));
     }
 }

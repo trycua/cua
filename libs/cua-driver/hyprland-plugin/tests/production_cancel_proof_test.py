@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import threading
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -335,7 +336,7 @@ class RecoveryTests(unittest.TestCase):
         for app, stage, tool in (('calc', 'click_b2', 'click'), ('inkscape', 'scroll_down', 'scroll'),
                                  ('inkscape', 'scroll_visible', 'scroll')):
             for failure in (None, 'slow_discovery', 'alive', 'reused', 'stale', 'identity', 'snapshot', 'unknown', 'denied', 'effect', 'trace', 'primary_before', 'primary_after',
-                            *(['margin'] if stage == 'scroll_visible' else [])):
+                            'untimed', *(['margin'] if stage == 'scroll_visible' else [])):
                 with self.subTest(app=app, failure=failure), ExitStack() as stack:
                     victim, sibling, observer, fresh = [client(pid) for pid in (100, 101, 102, 103)]
                     victim.failed = True
@@ -346,8 +347,10 @@ class RecoveryTests(unittest.TestCase):
                         'status': 'refused', 'refusal': {'code': 'permission_denied'}}}
                     fresh.tool.side_effect = [{}, TimeoutError('lost reply') if failure == 'unknown' else response]
                     spec = next(spec for spec in plan()['agents'] if spec['app'] == app)
-                    before, after = {'proof_image': 'before.png'}, {'proof_image': 'after.png'}
+                    before, after = {'proof_image': 'before.png', 'proof_observation_started_ns': 100}, {'proof_image': 'after.png'}
                     dispatch_ns = 101
+                    if failure == 'untimed':
+                        del before['proof_observation_started_ns']  # Never fall back to the wrapper clock.
                     if failure == 'slow_discovery':
                         before['proof_observation_started_ns'] = MAX_GROUNDING_AGE_NS + 200
                         dispatch_ns = MAX_GROUNDING_AGE_NS + 301
@@ -357,7 +360,7 @@ class RecoveryTests(unittest.TestCase):
                         side_effect=AssertionError('app changed') if failure == 'identity' else None,
                         return_value={'pid': spec['target']['pid']}))
                     stack.enter_context(patch('production_cancel_proof.time.monotonic_ns',
-                        side_effect=[100, MAX_GROUNDING_AGE_NS + 101 if failure == 'stale' else dispatch_ns]))
+                        side_effect=[MAX_GROUNDING_AGE_NS + 101 if failure == 'stale' else dispatch_ns]))
                     stack.enter_context(patch('production_cancel_proof.pointer_grounding.read_pixels', return_value='pixels'))
                     resolved_stage = 'scroll_up' if stage == 'scroll_visible' else stage
                     choose_stage = stack.enter_context(patch('production_cancel_proof.pointer_grounding.visible_inkscape_scroll_stage',
@@ -378,7 +381,11 @@ class RecoveryTests(unittest.TestCase):
                     def attempt():
                         return recover_once(fresh, observer, victim, sibling, spec, stage, trace_client,
                                             trace(FINISH[:-1]), 1, save, result, guard)
-                    if failure not in (None, 'slow_discovery'):
+                    if failure == 'untimed':
+                        with self.assertRaisesRegex(AssertionError, 'invalid observation timestamp'):
+                            attempt()
+                        self.assertEqual([call.args[0] for call in fresh.tool.call_args_list], ['start_session'])
+                    elif failure not in (None, 'slow_discovery'):
                         with self.assertRaises((AssertionError, TimeoutError)):
                             attempt()
                     else:
@@ -388,8 +395,7 @@ class RecoveryTests(unittest.TestCase):
                         self.assertNotEqual(result['runtime_pid'], result['victim_pid'])
                         self.assertFalse(result['replayed'])
                         self.assertEqual(result['action']['dispatch_ns'], dispatch_ns)
-                        self.assertEqual(result['grounding']['prepared_ns'],
-                                         before.get('proof_observation_started_ns', 100))
+                        self.assertEqual(result['grounding']['prepared_ns'], before['proof_observation_started_ns'])
                         identity.assert_called_once_with(app, spec['target']['pid'])
                         action.assert_called_once_with(before, 'pixels', app, resolved_stage)
                         self.assertEqual(result['grounding']['requested_stage'], stage)
@@ -401,7 +407,7 @@ class RecoveryTests(unittest.TestCase):
                         self.assertIs(snapshot.call_args_list[0].args[0], fresh)
                         self.assertIs(snapshot.call_args_list[1].args[0], observer)
                     inputs = [call for call in fresh.tool.call_args_list if call.args[0] != 'start_session']
-                    self.assertEqual(len(inputs), 0 if failure in ('alive', 'reused', 'stale', 'identity', 'snapshot', 'primary_before', 'margin') else 1)
+                    self.assertEqual(len(inputs), 0 if failure in ('alive', 'reused', 'stale', 'identity', 'snapshot', 'primary_before', 'margin', 'untimed') else 1)
                     if inputs:
                         self.assertEqual(inputs[0].args, (tool, {**arguments, **spec['target'],
                             'session': spec['name'] + '-recovery', 'delivery_mode': 'background'}))
@@ -551,7 +557,7 @@ class OwnershipTests(unittest.TestCase):
 
     def test_pointer_preparation_uses_exact_image_and_preserves_oracle(self):
         spec = {**plan()['agents'][0], 'drag': {}, 'pointer_stage': 'select_range'}
-        before = {'proof_image': 'fresh.png', 'window_bounds': BOUNDS}
+        before = {'proof_image': 'fresh.png', 'window_bounds': BOUNDS, 'proof_observation_started_ns': 100}
         arguments = {**plan()['agents'][0]['drag'], 'steps': 30}
         oracle = {'selection': 'A1:B3'}
         with patch('production_cancel_proof.grounded_snapshot', return_value=before) as snapshot, \
@@ -599,9 +605,20 @@ class OwnershipTests(unittest.TestCase):
                 self.assertEqual(prepared['timing']['grounding_age_ns'], MAX_GROUNDING_AGE_NS + 1)
         mcp.tool.assert_not_called()
 
+    def test_untimed_observation_never_gets_the_wrapper_clock(self):
+        spec, mcp = plan()['agents'][0], Mock()
+        for value in (None, True, 0, -1, 100.0):
+            snapshot = {} if value is None else {'proof_observation_started_ns': value}
+            with self.subTest(value=value), \
+                 patch('production_cancel_proof.grounded_snapshot', return_value=snapshot), \
+                 patch('production_cancel_proof.time.monotonic_ns', return_value=100), \
+                 self.assertRaisesRegex(AssertionError, 'invalid observation timestamp'):
+                prepare_drag(mcp, spec)
+        mcp.tool.assert_not_called()
+
     def test_expired_or_retargeted_grounding_never_dispatches(self):
         spec, mcp = plan()['agents'][0], Mock()
-        with patch('production_cancel_proof.grounded_snapshot', return_value={}), \
+        with patch('production_cancel_proof.grounded_snapshot', return_value={'proof_observation_started_ns': 100}), \
              patch('production_cancel_proof.time.monotonic_ns', return_value=100):
             prepared = prepare_drag(mcp, spec)
         for change, now in [({}, 101 + MAX_GROUNDING_AGE_NS), ({}, 99),
@@ -614,7 +631,7 @@ class OwnershipTests(unittest.TestCase):
     def test_prepared_drag_does_not_snapshot_during_sibling_gesture(self):
         spec, mcp = plan()['agents'][0], Mock()
         mcp.tool.return_value = RESPONSE
-        with patch('production_cancel_proof.grounded_snapshot', return_value={}) as snapshot, \
+        with patch('production_cancel_proof.grounded_snapshot', return_value={'proof_observation_started_ns': 100}) as snapshot, \
              patch('production_cancel_proof.time.monotonic_ns', return_value=100):
             prepared = prepare_drag(mcp, spec)
             result = call_drag(mcp, spec, prepared)
@@ -734,7 +751,8 @@ class OwnershipTests(unittest.TestCase):
     def test_unknown_drag_is_called_once_with_fresh_grounding(self):
         mcp, spec = Mock(), plan()['agents'][0]
         mcp.tool.side_effect = TimeoutError('lost reply')
-        with patch('production_cancel_proof.grounded_snapshot', return_value={}) as snapshot:
+        with patch('production_cancel_proof.grounded_snapshot', return_value={'proof_observation_started_ns': 100}) as snapshot, \
+             patch('production_cancel_proof.time.monotonic_ns', return_value=100):
             result = call_drag(mcp, spec)
         snapshot.assert_called_once_with(mcp, spec['target'], spec)
         self.assertEqual(result['outcome'], 'unknown')
@@ -919,7 +937,9 @@ class RunnerTests(unittest.TestCase):
                 pool = Mock(submit=Mock(side_effect=futures))
                 proof_image = root / 'fresh.png'
                 proof_image.write_bytes(b'synthetic-test-image')
-                snapshot = Mock(return_value={'window_bounds': BOUNDS, 'proof_image': str(proof_image)})
+                # Real monotonic clock: every mocked observation is fresh at setup.
+                snapshot = Mock(return_value={'window_bounds': BOUNDS, 'proof_image': str(proof_image),
+                                              'proof_observation_started_ns': time.monotonic_ns()})
                 preparation_clock_ns = 2 * MAX_GROUNDING_AGE_NS
                 if failure == 'prepare_budget':
                     # A monotonic clock has an unspecified origin: timestamp 1

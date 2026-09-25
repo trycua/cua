@@ -2,7 +2,7 @@ use cua_driver_core::element_cache::{
     register_runtime_cache, retire_runtime_scope, ElementCacheCore, SnapshotPayload,
 };
 use cua_driver_core::element_token::{
-    format_token, ResolvedElement, LRU_CAP_PER_PID, STALE_TOKEN_ERROR,
+    token_for, ResolvedElement, LRU_CAP_PER_PID, STALE_TOKEN_ERROR,
 };
 use cua_driver_core::tool::with_runtime_scope;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -47,7 +47,7 @@ fn resolve<T: Clone + Send + Sync + 'static>(
         .resolve_element_args(
             42,
             None,
-            Some(&format_token(snapshot, index)),
+            Some(&token_for(snapshot, index)),
             None,
             None,
             "click",
@@ -97,14 +97,21 @@ fn replacement_invalidates_every_old_member_and_admits_new_members() {
 #[test]
 fn resolving_does_not_change_publication_order_eviction() {
     let cache = ElementCacheCore::new();
-    let first = cache.publish(42, 1, payload(vec![1]));
-    for window in 2..=LRU_CAP_PER_PID as u64 {
-        cache.publish(42, window, payload(vec![1]));
-    }
+    let mut ids: Vec<_> = (1..=LRU_CAP_PER_PID as u64)
+        .map(|window| cache.publish(42, window, payload(vec![1])))
+        .collect();
+    let first = ids[0];
     assert_eq!(resolve(&cache, first, 0), Ok((1, 0, 1)));
     let latest = cache.publish(42, LRU_CAP_PER_PID as u64 + 1, payload(vec![1]));
+    ids.push(latest);
     assert_eq!(resolve(&cache, first, 0), Err(STALE_TOKEN_ERROR.to_owned()));
     assert!(resolve(&cache, latest, 0).is_ok());
+    assert_eq!(
+        ids.iter()
+            .filter(|id| resolve(&cache, **id, 0).is_ok())
+            .count(),
+        LRU_CAP_PER_PID
+    );
 }
 
 #[test]

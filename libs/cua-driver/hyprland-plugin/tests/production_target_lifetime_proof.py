@@ -248,8 +248,12 @@ class TargetLifetime(ExactDesktop):
             self.record['last_status'] = observed
             try:
                 verify_cleared(before, observed, lane)
-            except AssertionError:
+            except (AssertionError, KeyError) as error:
+                # Not yet cleared, including a sample without resource counters.
+                # Retain why; the bounded wait fails closed if it never clears.
+                self.record['last_clear_error'] = f'{type(error).__name__}: {error}'
                 return None
+            self.record.pop('last_clear_error', None)
             return observed
         self.record['after'] = wait_for(cleared, timeout=3)
         self.record['observed_ns'] = time.monotonic_ns()

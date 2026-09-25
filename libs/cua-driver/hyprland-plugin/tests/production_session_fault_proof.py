@@ -488,11 +488,14 @@ def prepare_actions(clients, spec, stage, save):
 
 
 def refuse(client, spec, prepared, fault, trace, guard, save):
-    record = {**prepared, 'outcome': 'unknown', 'replayed': False, 'runtime_pid': client.process.pid,
-              'pointer_cleanup': pointer_cleanup(fault.config),
-              'deadline_ns': fault.config['deadline_ns'], 'before': production_status(fault.config),
-              'monitors_before': fault.unavailable(), 'trace_before': trace.collect()}
+    record = {**prepared, 'outcome': 'unknown', 'replayed': False, 'runtime_pid': client.process.pid}
     try:
+        # Every pre-action read can fail; keep the partial record for the finally-save.
+        record['pointer_cleanup'] = pointer_cleanup(fault.config)
+        record['deadline_ns'] = fault.config['deadline_ns']
+        record['before'] = production_status(fault.config)
+        record['monitors_before'] = fault.unavailable()
+        record['trace_before'] = trace.collect()
         if pointer_cleanup(record) == 'retained_inert':
             record['lane'] = fault.record['lane']
             verify_stable_inert(fault.record['after'], record['before'], record['lane'])

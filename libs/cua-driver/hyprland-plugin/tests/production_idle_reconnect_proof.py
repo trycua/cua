@@ -70,7 +70,7 @@ def calc_identity(spec):
     identity = app_process_identity(spec['app'], pid)
     document = Path(spec['document']).resolve(strict=True)
     assert str(document).encode() in Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0'), \
-        'Calc process is not bound to the synthetic document'
+        'app process is not bound to the synthetic document'
     return {key: identity[key] for key in ('pid', 'executable', 'sha256')} | {
         'start_ticks': process_birth(pid), 'document': str(document)}
 
@@ -155,7 +155,7 @@ def click_once(client, observer, spec, stage, runtime, identity, trace, boundary
     """Exactly one click invocation; unknown outcomes remain failures without replay."""
     assert stage in (INKSCAPE_STAGES if spec['app'] == 'inkscape' else STAGES)
     require_runtime(client, runtime)
-    assert calc_identity(spec) == identity, 'Calc process identity changed'
+    assert calc_identity(spec) == identity, 'app process identity changed'
     fresh = {**spec, 'pointer_stage': stage}
     before = grounded_snapshot(client, spec['target'], fresh)
     pixels = grounding.read_pixels(before['proof_image'])
@@ -167,7 +167,7 @@ def click_once(client, observer, spec, stage, runtime, identity, trace, boundary
     save(stage + '-grounding.json', result)
     guard()
     require_runtime(client, runtime)
-    assert process_birth(spec['target']['pid']) == identity['start_ticks'], 'Calc process identity changed'
+    assert process_birth(spec['target']['pid']) == identity['start_ticks'], 'app process identity changed'
     dispatch_ns = time.monotonic_ns()
     assert 0 <= dispatch_ns - before['proof_observation_started_ns'] <= MAX_GROUNDING_AGE_NS, \
         'snapshot grounding expired; no input sent'
@@ -187,9 +187,9 @@ def click_once(client, observer, spec, stage, runtime, identity, trace, boundary
     after_pixels = grounding.read_pixels(after['proof_image'])
     result['app_effect'] = grounding.verify(after, after_pixels, oracle)
     after_digest = grid_digest(after, after_pixels, spec['app'])
-    assert before_digest != after_digest, 'Calc grid pixels did not change'
+    assert before_digest != after_digest, 'app pixels did not change'
     result['pixels'] = {'before': before_digest, 'after': after_digest, 'changed': True}
-    assert calc_identity(spec) == identity, 'Calc process identity changed'
+    assert calc_identity(spec) == identity, 'app process identity changed'
     require_runtime(client, runtime)
     page = trace.collect()
     lane = capacity_lane(boundary, page, tool)
@@ -276,16 +276,16 @@ def episode(args, plan, client, observer, runtime, identity, stage, save, result
 def run(args):
     if not __debug__:
         raise RuntimeError('assertions must be enabled')
-    plan = json.loads(args.plan.read_text())
-    validate_plan(plan)
     args.evidence.mkdir(parents=True, exist_ok=False)
     def save(name, value):
         (args.evidence / name).write_text(json.dumps(value, indent=2))
-    save('plan.json', plan)
     report = {'result': 'failed', 'scope': 'native-production-idle-reconnect',
               'full_desktop_matrix': False, 'actions': []}
     clients = []
     try:
+        plan = json.loads(args.plan.read_text())
+        save('plan.json', plan)
+        validate_plan(plan)
         assert args.trace_socket.name in ('cua-input-v3.sock', 'cua-input-v3-2.sock')
         origin = provenance(args, plan)
         for name in ('production_idle_reconnect_proof.py', 'production_idle_reconnect_proof_test.py',

@@ -90,19 +90,11 @@ jobs:
             cargo test -p cua-driver --bin cua-driver $test --locked -- --exact
             if ($LASTEXITCODE -ne 0) { throw "Extension manager security regression $test failed with exit $LASTEXITCODE" }
           }
-      - name: Run deferred text publication regressions
+      # Run the whole inline suite so new platform-windows test modules cannot
+      # be silently left out by a hand-maintained module filter list.
+      - name: Run platform-windows unit tests
         working-directory: libs/cua-driver/rust
-        run: |
-          cargo test -p platform-windows post_message_readback_tests:: --lib --locked
-          if ($LASTEXITCODE -ne 0) { throw "PostMessage read-back tests failed with exit $LASTEXITCODE" }
-          cargo test -p platform-windows value_write_readback_tests:: --lib --locked
-          if ($LASTEXITCODE -ne 0) { throw "ValuePattern read-back tests failed with exit $LASTEXITCODE" }
-      - name: Run pixel click transport regressions
-        working-directory: libs/cua-driver/rust
-        run: "cargo test -p platform-windows pixel_click_transport_tests:: --lib --locked"
-      - name: Run bounded UIA worker regressions
-        working-directory: libs/cua-driver/rust
-        run: "cargo test -p platform-windows windows_enum::tests:: --lib --locked"
+        run: cargo test --locked -p platform-windows --lib
       - name: Run MCP proxy lifecycle regressions
         working-directory: libs/cua-driver/rust
         run: "cargo test -p cua-driver --bin cua-driver proxy::tests:: --locked"
@@ -123,25 +115,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "cursor renderer tests failed with exit $LASTEXITCODE" }
           cargo test -p cursor-theme-cli --locked
           if ($LASTEXITCODE -ne 0) { throw "cursor theme compiler tests failed with exit $LASTEXITCODE" }
-      - name: Run Windows delivery guidance unit tests
-        working-directory: libs/cua-driver/rust
-        run: "cargo test -p platform-windows input::delivery::tests:: --lib --locked"
-      - name: Run Windows installed-app discovery unit tests
-        working-directory: libs/cua-driver/rust
-        run: "cargo test -p platform-windows win32::installed_apps::tests:: --lib --locked"
-      - name: Run Windows app-name lookup tests
-        working-directory: libs/cua-driver/rust
-        run: "cargo test -p platform-windows launch_uwp::tests:: --lib --locked"
-      - name: Run Windows Computer History adapter tests
-        working-directory: libs/cua-driver/rust
-        run: "cargo test -p platform-windows history::tests:: --lib --locked"
       - name: Validate Windows Computer History uninstall ordering
         run: .\libs\cua-driver\scripts\tests\uninstall-windows-history-regression.ps1
       - name: Prove unknown app launch stays bounded and responsive
         working-directory: libs/cua-driver/rust
+        env:
+          CUA_TEST_REQUIRE_DRIVER_BIN: "1"
         run: "cargo test -p cua-driver --test protocol_tools_call_test launch_unknown_app_is_bounded_and_keeps_mcp_session_responsive --locked -- --exact --nocapture"
       - name: Validate desktop AppsFolder launch with Microsoft Edge
         working-directory: libs/cua-driver/rust
+        env:
+          CUA_TEST_REQUIRE_DRIVER_BIN: "1"
         run: "cargo test -p cua-driver --test protocol_tools_call_test launch_edge_from_apps_folder_registration --locked -- --ignored --exact --nocapture"
       - name: Run transport-independent authorization and SDK tests
         working-directory: libs/cua-driver/rust
@@ -159,8 +143,6 @@ jobs:
           # from the manifest-free library test target.
           cargo test -p cua-driver-uia --lib authorization_tests:: --locked
           if ($LASTEXITCODE -ne 0) { throw "UIAccess authorization tests failed with exit $LASTEXITCODE" }
-          cargo test -p platform-windows diagnostics::tests:: --lib --locked
-          if ($LASTEXITCODE -ne 0) { throw "Windows desktop classification tests failed with exit $LASTEXITCODE" }
       - name: Run full SDK unit suite in an interactive runner session
         if: steps.runner-session.outputs.session_id != '0'
         working-directory: libs/cua-driver/rust
@@ -168,7 +150,11 @@ jobs:
       - name: Prove Session 0 refusal
         if: steps.runner-session.outputs.session_id == '0'
         working-directory: libs/cua-driver/rust
-        run: cargo test -p cua-driver-sdk session_zero_refuses_runtime_creation_before_platform_dispatch --lib --locked
+        shell: pwsh
+        run: |
+          cargo test -p cua-driver-sdk session_zero_refuses_runtime_creation_before_platform_dispatch --lib --locked | Tee-Object -Variable sessionZeroLog
+          if ($LASTEXITCODE -ne 0) { throw "Session 0 refusal test failed with exit $LASTEXITCODE" }
+          if (-not ($sessionZeroLog -match 'test result: ok\. 1 passed')) { throw "Session 0 refusal filter matched no test" }
       - name: Prove metadata commands remain desktop-free
         working-directory: libs/cua-driver/rust
         run: |
@@ -178,9 +164,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "describe failed with exit $LASTEXITCODE" }
           cargo run -p cua-driver --locked -- dump-docs --type cli | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "dump-docs failed with exit $LASTEXITCODE" }
-      - name: Run Windows browser platform unit tests
-        working-directory: libs/cua-driver/rust
-        run: "cargo test -p platform-windows browser_platform::tests:: --lib --locked"
       - name: Run Windows protocol schema contract
         if: steps.runner-session.outputs.session_id != '0'
         working-directory: libs/cua-driver/rust

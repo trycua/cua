@@ -54,20 +54,17 @@ from desktop_faults import _identity, _same_compositor, _hypr
 from input_config_toggle import ENABLED, DISABLED
 from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
-from production_cancel_proof import (MAX_GROUNDING_AGE_NS, PROFILE, active_drags, call_drag, close_owned,
+from production_cancel_proof import (PROFILE, active_drags, call_drag, close_owned,
     grounded_snapshot, poll_active, prepare_drag, stopped_prefix, verify_recovery_cleanup)
 from production_geometry_fault_proof import recover, fault_outcome, validate_plan as geometry_plan
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
-from production_realapp_proof import (PRIMARY_LIFETIME_MS, app_process_identity, check_response, primary_acknowledgement,
-    provenance, require_primary_active, trace_interval)
+from production_realapp_proof import (PRIMARY_LIFETIME_MS, primary_acknowledgement, provenance,
+    require_primary_active, trace_interval)
 from realapp_proof import cleanup_all, released_synthetic_input
-import production_pointer_grounding as pointer_grounding
 
 
 KEYMAP_US = 'hl.config({input = {kb_rules = "evdev", kb_model = "pc105", kb_layout = "us", kb_variant = "", kb_options = "", kb_file = ""}})\n'
 KEYMAP_CAPS_CTRL = 'hl.config({input = {kb_rules = "evdev", kb_model = "pc105", kb_layout = "us", kb_variant = "", kb_options = "ctrl:nocaps", kb_file = ""}})\n'
-KEYMAP_CAPS_SUPER = 'hl.config({input = {kb_rules = "evdev", kb_model = "pc105", kb_layout = "us", kb_variant = "", kb_options = "caps:super", kb_file = ""}})\n'
-KEYMAP_REMAPS = {'caps_to_ctrl': KEYMAP_CAPS_CTRL, 'caps_to_super': KEYMAP_CAPS_SUPER}
 WATCHDOG_SECONDS = {'config_disable': 12, 'keymap': 30}
 
 
@@ -533,7 +530,7 @@ def verify_cancelled(boundary, record, before_restore_ns):
     tail = trace_interval(prefix, boundary)
     assert prefix['events'][-1][1] <= record['gate_ns'] <= record['requested_ns'] <= record['acknowledged_ns']
     assert record['acknowledged_ns'] <= before_restore_ns
-    assert 0 <= record['requested_ns'] - record['gate_ns'] <= 250_000_000
+    assert 0 <= record['requested_ns'] - record['gate_ns'] <= 250_000_000, 'stale fault gate'
     synthetic = [row for row in tail if row[5] in (1, 2)]
     assert all(row[5] == lane for row in synthetic), 'cleanup crossed lanes'
     cancelled = [row for row in synthetic if row[2] == 'agent_cancel']
@@ -553,36 +550,6 @@ def verify_cancelled(boundary, record, before_restore_ns):
     isolation = analyze(stopped)
     assert isolation['result'] == 'passed' and released_synthetic_input(stopped), isolation
     return isolation
-
-
-def verify_layout_refusal(record):
-    policy = pointer_cleanup(record)
-    assert record['outcome'] == 'response' and record['replayed'] is False
-    assert record['tool'] in ('click', 'scroll')
-    assert type(record['runtime_pid']) is int and record['runtime_pid'] != record['previous_runtime_pid']
-    assert record['prepared_ns'] <= record['dispatch_ns'] <= record['observed_ns']
-    assert record['dispatch_ns'] - record['prepared_ns'] <= MAX_GROUNDING_AGE_NS
-    assert record['snapshot']['window_bounds'] == record['after_snapshot']['window_bounds'], 'refused target geometry changed'
-    check_response(record['response'], {'kind': 'refused', 'reason': 'unsupported_layout'})
-    content = record['response']['structuredContent']
-    assert content.get('route') == 'synthetic_events' and content.get('detail') == 'unsupported_layout'
-    assert content.get('code') == 'background_unavailable', 'not the compositor layout refusal'
-    before, after = keymap_lanes(record['before'], cleared=policy == 'cleared'), keymap_lanes(record['after'], cleared=policy == 'cleared')
-    if policy == 'retained_inert':
-        verify_retained_inert(record['before'], record['before'], record['lane'])
-        verify_refusal_claim(record['before'], record['after'], record['response'], record['lane'])
-        verify_target_snapshots(record['target'], record['bounds'], record['snapshot'], record['after_snapshot'])
-    for lane in before:
-        assert all(before[lane][key] == after[lane][key] for key in ('epoch', 'desktop_generation', 'dispatches')), \
-            'layout refusal changed compositor state or dispatched input'
-    verify_keymap_options(record['keymap_options'], False)
-    tail = trace_interval(record['trace_before'], record['trace_after'])
-    assert not any(row[5] in (1, 2) for row in tail), 'refused fresh action dispatched synthetic input'
-    assert analyze(stopped_prefix(record['trace_after']))['result'] == 'passed'
-    if policy == 'retained_inert':
-        verify_refusal_closed(record, record['lane'])
-    return {'result': 'verified', 'reason': 'unsupported_layout', 'no_dispatch': 'verified',
-            'compiled_map_invalidation': 'verified', 'keymap_hash': 'not_exposed'}
 
 
 def verify_refusal_claim(before, after, response, interrupted_lane=None):
@@ -607,73 +574,6 @@ def verify_refusal_claim(before, after, response, interrupted_lane=None):
         assert all(row[k] == old[lane][k] for k in ('epoch', 'desktop_generation', 'dispatches')), 'refusal changed desktop or dispatched'
     return {'claimed_lane': claimed, 'capacity_only': True, 'input_authority': False,
             'owner_pid_in_status': 'not_exposed'}
-
-
-def verify_refusal_closed(record, interrupted_lane):
-    closed = record['closure']
-    assert closed['runtime_pid'] == record['runtime_pid'] and type(closed['exit_code']) is int
-    assert record['observed_ns'] <= closed['started_ns'] <= closed['reaped_ns'] <= closed['observed_ns']
-    verify_retained_inert(record['before'], closed['status'], interrupted_lane)
-    old, new = keymap_lanes(record['after']), keymap_lanes(closed['status'])
-    for lane in old:
-        assert all(old[lane][k] == new[lane][k] for k in ('epoch', 'desktop_generation', 'dispatches'))
-    assert not any(row[5] in (1, 2) for row in trace_interval(record['trace_after'], closed['trace'])), 'probe EOF changed inert pointer or emitted input'
-    return {'result': 'verified', 'reservation_released': True}
-
-
-def refuse_new_action(client, observer, victim, spec, stage, trace, config, guard, save):
-    """Exercise real Driver admission while the compiled physical map is invalid."""
-    assert victim.process.poll() is not None, 'old runtime must be reaped before refusal probe'
-    assert victim.process.pid not in assert_distinct_runtimes([client, observer])
-    fresh = {**spec, 'name': spec['name'] + '-wrong-layout', 'pointer_stage': stage}
-    assert not client.tool('start_session', {'session': fresh['name']}).get('isError')
-    app_process_identity(spec['app'], spec['target']['pid'])
-    prepared_ns = time.monotonic_ns()
-    snapshot = grounded_snapshot(client, spec['target'], fresh)
-    arguments, _ = pointer_grounding.action(snapshot, pointer_grounding.read_pixels(snapshot['proof_image']), spec['app'], stage)
-    tool = pointer_grounding.STAGES[spec['app']][stage]
-    assert tool in ('click', 'scroll'), 'never replay the interrupted drag'
-    record = {'outcome': 'unknown', 'replayed': False, 'runtime_pid': client.process.pid,
-              'previous_runtime_pid': victim.process.pid, 'tool': tool, 'prepared_ns': prepared_ns,
-              'snapshot': snapshot, 'arguments': arguments, 'session': fresh['name'],
-              'before': production_status(config['instance'], True), 'trace_before': trace.collect()}
-    policy = pointer_cleanup(config)
-    if policy == 'retained_inert':
-        record.update(pointer_cleanup=policy, lane=config['lane'], target=dict(spec['target']), bounds=dict(spec['bounds']))
-        verify_retained_inert(record['before'], record['before'], record['lane'])
-    else:
-        keymap_lanes(record['before'], cleared=True)
-    record['keymap_options'] = keymap_options(config['instance'], False)
-    guard()
-    _guard(config)
-    assert file_identity(config['path']) == config['files']['disabled']['identity']
-    record['dispatch_ns'] = time.monotonic_ns()
-    assert record['dispatch_ns'] - prepared_ns <= MAX_GROUNDING_AGE_NS
-    assert record['dispatch_ns'] + 1_000_000_000 < config['deadline_ns'], 'watchdog deadline too near'
-    save('wrong-layout-action.json', record)
-    try:
-        record['response'] = client.tool(tool, {**arguments, **spec['target'], 'session': fresh['name'],
-                                               'delivery_mode': 'background'})
-        record['outcome'] = 'response'
-        record['after_snapshot'] = grounded_snapshot(observer, spec['target'], fresh, session=False)
-        record['after'] = production_status(config['instance'], True)
-        record['trace_after'] = trace.collect()
-        record['keymap_options'] = keymap_options(config['instance'], False)
-        record['observed_ns'] = time.monotonic_ns()
-        assert record['observed_ns'] < config['deadline_ns'], 'watchdog restored during refusal probe'
-        guard()
-        if policy == 'retained_inert':
-            record['claim'] = verify_refusal_claim(record['before'], record['after'], record['response'], record['lane'])
-            closed = record['closure'] = {'runtime_pid': client.process.pid, 'started_ns': time.monotonic_ns()}
-            close_owned(client)
-            closed.update(reaped_ns=time.monotonic_ns(), exit_code=client.process.poll())
-            closed.update(status=production_status(config['instance'], True), trace=trace.collect(), observed_ns=time.monotonic_ns())
-            assert closed['observed_ns'] < config['deadline_ns'], 'watchdog restored during probe closure'
-            guard()
-        record['verification'] = verify_layout_refusal(record)
-        return record
-    finally:
-        save('wrong-layout-action.json', record)
 
 
 def verify_target_snapshots(target, bounds, before, after):
@@ -711,26 +611,7 @@ def verify_fault(boundary, record, restoration, action):
         verify_keymap_options(restoration['keymap_options'], True)
         assert record['keymap_before'] == restoration['keymap_options'], 'original map options not restored'
         verify_keymap_transition(record['gate_status'], record['after'], policy, record['lane'])
-        # Preserve validation of archived pre-private-keymap evidence without
-        # requiring or producing a fresh unsupported-layout probe today.
-        if 'wrong_layout' in record:
-            refusal = record['wrong_layout']
-            assert pointer_cleanup(refusal) == policy, 'refusal changed pointer cleanup contract'
-            if policy == 'retained_inert':
-                assert refusal['lane'] == record['lane'] and refusal['target'] == record['target'] and refusal['bounds'] == record['bounds']
-                verify_retained_inert(record['after'], refusal['before'], record['lane'])
-                assert refusal['closure']['observed_ns'] < restoration['started_ns'], 'probe not closed before restoration'
-            verify_layout_refusal(refusal)
-            after, before_refusal = keymap_lanes(record['after']), keymap_lanes(refusal['before'])
-            for lane in after:
-                assert all(after[lane][key] == before_refusal[lane][key] for key in ('epoch', 'desktop_generation', 'dispatches')), \
-                    'keymap state changed before fresh refusal'
-            trace_interval(record['prefix'], refusal['trace_before'])
-            trace_interval(refusal['trace_after'], boundary)
-            assert record['acknowledged_ns'] <= refusal['prepared_ns'] <= refusal['observed_ns'] < restoration['started_ns']
-            verify_keymap_transition(refusal['after'], restoration['status'], policy, record['lane'])
-        else:
-            verify_keymap_transition(record['after'], restoration['status'], policy, record['lane'])
+        verify_keymap_transition(record['after'], restoration['status'], policy, record['lane'])
     if policy == 'retained_inert':
         gate = keymap_lanes(record['gate_status'])
         initial = idle_lanes(record['before'])
@@ -753,8 +634,6 @@ def verify_fault(boundary, record, restoration, action):
     isolation = verify_cancelled(boundary, record, restoration['started_ns'])
     result = {'result': 'verified', 'outcome': fault_outcome(action), 'continuous_isolation': isolation,
               'synthetic_cleanup': 'verified', 'saved_document_effect': 'unproven'}
-    if record['kind'] == 'keymap' and 'wrong_layout' in record:
-        result['legacy_wrong_layout'] = verify_layout_refusal(record['wrong_layout'])
     if policy == 'retained_inert':
         result['pointer_cleanup'] = {'policy': policy, 'presence_continuity': 'verified',
                                      'grounded_target_identity': 'verified', 'wayland_surface_identity': 'not_exposed'}

@@ -357,6 +357,28 @@ class GroundingTests(unittest.TestCase):
             self.assertEqual(save.call_args.args[1]['outcome'], 'unknown')
             self.assertFalse(save.call_args.args[1]['replayed'])
 
+    def test_failed_pre_action_reads_still_save_partial_refusal_evidence(self):
+        for failure in ('status', 'monitors', 'trace'):
+            with self.subTest(failure=failure):
+                client, save = Mock(process=Mock(pid=100)), Mock()
+                fault = Mock(config={'deadline_ns': 1_000_000_000},
+                             unavailable=Mock(side_effect=AssertionError('monitors read failed') if failure == 'monitors'
+                                              else None, return_value=[{**MONITOR, 'dpmsStatus': False}]))
+                collector = Mock(collect=Mock(side_effect=AssertionError('trace read failed') if failure == 'trace'
+                                              else None, return_value=trace(CANCEL)))
+                with patch.object(proof, 'production_status',
+                                  side_effect=AssertionError('status read failed') if failure == 'status' else None,
+                                  return_value=status(2)), \
+                     self.assertRaisesRegex(AssertionError, failure + ' read failed'):
+                    proof.refuse(client, plan()['agents'][0], {'prepared_ns': 100}, fault, collector, Mock(), save)
+                client.tool.assert_not_called()
+                save.assert_called_once()
+                name, saved = save.call_args.args
+                self.assertEqual(name, 'unavailable-action.json')
+                self.assertEqual((saved['outcome'], saved['replayed'], saved['runtime_pid']), ('unknown', False, 100))
+                self.assertEqual('before' in saved, failure != 'status')
+                self.assertNotIn('trace_before', saved)
+
 
 class WatchdogTests(unittest.TestCase):
     def test_injection_is_gated_by_fresh_pending_drag_and_acks_exact_power(self):

@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::daemon::TestDaemon;
 use crate::driver::{BehaviorRecording, Driver};
-use crate::paths::driver_binary;
+use crate::paths::{driver_binary, ensure_driver_binary};
 use crate::reaper::{spawn_in_job, ChildReaper};
 use crate::response::ToolResponse;
 use crate::CALL_TIMEOUT;
@@ -64,6 +64,7 @@ impl McpDriver {
     /// Spawn the driver, start the stdout reader thread, and `initialize`.
     /// Returns `None` (with a skip message) if the binary isn't built — the
     /// caller's test should early-return so an un-built binary skips, not fails.
+    /// `CUA_TEST_REQUIRE_DRIVER_BIN=1` makes a missing binary panic instead.
     pub fn spawn() -> Option<Self> {
         Self::spawn_internal(&[], &[], None, false, true)
     }
@@ -172,8 +173,7 @@ impl McpDriver {
                 ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
             ]);
         }
-        if !bin.exists() {
-            eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
+        if !ensure_driver_binary(&bin) {
             return None;
         }
 

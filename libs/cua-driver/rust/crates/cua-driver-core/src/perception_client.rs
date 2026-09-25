@@ -1049,7 +1049,11 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     fn with_fixture_interpreter(script: &str) -> String {
-        let interpreter = fixture_python_interpreter();
+        // The sandbox grants exec on the canonical interpreter only, and it
+        // cannot read a symlink along a configured path (for example a hosted
+        // runner's `/Applications/Xcode.app -> Xcode_<version>.app`), so the
+        // shebang must name the resolved file.
+        let interpreter = std::fs::canonicalize(fixture_python_interpreter()).unwrap();
         script.replacen(
             "#!/usr/bin/env python3",
             &format!("#!{}", interpreter.display()),

@@ -610,7 +610,7 @@ pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
 /// at a time, every later tool call — open indefinitely. Sized above the
 /// longest legal glide (`glide_duration_ms` ≤ 5000; speed-based glides cross
 /// a 4K diagonal in ≈5 s at 900 px/s).
-const ARRIVAL_WAIT_CAP: Duration = Duration::from_millis(5_500);
+const ARRIVAL_WAIT_CAP: std::time::Duration = std::time::Duration::from_millis(5_500);
 
 /// Latched once an arrival wait expired; cleared by the next real arrival.
 static ARRIVAL_DEGRADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

@@ -9,33 +9,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 import production_geometry_fault_proof as proof
-
-
-BOUNDS = {'x': 10, 'y': 20, 'width': 800, 'height': 600}
-PARTIAL = {'structuredContent': {'effect': 'partial', 'route': 'synthetic_events',
-                               'delivery': {'mode': 'background', 'delivered_count': 1}}}
-DELIVERED = {'structuredContent': {'effect': 'unverifiable', 'route': 'synthetic_events',
-                                 'delivery': {'mode': 'background'}}}
-
-
-def plan(kind='move', app='calc'):
-    return {'purpose': 'geometry_fault', 'disposable': True, 'compositor': {'pid': 50, 'instance': 'test_1'},
-            'foreground': {'pid': 10, 'window_id': 100}, 'primary_point': [20, 20],
-            'agents': [{'app': app, 'name': 'geometry', 'target': {'pid': 20, 'window_id': 200},
-                        'bounds': dict(BOUNDS), 'pointer_stage': proof.POINTER_STAGES[app], 'drag': {}}],
-            'fault': {'kind': kind, 'to': [30, 40] if kind == 'move' else [820, 620]},
-            'recovery': {'pointer_stage': 'click_b2' if app == 'calc' else 'scroll_down'}}
-
-
-def trace(rows, active=True):
-    return {'hook': True, 'active': active, 'overflow': False, 'timed_out': False, 'count': len(rows),
-            'events': [[i + 1, ms * 1_000_000, kind, 100, 100, lane, value]
-                       for i, (ms, kind, lane, value) in enumerate(rows)]}
-
-
-ACTIVE = [(0, 'start', 0, 0), (1, 'agent_admitted', 1, 0), (2, 'agent_drag_start', 1, 0),
-          (3, 'pointer_button', 1, 1), (4, 'pointer_motion', 1, 0)]
-CANCEL = ACTIVE + [(8, 'agent_cancel', 1, 0), (9, 'pointer_button', 1, 0), (10, 'pointer_leave', 1, 0)]
+from proof_fixtures import (ACTIVE, BOUNDS, CANCEL, DELIVERED, PARTIAL, action, client, geometry_plan as plan,
+                            inkscape_profile, trace)
 
 
 def record():
@@ -43,16 +18,6 @@ def record():
             'requested_ns': 6_000_000, 'acknowledged_ns': 7_000_000,
             'after': {'bounds': {**BOUNDS, 'x': 30, 'y': 40}, 'observed_ns': 11_000_000},
             'before_bounds': dict(BOUNDS), 'expected_bounds': {**BOUNDS, 'x': 30, 'y': 40}}
-
-
-def action(response=PARTIAL):
-    return {'outcome': 'response', 'response': deepcopy(response), 'replayed': False}
-
-
-def client(pid, alive=True):
-    process = Mock(pid=pid, poll=Mock(return_value=None if alive else 0))
-    process.kill.side_effect = lambda: setattr(process.poll, 'return_value', -9)
-    return Mock(process=process)
 
 
 class OracleTests(unittest.TestCase):
@@ -70,24 +35,20 @@ class OracleTests(unittest.TestCase):
             proof.fault_outcome({**action(), 'replayed': True})
 
     def test_incomplete_and_discontinuous_telemetry_cannot_pass(self):
-        for key, value in [('hook', False), ('active', False), ('overflow', True), ('timed_out', True), ('count', 0)]:
-            with self.subTest(key=key), self.assertRaises(AssertionError):
-                proof.verify_fault({**trace(CANCEL), key: value}, record(), action())
+        # Page validity is owned by trace_interval (realapp TraceIntervalTests); one case proves wiring.
+        with self.assertRaisesRegex(AssertionError, 'dropped events'):
+            proof.verify_fault({**trace(CANCEL), 'overflow': True}, record(), action())
         changed = trace(CANCEL)
         changed['events'][1][1] += 1
         with self.assertRaisesRegex(AssertionError, 'history'):
             proof.verify_fault(changed, record(), action())
 
-    def test_primary_warp_and_input_leak_fail_even_with_equal_endpoints(self):
-        for kind, lane, value in [('cursor', 0, 0), ('pointer_focus', 0, 0), ('pointer_button', 0, 0),
-                                  ('keyboard_key', 0, 1), ('pointer_axis', 0, 0)]:
-            rows = trace(CANCEL + [(12, kind, lane, value), (13, 'pointer_leave', 1, 0)])
-            if kind == 'cursor':
-                rows['events'][-2][3] += 1
-                rows['events'][-1][2] = 'cursor'  # Warp back: endpoint-only checks would miss it.
-                rows['events'][-1][5] = 0
-            with self.subTest(kind=kind), self.assertRaises(AssertionError):
-                proof.verify_fault(rows, record(), action())
+    def test_primary_warp_fails_even_with_equal_endpoints(self):
+        # Primary classification is owned by primary_trace_test; one warp proves wiring.
+        rows = trace(CANCEL + [(12, 'cursor', 0, 0), (13, 'cursor', 0, 0)])
+        rows['events'][-2][3] += 1  # Warp back: endpoint-only checks would miss it.
+        with self.assertRaisesRegex(AssertionError, "'result': 'failed'"):
+            proof.verify_fault(rows, record(), action())
 
     def test_own_lane_cancellation_release_and_no_continuation_required(self):
         mutations = [ACTIVE, CANCEL[:5] + CANCEL[6:], CANCEL[:6] + CANCEL[7:],
@@ -124,6 +85,13 @@ class OracleTests(unittest.TestCase):
 
 
 class OwnershipTests(unittest.TestCase):
+    def test_inkscape_only_profile_reaches_the_shared_app_profile_gate(self):
+        candidate = inkscape_profile(plan())
+        proof.validate_plan(candidate)
+        candidate['agents'][0]['document'] = '/synthetic/private.svg'
+        with self.assertRaisesRegex(AssertionError, 'absolute synthetic SVG document'):
+            proof.validate_plan(candidate)
+
     def test_resize_keeps_center_not_top_left_and_inverse_restores_exact_frame(self):
         before = {'x': 983, 'y': 576, 'width': 480, 'height': 480}
         smaller = {'x': 987, 'y': 580, 'width': 472, 'height': 472}

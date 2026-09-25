@@ -295,7 +295,7 @@ def run(args):
         policy = pointer_cleanup(fixture.config)
         origin = provenance(args, plan)
         for name in (Path(__file__).name, 'production_active_lock_proof_test.py',
-                     'production_lock_refusal_proof.py', 'production_lock_refusal_proof_test.py',
+                     'production_lock_refusal_proof.py', 'production_lock_refusal_proof_test.py', 'proof_fixtures.py',
                      'session_lock_fixture.c', 'production_session_fault_proof.py',
                      'production_desktop_fault_proof.py', 'production_cancel_proof.py', 'desktop_faults.py'):
             path = Path(__file__).with_name(name)

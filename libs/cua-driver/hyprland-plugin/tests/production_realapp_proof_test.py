@@ -20,10 +20,23 @@ from production_realapp_proof import (SMOKE_STEPS, app_process_identity, provena
                                     passive_focus_evidence,
                                     expected_primary_motion, move_primary, primary_acknowledgement,
                                     parallel_actions, primary_trajectory, require_primary_active,
-                                    PRIMARY_LIFETIME_MS, POINTER_EPISODES, run, validate_plan, verify_output)
-from primary_trace import analyze
-from primary_trace_test import START, STOP, trace
-from production_app_smoke_test import INKSCAPE, INKSCAPE_SELECTED
+                                    PRIMARY_LIFETIME_MS, POINTER_EPISODES, run, trace_interval, validate_plan,
+                                    verify_output)
+from proof_fixtures import (INKSCAPE, INKSCAPE_SELECTED, START, STOP, assert_rejects, capacity_events, capacity_plan,
+                            harness_args, inkscape_plan, lane, lane_status, patch_module, plan,
+                            policy_cache_plan, primary_trace as trace, run_replacements)
+
+
+def focus_evidence(rows):
+    """Passive-focus checkpoints around one lane-1 episode, then its stopped trace."""
+    focus_page = {'hook': True, 'active': True, 'overflow': False, 'timed_out': False,
+                  'count': len(rows), 'events': rows}
+    before = {'status': lane_status(lane(0, reserved=True, pointer_focus=True), lane(1)), 'trace': focus_page}
+    after = {'status': copy.deepcopy(before['status'])}
+    after['status']['input']['lanes'][0]['reserved'] = False
+    stopped = {**focus_page, 'active': False, 'count': len(rows) + 1,
+               'events': rows + [[len(rows) + 1, len(rows), 'stop', 100, 100, 0, 0]]}
+    return before, after, stopped
 
 
 class PassiveFocusTests(unittest.TestCase):
@@ -35,20 +48,7 @@ class PassiveFocusTests(unittest.TestCase):
                 if kind in ('pointer_enter', 'pointer_motion'):
                     row.extend((10, 20))
                 rows.append(row)
-            page = {'hook': True, 'active': True, 'overflow': False, 'timed_out': False,
-                    'count': len(rows), 'events': rows}
-            values = [{'lane': lane, 'epoch': f'lane-{lane}', 'desktop_generation': 1,
-                       'reserved': lane == 0, 'pointer_focus': lane == 0,
-                       'keyboard_focus': False, 'lease_active': False, 'drag_active': False,
-                       'held_button': 0, 'held_keys': 0} for lane in (0, 1)]
-            status = {'state': 'input_v3_candidate', 'input': {'protocol': 3, 'test_only': False,
-                       'transport_ready': True, 'lanes': values}}
-            before = {'status': status, 'trace': page}
-            after = {'status': copy.deepcopy(status)}
-            after['status']['input']['lanes'][0]['reserved'] = False
-            stopped = {**page, 'active': False, 'count': len(rows) + 1,
-                       'events': rows + [[len(rows) + 1, len(rows), 'stop', 100, 100, 0, 0]]}
-            return before, after, stopped
+            return focus_evidence(rows)
 
         accepted = [
             ['pointer_leave', 'agent_admitted', 'pointer_enter', 'pointer_motion', 'agent_action_end'],
@@ -72,23 +72,10 @@ class PassiveFocusTests(unittest.TestCase):
                 passive_focus_evidence(*evidence(kinds))
 
     def test_passive_focus_retains_presence_without_authority_after_close(self):
-        rows = [[1, 0, 'start', 100, 100, 0, 0],
-                [2, 1, 'pointer_enter', 100, 100, 1, 0, 10, 20],
-                [3, 2, 'pointer_motion', 100, 100, 1, 0, 10, 20],
-                [4, 3, 'agent_action_end', 100, 100, 1, 0]]
-        page = {'hook': True, 'active': True, 'overflow': False, 'timed_out': False,
-                'count': len(rows), 'events': rows}
-        values = [{'lane': lane, 'epoch': f'lane-{lane}', 'desktop_generation': 1,
-                   'reserved': lane == 0, 'pointer_focus': lane == 0,
-                   'keyboard_focus': False, 'lease_active': False, 'drag_active': False,
-                   'held_button': 0, 'held_keys': 0} for lane in (0, 1)]
-        status = {'state': 'input_v3_candidate', 'input': {'protocol': 3, 'test_only': False,
-                   'transport_ready': True, 'lanes': values}}
-        before = {'status': status, 'trace': page}
-        after = {'status': copy.deepcopy(status)}
-        after['status']['input']['lanes'][0].update(reserved=False)
-        stopped = {**page, 'active': False, 'count': len(rows) + 1,
-                   'events': rows + [[5, 4, 'stop', 100, 100, 0, 0]]}
+        before, after, stopped = focus_evidence([[1, 0, 'start', 100, 100, 0, 0],
+                                                 [2, 1, 'pointer_enter', 100, 100, 1, 0, 10, 20],
+                                                 [3, 2, 'pointer_motion', 100, 100, 1, 0, 10, 20],
+                                                 [4, 3, 'agent_action_end', 100, 100, 1, 0]])
         def append_synthetic(t, kind):
             t['events'].insert(-1, [5, 4, kind, 100, 100, 1, 0])
             t['events'][-1][0] = 6
@@ -115,49 +102,6 @@ class PassiveFocusTests(unittest.TestCase):
                         passive_focus_evidence(b, a, t)
                 else:
                     self.assertEqual(passive_focus_evidence(b, a, t)['lanes'], [1])
-
-
-def plan():
-    return {'purpose': 'apps', 'foreground': {'pid': 10, 'window_id': 100},
-            'agents': [{'app': 'calc', 'target': {'pid': 20, 'window_id': 200}},
-                       {'app': 'inkscape', 'target': {'pid': 30, 'window_id': 300}}],
-            'phases': [{'parallel': [{'agent': 0, 'tool': 'drag', 'arguments': {}},
-                                     {'agent': 1, 'tool': 'drag', 'arguments': {}}]}],
-            'outputs': [{'agent': 0, 'attributes': {'value': '96'}},
-                        {'agent': 1, 'rect_translation': [[10, 20], [30, 40]]}]}
-
-
-def capacity_plan():
-    result = {**plan(), 'purpose': 'capacity', 'outputs': []}
-    result['agents'].append({'app': 'inkscape', 'target': {'pid': 40, 'window_id': 400}})
-    for index, spec in enumerate(result['agents']):
-        spec.update(name='same-public-name', profile={'mode': 'standard'},
-                    bounds={'x': 0, 'y': 0, 'width': 600, 'height': 600})
-    result['phases'] = [{'agent': index, 'tool': 'click', 'arguments': {'x': 20, 'y': 30}}
-                        for index in range(3)]
-    result['phases'][2]['expect'] = {'kind': 'refused', 'reason': 'lane_busy'}
-    return result
-
-
-def capacity_events(lane):
-    return [('agent_admitted', 100, 200, lane, 0),
-            ('pointer_button', 100, 200, lane, 1),
-            ('pointer_button', 100, 200, lane, 0),
-            ('agent_action_end', 100, 200, lane, 0)]
-
-
-def policy_cache_plan():
-    result = capacity_plan()
-    result.update(purpose='policy_cache', agents=result['agents'][:1])
-    result['agents'][0]['profile'].update(manifest='reviewed.yaml', approve_manifest=True)
-    result['phases'] = [
-        {'agent': 0, 'tool': 'click', 'arguments': {'x': 20, 'y': 30}},
-        {'agent': 0, 'tool': 'press_key', 'arguments': {'key': 'ESC'},
-         'expect': {'kind': 'refused', 'reason': 'permission_denied',
-                    'message': "Permission denied: capability manifest denies tool 'press_key'"}},
-        {'agent': 0, 'tool': 'click', 'arguments': {'x': 30, 'y': 40}},
-    ]
-    return result
 
 
 class ProvenanceTests(unittest.TestCase):
@@ -222,31 +166,33 @@ class PolicyCacheTests(unittest.TestCase):
                 candidate['agents'][0]['profile'].update(mode=mode, acknowledge_unrestricted=True)
                 candidate['phases'][1]['expect']['message'] = message
                 validate_plan(candidate)
-        for mutate in (lambda p: p['agents'].append(copy.deepcopy(p['agents'][0])),
-                       lambda p: p['agents'][0].update(app='fixture'),
-                       lambda p: p['agents'][0].update(name=''),
-                       lambda p: p['agents'][0]['target'].update(window_id=None),
-                       lambda p: p['agents'][0]['profile'].pop('manifest'),
-                       lambda p: p['agents'][0]['profile'].update(approve_manifest=False),
-                       lambda p: p['agents'][0]['profile'].update(mode='unrestricted'),
-                       lambda p: p['phases'].pop(),
-                       lambda p: p['phases'][1].update(agent=1),
-                       lambda p: p['phases'][1].update(parallel=[]),
-                       lambda p: p['phases'][1].update(tool='click'),
-                       lambda p: p['phases'][2].update(tool='scroll'),
-                       lambda p: p['phases'][2].update(expect={'kind': 'unknown'}),
-                       lambda p: p['phases'][1]['expect'].update(reason='lane_busy'),
-                       lambda p: p['phases'][1]['expect'].update(reason='bounded_resource_outside_manifest'),
-                       lambda p: p['phases'][1]['expect'].pop('message'),
-                       lambda p: p['phases'][1]['expect'].update(message='Permission denied'),
-                       lambda p: p['phases'][1]['arguments'].update(pid=99),
-                       lambda p: p['phases'][1]['arguments'].update(session='new'),
-                       lambda p: p.update(moving_primary=True),
-                       lambda p: p.update(require_overlap=True)):
-            bad = policy_cache_plan()
-            mutate(bad)
-            with self.subTest(plan=bad), self.assertRaises(AssertionError):
-                validate_plan(bad)
+        click_denial = "Permission denied: capability manifest denies tool 'click'"
+        assert_rejects(self, validate_plan, policy_cache_plan(), [
+            ('one persistent runtime', lambda p: p['agents'].append(copy.deepcopy(p['agents'][0]))),
+            ('reviewed Calc or Inkscape target', lambda p: p['agents'][0].update(app='fixture')),
+            ('fixed session', lambda p: p['agents'][0].update(name='')),
+            ('exact window id', lambda p: p['agents'][0]['target'].update(window_id=None)),
+            ('approved reviewed manifest', lambda p: p['agents'][0]['profile'].pop('manifest')),
+            ('approved reviewed manifest', lambda p: p['agents'][0]['profile'].update(approve_manifest=False)),
+            ('explicit acknowledgement', lambda p: p['agents'][0]['profile'].update(mode='unrestricted')),
+            ('allow, deny, fresh allow', lambda p: p['phases'].pop()),
+            ('reuse agent 0 serially', lambda p: p['phases'][1].update(agent=1)),
+            ('reuse agent 0 serially', lambda p: p['phases'][1].update(parallel=[])),
+            # Denying the allowed tool must reach the distinct-tool guard, not the message guard.
+            ('distinct denied tool', lambda p: p['phases'][1].update(
+                tool='click', expect={**p['phases'][1]['expect'], 'message': click_denial})),
+            ('distinct denied tool', lambda p: p['phases'][2].update(tool='scroll')),
+            ('permitted calls must dispatch', lambda p: p['phases'][2].update(expect={'kind': 'unknown'})),
+            ('must be permission_denied', lambda p: p['phases'][1]['expect'].update(reason='lane_busy')),
+            ('must be permission_denied', lambda p: p['phases'][1]['expect'].update(
+                reason='bounded_resource_outside_manifest')),
+            ('exact manifest tool-ceiling refusal', lambda p: p['phases'][1]['expect'].pop('message')),
+            ('exact manifest tool-ceiling refusal', lambda p: p['phases'][1]['expect'].update(message='Permission denied')),
+            ('overrides reviewed ownership', lambda p: p['phases'][1]['arguments'].update(pid=99)),
+            ('overrides reviewed ownership', lambda p: p['phases'][1]['arguments'].update(session='new')),
+            ('parked primary', lambda p: p.update(moving_primary=True)),
+            ('parked primary', lambda p: p.update(require_overlap=True)),
+        ])
 
     def test_exact_common_envelope_excludes_plugin_and_other_policy_refusals(self):
         expected = policy_cache_plan()['phases'][1]['expect']
@@ -299,36 +245,37 @@ class PolicyCacheTests(unittest.TestCase):
             with self.subTest(response=bad), self.assertRaises(AssertionError):
                 check_manifest_refusal(bad, expected, 'press_key')
 
-    def test_missing_trace_fails_before_process_launch(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            path = root / 'plan.json'
-            path.write_text(json.dumps(policy_cache_plan()))
-            args = SimpleNamespace(plan=path, evidence=root / 'evidence', trace_socket=None)
-            with patch('production_realapp_proof.provenance') as provenance, \
-                    patch('production_realapp_proof.DirectMCP') as spawn:
-                self.assertEqual(run(args), 1)
-                provenance.assert_not_called()
-                spawn.assert_not_called()
-            result = json.loads((args.evidence / 'result.json').read_text())
-            self.assertEqual(result['error'], 'policy_cache requires continuous trace')
-            self.assertEqual(result['policy_cache']['result'], 'unproven')
-
     def test_runner_persistent_runtime_quiet_denial_and_failures_without_replay(self):
-        for failure in (None, 'changed_lane', 'missing_input', 'wrong_refusal', 'plugin_refusal',
-                        'admitted_on_denial', 'input_on_denial', 'denial_before_snapshot',
-                        'denial_after_snapshot', 'next_snapshot_input', 'gap_input', 'dead_runtime', 'changed_runtime',
-                        'transport', 'partial', 'unknown', 'missing_hook', 'reset_trace',
-                        'cleanup_reset', 'foreground_input', 'cleanup_failure', 'stale_window'):
+        # Each failure must fail for its own reason: in the result, or in cleanup.
+        failures = {
+            None: None,
+            'changed_lane': ('error', 'compositor lane changed'),
+            'missing_input': ('error', 'admission, input, and completion evidence'),
+            'wrong_refusal': ('error', 'wrong MCP manifest tool-ceiling refusal'),
+            'plugin_refusal': ('error', 'common authorization refusal, not a plugin error'),
+            'admitted_on_denial': ('error', 'denied call reached a synthetic lane'),
+            'input_on_denial': ('error', 'denied call reached a synthetic lane'),
+            'denial_before_snapshot': ('error', 'denied call reached a synthetic lane'),
+            'denial_after_snapshot': ('error', 'denied call reached a synthetic lane'),
+            'next_snapshot_input': ('error', 'denied call reached a synthetic lane'),
+            'gap_input': ('error', 'denied call reached a synthetic lane'),
+            'dead_runtime': ('error', 'Driver process exited'),
+            'changed_runtime': ('error', 'policy_cache runtime changed'),
+            'transport': ('error', 'unknown effect'),
+            'partial': ('error', "'effect': 'partial'"),
+            'unknown': ('error', "'mode': 'unknown'"),
+            'missing_hook': ('error', 'dispatch telemetry is not live'),
+            'reset_trace': ('error', 'trace history changed'),
+            'cleanup_reset': ('finish_trace', 'policy_cache trace history changed at cleanup'),
+            'foreground_input': ('finish_trace', "'result': 'failed'"),
+            'cleanup_failure': ('close_agent_0', 'cleanup failed'),
+            'stale_window': ('error', 'reviewed PID/window identity is stale or ambiguous'),
+        }
+        for failure, expected_error in failures.items():
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
                 root = Path(directory)
                 candidate = policy_cache_plan()
-                path = root / 'plan.json'
-                path.write_text(json.dumps(candidate))
-                args = SimpleNamespace(plan=path, evidence=root / 'evidence',
-                                       trace_socket=root / 'cua-input-v3.sock', driver=root / 'driver',
-                                       primary_grab=root / 'primary-grab', foreground_journal=root / 'journal',
-                                       record_video=False)
+                args = harness_args(root, candidate, trace_socket=root / 'cua-input-v3.sock')
                 calls, events, held = [], [START], [True]
                 agent = Mock(process=Mock(pid=101, poll=Mock(return_value=None)))
                 observer = Mock()
@@ -403,17 +350,9 @@ class PolicyCacheTests(unittest.TestCase):
                 trace_client.collect.side_effect = collect
                 if failure == 'cleanup_failure':
                     agent.close.side_effect = RuntimeError('cleanup failed')
-                grab = Mock(poll=Mock(return_value=None))
-                replacements = {'provenance': Mock(return_value={}),
-                    'DirectMCP': Mock(side_effect=[agent, observer]), 'Trace': Mock(return_value=trace_client),
-                    'subprocess.Popen': Mock(return_value=grab),
-                    'primary_acknowledgement': Mock(return_value='HELD\n'),
-                    'wait_for': lambda predicate: self.assertTrue(predicate()),
-                    'state': lambda path: {'held': held[0], 'clicks': 0, 'keys': 0, 'scroll': 0},
-                    'wm': lambda: {'pid': 10, 'address': '0x10', 'workspace': 1, 'cursor': {'x': 100, 'y': 200}},
-                    'stop_process': lambda process: held.__setitem__(0, False)}
-                for name, replacement in replacements.items():
-                    stack.enter_context(patch('production_realapp_proof.' + name, replacement))
+                replacements = run_replacements(self, held, DirectMCP=Mock(side_effect=[agent, observer]),
+                                                Trace=Mock(return_value=trace_client))
+                patch_module(stack, 'production_realapp_proof', replacements)
                 self.assertEqual(run(args), 0 if failure is None else 1)
                 mutations = [name for name, _ in calls if name in ('click', 'press_key')]
                 self.assertEqual(mutations, ['click', 'press_key', 'click'][:len(mutations)])
@@ -430,45 +369,54 @@ class PolicyCacheTests(unittest.TestCase):
                 self.assertEqual(replacements['DirectMCP'].call_args.args[2],
                                  {'mode': 'unrestricted', 'acknowledge_unrestricted': True})
                 result = json.loads((args.evidence / 'result.json').read_text())
+                cleanup = {row['operation']: row['error']
+                           for row in json.loads((args.evidence / 'cleanup.json').read_text())['errors']}
                 if failure is None:
                     self.assertEqual(mutations, ['click', 'press_key', 'click'])
                     self.assertEqual(result['policy_cache']['compositor_lane'], 1)
                     self.assertEqual(result['continuous_isolation'], 'passed')
                     self.assertEqual(result['synthetic_cleanup'], 'verified')
+                    self.assertEqual(cleanup, {})
                     for index in range(3):
                         self.assertTrue((args.evidence / f'policy-cache-phase-{index}-trace.json').is_file())
+                else:
+                    where, pattern = expected_error
+                    self.assertRegex(result['error'] if where == 'error' else cleanup[where], pattern)
                 if failure in ('transport', 'dead_runtime', 'changed_runtime', 'gap_input', 'next_snapshot_input'):
                     self.assertEqual(mutations, ['click', 'press_key'])
 
 
 class CapacityTests(unittest.TestCase):
     def test_plan_requires_three_serial_independent_qualified_targets(self):
-        validate_plan(capacity_plan())
-        for mutate in (lambda p: p.update(phases=[]),
-                       lambda p: p.update(phases=p['phases'][:2]),
-                       lambda p: p.update(agents=p['agents'][:2]),
-                       lambda p: p['phases'][1].update(agent=0),
-                       lambda p: p['phases'][0].update(parallel=[]),
-                       lambda p: p['phases'][0].update(expect={'kind': 'unknown'}),
-                       lambda p: p['phases'][2].pop('expect'),
-                       lambda p: p['phases'][2].update(expect={'kind': 'refused', 'reason': 'permission_denied'}),
-                       lambda p: p['agents'][2].update(target=p['agents'][1]['target']),
-                       lambda p: p['agents'][2]['target'].update(window_id=None),
-                       lambda p: p['agents'][2].update(app='fixture'),
-                       lambda p: p.update(moving_primary=True),
-                       lambda p: p.update(require_overlap=True)):
-            bad = capacity_plan()
-            mutate(bad)
-            with self.subTest(plan=bad), self.assertRaises(AssertionError):
-                validate_plan(bad)
-        # Capacity does not redefine the normal reviewed permission contract.
-        for mode in ('standard', 'bounded', 'unrestricted'):
-            candidate = capacity_plan()
-            candidate['agents'][0]['profile']['mode'] = mode
-            validate_plan(candidate)
-        for purpose in ('apps', 'policy', 'negative_control'):
-            with self.assertRaises(AssertionError):
-                validate_plan({**capacity_plan(), 'purpose': purpose})
+        for app_profile, factory in (('calc-inkscape', capacity_plan),
+                                     ('inkscape-only', lambda: inkscape_plan(capacity=True))):
+            validate_plan(factory())
+            for mutate in (lambda p: p.update(phases=[]),
+                           lambda p: p.update(phases=p['phases'][:2]),
+                           lambda p: p.update(agents=p['agents'][:2]),
+                           lambda p: p['phases'][1].update(agent=0),
+                           lambda p: p['phases'][2].update(agent=0),
+                           lambda p: p['phases'][0].update(parallel=[]),
+                           lambda p: p['phases'][0].update(expect={'kind': 'unknown'}),
+                           lambda p: p['phases'][2].pop('expect'),
+                           lambda p: p['phases'][2].update(expect={'kind': 'refused', 'reason': 'permission_denied'}),
+                           lambda p: p['agents'][2].update(target=p['agents'][1]['target']),
+                           lambda p: p['agents'][2]['target'].update(window_id=None),
+                           lambda p: p['agents'][2].update(app='fixture'),
+                           lambda p: p.update(moving_primary=True),
+                           lambda p: p.update(require_overlap=True)):
+                bad = factory()
+                mutate(bad)
+                with self.subTest(app_profile=app_profile, plan=bad), self.assertRaises(AssertionError):
+                    validate_plan(bad)
+            # Capacity does not redefine the normal reviewed permission contract.
+            for mode in ('standard', 'bounded', 'unrestricted'):
+                candidate = factory()
+                candidate['agents'][0]['profile']['mode'] = mode
+                validate_plan(candidate)
+            for purpose in ('apps', 'policy', 'negative_control'):
+                with self.assertRaises(AssertionError):
+                    validate_plan({**factory(), 'purpose': purpose})
 
     def test_lane_needs_actual_ordered_input_and_completion(self):
         before = {**trace(START), 'active': True}
@@ -481,12 +429,11 @@ class CapacityTests(unittest.TestCase):
                      [(kind, x, y, 0, state) for kind, x, y, lane, state in events]):
             with self.subTest(rows=rows), self.assertRaises(AssertionError):
                 capacity_lane(before, {**trace(START, *rows), 'active': True}, 'click')
-        for malformed in (None, {}, {**after, 'events': []}, {**after, 'hook': False},
-                          {**after, 'overflow': True}, {**after, 'count': 0},
-                          {**after, 'timed_out': True}, {**after, 'events': [[1]]}):
-            with self.subTest(trace=malformed), self.assertRaises(AssertionError):
-                capacity_lane(before, malformed, 'click')
-        with self.assertRaises(AssertionError):
+        # Page validity belongs to trace_interval; one case proves it is applied.
+        with self.assertRaisesRegex(AssertionError, 'dropped events'):
+            capacity_lane(before, {**after, 'overflow': True}, 'click')
+        # A pointer click cannot count as keyboard input.
+        with self.assertRaisesRegex(AssertionError, 'admission, input, and completion'):
             capacity_lane(before, after, 'press_key')
 
     def test_summary_rejects_incomplete_wrong_lane_and_wrong_refusal(self):
@@ -507,27 +454,22 @@ class CapacityTests(unittest.TestCase):
             with self.subTest(actions=bad), self.assertRaises(AssertionError):
                 verify_capacity(bad)
 
-    def test_missing_trace_fails_before_process_launch(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source_plan = root / 'plan.json'
-            source_plan.write_text(json.dumps(capacity_plan()))
-            args = SimpleNamespace(plan=source_plan, evidence=root / 'evidence', trace_socket=None)
-            with patch('production_realapp_proof.provenance') as provenance, \
-                    patch('production_realapp_proof.DirectMCP') as spawn:
-                self.assertEqual(run(args), 1)
-                provenance.assert_not_called()
-                spawn.assert_not_called()
-            result = json.loads((args.evidence / 'result.json').read_text())
-            self.assertEqual(result['error'], 'capacity requires continuous trace')
-            self.assertEqual(result['capacity']['result'], 'unproven')
-
     def test_runner_serial_capacity_and_failures_without_replay(self):
-        cases = [(app_profile, failure) for app_profile in ('calc-inkscape', 'inkscape-only')
-                 for failure in (None, 'same_lane', 'missing_input', 'wrong_refusal', 'dispatch_on_refusal',
-                                 'dead_runtime', 'stale_window', 'transport', 'missing_hook', 'reset_trace')]
-        cases += [('inkscape-only', failure) for failure in ('owner_lost', 'owner_changed', 'document_changed')]
-        for app_profile, failure in cases:
+        failures = {None: None, 'same_lane': 'capacity needs distinct compositor lanes',
+                    'missing_input': 'capacity needs admission, input, and completion evidence',
+                    'wrong_refusal': "'reason': 'permission_denied'",
+                    'dispatch_on_refusal': 'denied call reached a synthetic lane',
+                    'dead_runtime': 'Driver process exited',
+                    'stale_window': 'reviewed PID/window identity is stale or ambiguous',
+                    'transport': 'unknown effect', 'missing_hook': 'dispatch telemetry is not live',
+                    'reset_trace': 'trace history changed'}
+        owner_failures = {'owner_lost': 'capacity owner lost its lane reservation',
+                          'owner_changed': 'capacity lane ownership changed',
+                          'document_changed': 'snapshot document mismatch'}
+        cases = [(app_profile, failure, error) for app_profile in ('calc-inkscape', 'inkscape-only')
+                 for failure, error in failures.items()]
+        cases += [('inkscape-only', failure, error) for failure, error in owner_failures.items()]
+        for app_profile, failure, expected_error in cases:
             with self.subTest(app_profile=app_profile, failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
                 root = Path(directory)
                 candidate = capacity_plan()
@@ -535,12 +477,7 @@ class CapacityTests(unittest.TestCase):
                     candidate['app_profile'] = app_profile
                     for i, spec in enumerate(candidate['agents']):
                         spec.update(app='inkscape', document=str(root.resolve() / f'lane-{i}.svg'))
-                path = root / 'plan.json'
-                path.write_text(json.dumps(candidate))
-                args = SimpleNamespace(plan=path, evidence=root / 'evidence',
-                                       trace_socket=root / 'cua-input-v3.sock', driver=root / 'driver',
-                                       primary_grab=root / 'primary-grab', foreground_journal=root / 'journal',
-                                       record_video=False)
+                args = harness_args(root, candidate, trace_socket=root / 'cua-input-v3.sock')
                 calls, events, held = [], [START], [True]
                 agents = [Mock(process=Mock(pid=101 + i, poll=Mock(return_value=None))) for i in range(3)]
                 observer = Mock()
@@ -589,26 +526,15 @@ class CapacityTests(unittest.TestCase):
                         events[:] = [START]
                     return {**trace(*events), 'active': events[-1] != STOP, 'hook': failure != 'missing_hook'}
                 trace_client.collect.side_effect = collect
-                grab = Mock(poll=Mock(return_value=None))
                 def input_status():
                     third_called = ('click', 2) in calls
-                    return {'state': 'input_v3_candidate', 'input': {'protocol': 3, 'test_only': False,
-                            'transport_ready': True, 'lanes': [
-                                {'lane': lane, 'reserved': not (third_called and failure == 'owner_lost'),
-                                 'epoch': 100 if third_called and failure == 'owner_changed' else 50 + lane,
-                                 'desktop_generation': 1, 'lease_active': False, 'drag_active': False,
-                                 'held_keys': 0, 'held_button': 0} for lane in (0, 1)]}}
-                replacements = {'provenance': Mock(return_value={}),
-                    'read_input_status': input_status,
-                    'DirectMCP': Mock(side_effect=agents + [observer]), 'Trace': Mock(return_value=trace_client),
-                    'subprocess.Popen': Mock(return_value=grab),
-                    'primary_acknowledgement': Mock(return_value='HELD\n'),
-                    'wait_for': lambda predicate: self.assertTrue(predicate()),
-                    'state': lambda path: {'held': held[0], 'clicks': 0, 'keys': 0, 'scroll': 0},
-                    'wm': lambda: {'pid': 10, 'address': '0x10', 'workspace': 1, 'cursor': {'x': 100, 'y': 200}},
-                    'stop_process': lambda process: held.__setitem__(0, False)}
-                for name, replacement in replacements.items():
-                    stack.enter_context(patch('production_realapp_proof.' + name, replacement))
+                    return lane_status(*(lane(index, reserved=not (third_called and failure == 'owner_lost'),
+                                              epoch=100 if third_called and failure == 'owner_changed' else 51 + index)
+                                         for index in (0, 1)))
+                replacements = run_replacements(self, held, read_input_status=input_status,
+                                                DirectMCP=Mock(side_effect=agents + [observer]),
+                                                Trace=Mock(return_value=trace_client))
+                patch_module(stack, 'production_realapp_proof', replacements)
                 self.assertEqual(run(args), 0 if failure is None else 1)
                 action_indexes = [index for name, index in calls if name == 'click']
                 self.assertEqual(action_indexes, list(range(len(action_indexes))))
@@ -637,6 +563,8 @@ class CapacityTests(unittest.TestCase):
                         self.assertEqual(set(result['actions'][2]['persistent_owners']), {'1', '2'})
                         self.assertTrue((args.evidence / 'capacity-agent-2-owners-before.json').is_file())
                         self.assertTrue((args.evidence / 'capacity-agent-2-owners-after.json').is_file())
+                else:
+                    self.assertRegex(result['error'], expected_error)
 
 
 class PlanTests(unittest.TestCase):
@@ -745,11 +673,17 @@ class SmokeStageTests(unittest.TestCase):
                                    'message': 'unconfirmed effect'}])
 
     def test_runner_grounds_full_snapshots_and_never_recovers_or_replays(self):
+        failures = {None: None, 'unmarked': None,
+                    'no_elements': 'snapshot has no semantic elements',
+                    'dialog': 'unexpected dialog; no dismissal keys were sent',
+                    'extra_window': 'reviewed PID/window identity is stale or ambiguous',
+                    'after_dialog': 'unexpected dialog; no dismissal keys were sent',
+                    'transport': 'unknown input outcome'}
         for app, stage, elements in (
                 ('calc', 'insert', [{'role': 'table cell', 'label': 'A1', 'selected': True}]),
                 ('inkscape', 'select', INKSCAPE['elements']),
                 ('inkscape', 'move', INKSCAPE_SELECTED['elements'])):
-            for failure in (None, 'no_elements', 'dialog', 'extra_window', 'after_dialog', 'transport', 'unmarked'):
+            for failure, expected_error in failures.items():
                 with self.subTest(app=app, stage=stage, failure=failure), \
                         tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
                     root = Path(directory)
@@ -766,11 +700,7 @@ class SmokeStageTests(unittest.TestCase):
                         path = root / f'{i}.xml'
                         path.write_text('<synthetic/>')
                         candidate['outputs'][i]['path'] = str(path)
-                    path = root / 'plan.json'
-                    path.write_text(json.dumps(candidate))
-                    args = SimpleNamespace(plan=path, evidence=root / 'evidence', trace_socket=None,
-                                           driver=root / 'driver', primary_grab=root / 'primary-grab',
-                                           foreground_journal=root / 'journal', record_video=False)
+                    args = harness_args(root, candidate)
                     calls, held = [], [True]
                     agents = [Mock(process=Mock(pid=101 + i, poll=Mock(return_value=None))) for i in range(2)]
                     observer = Mock()
@@ -806,19 +736,10 @@ class SmokeStageTests(unittest.TestCase):
 
                     for mcp in agents + [observer]:
                         mcp.tool.side_effect = tool
-                    replacements = {'provenance': Mock(return_value={}),
-                        'DirectMCP': Mock(side_effect=agents + [observer]),
-                        'subprocess.Popen': Mock(return_value=Mock(poll=Mock(return_value=None))),
-                        'primary_acknowledgement': Mock(return_value='HELD\n'),
-                        'verify_output': Mock(return_value={'verified': True}),
-                        'wait_for': lambda predicate: self.assertTrue(predicate()),
-                        'state': lambda path: {'held': held[0], 'clicks': 0, 'keys': 0, 'scroll': 0},
-                        'wm': lambda: {'pid': 10, 'address': '0x10', 'workspace': 1,
-                                       'cursor': {'x': 100, 'y': 200}},
-                        'stop_process': lambda process: held.__setitem__(0, False)}
-                    for name, replacement in replacements.items():
-                        stack.enter_context(patch('production_realapp_proof.' + name, replacement))
-                    self.assertEqual(run(args), 0 if failure in (None, 'unmarked') else 1)
+                    patch_module(stack, 'production_realapp_proof', run_replacements(
+                        self, held, DirectMCP=Mock(side_effect=agents + [observer]),
+                        verify_output=Mock(return_value={'verified': True})))
+                    self.assertEqual(run(args), 0 if expected_error is None else 1)
                     inputs = [i for i, row in enumerate(calls) if row[0] == 'input']
                     self.assertEqual(len(inputs), 0 if failure in ('no_elements', 'dialog', 'extra_window') else 1)
                     if inputs:
@@ -836,6 +757,8 @@ class SmokeStageTests(unittest.TestCase):
                     report = json.loads((args.evidence / 'result.json').read_text())
                     if failure is None:
                         self.assertEqual(report['actions'][0]['smoke_stage'], stage)
+                    if expected_error:
+                        self.assertRegex(report['error'], expected_error)
 
 
 class PointerStageTests(unittest.TestCase):
@@ -871,14 +794,17 @@ class PointerStageTests(unittest.TestCase):
 
     def test_primary_guard_fails_at_deadline_or_any_helper_exit(self):
         helper = Mock(poll=Mock(return_value=None))
-        require_primary_active(helper, 100, now_ns=99)
-        for now in (100, 101):
-            with self.assertRaisesRegex(AssertionError, 'deadline expired'):
-                require_primary_active(helper, 100, now_ns=now)
-        for code in (0, 1, -15):
-            helper.poll.return_value = code
-            with self.assertRaisesRegex(AssertionError, 'helper exited'):
-                require_primary_active(helper, 100, now_ns=99)
+        with patch('production_realapp_proof.time.monotonic_ns', return_value=99) as clock:
+            require_primary_active(helper, 100)
+            for now in (100, 101):
+                clock.return_value = now
+                with self.assertRaisesRegex(AssertionError, 'deadline expired'):
+                    require_primary_active(helper, 100)
+            clock.return_value = 99
+            for code in (0, 1, -15):
+                helper.poll.return_value = code
+                with self.assertRaisesRegex(AssertionError, 'helper exited'):
+                    require_primary_active(helper, 100)
 
     def test_pointer_stages_reject_supplied_coordinates_or_wrong_tool(self):
         candidate = plan()
@@ -905,11 +831,7 @@ class PointerStageTests(unittest.TestCase):
                     output = root / f'{index}.xml'
                     output.write_text('<synthetic/>')
                     candidate['outputs'][index]['path'] = str(output)
-                plan_path = root / 'plan.json'
-                plan_path.write_text(json.dumps(candidate))
-                args = SimpleNamespace(plan=plan_path, evidence=root / 'evidence', trace_socket=None,
-                                       driver=root / 'driver', primary_grab=root / 'primary-grab',
-                                       foreground_journal=root / 'journal', record_video=False)
+                args = harness_args(root, candidate)
                 targets = [candidate['foreground']] + [spec['target'] for spec in candidate['agents']]
                 clients, calls, held = [], [], [True]
                 clock_now = [1]
@@ -956,19 +878,12 @@ class PointerStageTests(unittest.TestCase):
                                     side_effect=AssertionError('unchanged app') if failure == 'after' else None)
                 if failure == 'after_recovers':
                     verification.side_effect = [AssertionError('not settled'), {'verified': True}, {'verified': True}]
-                replacements = {'provenance': Mock(return_value={}), 'DirectMCP': client,
-                    'subprocess.Popen': Mock(return_value=grab),
+                patch_module(stack, 'production_realapp_proof', run_replacements(
+                    self, held, DirectMCP=client, **{'subprocess.Popen': Mock(return_value=grab),
                     'time.monotonic_ns': lambda: clock_now[0],
-                    'primary_acknowledgement': Mock(return_value='HELD\n'),
                     'verify_output': Mock(return_value={'verified': True}),
-                    'wait_for': lambda predicate: self.assertTrue(predicate()),
-                    'state': lambda path: {'held': held[0], 'clicks': 0, 'keys': 0, 'scroll': 0},
-                    'wm': lambda: {'pid': 10, 'address': '0x10', 'workspace': 1, 'cursor': {'x': 100, 'y': 200}},
-                    'stop_process': lambda process: held.__setitem__(0, False),
                     'pointer_grounding.read_pixels': lambda path: path,
-                    'pointer_grounding.action': grounding, 'pointer_grounding.verify': verification}
-                for name, replacement in replacements.items():
-                    stack.enter_context(patch('production_realapp_proof.' + name, replacement))
+                    'pointer_grounding.action': grounding, 'pointer_grounding.verify': verification}))
                 self.assertEqual(run(args), 0 if failure is None else 1)
                 inputs = [index for index, row in enumerate(calls) if row[0] == 'input']
                 self.assertEqual(len(inputs), 0 if failure in
@@ -1058,12 +973,53 @@ class ResponseTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 assert_no_dispatch(before, after)
 
-    def test_no_dispatch_rejects_missing_or_changed_telemetry(self):
+    def test_no_dispatch_requires_valid_telemetry(self):
         before = {**trace(START), 'active': True}
-        for change in ({'hook': False}, {'overflow': True}, {'timed_out': True},
-                       {'count': 2}, {'active': False}, {'events': []}):
-            with self.assertRaises(AssertionError):
-                assert_no_dispatch(before, {**before, **change})
+        with self.assertRaisesRegex(AssertionError, 'dropped events'):
+            assert_no_dispatch(before, {**before, 'overflow': True})
+
+
+class TraceIntervalTests(unittest.TestCase):
+    """Owner of dispatch-interval page validity for every proof that reuses it."""
+
+    def test_returns_only_rows_appended_after_a_valid_prefix(self):
+        before = {**trace(START), 'active': True}
+        after = {**trace(START, ('agent_admitted', 100, 200, 1, 0)), 'active': True}
+        self.assertEqual(trace_interval(before, after), [after['events'][1]])
+        self.assertEqual(trace_interval(before, before), [])
+        motion = {**trace(START, ('pointer_motion', 100, 200, 1, 0)), 'active': True}
+        motion['events'][1].extend([10, 20])  # Surface coordinates are a valid row shape.
+        self.assertEqual(trace_interval(before, motion), [motion['events'][1]])
+
+    def test_rejects_missing_incomplete_malformed_stopped_or_rewritten_pages(self):
+        before = {**trace(START), 'active': True}
+        after = {**trace(START, ('cursor', 100, 200, 0, 0)), 'active': True}
+        def changed(update):
+            page = copy.deepcopy(after)
+            update(page)
+            return page
+        cases = [
+            ('missing dispatch telemetry', None),
+            ('not live', {**after, 'hook': False}),
+            ('not live', {**after, 'active': False}),
+            ('dropped events', {**after, 'overflow': True}),
+            ('dropped events', {**after, 'timed_out': True}),
+            ('empty dispatch telemetry', {**after, 'events': [], 'count': 0}),
+            ('incomplete dispatch telemetry', {**after, 'count': 3}),
+            ('malformed dispatch telemetry', changed(lambda p: p['events'][-1].pop())),
+            ('malformed trace sequence', changed(lambda p: p['events'][-1].__setitem__(0, '2'))),
+            ('incomplete dispatch telemetry', changed(lambda p: p['events'][-1].__setitem__(2, 'unknown'))),
+            ('incomplete dispatch telemetry', changed(lambda p: p['events'][-1].__setitem__(0, 3))),
+            ('trace already stopped', changed(lambda p: p['events'].insert(1, [2, 0, 'stop', 100, 200, 0, 0])
+                                              or p['events'][2].__setitem__(0, 3) or p.update(count=3))),
+            ('trace history changed', changed(lambda p: p['events'][0].__setitem__(3, 101))),
+        ]
+        for pattern, page in cases:
+            with self.subTest(pattern=pattern, page=page), self.assertRaisesRegex(AssertionError, pattern):
+                trace_interval(before, page)
+        # The prefix is held to the same contract as the interval end.
+        with self.assertRaisesRegex(AssertionError, 'dropped events'):
+            trace_interval({**before, 'overflow': True}, after)
 
 
 class OutputTests(unittest.TestCase):
@@ -1133,21 +1089,6 @@ class MovingPrimaryTests(unittest.TestCase):
             with self.subTest(log=log), self.assertRaises(AssertionError):
                 expected_primary_motion(log, route)
 
-    def test_trace_must_match_commands_without_extra_motion_focus_or_grab_changes(self):
-        route = [[120, 200], [100, 200]]
-        commands = [motion_command(1, route[0]), motion_command(2, route[1], 3, 4)]
-        expected = expected_primary_motion(commands, route)
-        events = [('cursor', *point, 0, 0) for point in route]
-        self.assertEqual(analyze(trace(START, *events, STOP), expected_motion=expected)['result'], 'passed')
-        bad_events = [events[:1], list(reversed(events)),
-                      [events[0], ('cursor', 150, 200, 0, 0), *events[1:]]]
-        for kind in ('pointer_focus', 'keyboard_focus', 'pointer_button', 'pointer_axis', 'keyboard_key'):
-            bad_events.append([events[0], (kind, 120, 200, 0, 0), events[1]])
-        for rows in bad_events:
-            self.assertEqual(analyze(trace(START, *rows, STOP), expected_motion=expected)['result'], 'failed')
-        self.assertEqual(analyze({**trace(START, *events, STOP), 'overflow': True},
-                                 expected_motion=expected)['result'], 'inconclusive')
-
     def test_acknowledgement_rejects_timeout_eof_partial_and_oversized_lines(self):
         stream = Mock()
         for chunks, readiness in (([b''], [[stream]]), ([b'MOVED 120'], [[stream], []]),
@@ -1177,22 +1118,6 @@ class MovingPrimaryTests(unittest.TestCase):
             grab.stdin.flush.assert_called_once()
             self.assertEqual(commands[0]['acknowledgement'], acknowledgement)
 
-    def test_no_trace_fails_before_provenance_or_process_launch(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source_plan = root / 'plan.json'
-            source_plan.write_text(json.dumps({**plan(), 'moving_primary': True}))
-            args = SimpleNamespace(plan=source_plan, evidence=root / 'evidence', trace_socket=None)
-            with patch('production_realapp_proof.provenance') as provenance, \
-                    patch('production_realapp_proof.subprocess.Popen') as spawn:
-                self.assertEqual(run(args), 1)
-                provenance.assert_not_called()
-                spawn.assert_not_called()
-            result = json.loads((args.evidence / 'result.json').read_text())
-            self.assertEqual(result['result'], 'failed')
-            self.assertEqual(result['error'], 'moving primary requires continuous trace')
-            self.assertEqual(result['continuous_isolation'], 'unproven')
-
     def test_runner_uses_acknowledged_motion_and_brackets_background_action(self):
         # Exercise orchestration without a compositor, Driver process, or GUI.
         for during_action, failure in ((True, None), (False, None), (True, 'ack'),
@@ -1204,16 +1129,12 @@ class MovingPrimaryTests(unittest.TestCase):
                 bounds = {'x': 0, 'y': 0, 'width': 600, 'height': 600}
                 spec = {'target': {'pid': 20, 'window_id': 200}, 'bounds': bounds,
                         'name': 'agent', 'profile': {'mode': 'standard'}}
-                source_plan = root / 'plan.json'
-                source_plan.write_text(json.dumps({
+                args = harness_args(root, {
                     'purpose': 'policy', 'moving_primary': True, 'primary_point': [100, 200],
                     'foreground': {'pid': 10, 'window_id': 100}, 'agents': [spec],
                     'phases': [{'agent': 0, 'tool': 'click', 'arguments': {'x': 10, 'y': 20},
-                                'expect': {'kind': 'refused', 'reason': 'permission_denied'}}]}))
-                args = SimpleNamespace(plan=source_plan, evidence=root / 'evidence',
-                                       trace_socket=root / 'cua-input-v3.sock', driver=root / 'driver',
-                                       primary_grab=root / 'primary-grab', foreground_journal=root / 'journal',
-                                       record_video=False)
+                                'expect': {'kind': 'refused', 'reason': 'permission_denied'}}]},
+                    trace_socket=root / 'cua-input-v3.sock')
                 log, action_calls, held = [], [], [True]
 
                 def append_motion(point):
@@ -1270,22 +1191,17 @@ class MovingPrimaryTests(unittest.TestCase):
                     workers.append(worker)
                     return worker
 
-                replacements = {
-                    'provenance': Mock(return_value={}),
+                replacements = run_replacements(self, held, **{
                     'DirectMCP': Mock(side_effect=[agent, observer]),
                     'subprocess.Popen': Mock(return_value=grab),
                     'primary_acknowledgement': Mock(side_effect=AssertionError('incomplete HELD'))
                         if failure == 'startup' else Mock(return_value='HELD\n'),
                     'select.select': Mock(return_value=([grab.stdout], [], [])),
-                    'wait_for': lambda predicate: self.assertTrue(predicate()),
-                    'state': lambda path: {'held': held[0], 'clicks': 0, 'keys': 0, 'scroll': 0},
                     'wm': lambda: {'pid': 10, 'address': '0x10', 'workspace': 1,
                                    'cursor': {'x': log[-1]['x'] if log else 100, 'y': 200}},
                     'Trace': Mock(return_value=trace_client), 'threading.Thread': thread,
-                    'move_primary': movement, 'stop_process': lambda process: held.__setitem__(0, False),
-                }
-                for name, replacement in replacements.items():
-                    stack.enter_context(patch('production_realapp_proof.' + name, replacement))
+                    'move_primary': movement})
+                patch_module(stack, 'production_realapp_proof', replacements)
                 self.assertEqual(run(args), 0 if during_action and failure is None else 1)
                 if failure not in ('startup', 'motion'):
                     click_index = action_calls.index('click')
@@ -1393,20 +1309,37 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(spawn.call_args.kwargs['env']['CUA_DRIVER_PERMISSION_MODE'], 'unrestricted')
             self.assertEqual(spawn.call_args.kwargs['env']['CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS'], '1')
 
+    def test_unprovable_plans_fail_before_provenance_or_any_process(self):
+        cases = (
+            ('policy_cache requires continuous trace', policy_cache_plan(), {}, {'policy_cache': {'result': 'unproven'}}),
+            ('capacity requires continuous trace', capacity_plan(), {}, {'capacity': {'result': 'unproven'}}),
+            ('moving primary requires continuous trace', {**plan(), 'moving_primary': True}, {}, {}),
+            ('requires the independent primary observer', plan(), {'artifact_role': 'production'}, {}),
+        )
+        for error, candidate, overrides, retained in cases:
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+                args = harness_args(directory, candidate, **overrides)
+                launches = [stack.enter_context(patch('production_realapp_proof.' + name))
+                            for name in ('provenance', 'DirectMCP', 'subprocess.Popen')]
+                self.assertEqual(run(args), 1)
+                for launch in launches:
+                    launch.assert_not_called()
+                result = json.loads((args.evidence / 'result.json').read_text())
+                self.assertEqual(result['result'], 'failed')
+                self.assertRegex(result['error'], error)
+                self.assertEqual(result['continuous_isolation'], 'unproven')
+                for key, value in retained.items():
+                    self.assertEqual(result[key], value)
+
     def test_preflight_failure_is_retained_as_failure(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            import json
-            source_plan = root / 'plan.json'
-            source_plan.write_text(json.dumps(plan()))
-            args = SimpleNamespace(plan=source_plan, evidence=root / 'evidence')
+            args = harness_args(directory, plan())
             with patch('production_realapp_proof.provenance', side_effect=AssertionError('SHA mismatch')):
                 self.assertEqual(run(args), 1)
             result = json.loads((args.evidence / 'result.json').read_text())
             self.assertEqual(result['result'], 'failed')
             self.assertEqual(result['error'], 'SHA mismatch')
             self.assertTrue((args.evidence / 'cleanup.json').is_file())
-
 
 if __name__ == '__main__':
     unittest.main()

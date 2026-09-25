@@ -12,8 +12,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import production_desktop_fault_proof as proof
-from production_geometry_fault_proof_test import (ACTIVE, CANCEL, BOUNDS, action,
-                                                  client, plan as geometry_plan, trace)
+from proof_fixtures import ACTIVE, BOUNDS, CANCEL, action, client, geometry_plan, inkscape_profile, trace
 
 
 def plan(kind='config_disable'):
@@ -352,10 +351,10 @@ class MotionGateTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, 'history'):
             proof.poll_fault_active(Mock(collect=Mock(side_effect=[first, changed])), trace(ACTIVE[:1]),
                                     Mock(done=Mock(return_value=False)), 12)
-        for field, value in (('overflow', True), ('timed_out', True), ('active', False), ('hook', False), ('count', 0)):
-            with self.subTest(field=field), self.assertRaises(AssertionError):
-                proof.poll_fault_active(Mock(collect=Mock(return_value={**motion_trace(), field: value})),
-                                        trace(ACTIVE[:1]), Mock(done=Mock(return_value=False)), 12)
+        # Page validity is owned by trace_interval (realapp TraceIntervalTests); one case proves wiring.
+        with self.assertRaisesRegex(AssertionError, 'dropped events'):
+            proof.poll_fault_active(Mock(collect=Mock(return_value={**motion_trace(), 'overflow': True})),
+                                    trace(ACTIVE[:1]), Mock(done=Mock(return_value=False)), 12)
         with patch.object(proof.time, 'monotonic', side_effect=[0, .01, .02, .03, .04, .30]), \
              self.assertRaisesRegex(AssertionError, 'stale'):
             proof.poll_fault_active(Mock(collect=Mock(return_value=motion_trace())), trace(ACTIVE[:1]),
@@ -532,22 +531,18 @@ class OracleTests(unittest.TestCase):
             proof.verify_fault(trace(late_release), record(), restoration(), action())
 
     def test_reconnected_trace_must_be_complete_and_preserve_prefix(self):
-        for key, value in (('overflow', True), ('timed_out', True), ('hook', False), ('active', False), ('count', 0)):
-            with self.subTest(key=key), self.assertRaises(AssertionError):
-                proof.verify_fault({**trace(CANCEL), key: value}, record(), restoration(), action())
+        # Page validity is owned by trace_interval (realapp TraceIntervalTests); one case proves wiring.
+        with self.assertRaisesRegex(AssertionError, 'dropped events'):
+            proof.verify_fault({**trace(CANCEL), 'overflow': True}, record(), restoration(), action())
         for page in (trace(CANCEL[5:]), trace(CANCEL)):
             page['events'][1][1] += 1
             with self.assertRaises(AssertionError):
                 proof.verify_fault(page, record(), restoration(), action())
 
-    def test_primary_input_focus_and_transient_warp_fail(self):
-        for kind, value in (('pointer_button', 0), ('keyboard_key', 1), ('pointer_axis', 0), ('pointer_focus', 0)):
-            with self.subTest(kind=kind), self.assertRaises(AssertionError):
-                proof.verify_fault(trace(CANCEL + [(11, kind, 0, value)]), record(), restoration(), action())
-        page = trace(CANCEL + [(11, 'cursor', 0, 0), (12, 'cursor', 0, 0)])
-        page['events'][-2][3] += 5
-        with self.assertRaises(AssertionError):
-            proof.verify_fault(page, record(), restoration(), action())
+    def test_primary_input_fails_the_fault(self):
+        # Primary classification is owned by primary_trace_test; one case proves wiring.
+        with self.assertRaisesRegex(AssertionError, "'result': 'failed'"):
+            proof.verify_fault(trace(CANCEL + [(11, 'keyboard_key', 0, 1)]), record(), restoration(), action())
 
     def test_exact_fault_bytes_and_restoration_required(self):
         for key, value in (('result', 'unproven'), ('kind', 'keymap'), ('config', {'sha256': 'bad'})):
@@ -559,6 +554,13 @@ class OracleTests(unittest.TestCase):
 
 
 class SafetyTests(unittest.TestCase):
+    def test_inkscape_only_profile_reaches_the_shared_app_profile_gate(self):
+        candidate = inkscape_profile(plan())
+        proof.validate_plan(candidate)
+        candidate['agents'][0]['document'] = '/synthetic/private.svg'
+        with self.assertRaisesRegex(AssertionError, 'absolute synthetic SVG document'):
+            proof.validate_plan(candidate)
+
     def test_plan_rejects_other_faults_and_incomplete_identity(self):
         proof.validate_plan(plan())
         for change in ({'disposable': False}, {'fault': {'kind': 'keymap'}}, {'fault': {'kind': 'dpms'}},

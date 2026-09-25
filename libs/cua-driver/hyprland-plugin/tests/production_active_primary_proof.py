@@ -418,7 +418,7 @@ def run(args):
         app_process_identity(spec['app'], spec['target']['pid'])
         origin = provenance(args, plan)
         for name in (Path(__file__).name, 'production_active_primary_proof_test.py',
-                     'primary_hover_fixture.c', 'primary_hover_fixture_test.py',
+                     'primary_hover_fixture.c', 'primary_hover_fixture_test.py', 'proof_fixtures.py',
                      'production_active_lock_proof.py', 'production_primary_conflict_proof.py',
                      'production_desktop_fault_proof.py', 'production_session_fault_proof.py'):
             path = Path(__file__).with_name(name)

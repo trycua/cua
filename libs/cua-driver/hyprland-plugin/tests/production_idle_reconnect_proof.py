@@ -288,7 +288,7 @@ def run(args):
         validate_plan(plan)
         assert args.trace_socket.name in ('cua-input-v3.sock', 'cua-input-v3-2.sock')
         origin = provenance(args, plan)
-        for name in ('production_idle_reconnect_proof.py', 'production_idle_reconnect_proof_test.py',
+        for name in ('production_idle_reconnect_proof.py', 'production_idle_reconnect_proof_test.py', 'proof_fixtures.py',
                      'production_cancel_proof.py'):
             path = Path(__file__).with_name(name)
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}

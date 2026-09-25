@@ -58,7 +58,7 @@ def package_owner(path, package):
     assert path.resolve(strict=True) == path, 'noncanonical package executable'
     assert path.is_file() and path.stat().st_mode & 0o111, 'package executable is not executable'
     assert read(['pacman', '-Qqo', str(path)]) == package, 'noncanonical package owner'
-    assert read(['pacman', '-Q', package]) == f'{package} {PACKAGES[package]}'
+    assert read(['pacman', '-Q', package]) == f'{package} {PACKAGES[package]}', 'package is not the qualified version'
     return digest(path)
 
 

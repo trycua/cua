@@ -576,7 +576,7 @@ def run(args):
         validate_plan(plan)
         fault = SessionFault(plan, args)
         origin = provenance(args, plan)
-        for name in ('production_session_fault_proof.py', 'production_session_fault_proof_test.py',
+        for name in ('production_session_fault_proof.py', 'production_session_fault_proof_test.py', 'proof_fixtures.py',
                      'production_desktop_fault_proof.py', 'production_geometry_fault_proof.py',
                      'production_cancel_proof.py', 'desktop_faults.py'):
             path = Path(__file__).with_name(name)

@@ -162,14 +162,17 @@ def analyze(before, after, journal, wire, intervals, primary_before, primary_aft
     """An incomplete observation raises; a complete observation can fail isolation."""
     assert before['identity'] == after['identity'], 'observer identity changed'
     start, end = before['marker'], after['marker']
-    assert start['kind'] == end['kind'] == 'sync' and start['nonce'] != end['nonce']
-    assert start['time'] < end['time'] and end['time'] - start['time'] <= MAX_INTERVAL_NS
+    assert start['kind'] == end['kind'] == 'sync' and start['nonce'] != end['nonce'], 'sync markers are not distinct'
+    assert start['time'] < end['time'] and end['time'] - start['time'] <= MAX_INTERVAL_NS, \
+        'observer interval is empty or exceeds its bound'
     assert journal[start['seq'] - 1] == start and journal[end['seq'] - 1] == end, 'sync marker journal mismatch'
     assert end['seq'] == len(journal), 'end marker is not the final retained journal row'
-    assert 0 <= start['wire_start'] < start['wire_end'] <= end['wire_start'] < end['wire_end'] == len(wire)
+    assert 0 <= start['wire_start'] < start['wire_end'] <= end['wire_start'] < end['wire_end'] == len(wire), \
+        'sync markers do not bracket the wire log'
     sync_barrier(wire[start['wire_start']:start['wire_end']])
     sync_barrier(wire[end['wire_start']:end['wire_end']])
-    assert start['held'] is True and start['buttons'] == [1] and not start['keys_down']
+    assert start['held'] is True and start['buttons'] == [1] and not start['keys_down'], \
+        'observer baseline lacks the held primary grab'
     assert start['window_active'] is True and start['canvas_focus'] is True, 'foreground fixture is not focused'
     assert intervals and all(start['time'] <= begin < finish <= end['time'] for begin, finish in intervals), \
         'observer does not cover the complete action/control interval'

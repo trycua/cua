@@ -356,6 +356,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_scroll_background \
     harness_appkit_counter \
     harness_appkit_counter_px_background \
+    harness_appkit_px_background_press_key_reports_honest_delivery_truth \
     harness_appkit_exact_activation_with_agent_cursor \
     harness_appkit_exact_activation_refuses_competing_window \
     harness_appkit_foreground_single_click_has_one_ordered_native_pair \
@@ -395,6 +396,11 @@ EOF
     run_test installed-app-textedit cargo test -p cua-driver --test installed_app_textedit_macos_test -- \
       --ignored --exact background_type_on_native_cocoa_is_ax_verified \
       --nocapture --test-threads=1
+    # These rows assert through System Events and CoreGraphics oracles rather
+    # than typed matrix results, so they must not leave unowned trajectories.
+    run_test bring-to-front env -u CUA_E2E_RECORDINGS_ROOT \
+      cargo test -p cua-driver --test bring_to_front_macos_test -- \
+      --ignored --nocapture --test-threads=1
   fi
 fi
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then

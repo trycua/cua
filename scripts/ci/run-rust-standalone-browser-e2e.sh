@@ -117,7 +117,13 @@ else
   tests+=(
     standalone_browser_download
   )
-  if [[ "${HOST_OS}" != Darwin ]]; then
+  if [[ "${HOST_OS}" == Darwin ]]; then
+    tests+=(
+      standalone_browser_native_omnibox_select_all
+      standalone_browser_generic_type_text_completion
+      standalone_browser_web_type_text_verification
+    )
+  else
     tests+=(standalone_browser_existing_profile_standard_refusal)
   fi
   tests+=(
@@ -128,6 +134,7 @@ else
     standalone_browser_pointer_actions
     standalone_browser_prepare_isolated
     standalone_browser_roundtrip
+    standalone_browser_same_title_tabs
     standalone_browser_semantic_state
     standalone_browser_stale_ref
     standalone_browser_trust_gated_dom_click

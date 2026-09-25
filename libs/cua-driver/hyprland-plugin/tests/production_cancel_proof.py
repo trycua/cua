@@ -451,8 +451,7 @@ def verify_cancellation(stopped, kill_prefix, victim_lane, sibling_lane):
             'continuous_isolation': isolation, 'synthetic_cleanup': 'verified'}
 
 
-def call_drag(client, spec, prepared=None, guard=None):
-    prepared = prepare_drag(client, spec) if prepared is None else prepared
+def call_drag(client, spec, prepared, guard=None):
     assert prepared['target'] == spec['target'] and prepared['session'] == spec['name']
     if guard:
         guard()
@@ -493,7 +492,7 @@ def run(args):
         assert args.trace_socket and args.trace_socket.name in ('cua-input-v3.sock', 'cua-input-v3-2.sock'), \
             'cancellation requires continuous v3 trace'
         origin = provenance(args, plan)
-        for name in ('production_cancel_proof.py', 'production_cancel_proof_test.py'):
+        for name in ('production_cancel_proof.py', 'production_cancel_proof_test.py', 'proof_fixtures.py'):
             path = Path(__file__).with_name(name)
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
         save('provenance.json', origin)

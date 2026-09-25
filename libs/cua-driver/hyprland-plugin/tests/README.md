@@ -408,3 +408,24 @@ unload command separately; none is application mutation proof. Likewise,
 individual `cua-driver call` requests are driver-side tests, not plugin
 capabilities. They may be exercised to diagnose an agent integration, but
 must not appear in the plugin capability result.
+
+## Portable harness test ownership
+
+The `*_test.py` suites run in hosted CI with every native boundary mocked. Keep
+them cheap to trust:
+
+- Put shared plans, trace pages, status builders, and UI snapshots in
+  `proof_fixtures.py`. Never import one `*_test.py` from another or borrow a
+  `TestCase` as a helper. Proofs that hash their own tests into
+  `provenance.json` also hash `proof_fixtures.py`; update those lists when a
+  test file is added, renamed, or removed.
+- Test a shared helper once, at its owner: `trace_interval` in
+  `production_realapp_proof_test.py`, `primary_trace.analyze` in
+  `primary_trace_test.py`, `validate_app_profile` and
+  `verify_fresh_observation` in `production_cancel_proof_test.py`, and
+  `verify_status` and `validate_min_motion` in
+  `production_desktop_fault_proof_test.py`. A consumer keeps one case that
+  proves it calls the helper.
+- Give every negative row the error it must raise. A bare
+  `assertRaises(AssertionError)` also passes when an earlier, unrelated guard
+  fails.

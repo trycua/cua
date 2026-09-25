@@ -2,8 +2,6 @@
 import copy
 import json
 from pathlib import Path
-import subprocess
-import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -13,30 +11,16 @@ from production_app_smoke import (PACKAGES, artifact_identity, create_documents,
                                   digest, package_owner, profile_packages, source_identities)
 from production_realapp_proof import (capacity_reservations, inkscape_client_identity,
                                      validate_plan, verify_output)
-from production_realapp_proof_test import capacity_plan, plan
-
-
-def inkscape_plan(capacity=False):
-    candidate = capacity_plan() if capacity else plan()
-    candidate['app_profile'] = 'inkscape-only'
-    candidate['package_versions'] = {'inkscape': '1.4.4-6'}
-    for index, spec in enumerate(candidate['agents']):
-        spec.update(app='inkscape', document=f'/synthetic/lane-{index}.svg')
-    candidate['outputs'] = [] if capacity else [
-        {'agent': i, 'path': spec['document'], 'format': 'svg',
-         'xpath': './/svg:rect[@id="smoke-rectangle"]',
-         'namespaces': {'svg': 'http://www.w3.org/2000/svg'},
-         'rect_translation': [[2, 2], [0, 0]]}
-        for i, spec in enumerate(candidate['agents'])]
-    return candidate
+from proof_fixtures import capacity_plan, inkscape_plan, lane, lane_status, plan
 
 
 class AppProfileTests(unittest.TestCase):
     def test_profile_is_explicit_and_keeps_exact_package_gate(self):
-        self.assertEqual(profile_packages('calc-inkscape'), PACKAGES)
-        self.assertEqual(profile_packages('inkscape-only'), {'inkscape': '1.4.4-6'})
+        self.assertEqual(profile_packages('calc-inkscape'),
+                         {name: PACKAGES[name] for name in ('libreoffice-fresh', 'inkscape')})
+        self.assertEqual(profile_packages('inkscape-only'), {'inkscape': PACKAGES['inkscape']})
         for value in ('all', 'inkscape', '', None):
-            with self.subTest(value=value), self.assertRaises(AssertionError):
+            with self.subTest(value=value), self.assertRaisesRegex(AssertionError, 'unknown app qualification profile'):
                 profile_packages(value)
 
     def test_single_app_smoke_does_not_create_calc_document(self):
@@ -48,16 +32,22 @@ class AppProfileTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 create_documents(directory, 'inkscape-only')
 
-    def test_inkscape_executable_owner_and_version_are_both_exact(self):
+    def test_executable_owner_and_version_are_both_exact(self):
         with tempfile.TemporaryDirectory() as temporary:
-            executable = Path(temporary).resolve() / 'inkscape'
+            executable = Path(temporary).resolve() / 'app'
             executable.write_bytes(b'synthetic executable')
             executable.chmod(0o700)
-            for replies in (['other-package'], ['inkscape', 'inkscape 1.4.4-7']):
-                with patch('production_app_smoke.read', side_effect=replies), self.assertRaises(AssertionError):
-                    package_owner(executable, 'inkscape')
-            with patch('production_app_smoke.read', side_effect=['inkscape', 'inkscape 1.4.4-6']):
-                self.assertEqual(package_owner(executable, 'inkscape'), digest(executable))
+            for package in ('inkscape', 'libreoffice-fresh'):
+                qualified = f'{package} {PACKAGES[package]}'
+                for replies, error, queries in ((['other-package', qualified], 'noncanonical package owner', 1),
+                                                ([package, qualified + '-1'], 'not the qualified version', 2)):
+                    with self.subTest(package=package, error=error), \
+                            patch('production_app_smoke.read', side_effect=replies) as read, \
+                            self.assertRaisesRegex(AssertionError, error):
+                        package_owner(executable, package)
+                    self.assertEqual(read.call_count, queries)
+                with patch('production_app_smoke.read', side_effect=[package, qualified]):
+                    self.assertEqual(package_owner(executable, package), digest(executable))
 
     def test_apps_and_capacity_need_explicit_profile_and_independent_clients(self):
         for capacity in (False, True):
@@ -95,35 +85,18 @@ class AppProfileTests(unittest.TestCase):
             with self.subTest(plan=candidate), self.assertRaises(AssertionError):
                 validate_plan(candidate)
 
-    def test_capacity_keeps_two_admissions_exact_third_refusal_and_serial_order(self):
-        for mutate in (
-            lambda p: p.update(agents=p['agents'][:2]),
-            lambda p: p['phases'][2].update(expect={'kind': 'dispatched'}),
-            lambda p: p['phases'][2]['expect'].update(reason='target_unavailable'),
-            lambda p: p['phases'][2].update(agent=0),
-            lambda p: p.update(require_overlap=True),
-            lambda p: p.update(moving_primary=True),
-        ):
-            candidate = inkscape_plan(True)
-            mutate(candidate)
-            with self.subTest(plan=candidate), self.assertRaises(AssertionError):
-                validate_plan(candidate)
-
     def test_capacity_owners_must_retain_both_reservations_through_third_refusal(self):
-        status = {'state': 'input_v3_candidate', 'input': {'protocol': 3, 'test_only': False,
-                  'transport_ready': True, 'lanes': [
-                      {'lane': lane, 'reserved': True, 'lease_active': False, 'drag_active': False,
-                       'held_keys': 0, 'held_button': 0, 'epoch': 50 + lane, 'desktop_generation': 4}
-                      for lane in (0, 1)]}}
+        status = lane_status(*(lane(index, reserved=True, epoch=50 + index, desktop_generation=4)
+                               for index in (0, 1)))
         previous = capacity_reservations(status, [1], {})
         both = capacity_reservations(status, [1, 2], previous)
         self.assertEqual(capacity_reservations(status, [1, 2], both), both)
-        for lane in (0, 1):
+        for index in (0, 1):
             for change in ({'reserved': False}, {'epoch': 100}, {'desktop_generation': 5},
                            {'held_keys': 1}, {'held_button': 272}, {'lease_active': True}):
                 bad = copy.deepcopy(status)
-                bad['input']['lanes'][lane].update(change)
-                with self.subTest(lane=lane, change=change), self.assertRaises(AssertionError):
+                bad['input']['lanes'][index].update(change)
+                with self.subTest(lane=index, change=change), self.assertRaises(AssertionError):
                     capacity_reservations(bad, [1, 2], both)
 
     def test_saved_svg_must_change_exact_rectangle_without_resizing(self):
@@ -163,20 +136,6 @@ class AppProfileTests(unittest.TestCase):
 
 
 class ProfileProvenanceTests(unittest.TestCase):
-    def test_helper_clis_expose_separate_source_and_artifact_options(self):
-        names = ('app_smoke', 'realapp_proof', 'active_lock_proof', 'active_primary_proof',
-                 'cancel_proof', 'desktop_fault_proof', 'geometry_fault_proof', 'idle_reconnect_proof',
-                 'lock_refusal_proof', 'primary_conflict_proof', 'session_fault_proof',
-                 'target_lifetime_proof', 'policy_proof')
-        for name in names:
-            with self.subTest(helper=name):
-                output = subprocess.check_output(
-                    [sys.executable, str(Path(__file__).with_name(f'production_{name}.py')), '--help'],
-                    text=True, timeout=10)
-                for option in ('--source-sha', '--harness-source', '--harness-sha', '--artifact-role',
-                               '--kit-manifest', '--profile-manifest', '--build-provenance'):
-                    self.assertIn(option, output)
-
     def test_clean_exact_product_and_harness_checkouts_are_independent(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()

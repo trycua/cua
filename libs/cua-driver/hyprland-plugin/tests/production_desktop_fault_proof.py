@@ -663,7 +663,7 @@ def run(args):
         report['scope'] = 'native-' + plan['fault']['kind'].replace('_', '-')
         assert args.trace_socket.name in ('cua-input-v3.sock', 'cua-input-v3-2.sock')
         origin = provenance(args, plan)
-        for name in ('production_desktop_fault_proof.py', 'production_desktop_fault_proof_test.py',
+        for name in ('production_desktop_fault_proof.py', 'production_desktop_fault_proof_test.py', 'proof_fixtures.py',
                      'production_geometry_fault_proof.py', 'production_cancel_proof.py',
                      'input_config_toggle.py', 'desktop_faults.py'):
             path = Path(__file__).with_name(name)

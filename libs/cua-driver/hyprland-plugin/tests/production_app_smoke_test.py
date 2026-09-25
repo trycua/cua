@@ -1,6 +1,5 @@
 """No native applications or input: fixtures and fail-closed orchestration only."""
 import copy
-import io
 import os
 from pathlib import Path
 import tempfile
@@ -9,60 +8,18 @@ from unittest.mock import Mock, patch
 import zipfile
 
 from production_app_smoke import (
-    LIMITS, GroundingUnavailable, check_delivery, create_documents, ground, input_step,
+    GroundingUnavailable, check_delivery, create_documents, ground, input_step,
     kernel_file_identity, launch_arguments, mapped_plugin, package_owner,
     require_background_target, require_enabled_plugin, run_app, verify_calc, verify_inkscape,
 )
+from proof_fixtures import CALC, INKSCAPE, INKSCAPE_SELECTED, changed_ods
 
 
 TARGET = {'pid': 123, 'window_id': 456}
 GOOD_DELIVERY = {'structuredContent': {'route': 'synthetic_events',
                                       'effect': 'unverifiable',
                                       'delivery': {'mode': 'background'}}}
-CALC = {'window_title': 'cua-smoke-calc.ods - LibreOffice Calc',
-        'elements': [{'role': 'text', 'label': 'Name Box', 'value': 'A1'}]}
 WINDOWS = {'structuredContent': {'windows': [TARGET]}}
-INKSCAPE = {
-    'elements': [
-        {'element_index': 10, 'role': 'menu', 'label': 'Edit', 'enabled': True},
-        {'element_index': 11, 'parent_index': 10, 'role': 'menu item',
-         'label': 'Select All', 'enabled': True},
-        {'element_index': 12, 'role': 'table cell', 'label': 'smoke-rectangle', 'enabled': True}],
-    'tree_markdown': '\n'.join([
-        '  - [10] menu "Edit" [actions=[click]]',
-        '    - [11] menu item "Select All" [actions=[click]]',
-        '  - [12] table cell "smoke-rectangle" [actions=[activate]]',
-        '  - label = "No objects selected. Click, Shift+click, Alt+scroll mouse on top of '
-        'objects, or drag around objects to select."']),
-}
-INKSCAPE_SELECTED = {
-    'elements': [{'element_index': 1, 'role': 'table cell',
-                  'label': 'smoke-rectangle', 'enabled': True}] + [
-        {'element_index': index, 'role': 'spin button', 'label': f'{value:.3f}',
-         'value': f'{value:.1f}', 'enabled': True}
-        for index, value in enumerate((40, 60, 80, 50), 2)],
-    'tree_markdown': '\n'.join([
-        '  - [1] table cell "smoke-rectangle" [actions=[activate]]',
-        '  - label = "Rectangle  in root. Click selection again to toggle scale/rotation handles."',
-        *[f'  - label = "{axis}:"\n  - [{index}] spin button "{value:.3f}" '
-          f'value="{value:.1f}" [actions=[activate]]'
-          for index, (axis, value) in enumerate((('X', 40), ('Y', 60), ('W', 80), ('H', 50)), 2)]]),
-}
-
-
-def changed_ods(original, text='abc', empty_first=False):
-    destination = io.BytesIO()
-    with zipfile.ZipFile(io.BytesIO(original)) as source, zipfile.ZipFile(destination, 'w') as target:
-        for name in source.namelist():
-            value = source.read(name)
-            if name == 'content.xml':
-                cell = (f'<table:table-cell office:value-type="string"><text:p>{text}</text:p>'
-                        '</table:table-cell>')
-                if empty_first:
-                    cell = '<table:table-cell/>' + cell
-                value = value.replace(b'<table:table-cell/>', cell.encode())
-            target.writestr(name, value)
-    return destination.getvalue()
 
 
 class FixtureTests(unittest.TestCase):
@@ -189,14 +146,6 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(identity[2], plugin.stat().st_ino)
         self.assertTrue(all(type(value) is int and value >= 0 for value in identity))
 
-    def test_alpm_owner_required_even_when_version_matches(self):
-        executable = self.directory / 'app'
-        executable.write_bytes(b'synthetic executable')
-        executable.chmod(0o700)
-        with patch('production_app_smoke.read', return_value='unrelated-package'):
-            with self.assertRaisesRegex(AssertionError, 'noncanonical package owner'):
-                package_owner(executable, 'libreoffice-fresh')
-
     def test_package_executable_rejects_symlink_and_nonexecutable(self):
         executable = self.directory / 'app'
         executable.write_bytes(b'synthetic executable')
@@ -259,9 +208,6 @@ class InputTests(unittest.TestCase):
                 ground({**state, 'tree_markdown': markdown}, 'calc', 'insert')
         with self.assertRaises(GroundingUnavailable):
             ground({**state, 'elements': state['elements'] + [state['elements'][1]]}, 'calc', 'insert')
-
-    def test_route_family_does_not_claim_plugin_transport_attribution(self):
-        self.assertIs(LIMITS['plugin_transport_attribution'], False)
 
     def test_inkscape_requires_document_command_and_exact_initial_status(self):
         ground(INKSCAPE, 'inkscape', 'select')
@@ -327,19 +273,14 @@ class InputTests(unittest.TestCase):
             with self.assertRaises(GroundingUnavailable):
                 ground(state, 'inkscape', 'move')
 
-    def test_grounding_rejects_dialog_missing_selection_and_missing_canvas(self):
+    def test_calc_grounding_rejects_empty_tree_dialog_and_wrong_selection(self):
+        # Inkscape stages are owned by the two Inkscape grounding tables above.
         ground(CALC, 'calc', 'insert')
         for state in ({'elements': []},
                       {'elements': [{'role': 'dialog', 'label': 'Recover documents'}]},
                       {'elements': [{'role': 'text', 'label': 'Name Box', 'value': 'B1'}]}):
-            with self.assertRaises(GroundingUnavailable):
+            with self.subTest(state=state), self.assertRaises(GroundingUnavailable):
                 ground(state, 'calc', 'insert')
-        with self.assertRaises(GroundingUnavailable):
-            ground(CALC, 'inkscape', 'select')
-        ground(INKSCAPE, 'inkscape', 'select')
-        with self.assertRaises(GroundingUnavailable):
-            ground({'elements': [{'role': 'status bar', 'value': 'No objects selected'}]}, 'inkscape', 'move')
-        ground(INKSCAPE_SELECTED, 'inkscape', 'move')
 
     def test_snapshot_action_snapshot_and_no_replay(self):
         mcp = Mock()
@@ -364,7 +305,7 @@ class InputTests(unittest.TestCase):
         dialog = {**CALC, 'elements': [{'role': 'dialog'}]}
         mcp.tool.side_effect = [{'structuredContent': CALC}, WINDOWS, partial,
                                 {'structuredContent': dialog}, WINDOWS]
-        with self.assertRaises(AssertionError):
+        with self.assertRaisesRegex(AssertionError, 'partial/refused input cannot pass'):
             input_step(mcp, TARGET, 'cua-smoke-calc.ods', 'calc', 'insert', 'type_text', {'text': 'abc'})
         self.assertEqual(mcp.tool.call_count, 5)
 

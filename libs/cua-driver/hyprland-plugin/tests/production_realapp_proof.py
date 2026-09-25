@@ -80,18 +80,21 @@ def validate_plan(plan):
         assert not plan.get('moving_primary') and not plan.get('require_overlap'), \
             'policy_cache requires serial actions and a parked primary'
         spec = plan['agents'][0]
-        assert spec['app'] in ('calc', 'inkscape')
+        assert spec['app'] in ('calc', 'inkscape'), 'policy_cache needs a reviewed Calc or Inkscape target'
         assert isinstance(spec['name'], str) and spec['name'], 'policy_cache needs a fixed session'
         profile = spec['profile']
         assert profile['mode'] in ('standard', 'bounded', 'unrestricted')
-        assert profile.get('manifest') and profile.get('approve_manifest') is True
-        assert profile['mode'] != 'unrestricted' or profile.get('acknowledge_unrestricted') is True
+        assert profile.get('manifest') and profile.get('approve_manifest') is True, \
+            'policy_cache needs an approved reviewed manifest'
+        assert profile['mode'] != 'unrestricted' or profile.get('acknowledge_unrestricted') is True, \
+            'unrestricted policy_cache needs explicit acknowledgement'
         assert len(plan['phases']) == 3, 'policy_cache needs allow, deny, fresh allow'
         for index, step in enumerate(plan['phases']):
             assert 'parallel' not in step and step.get('agent') == 0, 'policy_cache must reuse agent 0 serially'
             expected = step.get('expect', {'kind': 'dispatched'})
             if index == 1:
-                assert expected.get('kind') == 'refused' and expected.get('reason') == 'permission_denied'
+                assert expected.get('kind') == 'refused' and expected.get('reason') == 'permission_denied', \
+                    'policy_cache denial must be permission_denied'
                 assert expected.get('message') in manifest_tool_messages(step['tool']), \
                     'policy_cache needs an exact manifest tool-ceiling refusal'
             else:
@@ -122,7 +125,7 @@ def validate_plan(plan):
         assert set(target) == {'pid', 'window_id'}
         assert type(target['pid']) is int and target['pid'] > 0
         if capacity or policy_cache or inkscape_only:
-            assert type(target['window_id']) is int and target['window_id'] > 0
+            assert type(target['window_id']) is int and target['window_id'] > 0, 'reviewed target needs an exact window id'
     if inkscape_only:
         assert len({target['window_id'] for target in targets}) == len(targets), 'apps must be distinct native clients'
         documents = [Path(spec['document']) for spec in plan['agents']]
@@ -215,8 +218,8 @@ def trace_interval(before, after):
     """Validate complete active prefixes before interpreting their difference."""
     for page in (before, after):
         assert isinstance(page, dict), 'missing dispatch telemetry'
-        assert page.get('hook') is True and page.get('active') is True
-        assert page.get('overflow') is False and page.get('timed_out') is False
+        assert page.get('hook') is True and page.get('active') is True, 'dispatch telemetry is not live'
+        assert page.get('overflow') is False and page.get('timed_out') is False, 'dispatch telemetry dropped events'
         rows = page.get('events')
         assert isinstance(rows, list) and rows, 'empty dispatch telemetry'
         assert type(page.get('count')) is int and page['count'] == len(rows), 'incomplete dispatch telemetry'
@@ -572,11 +575,10 @@ def provenance(args, plan):
     return origin
 
 
-def require_primary_active(grab, deadline_ns, now_ns=None):
+def require_primary_active(grab, deadline_ns):
     """Do not dispatch or accept a proof after its bounded primary grab ends."""
     assert grab is not None and grab.poll() is None, 'primary grab helper exited'
-    now_ns = time.monotonic_ns() if now_ns is None else now_ns
-    assert deadline_ns is not None and now_ns < deadline_ns, 'primary grab deadline expired'
+    assert deadline_ns is not None and time.monotonic_ns() < deadline_ns, 'primary grab deadline expired'
 
 
 def run(args):

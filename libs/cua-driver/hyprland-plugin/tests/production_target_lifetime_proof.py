@@ -72,7 +72,8 @@ def validate_owned(spec):
     document = owned['document']
     assert set(document) == {'path', 'device', 'inode', 'uid', 'sha256'}
     path = Path(document['path'])
-    assert path.is_absolute() and path.name == ('cua-smoke-inkscape.svg' if spec['app'] == 'inkscape' else 'cua-smoke-calc.ods')
+    assert path.is_absolute() and path.name == ('cua-smoke-inkscape.svg' if spec['app'] == 'inkscape' else 'cua-smoke-calc.ods'), \
+        'owned document must be the synthetic smoke document'
     assert all(type(document[k]) is int and document[k] >= 0 for k in ('device', 'inode', 'uid'))
     assert len(document['sha256']) == 64 and all(c in '0123456789abcdef' for c in document['sha256'])
     if spec['app'] == 'inkscape':
@@ -91,7 +92,8 @@ def validate_plan(plan):
     assert recovery['mode'] == 'prepared_distinct_process'
     fresh = recovery['agent']
     inkscape = plan.get('app_profile') == 'inkscape-only'
-    assert fresh['pointer_stage'] in (('click_rectangle',) if inkscape else ('click_a1', 'click_b2'))
+    assert fresh['pointer_stage'] in (('click_rectangle',) if inkscape else ('click_a1', 'click_b2')), \
+        'recovery needs a fresh click stage'
     recovery_stage = 'scroll_down' if inkscape else 'click_b2'
     base = {k: v for k, v in plan.items() if k != 'fault'}
     primary_plan({**base, 'purpose': 'primary_conflict', 'case': 'initial_refusal',
@@ -471,7 +473,8 @@ def run(args):
         fault = TargetLifetime(plan)
         origin = provenance(args, plan)
         origin['ownership'] = {key: plan[key] for key in ('vm', 'compositor', 'processes', 'recovery')}
-        for name in ('production_target_lifetime_proof.py', 'production_target_lifetime_proof_test.py'):
+        for name in ('production_target_lifetime_proof.py', 'production_target_lifetime_proof_test.py',
+                     'proof_fixtures.py'):
             path = Path(__file__).with_name(name)
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
         save('provenance.json', origin)

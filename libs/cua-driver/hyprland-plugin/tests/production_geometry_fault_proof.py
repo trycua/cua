@@ -318,7 +318,8 @@ def run(args):
         assert args.trace_socket.name in ('cua-input-v3.sock', 'cua-input-v3-2.sock')
         fault = GeometryFault(plan)
         origin = provenance(args, plan)
-        for name in ('production_geometry_fault_proof.py', 'production_geometry_fault_proof_test.py', 'production_cancel_proof.py'):
+        for name in ('production_geometry_fault_proof.py', 'production_geometry_fault_proof_test.py', 'proof_fixtures.py',
+                     'production_cancel_proof.py'):
             path = Path(__file__).with_name(name)
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
         save('provenance.json', origin)

@@ -3,27 +3,7 @@ import copy
 import unittest
 
 import production_pointer_grounding as pointer
-from production_app_smoke_test import INKSCAPE, INKSCAPE_SELECTED
-from primary_trace_test import START, STOP, trace
-
-
-class Image:
-    width = height = 500
-
-    def __init__(self):
-        self.points = {}
-
-    def rgb(self, x, y):
-        assert 0 <= x < self.width and 0 <= y < self.height
-        return self.points.get((x, y), (255, 255, 255))
-
-    def rectangle(self, x, y, w, h):
-        self.points.update({(a, b): (51, 102, 153) for a in range(x, x + w) for b in range(y, y + h)})
-
-
-def snapshot(app):
-    return {'window_title': f'cua-smoke-{app}', 'window_bounds': {'x': 600, 'y': 400, 'width': 500, 'height': 500},
-            'screenshot_width': 500, 'screenshot_height': 500}
+from proof_fixtures import START, STOP, Image, app_snapshot as snapshot, ink, primary_trace as trace
 
 
 def calc(selection='A2', scroll=0):
@@ -53,23 +33,6 @@ def highlighted_calc():
     # A1:B3. C and D retain independent evidence for the first two row lines.
     image.points.update({(x, y): (205, 226, 247)
                          for x in range(45, 215) for y in range(169, 222)})
-    return state, image
-
-
-def ink(selected=True, dx=0, dy=0, scroll_y=0):
-    state = {**snapshot('inkscape'), **copy.deepcopy(INKSCAPE_SELECTED if selected else INKSCAPE)}
-    if selected:
-        for row in state['elements']:
-            if row['role'] == 'spin button':
-                row['frame'] = {'x': 700, 'y': 435, 'w': 100, 'h': 34}
-        for index, value in ((2, 40 + dx * .8), (3, 60 + dy * .8)):
-            row = next(row for row in state['elements'] if row['element_index'] == index)
-            state['tree_markdown'] = state['tree_markdown'].replace(
-                f'[{index}] spin button "{row["label"]}" value="{row["value"]}"',
-                f'[{index}] spin button "{value:.3f}" value="{value:.1f}"')
-            row.update(label=f'{value:.3f}', value=f'{value:.1f}')
-    image = Image()
-    image.rectangle(120 + dx, 150 + dy + scroll_y, 100, 60)
     return state, image
 
 

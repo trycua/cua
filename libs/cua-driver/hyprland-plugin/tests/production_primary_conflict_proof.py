@@ -289,7 +289,7 @@ def run(args):
         desktop = ExactDesktop(plan)
         app_process_identity(spec['app'], spec['target']['pid'])
         origin = provenance(args, plan)
-        for name in (Path(__file__).name, 'production_primary_conflict_proof_test.py',
+        for name in (Path(__file__).name, 'production_primary_conflict_proof_test.py', 'proof_fixtures.py',
                      'desktop_faults.py', 'production_cancel_proof.py',
                      'production_desktop_fault_proof.py', 'production_geometry_fault_proof.py'):
             path = Path(__file__).with_name(name)

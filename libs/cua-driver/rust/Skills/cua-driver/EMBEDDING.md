@@ -208,7 +208,9 @@ that watch lasts up to 1000 ms for an action that opens nothing, which makes it
 the largest part of a background click's latency. A host that already observes
 its target continuously can shorten it through two variables set at trusted
 launch, in the environment of the `serve --embedded` child (or of the host
-process when you use the same-process runtime):
+process when you use the same-process runtime). `EmbeddedCuaDriverHost` starts
+that child from an allowlisted environment that admits both variables, so pass
+them in its `environment` option or set them in the host process:
 
 | Variable                              | Meaning                                              | Default                         | Accepted range                            |
 | ------------------------------------- | ---------------------------------------------------- | ------------------------------- | ----------------------------------------- |

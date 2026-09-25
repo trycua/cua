@@ -144,7 +144,8 @@ After each input action, the driver watches the window list to report a menu,
 dialog, or new window the action opened. For an action that opens nothing, the
 wait lasts 1000 ms on macOS and 800 ms for Linux X11 foreground delivery. A host
 that observes its target continuously can shorten it by setting these variables
-in the daemon's launch environment. Tool arguments cannot change them.
+in the daemon's launch environment. `EmbeddedCuaDriverHost` admits both in its
+`environment` option. Tool arguments cannot change them.
 
 | Variable                              | Meaning                                         | Accepted values                                        |
 | ------------------------------------- | ----------------------------------------------- | ------------------------------------------------------ |

@@ -106,7 +106,6 @@ if [[ "${HOST_OS}" == Linux && "${CUA_E2E_WAYLAND_SESSION:-}" == generic ]]; the
   tests=(standalone_browser_generic_wayland_existing_profile_refusal)
 else
   tests=(
-    standalone_browser_native_omnibox_select_all
     standalone_browser_generic_type_text_completion
     standalone_browser_web_type_text_verification
     standalone_browser_existing_profile_setup

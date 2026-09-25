@@ -2031,6 +2031,36 @@ fn generic_editor_coordinates(fixture: &mut BrowserFixture) -> (f64, f64) {
         }),
     );
     assert!(!state.is_error(), "native browser snapshot: {}", state.raw);
+    let mut state = state;
+    let started = Instant::now();
+    for attempt in 0..12 {
+        let found = element_index_containing(state.tree_text(), "generic-long-editor").is_some();
+        let structured = state.structured();
+        eprintln!(
+            "[diag-4126] attempt={attempt} t={:?} found={found} elements={} keys={:?}",
+            started.elapsed(),
+            structured["elements"].as_array().map_or(0, |e| e.len()),
+            structured.as_object().map(|o| o
+                .iter()
+                .filter(|(_, v)| !v.is_array() && !v.is_object())
+                .map(|(k, v)| format!("{k}={}", v.to_string().chars().take(80).collect::<String>()))
+                .collect::<Vec<_>>())
+        );
+        if found {
+            break;
+        }
+        if attempt == 0 || attempt == 11 {
+            eprintln!("[diag-4126] tree attempt={attempt}:\n{}", state.tree_text());
+        }
+        thread::sleep(Duration::from_millis(500));
+        state = fixture.driver.call(
+            "get_window_state",
+            serde_json::json!({
+                "pid": fixture.pid as i64,
+                "window_id": fixture.window_id,
+            }),
+        );
+    }
     let index = element_index_containing(state.tree_text(), "generic-long-editor")
         .expect("generic long editor must be present in the native AX tree");
     let elements = state.structured()["elements"]

@@ -15,7 +15,7 @@
 //! sessions can use different capture scopes without shared mutable config.
 //!
 //! #[ignore] (needs an X11/Xwayland display + AT-SPI + the GTK3 harness). Run:
-//!   cargo test -p cua-driver --test desktop_scope_linux_test -- --ignored --nocapture --test-threads=1
+//!   cargo test -p cua-driver-e2e --test desktop_scope_linux_test -- --ignored --nocapture --test-threads=1
 
 #![cfg(target_os = "linux")]
 

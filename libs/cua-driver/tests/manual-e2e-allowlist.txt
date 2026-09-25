@@ -1,8 +1,10 @@
-# Ignored cua-driver integration tests that no canonical runner selects.
+# Ignored cua-driver and cua-driver-e2e integration tests that no canonical
+# runner selects.
 #
 # .github/scripts/tests/test_cua_driver_e2e_inventory.py fails when an
-# #[ignore] test under libs/cua-driver/rust/crates/cua-driver/tests is neither
-# selected by a runner or workflow nor listed here. It also fails when an entry
+# #[ignore] test under libs/cua-driver/rust/crates/cua-driver/tests or
+# libs/cua-driver/rust/crates/cua-driver-e2e/tests is neither selected by a
+# runner or workflow nor listed here. It also fails when an entry
 # here no longer names an ignored test or is routed after all.
 #
 # Format: <test binary>::<test function> | <why it stays manual>

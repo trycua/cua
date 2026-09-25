@@ -142,7 +142,7 @@ $tests = @(
 $failureCount = 0
 foreach ($testName in $tests) {
     $testExit = Invoke-CargoStep -Name $testName -Arguments @(
-        "test", "--release", "-p", "cua-driver",
+        "test", "--release", "-p", "cua-driver-e2e",
         "--test", "standalone_browser_behavior_test", $testName, "--",
         "--ignored", "--exact", "--nocapture", "--test-threads=1"
     ) -LogPath (Join-Path $artifactDir "$testName.log")

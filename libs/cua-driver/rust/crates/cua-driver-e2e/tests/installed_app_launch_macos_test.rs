@@ -5,7 +5,7 @@
 //! TCC-authorized desktop session.
 //!
 //! Run:
-//!   cargo test -p cua-driver --test installed_app_launch_macos_test -- --ignored --nocapture --test-threads=1
+//!   cargo test -p cua-driver-e2e --test installed_app_launch_macos_test -- --ignored --nocapture --test-threads=1
 
 #![cfg(target_os = "macos")]
 

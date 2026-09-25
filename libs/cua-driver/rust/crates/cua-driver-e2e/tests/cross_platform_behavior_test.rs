@@ -12,7 +12,7 @@
 //! Run after building the shared fixtures:
 //!
 //! ```text
-//! cargo test -p cua-driver --test cross_platform_behavior_test -- --ignored \
+//! cargo test -p cua-driver-e2e --test cross_platform_behavior_test -- --ignored \
 //!   --nocapture --test-threads=1
 //! ```
 

@@ -67,7 +67,7 @@ the runner's required cells, assertions, and evidence checks. Record compositor
 and backend provenance; an X11 run does not establish native Hyprland coverage.
 Environment failures and failed cells remain failures, not permission to skip
 tests or change expected results. In the same desktop, also run
-`cargo test -p cua-driver --test hyprland_foreground_test -- --ignored --test-threads=1`
+`cargo test -p cua-driver-e2e --test hyprland_foreground_test -- --ignored --test-threads=1`
 and the same command for `hyprland_native_observation_test`. No automated lane
 runs these foreground-safety and exact-identity rows, so
 `tests/manual-e2e-allowlist.txt` records them as a manual native-Hyprland gate.
@@ -150,7 +150,8 @@ cua/
 |-- libs/cua-driver/
 |   |-- rust/
 |   |   |-- crates/
-|   |   |   |-- cua-driver/          Rust driver and integration tests
+|   |   |   |-- cua-driver/          Rust driver and hermetic integration tests
+|   |   |   |-- cua-driver-e2e/      Desktop E2E suites the OS runners select
 |   |   |   |-- cua-driver-core/     Shared driver logic and unit tests
 |   |   |   |-- cua-driver-testkit/  Shared Rust E2E helpers and evidence capture
 |   |   |   |-- platform-linux/      Linux backend
@@ -227,15 +228,20 @@ reached an application.
 
 ### Harness E2E Tests
 
-These are Rust integration tests under:
+These are Rust integration tests in their own crate:
 
 ```text
-libs/cua-driver/rust/crates/cua-driver/tests/
+libs/cua-driver/rust/crates/cua-driver-e2e/tests/
 ```
 
-Most are marked `#[ignore]` because they require a desktop, built fixtures, and
-platform permissions. They are selected by the OS runner rather than the
-ordinary unit command.
+Hermetic protocol, CLI, and schema tests stay in
+`libs/cua-driver/rust/crates/cua-driver/tests/`. A test that needs a desktop,
+built fixtures, installed apps, or platform permissions belongs in
+`cua-driver-e2e`. Most E2E tests are marked `#[ignore]`; the OS runner selects
+them with `cargo test -p cua-driver-e2e --test <suite> -- --ignored`. The
+crate does not depend on the driver, so build `cua-driver` first or set
+`CUA_TEST_DRIVER_BIN`. Its few non-ignored tests are hermetic oracle and
+parser checks that ordinary CI runs with the driver's tests.
 
 The canonical E2E suite has two behavior owners:
 
@@ -546,7 +552,7 @@ to give each behavior one clear owner and make cross-cutting evidence reusable.
 rust/crates/cua-driver-testkit/src/
 `-- observer.rs                     Cross-OS desktop-side-effect interface
 
-rust/crates/cua-driver/tests/
+rust/crates/cua-driver-e2e/tests/
 |-- cross_platform_behavior_test.rs Shared Electron/Tauri action matrix
 |-- harness_wpf_test.rs             Windows WPF action rows
 |-- harness_winui3_test.rs          Windows WinUI3 action rows
@@ -555,7 +561,9 @@ rust/crates/cua-driver/tests/
 |-- harness_swiftui_test.rs         macOS SwiftUI action rows
 |-- harness_gtk3_test.rs            Linux GTK3 action rows
 |-- capture_contract_test.rs        Tree and screenshot read contract
-|-- desktop_scope_<os>_test.rs      Window/desktop scope invariants
+`-- desktop_scope_<os>_test.rs      Window/desktop scope invariants
+
+rust/crates/cua-driver/tests/
 `-- protocol_*_test.rs              Protocol and schema tests
 ```
 
@@ -576,7 +584,7 @@ user-facing command; lane selectors are internal diagnostics.
 When adding a new scenario:
 
 1. Add or update the repo-local fixture and its external state marker.
-2. Add the Rust scenario under `rust/crates/cua-driver/tests/`.
+2. Add the Rust scenario under `rust/crates/cua-driver-e2e/tests/`.
 3. Declare AX/PX addressing, foreground/background delivery, scope, and oracle.
 4. Add the scenario to `docs/test-matrix.md` and this guide when it changes the
    cross-OS structure.

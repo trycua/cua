@@ -245,7 +245,7 @@ jobs:
           python libs/cua-driver/tests/perception-demo/test_sanitize_evidence.py -v
           python libs/cua-driver/tests/perception-demo/test_evidence_envelope.py -v
           python .github/scripts/tests/test_authorized_live_jev_use_demo.py -v
-          cargo test --manifest-path libs/cua-driver/rust/Cargo.toml -p cua-driver --test authorized_live_jev_use_demo_test --locked
+          cargo test --manifest-path libs/cua-driver/rust/Cargo.toml -p cua-driver-e2e --test authorized_live_jev_use_demo_test --locked
           cargo test --manifest-path libs/cua-driver/rust/Cargo.toml -p cua-perception --locked
 
   candidate:
@@ -478,7 +478,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $messages = Join-Path $env:RUNNER_TEMP 'candidate-test-build.jsonl'
-          cargo test --manifest-path libs/cua-driver/rust/Cargo.toml -p cua-driver --test authorized_live_jev_use_demo_test --locked --no-run --message-format=json-render-diagnostics | Set-Content $messages -Encoding utf8
+          cargo test --manifest-path libs/cua-driver/rust/Cargo.toml -p cua-driver-e2e --test authorized_live_jev_use_demo_test --locked --no-run --message-format=json-render-diagnostics | Set-Content $messages -Encoding utf8
           if ($LASTEXITCODE -ne 0) { throw 'candidate test build failed' }
           @'
           import hashlib, json, os, pathlib, re, subprocess, sys

@@ -70,7 +70,7 @@ Source:
 - `tests/fixtures/shared/web/index.html`
 - `tests/fixtures/apps/cross-platform/electron/`
 - `tests/fixtures/apps/cross-platform/tauri/`
-- `rust/crates/cua-driver/tests/cross_platform_behavior_test.rs`
+- `rust/crates/cua-driver-e2e/tests/cross_platform_behavior_test.rs`
 
 The shared harness exposes deterministic external markers for these actions:
 

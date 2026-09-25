@@ -53,6 +53,8 @@ on:
       - "libs/cua-driver/tests/runners/windows/**"
       # The E2E inventory test checks every runner against the ignored tests.
       - "libs/cua-driver/tests/manual-e2e-allowlist.txt"
+      - "libs/cua-driver/rust/crates/cua-driver/tests/**"
+      - "libs/cua-driver/rust/crates/cua-driver-e2e/tests/**"
       - "scripts/ci/**"
       - "scripts/ci/macos/**"
       - "libs/cua-driver/tests/perception-demo/**"

@@ -6,7 +6,7 @@
 //!
 //! Requires a Linux desktop, AT-SPI, GTK3, PyGObject, and the fixture built by
 //! `tests/fixtures/build/linux.sh`. The canonical lane runs this target with:
-//!   cargo test -p cua-driver --test harness_gtk3_test -- --ignored --nocapture --test-threads=1
+//!   cargo test -p cua-driver-e2e --test harness_gtk3_test -- --ignored --nocapture --test-threads=1
 
 #![cfg(target_os = "linux")]
 

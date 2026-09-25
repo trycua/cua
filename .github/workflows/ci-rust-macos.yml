@@ -54,6 +54,10 @@ jobs:
       # harness (libs/cua-driver/tests/runners/macos-lume/run-all.sh).
       - name: Run platform-macos unit tests
         working-directory: libs/cua-driver/rust
+        env:
+          # The hosted runner's pasteboard is disposable; opt in to the native
+          # clipboard round trip that would clobber a developer's clipboard.
+          CUA_TEST_ALLOW_CLIPBOARD: "1"
         run: cargo test --locked -p platform-macos --lib
       - name: Run cua-driver-core unit tests on macOS
         working-directory: libs/cua-driver/rust

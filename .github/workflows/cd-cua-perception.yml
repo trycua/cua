@@ -153,6 +153,12 @@ jobs:
     needs: resolve
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The reviewed conversion is an asset of an unpublished (draft) release,
+    # and GitHub lists draft release assets only to tokens with push access.
+    # This job only reads that asset and hashes it; it runs no checked-out
+    # code and keeps no credentials in the checkout.
+    permissions:
+      contents: write
     steps:
       - name: Check out the exact source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683

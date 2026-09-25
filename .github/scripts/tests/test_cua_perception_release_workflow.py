@@ -58,6 +58,16 @@ def test_permissions_are_read_only_except_the_release_job() -> None:
         permissions = job.get("permissions", {})
         if name == "release":
             assert permissions == {"actions": "read", "contents": "write"}
+        elif name == "reviewed-model":
+            # Draft release assets are visible only to tokens with push access.
+            assert permissions == {"contents": "write"}
+            script = run_text(job)
+            assert "python" not in script and "cargo" not in script and "bash " not in script
+            assert all(
+                step.get("with", {}).get("persist-credentials") is False
+                for step in job["steps"]
+                if "actions/checkout" in step.get("uses", "")
+            )
         else:
             assert "write" not in json.dumps(permissions), name
 

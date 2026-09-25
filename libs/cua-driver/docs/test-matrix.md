@@ -100,6 +100,26 @@ Canonical reporting rejects skips and enforces the complete shared catalog
 size for unfiltered runs. Diagnostic filters are allowed, but matching zero
 cells is always an error.
 
+## Harness E2E: Optional Perception Loop
+
+`perception_capture_loop_test.rs` runs the documented capture-bound loop
+against the shared web harness in Electron in the capture lane of the macOS,
+Windows, and Linux X11 runners:
+
+| Cell | Coverage |
+| --- | --- |
+| `<os>-electron-parse-visual-regions-not-installed-not-applicable-not-applicable` | A retained window capture parses to the typed `not_installed` refusal when no extension is installed |
+| `<os>-electron-perception-capture-click-px-foreground` | `get_window_state` capture, `parse_visual_regions` on that capture, one foreground `click` with the same `capture_id` at the parsed region center, fixture-journal delivery oracle, `capture_not_found` refusal for the consumed capture, then a fresh capture and reparse |
+
+The installed extension is a developer-only unsigned worker compiled from
+`tests/support/perception_swatch_worker.rs`. It speaks the real worker
+protocol inside Driver's containment, echoes the retained PNG digest, and finds
+the harness's solid `#drag-source` and `#drop-target` swatches in the captured
+pixels, so the row needs no published artifact or model. macOS runs a second
+instance of the installed app with an isolated extension home and socket.
+Wayland lanes record a coverage limitation instead of running the row. Model
+quality belongs to the `cua-perception` crate and its artifact-gated lanes.
+
 ## Harness E2E: Native Windows
 
 Windows native harnesses are repo-local applications built from source:

@@ -597,3 +597,40 @@ When adding a new scenario:
 
 The goal is one understandable Rust E2E model across platforms, with
 platform-specific harnesses where the OS genuinely differs.
+
+## Test Layout Conventions
+
+Rust tests in the driver workspace use one layout:
+
+| Test kind | Where it lives |
+| --- | --- |
+| Small unit suite | Inline `#[cfg(test)] mod tests { ... }` at the end of the module |
+| Large unit suite | `src/<module>/tests.rs`, declared as `#[cfg(test)] mod tests;` in `src/<module>.rs` |
+| Several suites for one large module | `src/<module>/<name>_tests.rs`, one `#[cfg(test)] mod <name>_tests;` each, for example `platform-{linux,windows}/src/tools/impl_/` |
+| Crate-root suites | `src/tests/`, for example `cua-driver-sdk/src/tests/` |
+| Integration test in `cua-driver` or its E2E suites | `tests/<subject>_test.rs`; shared helpers go in `tests/support/` |
+
+Moving a suite into its own file keeps its module path, so test names and
+CI filters stay the same. Prefer Rust's default module file lookup over
+`#[path]`. Other crates' `tests/` directories keep their existing names.
+
+Scripts and their tests live next to their owner:
+
+- Desktop runners and focused native gates live in `scripts/ci/<os>/`, for
+  example `scripts/ci/linux/run-mpx-recovery-e2e.py`.
+- Example code keeps its tests in a `tests/` directory beside it, for example
+  `libs/cua-driver/examples/agent-sdks/tests/`.
+- `libs/cua-driver/rust/test-apps/` is the staging directory for built
+  harness apps, not a test directory. The fixture build scripts `cd` into it,
+  so its tracked README and `.gitignore` must stay.
+
+Perception tests have three owners, and each tests different code:
+
+| Directory | Owns | Run by |
+| --- | --- | --- |
+| `libs/cua-driver/rust/crates/cua-perception/{src,tests}` | Rust perception engine and extension protocol | `ci-cua-perception-release.yml`, `ci-cua-driver-quick.yml` |
+| `libs/cua-driver/rust/crates/cua-perception/scripts/tests/` | Model artifact tooling and quality measurement scripts | `ci-cua-perception-release.yml` |
+| `libs/cua-driver/tests/perception-demo/` | Visual demo evidence sanitizing, caching, and envelopes | `ci-test-scripts.yml` |
+| `.github/scripts/tests/test_cua_perception_*.py`, `test_perception_release.py` | Perception release, review-trigger, and review-pipeline workflows and `.github/scripts` helpers | `ci-test-scripts.yml`, `ci-cua-perception-release.yml` |
+
+Add a perception test to the directory that owns the code it exercises.

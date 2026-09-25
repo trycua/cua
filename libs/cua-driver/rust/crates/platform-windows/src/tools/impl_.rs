@@ -4383,6 +4383,15 @@ mod pixel_click_transport_tests {
                 text.contains("delivery_mode:\"foreground\""),
                 "text must surface the escalation: {text}"
             );
+            let record = ActionExecutionRecord::from_legacy(
+                "click",
+                &serde_json::json!({ "delivery_mode": "background" }),
+                data,
+            )
+            .expect("UIA refusal should normalize into the public action contract");
+            let public = serde_json::to_value(record.public_result().expect("valid ActionResult"))
+                .expect("serialize ActionResult");
+            assert_eq!(public["effect"], "unverifiable", "{outcome:?}");
         }
         // The completed-miss boundary is unchanged: only Miss falls through,
         // and a delivered Invoke carries no escalation hint.

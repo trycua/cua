@@ -1,0 +1,668 @@
+name: "CD: Cua Perception release"
+
+# Cua Perception releases follow Release Please with no manual publish step.
+#
+# Merging the Release Please pull request bumps
+# libs/cua-driver/rust/crates/cua-perception/VERSION. The main push then runs
+# release-please.yml, which anchors the merged commit with the lightweight
+# `cua-perception-vX.Y.Z` tag (Perception keeps `skip-github-release`, so
+# Release Please itself creates no GitHub release). That tag push runs this
+# workflow:
+#
+#   1. resolve: prove the tag is a lightweight tag on main at github.sha and
+#      matches VERSION.
+#   2. reviewed-model: fetch the reviewed OmniParser ONNX conversion and verify
+#      it against artifacts.lock.json.
+#   3. input: build the native worker and assemble, bind, and validate the
+#      release input on macOS arm64, Linux x64, and Windows x64.
+#   4. candidate: the existing reviewed candidate workflow re-verifies the input
+#      at the exact tag, executes the worker release gates, packages, and signs
+#      each catalog in the cua-perception-candidate-signing environment.
+#   5. verify: on each target, install the published Cua Driver with its
+#      canonical installer and prove inspect, install, self-test, a real parse,
+#      and remove against the signed catalog.
+#   6. release: publish the verified catalogs, archives, SBOMs, and provenance
+#      as the `cua-perception-vX.Y.Z` GitHub release, never marked Latest.
+#
+# Pull requests that change this pipeline run steps 1-3 plus an unsigned
+# package and developer-only install check. They never sign or publish.
+
+on:
+  push:
+    tags:
+      - "cua-perception-v*"
+  pull_request:
+    paths:
+      - ".github/workflows/cd-cua-perception.yml"
+      - ".github/scripts/perception_release.py"
+      - ".github/scripts/perception_release_install_check.py"
+      - ".github/releases/cua-perception/**"
+      - "libs/cua-driver/rust/crates/cua-perception/scripts/**"
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: cd-cua-perception-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Reviewed OmniParser icon-detect ONNX conversion. The bytes are verified
+  # against the icon-detect entry in artifacts.lock.json before use.
+  REVIEWED_MODEL_ASSET_ID: "571471639"
+
+jobs:
+  resolve:
+    name: Resolve the release identity
+    if: >-
+      github.repository == 'trycua/cua' &&
+      (github.event_name == 'push' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      reviewed_ref: ${{ steps.resolve.outputs.reviewed_ref }}
+      catalog_version: ${{ steps.resolve.outputs.catalog_version }}
+      expires_unix: ${{ steps.resolve.outputs.expires_unix }}
+      publish: ${{ steps.resolve.outputs.publish }}
+    steps:
+      - name: Check out the exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: resolve
+        name: Bind version, tag, and commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          VERSION_PATH=libs/cua-driver/rust/crates/cua-perception/VERSION
+          VERSION=$(tr -d '[:space:]' < "$VERSION_PATH")
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo "::error::Perception VERSION is not a stable SemVer: $VERSION"; exit 1; }
+          python3 .github/scripts/validate_release_versions.py --product perception
+
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            [[ "$GITHUB_REF" == refs/tags/cua-perception-v* ]] || {
+              echo "::error::Publication requires a cua-perception-v* tag push, got $GITHUB_REF"; exit 1; }
+            TAG="${GITHUB_REF#refs/tags/}"
+            [[ "$TAG" == "cua-perception-v$VERSION" ]] || {
+              echo "::error::$TAG does not match VERSION $VERSION"; exit 1; }
+            SOURCE_SHA="$GITHUB_SHA"
+            [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+            # release-please.yml anchors each merged version with a
+            # lightweight tag; refuse annotated or moved tags.
+            IFS=$'\t' read -r TAG_TYPE TAG_SHA < <(
+              gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" \
+                --jq '[.object.type, .object.sha] | @tsv')
+            [[ "$TAG_TYPE" == commit && "$TAG_SHA" == "$SOURCE_SHA" ]] || {
+              echo "::error::$TAG is not a lightweight tag at $SOURCE_SHA"; exit 1; }
+            git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main"
+            git merge-base --is-ancestor "$SOURCE_SHA" origin/main || {
+              echo "::error::$TAG points outside main history"; exit 1; }
+            REVIEWED_REF="refs/tags/$TAG"
+            PUBLISH=true
+          else
+            TAG="cua-perception-v$VERSION"
+            SOURCE_SHA="$PR_HEAD_SHA"
+            [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+            REVIEWED_REF=""
+            PUBLISH=false
+          fi
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          # Deterministic across re-runs of the same tag and monotonic across
+          # releases: UTC commit minute as YYMMDDHHMM. It exceeds the
+          # date-based staging catalog versions (YYYYMMDDNN) already issued,
+          # so the Driver's rollback check accepts release catalogs.
+          COMMIT_UNIX=$(git show -s --format=%ct "$SOURCE_SHA")
+          CATALOG_VERSION=$(date -u -d "@$COMMIT_UNIX" +%y%m%d%H%M)
+          CATALOG_VERSION=$((10#$CATALOG_VERSION))
+          # Catalogs expire one year after the release commit and never after
+          # the active signing key.
+          KEY_VALID_UNTIL=$(jq -r '.activeKeyId as $id | .keys[] | select(.keyId == $id) | .validUntilUnix' \
+            .github/releases/cua-perception/trust-root.json)
+          EXPIRES_UNIX=$((COMMIT_UNIX + 365 * 86400))
+          if (( EXPIRES_UNIX > KEY_VALID_UNTIL - 86400 )); then
+            EXPIRES_UNIX=$((KEY_VALID_UNTIL - 86400))
+          fi
+          (( EXPIRES_UNIX > $(date +%s) + 7 * 86400 )) || {
+            echo "::error::Catalog would expire within a week; cut a new release instead"; exit 1; }
+
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "source_sha=$SOURCE_SHA"
+            echo "reviewed_ref=$REVIEWED_REF"
+            echo "catalog_version=$CATALOG_VERSION"
+            echo "expires_unix=$EXPIRES_UNIX"
+            echo "publish=$PUBLISH"
+          } >> "$GITHUB_OUTPUT"
+          echo "Cua Perception $VERSION at $SOURCE_SHA (catalog $CATALOG_VERSION, expires $EXPIRES_UNIX, publish=$PUBLISH)"
+
+  reviewed-model:
+    name: Fetch the reviewed detector conversion
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          persist-credentials: false
+      - name: Download and verify the reviewed model
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          read -r FILENAME SIZE SHA256 < <(jq -r '.artifacts[] | select(.role == "icon-detect") | "\(.filename) \(.size) \(.sha256)"' \
+            libs/cua-driver/rust/crates/cua-perception/scripts/artifacts.lock.json)
+          [[ -n "$FILENAME" && "$FILENAME" != */* ]]
+          ASSET_NAME=$(gh api "repos/$GITHUB_REPOSITORY/releases/assets/$REVIEWED_MODEL_ASSET_ID" --jq .name)
+          [[ "$ASSET_NAME" == "$FILENAME" ]] || {
+            echo "::error::reviewed asset is $ASSET_NAME, expected $FILENAME"; exit 1; }
+          mkdir reviewed-inputs
+          gh api -H "Accept: application/octet-stream" \
+            "repos/$GITHUB_REPOSITORY/releases/assets/$REVIEWED_MODEL_ASSET_ID" > "reviewed-inputs/$FILENAME"
+          ACTUAL_SIZE=$(stat -c %s "reviewed-inputs/$FILENAME")
+          ACTUAL_SHA256=$(sha256sum "reviewed-inputs/$FILENAME" | cut -d' ' -f1)
+          [[ "$ACTUAL_SIZE" == "$SIZE" && "$ACTUAL_SHA256" == "$SHA256" ]] || {
+            echo "::error::reviewed model bytes differ from artifacts.lock.json"; exit 1; }
+          echo "Verified $FILENAME ($SIZE bytes, sha256 $SHA256)"
+      - name: Hand off the verified model
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: reviewed-cua-perception-model
+          path: reviewed-inputs/
+          if-no-files-found: error
+          retention-days: 1
+
+  input:
+    name: release input (${{ matrix.target }})
+    needs: [resolve, reviewed-model]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            input_artifact: cua-perception-input-linux-x86_64
+            worker: cua-perception
+          # Match the production Driver build and hosted desktop E2E image.
+          - runner: macos-26
+            target: aarch64-apple-darwin
+            input_artifact: cua-perception-input-macos-aarch64
+            worker: cua-perception
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            input_artifact: cua-perception-input-windows-x86_64
+            worker: cua-perception.exe
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - name: Check out the exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Install release validators
+        shell: bash
+        run: python -m pip install --disable-pip-version-check --require-hashes -r .github/releases/cua-perception/test-requirements.lock
+      - name: Download the verified model
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: reviewed-cua-perception-model
+          path: reviewed-inputs
+      - name: Build the native worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path libs/cua-driver/rust/Cargo.toml \
+            -p cua-perception --release --locked
+      - name: Assemble and execute native health, self-test, and real parse
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          WORKER: ${{ matrix.worker }}
+        run: |
+          set -euo pipefail
+          python libs/cua-driver/rust/crates/cua-perception/scripts/assemble_bundle.py \
+            --target "$TARGET" \
+            --worker "libs/cua-driver/rust/target/release/$WORKER" \
+            --inputs reviewed-inputs \
+            --cache "$RUNNER_TEMP/cua-perception-cache" \
+            --real-parse-fixture libs/cua-driver/tests/fixtures/apps/cross-platform/tauri/src-tauri/icons/icon.png \
+            --source-sha "$SOURCE_SHA" \
+            --version "$VERSION" \
+            --output perception-input
+      - name: Convert sealed assembler evidence to candidate input
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, pathlib
+
+          root = pathlib.Path("perception-input")
+          manifest = json.loads((root / "artifact-manifest.json").read_text())
+          (root / "release-input.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+          )
+          PY
+          python .github/scripts/perception_release.py bind-source \
+            --manifest perception-input/release-input.json \
+            --payload-root perception-input \
+            --repository-root .
+          python .github/scripts/perception_release.py validate \
+            --manifest perception-input/release-input.json \
+            --payload-root perception-input
+          rm perception-input/artifact-manifest.json perception-input/SHA256SUMS
+      - name: Preserve exact candidate packaging input
+        if: needs.resolve.outputs.publish == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ matrix.input_artifact }}
+          path: perception-input/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Dry run the unsigned package
+        if: needs.resolve.outputs.publish != 'true'
+        shell: bash
+        env:
+          CATALOG_VERSION: ${{ needs.resolve.outputs.catalog_version }}
+          EXPIRES_UNIX: ${{ needs.resolve.outputs.expires_unix }}
+        run: |
+          set -euo pipefail
+          python .github/scripts/perception_release.py run-gates \
+            --manifest perception-input/release-input.json \
+            --payload-root perception-input \
+            --evidence executed-verification.json
+          python .github/scripts/perception_release.py package \
+            --manifest perception-input/release-input.json \
+            --payload-root perception-input \
+            --executed-evidence executed-verification.json \
+            --output perception-candidate \
+            --key-id cua-extension-ed25519-2026-09 \
+            --catalog-version "$CATALOG_VERSION" \
+            --expires-unix "$EXPIRES_UNIX"
+          python .github/scripts/perception_release.py \
+            verify-checksums perception-candidate/checksums.txt
+      - name: Install the published Cua Driver (macOS and Linux)
+        if: needs.resolve.outputs.publish != 'true' && runner.os != 'Windows'
+        shell: bash
+        env:
+          CUA_DRIVER_RS_HOME: ${{ runner.temp }}/cua-driver-installer-home
+          CUA_DRIVER_RS_INSTALL_DIR: ${{ runner.temp }}/cua-driver-bin
+          CUA_DRIVER_RS_NO_MODIFY_PATH: "1"
+          CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"
+          CUA_TELEMETRY_ENABLED: "false"
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0
+          fi
+          bash libs/cua-driver/scripts/install.sh --no-modify-path
+          echo "CUA_DRIVER_BINARY=$CUA_DRIVER_RS_INSTALL_DIR/cua-driver" >> "$GITHUB_ENV"
+      - name: Install the published Cua Driver (Windows)
+        if: needs.resolve.outputs.publish != 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "cua-driver-installer"
+          $env:CUA_DRIVER_RS_HOME = Join-Path $root "home"
+          $env:CUA_DRIVER_RS_INSTALL_DIR = Join-Path $root "bin"
+          $env:CUA_DRIVER_RS_TELEMETRY_ENABLED = "false"
+          & ./libs/cua-driver/scripts/install.ps1 -NoAutoStart -NoPathUpdate
+          $binary = Join-Path $env:CUA_DRIVER_RS_INSTALL_DIR "cua-driver.exe"
+          if (-not (Test-Path -LiteralPath $binary)) { throw "installer did not create $binary" }
+          "CUA_DRIVER_BINARY=$binary" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Developer-only install check of the unsigned package
+        if: needs.resolve.outputs.publish != 'true'
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          python .github/scripts/perception_release_install_check.py \
+            --driver "$CUA_DRIVER_BINARY" \
+            --unsigned-archive "perception-candidate/cua-perception-$VERSION-$TARGET.tar.gz" \
+            --version "$VERSION" \
+            --target "$TARGET" \
+            --source-sha "$SOURCE_SHA" \
+            --image libs/cua-driver/tests/fixtures/apps/cross-platform/tauri/src-tauri/icons/icon.png \
+            --home "$RUNNER_TEMP/cua-perception-dry-run-home" \
+            --evidence dry-run-install-check.json
+
+  candidate:
+    name: candidate ${{ matrix.target_triple }}
+    needs: [resolve, input]
+    if: needs.resolve.outputs.publish == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_os: linux
+            target_triple: x86_64-unknown-linux-gnu
+            payload_artifact: cua-perception-input-linux-x86_64
+          - target_os: macos
+            target_triple: aarch64-apple-darwin
+            payload_artifact: cua-perception-input-macos-aarch64
+          - target_os: windows
+            target_triple: x86_64-pc-windows-msvc
+            payload_artifact: cua-perception-input-windows-x86_64
+    uses: ./.github/workflows/cd-cua-perception-candidate.yml
+    with:
+      payload_artifact: ${{ matrix.payload_artifact }}
+      payload_run_id: ${{ fromJSON(github.run_id) }}
+      source_ref: ${{ needs.resolve.outputs.source_sha }}
+      reviewed_ref: ${{ needs.resolve.outputs.reviewed_ref }}
+      target_os: ${{ matrix.target_os }}
+      target_triple: ${{ matrix.target_triple }}
+      catalog_version: ${{ fromJSON(needs.resolve.outputs.catalog_version) }}
+      expires_unix: ${{ fromJSON(needs.resolve.outputs.expires_unix) }}
+    secrets:
+      PERCEPTION_ED25519_PRIVATE_KEY_BASE64: ${{ secrets.PERCEPTION_ED25519_PRIVATE_KEY_BASE64 }}
+
+  verify:
+    name: verify signed release (${{ matrix.target }})
+    needs: [resolve, candidate]
+    if: needs.resolve.outputs.publish == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - runner: macos-26
+            target: aarch64-apple-darwin
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - name: Check out the exact release source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Download the signed candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: STAGING-cua-perception-candidate-${{ matrix.target }}-${{ needs.resolve.outputs.source_sha }}
+          path: signed
+      - name: Verify checksums and the publisher signature against the trust root
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          CATALOG_VERSION: ${{ needs.resolve.outputs.catalog_version }}
+          EXPIRES_UNIX: ${{ needs.resolve.outputs.expires_unix }}
+        run: |
+          set -euo pipefail
+          python .github/scripts/perception_release.py verify-checksums signed/checksums.txt
+          python .github/scripts/perception_release.py verify-checksums signed/signed-candidate-checksums.txt
+          node <<'JS'
+          const crypto = require("node:crypto");
+          const fs = require("node:fs");
+          const trust = JSON.parse(fs.readFileSync(".github/releases/cua-perception/trust-root.json"));
+          const active = trust.keys.filter((key) =>
+            key.keyId === trust.activeKeyId && key.algorithm === "Ed25519" && key.status === "active");
+          if (active.length !== 1) throw new Error("active trust root is missing or ambiguous");
+          const catalog = JSON.parse(fs.readFileSync("signed/signed-catalog.json"));
+          const payloadBytes = fs.readFileSync("signed/catalog-payload.json");
+          if (JSON.stringify(catalog.payload) !== payloadBytes.toString()) {
+            throw new Error("signed catalog payload differs from catalog-payload.json");
+          }
+          const spki = Buffer.concat([
+            Buffer.from("302a300506032b6570032100", "hex"),
+            Buffer.from(active[0].publicKeyBase64, "base64"),
+          ]);
+          const key = crypto.createPublicKey({key: spki, format: "der", type: "spki"});
+          if (catalog.signature_algorithm !== "ed25519" ||
+              !crypto.verify(null, payloadBytes, key, Buffer.from(catalog.signature, "base64"))) {
+            throw new Error("catalog signature does not verify against the active trust root");
+          }
+          const payload = catalog.payload;
+          const expected = {
+            publisher_id: "cua",
+            key_id: trust.activeKeyId,
+            extension_id: "cua-perception",
+            version: process.env.VERSION,
+            target: process.env.TARGET,
+            corresponding_source_revision: process.env.SOURCE_SHA,
+            catalog_version: Number(process.env.CATALOG_VERSION),
+            expires_unix: Number(process.env.EXPIRES_UNIX),
+            archive: `cua-perception-${process.env.VERSION}-${process.env.TARGET}.tar.gz`,
+          };
+          for (const [field, value] of Object.entries(expected)) {
+            if (payload[field] !== value) throw new Error(`catalog ${field} is ${payload[field]}, expected ${value}`);
+          }
+          const archive = fs.readFileSync(`signed/${payload.archive}`);
+          if (archive.length !== payload.archive_size ||
+              crypto.createHash("sha256").update(archive).digest("hex") !== payload.archive_sha256) {
+            throw new Error("catalog archive binding is invalid");
+          }
+          console.log(`verified ${payload.archive} for ${payload.target} (catalog ${payload.catalog_version})`);
+          JS
+      - name: Install the published Cua Driver (macOS and Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          CUA_DRIVER_RS_HOME: ${{ runner.temp }}/cua-driver-installer-home
+          CUA_DRIVER_RS_INSTALL_DIR: ${{ runner.temp }}/cua-driver-bin
+          CUA_DRIVER_RS_NO_MODIFY_PATH: "1"
+          CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"
+          CUA_TELEMETRY_ENABLED: "false"
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0
+          fi
+          bash libs/cua-driver/scripts/install.sh --no-modify-path
+          echo "CUA_DRIVER_BINARY=$CUA_DRIVER_RS_INSTALL_DIR/cua-driver" >> "$GITHUB_ENV"
+      - name: Install the published Cua Driver (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "cua-driver-installer"
+          $env:CUA_DRIVER_RS_HOME = Join-Path $root "home"
+          $env:CUA_DRIVER_RS_INSTALL_DIR = Join-Path $root "bin"
+          $env:CUA_DRIVER_RS_TELEMETRY_ENABLED = "false"
+          & ./libs/cua-driver/scripts/install.ps1 -NoAutoStart -NoPathUpdate
+          $binary = Join-Path $env:CUA_DRIVER_RS_INSTALL_DIR "cua-driver.exe"
+          if (-not (Test-Path -LiteralPath $binary)) { throw "installer did not create $binary" }
+          "CUA_DRIVER_BINARY=$binary" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Inspect, install, self-test, parse, and remove with the published Driver
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          python .github/scripts/perception_release_install_check.py \
+            --driver "$CUA_DRIVER_BINARY" \
+            --catalog signed/signed-catalog.json \
+            --version "$VERSION" \
+            --target "$TARGET" \
+            --source-sha "$SOURCE_SHA" \
+            --image libs/cua-driver/tests/fixtures/apps/cross-platform/tauri/src-tauri/icons/icon.png \
+            --home "$RUNNER_TEMP/cua-perception-release-home" \
+            --evidence "install-check-$TARGET.json"
+      - name: Preserve install evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cua-perception-install-evidence-${{ matrix.target }}
+          path: install-check-${{ matrix.target }}.json
+          if-no-files-found: error
+          retention-days: 90
+
+  release:
+    name: Publish the verified release
+    needs: [resolve, input, candidate, verify]
+    if: >-
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/cua-perception-v') &&
+      needs.resolve.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Refuse anything but the verified tag commit
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/tags/$TAG" ]]
+          HEAD_SHA=$(git rev-parse HEAD)
+          TAG_SHA=$(git rev-list -n 1 "$TAG")
+          # Every job above built, signed, and verified github.sha.
+          if [[ "$HEAD_SHA" != "$GITHUB_SHA" || "$TAG_SHA" != "$GITHUB_SHA" || "$SOURCE_SHA" != "$GITHUB_SHA" ]]; then
+            echo "::error::$TAG ($TAG_SHA) is not the verified commit ($GITHUB_SHA)"
+            exit 1
+          fi
+      - name: Download signed candidates
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: STAGING-cua-perception-candidate-*-${{ needs.resolve.outputs.source_sha }}
+          path: signed
+      - name: Download install evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: cua-perception-install-evidence-*
+          path: evidence
+          merge-multiple: true
+      - name: Stage release assets
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir release-upload
+          for TARGET in aarch64-apple-darwin x86_64-unknown-linux-gnu x86_64-pc-windows-msvc; do
+            DIR="signed/STAGING-cua-perception-candidate-$TARGET-$SOURCE_SHA"
+            BASE="cua-perception-$VERSION-$TARGET"
+            python3 .github/scripts/perception_release.py verify-checksums "$DIR/signed-candidate-checksums.txt"
+            python3 .github/scripts/perception_release.py verify-checksums "$DIR/checksums.txt"
+            ARCHIVE=$(jq -r .payload.archive "$DIR/signed-catalog.json")
+            [[ "$ARCHIVE" == "$BASE.tar.gz" ]]
+            [[ "$(jq -r .payload.target "$DIR/signed-catalog.json")" == "$TARGET" ]]
+            [[ "$(jq -r .payload.corresponding_source_revision "$DIR/signed-catalog.json")" == "$SOURCE_SHA" ]]
+            jq -e --arg target "$TARGET" --arg version "$VERSION" \
+              '.target == $target and .extension_version == $version and .trust == "publisher-verified"' \
+              "evidence/install-check-$TARGET.json" >/dev/null
+            # The Driver resolves the archive beside the catalog, so the
+            # archive keeps its signed name and the catalog gets a unique one.
+            cp "$DIR/$ARCHIVE" "release-upload/$ARCHIVE"
+            cp "$DIR/signed-catalog.json" "release-upload/$BASE.catalog.json"
+            cp "$DIR/sbom.spdx.json" "release-upload/$BASE.sbom.spdx.json"
+            cp "$DIR/provenance.redacted.json" "release-upload/$BASE.provenance.json"
+            cp "$DIR/runtime-contract.json" "release-upload/$BASE.runtime-contract.json"
+            cp "evidence/install-check-$TARGET.json" "release-upload/$BASE.install-check.json"
+          done
+          (cd release-upload && sha256sum -- * > SHA256SUMS)
+          cat release-upload/SHA256SUMS
+      - name: Write release notes
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          DRIVER_VERSION=$(jq -r .driver_version "release-upload/cua-perception-$VERSION-x86_64-unknown-linux-gnu.install-check.json")
+          {
+            awk -v version="$VERSION" '
+              /^## / { if (found) exit; if (index($0, "[" version "]") || $0 == "## " version) { found = 1; next } }
+              found { print }
+            ' libs/cua-driver/rust/crates/cua-perception/CHANGELOG.md
+            cat <<EOF
+
+          ## Install
+
+          Cua Perception is an optional, separately licensed extension for Cua Driver. Download the catalog and the archive for your platform into the same directory, then inspect before installing:
+
+          | Platform | Catalog | Archive |
+          | --- | --- | --- |
+          | macOS arm64 | \`cua-perception-$VERSION-aarch64-apple-darwin.catalog.json\` | \`cua-perception-$VERSION-aarch64-apple-darwin.tar.gz\` |
+          | Linux x64 | \`cua-perception-$VERSION-x86_64-unknown-linux-gnu.catalog.json\` | \`cua-perception-$VERSION-x86_64-unknown-linux-gnu.tar.gz\` |
+          | Windows x64 | \`cua-perception-$VERSION-x86_64-pc-windows-msvc.catalog.json\` | \`cua-perception-$VERSION-x86_64-pc-windows-msvc.tar.gz\` |
+
+          \`\`\`bash
+          cua-driver extension inspect cua-perception --catalog cua-perception-$VERSION-<target>.catalog.json
+          cua-driver extension install cua-perception --catalog cua-perception-$VERSION-<target>.catalog.json
+          cua-driver extension status cua-perception --self-test
+          \`\`\`
+
+          Each catalog is signed with the \`cua\` publisher key pinned in Cua Driver. The release gate installed, self-tested, and parsed with every catalog using $DRIVER_VERSION from the canonical installer. Source: \`$SOURCE_SHA\`.
+
+          The archive bundles the OmniParser detector (AGPL-3.0-only) and its corresponding source; see the included notices and \`libs/cua-driver/docs/perception-third-party-notices.md\`.
+          EOF
+          } > release-notes.md
+          cat release-notes.md
+      - name: Publish the GitHub release
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --json isDraft --jq .isDraft > release-state.txt 2>/dev/null; then
+            if [[ "$(cat release-state.txt)" == "false" ]]; then
+              # A published release is immutable. Accept a re-run only when
+              # every asset already matches the verified bytes.
+              gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" \
+                --jq '.assets[] | "\((.digest // "") | ltrimstr("sha256:"))  \(.name)"' | sort > published.txt
+              (cd release-upload && sha256sum -- * | sort) > expected.txt
+              diff -u expected.txt published.txt
+              echo "$TAG is already published with the verified assets."
+              exit 0
+            fi
+            gh release upload "$TAG" release-upload/* --clobber
+          else
+            gh release create "$TAG" release-upload/* \
+              --draft \
+              --verify-tag \
+              --title "cua-perception: v$VERSION" \
+              --notes-file release-notes.md
+          fi
+          gh release edit "$TAG" --notes-file release-notes.md --draft=false --latest=false
+          gh release view "$TAG" --json isDraft,assets \
+            --jq '"draft=\(.isDraft) assets=\(.assets | length)"'

@@ -214,14 +214,20 @@ async function run(args: Arguments): Promise<Outcome> {
         tab_id: tabId,
         snapshot_format: 'semantic_v2',
       })) as BrowserSnapshot;
-      const visual = await optionalVisualObservation(
-        driver,
-        pid,
-        Number(window.window_id),
-        availableTools,
-        captureBoundClick
-      );
-      const candidates = buildCandidates(snapshot, token, visual, captureBoundClick);
+      let candidates = buildCandidates(snapshot, token, undefined, captureBoundClick);
+      let visual: VisualObservation | undefined;
+      if (!candidates.some((candidate) => candidate.tool !== null)) {
+        visual = await optionalVisualObservation(
+          driver,
+          pid,
+          Number(window.window_id),
+          availableTools,
+          captureBoundClick
+        );
+        if (visual) {
+          candidates = buildCandidates(snapshot, token, visual, captureBoundClick);
+        }
+      }
       if (!candidates.length) {
         await writeEvent(args.log, { event: 'outcome', outcome: 'abstained', step });
         return 'abstained';

@@ -74,6 +74,21 @@ test('reserved candidates are always available', () => {
   assert.equal(chooseMock(candidates).choice, 'reobserve');
 });
 
+test('visual input does not change a semantic executable candidate set', () => {
+  const visual = parseVisualRegions(
+    fixture('parse-visual-regions-submit-v1.json'),
+    'capture-submit',
+    7,
+    9
+  );
+  for (const value of [null, 'expected']) {
+    const withoutVisual = buildCandidates(snapshot(value), 'expected', undefined, true);
+    const withVisual = buildCandidates(snapshot(value), 'expected', visual, true);
+    assert.deepEqual(withVisual, withoutVisual);
+    assert.ok(withoutVisual.some((candidate) => candidate.tool !== null));
+  }
+});
+
 test('visual fixture builds a candidate without claiming interactivity', () => {
   const payload = fixture('parse-visual-regions-submit-v1.json');
   payload.regions[0].interactive = false;

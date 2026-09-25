@@ -338,7 +338,12 @@ jobs:
           & ./libs/cua-driver/scripts/install.ps1 -NoAutoStart -NoPathUpdate
           $binary = Join-Path $env:CUA_DRIVER_RS_INSTALL_DIR "cua-driver.exe"
           if (-not (Test-Path -LiteralPath $binary)) { throw "installer did not create $binary" }
+          # The installer can leave a nonzero $LASTEXITCODE from an optional
+          # probe; the step result must reflect the installed binary instead.
+          & $binary --version
+          if ($LASTEXITCODE -ne 0) { throw "installed binary exited with $LASTEXITCODE" }
           "CUA_DRIVER_BINARY=$binary" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          exit 0
       - name: Developer-only install check of the unsigned package
         if: needs.resolve.outputs.publish != 'true'
         shell: bash
@@ -502,7 +507,12 @@ jobs:
           & ./libs/cua-driver/scripts/install.ps1 -NoAutoStart -NoPathUpdate
           $binary = Join-Path $env:CUA_DRIVER_RS_INSTALL_DIR "cua-driver.exe"
           if (-not (Test-Path -LiteralPath $binary)) { throw "installer did not create $binary" }
+          # The installer can leave a nonzero $LASTEXITCODE from an optional
+          # probe; the step result must reflect the installed binary instead.
+          & $binary --version
+          if ($LASTEXITCODE -ne 0) { throw "installed binary exited with $LASTEXITCODE" }
           "CUA_DRIVER_BINARY=$binary" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          exit 0
       - name: Inspect, install, self-test, parse, and remove with the published Driver
         shell: bash
         env:

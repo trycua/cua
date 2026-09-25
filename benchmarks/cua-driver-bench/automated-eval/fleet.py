@@ -309,8 +309,20 @@ def _command_error(label: str, result: Any) -> RuntimeError:
     return RuntimeError(f"{label} failed (exit {result.returncode}): {detail}")
 
 
+async def _retry_transport(operation: Any, label: str) -> Any:
+    for attempt in range(3):
+        try:
+            return await operation()
+        except Exception:
+            if attempt == 2:
+                raise
+            print(f"[fleet] {label} transport failed; retrying...")
+            await asyncio.sleep(5)
+    raise AssertionError("unreachable")
+
+
 async def _run_checked(worker: Any, command: str, label: str, timeout: int) -> Any:
-    result = await worker.shell.run(command, timeout=timeout)
+    result = await _retry_transport(lambda: worker.shell.run(command, timeout=timeout), label)
     if result.returncode != 0:
         raise _command_error(label, result)
     return result
@@ -362,8 +374,9 @@ async def _run_background_command(
     stderr_path: str,
     exit_path: str,
 ) -> _RemoteCommandResult:
+    pid_path = f"{exit_path}.pid"
     cleanup = await worker.shell.run(
-        f"rm -f {stdout_path} {stderr_path} {exit_path} {exit_path}.partial",
+        f"rm -f {stdout_path} {stderr_path} {exit_path} {exit_path}.partial {pid_path}",
         timeout=30,
     )
     if cleanup.returncode != 0:
@@ -371,12 +384,17 @@ async def _run_background_command(
     script = f"""
 set +e
 exit_status_partial={exit_path}.partial
+printf '%s\n' "$$" >{pid_path}
+finish() {{
+  status=$?
+  printf '%s\n' "$status" >"$exit_status_partial"
+  mv "$exit_status_partial" {exit_path}
+}}
+trap finish EXIT
 {command} >{stdout_path} 2>{stderr_path}
-status=$?
-printf '%s\n' "$status" >"$exit_status_partial"
-mv "$exit_status_partial" {exit_path}
 """.strip()
-    launch = await worker.shell.run(_bash(script), background=True)
+    detached = f"nohup setsid -f bash -lc {shlex.quote(script)} </dev/null >/dev/null 2>&1"
+    launch = await worker.shell.run(detached, background=True)
     if launch.returncode != 0:
         raise _command_error(f"{label} launch", launch)
     deadline = time.monotonic() + timeout
@@ -402,8 +420,15 @@ mv "$exit_status_partial" {exit_path}
                 stderr = await worker.files.read_text(stderr_path)
             return _RemoteCommandResult(stdout, stderr, returncode)
         await asyncio.sleep(10)
-    if launch.stdout.strip().isdigit():
-        await worker.shell.run(f"kill {launch.stdout.strip()}", timeout=30)
+    remote_pid = ""
+    if await worker.files.exists(pid_path):
+        remote_pid = (await worker.files.read_text(pid_path)).strip()
+    if remote_pid.isdigit():
+        await worker.shell.run(
+            f"kill -TERM -- -{remote_pid} 2>/dev/null || "
+            f"kill -TERM {remote_pid} 2>/dev/null || true",
+            timeout=30,
+        )
     raise RuntimeError(f"{label} timed out after {timeout} seconds")
 
 
@@ -449,13 +474,17 @@ done
 
 def _driver_check_command(config: ComparisonConfig) -> str:
     checks: list[str] = ["set -eu", "export DISPLAY=:1"]
+    releases = discover_driver_releases(config.drivers_root, "linux")
     for version in _selected_versions(config):
+        release = require_release(releases, version)
+        binary_version = release.binary_version or version
         binary = f"{REMOTE_REPO}/cua-drivers/{version}/binary/cua-driver"
         checks.extend(
             (
                 f"chmod +x {shlex.quote(binary)}",
                 f"version_output=$({shlex.quote(binary)} --version)",
-                f"printf '%s\\n' \"$version_output\" | grep -F {shlex.quote(version)} >/dev/null",
+                f"printf '%s\\n' \"$version_output\" | "
+                f"grep -F {shlex.quote(binary_version)} >/dev/null",
                 f"{shlex.quote(binary)} doctor",
             )
         )
@@ -526,7 +555,10 @@ async def _download_results(
     ) as temporary:
         archive_path = Path(temporary.name)
     try:
-        await worker.files.download(REMOTE_RESULTS_ARCHIVE, archive_path)
+        await _retry_transport(
+            lambda: worker.files.download(REMOTE_RESULTS_ARCHIVE, archive_path),
+            "result archive download",
+        )
         local_output.mkdir(parents=True, exist_ok=False)
         _safe_extract(archive_path, local_output)
     finally:
@@ -609,9 +641,18 @@ async def run_on_fleet(config: ComparisonConfig) -> tuple[Path, Path]:
             print(preflight.stdout.strip().splitlines()[0])
 
             print("[fleet] uploading repository, selected tasks, and drivers...")
-            await worker.files.upload(repo_archive, REMOTE_REPO_ARCHIVE)
-            await worker.files.upload(driver_archive, REMOTE_DRIVER_ARCHIVE)
-            await worker.files.upload(task_archive, REMOTE_TASKS_ARCHIVE)
+            await _retry_transport(
+                lambda: worker.files.upload(repo_archive, REMOTE_REPO_ARCHIVE),
+                "repository archive upload",
+            )
+            await _retry_transport(
+                lambda: worker.files.upload(driver_archive, REMOTE_DRIVER_ARCHIVE),
+                "driver archive upload",
+            )
+            await _retry_transport(
+                lambda: worker.files.upload(task_archive, REMOTE_TASKS_ARCHIVE),
+                "task archive upload",
+            )
             await _run_checked(
                 worker,
                 f"rm -rf {REMOTE_WORKSPACE} {REMOTE_TASKS_ROOT}; mkdir -p /root; "
@@ -660,7 +701,12 @@ async def run_on_fleet(config: ComparisonConfig) -> tuple[Path, Path]:
                 "Codex configuration staging",
                 30,
             )
-            await worker.files.write_text(f"{REMOTE_CODEX_HOME}/config.toml", provider_config)
+            await _retry_transport(
+                lambda: worker.files.write_text(
+                    f"{REMOTE_CODEX_HOME}/config.toml", provider_config
+                ),
+                "agent configuration upload",
+            )
             await _run_checked(
                 worker,
                 _bootstrap_command(config, codex_version),
@@ -676,10 +722,13 @@ async def run_on_fleet(config: ComparisonConfig) -> tuple[Path, Path]:
                 180,
             )
 
-            await worker.files.write_text(
-                REMOTE_ENV,
-                f"OPENAI_API_KEY={shlex.quote(model_key)}\n"
-                f"OPENAI_BASE_URL={shlex.quote(model_base_url)}\n",
+            await _retry_transport(
+                lambda: worker.files.write_text(
+                    REMOTE_ENV,
+                    f"OPENAI_API_KEY={shlex.quote(model_key)}\n"
+                    f"OPENAI_BASE_URL={shlex.quote(model_base_url)}\n",
+                ),
+                "model environment upload",
             )
             secret_written = True
             await _run_checked(worker, f"chmod 600 {REMOTE_ENV}", "secret staging", 30)

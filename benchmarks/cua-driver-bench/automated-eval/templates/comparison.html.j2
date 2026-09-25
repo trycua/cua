@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cua Driver Diagnostic Comparison</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 32px; line-height: 1.4; }
+    .table-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: right; white-space: nowrap; }
+    th:first-child, td:first-child { text-align: left; }
+    a { color: inherit; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  </style>
+</head>
+<body>
+  <h1>Cua Driver Local Diagnostic Comparison</h1>
+  <p>Non-certifying diagnostic output. Papercuts and foreground disturbances do not affect scores or signals. Required participation failures make comparison signals incomplete.</p>
+
+  <h2>Trials</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Task</th><th>Version</th><th>Trajectory</th><th>Pass</th><th>Participation</th><th>Score</th>
+        <th>Total ms</th><th>Cua calls</th><th>Input actions</th><th>Recorded actions</th><th>Focus drops</th>
+        <th>Drag interruptions</th><th>Cursor deviations</th><th>FG disturbances</th>
+        <th>Input tokens</th><th>Cached tokens</th><th>Output tokens</th><th>Termination</th><th>Papercuts</th>
+      </tr></thead>
+      <tbody>
+      {% for trial in report.trials %}
+        <tr>
+          <td>{{ trial.task }}</td>
+          <td>{{ trial.version }}</td>
+          <td><a href="{{ trial.trajectory_html_relative }}">view</a></td>
+          <td>{{ "yes" if trial.passed else "no" }}</td>
+          <td>{{ trial.participation_status or "—" }}</td>
+          <td>{{ trial.score if trial.score is not none else "—" }}</td>
+          <td>{{ trial.total_ms if trial.total_ms is not none else "—" }}</td>
+          <td>{{ trial.cua_calls }}</td>
+          <td>{{ trial.input_actions }}</td>
+          <td>{% if trial.get("recorded_input_actions") is not none %}{{ trial.recorded_input_actions }}/{{ trial.input_actions }}{% else %}—{% endif %}</td>
+          <td>{{ trial.foreground_keyboard_focus_drops if trial.foreground_keyboard_focus_drops is not none else "—" }}</td>
+          <td>{{ trial.foreground_drag_interruptions if trial.foreground_drag_interruptions is not none else "—" }}</td>
+          <td>{{ trial.foreground_cursor_trajectory_deviations if trial.foreground_cursor_trajectory_deviations is not none else "—" }}</td>
+          <td>{{ trial.foreground_disturbances if trial.foreground_disturbances is not none else "—" }}</td>
+          <td>{{ trial.codex_tokens.input_tokens if trial.codex_tokens and trial.codex_tokens.input_tokens is not none else "—" }}</td>
+          <td>{{ trial.codex_tokens.cache_read_tokens if trial.codex_tokens and trial.codex_tokens.cache_read_tokens is not none else "—" }}</td>
+          <td>{{ trial.codex_tokens.output_tokens if trial.codex_tokens and trial.codex_tokens.output_tokens is not none else "—" }}</td>
+          <td>{{ trial.termination }}</td>
+          <td>{% if trial.papercut_count is not none %}<a href="{{ trial.papercuts_md_relative }}">{{ trial.papercut_count }}</a>{% else %}—{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Diagnostic Integrity</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Task</th><th>Version</th><th>Participation required</th><th>Participation status</th><th>Participation detail</th><th>Recording complete</th><th>Recording detail</th></tr></thead>
+      <tbody>
+      {% for trial in report.trials %}
+        <tr>
+          <td>{{ trial.task }}</td><td>{{ trial.version }}</td>
+          <td>{{ "yes" if trial.participation_required else "no" }}</td>
+          <td>{{ trial.participation_status or "—" }}</td>
+          <td>{{ trial.participation_detail or "—" }}</td>
+          <td>{% if trial.get("recording_input_actions_complete") is not none %}{{ "yes" if trial.recording_input_actions_complete else "no" }}{% else %}—{% endif %}</td>
+          <td>{{ trial.recording_detail or "—" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Foreground Disturbance Availability</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Task</th><th>Version</th><th>Suite</th><th>Keyboard focus</th><th>Drag</th><th>Cursor trajectory</th><th>Error</th></tr></thead>
+      <tbody>
+      {% for trial in report.trials %}
+        <tr>
+          <td>{{ trial.task }}</td><td>{{ trial.version }}</td>
+          <td>{{ "yes" if trial.foreground_disturbance_available else "no" }}</td>
+          <td>{{ "yes" if trial.foreground_keyboard_focus_available else "no" }}</td>
+          <td>{{ "yes" if trial.foreground_drag_available else "no" }}</td>
+          <td>{{ "yes" if trial.foreground_cursor_trajectory_available else "no" }}</td>
+          <td>{{ trial.foreground_disturbance_error or trial.foreground_keyboard_focus_error or trial.foreground_drag_error or trial.foreground_cursor_trajectory_error or "—" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Baseline vs Candidate</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Task</th><th>Baseline score</th><th>Candidate score</th><th>Score Δ</th><th>Time Δ ms</th>
+        <th>Call Δ</th><th>Action Δ</th><th>Focus-drop Δ</th><th>Drag Δ</th><th>Cursor Δ</th>
+        <th>Disturbance Δ</th><th>Input token Δ</th><th>Cached token Δ</th><th>Output token Δ</th><th>Papercut Δ</th><th>Signal</th>
+      </tr></thead>
+      <tbody>
+      {% for comparison in report.comparisons %}
+        <tr>
+          <td>{{ comparison.task }}</td>
+          <td>{{ comparison.baseline.score if comparison.baseline.score is not none else "—" }}</td>
+          <td>{{ comparison.candidate.score if comparison.candidate.score is not none else "—" }}</td>
+          <td>{{ comparison.delta.score if comparison.delta.score is not none else "—" }}</td>
+          <td>{{ comparison.delta.total_ms if comparison.delta.total_ms is not none else "—" }}</td>
+          <td>{{ comparison.delta.cua_calls if comparison.delta.cua_calls is not none else "—" }}</td>
+          <td>{{ comparison.delta.input_actions if comparison.delta.input_actions is not none else "—" }}</td>
+          <td>{{ comparison.delta.foreground_keyboard_focus_drops if comparison.delta.foreground_keyboard_focus_drops is not none else "—" }}</td>
+          <td>{{ comparison.delta.foreground_drag_interruptions if comparison.delta.foreground_drag_interruptions is not none else "—" }}</td>
+          <td>{{ comparison.delta.foreground_cursor_trajectory_deviations if comparison.delta.foreground_cursor_trajectory_deviations is not none else "—" }}</td>
+          <td>{{ comparison.delta.foreground_disturbances if comparison.delta.foreground_disturbances is not none else "—" }}</td>
+          <td>{{ comparison.delta.input_tokens if comparison.delta.input_tokens is not none else "—" }}</td>
+          <td>{{ comparison.delta.cached_tokens if comparison.delta.cached_tokens is not none else "—" }}</td>
+          <td>{{ comparison.delta.output_tokens if comparison.delta.output_tokens is not none else "—" }}</td>
+          <td>{{ comparison.delta.papercuts if comparison.delta.papercuts is not none else "—" }}</td>
+          <td>{{ comparison.signal }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

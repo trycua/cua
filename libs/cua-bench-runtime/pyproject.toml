@@ -11,6 +11,7 @@ license = "MIT"
 authors = [{ name = "Cua AI", email = "gh@trycua.com" }]
 requires-python = ">=3.11"
 dependencies = [
+  "Jinja2>=3.1,<4.0",
   "jsonschema==4.23.0",
   "python-dotenv>=1.0,<2.0",
   "referencing==0.35.1",

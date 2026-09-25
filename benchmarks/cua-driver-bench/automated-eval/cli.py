@@ -226,6 +226,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"completed {len(report['trials'])} diagnostic trials; {passed} passed")
     print(f"JSON: {json_path}")
     print(f"Markdown: {markdown_path}")
+    print(f"HTML: {json_path.parent / 'report' / 'index.html'}")
     return 0
 
 

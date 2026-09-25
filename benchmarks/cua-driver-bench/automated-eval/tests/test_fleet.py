@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 import sys
@@ -8,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "fleet.py"
@@ -85,6 +87,84 @@ class FleetHelpersTests(unittest.TestCase):
         self.assertEqual(arguments[0], f"{fleet.REMOTE_WORKSPACE}/.fleet-venv/bin/python")
         self.assertEqual(arguments[arguments.index("--tasks-root") + 1], fleet.REMOTE_TASKS_ROOT)
         self.assertEqual(arguments[-2:], ["--task", "CDB-S01"])
+
+    def test_driver_check_supports_diagnostic_version_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            drivers_root = Path(temporary)
+            releases = {
+                "3719.0.0": {"version": "3719.0.0", "binaryVersion": "0.28.2"},
+                "0.23.2": {"version": "0.23.2"},
+            }
+            for version, manifest in releases.items():
+                release = drivers_root / version
+                (release / "binary").mkdir(parents=True)
+                binary = release / "binary" / "cua-driver"
+                binary.write_text("", encoding="utf-8")
+                binary.chmod(0o755)
+                (release / "release-manifest.json").write_text(
+                    json.dumps(manifest), encoding="utf-8"
+                )
+            config = SimpleNamespace(
+                drivers_root=drivers_root,
+                baseline="3719.0.0",
+                candidate="0.23.2",
+            )
+
+            command = fleet._driver_check_command(config)
+
+        self.assertIn("grep -F 0.28.2", command)
+        self.assertIn("grep -F 0.23.2", command)
+
+    def test_run_checked_retries_transport_errors_only(self) -> None:
+        shell = SimpleNamespace(
+            run=AsyncMock(
+                side_effect=[
+                    RuntimeError("transport dropped"),
+                    SimpleNamespace(returncode=0, stdout="ok", stderr=""),
+                ]
+            )
+        )
+        worker = SimpleNamespace(shell=shell)
+
+        with patch.object(fleet.asyncio, "sleep", new=AsyncMock()):
+            result = asyncio.run(fleet._run_checked(worker, "true", "driver verification", 30))
+
+        self.assertEqual(result.stdout, "ok")
+        self.assertEqual(shell.run.await_count, 2)
+
+    def test_background_command_uses_durable_detached_process(self) -> None:
+        shell = SimpleNamespace(
+            run=AsyncMock(
+                side_effect=[
+                    SimpleNamespace(returncode=0, stdout="", stderr=""),
+                    SimpleNamespace(returncode=0, stdout="4321\n", stderr=""),
+                ]
+            )
+        )
+        files = SimpleNamespace(
+            exists=AsyncMock(return_value=True),
+            read_text=AsyncMock(return_value="0\n"),
+        )
+        worker = SimpleNamespace(shell=shell, files=files)
+
+        result = asyncio.run(
+            fleet._run_background_command(
+                worker,
+                "google-chrome --version",
+                30,
+                label="task application provisioning",
+                stdout_path="/tmp/provision.stdout",
+                stderr_path="/tmp/provision.stderr",
+                exit_path="/tmp/provision.exit",
+            )
+        )
+
+        self.assertEqual(result.returncode, 0)
+        launch = shell.run.await_args_list[1]
+        self.assertIn("nohup setsid -f bash -lc", launch.args[0])
+        self.assertIn("trap finish EXIT", launch.args[0])
+        self.assertIn("/tmp/provision.exit.pid", launch.args[0])
+        self.assertEqual(launch.kwargs, {"background": True})
 
     def test_task_archive_contains_only_selected_task_source(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

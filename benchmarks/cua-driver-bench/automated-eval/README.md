@@ -101,6 +101,17 @@ The Linux observer records three diagnostic foreground metrics:
 
 These metrics do not change scores, pass results, or comparison signals.
 
+Reports also show required driver participation and recording coverage. A
+required participation failure does not rewrite the evaluator result, but it
+makes a baseline-versus-candidate signal incomplete. Recording coverage is the
+number of successful input actions captured by Cua Driver recording compared
+with the successful input actions counted from the agent transcript.
+
+The participant prompt forbids direct backing-store, internal API, IPC, or
+shell-based substitutes for state changes that the task requires through a GUI.
+If the required GUI interaction fails, the agent must leave it incomplete and
+report the blocker as a papercut.
+
 ## Run on Cua Fleet
 
 Fleet runs the same comparison CLI on one isolated Linux/X11 worker. The controller uploads only the public benchmark source, Cua Bench Runtime, selected driver releases, and selected tasks from the authorized task pack. Task content remains separate from the public source archive.

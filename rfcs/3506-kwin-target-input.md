@@ -3,7 +3,7 @@ title: Target-addressable KWin input delivery for KDE/Wayland
 authors:
   - netbospl
 created: 2026-09-01
-last_updated: 2026-09-26
+last_updated: 2026-09-25
 status: review
 discussion: https://github.com/trycua/cua/issues/3506
 rfc_pr: https://github.com/trycua/cua/pull/3507
@@ -397,8 +397,12 @@ helper disable/unload, or compositor restart. Observe these transitions even
 when lock/unlock or off/on occurs between dispatch steps; a later matching
 snapshot must not revive revoked authority. Geometry changes abort affected
 gestures without recomputing a path. Apply section 5's partial/unknown result
-and target-bound cleanup rules; if the original target is gone, discard
-operation-owned state without sending cleanup input to another target.
+and target-bound cleanup rules. Operation-owned synthetic held-key/button state
+must be cleared in helper/compositor-owned state without emitting cleanup input
+to a replacement or unrelated surface. If the original target is gone, discard
+target-specific operation state rather than sending a release to another target.
+An operation that cannot guarantee this held-state cleanup invariant must remain
+unsupported and refuse before dispatch.
 
 Qualify cancellation through each exposed Driver transport separately. A
 queued public stop request is not evidence of immediate cancellation; report
@@ -470,26 +474,37 @@ acknowledgement.
 | Dispatch may have begun and final acknowledgement is missing                  | Unknown delivery; retain any acknowledged prefix as partial progress and the unacknowledged remainder as unknown. Never infer zero delivery or completion. |
 
 Map these facts into the shared
-[action-result contract](../libs/cua-driver/docs/action-result-contract.md):
-`partial` retains `delivery.delivered_count` when progress is known;
-`unverifiable` expresses uncertainty when no delivered count is known.
-Dispatch acknowledgement alone does not justify `confirmed`. Preserve unknown
-additional delivery alongside a partial count; do not invent a new public enum
-value or discard uncertainty to fit an existing field. The current public
-`ActionDelivery` has no field for an unknown remainder alongside
-`delivered_count`; a reviewed, lossless shared-schema mapping or extension with
-Rust/Python/TypeScript/CLI/MCP parity coverage is required for every outcome an
-operation can produce before that operation is enabled, including a lost final
-reply for a click or key press. Prose-only `summary` is not a machine-readable
-substitute for delivery uncertainty.
+[action-result contract](../libs/cua-driver/docs/action-result-contract.md).
+Before any KWin operation is enabled, its public machine-readable result must
+represent these facts independently when they apply:
+
+1. delivery mode/route;
+2. acknowledged progress, including a `delivered_count` or equivalent prefix;
+3. whether additional unacknowledged delivery may have occurred; and
+4. the terminal interruption cause, such as cancellation, target/generation
+   loss, capability loss, or transport loss.
+
+The concrete shared-schema field names remain a contract-review decision, but
+the mapping must be lossless. `partial` retains acknowledged progress when it
+is known; `unverifiable` may express uncertainty when no delivered count is
+known. Dispatch acknowledgement alone does not justify `confirmed`. The
+current public `ActionDelivery` cannot independently encode an unknown
+remainder alongside `delivered_count`, and the current result contract reserves
+`error` for refusals. Do not discard either uncertainty or interruption cause
+to fit those existing fields, and do not overload a refusal-only field for an
+operation that may already have dispatched. A reviewed shared-schema mapping or
+extension with Rust/Python/TypeScript/CLI/MCP parity coverage is required for
+every outcome an operation can produce before that operation is enabled,
+including a lost final reply for a click or key press. Prose-only `summary` is
+not a machine-readable substitute.
 
 Target loss, generation change, capability loss, and cancellation after dispatch
 must not collapse into an ordinary `target_identity_stale` refusal. Keep their
 cause separate from the delivery outcome. Cancellation/cleanup cannot undo a
 click or text already delivered, and must release only operation-owned held
-state through a valid target-bound path, never through global input or a
-replacement target. Partial or unknown operations and their remaining frames
-are never automatically replayed.
+state through the target-bound or internal cleanup contract above, never through
+global input or a replacement target. Partial or unknown operations and their
+remaining frames are never automatically replayed.
 
 ### 6. Supported operations
 
@@ -820,6 +835,9 @@ Explicitly prove:
   partial/unknown operation into a fresh automatic attempt;
 - capability/transport material is not exposed in logs, health output, or
   telemetry;
+- public results preserve acknowledged progress, possible additional delivery,
+  and the terminal interruption cause as independent machine-readable facts,
+  including parity across Rust, Python, TypeScript, CLI, and MCP;
 - standard, bounded, and acknowledged unrestricted modes preserve their existing
   semantics; and
 - the test plan does not claim same-user hostile-code isolation beyond the
@@ -846,8 +864,10 @@ the compositor event loop; competing connections targeting shared input state;
 and owner-scoped cancellation that leaves another runtime unaffected. Trigger
 lock/unlock and DPMS off/on entirely between dispatch steps, session and keymap
 changes, and owner disconnect with held input. Prove old transactions remain
-invalid after recovery and cleanup never targets a replacement window. Record
-stop latency for each supported public transport rather than inferring it from
+invalid after recovery; held synthetic key/button state is cleared without a
+release reaching a replacement or unrelated surface; and cleanup never targets
+a replacement window. Record stop latency for each supported public transport
+rather than inferring it from
 the helper's cancellation acknowledgement.
 
 For every unsafe case, acceptance requires:

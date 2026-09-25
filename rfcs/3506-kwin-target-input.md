@@ -319,6 +319,9 @@ are required:
 - the mutation transport binding is tied to the compatible live generation;
 - the target is revalidated immediately before each irreversible mutation or
   input frame;
+- screenshot-derived coordinates are bound to the target geometry/capture
+  state and checked at dispatch; a moved or resized window must not silently
+  reinterpret old coordinates, even when its identity is unchanged;
 - duplicate or ambiguous identities refuse rather than selecting a best match.
 
 The existing helper-owner/session/UID checks remain mandatory. The implementation
@@ -343,7 +346,7 @@ must:
 4. validate the live helper/KWin generation;
 5. negotiate the required target-input capability;
 6. bind a fresh operation identity to the private mutation connection, admitted
-   action, target identity, and generation; and
+   action, target identity, generation, and applicable coordinate state; and
 7. reject stale, ambiguous, missing, policy-denied, or unsupported targets
    before mutation.
 
@@ -429,9 +432,12 @@ Map these facts into the shared
 `unverifiable` expresses uncertainty when no delivered count is known.
 Dispatch acknowledgement alone does not justify `confirmed`. Preserve unknown
 additional delivery alongside a partial count; do not invent a new public enum
-value or discard uncertainty to fit an existing field. Any required shared
-schema extension must receive review and Rust/Python/TypeScript/CLI/MCP parity
-coverage before input is enabled.
+value or discard uncertainty to fit an existing field. The current public
+`ActionDelivery` has no field for an unknown remainder alongside
+`delivered_count`; a reviewed, lossless shared-schema mapping or extension with
+Rust/Python/TypeScript/CLI/MCP parity coverage is required before multi-frame
+input with uncertain progress is enabled. Prose-only `summary` is not a
+machine-readable substitute.
 
 Target loss, generation change, capability loss, and cancellation after dispatch
 must not collapse into an ordinary `target_identity_stale` refusal. Keep their
@@ -747,6 +753,8 @@ Cover at least:
   supported, exact operation/payload matching without redispatch;
 - browser restart and PID reuse;
 - workspace and geometry changes;
+- stale screenshot coordinates after target movement or resize, with no
+  reinterpretation onto the new geometry;
 - target loss before mutation;
 - unsupported operation capability.
 

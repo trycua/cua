@@ -200,6 +200,61 @@ daemon child.
 - Permission changes require destroying clients, restarting the daemon, and
   reconnecting. A connection from the old generation is never reusable.
 
+## Bounding the post-action window observation
+
+After an input action, the driver watches the window list for a short time so
+it can report a menu, dialog, or new window that the action opened. On macOS,
+that watch lasts up to 1000 ms for an action that opens nothing, which makes it
+the largest part of a background click's latency. A host that already observes
+its target continuously can shorten it through two variables set at trusted
+launch, in the environment of the `serve --embedded` child (or of the host
+process when you use the same-process runtime):
+
+| Variable                              | Meaning                                              | Default                         | Accepted range                            |
+| ------------------------------------- | ---------------------------------------------------- | ------------------------------- | ----------------------------------------- |
+| `CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS` | Longest wait for a window change after each action.  | 1000 on macOS, 800 on Linux X11 | 0 to 10000; larger values are clamped     |
+| `CUA_DRIVER_WINDOW_CHANGE_POLL_MS`    | Interval between window-list reads during that wait. | 50                              | 5 to 1000, and never longer than the wait |
+
+Unset, empty, or unparsable values, such as `-1`, `1.5`, or `100ms`, keep the
+default, so a daemon launched without these variables behaves exactly as
+before. No tool argument can change the bound. Every ingress strips
+underscore-prefixed arguments, so an agent cannot shorten its own focus
+protection.
+
+```sh
+CUA_DRIVER_EMBEDDED=1 \
+CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS=200 \
+  cua-driver serve --embedded --socket /tmp/yourapp-cua.sock
+```
+
+A shorter wait costs something on each platform. Choose a value knowingly.
+
+- **macOS: less focus protection.** The watch also holds a focus-steal lease:
+  while it runs, the driver reactivates the app that was frontmost before the
+  action if any other app activates, such as a browser opened by a link. The
+  lease ends when the watch ends. With a nonzero value, cross-app activations
+  are reverted only for that long after the action returns. With `0`, the lease
+  is released as soon as the action returns. The separate target-pid guard
+  remains, and it still covers the action plus a 50 ms settle when the target
+  was not frontmost. An app that activates later stays frontmost, so the host
+  must detect and correct that itself.
+- **macOS: missing result suffixes.** A window that appears after the wait
+  ends is not reported. With `0`, results never carry
+  `Action opened new window(s): …` or
+  `Action caused a different app to become frontmost.`
+- **Linux X11 foreground delivery: weaker evidence.** A foreground-delivery
+  action (`"delivery_mode": "foreground"`) reports `effect: "confirmed"` when
+  the target opened or closed a window during the wait. A dialog that maps after a shorter wait
+  leaves the action `unverifiable`. Qt file dialogs can take 300 to 600 ms to
+  map. With `0`, foreground actions never report window-change evidence. Focus
+  checks and `suspected_noop` detection are unchanged.
+- **Windows: no effect.** The Windows adapter does not wait for window changes
+  after an action, so it ignores both variables.
+
+Measured on macOS with Calculator in the background and Terminal frontmost, a
+background AX click took 1153 ms with the default, 325 ms with `200`, and 78 ms
+with `0`.
+
 ## What embedded mode changes (and what it doesn't)
 
 |                                               | Standalone                    | Embedded (`CUA_DRIVER_EMBEDDED=1`)     |

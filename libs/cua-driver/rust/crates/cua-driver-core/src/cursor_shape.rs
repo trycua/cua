@@ -107,12 +107,10 @@ pub fn current_system_cursor_shape() -> SystemCursorShape {
 mod tests {
     use super::*;
 
-    /// The distinction the whole module rests on: an unsupported platform must
-    /// report `Unknown`, never `Default`. Reporting `Default` would render a
-    /// confident arrow on a host that has no idea what the pointer looks like.
+    /// The derived default is the ordinary arrow. Unsupported platforms never
+    /// reach it: they report `Unknown` (see the next test).
     #[test]
-    fn unknown_is_not_default() {
-        assert_ne!(SystemCursorShape::Unknown, SystemCursorShape::Default);
+    fn default_variant_is_default_arrow() {
         assert_eq!(SystemCursorShape::default(), SystemCursorShape::Default);
     }
 

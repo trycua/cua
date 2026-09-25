@@ -451,6 +451,10 @@ mod tests {
             .join(" ");
         assert!(description.starts_with(MULTI_CALL_SESSION_DESCRIPTION));
         assert!(description.contains("never selects capture modality or authorization"));
+
+        assert!(MULTI_CALL_SESSION_DESCRIPTION.contains("prefer a short public session label"));
+        assert!(MULTI_CALL_SESSION_DESCRIPTION.contains("repeat it on every call that accepts it"));
+        assert!(MULTI_CALL_SESSION_DESCRIPTION.contains("implicit lifecycle session"));
     }
 
     #[test]
@@ -460,6 +464,22 @@ mod tests {
             assert!(
                 tool.success_output_schema.is_some(),
                 "{} has no success output schema",
+                tool.name
+            );
+        }
+    }
+
+    #[test]
+    fn delivery_mode_capability_matches_the_typed_input_schema() {
+        for tool in manifest().tools {
+            assert_eq!(
+                tool.input_schema
+                    .pointer("/properties/delivery_mode")
+                    .is_some(),
+                tool.capabilities
+                    .iter()
+                    .any(|capability| capability == "input.delivery_mode"),
+                "{} typed contract delivery_mode schema/capability mismatch",
                 tool.name
             );
         }

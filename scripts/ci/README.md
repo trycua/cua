@@ -107,6 +107,35 @@ desktop certification, and it does not replace the desktop matrix.
 
 ## Desktop runners
 
+### Canonical and supporting runners
+
+This table lists every desktop runner and its evidence authority. Only a
+canonical runner, run in full at the exact source SHA, certifies desktop
+behavior. A scoped gate certifies only its own scope and does not replace
+the three OS rows. Supporting runners help with diagnosis or convenience and
+never certify.
+
+| Runner | Workflow or environment | Authority |
+| --- | --- | --- |
+| `scripts/ci/linux/run-rust-e2e.sh` | `e2e-rust-linux.yml`, GitHub-hosted X11 | Canonical: Linux |
+| `scripts/ci/windows/run-rust-e2e.ps1 -RequireGui` | `e2e-rust-windows.yml`, GitHub-hosted, when its strict desktop preflight passes | Canonical: Windows |
+| `libs/cua-driver/tests/runners/macos-lume/run-all.sh` | Logged-in, TCC-authorized Lume worker; every complete run includes the standalone-browser matrix | Canonical: macOS |
+| `scripts/ci/macos/run-rust-e2e.sh` | Called by the Lume wrapper and the hosted macOS script | Matrix implementation behind the macOS rows; refuses to run without the wrapper's unrestricted daemon |
+| `scripts/ci/run-rust-standalone-browser-e2e.sh`, `scripts/ci/windows/run-rust-standalone-browser-e2e.ps1` | `e2e-rust-standalone-browsers.yml`; the macOS Lume wrapper runs it as well | Scoped gate: installed Chrome and Edge, required for browser-facing changes |
+| `scripts/ci/linux/run-rust-e2e-wayland.sh`, `run-rust-e2e-inject.sh` | `e2e-rust-linux-wayland.yml` (`sway`, `sway-xwayland`, `cua-compositor`) | Scoped gate: native Wayland compositor lanes, kept separate from X11 |
+| `run-rust-e2e.sh` in a native Hyprland desktop, plus the allowlisted `hyprland_*` rows | Maintainer's prepared native Hyprland desktop | Scoped gate: native Hyprland; no automated lane |
+| `scripts/ci/macos/run-hosted-rust-e2e.sh` | `e2e-rust-macos.yml` with `mode=hosted` | Supporting: supplemental hosted macOS matrix; does not replace Lume |
+| `scripts/ci/linux/run-rust-e2e-desktop.sh` | Representative GNOME or KDE maintainer desktop | Supporting: environment coverage |
+| `libs/cua-driver/tests/runners/windows/run-all.ps1` | Local RDP or console session | Supporting: convenience wrapper that calls the canonical Windows runner; certify through the canonical row |
+| `libs/cua-driver/tests/runners/windows-sandbox/` | Windows Sandbox | Supporting: legacy local smoke; never certifies |
+| Azure RDP replay of the Windows runner | Maintainer Azure VM | Supporting: optional environment-parity replay, or a fallback when the hosted preflight cannot prove a capability |
+| `scripts/ci/linux/run-valgrind-e2e.py` | `ci-cua-driver-valgrind.yml` | Supporting: memory-safety diagnostic |
+| `scripts/ci/linux/preflight-rust-e2e.sh`, `scripts/ci/windows/preflight-rust-e2e.ps1` | `ci-cua-driver-preflight.yml` or a local desktop | Supporting: lightweight host readiness only |
+| One-off app smokes and manual recordings | Any | Supporting: diagnostics only |
+
+Nix source checks (`ci-nix-linux.yml`) are a separate build and unit gate,
+not a desktop runner.
+
 ### Choose the evidence tier
 
 Use the narrowest useful tier during implementation, then complete the required

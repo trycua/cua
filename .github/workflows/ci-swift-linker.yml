@@ -3,13 +3,29 @@ name: "CI: macOS Swift linker"
 on:
   pull_request:
     paths:
-      - "libs/cua-driver/rust/**"
+      # The duplicate-symbol regression comes from native Swift/Objective-C
+      # bridges linked into the macOS binary. Rebuild only when the macOS
+      # adapter, a manifest, a build script, the lockfile, or the toolchain
+      # can change what the linker sees.
+      - "libs/cua-driver/rust/.cargo/**"
+      - "libs/cua-driver/rust/Cargo.toml"
+      - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/rust-toolchain.toml"
+      - "libs/cua-driver/rust/crates/*/Cargo.toml"
+      - "libs/cua-driver/rust/crates/*/build.rs"
+      - "libs/cua-driver/rust/crates/platform-macos/**"
       - "scripts/ci/macos/test-swift-linker-symbols.sh"
       - ".github/workflows/ci-swift-linker.yml"
   push:
     branches: [main]
     paths:
-      - "libs/cua-driver/rust/**"
+      - "libs/cua-driver/rust/.cargo/**"
+      - "libs/cua-driver/rust/Cargo.toml"
+      - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/rust-toolchain.toml"
+      - "libs/cua-driver/rust/crates/*/Cargo.toml"
+      - "libs/cua-driver/rust/crates/*/build.rs"
+      - "libs/cua-driver/rust/crates/platform-macos/**"
       - "scripts/ci/macos/test-swift-linker-symbols.sh"
       - ".github/workflows/ci-swift-linker.yml"
   workflow_dispatch:

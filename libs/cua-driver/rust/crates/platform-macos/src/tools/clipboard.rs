@@ -89,8 +89,12 @@ mod tests {
     }
 
     #[test]
-    fn native_clipboard_round_trips_text_png_and_file_url_in_ci() {
-        if std::env::var_os("CI").is_none() {
+    fn native_clipboard_round_trips_text_png_and_file_url_when_opted_in() {
+        // Overwrites the general pasteboard, so it runs only where a job opts
+        // in explicitly. `CI` alone is not enough: developers export it too.
+        if std::env::var_os("CUA_TEST_ALLOW_CLIPBOARD").as_deref()
+            != Some(std::ffi::OsStr::new("1"))
+        {
             return;
         }
         let backend = MacosClipboard::new();

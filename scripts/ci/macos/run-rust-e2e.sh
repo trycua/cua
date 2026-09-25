@@ -303,7 +303,7 @@ run_report() {
 
 echo "[PREFLIGHT] macOS daemon identity, fixture, AX, capture, and video"
 set +e
-(cd "${RUST_ROOT}" && cargo test -p cua-driver --test e2e_environment_preflight_test -- \
+(cd "${RUST_ROOT}" && cargo test -p cua-driver-e2e --test e2e_environment_preflight_test -- \
   --ignored --exact canonical_e2e_environment_is_ready --nocapture --test-threads=1) \
   2>&1 | tee "${ARTIFACT_DIR}/environment-preflight.log"
 PREFLIGHT_EXIT=${PIPESTATUS[0]}
@@ -329,17 +329,17 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
     --test runtime_configuration -- --test-threads=1
   run_test private-worker-lifecycle cargo test -p cua-driver \
     --test private_worker_test -- --test-threads=1
-  run_test shared-app-matrix cargo test -p cua-driver --test cross_platform_behavior_test -- \
+  run_test shared-app-matrix cargo test -p cua-driver-e2e --test cross_platform_behavior_test -- \
     --ignored --exact shared_web_action_matrix_is_state_verified \
     --nocapture --test-threads=1
-  run_test embedded-browser-routes cargo test -p cua-driver --test cross_platform_behavior_test -- \
+  run_test embedded-browser-routes cargo test -p cua-driver-e2e --test cross_platform_behavior_test -- \
     --ignored --exact embedded_browser_routes_are_exact_or_refused \
     --nocapture --test-threads=1
 fi
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
   NATIVE_FILTER_MATCHES=0
   if ! native_retry_filter_active; then
-    run_test agent-cursor-showcase cargo test -p cua-driver \
+    run_test agent-cursor-showcase cargo test -p cua-driver-e2e \
       --test agent_cursor_showcase_test -- \
       --ignored --nocapture --test-threads=1
     for appkit_test in \
@@ -356,6 +356,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_scroll_background \
     harness_appkit_counter \
     harness_appkit_counter_px_background \
+    harness_appkit_px_background_press_key_reports_honest_delivery_truth \
     harness_appkit_exact_activation_with_agent_cursor \
     harness_appkit_exact_activation_refuses_competing_window \
     harness_appkit_foreground_single_click_has_one_ordered_native_pair \
@@ -365,7 +366,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_double_click_px_background \
     harness_appkit_slider_drag_px_foreground \
       harness_appkit_slider_drag_px_background; do
-      run_test "appkit-${appkit_test}" cargo test -p cua-driver --test harness_appkit_test -- \
+      run_test "appkit-${appkit_test}" cargo test -p cua-driver-e2e --test harness_appkit_test -- \
         --ignored --exact "${appkit_test}" --nocapture --test-threads=1
     done
   fi
@@ -373,7 +374,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
   while IFS='|' read -r swiftui_cell swiftui_test; do
     if native_swiftui_test_selected "${swiftui_cell}"; then
       NATIVE_FILTER_MATCHES=$((NATIVE_FILTER_MATCHES + 1))
-      run_test "swiftui-${swiftui_test}" cargo test -p cua-driver --test harness_swiftui_test -- \
+      run_test "swiftui-${swiftui_test}" cargo test -p cua-driver-e2e --test harness_swiftui_test -- \
         --ignored --exact "${swiftui_test}" --nocapture --test-threads=1
     fi
   done <<'EOF'
@@ -390,20 +391,25 @@ EOF
       note_lane_failure native-filter-selection
     fi
   else
-    run_test installed-app-launch cargo test -p cua-driver --test installed_app_launch_macos_test -- \
+    run_test installed-app-launch cargo test -p cua-driver-e2e --test installed_app_launch_macos_test -- \
       --ignored --nocapture --test-threads=1
-    run_test installed-app-textedit cargo test -p cua-driver --test installed_app_textedit_macos_test -- \
+    run_test installed-app-textedit cargo test -p cua-driver-e2e --test installed_app_textedit_macos_test -- \
       --ignored --exact background_type_on_native_cocoa_is_ax_verified \
       --nocapture --test-threads=1
+    # These rows assert through System Events and CoreGraphics oracles rather
+    # than typed matrix results, so they must not leave unowned trajectories.
+    run_test bring-to-front env -u CUA_E2E_RECORDINGS_ROOT \
+      cargo test -p cua-driver-e2e --test bring_to_front_macos_test -- \
+      --ignored --nocapture --test-threads=1
   fi
 fi
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
-  run_test capture-contract cargo test -p cua-driver --test capture_contract_test -- \
+  run_test capture-contract cargo test -p cua-driver-e2e --test capture_contract_test -- \
     --ignored --nocapture --test-threads=1
   run_test capture-environment env CUA_TEST_DRIVER_BIN="${MACOS_DAEMON_BIN}" \
-    cargo test -p cua-driver --test macos_capture_environment_test -- \
+    cargo test -p cua-driver-e2e --test macos_capture_environment_test -- \
     --ignored --nocapture --test-threads=1
-  run_test desktop-scope cargo test -p cua-driver --test desktop_scope_macos_test -- \
+  run_test desktop-scope cargo test -p cua-driver-e2e --test desktop_scope_macos_test -- \
     --ignored --nocapture --test-threads=1
 fi
 

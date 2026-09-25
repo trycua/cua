@@ -21,16 +21,6 @@ struct GalleryState {
     session_label: Option<&'static str>,
 }
 
-#[cfg(test)]
-fn runtime_state() -> GalleryState {
-    GalleryState {
-        action: CursorAction::Observe,
-        delivery: Some(DeliveryModifier::Background),
-        target: Some(TargetModifier::Browser),
-        session_label: Some(RUNTIME_SESSION_LABEL),
-    }
-}
-
 const DELIVERIES: [Option<DeliveryModifier>; 3] = [
     None,
     Some(DeliveryModifier::Background),
@@ -178,19 +168,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn runtime_preview_uses_the_complete_production_composition() {
-        let state = runtime_state();
-        assert_eq!(state.action, CursorAction::Observe);
-        assert_eq!(state.delivery, Some(DeliveryModifier::Background));
-        assert_eq!(state.target, Some(TargetModifier::Browser));
-        assert_eq!(state.session_label, Some(RUNTIME_SESSION_LABEL));
-    }
-
-    #[test]
     fn preview_inventory_covers_every_runtime_combination_once() {
         let root = Path::new("gallery");
         let states = preview_states(root);
-        assert_eq!(states.len(), 12 * 3 * 5);
+        assert_eq!(
+            states.len(),
+            CursorAction::ALL.len() * DELIVERIES.len() * TARGETS.len()
+        );
 
         let slugs = states
             .iter()

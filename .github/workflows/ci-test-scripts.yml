@@ -50,8 +50,36 @@ on:
       - "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json"
       - "libs/cua-driver/tests/fixtures/apps/cross-platform/tauri/build.sh"
       - "libs/cua-driver/tests/runners/macos-lume/**"
+      - "libs/cua-driver/tests/runners/windows/**"
+      # The E2E inventory test checks every runner against the ignored tests.
+      - "libs/cua-driver/tests/manual-e2e-allowlist.txt"
+      - "libs/cua-driver/rust/crates/cua-driver/tests/**"
+      - "libs/cua-driver/rust/crates/cua-driver-e2e/tests/**"
+      - "scripts/ci/**"
       - "scripts/ci/macos/**"
       - "libs/cua-driver/tests/perception-demo/**"
+      # Release-wiring, channel, and installer tests read these inputs.
+      - ".github/release-notes/**"
+      - ".github/release-state/**"
+      - "AGENTS.md"
+      - "CONTRIBUTING.md"
+      - "docs/content/docs/reference/cua-driver/**"
+      - "libs/cua-driver/examples/agent-sdks/**"
+      - "libs/cua-driver/rust/Cargo.lock"
+      - "libs/cua-driver/rust/VERSION"
+      - "libs/cua-driver/rust/Skills/cua-driver/**"
+      - "libs/cua-driver/rust/crates/cua-driver/src/cli.rs"
+      - "libs/cua-driver/rust/crates/cua-driver/src/main.rs"
+      - "libs/cua-driver/rust/crates/cua-driver/src/skills.rs"
+      - "libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs"
+      - "libs/cua-driver/rust/crates/cua-perception/VERSION"
+      - "libs/cua-driver/rust/scripts/CuaDriverBundle/**"
+      - "libs/cua-driver/typescript/package.json"
+      - "libs/cua-driver/typescript/package-lock.json"
+      - "libs/lume/VERSION"
+      - "libs/lume/scripts/**"
+      - "libs/lume/src/Main.swift"
+      - "scripts/docs-generators/config.json"
 
 jobs:
   windows-uninstall:
@@ -89,14 +117,14 @@ jobs:
           cd .github/scripts
           pytest tests/ -v
 
-      - name: Test Cua Driver uninstall scripts
+      - name: Test Cua Driver install and uninstall scripts
         run: python -m pytest libs/cua-driver/scripts/tests/ -v
 
-      - name: Test private evidence cache and envelope contracts
-        run: |
-          python -m pytest \
-            libs/cua-driver/tests/perception-demo/test_cache_evidence.py \
-            libs/cua-driver/tests/perception-demo/test_evidence_envelope.py -v
+      - name: Test Computer History purge during uninstall
+        run: bash libs/cua-driver/scripts/tests/uninstall-history-purge-test.sh
+
+      - name: Test private evidence cache, envelope, and sanitizer contracts
+        run: python -m pytest libs/cua-driver/tests/perception-demo/ -v
 
       - uses: actions/setup-node@v4
         with:

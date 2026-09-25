@@ -715,7 +715,7 @@ run_computer_history_gate() {
   echo "[HISTORY] Recording one packaged action before daemon restart"
   (
     cd "${RUST_ROOT}"
-    cargo test -p cua-driver --release --test "${test_binary}" \
+    cargo test -p cua-driver-e2e --release --test "${test_binary}" \
       history_records_agent_action_before_restart -- \
       --ignored --exact --nocapture --test-threads=1
   ) 2>&1 | tee "${ARTIFACT_DIR}/history-before-restart.log"
@@ -724,7 +724,7 @@ run_computer_history_gate() {
   restart_unrestricted_daemon
   (
     cd "${RUST_ROOT}"
-    cargo test -p cua-driver --release --test "${test_binary}" \
+    cargo test -p cua-driver-e2e --release --test "${test_binary}" \
       history_reopens_after_restart_and_cryptographically_purges -- \
       --ignored --exact --nocapture --test-threads=1
   ) 2>&1 | tee "${ARTIFACT_DIR}/history-after-restart.log"

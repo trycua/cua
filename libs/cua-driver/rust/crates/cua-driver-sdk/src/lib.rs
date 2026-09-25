@@ -1995,6 +1995,7 @@ fn normalize_result(tool: &str, raw: Value) -> Result<ToolResult, DriverError> {
 uniffi::setup_scaffolding!("cua_driver_sdk");
 
 #[cfg(test)]
+#[path = "tests/snapshot_lifecycle.rs"]
 mod snapshot_lifecycle_tests;
 
 #[cfg(test)]

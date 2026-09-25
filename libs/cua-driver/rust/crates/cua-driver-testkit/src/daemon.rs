@@ -6,6 +6,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::host_state::{apply_env, IsolatedStateRoot};
 use crate::reaper::{spawn_in_job, ChildReaper};
 
 #[cfg(not(unix))]
@@ -17,9 +18,25 @@ pub(crate) struct TestDaemon {
     pub(crate) pid: u32,
     #[cfg(unix)]
     _socket_dir: tempfile::TempDir,
+    /// Per-user state root shared by the daemon and its transport clients.
+    /// `None` only when the caller opted into host state.
+    state_root: Option<IsolatedStateRoot>,
 }
 
 impl TestDaemon {
+    /// Give a transport client (stdio proxy, one-shot CLI call) the same
+    /// per-user state root as the daemon it talks to.
+    pub(crate) fn apply_state_root(&self, command: &mut Command) {
+        if let Some(root) = &self.state_root {
+            root.apply(command);
+        }
+    }
+
+    /// Root of the isolated per-user state, when the daemon has one.
+    pub(crate) fn state_root(&self) -> Option<&Path> {
+        self.state_root.as_ref().map(IsolatedStateRoot::path)
+    }
+
     pub(crate) fn spawn(
         binary: &Path,
         reaper: &mut ChildReaper,
@@ -83,9 +100,13 @@ impl TestDaemon {
         if !overlay_enabled {
             command.arg("--no-overlay");
         }
-        for (key, value) in env {
-            command.env(key, value);
+        // Never let a test-owned daemon read the developer's installed-product
+        // state (Computer History admission, config, extensions, ...).
+        let state_root = IsolatedStateRoot::for_env(env);
+        if state_root.is_none() && !crate::host_state::shares_host_state(env) {
+            return None;
         }
+        apply_env(&mut command, state_root.as_ref(), env);
         // Spawn directly so the `Child` stays reachable for `try_wait` below;
         // the reaper adopts it on every exit path. Without the handle, a daemon
         // that dies during startup is indistinguishable from one that is merely
@@ -117,6 +138,7 @@ impl TestDaemon {
                     pid,
                     #[cfg(unix)]
                     _socket_dir: socket_dir,
+                    state_root,
                 });
             }
             std::thread::sleep(Duration::from_millis(50));

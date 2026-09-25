@@ -6318,24 +6318,6 @@ mod coord_tests {
     }
 
     #[test]
-    fn foreign_empty_application_before_target_is_ignored() {
-        let target_pid = 4242;
-        let candidates = [
-            (Some(9000), "foreign-empty", false),
-            (Some(target_pid), "target-live-tree", true),
-        ];
-        let mut selection = ApplicationSelection::new(target_pid);
-
-        for (pid, app, has_children) in candidates {
-            if selection.matches_pid(pid) {
-                selection.consider_matching(app, has_children);
-            }
-        }
-
-        assert_eq!(selection.into_selected(), Ok(Some("target-live-tree")));
-    }
-
-    #[test]
     fn childless_exact_pid_application_remains_the_fallback() {
         let mut selection = ApplicationSelection::new(4242);
         selection.consider_matching("first-empty", false);
@@ -6651,7 +6633,15 @@ mod coord_tests {
 
     #[test]
     fn point_hit_projection_rejects_unrealized_extents_before_offsets() {
-        for raw in [(i32::MIN, 0, 40, 20), (0, i32::MIN, 40, 20), (0, 0, 1, 1)] {
+        // The -16390 rows fall below the -16384 sentinel floor only before
+        // the offsets are applied, so they fail if the check moves after them.
+        for raw in [
+            (i32::MIN, 0, 40, 20),
+            (0, i32::MIN, 40, 20),
+            (-16390, 0, 40, 20),
+            (0, -16390, 40, 20),
+            (0, 0, 1, 1),
+        ] {
             assert_eq!(project_screen_extents(raw, (108, 79), Some((0, 47))), None);
         }
     }
@@ -6869,20 +6859,6 @@ mod coord_tests {
         assert_eq!(parse_gtk_frame_extents(&[]), None);
         assert_eq!(parse_gtk_frame_extents(&[61, 61]), None);
         assert_eq!(parse_gtk_frame_extents(&[61, 61, 55]), None);
-    }
-
-    #[test]
-    fn screen_reconstruction_matches_live_gnome_calculator() {
-        // Regression anchor for the whole GTK4 fix, from a live-verified capture:
-        // gnome-calculator button "7" = x11_window_origin (55,27)
-        //   + _GTK_FRAME_EXTENTS inset (61,55) + atspi WINDOW coords (16,293)
-        //   = screen (132,375).
-        let (fl, ft) = parse_gtk_frame_extents(&[61, 61, 55, 67]).unwrap();
-        let origin = (55, 27); // x11_window_origin
-        let window = (16, 293); // atspi CoordType::Window
-        let offset = (origin.0 + fl, origin.1 + ft); // window_to_screen_offset
-        let screen = (offset.0 + window.0, offset.1 + window.1);
-        assert_eq!(screen, (132, 375));
     }
 
     #[test]

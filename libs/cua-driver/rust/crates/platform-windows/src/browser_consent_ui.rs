@@ -347,7 +347,7 @@ where
 }
 
 fn exact_allow_button(nodes: &[UiaNode]) -> Result<Option<usize>, BrowserRefusal> {
-    Ok(exact_consent_actions_with(nodes, native_button_properties)?.map(|actions| actions.0))
+    exact_allow_button_with(nodes, native_button_properties)
 }
 
 fn exact_cancel_button(nodes: &[UiaNode]) -> Result<Option<usize>, BrowserRefusal> {

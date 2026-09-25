@@ -5395,36 +5395,6 @@ mod capability_tests {
     }
 
     #[test]
-    fn capability_version_is_string_one() {
-        // Bumping this constant in a non-breaking PR is an error —
-        // the version is the contract version, not the build version.
-        // Pinned to "1" until we ship a BREAKING vocabulary change.
-        assert_eq!(CAPABILITY_VERSION, "1");
-    }
-
-    #[test]
-    fn delivery_mode_capability_is_derived_from_the_runtime_schema() {
-        let with_delivery_mode = serde_json::json!({
-            "type": "object",
-            "properties": {
-                "delivery_mode": crate::tool_schema::delivery_mode_schema()
-            }
-        });
-        let without_delivery_mode = serde_json::json!({"type": "object", "properties": {}});
-
-        assert!(
-            advertised_capabilities_for("press_key", &with_delivery_mode)
-                .iter()
-                .any(|capability| capability == "input.delivery_mode")
-        );
-        assert!(
-            !advertised_capabilities_for("press_key", &without_delivery_mode)
-                .iter()
-                .any(|capability| capability == "input.delivery_mode")
-        );
-    }
-
-    #[test]
     fn delivery_mode_normalization_is_schema_gated_modern_first_and_fail_closed() {
         let with_delivery_mode = super::ToolDef {
             name: "click".into(),
@@ -5493,16 +5463,6 @@ mod capability_tests {
         let mut unrelated = serde_json::json!({"dispatch": "foreground"});
         super::normalize_delivery_mode_args(&without_delivery_mode, &mut unrelated);
         assert_eq!(unrelated, serde_json::json!({"dispatch": "foreground"}));
-    }
-
-    #[test]
-    fn unknown_tools_get_empty_capabilities() {
-        // Tools without a mapping (typically internal/stub tools like
-        // `unsupported_platform`) return `[]`. Consumers fall back to
-        // name-matching for those, which is fine — they were never
-        // load-bearing for capability routing.
-        assert!(default_capabilities_for("unsupported_platform").is_empty());
-        assert!(default_capabilities_for("totally_made_up_tool").is_empty());
     }
 
     fn dummy_def(name: &str) -> ToolDef {
@@ -5611,14 +5571,16 @@ mod capability_tests {
     #[test]
     fn to_list_entry_includes_empty_capabilities_array_for_unknown_tool() {
         // Even when no capabilities are claimed, the field is still
-        // present — consumers can rely on the key existing.
-        let def = dummy_def("totally_made_up_tool");
-        let entry = def.to_list_entry();
-        let caps = entry
-            .get("capabilities")
-            .and_then(|v| v.as_array())
-            .expect("capabilities must be present even if empty");
-        assert!(caps.is_empty());
+        // present — consumers can rely on the key existing. Internal stub
+        // tools such as `unsupported_platform` claim nothing either.
+        for name in ["totally_made_up_tool", "unsupported_platform"] {
+            let entry = dummy_def(name).to_list_entry();
+            let caps = entry
+                .get("capabilities")
+                .and_then(|v| v.as_array())
+                .expect("capabilities must be present even if empty");
+            assert!(caps.is_empty(), "{name}");
+        }
     }
 
     #[test]

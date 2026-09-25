@@ -8,7 +8,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
     BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
@@ -19,6 +18,9 @@ use cua_driver_core::browser::types::{
     BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
     EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
+};
+use cua_driver_core::browser::{
+    existing_profile_setup_descriptor, is_firefox, parse_devtools_active_port, BrowserCursorTracker,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use windows::core::PCWSTR;
@@ -45,50 +47,6 @@ use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetWindowRect, GA_ROO
 pub struct WindowsBrowserPlatform {
     cursor_registry: Arc<cursor_overlay::CursorRegistry>,
     browser_cursors: Arc<Mutex<BrowserCursorTracker>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BrowserCursorBinding {
-    window_id: u64,
-    cdp_target_id: String,
-}
-
-#[derive(Debug, Default)]
-struct BrowserCursorTracker {
-    bindings: HashMap<String, BrowserCursorBinding>,
-}
-
-impl BrowserCursorTracker {
-    fn update(
-        &mut self,
-        session: &str,
-        window_id: u64,
-        cdp_target_id: &str,
-        tab_is_active: bool,
-    ) -> Vec<(String, bool)> {
-        self.bindings.insert(
-            session.to_owned(),
-            BrowserCursorBinding {
-                window_id,
-                cdp_target_id: cdp_target_id.to_owned(),
-            },
-        );
-
-        if !tab_is_active {
-            return vec![(session.to_owned(), false)];
-        }
-
-        self.bindings
-            .iter()
-            .filter(|(_, binding)| binding.window_id == window_id)
-            .map(|(key, binding)| {
-                (
-                    key.clone(),
-                    key == session && binding.cdp_target_id == cdp_target_id,
-                )
-            })
-            .collect()
-    }
 }
 
 impl WindowsBrowserPlatform {
@@ -118,12 +76,6 @@ fn is_chromium(name: &str) -> bool {
     ];
     name.split(|ch: char| !ch.is_ascii_alphanumeric())
         .any(|token| products.contains(&token))
-}
-
-fn is_firefox(name: &str) -> bool {
-    name.to_ascii_lowercase()
-        .split(|ch: char| !ch.is_ascii_alphanumeric())
-        .any(|token| token == "firefox")
 }
 
 fn browser_product(name: &str) -> BrowserProduct {
@@ -512,21 +464,6 @@ async fn browser_command_line(pid: u32) -> Result<String, BrowserRefusal> {
     Ok(command_line)
 }
 
-fn parse_devtools_active_port(text: &str) -> Option<(u16, &str)> {
-    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
-    let port = lines.next()?.parse::<u16>().ok()?;
-    let path = lines.next()?;
-    if lines.next().is_some() {
-        return None;
-    }
-    let instance = path.strip_prefix("/devtools/browser/")?;
-    (!instance.is_empty()
-        && instance
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))
-    .then_some((port, path))
-}
-
 async fn active_port_endpoint(
     pid: u32,
     product: BrowserProduct,
@@ -780,17 +717,6 @@ fn parse_netstat_loopback_listeners(text: &str, allowed_pids: &[u32]) -> Vec<(u1
     listeners.sort_unstable();
     listeners.dedup();
     listeners
-}
-
-#[cfg(test)]
-fn parse_netstat_loopback_ports(text: &str, allowed_pids: &[u32]) -> Vec<u16> {
-    let mut ports = parse_netstat_loopback_listeners(text, allowed_pids)
-        .into_iter()
-        .map(|(port, _owner_pid)| port)
-        .collect::<Vec<_>>();
-    ports.sort_unstable();
-    ports.dedup();
-    ports
 }
 
 fn system_directory_path() -> Result<PathBuf, BrowserRefusal> {
@@ -2163,51 +2089,17 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn browser_cursor_tracker_shows_only_the_active_tabs_session_per_window() {
-        let mut tracker = BrowserCursorTracker::default();
-        assert_eq!(
-            tracker.update("tab-a", 101, "target-a", false),
-            vec![("tab-a".to_owned(), false)]
-        );
-        assert_eq!(
-            tracker.update("tab-b", 101, "target-b", false),
-            vec![("tab-b".to_owned(), false)]
-        );
-
-        let mut updates = tracker.update("tab-a", 101, "target-a", true);
-        updates.sort();
-        assert_eq!(
-            updates,
-            vec![("tab-a".to_owned(), true), ("tab-b".to_owned(), false)]
-        );
-
-        let mut updates = tracker.update("tab-b", 101, "target-b", true);
-        updates.sort();
-        assert_eq!(
-            updates,
-            vec![("tab-a".to_owned(), false), ("tab-b".to_owned(), true)]
-        );
-    }
-
-    #[test]
     fn netstat_parser_requires_loopback_listening_and_browser_process_tree() {
         let input = "\
   TCP    127.0.0.1:9222       0.0.0.0:0       LISTENING       42\n\
   TCP    0.0.0.0:9333         0.0.0.0:0       LISTENING       43\n\
   TCP    [::1]:9444           [::]:0          LISTENING       43\n\
+  TCP    127.0.0.1:9666       127.0.0.1:50000 ESTABLISHED     42\n\
   TCP    127.0.0.1:9555       0.0.0.0:0       LISTENING       7\n";
         assert_eq!(
-            parse_netstat_loopback_ports(input, &[42, 43]),
-            vec![9222, 9444]
+            parse_netstat_loopback_listeners(input, &[42, 43]),
+            vec![(9222, 42), (9444, 43)]
         );
-    }
-
-    #[test]
-    fn netstat_parser_rejects_unrelated_process_trees() {
-        let input = "\
-  TCP    127.0.0.1:9222       0.0.0.0:0       LISTENING       42\n\
-  TCP    127.0.0.1:9555       0.0.0.0:0       LISTENING       99\n";
-        assert_eq!(parse_netstat_loopback_ports(input, &[42, 43]), vec![9222]);
     }
 
     #[test]
@@ -2432,14 +2324,6 @@ mod tests {
     }
 
     #[test]
-    fn firefox_classifier_uses_product_tokens() {
-        assert!(is_firefox("firefox.exe"));
-        assert!(is_firefox("Mozilla Firefox.exe"));
-        assert!(!is_firefox("FirefoxHelper.exe"));
-        assert!(!is_firefox("waterfox.exe"));
-    }
-
-    #[test]
     fn discovered_websocket_url_is_canonical_and_keeps_the_attested_port() {
         assert_eq!(
             canonical_discovered_websocket_url("ws://localhost:9222/devtools/browser/id", 9222),
@@ -2525,22 +2409,6 @@ mod tests {
             )
             .expect("one absolute custom profile"),
             Some(PathBuf::from(r#"C:\Profiles\Personal Browser"#))
-        );
-    }
-
-    #[test]
-    fn active_port_parser_rejects_non_browser_and_ambiguous_paths() {
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser/exact-id\n"),
-            Some((9222, "/devtools/browser/exact-id"))
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/page/id\n"),
-            None
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser/id\nextra\n"),
-            None
         );
     }
 

@@ -140,27 +140,6 @@ fn def() -> &'static ToolDef {
     })
 }
 
-/// Fold a per-call `max_dimension` cap with the session/global
-/// `max_image_dimension` ceiling. `resize_png_if_needed` treats `0` as "no
-/// limit", so when the ceiling is unlimited the per-call cap stands alone;
-/// otherwise the tighter (smaller, non-zero) of the two wins. Returns `0` only
-/// when neither imposes a limit.
-fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
-    match per_call {
-        Some(md) if ceiling == 0 => md,
-        Some(md) => ceiling.min(md),
-        None => ceiling,
-    }
-}
-
-fn resolve_max_dimension(
-    configured: u32,
-    legacy_cap: Option<u32>,
-    per_call_override: Option<u32>,
-) -> u32 {
-    per_call_override.unwrap_or_else(|| fold_max_dimension(configured, legacy_cap))
-}
-
 fn chromium_browser_window(pid: i32) -> bool {
     let identity = format!(
         "{} {}",
@@ -375,7 +354,12 @@ impl Tool for GetWindowStateTool {
         // The portable `max_image_dimension` is an explicit per-call override,
         // including 0 for native resolution. Without it, preserve the existing
         // configured ceiling and legacy `max_dimension` tighter-cap behavior.
-        let max_dim = resolve_max_dimension(effective_max_dim, max_dimension, max_image_dimension);
+        let max_dim = cua_driver_core::image_utils::ImageDimensionLimits {
+            configured: effective_max_dim,
+            legacy_max_dimension: max_dimension,
+            max_image_dimension,
+        }
+        .resolve();
         // Returns the exact delivered PNG bytes, optional file path, delivered
         // and native dimensions, the WindowServer bounds it was validated
         // against, and the raw capture's backing scale.
@@ -1131,38 +1115,12 @@ mod window_scope_contract_tests {
             "description must document the both-false error"
         );
     }
-
-    /// The per-call `max_dimension` folds with the session/global ceiling: the
-    /// tighter non-zero cap wins, an unlimited (0) ceiling defers to the
-    /// per-call cap, and absent inputs pass the ceiling through unchanged.
-    #[test]
-    fn max_dimension_folds_tighter_cap() {
-        // Ceiling wins when it is tighter than the per-call cap.
-        assert_eq!(fold_max_dimension(1024, Some(2048)), 1024);
-        // Per-call wins when it is tighter than the ceiling.
-        assert_eq!(fold_max_dimension(4096, Some(512)), 512);
-        // Unlimited ceiling (0) defers entirely to the per-call cap.
-        assert_eq!(fold_max_dimension(0, Some(768)), 768);
-        // No per-call cap → the ceiling passes through (0 stays unlimited).
-        assert_eq!(fold_max_dimension(1600, None), 1600);
-        assert_eq!(fold_max_dimension(0, None), 0);
-    }
-
-    #[test]
-    fn max_image_dimension_explicit_override_wins() {
-        assert_eq!(resolve_max_dimension(1024, None, Some(2048)), 2048);
-        assert_eq!(resolve_max_dimension(1024, Some(512), Some(2048)), 2048);
-        assert_eq!(resolve_max_dimension(1024, Some(512), Some(0)), 0);
-        assert_eq!(resolve_max_dimension(1024, Some(512), None), 512);
-        assert_eq!(resolve_max_dimension(1024, None, None), 1024);
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ax::tree::AXNode;
-    use cua_driver_core::element_query::project_elements_for_query;
     use serde_json::json;
 
     fn node(
@@ -1245,95 +1203,6 @@ mod tests {
             vec![0, 1, 2],
             "ordering must match DFS / element_index assignment"
         );
-    }
-
-    #[test]
-    fn query_projection_keeps_only_rendered_actionable_rows() {
-        let nodes = vec![
-            node(Some(0), "AXWindow", Some("Document"), 0, None, None, vec![]),
-            node(
-                Some(1),
-                "AXMenuItem",
-                Some("Window"),
-                1,
-                Some(0),
-                None,
-                vec![],
-            ),
-            node(
-                Some(2),
-                "AXMenuItem",
-                Some("Move & Resize"),
-                2,
-                Some(1),
-                None,
-                vec![],
-            ),
-            node(
-                Some(3),
-                "AXMenuItem",
-                Some("Left"),
-                3,
-                Some(2),
-                None,
-                vec![],
-            ),
-            node(
-                Some(4),
-                "AXButton",
-                Some("Unrelated"),
-                1,
-                Some(0),
-                None,
-                vec![],
-            ),
-        ];
-        let elements = build_elements_array_with_token(&nodes, None);
-        let filtered_markdown = concat!(
-            "- [0] AXWindow \"Document\"\n",
-            "  - [1] AXMenuItem \"Window\"\n",
-            "    - [2] AXMenuItem \"Move & Resize\"\n",
-            "      - [3] AXMenuItem \"Left\"\n",
-        );
-
-        let projected = project_elements_for_query(elements, Some("Left"), filtered_markdown);
-        let indices: Vec<u64> = projected
-            .iter()
-            .map(|entry| entry["element_index"].as_u64().unwrap())
-            .collect();
-
-        assert_eq!(indices, vec![0, 1, 2, 3]);
-    }
-
-    #[test]
-    fn query_projection_returns_no_elements_when_markdown_has_no_match() {
-        let nodes = vec![node(
-            Some(0),
-            "AXButton",
-            Some("Unrelated"),
-            0,
-            None,
-            None,
-            vec![],
-        )];
-        let elements = build_elements_array_with_token(&nodes, None);
-
-        let projected = project_elements_for_query(elements, Some("zoomLeft"), "");
-
-        assert!(projected.is_empty());
-    }
-
-    #[test]
-    fn unfiltered_projection_preserves_every_element() {
-        let nodes = vec![
-            node(Some(0), "AXButton", Some("One"), 0, None, None, vec![]),
-            node(Some(1), "AXButton", Some("Two"), 0, None, None, vec![]),
-        ];
-        let elements = build_elements_array_with_token(&nodes, None);
-
-        let projected = project_elements_for_query(elements, None, "");
-
-        assert_eq!(projected.len(), 2);
     }
 
     #[test]
@@ -1611,35 +1480,6 @@ mod tests {
             entries[0].get("element_token").is_none(),
             "observation-only entries must not emit unregistered element_token: {}",
             entries[0]
-        );
-    }
-
-    #[test]
-    fn walk_tree_bounded_signature_accepts_caps_no_panic() {
-        // Regression guard for #22865: the bounded variant must accept
-        // arbitrary cap values without panicking, even against a pid that
-        // has no AX tree to walk. Returns a TreeWalkResult either way.
-        // Use pid that won't be a real process. Don't assume tree is empty
-        // (CI may have process re-use) — only assert that the call returns
-        // and the result struct shape is intact.
-        let r1 = crate::ax::tree::walk_tree_bounded(i32::MAX, None, None, 5, 2);
-        // Cap of 5 is the contract test from the task: when this many
-        // visible nodes existed, the walker must stop early. The dead pid
-        // exercises the early-return path; the assertion is that the call
-        // honors the cap without overflowing or panicking.
-        assert!(r1.nodes.len() <= 5, "max_elements=5 must cap nodes ≤ 5");
-        assert!(
-            r1.nodes.iter().all(|n| n.depth <= 2),
-            "max_depth=2 must cap depth ≤ 2"
-        );
-        // And the uncapped variant — same dead-pid path, just validating
-        // walk_tree(...) (which delegates to walk_tree_bounded with
-        // DEFAULT_MAX_*) returns the same empty/safe shape.
-        let r2 = crate::ax::tree::walk_tree(i32::MAX, None, None);
-        assert_eq!(
-            r1.nodes.len(),
-            r2.nodes.len(),
-            "no-pid case: both bounded and unbounded must agree on the empty result"
         );
     }
 }

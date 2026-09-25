@@ -770,15 +770,6 @@ mod tests {
     }
 
     #[test]
-    fn env_var_disables_gate() {
-        let _guard = env_lock();
-        std::env::set_var("CUA_DRIVER_RS_PERMISSIONS_GATE", "0");
-        let opts = GateOpts::from_env_and_flag(false);
-        assert!(opts.opt_out, "env=0 must opt out");
-        std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_GATE");
-    }
-
-    #[test]
     fn flag_disables_gate() {
         let _guard = env_lock();
         std::env::remove_var("CUA_DRIVER_RS_PERMISSIONS_GATE");

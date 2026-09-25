@@ -29,6 +29,8 @@ pkgs.rustPlatform.buildRustPackage {
     "-p"
     "cua-driver"
     "-p"
+    "cua-driver-e2e"
+    "-p"
     "cua-driver-core"
     "-p"
     "cua-driver-testkit"

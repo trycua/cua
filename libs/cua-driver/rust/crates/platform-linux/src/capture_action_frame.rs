@@ -1,24 +1,11 @@
 use cua_driver_core::capture_runtime::{
-    CaptureActionError, CaptureActionRequest, CaptureIdParseError, CaptureLookupError,
-    CapturePublication, CaptureService, CaptureTarget, EncodedScreenshotDimensions,
-    NativeActionDimensions, ScreenshotToActionTransform,
+    CaptureActionRequest, CapturePublication, CaptureService, CaptureTarget,
+    EncodedScreenshotDimensions, NativeActionDimensions, ScreenshotToActionTransform,
 };
 use serde_json::Value;
 
 fn window_target(pid: u32, window_id: u64) -> CaptureTarget {
     CaptureTarget::Window { pid, window_id }
-}
-
-pub fn resolve_max_image_dimension(
-    configured: u32,
-    legacy_max_dimension: Option<u32>,
-    max_image_dimension: Option<u32>,
-) -> u32 {
-    max_image_dimension.unwrap_or_else(|| match legacy_max_dimension {
-        Some(value) if configured == 0 => value,
-        Some(value) => configured.min(value),
-        None => configured,
-    })
 }
 
 fn publish(
@@ -206,27 +193,6 @@ fn select_desktop_action_dimensions(
     Ok(dimensions)
 }
 
-pub(crate) fn admission_error_code(error: &anyhow::Error) -> &'static str {
-    if error.downcast_ref::<CaptureIdParseError>().is_some() {
-        return "capture_id_invalid";
-    }
-    match error.downcast_ref::<CaptureActionError>() {
-        Some(CaptureActionError::Lookup(CaptureLookupError::Unknown)) => "capture_not_found",
-        Some(CaptureActionError::Lookup(CaptureLookupError::Expired)) => "capture_expired",
-        Some(CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch)) => {
-            "capture_generation_mismatch"
-        }
-        Some(CaptureActionError::Lookup(CaptureLookupError::TargetMismatch)) => {
-            "capture_target_mismatch"
-        }
-        Some(
-            CaptureActionError::InvalidScreenshotPoint | CaptureActionError::InvalidMappedPoint,
-        ) => "capture_coordinate_invalid",
-        Some(CaptureActionError::NativeActionFrameMismatch) => "capture_frame_mismatch",
-        None => "capture_action_refused",
-    }
-}
-
 pub fn admit_window_click(
     service: &CaptureService,
     args: &Value,
@@ -270,6 +236,7 @@ pub fn retire_runtime(service: &CaptureService) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cua_driver_core::capture_runtime::admission_error_code;
     use sha2::{Digest, Sha256};
 
     fn png(width: u32, height: u32, value: u8) -> Vec<u8> {
@@ -451,42 +418,6 @@ mod tests {
     }
 
     #[test]
-    fn capture_action_refusals_have_stable_specific_codes() {
-        for (error, code) in [
-            (
-                CaptureActionError::Lookup(CaptureLookupError::Unknown),
-                "capture_not_found",
-            ),
-            (
-                CaptureActionError::Lookup(CaptureLookupError::Expired),
-                "capture_expired",
-            ),
-            (
-                CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch),
-                "capture_generation_mismatch",
-            ),
-            (
-                CaptureActionError::Lookup(CaptureLookupError::TargetMismatch),
-                "capture_target_mismatch",
-            ),
-            (
-                CaptureActionError::InvalidScreenshotPoint,
-                "capture_coordinate_invalid",
-            ),
-            (
-                CaptureActionError::InvalidMappedPoint,
-                "capture_coordinate_invalid",
-            ),
-            (
-                CaptureActionError::NativeActionFrameMismatch,
-                "capture_frame_mismatch",
-            ),
-        ] {
-            assert_eq!(admission_error_code(&anyhow::Error::new(error)), code);
-        }
-    }
-
-    #[test]
     fn desktop_publication_uses_the_post_normalization_bytes() {
         let service = CaptureService::default();
         let normalized = png(4, 3, 0x18);
@@ -501,22 +432,6 @@ mod tests {
             admit_desktop(&service, &args("desktop"), &id, (2.0, 1.0), (4, 3)).unwrap(),
             (2.0, 1.0)
         );
-    }
-
-    #[test]
-    fn explicit_image_dimension_override_wins_including_native_zero() {
-        assert_eq!(
-            resolve_max_image_dimension(1568, Some(800), Some(2048)),
-            2048
-        );
-        assert_eq!(resolve_max_image_dimension(1568, Some(800), Some(0)), 0);
-    }
-
-    #[test]
-    fn omitted_image_dimension_override_preserves_existing_behavior() {
-        assert_eq!(resolve_max_image_dimension(1568, None, None), 1568);
-        assert_eq!(resolve_max_image_dimension(0, None, None), 0);
-        assert_eq!(resolve_max_image_dimension(1568, Some(800), None), 800);
     }
 
     #[test]

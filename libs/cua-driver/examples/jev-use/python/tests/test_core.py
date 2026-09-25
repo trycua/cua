@@ -60,6 +60,24 @@ class CoreTest(unittest.TestCase):
         self.assertEqual([candidate.id for candidate in candidates], ["reobserve", "abstain"])
         self.assertEqual(choose_mock(candidates)[0], "reobserve")
 
+    def test_visual_input_does_not_change_semantic_candidate_set(self) -> None:
+        payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
+        visual = parse_visual_regions(
+            payload,
+            expected_capture_id="capture-submit",
+            expected_pid=7,
+            expected_window_id=9,
+        )
+        for value in [None, "expected"]:
+            without_visual = build_candidates(
+                self.snapshot(value), "expected", None, capture_bound_click=True
+            )
+            with_visual = build_candidates(
+                self.snapshot(value), "expected", visual, capture_bound_click=True
+            )
+            self.assertEqual(with_visual, without_visual)
+            self.assertTrue(any(candidate.tool is not None for candidate in without_visual))
+
     def test_visual_fixture_builds_candidate_without_claiming_interactivity(self) -> None:
         payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
         payload["regions"][0]["interactive"] = False

@@ -52,6 +52,11 @@ pub mod history;
 #[cfg(target_os = "windows")]
 pub mod browser_platform;
 
+// Pure isolated-browser selection decision; cfg-independent so its unit
+// tests run on any host.
+#[cfg(any(target_os = "windows", test))]
+mod browser_isolated_selection;
+
 #[cfg(target_os = "windows")]
 mod browser_consent_ui;
 #[cfg(target_os = "windows")]

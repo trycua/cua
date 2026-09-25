@@ -65,6 +65,14 @@ session. Install Google Chrome or Microsoft Edge as a system application.
 Run Driver without elevation too: automatic browser discovery requires an
 installation the running account's token cannot modify.
 
+An elevated or administrator token can modify `Program Files`, so Driver
+refuses its signed Chrome and Edge. `browser_prepare` then fails with
+`browser_route_unavailable` and a message that says the installed browser is
+writable by the current elevated or administrator token. Some cloud Windows
+images make the first user the built-in Administrator account (SID ending in
+`-500`). That account always runs elevated, even with UAC enabled. Sign in as
+a standard user instead, or run Driver from a non-elevated session.
+
 ```powershell
 cua-driver --version
 cua-driver status

@@ -179,12 +179,47 @@ fn zero_length_frame_is_recoverable() {
     assert_eq!(read_json_frame(&mut stdout)["request_id"], "after-empty");
 }
 
+/// Compare JSON numbers by value. Release Please bumps the version in the
+/// response golden by re-serializing it with `JSON.stringify`, which writes
+/// `1.0` as `1`; serde_json would otherwise treat those as different values.
+fn numbers_as_f64(value: Value) -> Value {
+    match value {
+        Value::Number(number) => number
+            .as_f64()
+            .and_then(serde_json::Number::from_f64)
+            .map_or(Value::Number(number), Value::Number),
+        Value::Array(items) => Value::Array(items.into_iter().map(numbers_as_f64).collect()),
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .map(|(key, value)| (key, numbers_as_f64(value)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
 #[test]
 fn fixture_parse_matches_the_checked_in_golden() {
-    let actual = response(FIXTURE_REQUEST);
-    let expected: Value = serde_json::from_str(FIXTURE_RESPONSE).expect("parse response golden");
+    let actual = numbers_as_f64(response(FIXTURE_REQUEST));
+    let expected =
+        numbers_as_f64(serde_json::from_str(FIXTURE_RESPONSE).expect("parse response golden"));
     assert_eq!(actual, expected);
-    assert_eq!(response(FIXTURE_REQUEST), expected);
+    assert_eq!(numbers_as_f64(response(FIXTURE_REQUEST)), expected);
+}
+
+#[test]
+fn response_golden_survives_release_please_reserialization() {
+    // Release Please's JSON updater writes integral floats without their
+    // fraction, so the bumped golden says `1` where the worker emits `1.0`.
+    let reserialized = FIXTURE_RESPONSE.replace("\"confidence\": 1.0", "\"confidence\": 1");
+    assert_ne!(
+        reserialized, FIXTURE_RESPONSE,
+        "golden should contain a float confidence"
+    );
+    let expected =
+        numbers_as_f64(serde_json::from_str(&reserialized).expect("parse reserialized golden"));
+    assert_eq!(numbers_as_f64(response(FIXTURE_REQUEST)), expected);
 }
 
 #[test]

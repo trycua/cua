@@ -324,7 +324,12 @@ jobs:
               git push --force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD" \
                 origin "HEAD:refs/heads/$BRANCH"
             fi
-          done < <(gh pr list --state open --base main --limit 100 --json number --jq '.[].number')
+          # Search by head branch: an unfiltered list returns only the newest
+          # 100 open pull requests and can silently skip an older release PR.
+          done < <(gh pr list --state open --base main \
+            --search "head:release-please--branches--" --limit 100 \
+            --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("release-please--branches--")) | .number')
 
       - name: Verify repository release versions
         run: python3 .github/scripts/validate_release_versions.py --product all

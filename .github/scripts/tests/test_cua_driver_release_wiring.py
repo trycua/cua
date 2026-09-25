@@ -275,7 +275,8 @@ fi
         self.assertIn("5c625bfb5d1ff62eadeeb3772007f7f66fdcf071", workflow)
         self.assertIn("validate_release_please_tags.py --target HEAD", workflow)
         self.assertIn('-p cua-driver --precise "$DRIVER_VERSION"', workflow)
-        self.assertIn(
+        self.assertIn('--search "head:release-please--branches--"', workflow)
+        self.assertNotIn(
             "gh pr list --state open --base main --limit 100 --json number",
             workflow,
         )

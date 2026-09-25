@@ -210,6 +210,26 @@ fn await_web_content(
     false
 }
 
+
+unsafe fn diag_raw_tree(element: AXUIElementRef, depth: usize, out: &mut Vec<String>) {
+    if out.len() > 250 || depth > 9 {
+        return;
+    }
+    let role = super::bindings::copy_string_attr(element, "AXRole");
+    let title = super::bindings::copy_string_attr(element, "AXTitle")
+        .or_else(|| super::bindings::copy_string_attr(element, "AXDescription"));
+    let children = super::bindings::copy_children(element);
+    if role.as_deref() != Some("AXMenuBar") {
+        out.push(format!("{}{:?} {:?} children={}", "  ".repeat(depth), role, title.map(|t| t.chars().take(50).collect::<String>()), children.len()));
+        for child in &children {
+            diag_raw_tree(*child, depth + 1, out);
+        }
+    }
+    for child in children {
+        core_foundation::base::CFRelease(child as core_foundation::base::CFTypeRef);
+    }
+}
+
 /// # Safety
 ///
 /// `app_element` must be a valid application `AXUIElementRef` for `pid`.
@@ -220,12 +240,32 @@ pub unsafe fn ensure_chromium_ax_enabled(pid: i32, app_element: AXUIElementRef) 
         .ok()
         .and_then(|state| state.get(&pid).copied());
     let attempted_at = Instant::now();
-    let prior_timeouts = match next_attempt(cached.as_ref(), stamp, attempted_at) {
+    let decision = next_attempt(cached.as_ref(), stamp, attempted_at);
+    let diag = |line: String| {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/cua-diag-4125.log") {
+            let _ = writeln!(f, "[diag-4126] pid={pid} {line}");
+        }
+    };
+    diag(format!(
+        "ensure cached={cached:?} decision_skip={} probe_before={:?} manual_attr={:?} eui_attr={:?}",
+        matches!(decision, Attempt::Skip),
+        probe_web_content(app_element),
+        super::bindings::copy_bool_attr(app_element, "AXManualAccessibility"),
+        super::bindings::copy_bool_attr(app_element, "AXEnhancedUserInterface"),
+    ));
+    let prior_timeouts = match decision {
         Attempt::Skip => return,
         Attempt::Run { prior_timeouts } => prior_timeouts,
     };
+    let opt_in = enable_chromium_accessibility(app_element);
+    diag(format!(
+        "enable opt_in={opt_in:?} manual_set_err={} eui_set_err={}",
+        super::bindings::set_bool_attr_true(app_element, "AXManualAccessibility"),
+        super::bindings::set_bool_attr_true(app_element, "AXEnhancedUserInterface"),
+    ));
     let outcome = wait_outcome(
-        enable_chromium_accessibility(app_element),
+        opt_in,
         prior_timeouts,
         attempted_at,
         || {
@@ -238,6 +278,14 @@ pub unsafe fn ensure_chromium_ax_enabled(pid: i32, app_element: AXUIElementRef) 
             )
         },
     );
+    diag(format!(
+        "after outcome={outcome:?} probe_after={:?} elapsed={:?}",
+        probe_web_content(app_element),
+        attempted_at.elapsed()
+    ));
+    let mut raw = Vec::new();
+    diag_raw_tree(app_element, 0, &mut raw);
+    diag(format!("raw tree:\n{}", raw.join("\n")));
     if let (Some(stamp), Some(wait)) = (stamp, outcome) {
         if let Ok(mut state) = ENABLEMENT_STATE.lock() {
             state.insert(pid, ProcessEnablement { stamp, wait });

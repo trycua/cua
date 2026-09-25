@@ -25,6 +25,7 @@ destination. This exercises native follow-mouse after idle without changing
 its threshold, sending a click, or weakening the exact focused-client gate.
 """
 import argparse
+from harness_paths import harness_file  # Also puts tests/ helpers on sys.path.
 from production_app_smoke import add_provenance_arguments
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
@@ -421,7 +422,7 @@ def run(args):
                      'primary_hover_fixture.c', 'primary_hover_fixture_test.py', 'proof_fixtures.py',
                      'production_active_lock_proof.py', 'production_primary_conflict_proof.py',
                      'production_desktop_fault_proof.py', 'production_session_fault_proof.py'):
-            path = Path(__file__).with_name(name)
+            path = harness_file(name)
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
         origin['hover_fixture'] = plan['hover_fixture']
         origin['ownership'] = {key: plan[key] for key in ('vm', 'compositor', 'processes')}

@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 import production_target_lifetime_proof as proof
 from proof_fixtures import (ACTIVE, DELIVERED, PARTIAL, assert_rejects, identity, inkscape_profile,
                             primary_conflict_plan as base_plan, status, trace)

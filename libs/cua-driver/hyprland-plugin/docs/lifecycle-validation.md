@@ -60,7 +60,7 @@ The plugin's timer-expiry refusal now reports `lease_expired` explicitly.
 
 ## Test method
 
-[`input_lifecycle_live.py`](input_lifecycle_live.py) drives two native GTK
+[`input_lifecycle_live.py`](../tests/input_lifecycle_live.py) drives two native GTK
 DrawingArea fixtures through independent agent and observer MCP connections.
 Every background action uses a reviewed target and fresh Driver snapshots.
 The host operator signs a short-lived connection/target/epoch-bound grant;
@@ -83,7 +83,7 @@ past the grant deadline. A separate PID-fd watchdog resumes the exact process
 if the caller fails. The measured release interval starts immediately before
 SIGCONT, and the action must refuse with `lease_expired`. This proves expiry
 cleanup after resume, not continued desktop responsiveness during the stall.
-See the [runner instructions](README.md#held-input-lifecycle-faults).
+See the [runner instructions](../tests/README.md#held-input-lifecycle-faults).
 
 ## Recorded results
 

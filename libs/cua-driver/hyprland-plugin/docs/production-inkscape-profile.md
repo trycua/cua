@@ -102,7 +102,7 @@ from the clean harness checkout in the disposable native Wayland session,
 using fresh paths (the journal, wire file, and control socket must not exist):
 
 ```sh
-cd libs/cua-driver/hyprland-plugin/tests
+cd libs/cua-driver/hyprland-plugin/proofs
 observer_dir=$(mktemp -d)
 python3 "$(pwd)/primary_observer_fixture.py" \
   --journal "$observer_dir/foreground.jsonl" \

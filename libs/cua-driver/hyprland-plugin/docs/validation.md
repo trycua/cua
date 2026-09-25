@@ -2,7 +2,7 @@
 
 The discovery-only plugin passed a native build and lifecycle checks on Cua
 Cloud Fleet on September 4, 2026. These results support review of the foundation;
-the full promotion gates in [the test plan](README.md) remain open.
+the full promotion gates in [the test plan](../tests/README.md) remain open.
 
 The [September 5 merge-readiness pass](#merge-readiness-revalidation-september-5-2026)
 records a fresh candidate build and the remaining system-installation gate.
@@ -64,7 +64,7 @@ for installed Hyprland and header versions still ran.
 - macOS review-host suites: six of six tests passed in normal, ASan/UBSan, and
   TSan configurations. macOS uses a transport shim and mocked compositor APIs.
 
-The reusable live check is [live_discovery.py](live_discovery.py). It measures
+The reusable live check is [live_discovery.py](../tests/live_discovery.py). It measures
 active-window identity, workspace, cursor coordinates, window geometry/mapping,
 and focus history. It does not prove application delivery, complete stacking
 order, physical input isolation, or behavior during an active foreground grab.
@@ -143,7 +143,7 @@ treated as proof of deletion.
 
 ## Reproducible lifecycle follow-up at `0a67bf5c8`
 
-The checked-in [nested lifecycle runner](nested_lifecycle.py) passed on Cua
+The checked-in [nested lifecycle runner](../tests/nested_lifecycle.py) passed on Cua
 Cloud Fleet at `0a67bf5c844f5b358651737fb3545aaed5522007` on September 5, 2026
 (UTC), through the Cua Sandbox SDK. The committed plugin, workflow, and license
 archive had SHA-256

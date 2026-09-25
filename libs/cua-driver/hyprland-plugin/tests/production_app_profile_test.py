@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 from production_app_smoke import (PACKAGES, artifact_identity, create_documents,
                                   digest, package_owner, profile_packages, source_identities)
 from production_realapp_proof import (capacity_reservations, inkscape_client_identity,

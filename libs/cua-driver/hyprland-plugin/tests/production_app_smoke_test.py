@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import Mock, patch
 import zipfile
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 from production_app_smoke import (
     GroundingUnavailable, check_delivery, create_documents, ground, input_step,
     kernel_file_identity, launch_arguments, mapped_plugin, package_owner,

@@ -28,6 +28,7 @@ boundary, not cached authorization, concurrency, hostile same-user isolation,
 managed deployment/immutability, or the complete desktop certification matrix.
 """
 import argparse
+import harness_paths  # noqa: F401  Puts tests/ helpers on sys.path.
 from production_app_smoke import add_provenance_arguments
 import base64
 import hashlib

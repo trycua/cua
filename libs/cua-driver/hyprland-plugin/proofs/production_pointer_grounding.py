@@ -7,6 +7,7 @@ These helpers inspect synthetic documents, not arbitrary application content.
 import math
 import re
 
+import harness_paths  # noqa: F401  Puts tests/ helpers on sys.path.
 from production_app_smoke import GroundingUnavailable, calc_formula_selection, rows
 
 

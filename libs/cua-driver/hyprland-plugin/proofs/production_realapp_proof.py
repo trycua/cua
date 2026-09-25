@@ -19,6 +19,7 @@ import time
 import xml.etree.ElementTree as ET
 import zipfile
 
+from harness_paths import harness_file  # Also puts tests/ helpers on sys.path.
 from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
 from primary_observer import PrimaryObserver, verify_negative_control as verify_primary_control
@@ -553,7 +554,7 @@ def provenance(args, plan):
     files = {'primary-grab': args.primary_grab}
     for name in ('production_realapp_proof.py', 'production_mcp.py', 'driver_input_live.py',
                  'realapp_proof.py', 'primary_trace.py', 'production_pointer_grounding.py'):
-        files[name] = Path(__file__).with_name(name)
+        files[name] = harness_file(name)
     windows = json.loads(subprocess.check_output(
         ['hyprctl', '-j', 'clients'], text=True, timeout=10))
     identities = {}
@@ -571,7 +572,7 @@ def provenance(args, plan):
     origin['app_processes'] = identities
     if getattr(args, 'primary_observer', None):
         for name in ('primary_observer.py', 'primary_observer_fixture.py'):
-            origin['files'][name] = digest(Path(__file__).with_name(name))
+            origin['files'][name] = digest(harness_file(name))
     return origin
 
 

@@ -121,10 +121,10 @@ background qualification remains native Calc from `libreoffice-fresh 26.2.5-3`,
 Inkscape `1.4.4-6`, the plain compiled `evdev`/`pc105`/`us` keymap, and two
 seats. Chromium, Electron, and XWayland raw background input remain unqualified;
 semantic AT-SPI actions are separate.
-See [production proof preparation](../hyprland-plugin/tests/production-proof.md)
+See [production proof preparation](../hyprland-plugin/docs/production-proof.md)
 for the bounded plans and their limits.
 
-The explicit [Inkscape-only qualification profile](../hyprland-plugin/tests/production-inkscape-profile.md)
+The explicit [Inkscape-only qualification profile](../hyprland-plugin/docs/production-inkscape-profile.md)
 supports a bounded packaging candidate using exact Inkscape `1.4.4-6`, with
 independent native clients, two app lanes, separate SVG oracles, and third-owner
 capacity refusal. It preserves the default Calc/Inkscape profile and the native

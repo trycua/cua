@@ -2,6 +2,7 @@
 import copy
 import unittest
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 import production_pointer_grounding as pointer
 from proof_fixtures import START, STOP, Image, app_snapshot as snapshot, ink, primary_trace as trace
 

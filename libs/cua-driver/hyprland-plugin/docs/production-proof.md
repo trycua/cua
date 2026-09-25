@@ -219,7 +219,7 @@ Invoke from the exact source checkout, substituting the already reviewed paths
 and candidate SHA:
 
 ```text
-python3 libs/cua-driver/hyprland-plugin/tests/production_realapp_proof.py \
+python3 libs/cua-driver/hyprland-plugin/proofs/production_realapp_proof.py \
   --source <checkout> --source-sha <candidate-sha> \
   --driver <driver> --plugin <loaded-plugin-file> \
   --primary-grab <primary-grab> --foreground-journal <fixture-journal> \

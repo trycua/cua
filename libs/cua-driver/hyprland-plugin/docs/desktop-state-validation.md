@@ -65,7 +65,7 @@ with `NDEBUG` defined.
 
 ## Method and foreground comparison
 
-[`desktop_state_live.py`](desktop_state_live.py) drives native GTK raw-event
+[`desktop_state_live.py`](../tests/desktop_state_live.py) drives native GTK raw-event
 fixtures through real Driver MCP `drag` and `press_key` calls. The Fleet SDK
 provides VM transport and setup, not the background input path. An independent
 virtual primary pointer holds a real Wayland grab in the foreground fixture.
@@ -101,7 +101,7 @@ Every action refuses the old grant, refuses unapproved recovery input, requires
 a distinct fresh grant, and then delivers exactly one Escape press/release pair.
 The recovery checks also require unchanged foreground application and compositor
 state and no foreground wire-input leakage. See the
-[runner instructions](README.md#desktop-state-fault-controls) for setup and
+[runner instructions](../tests/README.md#desktop-state-fault-controls) for setup and
 watchdog requirements.
 
 ## Recorded results

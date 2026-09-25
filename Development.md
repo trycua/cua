@@ -97,7 +97,7 @@ The Rust harnesses are the source of truth for desktop behavior. Python tests
 do not duplicate that matrix. Start with:
 
 - [`libs/cua-driver/rust/README.md`](libs/cua-driver/rust/README.md) for the Cargo workspace.
-- [`libs/cua-driver/rust/crates/cua-driver/tests/README.md`](libs/cua-driver/rust/crates/cua-driver/tests/README.md) for test ownership.
+- [`libs/cua-driver/rust/crates/cua-driver-e2e/tests/README.md`](libs/cua-driver/rust/crates/cua-driver-e2e/tests/README.md) for desktop E2E test ownership.
 - [`scripts/ci/README.md`](scripts/ci/README.md) for canonical OS runners.
 - [Platform support](https://cua.ai/docs/reference/cua-driver/platform-support) for current capability boundaries.
 - [How Cua Driver is validated](https://cua.ai/docs/concepts/how-cua-driver-is-validated) for the public evidence model.

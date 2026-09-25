@@ -313,6 +313,13 @@ jobs:
               COMMIT_MESSAGE="chore(lume): synchronize release documentation"
             else
               python3 .github/scripts/validate_release_versions.py --product sandbox
+              # The Sandbox reference records the package version, so regenerate
+              # it with the release version. Lifecycle scripts stay disabled
+              # because this step holds the release app token.
+              npx --yes pnpm@9.0.4 --dir docs install --frozen-lockfile --ignore-scripts
+              node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library sandbox
+              git add docs/content/docs/reference/sandbox-sdk/runtime-support.mdx \
+                docs/content/docs/reference/sandbox-sdk/os-image-catalog.mdx
               COMMIT_MESSAGE="chore(sandbox): synchronize release metadata"
             fi
             if git diff --cached --quiet; then
@@ -324,7 +331,12 @@ jobs:
               git push --force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD" \
                 origin "HEAD:refs/heads/$BRANCH"
             fi
-          done < <(gh pr list --state open --base main --limit 100 --json number --jq '.[].number')
+          # Search by head branch: an unfiltered list returns only the newest
+          # 100 open pull requests and can silently skip an older release PR.
+          done < <(gh pr list --state open --base main \
+            --search "head:release-please--branches--" --limit 100 \
+            --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("release-please--branches--")) | .number')
 
       - name: Verify repository release versions
         run: python3 .github/scripts/validate_release_versions.py --product all

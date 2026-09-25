@@ -1,7 +1,7 @@
 # test fixture CLI smoke runners
 
 Per-OS broad PASS / FAIL / SKIP probes across the full cua-driver tool
-surface. Complements the Rust integration tests under `libs/cua-driver/rust/crates/cua-driver/tests/`:
+surface. Complements the Rust integration tests under `libs/cua-driver/rust/crates/cua-driver-e2e/tests/`:
 
 - Integration tests drive cua-driver through the MCP stdio loop and
   assert on specific UIA / AX state changes.

@@ -104,6 +104,108 @@ pub fn sanitize_reserved_args(args: &mut Value) {
     }
 }
 
+/// Resolve and apply the session identity for one tool call at a trusted
+/// transport boundary, returning the effective `_session_id`.
+///
+/// Public naming and the transport's lifecycle identity resolve
+/// independently. A non-empty `session` label is mirrored into the reserved
+/// `_session_id`; otherwise the transport's own session (a per-connection
+/// lease or MCP HTTP session) becomes the implicit lifecycle key.
+/// `_transport_session_id` always carries the transport session. Any
+/// caller-supplied value for either reserved key is replaced, never trusted.
+/// With neither a label nor a transport session the call stays anonymous.
+pub fn apply_session_identity(args: &mut Value, transport_session: Option<&str>) -> Option<String> {
+    let object = args.as_object_mut()?;
+    let effective = object
+        .get("session")
+        .and_then(Value::as_str)
+        .filter(|session| !session.is_empty())
+        .or(transport_session)
+        .map(str::to_owned);
+    object.remove("_session_id");
+    object.remove("_transport_session_id");
+    if let Some(id) = &effective {
+        object.insert("_session_id".to_owned(), Value::String(id.clone()));
+    }
+    if let Some(id) = transport_session {
+        object.insert(
+            "_transport_session_id".to_owned(),
+            Value::String(id.to_owned()),
+        );
+    }
+    effective
+}
+
+#[cfg(test)]
+mod session_identity_tests {
+    use super::apply_session_identity;
+    use serde_json::json;
+
+    #[test]
+    fn public_label_and_transport_session_resolve_independently() {
+        // (args, transport session) -> (effective _session_id, _transport_session_id)
+        for (mut args, transport, session_id, transport_id) in [
+            (
+                json!({ "x": 1, "session": "research-1" }),
+                None,
+                Some("research-1"),
+                None,
+            ),
+            (
+                json!({ "session": "capability-session" }),
+                Some("proxy-session"),
+                Some("capability-session"),
+                Some("proxy-session"),
+            ),
+            // The transport session drives the implicit lifecycle without
+            // manufacturing a caller-visible public `session` label.
+            (
+                json!({ "x": 1 }),
+                Some("mcp-123"),
+                Some("mcp-123"),
+                Some("mcp-123"),
+            ),
+            (
+                json!({ "session": "" }),
+                Some("mcp-1"),
+                Some("mcp-1"),
+                Some("mcp-1"),
+            ),
+            (json!({ "x": 1 }), None, None, None),
+            // Caller-supplied reserved keys are replaced or removed.
+            (
+                json!({ "_session_id": "caller-set", "_transport_session_id": "forged" }),
+                Some("mcp-999"),
+                Some("mcp-999"),
+                Some("mcp-999"),
+            ),
+            (
+                json!({ "_session_id": "caller-set", "_transport_session_id": "forged" }),
+                None,
+                None,
+                None,
+            ),
+        ] {
+            let before = args.clone();
+            let effective = apply_session_identity(&mut args, transport);
+            assert_eq!(effective.as_deref(), session_id, "{before}");
+            assert_eq!(args["_session_id"].as_str(), session_id, "{before}");
+            assert_eq!(
+                args["_transport_session_id"].as_str(),
+                transport_id,
+                "{before}"
+            );
+            assert_eq!(args.get("session"), before.get("session"), "{before}");
+        }
+
+        let mut not_an_object = json!(["session"]);
+        assert_eq!(
+            apply_session_identity(&mut not_an_object, Some("mcp")),
+            None
+        );
+    }
+}
+
 /// The session key an isolation-scoped state store should key on for this
 /// call: the public `session` label, else the proxy-minted `_session_id`,
 /// else the legacy `cursor_id`, else a shared `"default"` bucket for

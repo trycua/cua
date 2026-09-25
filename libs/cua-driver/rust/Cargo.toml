@@ -6,6 +6,7 @@ members = [
     "crates/cua-driver-sdk",
     "crates/cua-driver-bindgen",
     "crates/cua-driver-testkit",
+    "crates/cua-driver-e2e",
     "crates/cua-driver-uia",
     "crates/cua-driver-core",
     "crates/platform-macos",

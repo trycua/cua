@@ -15,7 +15,6 @@ pub mod render_state;
 pub mod session_badge;
 pub mod theme;
 pub mod theme_artifact;
-pub mod util;
 pub mod z_order;
 
 pub use badge_glyphs::{BadgeChip, BadgeGlyph};
@@ -447,8 +446,10 @@ mod pointer_tracking_tests {
         else {
             panic!("pointer tracking must produce an anchored snap");
         };
-        assert!((x - (120.0 + heading.cos() * 16.0)).abs() < f64::EPSILON);
-        assert!((y - (80.0 + heading.sin() * 16.0)).abs() < f64::EPSILON);
+        // The artwork centre sits 16 points down-right of the tip at 45 degrees.
+        assert_eq!(heading, std::f64::consts::FRAC_PI_4);
+        assert!((x - 131.313_708_498_984_76).abs() < 1e-9, "x = {x}");
+        assert!((y - 91.313_708_498_984_76).abs() < 1e-9, "y = {y}");
     }
 
     #[test]

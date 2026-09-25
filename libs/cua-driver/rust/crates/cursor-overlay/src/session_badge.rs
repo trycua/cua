@@ -614,6 +614,25 @@ mod tests {
                 hidden.data().chunks_exact(4).all(|pixel| pixel[3] == 0),
                 "{scale}x"
             );
+
+            // Without chips, only the pill paints, so the session colour must
+            // tint the pill itself rather than just the chips.
+            let pill_only = session_badge_layout(SessionBadgeInput {
+                label: Some("Research run"),
+                delivery: None,
+                target: None,
+                cursor: (120.0 * scale, 60.0 * scale),
+                backing_scale: scale,
+                label_alpha: 1.0,
+                chip_alpha: 0.0,
+                clip: Some((width as f32, height as f32)),
+            })
+            .unwrap();
+            let mut pill_blue = Pixmap::new(width, height).unwrap();
+            let mut pill_purple = Pixmap::new(width, height).unwrap();
+            paint_session_badge(&mut pill_blue, &pill_only, [94, 192, 232, 255], 1.0);
+            paint_session_badge(&mut pill_purple, &pill_only, [178, 132, 255, 255], 1.0);
+            assert_ne!(pill_blue.data(), pill_purple.data(), "pill {scale}x");
         }
     }
 

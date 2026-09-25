@@ -166,6 +166,22 @@ async function writeEvent(path: string | undefined, event: Record<string, unknow
   if (path) await appendFile(path, `${line}\n`, 'utf8');
 }
 
+export function decisionTimingFields(args: {
+  decisionMs: number;
+  semanticObserveMs: number;
+  visualObserveMs: number;
+  candidateBuildMs: number;
+  providerDecisionMs: number;
+}): Record<string, number> {
+  return {
+    decision_ms: args.decisionMs,
+    semantic_observe_ms: args.semanticObserveMs,
+    visual_observe_ms: args.visualObserveMs,
+    candidate_build_ms: args.candidateBuildMs,
+    provider_decision_ms: args.providerDecisionMs,
+  };
+}
+
 async function run(args: Arguments): Promise<Outcome> {
   const token = args.token ?? `jev-${randomUUID().replaceAll('-', '').slice(0, 10)}`;
   const transport = new StdioClientTransport({
@@ -211,11 +227,16 @@ async function run(args: Arguments): Promise<Outcome> {
       }
 
       const decisionStarted = performance.now();
+      let phaseStarted = performance.now();
       const snapshot = (await driver.call('get_browser_state', {
         target_id: targetId,
         tab_id: tabId,
         snapshot_format: 'semantic_v2',
       })) as BrowserSnapshot;
+      const semanticObserveMs =
+        Math.round((performance.now() - phaseStarted) * 100) / 100;
+
+      phaseStarted = performance.now();
       const visual = await optionalVisualObservation(
         driver,
         pid,
@@ -223,18 +244,34 @@ async function run(args: Arguments): Promise<Outcome> {
         availableTools,
         captureBoundClick
       );
+      const visualObserveMs =
+        Math.round((performance.now() - phaseStarted) * 100) / 100;
+
+      phaseStarted = performance.now();
       const candidates = buildCandidates(snapshot, token, visual, captureBoundClick);
+      const candidateBuildMs =
+        Math.round((performance.now() - phaseStarted) * 100) / 100;
       if (!candidates.length) {
         await writeEvent(args.log, { event: 'outcome', outcome: 'abstained', step });
         return 'abstained';
       }
+      phaseStarted = performance.now();
       const answer =
         args.provider === 'mock'
           ? chooseMockAdapter(candidates, snapshot, visual, history)
           : await chooseLive(candidates, snapshot, visual, history);
+      const providerDecisionMs =
+        Math.round((performance.now() - phaseStarted) * 100) / 100;
       if (!answer.choice) return 'abstained';
       const candidate = validateChoice(answer.choice, candidates, visual?.captureId);
       const decisionMs = Math.round((performance.now() - decisionStarted) * 100) / 100;
+      const timing = decisionTimingFields({
+        decisionMs,
+        semanticObserveMs,
+        visualObserveMs,
+        candidateBuildMs,
+        providerDecisionMs,
+      });
 
       if (candidate.id === 'reobserve') {
         const event = {
@@ -243,8 +280,9 @@ async function run(args: Arguments): Promise<Outcome> {
           candidate: candidate.id,
           confidence: answer.confidence,
           probabilities: answer.probabilities,
-          decision_ms: decisionMs,
+          ...timing,
           action_ms: 0,
+          total_step_ms: Math.round((performance.now() - decisionStarted) * 100) / 100,
           dry_run: args.dryRun,
         };
         history.push(event);
@@ -287,8 +325,9 @@ async function run(args: Arguments): Promise<Outcome> {
         candidate: candidate.id,
         confidence: answer.confidence,
         probabilities: answer.probabilities,
-        decision_ms: decisionMs,
+        ...timing,
         action_ms: actionMs,
+        total_step_ms: Math.round((performance.now() - decisionStarted) * 100) / 100,
         dry_run: args.dryRun,
       };
       history.push(event);

@@ -634,8 +634,8 @@ fn configure_macos_runtime() {
     cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
         platform_macos::capture::crosshair_png_bytes(png_bytes, x, y).ok()
     });
-    cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
-        platform_macos::recording_hooks::app_state_json_for(window_id, pid)
+    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(|window_id, pid, budget| {
+        platform_macos::recording_hooks::app_state_json_for(window_id, pid, budget)
     });
     cua_driver_core::recording::set_element_bounds_fn(|window_id, pid, index| {
         platform_macos::recording_hooks::element_window_local_xy(window_id, pid, index)
@@ -653,8 +653,8 @@ fn configure_windows_runtime() {
     cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
         platform_windows::capture::crosshair_png_bytes(png_bytes, x, y).ok()
     });
-    cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
-        platform_windows::recording_hooks::app_state_json_for(window_id, pid)
+    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(|window_id, pid, budget| {
+        platform_windows::recording_hooks::app_state_json_for(window_id, pid, budget)
     });
     cua_driver_core::recording::set_element_bounds_fn(|window_id, pid, index| {
         platform_windows::recording_hooks::element_window_local_xy(window_id, pid, index)
@@ -682,8 +682,8 @@ fn configure_linux_runtime(prepare_desktop_environment: bool) {
     cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
         platform_linux::capture::crosshair_png_bytes(png_bytes, x, y).ok()
     });
-    cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
-        platform_linux::recording_hooks::app_state_json_for(window_id, pid)
+    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(|window_id, pid, budget| {
+        platform_linux::recording_hooks::app_state_json_for(window_id, pid, budget)
     });
     cua_driver_core::recording::set_element_bounds_fn(|window_id, pid, index| {
         platform_linux::recording_hooks::element_window_local_xy(window_id, pid, index)

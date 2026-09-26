@@ -46,7 +46,9 @@ def test_release_please_keeps_creating_the_lightweight_anchor_tag() -> None:
     package = config["packages"]["libs/cua-driver/rust/crates/cua-perception"]
     assert package["skip-github-release"] is True
     release_please = (ROOT / ".github/workflows/release-please.yml").read_text()
-    assert 'TAG="cua-perception-v$VERSION"' in release_please
+    anchor = (ROOT / ".github/scripts/anchor_perception_release_tag.sh").read_text()
+    assert "run: bash .github/scripts/anchor_perception_release_tag.sh" in release_please
+    assert 'TAG="cua-perception-v$VERSION"' in anchor
     # The anchor uses the release app token so the tag push triggers this workflow.
     assert "GH_TOKEN: ${{ steps.app-token.outputs.token }}" in release_please
 

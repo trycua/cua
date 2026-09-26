@@ -5,6 +5,8 @@ on:
     paths:
       - ".github/releases/**"
       - ".github/scripts/perception_release.py"
+      - ".github/scripts/anchor_perception_release_tag.sh"
+      - ".github/scripts/tests/test_anchor_perception_release_tag.py"
       - ".github/scripts/perception_release_install_check.py"
       - ".github/scripts/tests/test_cua_perception_release_workflow.py"
       - ".github/scripts/tests/test_perception_release_install_check.py"
@@ -27,6 +29,8 @@ on:
     paths:
       - ".github/releases/**"
       - ".github/scripts/perception_release.py"
+      - ".github/scripts/anchor_perception_release_tag.sh"
+      - ".github/scripts/tests/test_anchor_perception_release_tag.py"
       - ".github/scripts/perception_release_install_check.py"
       - ".github/scripts/tests/test_cua_perception_release_workflow.py"
       - ".github/scripts/tests/test_perception_release_install_check.py"
@@ -93,6 +97,8 @@ jobs:
             .github/scripts/tests/test_cua_driver_default_distribution.py \
             .github/scripts/tests/test_cua_perception_release_topology.py \
             .github/scripts/tests/test_cua_perception_release_workflow.py \
+            .github/scripts/tests/test_anchor_perception_release_tag.py \
+            .github/scripts/tests/test_cua_perception_release_workflows.py \
             .github/scripts/tests/test_perception_release_install_check.py \
             .github/scripts/tests/test_verify_cua_driver_release_archives.py \
             .github/scripts/tests/test_release_channels.py \

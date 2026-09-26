@@ -33,7 +33,14 @@ The example prefers browser DOM evidence. It also recognizes the public
 tool and the capture-bound `click.capture_id` input. The agent obtains the
 capture from `get_window_state` and sends its exact ID with the visual click;
 it never falls back to unbound coordinates. The optional path is not required
-for this form. See
+for this form: its Submit button has a DOM reference, so the agent submits
+with `browser_click` and skips the visual parse. The agent parses visual
+regions only when the page offers no action. If Driver refuses a background
+visual click, the next step offers an explicit foreground click instead of
+retrying in the background. Each logged step records which tool acted and a
+`visual` status (`skipped`, `ok`, `not_installed`, `error`, or `unavailable`). To prove the visual action path with the perception
+extension installed, add `--visual-fixture --require-visual-path` to
+`verify_setup.py`; that test page has no Submit button reference. See
 [Capture and delivery modalities](/concepts/capture-and-delivery-modalities) for
 the observation modes Cua Driver supports.
 
@@ -64,6 +71,14 @@ Use a normal, non-administrator PowerShell terminal in your logged-in desktop
 session. Install Google Chrome or Microsoft Edge as a system application.
 Run Driver without elevation too: automatic browser discovery requires an
 installation the running account's token cannot modify.
+
+An elevated or administrator token can modify `Program Files`, so Driver
+refuses its signed Chrome and Edge. `browser_prepare` then fails with
+`browser_route_unavailable` and a message that says the installed browser is
+writable by the current elevated or administrator token. Some cloud Windows
+images make the first user the built-in Administrator account (SID ending in
+`-500`). That account always runs elevated, even with UAC enabled. Sign in as
+a standard user instead, or run Driver from a non-elevated session.
 
 ```powershell
 cua-driver --version

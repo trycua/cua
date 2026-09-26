@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -196,7 +197,81 @@ def visual_regions_as_text(request: DecisionRequest) -> str:
     return "\n".join(lines)
 
 
+S1_MODALITIES = ("text", "multimodal")
+_HF_SNAPSHOT_PARENT = "snapshots"
+_REVISION_PATTERN = re.compile(r"[0-9a-f]{40}")
+_UNSAFE_IDENTITY_CHARS = re.compile(r"[^A-Za-z0-9._/-]")
+
+
+def _hf_local_dir_revision(root: Path, modality: str) -> str | None:
+    """Read the commit that `hf download --local-dir` recorded for the adapter.
+
+    `huggingface_hub` writes `<local-dir>/.cache/huggingface/download/<file>.metadata`
+    whose first line is the resolved commit hash. Only the selected modality's
+    adapter files are consulted, and they must agree.
+    """
+    metadata_dir = root / ".cache" / "huggingface" / "download"
+    revisions: set[str] = set()
+    for prefix in (Path(modality), Path()):
+        for name in ("adapter_config.json", "adapter_model.safetensors"):
+            candidate = metadata_dir / prefix / f"{name}.metadata"
+            try:
+                first_line = candidate.read_text(encoding="utf-8").splitlines()[0].strip()
+            except (OSError, IndexError, UnicodeDecodeError):
+                continue
+            if _REVISION_PATTERN.fullmatch(first_line):
+                revisions.add(first_line)
+        if revisions:
+            break
+    return revisions.pop() if len(revisions) == 1 else None
+
+
+def s1_model_identity(
+    adapter_path: Path,
+    modality: str,
+    *,
+    repo_id: str | None = None,
+    revision: str | None = None,
+) -> str:
+    """Name the S1 checkpoint that produced a decision, for evidence logs.
+
+    The result is `<adapter>[@<revision>]:<modality>`, for example
+    `cua-ai/cua-s1-4b-0.2@16818868b0cc7813808aae4e87b417657046ab79:text`.
+    `repo_id` and `revision` override detection. Otherwise the adapter name
+    and revision come from a Hugging Face cache snapshot path
+    (`models--<org>--<name>/snapshots/<commit>`), from the metadata that
+    `hf download --local-dir` leaves in the adapter directory, or, failing
+    both, from the adapter directory name with no revision. Detection never
+    claims a Hub repository or revision it cannot read locally.
+    """
+    if modality not in S1_MODALITIES:
+        raise ValueError(f"unknown S1 modality: {modality!r}")
+    root = Path(adapter_path).expanduser()
+    if root.name in S1_MODALITIES:
+        root = root.parent
+    label = repo_id.strip() if repo_id and repo_id.strip() else None
+    detected_revision: str | None = None
+    parts = root.parts
+    if len(parts) >= 3 and parts[-2] == _HF_SNAPSHOT_PARENT and parts[-3].startswith("models--"):
+        if label is None:
+            label = parts[-3].removeprefix("models--").replace("--", "/")
+        if _REVISION_PATTERN.fullmatch(parts[-1]):
+            detected_revision = parts[-1]
+    else:
+        detected_revision = _hf_local_dir_revision(root, modality)
+    if label is None:
+        label = root.name or "cua-s1-adapter"
+    chosen_revision = revision.strip() if revision and revision.strip() else detected_revision
+    label = _UNSAFE_IDENTITY_CHARS.sub("_", label)[:64]
+    identity = label
+    if chosen_revision:
+        identity += "@" + _UNSAFE_IDENTITY_CHARS.sub("_", chosen_revision)[:40]
+    return f"{identity}:{modality}"
+
+
 class S1DecisionModel:
+    # Default identity for callers that construct the adapter directly without
+    # naming the checkpoint. `choose_decision.py` passes a derived identity.
     name = "cua-s1-4b-local"
 
     def __init__(
@@ -206,7 +281,12 @@ class S1DecisionModel:
         modality: Literal["text", "multimodal"] = "text",
         screenshot_path: Path | None = None,
         screenshot_capture_id: str | None = None,
+        name: str | None = None,
     ) -> None:
+        if name is not None:
+            if not isinstance(name, str) or not 0 < len(name) <= 128:
+                raise ValueError("S1 model identity must be a bounded string")
+            self.name = name
         self.scorer = scorer
         self.modality = modality
         self.screenshot_path = screenshot_path

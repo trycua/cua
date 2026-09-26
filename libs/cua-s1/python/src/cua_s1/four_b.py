@@ -31,13 +31,49 @@ libraries are only imported inside `FourBModel.load`.
 
 from __future__ import annotations
 
+import os
 import string
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_BASE_MODEL = "Qwen/Qwen3.5-4B"
 
 LETTERS = string.ascii_uppercase  # "A".."Z" -- enough letters for any realistic option set
+
+# Transformers 5 materializes checkpoint tensors on a thread pool unless this
+# variable is true. On Apple silicon, concurrent dtype casts onto `mps` (for
+# example bf16 checkpoint shards loaded as float16) can segfault or hang
+# during `from_pretrained`, so `FourBModel.load` turns it on for `mps` loads.
+ASYNC_LOAD_ENV = "HF_DEACTIVATE_ASYNC_LOAD"
+
+
+def needs_sync_weight_loading(device: str) -> bool:
+    """Return whether weights for `device` must be materialized sequentially.
+
+    Only Apple's `mps` backend (`"mps"` or `"mps:<index>"`) needs it; CUDA and
+    CPU keep Transformers' default threaded loader.
+    """
+    return str(device).strip().lower().split(":", 1)[0] == "mps"
+
+
+@contextmanager
+def sync_weight_loading(enabled: bool) -> Iterator[None]:
+    """Set `HF_DEACTIVATE_ASYNC_LOAD=1` for the duration of a model load.
+
+    Does nothing when `enabled` is false or when the caller already set the
+    variable explicitly (any value), so an explicit environment choice always
+    wins. The previous environment is restored afterwards.
+    """
+    if not enabled or ASYNC_LOAD_ENV in os.environ:
+        yield
+        return
+    os.environ[ASYNC_LOAD_ENV] = "1"
+    try:
+        yield
+    finally:
+        os.environ.pop(ASYNC_LOAD_ENV, None)
 
 
 @dataclass(frozen=True)
@@ -275,13 +311,16 @@ class FourBModel:
         model_cls = (
             AutoModelForImageTextToText if self.modality == "multimodal" else AutoModelForCausalLM
         )
-        model = model_cls.from_pretrained(
-            self.base_model, torch_dtype=torch_dtype, device_map=self.device
-        )
-        if self.lora_adapter_path:
-            from peft import PeftModel
+        # Sequential materialization on `mps` avoids a crash or hang in
+        # Transformers' threaded loader; see `ASYNC_LOAD_ENV`.
+        with sync_weight_loading(needs_sync_weight_loading(self.device)):
+            model = model_cls.from_pretrained(
+                self.base_model, torch_dtype=torch_dtype, device_map=self.device
+            )
+            if self.lora_adapter_path:
+                from peft import PeftModel
 
-            model = PeftModel.from_pretrained(model, str(self._resolve_adapter_path()))
+                model = PeftModel.from_pretrained(model, str(self._resolve_adapter_path()))
         model.eval()
         self._model = model
 

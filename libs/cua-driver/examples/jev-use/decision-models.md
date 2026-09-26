@@ -130,8 +130,29 @@ request schema permits up to 32 candidates. The S1 multimodal adapter requires
 an existing local screenshot path and an explicit screenshot capture ID equal
 to the request's `capture_id`. The caller must supply the image from that
 capture; the adapter checks identity but cannot authenticate image contents.
-The path and image are never added to a TypeSafe request. The CLI currently
-exposes only the text adapter.
+The path and image are never added to a TypeSafe request.
+
+`choose_decision.py --model s1` loads the text adapter by default. Select the
+multimodal adapter with `--s1-modality multimodal` (or `S1_MODALITY=multimodal`)
+and pass the capture's image with `--screenshot <png>` and
+`--screenshot-capture-id <capture_id>`; the chooser returns `error` when the
+capture ID differs from the request. `verify_decision_cli.py --model s1
+--screenshot <png>` runs the same check against a fixture, binding the image to
+the fixture's capture ID.
+
+The response's `model` field names the checkpoint as
+`<adapter>[@<revision>]:<modality>`, for example
+`cua-s1-4b-0.2@16818868b0cc7813808aae4e87b417657046ab79:text`. The adapter name
+and revision come from a Hugging Face cache snapshot path or from the metadata
+that `hf download --local-dir` writes; otherwise the directory name is used
+without a revision. Set `S1_ADAPTER_ID` (for example `cua-ai/cua-s1-4b-0.2`) and
+`S1_ADAPTER_REVISION` to state them explicitly. The base model is not part of
+this identity, so record `S1_BASE_MODEL_PATH`'s revision alongside the
+evidence.
+
+The chooser supports only Cua-S1-4B PEFT adapters (`cua-s1-4b-0.2` and
+`cua-s1-4b-0.1`). `cua-s1-nano-0.1` and `cua-s1-forms` are byte-level scorers
+with a different input format; `S1_ADAPTER_PATH` pointing at them fails setup.
 
 ## Verification scope
 

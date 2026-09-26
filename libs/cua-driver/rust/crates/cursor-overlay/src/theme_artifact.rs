@@ -783,10 +783,11 @@ pub fn paint_compiled_theme_with_tint(
     } else {
         (0.0, 0.0, 0.0)
     };
-    let transform = Transform::from_translate(-64.0, -64.0)
-        .post_scale(scale, scale)
-        .post_rotate((heading - std::f32::consts::FRAC_PI_4 + float_rotation).to_degrees())
-        .post_translate(anchor_x + float_dx * scale, anchor_y + float_dy * scale);
+    let transform =
+        Transform::from_translate(-f32::from(theme.hotspot[0]), -f32::from(theme.hotspot[1]))
+            .post_scale(scale, scale)
+            .post_rotate((heading - std::f32::consts::FRAC_PI_4 + float_rotation).to_degrees())
+            .post_translate(anchor_x + float_dx * scale, anchor_y + float_dy * scale);
     let reduced = visual.reduced_motion == crate::ReducedMotion::On;
     if let Some(animation) = theme.animation_for_action(visual.resolved_action) {
         draw_layer(
@@ -922,5 +923,113 @@ mod tests {
         let source = include_bytes!("../assets/cua.default.lottie");
         let expected: [u8; 32] = Sha256::digest(source).into();
         assert_eq!(embedded_default_theme().source_hash, expected);
+    }
+
+    fn hotspot_theme(transforms: Vec<CompiledTransform>) -> CompiledTheme {
+        let frames = transforms
+            .into_iter()
+            .map(|transform| CompiledFrame {
+                commands: vec![CompiledDrawCommand {
+                    geometries: vec![CompiledGeometry::Ellipse {
+                        center: [55.0, 30.0],
+                        size: [8.0, 8.0],
+                    }],
+                    transform,
+                    opacity: 1.0,
+                    fill: Some([255, 0, 0, 255]),
+                    stroke: None,
+                }],
+            })
+            .collect();
+        let mut theme = minimal_theme();
+        theme.actions.insert(
+            "idle".into(),
+            CompiledAnimation {
+                still_frame: 0,
+                frames,
+            },
+        );
+        theme
+    }
+
+    fn marker_centroid(pixmap: &tiny_skia::Pixmap) -> (f32, f32) {
+        let (weight, x_sum, y_sum) = pixmap.data().chunks_exact(4).enumerate().fold(
+            (0.0, 0.0, 0.0),
+            |(weight, x_sum, y_sum), (index, pixel)| {
+                let alpha = f32::from(pixel[3]);
+                (
+                    weight + alpha,
+                    x_sum + (index % pixmap.width() as usize) as f32 * alpha,
+                    y_sum + (index / pixmap.width() as usize) as f32 * alpha,
+                )
+            },
+        );
+        assert!(weight > 0.0, "synthetic hotspot marker was not painted");
+        (x_sum / weight, y_sum / weight)
+    }
+
+    fn render_marker(
+        theme: &CompiledTheme,
+        heading: f32,
+        backing_scale: f32,
+        elapsed_secs: f64,
+    ) -> (f32, f32) {
+        let mut pixmap = tiny_skia::Pixmap::new(256, 256).unwrap();
+        let visual = CursorVisualState {
+            elapsed_secs,
+            ..CursorVisualState::default()
+        };
+        paint_compiled_theme_with_tint(
+            &mut pixmap,
+            theme,
+            &visual,
+            128.0,
+            128.0,
+            heading,
+            backing_scale,
+            1.0,
+            None,
+        );
+        marker_centroid(&pixmap)
+    }
+
+    #[test]
+    fn hotspot_stays_at_cursor_through_heading_scale_and_semantic_frames() {
+        let theme = hotspot_theme(vec![CompiledTransform::default(); 4]);
+        let headings = [
+            std::f32::consts::FRAC_PI_4,
+            0.0,
+            std::f32::consts::FRAC_PI_2,
+        ];
+
+        for heading in headings {
+            for backing_scale in [1.0, 2.0] {
+                for frame in 0..4 {
+                    let elapsed_secs = f64::from(frame) / f64::from(FPS);
+                    let (x, y) = render_marker(&theme, heading, backing_scale, elapsed_secs);
+                    assert!(
+                        (x - 128.0).abs() <= 0.75 && (y - 128.0).abs() <= 0.75,
+                        "hotspot drifted to ({x:.2}, {y:.2}) at heading={heading}, scale={backing_scale}, frame={frame}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn authored_layer_translation_remains_relative_to_hotspot() {
+        let plain = hotspot_theme(vec![CompiledTransform::default()]);
+        let translated = hotspot_theme(vec![CompiledTransform {
+            position: [6.0, 2.0],
+            ..CompiledTransform::default()
+        }]);
+        let heading = std::f32::consts::FRAC_PI_4;
+        let backing_scale = 2.0;
+        let origin = render_marker(&plain, heading, backing_scale, 0.0);
+        let moved = render_marker(&translated, heading, backing_scale, 0.0);
+        let scale = crate::theme::DISPLAY_SIZE * backing_scale / CANVAS as f32;
+
+        assert!((moved.0 - origin.0 - 6.0 * scale).abs() <= 0.35);
+        assert!((moved.1 - origin.1 - 2.0 * scale).abs() <= 0.35);
     }
 }

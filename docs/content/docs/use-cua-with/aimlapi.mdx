@@ -1,0 +1,29 @@
+---
+title: aimlapi.com
+description: Use models served by aimlapi.com with Cua Driver through an OpenAI-compatible harness, or with the Cua Agent SDK through LiteLLM.
+icon: Layers
+---
+
+aimlapi.com serves Anthropic, Google, OpenAI, Qwen, GLM, and other model families from one OpenAI-compatible endpoint at `https://api.aimlapi.com/v1`. Point a harness at that endpoint, then connect the same harness to Cua Driver over MCP.
+
+| Start here when…                       | Recommended path                                                                                                                                                    |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| You use an OpenAI-compatible harness   | Follow aimlapi.com's [quickstart](https://docs.aimlapi.com/quickstart/setting-up) to set the base URL and key, then [add Cua Driver over MCP](/how-to-guides/driver/connect-your-agent#generic-mcp-json) |
+| You use Codex                          | Configure Codex against the OpenAI-compatible endpoint, then [connect Codex to Cua Driver](/use-cua-with/codex)                                                     |
+| You use the Cua Agent SDK              | Pass a LiteLLM model string prefixed with `aiml/`, as shown below                                                                                                   |
+
+Cua Driver supplies desktop state and actions. The harness owns the model connection, reasoning loop, and tool selection.
+
+## Cua Agent SDK
+
+The Agent SDK reaches aimlapi.com through LiteLLM's `aiml` provider, which reads `AIML_API_KEY` and defaults to `https://api.aimlapi.com/v1`. No extra registration is needed:
+
+```python
+from cua_agent import ComputerAgent
+
+agent = ComputerAgent(model="aiml/alibaba/qwen3-vl-plus", tools=[computer])
+```
+
+`ComputerAgent` selects its agent loop by matching a regular expression against the whole model string, including the provider prefix. An id such as `aiml/anthropic/claude-sonnet-4.5` therefore selects the Anthropic hosted-tools loop, whose `computer_20250124` tool is not served by a chat-completions endpoint; the request succeeds but no screenshot is sent and no computer action comes back. Prefer an id that reaches a chat-completions loop, such as `aiml/alibaba/qwen3-vl-plus`, `aiml/z-ai/glm-4.5v`, or `aiml/openai/gpt-4o-mini`. The `qwen3-vl-plus` and `gpt-4o-mini` ids run on the generic VLM loop, which needs the `qwen` extra: `pip install cua-agent[qwen]`.
+
+Model ids change; check [aimlapi.com's model catalog](https://docs.aimlapi.com/api-overview/model-database/text-models) or `GET https://api.aimlapi.com/v1/models` for the current list. The catalog is served without authentication, so a successful request to it does not confirm that a key is valid.

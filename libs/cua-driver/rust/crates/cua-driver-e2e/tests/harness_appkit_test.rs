@@ -758,6 +758,69 @@ fn harness_appkit_invoke_menu_live_path() {
     );
 }
 
+#[test]
+#[ignore]
+fn harness_appkit_app_menu_row_is_admitted_and_reported_unverifiable() {
+    run_case(
+        native_foreground_case(
+            "appkit",
+            "app_menu_semantic_action",
+            Targeting::Ax,
+            DriverRoute::MacosAxAction,
+        ),
+        |pid, wid, driver| {
+            let fronted = driver.call(
+                "bring_to_front",
+                serde_json::json!({ "pid": pid as i64, "window_id": wid }),
+            );
+            assert!(
+                !fronted.is_error(),
+                "harness window did not reach the foreground, so its Window menu \
+                 command stays disabled: {}",
+                fronted.text()
+            );
+            std::thread::sleep(Duration::from_millis(250));
+            let snapshot = snapshot_elements(driver, pid, wid);
+            let index = element_index_by_id(snapshot.tree_text(), "menu-window-arrange-left")
+                .unwrap_or_else(|| {
+                    panic!(
+                        "AppKit menu bar row is not in the window snapshot:\n{}",
+                        snapshot.tree_text()
+                    )
+                });
+            let response = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_index": index,
+                    "snapshot_id": snapshot.snapshot_id(),
+                }),
+            );
+            println!(
+                "app menu row press: {} | {}",
+                response.text(),
+                response.structured()
+            );
+            assert!(
+                !response.is_error(),
+                "application menu row refused: {}",
+                response.text()
+            );
+            assert_eq!(response.structured()["effect"], "unverifiable");
+
+            std::thread::sleep(Duration::from_millis(300));
+            let post = snapshot_elements(driver, pid, wid);
+            assert!(
+                post.tree_text().contains("menu_action=window_arrange_left"),
+                "menu command did not reach the fixture: {}",
+                post.tree_text()
+            );
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        },
+    );
+}
+
 /// text_input: type_text into the NSTextField, verify the mirror label
 /// shows the typed string. Exercises the AX type_text path
 /// (AXSetAttribute on AXValue, or CGEvent fallback).

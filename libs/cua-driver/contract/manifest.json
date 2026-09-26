@@ -2750,6 +2750,12 @@
                 "is_on_screen": {
                   "type": "boolean"
                 },
+                "kind": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "layer": {
                   "format": "int32",
                   "type": [

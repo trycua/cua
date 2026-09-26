@@ -4526,7 +4526,7 @@ class _UniffiFfiConverterOptionalSequenceUInt64(_UniffiConverterRustBuffer):
 
 @dataclass
 class WindowInfo:
-    def __init__(self, *, window_id:int, pid:typing.Optional[int], app_name:str, title:str, bounds:WindowBounds, is_on_screen:bool, z_index:typing.Optional[int], layer:typing.Optional[int], minimized:typing.Optional[bool], current_space_id:typing.Optional[int], on_current_space:typing.Optional[bool], space_ids:typing.Optional[typing.List[int]]):
+    def __init__(self, *, window_id:int, pid:typing.Optional[int], app_name:str, title:str, bounds:WindowBounds, is_on_screen:bool, z_index:typing.Optional[int], layer:typing.Optional[int], minimized:typing.Optional[bool], current_space_id:typing.Optional[int], on_current_space:typing.Optional[bool], space_ids:typing.Optional[typing.List[int]], kind:typing.Optional[str]):
         self.window_id = window_id
         self.pid = pid
         self.app_name = app_name
@@ -4539,12 +4539,13 @@ class WindowInfo:
         self.current_space_id = current_space_id
         self.on_current_space = on_current_space
         self.space_ids = space_ids
+        self.kind = kind
 
 
 
 
     def __str__(self):
-        return "WindowInfo(window_id={}, pid={}, app_name={}, title={}, bounds={}, is_on_screen={}, z_index={}, layer={}, minimized={}, current_space_id={}, on_current_space={}, space_ids={})".format(self.window_id, self.pid, self.app_name, self.title, self.bounds, self.is_on_screen, self.z_index, self.layer, self.minimized, self.current_space_id, self.on_current_space, self.space_ids)
+        return "WindowInfo(window_id={}, pid={}, app_name={}, title={}, bounds={}, is_on_screen={}, z_index={}, layer={}, minimized={}, current_space_id={}, on_current_space={}, space_ids={}, kind={})".format(self.window_id, self.pid, self.app_name, self.title, self.bounds, self.is_on_screen, self.z_index, self.layer, self.minimized, self.current_space_id, self.on_current_space, self.space_ids, self.kind)
     def __eq__(self, other):
         if self.window_id != other.window_id:
             return False
@@ -4570,6 +4571,8 @@ class WindowInfo:
             return False
         if self.space_ids != other.space_ids:
             return False
+        if self.kind != other.kind:
+            return False
         return True
 
 class _UniffiFfiConverterTypeWindowInfo(_UniffiConverterRustBuffer):
@@ -4588,6 +4591,7 @@ class _UniffiFfiConverterTypeWindowInfo(_UniffiConverterRustBuffer):
             current_space_id=_UniffiFfiConverterOptionalUInt64.read(buf),
             on_current_space=_UniffiFfiConverterOptionalBoolean.read(buf),
             space_ids=_UniffiFfiConverterOptionalSequenceUInt64.read(buf),
+            kind=_UniffiFfiConverterOptionalString.read(buf),
         )
 
     @staticmethod
@@ -4604,6 +4608,7 @@ class _UniffiFfiConverterTypeWindowInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt64.check_lower(value.current_space_id)
         _UniffiFfiConverterOptionalBoolean.check_lower(value.on_current_space)
         _UniffiFfiConverterOptionalSequenceUInt64.check_lower(value.space_ids)
+        _UniffiFfiConverterOptionalString.check_lower(value.kind)
 
     @staticmethod
     def write(value, buf):
@@ -4619,6 +4624,7 @@ class _UniffiFfiConverterTypeWindowInfo(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt64.write(value.current_space_id, buf)
         _UniffiFfiConverterOptionalBoolean.write(value.on_current_space, buf)
         _UniffiFfiConverterOptionalSequenceUInt64.write(value.space_ids, buf)
+        _UniffiFfiConverterOptionalString.write(value.kind, buf)
 
 class _UniffiFfiConverterSequenceTypeWindowInfo(_UniffiConverterRustBuffer):
     @classmethod

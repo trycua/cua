@@ -45,6 +45,8 @@ pub mod video_sckit;
 #[cfg(target_os = "macos")]
 pub mod window_change_detector;
 #[cfg(target_os = "macos")]
+pub mod window_kind;
+#[cfg(target_os = "macos")]
 pub mod windows;
 
 use cua_driver_core::tool::ToolRegistry;

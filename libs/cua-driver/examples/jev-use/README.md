@@ -87,7 +87,9 @@ npm ci
 ```
 
 On Windows, use a non-administrator desktop session and `npm.cmd ci` in
-PowerShell. The managed verifier starts TypeScript through `node --import tsx`,
+PowerShell. An elevated session, including the built-in Administrator account
+that some cloud images create as the first user, makes Driver refuse the
+installed browser as writable by the current token. The managed verifier starts TypeScript through `node --import tsx`,
 not an npm shell shim. On Linux, use a supported system browser and a desktop
 session accessible to the same user as Driver; native Wayland has separate
 compositor-specific requirements.

@@ -163,8 +163,21 @@ fn ensure_applescript_process_identity(bundle_id: &str, expected_pid: i32) -> an
         .into_iter()
         .filter(|app| app.bundle_id.as_deref() == Some(bundle_id))
         .map(|app| app.pid)
+        .filter(|pid| process_is_alive(*pid))
         .collect::<Vec<_>>();
     ensure_applescript_process_identity_in(bundle_id, expected_pid, &matching_pids)
+}
+
+fn process_is_alive(pid: i32) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    // Signal zero checks process existence without delivering a signal.
+    // EPERM still proves that the pid exists; only ESRCH proves it is gone.
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
 fn ensure_applescript_process_identity_in(
@@ -406,22 +419,22 @@ mod tests {
 
     #[test]
     fn applescript_process_identity_accepts_only_the_requested_single_instance() {
-        assert!(ensure_applescript_process_identity_in(
-            "com.google.Chrome",
-            4242,
-            &[4242]
-        )
-        .is_ok());
+        assert!(
+            ensure_applescript_process_identity_in("com.google.Chrome", 4242, &[4242]).is_ok()
+        );
+    }
+
+    #[test]
+    fn process_liveness_filters_departed_running_application_rows() {
+        assert!(process_is_alive(std::process::id() as i32));
+        assert!(!process_is_alive(i32::MAX));
     }
 
     #[test]
     fn applescript_process_identity_refuses_same_bundle_ambiguity() {
-        let error = ensure_applescript_process_identity_in(
-            "com.google.Chrome",
-            4242,
-            &[4242, 9001],
-        )
-        .unwrap_err();
+        let error =
+            ensure_applescript_process_identity_in("com.google.Chrome", 4242, &[4242, 9001])
+                .unwrap_err();
         assert!(error
             .to_string()
             .contains("browser_applescript_process_ambiguous"));
@@ -429,12 +442,8 @@ mod tests {
 
     #[test]
     fn applescript_process_identity_refuses_missing_requested_instance() {
-        let error = ensure_applescript_process_identity_in(
-            "com.google.Chrome",
-            4242,
-            &[9001],
-        )
-        .unwrap_err();
+        let error =
+            ensure_applescript_process_identity_in("com.google.Chrome", 4242, &[9001]).unwrap_err();
         assert!(error.to_string().contains("browser_process_not_running"));
     }
 

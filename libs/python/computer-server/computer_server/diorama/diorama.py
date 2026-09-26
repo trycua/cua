@@ -484,8 +484,6 @@ class Diorama:
             return x, y
 
 
-import time
-
 from pynput.mouse import Controller as MouseController
 
 
@@ -537,7 +535,7 @@ async def main():
                 # Save the frame
                 frame.save("app_screenshots/desktop3_mouse.png")
                 print(f"Mouse at screen ({mouse_x}, {mouse_y}) -> screenshot ({sx:.1f}, {sy:.1f})")
-            time.sleep(0.05)  # Throttle updates to ~20 FPS
+            await asyncio.sleep(0.05)  # Throttle updates to ~20 FPS
     except KeyboardInterrupt:
         print("Stopped tracking.")
 

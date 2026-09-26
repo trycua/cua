@@ -178,6 +178,56 @@ fn derive_verified_standard_user_token(driver: &TokenFacts) -> Result<OwnedHandl
     Ok(derived)
 }
 
+#[cfg(test)]
+fn restricted_token_with_flags(
+    driver_token: HANDLE,
+    safer: HANDLE,
+    flags: u32,
+) -> Result<OwnedHandle, String> {
+    let mut sid_buffer = [0u64; 12];
+    let mut sid_size = std::mem::size_of_val(&sid_buffer) as u32;
+    let administrators = PSID(sid_buffer.as_mut_ptr().cast());
+    unsafe {
+        CreateWellKnownSid(
+            WinBuiltinAdministratorsSid,
+            PSID::default(),
+            administrators,
+            &mut sid_size,
+        )
+    }
+    .map_err(|error| error.to_string())?;
+    let groups = token_information(safer, TokenGroups)?;
+    let header = groups.as_ptr().cast::<TOKEN_GROUPS>();
+    let count = unsafe { (*header).GroupCount } as usize;
+    let first = unsafe { std::ptr::addr_of!((*header).Groups).cast::<SID_AND_ATTRIBUTES>() };
+    let mut disable = vec![SID_AND_ATTRIBUTES {
+        Sid: administrators,
+        Attributes: 0,
+    }];
+    for index in 0..count {
+        let group = unsafe { *first.add(index) };
+        if group.Attributes & SE_GROUP_USE_FOR_DENY_ONLY != 0 {
+            disable.push(SID_AND_ATTRIBUTES {
+                Sid: group.Sid,
+                Attributes: 0,
+            });
+        }
+    }
+    let mut restricted = HANDLE::default();
+    unsafe {
+        CreateRestrictedToken(
+            driver_token,
+            windows::Win32::Security::CREATE_RESTRICTED_TOKEN_FLAGS(flags),
+            Some(&disable),
+            None,
+            None,
+            &mut restricted,
+        )
+    }
+    .map_err(|error| error.to_string())?;
+    Ok(OwnedHandle(restricted))
+}
+
 /// Create a LUA restricted token from `driver_token` that disables, as
 /// deny-only, Administrators and every group `safer` holds as deny-only.
 fn lua_restricted_token(driver_token: HANDLE, safer: HANDLE) -> Result<OwnedHandle, String> {
@@ -961,12 +1011,30 @@ mod tests {
                 | TOKEN_ADJUST_PRIVILEGES,
         )
         .unwrap();
-        let safer = safer_normal_user_token(driver_token.raw()).unwrap();
-        let high = lua_restricted_token(driver_token.raw(), safer.raw()).unwrap();
-        let medium = lua_restricted_token(driver_token.raw(), safer.raw()).unwrap();
-        set_medium_integrity(medium.raw()).unwrap();
+        let variant = |flags: u32, safer_base: bool, medium: bool| -> OwnedHandle {
+            let safer = safer_normal_user_token(driver_token.raw()).unwrap();
+            let token = if safer_base {
+                safer
+            } else {
+                restricted_token_with_flags(driver_token.raw(), safer.raw(), flags).unwrap()
+            };
+            let facts = token_facts(token.raw()).unwrap();
+            if medium {
+                set_medium_integrity(token.raw()).unwrap();
+            }
+            remove_privileges(token.raw(), &facts).unwrap();
+            token
+        };
+        let variants = vec![
+            ("safer-medium", variant(0, true, true)),
+            ("plain-medium", variant(0, false, true)),
+            ("plain-high", variant(0, false, false)),
+            ("dmp-medium", variant(1, false, true)),
+            ("safer-high", variant(0, true, false)),
+        ];
         let mut report = vec![];
-        for (name, token) in [("lua-medium", medium), ("lua-high", high), ("safer", safer)] {
+        for (name, token) in variants {
+            report.push(format!("{name} facts: {:?}", token_facts(token.raw())));
             let profile =
                 std::env::temp_dir().join(format!("cua-diag-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&profile);

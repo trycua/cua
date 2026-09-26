@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/trycua/cua/compare/lume-v0.5.3...lume-v0.6.0) (2026-09-26)
+
+
+### Features
+
+* **lume:** add force/timeout to stop and fix stuck stop for detached VMs ([#4235](https://github.com/trycua/cua/issues/4235)) ([14f66c8](https://github.com/trycua/cua/commit/14f66c849217b59c89d72b16e04148e0ab93aea2))
+* **lume:** support running without a VNC listener ([#3209](https://github.com/trycua/cua/issues/3209)) ([ab957bd](https://github.com/trycua/cua/commit/ab957bdb7566f7e137b00654cc01167d9e42af38))
+
 ## [0.5.3](https://github.com/trycua/cua/compare/lume-v0.5.2...lume-v0.5.3) (2026-08-11)
 
 

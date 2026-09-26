@@ -2,9 +2,11 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{ChildStdin, Command, Stdio};
+use std::process::{ChildStderr, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -28,10 +30,70 @@ pub struct McpDriver {
     socket: String,
     stdin: ChildStdin,
     rx: Receiver<String>,
+    diagnostics: Diagnostics,
     next_id: u32,
     recording_dir: Option<PathBuf>,
     recording_started: bool,
     recording_started_at: Option<Instant>,
+}
+
+/// Upper bound on retained child stderr; a looping child cannot grow it.
+const MAX_DRIVER_STDERR: usize = 64 * 1024;
+
+/// What the driver child wrote to stderr, available to the test process after
+/// the child has stopped answering.
+#[derive(Default)]
+struct Diagnostics {
+    collected: Arc<Mutex<String>>,
+    reader: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl Diagnostics {
+    fn collect_from(&self, stderr: ChildStderr) {
+        let sink = Arc::clone(&self.collected);
+        let reader = std::thread::spawn(move || {
+            let mut reader = BufReader::new(stderr);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        let mut collected = sink.lock().expect("driver stderr sink");
+                        if collected.len() < MAX_DRIVER_STDERR {
+                            collected.push_str(&line);
+                        }
+                    }
+                }
+            }
+        });
+        *self.reader.lock().expect("driver stderr reader") = Some(reader);
+    }
+
+    /// Everything the child said, for a child that has exited: its stderr is
+    /// at EOF, so the reader thread is about to finish and the last line —
+    /// usually the reason it gave up — is worth waiting for.
+    fn drain(&self) -> Option<String> {
+        if let Some(reader) = self.reader.lock().expect("driver stderr reader").take() {
+            let _ = reader.join();
+        }
+        self.summary()
+    }
+
+    /// The child's own account of itself, one line, or `None` when it said
+    /// nothing beyond the update notice every invocation prints.
+    fn summary(&self) -> Option<String> {
+        let collected = self.collected.lock().expect("driver stderr sink");
+        let mut complaints = collected
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .filter(|line| !line.contains("cua-driver update") && !line.contains("Release notes"))
+            .filter(|line| !line.starts_with("✨"))
+            .peekable();
+        complaints.peek()?;
+        Some(complaints.collect::<Vec<_>>().join("; "))
+    }
 }
 
 static RECORDING_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -61,6 +123,9 @@ fn timeout_error_message(tool: &str, timeout: Duration) -> String {
 }
 
 impl McpDriver {
+    /// How long [`McpDriver::find_window`] polls a healthy `list_windows`.
+    pub const FIND_WINDOW_DEADLINE: Duration = Duration::from_secs(12);
+
     /// Spawn the driver, start the stdout reader thread, and `initialize`.
     /// Returns `None` (with a skip message) if the binary isn't built — the
     /// caller's test should early-return so an un-built binary skips, not fails.
@@ -190,10 +255,11 @@ impl McpDriver {
             None
         };
         let mut cmd = Command::new(&bin);
-        let stderr = if std::env::var_os("CUA_TEST_DRIVER_STDERR").is_some() {
-            Stdio::inherit()
+        let capture_stderr = std::env::var_os("CUA_TEST_DRIVER_STDERR").is_none();
+        let stderr = if capture_stderr {
+            Stdio::piped()
         } else {
-            Stdio::null()
+            Stdio::inherit()
         };
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -217,6 +283,11 @@ impl McpDriver {
             .ok()?;
         let stdin = driver.stdin.take().unwrap();
         let stdout = driver.stdout.take().unwrap();
+        let diagnostics = Diagnostics::default();
+        if capture_stderr {
+            let stderr = driver.stderr.take().unwrap();
+            diagnostics.collect_from(stderr);
+        }
         reaper.push(driver);
 
         let (tx, rx) = channel::<String>();
@@ -250,6 +321,7 @@ impl McpDriver {
             socket,
             stdin,
             rx,
+            diagnostics,
             next_id: 2,
             recording_dir: None,
             recording_started: false,
@@ -458,12 +530,31 @@ impl McpDriver {
     }
 
     /// Poll `list_windows` until a window of `pid` whose title contains
-    /// `title_substr` appears (up to ~12s). Returns `(window_id, title)`.
-    /// Replaces the per-file `find_harness_window` helper.
+    /// `title_substr` appears (up to [`McpDriver::FIND_WINDOW_DEADLINE`]). Returns
+    /// `(window_id, title)`. Replaces the per-file `find_harness_window` helper.
+    ///
+    /// A `list_windows` that failed carries no window information, so polling
+    /// it cannot succeed and the caller must not read the outcome as an absent
+    /// window.
     pub fn find_window(&mut self, pid: i64, title_substr: &str) -> Option<(u64, String)> {
-        let deadline = Instant::now() + Duration::from_secs(12);
+        self.find_window_within(pid, title_substr, Self::FIND_WINDOW_DEADLINE)
+    }
+
+    /// [`McpDriver::find_window`] with an explicit polling deadline.
+    pub fn find_window_within(
+        &mut self,
+        pid: i64,
+        title_substr: &str,
+        deadline: Duration,
+    ) -> Option<(u64, String)> {
+        let deadline = Instant::now() + deadline;
         loop {
             let r = self.call("list_windows", serde_json::json!({ "pid": pid }));
+            assert!(
+                !r.is_error(),
+                "list_windows failed while looking for {title_substr:?} of pid {pid}: {}",
+                r.text()
+            );
             if let Some(wins) = r.structured()["windows"].as_array() {
                 for w in wins {
                     if w["pid"].as_i64() != Some(pid) {
@@ -494,8 +585,17 @@ impl McpDriver {
         match self.rx.recv_timeout(timeout) {
             Ok(line) => serde_json::from_str(&line)
                 .unwrap_or_else(|_| serde_json::json!({ "error": format!("bad json: {line}") })),
-            Err(_) => serde_json::json!({
-                "error": timeout_error_message(tool, timeout)
+            Err(RecvTimeoutError::Disconnected) => serde_json::json!({
+                "error": match self.diagnostics.drain() {
+                    Some(reason) => format!("driver exited during {tool}: {reason}"),
+                    None => format!("driver exited during {tool}"),
+                }
+            }),
+            Err(RecvTimeoutError::Timeout) => serde_json::json!({
+                "error": match self.diagnostics.summary() {
+                    Some(reason) => format!("{}: {reason}", timeout_error_message(tool, timeout)),
+                    None => timeout_error_message(tool, timeout),
+                }
             }),
         }
     }

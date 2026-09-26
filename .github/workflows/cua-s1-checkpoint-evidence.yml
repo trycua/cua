@@ -1,0 +1,138 @@
+name: "Cua-S1 checkpoint evidence"
+
+on:
+  push:
+    branches:
+      - fix/cua-s1-checkpoint-locator-4007
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cua-s1-checkpoint-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checkpoint:
+    name: Checkpoint locator round-trip
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CUA_TELEMETRY_ENABLED: "false"
+      HF_DATASETS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+      PYTHONHASHSEED: "0"
+      TRANSFORMERS_OFFLINE: "1"
+      WANDB_MODE: disabled
+    defaults:
+      run:
+        working-directory: libs/cua-s1/python
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: libs/cua-s1/python/uv.lock
+
+      - name: Install locked test environment
+        run: |
+          uv lock --check
+          uv sync --frozen --extra pdf --group test
+
+      - name: Check formatting and lint for changed package
+        run: |
+          set -o pipefail
+          uv run --frozen ruff format --check src tests 2>&1 | tee "$RUNNER_TEMP/checkpoint-format.log"
+          uv run --frozen ruff check src tests 2>&1 | tee "$RUNNER_TEMP/checkpoint-lint.log"
+
+      - name: Run checkpoint regression file
+        run: |
+          set -o pipefail
+          uv run --frozen pytest -q tests/test_checkpoint.py 2>&1 | tee "$RUNNER_TEMP/checkpoint-tests.log"
+
+      - name: Independently exercise returned locator symmetry
+        env:
+          EVIDENCE_SHA: ${{ github.sha }}
+        run: |
+          uv run --frozen python - "$RUNNER_TEMP/checkpoint-summary.json" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+          import tempfile
+
+          import torch
+
+          from cua_s1.checkpoint import load_checkpoint_files, save_checkpoint_files
+
+          output = pathlib.Path(sys.argv[1])
+          with tempfile.TemporaryDirectory() as tmp:
+              root = pathlib.Path(tmp) / "checkpoint"
+              state = {
+                  "weight": torch.arange(6, dtype=torch.float32).reshape(2, 3),
+                  "bias": torch.tensor([0.25, -0.5]),
+              }
+              weights, config = save_checkpoint_files(
+                  root,
+                  state,
+                  {"encoder": "tiny", "width": 3},
+                  {"epoch": 2},
+              )
+              rows = []
+              for kind, locator in (
+                  ("directory", root),
+                  ("returned_weights", weights),
+                  ("returned_config", config),
+              ):
+                  loaded, cfg, meta = load_checkpoint_files(locator)
+                  assert cfg == {"encoder": "tiny", "width": 3}
+                  assert meta == {"epoch": 2}
+                  assert loaded.keys() == state.keys()
+                  assert all(torch.equal(loaded[name], state[name]) for name in state)
+                  rows.append({
+                      "kind": kind,
+                      "locator_name": pathlib.Path(locator).name,
+                      "weights_name": weights.name,
+                      "config_name": config.name,
+                      "outcome": "equal",
+                  })
+
+              named_weights, named_config = save_checkpoint_files(
+                  pathlib.Path(tmp) / "named.safetensors",
+                  state,
+                  {"encoder": "tiny", "width": 3},
+                  {"epoch": 2},
+              )
+              for locator in (named_weights, named_config):
+                  loaded, cfg, meta = load_checkpoint_files(locator)
+                  assert cfg == {"encoder": "tiny", "width": 3}
+                  assert meta == {"epoch": 2}
+                  assert all(torch.equal(loaded[name], state[name]) for name in state)
+
+              summary = {
+                  "sha": os.environ["EVIDENCE_SHA"],
+                  "canonical_pair": [weights.name, config.name],
+                  "canonical_locator_rows": rows,
+                  "named_pair": [named_weights.name, named_config.name],
+                  "pickle_policy_changed": False,
+                  "claim_boundary": "checkpoint locator/save-load symmetry only",
+              }
+              output.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+              print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload checkpoint evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: cua-s1-checkpoint-evidence
+          path: |
+            ${{ runner.temp }}/checkpoint-summary.json
+            ${{ runner.temp }}/checkpoint-tests.log
+            ${{ runner.temp }}/checkpoint-format.log
+            ${{ runner.temp }}/checkpoint-lint.log
+          if-no-files-found: error
+          retention-days: 14

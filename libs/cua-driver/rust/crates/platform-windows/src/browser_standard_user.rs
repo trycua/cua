@@ -752,6 +752,142 @@ mod tests {
         assert_eq!(child.wait().expect("wait").code(), Some(7));
     }
 
+    // TEMPORARY diagnostic (removed before review): report the desktop and
+    // process security the derived token must satisfy on this host.
+    #[test]
+    fn diagnostic_desktop_and_process_admission() {
+        use windows::Win32::Security::Authorization::{
+            ConvertSecurityDescriptorToStringSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1,
+            SE_KERNEL_OBJECT, SE_OBJECT_TYPE, SE_WINDOW_OBJECT,
+        };
+        use windows::Win32::Security::{
+            DACL_SECURITY_INFORMATION, LABEL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+            PSECURITY_DESCRIPTOR,
+        };
+        use windows::Win32::System::StationsAndDesktops::{
+            GetProcessWindowStation, GetThreadDesktop, OpenDesktopW, OpenWindowStationW,
+            DESKTOP_CONTROL_FLAGS, DESKTOP_CREATEWINDOW, DESKTOP_READOBJECTS, DESKTOP_WRITEOBJECTS,
+        };
+        use windows::Win32::System::Threading::{
+            GetCurrentProcessId, GetCurrentThreadId, OpenProcess, PROCESS_CREATE_THREAD,
+            PROCESS_VM_WRITE,
+        };
+
+        fn sddl(handle: HANDLE, kind: SE_OBJECT_TYPE) -> String {
+            let mut descriptor = PSECURITY_DESCRIPTOR::default();
+            let info =
+                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION;
+            let status = unsafe {
+                GetSecurityInfo(
+                    handle,
+                    kind,
+                    info,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(&mut descriptor),
+                )
+            };
+            if status.0 != 0 {
+                return format!("GetSecurityInfo error {}", status.0);
+            }
+            let mut text = PWSTR::null();
+            match unsafe {
+                ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                    descriptor,
+                    SDDL_REVISION_1,
+                    info,
+                    &mut text,
+                    None,
+                )
+            } {
+                Ok(()) => unsafe { text.to_string().unwrap_or_default() },
+                Err(error) => format!("convert error {error}"),
+            }
+        }
+
+        let mut report = Vec::new();
+        let lua = std::process::Command::new(system32().join("reg.exe"))
+            .args([
+                "query",
+                r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System",
+                "/v",
+                "EnableLUA",
+            ])
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+            .unwrap_or_default();
+        report.push(format!("EnableLUA: {lua}"));
+        let winsta = unsafe { GetProcessWindowStation() }.expect("winsta");
+        let desktop = unsafe { GetThreadDesktop(GetCurrentThreadId()) }.expect("desktop");
+        report.push(format!(
+            "winsta sddl: {}",
+            sddl(HANDLE(winsta.0), SE_WINDOW_OBJECT)
+        ));
+        report.push(format!(
+            "desktop sddl: {}",
+            sddl(HANDLE(desktop.0), SE_WINDOW_OBJECT)
+        ));
+        report.push(format!(
+            "driver process sddl: {}",
+            sddl(unsafe { GetCurrentProcess() }, SE_KERNEL_OBJECT)
+        ));
+
+        let driver_token = current_process_token(
+            TOKEN_QUERY
+                | TOKEN_DUPLICATE
+                | TOKEN_ASSIGN_PRIMARY
+                | TOKEN_ADJUST_DEFAULT
+                | TOKEN_ADJUST_PRIVILEGES,
+        )
+        .expect("driver token");
+        report.push(format!(
+            "driver facts: {:?}",
+            token_facts(driver_token.raw())
+        ));
+        let safer = safer_normal_user_token(driver_token.raw()).expect("safer");
+        report.push(format!("safer facts: {:?}", token_facts(safer.raw())));
+        let high = lua_restricted_token(driver_token.raw(), safer.raw()).expect("lua high");
+        let medium = lua_restricted_token(driver_token.raw(), safer.raw()).expect("lua medium");
+        set_medium_integrity(medium.raw()).expect("medium");
+        let pid = unsafe { GetCurrentProcessId() };
+        for (name, token) in [
+            ("lua-high", &high),
+            ("lua-medium", &medium),
+            ("safer", &safer),
+        ] {
+            report.push(format!("{name} facts: {:?}", token_facts(token.raw())));
+            let result = with_impersonation(token, || {
+                let winsta = unsafe {
+                    OpenWindowStationW(windows::core::w!("WinSta0"), false, 0x0020 | 0x0002)
+                }
+                .map(|_| "ok".to_owned())
+                .unwrap_or_else(|error| error.to_string());
+                let desktop = unsafe {
+                    OpenDesktopW(
+                        windows::core::w!("Default"),
+                        DESKTOP_CONTROL_FLAGS(0),
+                        false,
+                        DESKTOP_CREATEWINDOW.0 | DESKTOP_READOBJECTS.0 | DESKTOP_WRITEOBJECTS.0,
+                    )
+                }
+                .map(|_| "ok".to_owned())
+                .unwrap_or_else(|error| error.to_string());
+                let process =
+                    unsafe { OpenProcess(PROCESS_VM_WRITE | PROCESS_CREATE_THREAD, false, pid) }
+                        .map(|handle| {
+                            drop(OwnedHandle(handle));
+                            "OPENED".to_owned()
+                        })
+                        .unwrap_or_else(|error| error.to_string());
+                format!("winsta={winsta} desktop={desktop} driver_process_write={process}")
+            });
+            report.push(format!("{name}: {result:?}"));
+        }
+        panic!("DIAGNOSTIC\n{}", report.join("\n"));
+    }
+
     #[test]
     fn standard_user_launch_refuses_unforwarded_command_state() {
         let token = Arc::new(current_process_token(TOKEN_QUERY).expect("token"));

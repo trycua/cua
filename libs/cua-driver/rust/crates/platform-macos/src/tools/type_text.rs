@@ -964,6 +964,63 @@ fn read_axvalue_bound(
     }
 }
 
+/// Post-keystroke read-back over both readable views of the target.
+///
+/// Keystrokes land in whatever holds keyboard focus, and the addressed element
+/// is not always that object: AppKit installs a field editor over an
+/// NSTextField while it is edited, and some apps replace the row outright.
+/// Read the addressed element and, unless that reading already proves complete
+/// delivery, the window's focused element, then keep the stronger reading.
+/// Focus contributes evidence only when it provably resolves inside the
+/// requested window, per [`read_axvalue_bound`].
+fn read_typed_value(
+    pid: i32,
+    element_ptr_and_idx: Option<(usize, Option<usize>)>,
+    window_id: Option<u32>,
+    before: Option<&str>,
+    text: &str,
+) -> Option<String> {
+    let addressed = read_axvalue_bound(pid, element_ptr_and_idx, window_id);
+    if element_ptr_and_idx.is_none() {
+        return addressed;
+    }
+    if matches!(
+        typed_progress(before, addressed.as_deref(), text),
+        TypedProgress::Complete
+    ) {
+        return addressed;
+    }
+    let focused = read_axvalue_bound(pid, None, window_id);
+    stronger_reading(before, text, addressed, focused)
+}
+
+/// Keep whichever read-back proves more delivery. An unreadable or unrelated
+/// focused element can never downgrade the addressed element's evidence.
+fn stronger_reading(
+    before: Option<&str>,
+    text: &str,
+    addressed: Option<String>,
+    focused: Option<String>,
+) -> Option<String> {
+    if progress_rank(&typed_progress(before, focused.as_deref(), text))
+        > progress_rank(&typed_progress(before, addressed.as_deref(), text))
+    {
+        focused
+    } else {
+        addressed
+    }
+}
+
+/// Order two read-backs by how much delivery each one proves.
+fn progress_rank(progress: &TypedProgress) -> (u8, usize) {
+    match progress {
+        TypedProgress::Unverifiable => (0, 0),
+        TypedProgress::Unchanged => (1, 0),
+        TypedProgress::Partial(delivered) => (2, *delivered),
+        TypedProgress::Complete => (3, 0),
+    }
+}
+
 /// True when the addressed (or focused) AX element sits inside a web-content
 /// subtree — an `AXWebArea` ancestor. That covers every Chromium / WebKit /
 /// Electron rendered surface (Chrome, Safari, Slack, VS Code, X's compose box…),
@@ -1118,7 +1175,7 @@ fn cgevent_type_verified(
     // expires after observable growth, surface the exact partial count.
     let deadline = std::time::Instant::now() + DELIVERY_DRAIN_TIMEOUT;
     Ok(await_typed_delivery(before, text, deadline, || {
-        read_axvalue_bound(pid, element_ptr_and_idx, window_id)
+        read_typed_value(pid, element_ptr_and_idx, window_id, before, text)
     }))
 }
 
@@ -1585,6 +1642,38 @@ mod tests {
             || Some("BEGIN".to_owned()),
         );
         assert_eq!(delivery, (false, Some(5)));
+    }
+
+    #[test]
+    fn a_replaced_field_is_read_through_the_focused_element() {
+        assert_eq!(
+            stronger_reading(
+                Some(""),
+                "555-1234",
+                Some("555".to_owned()),
+                Some("555-1234".to_owned())
+            )
+            .as_deref(),
+            Some("555-1234")
+        );
+    }
+
+    #[test]
+    fn an_unrelated_focused_element_never_downgrades_the_addressed_read() {
+        assert_eq!(
+            stronger_reading(Some(""), "hi", Some("hi".to_owned()), None).as_deref(),
+            Some("hi")
+        );
+        assert_eq!(
+            stronger_reading(
+                Some(""),
+                "hi",
+                Some("hi".to_owned()),
+                Some("somewhere else".to_owned())
+            )
+            .as_deref(),
+            Some("hi")
+        );
     }
 
     #[test]

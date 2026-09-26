@@ -30,7 +30,8 @@ The fixture publishes its surface-local region map in its `startup` journal
 record, so the runner clicks published centers instead of guessing. The map
 moves with the surface: when the compositor resizes the window the fixture
 re-lays-out and republishes it as a `layout` record, so a consumer must follow
-the most recent one. The canonical Sway lane makes this the normal case, since
+the most recent one. The fixture commits the resized frame after acknowledging
+the configure. The canonical Sway lane makes this the normal case, since
 it resizes `CuaTestHarness` windows by title right after they map.
 
 | Region      | Behavior |
@@ -51,10 +52,10 @@ Two channels, deliberately separate:
 - `--journal <path>` — JSONL. `startup`, `mapped`, `layout`, `input`, `state`,
   `sample`, and `shutdown` records. The `sample` records are the causal timing
   rows.
-- `--state <path>` — application-owned state only (counter, colour, last
-  action), replaced atomically. The window title also mirrors the counter as
-  `CuaTestHarness Presentation [n=<counter>]`, which the Driver can read back
-  through `list_windows`.
+- `--state <path>` — application-owned state (counter, `last_update_id`, colour,
+  last action), replaced atomically. The window title mirrors both the counter
+  and update ID as `CuaTestHarness Presentation [n=<counter>] [u=<update_id>]`,
+  which the Driver can read back through `list_windows`.
 
 The runner asserts the mutation from the state channel and the title, never
 from the timing rows, so a bug in the timing path cannot manufacture a passing
@@ -84,6 +85,11 @@ is sampled locally when the callback runs; it is separate from the compositor's
 | `no_mutation`     | Input was delivered but changed no state and committed nothing. |
 
 Only `verified` counts as a presented mutation.
+
+The update ID is assigned before the counter changes. Feedback for an unknown
+or already accounted ID is recorded as `unmatched_feedback` and cannot claim
+another update's row. A refused Driver action is checked separately: it must
+produce neither input nor a sample.
 
 `discarded` is ordinary compositor behaviour: a superseded update was never
 shown. Its row retains callback receipt and state change, but no presentation
@@ -120,7 +126,8 @@ CuaTestHarness.WaylandPresentation --journal /tmp/probe.jsonl --probe
 ```
 
 The probe commits one content update with feedback requested and waits for the
-compositor to complete it. Binding `wp_presentation` is deliberately not the
+compositor to complete feedback for that probe's own update ID. Binding
+`wp_presentation` is deliberately not the
 answer, because advertising the global does not mean feedback ever arrives:
 
 | Compositor                        | Advertises | Completes feedback | Clock |
@@ -133,7 +140,8 @@ A headless wlroots 0.15 output never reaches a real presentation, so every
 action would time out and read as a slow Driver rather than as a lane that
 cannot see presentation. The probe reports that as a limitation instead. The
 hosted lane's sway 1.9 completes feedback in `CLOCK_MONOTONIC`, so its rows are
-directly comparable with the fixture's own stamps.
+directly comparable with the fixture's own stamps. A different clock produces
+a typed `clock_mismatch` lane limitation without an invalid subtraction.
 
 Exit codes: `0` normal, `2` bad arguments or non-Linux host, `3` this
 compositor cannot attribute a presentation — either `wp_presentation` is

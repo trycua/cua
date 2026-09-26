@@ -261,6 +261,14 @@ fn state_counter(path: &Path) -> Option<u64> {
         .and_then(Value::as_u64)
 }
 
+fn state_update_id(path: &Path) -> Option<u64> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<Value>(contents.trim())
+        .ok()?
+        .get("last_update_id")
+        .and_then(Value::as_u64)
+}
+
 /// Wait for the fixture to account for `expected` further samples.
 fn await_samples(path: &Path, previous: usize, expected: usize, what: &str) -> Vec<Value> {
     // Generous relative to one refresh interval; a slow compositor should
@@ -578,6 +586,11 @@ fn wayland_presentation_feedback_attributes_action_latency_across_the_boundary()
                 Some(counter_before + 1),
                 "attempt {attempt}: one Driver action must change fixture state exactly once"
             );
+            assert_eq!(
+                state_update_id(&fixture.state),
+                Some(row.sequence),
+                "attempt {attempt}: independent state must name the update whose feedback was joined"
+            );
             if !row.presented_mutation() {
                 assert_eq!(
                     row.fixture_outcome, "discarded",
@@ -694,6 +707,12 @@ fn wayland_presentation_feedback_attributes_action_latency_across_the_boundary()
             Some(counter_before + 2),
             "both probe updates mutate application state even if one is superseded"
         );
+        let latest_update_id = probe
+            .iter()
+            .map(|row| row.sequence)
+            .max()
+            .expect("two updates");
+        assert_eq!(state_update_id(&fixture.state), Some(latest_update_id));
         rows.extend(probe);
 
         // 4. The window title mirrors the counter, so the mutation is also
@@ -701,7 +720,7 @@ fn wayland_presentation_feedback_attributes_action_latency_across_the_boundary()
         //    fixture-owned files.
         let counter = state_counter(&fixture.state).expect("fixture state");
         let deadline = Instant::now() + Duration::from_secs(5);
-        let expected = format!("{TITLE_PREFIX} [n={counter}]");
+        let expected = format!("{TITLE_PREFIX} [n={counter}] [u={latest_update_id}]");
         loop {
             let titles: Vec<String> = driver.call("list_windows", json!({})).structured()
                 ["windows"]
@@ -725,6 +744,54 @@ fn wayland_presentation_feedback_attributes_action_latency_across_the_boundary()
             );
             std::thread::sleep(Duration::from_millis(100));
         }
+
+        // 5. A Driver refusal must inject no input and create no fixture row.
+        let state_before_refusal = std::fs::read(&fixture.state).expect("fixture state");
+        let samples_before_refusal = samples(&fixture.journal).len();
+        let inputs_before_refusal = records(&fixture.journal)
+            .iter()
+            .filter(|record| record["kind"] == "input")
+            .count();
+        let session = "wayland-presentation-refusal";
+        let started = driver.call(
+            "start_session",
+            json!({"session": session, "capture_scope": "window"}),
+        );
+        assert!(
+            !started.is_error(),
+            "start refusal session: {}",
+            started.text()
+        );
+        let refused = driver.call(
+            "click",
+            json!({"session": session, "scope": "desktop", "x": 100, "y": 100}),
+        );
+        assert!(
+            refused.is_error()
+                && refused.structured()["code"].as_str() == Some("desktop_scope_disabled"),
+            "window-scoped session must refuse a desktop click: {}",
+            refused.text()
+        );
+        std::thread::sleep(Duration::from_millis(250));
+        assert_eq!(
+            std::fs::read(&fixture.state).expect("fixture state"),
+            state_before_refusal
+        );
+        assert_eq!(samples(&fixture.journal).len(), samples_before_refusal);
+        assert_eq!(
+            records(&fixture.journal)
+                .iter()
+                .filter(|record| record["kind"] == "input")
+                .count(),
+            inputs_before_refusal,
+            "refused action must not reach the fixture"
+        );
+        assert!(
+            records(&fixture.journal)
+                .iter()
+                .all(|record| record["kind"] != "unmatched_feedback"),
+            "every callback in this run must belong to its own pending update"
+        );
 
         let summary = summarize(&rows, DEADLINE_MS * 1_000_000);
         write_evidence(&directory, &rows, &summary);

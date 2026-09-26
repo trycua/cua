@@ -40,7 +40,7 @@ use wayland_protocols::xdg::shell::client::{
 
 use crate::journal::{write_state, Journal};
 use crate::layout::{Layout, Rect};
-use crate::sample::{finalize, Feedback, Outcome, Pending, Region, CLOCK_MONOTONIC_ID};
+use crate::sample::{correlate, finalize, Feedback, Outcome, Pending, Region, CLOCK_MONOTONIC_ID};
 use crate::Config;
 
 /// How long one poll waits before the loop re-checks feedback deadlines.
@@ -261,11 +261,14 @@ struct App {
 
     presentation_clock_id: Option<u32>,
     configured: bool,
+    mapped: bool,
+    resize_pending: bool,
     closed: bool,
     width: i32,
     height: i32,
     layout: Layout,
     counter: u64,
+    last_update_id: Option<u64>,
     sequence: u64,
     accounted: u64,
     presented: u64,
@@ -274,6 +277,7 @@ struct App {
     /// complete feedback for its outputs, so advertisement alone does not make
     /// the measurement available; only an observed event does.
     feedback_seen: bool,
+    probe_update_id: Option<u64>,
     pointer_position: (f64, f64),
     pending: BTreeMap<u64, Pending>,
     journal: Journal,
@@ -304,7 +308,11 @@ impl App {
     }
 
     fn title(&self) -> String {
-        format!("{} [n={}]", self.title_prefix, self.counter)
+        let mut title = format!("{} [n={}]", self.title_prefix, self.counter);
+        if let Some(update_id) = self.last_update_id {
+            title.push_str(&format!(" [u={update_id}]"));
+        }
+        title
     }
 
     fn state_value(&self, action: &str, region: Option<Region>, time_ns: u64) -> serde_json::Value {
@@ -312,6 +320,7 @@ impl App {
         json!({
             "schema": crate::sample::JOURNAL_SCHEMA,
             "counter": self.counter,
+            "last_update_id": self.last_update_id,
             "colour": format!("#{red:02x}{green:02x}{blue:02x}"),
             "last_action": action,
             "last_region": region,
@@ -501,8 +510,10 @@ impl App {
         connection: &Connection,
         queue: &QueueHandle<Self>,
     ) -> Result<()> {
+        let sequence = self.next_sequence();
         let counter_before = self.counter;
         self.counter += 1;
+        self.last_update_id = Some(sequence);
         let state_changed_ns = now_ns();
         self.publish_state(action, Some(region), state_changed_ns);
         let title = self.title();
@@ -513,7 +524,6 @@ impl App {
             toplevel.set_title(title);
         }
         let index = self.paint()?;
-        let sequence = self.next_sequence();
         let surface_commit_ns =
             self.attach_and_commit(index, Some(sequence), flush, connection, queue)?;
         self.pending.insert(
@@ -613,10 +623,17 @@ impl App {
     }
 
     fn complete(&mut self, sequence: u64, feedback: Feedback) {
-        let Some(pending) = self.pending.remove(&sequence) else {
+        let Some(sample) = correlate(&mut self.pending, sequence, feedback, self.deadline_ns)
+        else {
+            if !matches!(feedback, Feedback::Timeout) {
+                let _ = self.journal.record(
+                    "unmatched_feedback",
+                    now_ns(),
+                    json!({"update_id": sequence, "feedback": format!("{feedback:?}")}),
+                );
+            }
             return;
         };
-        let sample = finalize(&pending, feedback, self.deadline_ns);
         if sample.fixture_outcome.is_presented_mutation() {
             self.presented += 1;
         }
@@ -673,15 +690,19 @@ pub fn run(config: &Config) -> Result<()> {
         pool: None,
         presentation_clock_id: None,
         configured: false,
+        mapped: false,
+        resize_pending: false,
         closed: false,
         width: config.width,
         height: config.height,
         layout: Layout::for_size(config.width, config.height),
         counter: 0,
+        last_update_id: None,
         sequence: 0,
         accounted: 0,
         presented: 0,
         feedback_seen: false,
+        probe_update_id: None,
         pointer_position: (-1.0, -1.0),
         pending: BTreeMap::new(),
         journal,
@@ -779,6 +800,8 @@ pub fn run(config: &Config) -> Result<()> {
     }
     let index = app.paint()?;
     app.attach_and_commit(index, None, true, &connection, &handle)?;
+    app.mapped = true;
+    app.resize_pending = false;
     app.journal.record(
         "mapped",
         now_ns(),
@@ -918,6 +941,7 @@ fn probe(
     handle: &QueueHandle<App>,
 ) -> Result<()> {
     let sequence = app.next_sequence();
+    app.probe_update_id = Some(sequence);
     let index = app.paint()?;
     app.attach_and_commit(index, Some(sequence), true, connection, handle)?;
 
@@ -942,6 +966,7 @@ fn probe(
         json!({
             "presentation_supported": true,
             "presentation_feedback_observed": observed,
+            "probe_update_id": sequence,
             "presentation_clock_id": app.presentation_clock_id,
             "presentation_clock_comparable":
                 app.presentation_clock_id == Some(CLOCK_MONOTONIC_ID),
@@ -980,28 +1005,32 @@ impl Dispatch<WpPresentationFeedback, u64> for App {
                     .saturating_mul(1_000_000_000)
                     .saturating_add(u64::from(tv_nsec));
                 let clock_id = state.presentation_clock_id;
-                state.feedback_seen = true;
-                state.complete(
-                    *sequence,
-                    Feedback::Presented {
-                        feedback_received_ns,
-                        presented_ns,
-                        refresh_ns: refresh,
-                        sequence: (u64::from(seq_hi) << 32) | u64::from(seq_lo),
-                        flags: flags.raw_bits(),
-                        clock_id,
-                    },
-                );
+                let feedback = Feedback::Presented {
+                    feedback_received_ns,
+                    presented_ns,
+                    refresh_ns: refresh,
+                    sequence: (u64::from(seq_hi) << 32) | u64::from(seq_lo),
+                    flags: flags.raw_bits(),
+                    clock_id,
+                };
+                if state.probe_update_id == Some(*sequence) {
+                    state.feedback_seen = true;
+                } else {
+                    state.complete(*sequence, feedback);
+                }
             }
             wp_presentation_feedback::Event::Discarded => {
                 let feedback_received_ns = now_ns();
-                state.feedback_seen = true;
-                state.complete(
-                    *sequence,
-                    Feedback::Discarded {
-                        feedback_received_ns,
-                    },
-                );
+                if state.probe_update_id == Some(*sequence) {
+                    state.feedback_seen = true;
+                } else {
+                    state.complete(
+                        *sequence,
+                        Feedback::Discarded {
+                            feedback_received_ns,
+                        },
+                    );
+                }
             }
             // `sync_output` names an output; it is not a completion event.
             _ => {}
@@ -1030,12 +1059,21 @@ impl Dispatch<XdgSurface, ()> for App {
         xdg_surface: &XdgSurface,
         event: xdg_surface::Event,
         _: &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
+        connection: &Connection,
+        queue: &QueueHandle<Self>,
     ) {
         if let xdg_surface::Event::Configure { serial } = event {
             xdg_surface.ack_configure(serial);
             state.configured = true;
+            if state.mapped && state.resize_pending {
+                let result = state.paint().and_then(|index| {
+                    state.attach_and_commit(index, None, true, connection, queue)
+                });
+                match result {
+                    Ok(_) => state.resize_pending = false,
+                    Err(error) => state.failure = Some(format!("resize commit failed: {error}")),
+                }
+            }
         }
     }
 }
@@ -1058,6 +1096,7 @@ impl Dispatch<XdgToplevel, ()> for App {
                     state.width = width;
                     state.height = height;
                     state.layout = Layout::for_size(width, height);
+                    state.resize_pending = true;
                     if let Some(shm) = state.shm.clone() {
                         if let Err(error) = state.allocate(&shm, queue) {
                             state.failure = Some(format!("resize failed: {error}"));

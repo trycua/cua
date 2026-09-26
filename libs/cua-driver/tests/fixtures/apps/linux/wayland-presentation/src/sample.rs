@@ -11,6 +11,8 @@
 //! else (discarded, superseded, timed out, foreign clock, no mutation) is
 //! retained as a typed non-presented outcome and never counted as a success.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Schema tag written on every journal line.
@@ -292,6 +294,19 @@ pub fn finalize(pending: &Pending, feedback: Feedback, deadline_ns: u64) -> Samp
     }
 }
 
+/// Consume only the update whose feedback object carried this ID. A callback
+/// for an unknown or already-accounted update cannot acquire another row.
+pub fn correlate(
+    pending: &mut BTreeMap<u64, Pending>,
+    update_id: u64,
+    feedback: Feedback,
+    deadline_ns: u64,
+) -> Option<Sample> {
+    pending
+        .remove(&update_id)
+        .map(|update| finalize(&update, feedback, deadline_ns))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,5 +498,49 @@ mod tests {
         .expect("serialize discarded row");
         assert!(discarded.get("presented_ns").is_none());
         assert!(discarded["derived"].get("commit_to_present_ns").is_none());
+    }
+
+    #[test]
+    fn wrong_and_late_feedback_cannot_claim_another_update() {
+        let mut pending_updates = BTreeMap::from([(1, pending(Region::Active, true))]);
+        assert!(correlate(
+            &mut pending_updates,
+            2,
+            presented(10_000, Some(CLOCK_MONOTONIC_ID)),
+            DEADLINE,
+        )
+        .is_none());
+        assert!(pending_updates.contains_key(&1));
+
+        let matched = correlate(
+            &mut pending_updates,
+            1,
+            presented(10_000, Some(CLOCK_MONOTONIC_ID)),
+            DEADLINE,
+        )
+        .expect("the exact update is still pending");
+        assert_eq!(matched.sequence, 1);
+        assert_eq!(matched.fixture_outcome, Outcome::Verified);
+        assert!(correlate(
+            &mut pending_updates,
+            1,
+            presented(11_000, Some(CLOCK_MONOTONIC_ID)),
+            DEADLINE,
+        )
+        .is_none());
+
+        let mut timed_out = pending(Region::Active, true);
+        timed_out.sequence = 3;
+        pending_updates.insert(3, timed_out);
+        let expired = correlate(&mut pending_updates, 3, Feedback::Timeout, DEADLINE)
+            .expect("timeout consumes its own update");
+        assert_eq!(expired.fixture_outcome, Outcome::Timeout);
+        assert!(correlate(
+            &mut pending_updates,
+            3,
+            presented(12_000, Some(CLOCK_MONOTONIC_ID)),
+            DEADLINE,
+        )
+        .is_none());
     }
 }

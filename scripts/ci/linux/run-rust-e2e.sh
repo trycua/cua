@@ -326,6 +326,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
       # advertises the protocol and completes no feedback, because no output ever
       # reaches a real presentation. wlroots 0.17 (the hosted lane's sway 1.9)
       # completes it in CLOCK_MONOTONIC.
+      bash "${SCRIPT_DIR}/test-wayland-presentation-probe-result.sh"
       presentation_fixture="${CUA_TEST_APPS_ROOT}/harness-wayland-presentation/CuaTestHarness.WaylandPresentation"
       presentation_probe="${ARTIFACT_DIR}/wayland-presentation-probe.jsonl"
       rm -f "${presentation_probe}"
@@ -334,21 +335,25 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
         > "${ARTIFACT_DIR}/wayland-presentation-probe.log" 2>&1
       presentation_probe_status=$?
       set -e
-      if [[ "${presentation_probe_status}" == 0 ]]; then
+      presentation_probe_result="$(bash "${SCRIPT_DIR}/wayland-presentation-probe-result.sh" \
+        "${presentation_probe_status}" "${presentation_probe}")"
+      if [[ "${presentation_probe_result}" == ready ]]; then
         run_test wayland-presentation-latency \
           cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
             --test wayland_presentation_latency_test -- \
             --ignored --nocapture --test-threads=1
-      elif [[ "${presentation_probe_status}" == 3 ]]; then
-        presentation_supported="$(jq -r 'select(.kind == "probe") | .presentation_supported // false' \
-          "${presentation_probe}" 2>/dev/null | tail -1)"
-        if [[ "${presentation_supported}" == true ]]; then
-          limitation="Compositor advertises wp_presentation but completed no feedback for a committed content update; presentation-timestamp latency evidence is unavailable in this lane."
-        else
-          limitation="Compositor does not implement stable wp_presentation; presentation-timestamp latency evidence is unavailable in this lane."
-        fi
+      elif [[ "${presentation_probe_result}" != error ]]; then
+        case "${presentation_probe_result}" in
+          clock_mismatch)
+            limitation="Compositor presentation clock differs from the fixture's CLOCK_MONOTONIC; cross-clock latency evidence is unavailable in this lane." ;;
+          feedback_unavailable)
+            limitation="Compositor advertises wp_presentation but completed no feedback for a committed content update; presentation-timestamp latency evidence is unavailable in this lane." ;;
+          protocol_unavailable)
+            limitation="Compositor does not implement stable wp_presentation; presentation-timestamp latency evidence is unavailable in this lane." ;;
+        esac
         jq -n \
           --arg reason "${limitation}" \
+          --arg outcome "${presentation_probe_result}" \
           --slurpfile probe "${presentation_probe}" \
           '{
             schema: "cua-e2e-limitation-v1",
@@ -357,12 +362,13 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
             harness: "wayland-presentation",
             test: "wayland-presentation-latency",
             status: "not_applicable",
+            outcome: $outcome,
             reason: $reason,
             probe: ($probe | map(select(.kind == "probe")) | last)
           }' > "${ARTIFACT_DIR}/wayland-presentation-latency-limitation.json"
         echo "[LIMITATION] wayland-presentation-latency: ${limitation}"
       else
-        echo "wayland presentation fixture probe failed with status ${presentation_probe_status}" >&2
+        echo "wayland presentation fixture probe failed or returned invalid evidence (status ${presentation_probe_status})" >&2
         cat "${ARTIFACT_DIR}/wayland-presentation-probe.log" >&2
         FAILURE_COUNT=$((FAILURE_COUNT + 1))
       fi

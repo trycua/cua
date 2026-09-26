@@ -406,12 +406,14 @@ publish a performance number. Read it accordingly:
 - `return_minus_present_ns` is signed on purpose. A negative value means the
   Driver returned before the compositor presented the update;
 - one presented action and the no-op and discarded controls produce raw rows;
+  a refused Driver action must produce no fixture input or sample;
   `summary.json` retains outcome and deadline-miss counts;
 - a `discarded` row is ordinary compositor behaviour, not a fault: an update
   superseded within the same refresh is never shown. It is retained as evidence
   but measures no presentation, so the cell repeats that action instead of
   counting it, and fails only if it cannot gather its samples at all;
-- a compositor that cannot attribute a presentation records a typed limitation
+- a compositor with an incomparable presentation clock, or one that cannot
+  attribute a presentation, records a typed limitation
   (`wayland-presentation-latency-limitation.json`) instead of a missing
   measurement. The runner decides this from the fixture's own `--probe` mode,
   which commits one content update and waits for feedback rather than trusting

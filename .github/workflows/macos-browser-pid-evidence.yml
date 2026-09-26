@@ -1,0 +1,85 @@
+name: "macOS browser PID evidence"
+
+on:
+  push:
+    branches:
+      - fix/macos-browser-pid-4035
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-browser-pid-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source:
+    name: BrowserJs source gates
+    runs-on: macos-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: libs/cua-driver/rust
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+
+      - name: Record exact candidate
+        run: |
+          echo "${GITHUB_SHA}" | tee "$RUNNER_TEMP/browser-pid-sha.txt"
+          rustc --version
+          cargo --version
+
+      - name: Rust format
+        run: |
+          set -o pipefail
+          cargo fmt --all -- --check 2>&1 | tee "$RUNNER_TEMP/browser-pid-fmt.log"
+
+      - name: Focused BrowserJs tests
+        run: |
+          set -o pipefail
+          cargo test -p platform-macos browser_js --locked -- --nocapture \
+            2>&1 | tee "$RUNNER_TEMP/browser-pid-tests.log"
+
+      - name: platform-macos check
+        run: |
+          set -o pipefail
+          cargo check -p platform-macos --locked \
+            2>&1 | tee "$RUNNER_TEMP/browser-pid-check.log"
+
+      - name: Write evidence summary
+        env:
+          EVIDENCE_SHA: ${{ github.sha }}
+        run: |
+          python3 - "$RUNNER_TEMP/browser-pid-summary.json" <<'PY'
+          import json, os, pathlib, sys
+          out = pathlib.Path(sys.argv[1])
+          summary = {
+              "sha": os.environ["EVIDENCE_SHA"],
+              "format": "passed",
+              "browser_js_tests": "passed",
+              "platform_macos_check": "passed",
+              "claim_boundary": (
+                  "source/unit gates only; does not prove two-live-Chrome "
+                  "AppleScript routing or single-instance window matching"
+              ),
+          }
+          out.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload source evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: macos-browser-pid-source-evidence
+          path: |
+            ${{ runner.temp }}/browser-pid-sha.txt
+            ${{ runner.temp }}/browser-pid-summary.json
+            ${{ runner.temp }}/browser-pid-fmt.log
+            ${{ runner.temp }}/browser-pid-tests.log
+            ${{ runner.temp }}/browser-pid-check.log
+          if-no-files-found: error
+          retention-days: 14

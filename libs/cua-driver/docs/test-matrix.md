@@ -120,6 +120,26 @@ instance of the installed app with an isolated extension home and socket.
 Wayland lanes record a coverage limitation instead of running the row. Model
 quality belongs to the `cua-perception` crate and its artifact-gated lanes.
 
+## Harness E2E: Model-Backed Perception Decision Loop
+
+`perception_s1_decision_loop_test.rs` runs the same capture-bound loop with
+real models, in the `s1-perception` lane of the Linux X11 runner
+(`scripts/ci/linux/run-rust-e2e.sh`). Only
+`.github/workflows/ci-cua-s1-weights.yml` selects that lane (nightly, manual
+dispatch, and pull requests that touch Cua-S1, the jev-use chooser, or the
+row), because it needs the pinned Cua-S1-4B weights:
+
+| Cell | Coverage |
+| --- | --- |
+| `linux-electron-perception-s1-capture-click-px-foreground` | The published `cua-perception` release, installed from its signed catalog as `publisher-verified`, parses a retained Electron window capture with OmniParser; a resident Cua-S1-4B (text adapter, CPU) chooses one of the parsed text regions for the goal "Increment the counter once."; Driver clicks the region center once with the same `capture_id` within the 60-second capture lifetime; the fixture journal must reach `counter=1`; the consumed capture is refused with `capture_not_found`, an unused capture past its lifetime is refused with `capture_expired`, and the counter stays at 1 |
+
+The row writes the parse, the `cua.jev_choice_request_v1` request, the S1
+decision, and a timing record under `artifacts/cua-driver/linux/s1-perception/`
+next to the trajectory video. macOS and Windows lanes do not run it: the
+hosted macOS arm64 runner has 7 GB of memory, less than the 9.3 GB of 16-bit
+base weights, and the Windows lane has no provisioned weights. Their
+capture-bound loop is covered by the model-free row above.
+
 ## Harness E2E: Native Windows
 
 Windows native harnesses are repo-local applications built from source:

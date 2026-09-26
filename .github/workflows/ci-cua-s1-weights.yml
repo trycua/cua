@@ -11,7 +11,10 @@ on:
   workflow_dispatch:
     inputs:
       dtype:
-        description: "Torch dtype for CPU inference (float32 does not fit in 16 GB)"
+        # bfloat16 uses the runner's AVX512-BF16; float16 has no native CPU
+        # support there and is several times slower. float32 weights (18.7 GB)
+        # do not fit in the runner's 16 GB of memory.
+        description: "Torch dtype for CPU inference"
         required: false
         type: choice
         default: bfloat16
@@ -27,6 +30,7 @@ on:
       - "libs/cua-driver/examples/jev-use/python/jev_adapter.py"
       - "libs/cua-driver/examples/jev-use/verify_decision_cli.py"
       - "libs/cua-driver/examples/jev-use/fixtures/jev-choice-*"
+      - "libs/cua-driver/rust/crates/cua-driver-e2e/tests/perception_s1_decision_loop_test.rs"
       - ".github/workflows/ci-cua-s1-weights.yml"
 
 permissions:
@@ -47,13 +51,9 @@ jobs:
     name: S1 chooser smoke with pinned weights (CPU, text + multimodal)
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        dtype: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.dtype) || '["bfloat16","float16"]') }}
     env:
       S1_DEVICE: cpu
-      S1_DTYPE: ${{ matrix.dtype }}
+      S1_DTYPE: ${{ inputs.dtype || 'bfloat16' }}
     defaults:
       run:
         shell: bash
@@ -230,7 +230,159 @@ jobs:
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         with:
-          name: cua-s1-weights-smoke-${{ matrix.dtype }}
+          name: cua-s1-weights-smoke
           path: ${{ runner.temp }}/s1-evidence
           if-no-files-found: ignore
+          retention-days: 14
+
+  driver-e2e:
+    # Canonical Linux X11 row for the model-backed perception loop: Driver
+    # captures the Electron harness, the published cua-perception extension
+    # parses the capture, Cua-S1-4B chooses one region, Driver clicks it with
+    # the same capture_id inside the 60 s lifetime, the fixture journal
+    # verifies the effect, and stale captures are refused. It runs here, not
+    # in e2e-rust-linux.yml, because it needs the 9.5 GB of pinned weights.
+    name: Linux X11 / S1 + OmniParser capture-loop row
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CUA_E2E_SOURCE_SHA: ${{ github.sha }}
+      CUA_E2E_PERCEPTION_VERSION: "0.2.1"
+      # SHA-256 of cua-perception-0.2.1-x86_64-unknown-linux-gnu.tar.gz as
+      # published; the Driver also verifies the signed catalog.
+      PERCEPTION_ARCHIVE_SHA256: b4d76b626df9ce1a48b8036f7313412525295d0cb818d82ecbe3d9cca5fd1d08
+      S1_DEVICE: cpu
+      S1_DTYPE: ${{ inputs.dtype || 'bfloat16' }}
+      S1_MODALITY: text
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Free disk space for the weights, Rust build, and extension
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          df -h /
+          {
+            echo "S1_MODELS=$RUNNER_TEMP/s1-models"
+            echo "S1_BASE_MODEL_PATH=$RUNNER_TEMP/s1-models/Qwen3.5-4B"
+            echo "S1_ADAPTER_PATH=$RUNNER_TEMP/s1-models/cua-s1-4b-0.2"
+            echo "CUA_E2E_S1_PYTHON=$GITHUB_WORKSPACE/libs/cua-s1/python/.venv/bin/python"
+            echo "PERCEPTION_DIR=$RUNNER_TEMP/cua-perception"
+          } >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: e2e-s1-perception
+          save-if: ${{ github.event_name == 'schedule' }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Install GUI and Rust build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb dbus-x11 at-spi2-core openbox picom python3-gi gir1.2-gtk-3.0 \
+            libgtk-3-dev clang pkg-config libdbus-1-dev libpipewire-0.3-dev \
+            libspa-0.2-dev libei-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
+            libwebkit2gtk-4.1-dev libssl-dev libxdo-dev \
+            libayatana-appindicator3-dev librsvg2-dev ffmpeg jq
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: libs/cua-s1/python/uv.lock
+
+      - name: Install the pinned four-b inference environment
+        working-directory: libs/cua-s1/python
+        run: uv sync --frozen --extra four-b
+
+      - name: Download and verify the pinned weights
+        run: |
+          set -euo pipefail
+          "$CUA_E2E_S1_PYTHON" libs/cua-s1/ci/fetch_pinned_weights.py --dest "$S1_MODELS"
+          df -h /
+
+      - name: Download the published cua-perception release
+        run: |
+          set -euo pipefail
+          tag="cua-perception-v${CUA_E2E_PERCEPTION_VERSION}"
+          stem="cua-perception-${CUA_E2E_PERCEPTION_VERSION}-x86_64-unknown-linux-gnu"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}"
+          mkdir -p "$PERCEPTION_DIR"
+          cd "$PERCEPTION_DIR"
+          for asset in "${stem}.catalog.json" "${stem}.tar.gz" SHA256SUMS; do
+            curl --fail --silent --show-error --location --retry 3 -o "$asset" "$base/$asset"
+          done
+          grep -E " \*?(${stem}\.catalog\.json|${stem}\.tar\.gz)$" SHA256SUMS | sha256sum --check --strict
+          echo "${PERCEPTION_ARCHIVE_SHA256}  ${stem}.tar.gz" | sha256sum --check --strict
+          echo "CUA_E2E_PERCEPTION_CATALOG=$PERCEPTION_DIR/${stem}.catalog.json" >> "$GITHUB_ENV"
+
+      - name: Run the S1 + OmniParser capture-loop row
+        env:
+          CUA_E2E_INTERNAL_LANE: s1-perception
+        run: |
+          set -euo pipefail
+          vmstat -S M 5 > "$RUNNER_TEMP/vmstat.log" &
+          vmstat_pid=$!
+          trap 'kill "$vmstat_pid" 2>/dev/null || true' EXIT
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            dbus-run-session -- bash -lc \
+            "openbox >/tmp/cua-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-picom.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh"
+
+      - name: Publish row summary
+        if: always()
+        run: |
+          set -euo pipefail
+          artifacts=artifacts/cua-driver/linux
+          {
+            echo "## S1 + OmniParser capture-loop row (Linux X11, S1 ${S1_MODALITY} on ${S1_DEVICE}/${S1_DTYPE})"
+            echo
+            if [[ -f "$artifacts/s1-perception/timing.json" ]]; then
+              jq -r '
+                "| Measure | Value |", "| --- | --- |",
+                "| Extension | cua-perception \(.extension.version) (\(.extension.trust)) |",
+                "| S1 checkpoint | `\(.s1.model)` (load \(.s1.load_s) s, peak RSS \(.s1.peak_rss_mb) MB) |",
+                "| Regions parsed / candidates | \(.regions_parsed) / \(.candidates) |",
+                "| S1 choice | `\(.selected_id)` \(.selected_text | tojson) (confidence \(.confidence)) |",
+                "| Parse (warm worker) | \(.parse_ms) ms (first parse \(.warm_parse_ms) ms) |",
+                "| S1 decision | \(.s1_decision_ms) ms |",
+                "| Capture age at click | \(.capture_age_at_click_ms) ms of 60000 |",
+                "| Click | \(.click_ms) ms, route \(.click_route) |",
+                "| Fixture oracle | \(.fixture_counter) |"
+              ' "$artifacts/s1-perception/timing.json"
+            else
+              echo "No timing record was produced."
+            fi
+            if [[ -f "$RUNNER_TEMP/vmstat.log" ]]; then
+              min_free="$(awk 'NR>2 {avail=$4+$5+$6; if (min=="" || avail<min) min=avail} END {print min}' "$RUNNER_TEMP/vmstat.log")"
+              echo
+              echo "Lowest free + buffer + cache memory during the row: ${min_free} MB (vmstat, 5 s samples)."
+            fi
+            echo
+            if [[ -f "$artifacts/summary.md" ]]; then
+              cat "$artifacts/summary.md"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          cp "$RUNNER_TEMP/vmstat.log" "$artifacts/" 2>/dev/null || true
+
+      - name: Upload row evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: cua-s1-perception-linux-x11
+          path: artifacts/cua-driver/linux
+          if-no-files-found: ignore
+          compression-level: 0
           retention-days: 14

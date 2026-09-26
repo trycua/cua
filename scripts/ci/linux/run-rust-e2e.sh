@@ -336,7 +336,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
       set -e
       if [[ "${presentation_probe_status}" == 0 ]]; then
         run_test wayland-presentation-latency \
-          cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+          cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
             --test wayland_presentation_latency_test -- \
             --ignored --nocapture --test-threads=1
       elif [[ "${presentation_probe_status}" == 3 ]]; then

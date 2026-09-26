@@ -1501,14 +1501,146 @@ fn case(browser: &str, action: &str) -> CaseSpec {
 }
 
 fn prepare_isolated_case(browser: &str) -> CaseSpec {
-    let case = case(browser, "browser_prepare_isolated_launch");
-    if cfg!(target_os = "windows")
-        && std::env::var("CUA_E2E_WINDOWS_BROWSER_LIMITATION").as_deref()
-            == Ok("hosted_runner_token")
-    {
-        case.expecting_refusal(vec![RefusalCode::BrowserRouteUnavailable])
-    } else {
-        case
+    case(browser, "browser_prepare_isolated_launch")
+}
+
+/// Independent oracle for the Windows isolated-browser token boundary. The
+/// ephemeral test daemon inherits this test process's token, so the test
+/// token stands in for the Driver's. An elevated Driver must run the browser
+/// with a standard-user token: not elevated, Administrators not enabled, and
+/// Medium (or lower) integrity below the Driver's.
+#[cfg(target_os = "windows")]
+fn assert_windows_isolated_browser_token(browser_pid: u32) {
+    let driver = windows_token_oracle::posture(None).expect("read the Driver token");
+    let browser =
+        windows_token_oracle::posture(Some(browser_pid)).expect("read the isolated browser token");
+    eprintln!("[isolated-browser-token] driver={driver:?} browser={browser:?}");
+    if std::env::var("CUA_E2E_EXPECT_ELEVATED_DRIVER").as_deref() == Ok("1") {
+        assert!(
+            driver.privileged(),
+            "this job must run the Driver elevated to prove the standard-user browser launch: {driver:?}"
+        );
+    }
+    assert!(
+        !browser.elevated && !browser.administrators_enabled && browser.integrity_rid <= 0x2000,
+        "the isolated browser must run with a standard-user token: {browser:?}"
+    );
+    if driver.privileged() {
+        assert!(
+            browser.integrity_rid < driver.integrity_rid,
+            "the isolated browser must run below the elevated Driver's integrity: driver={driver:?} browser={browser:?}"
+        );
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod windows_token_oracle {
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Security::{
+        CreateWellKnownSid, EqualSid, GetSidSubAuthority, GetSidSubAuthorityCount,
+        GetTokenInformation, TokenElevation, TokenGroups, TokenIntegrityLevel,
+        WinBuiltinAdministratorsSid, PSID, SID_AND_ATTRIBUTES, TOKEN_ELEVATION, TOKEN_GROUPS,
+        TOKEN_INFORMATION_CLASS, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Threading::{
+        GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    const SE_GROUP_ENABLED: u32 = 0x4;
+    const SE_GROUP_USE_FOR_DENY_ONLY: u32 = 0x10;
+
+    #[derive(Debug)]
+    pub(super) struct Posture {
+        pub elevated: bool,
+        pub administrators_enabled: bool,
+        pub integrity_rid: u32,
+    }
+
+    impl Posture {
+        pub fn privileged(&self) -> bool {
+            self.elevated || self.administrators_enabled || self.integrity_rid >= 0x3000
+        }
+    }
+
+    struct Handle(HANDLE);
+    impl Drop for Handle {
+        fn drop(&mut self) {
+            let _ = unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    fn information(token: HANDLE, class: TOKEN_INFORMATION_CLASS) -> Result<Vec<u64>, String> {
+        let mut needed = 0u32;
+        let _ = unsafe { GetTokenInformation(token, class, None, 0, &mut needed) };
+        let mut buffer = vec![0u64; (needed as usize).div_ceil(8).max(1)];
+        unsafe {
+            GetTokenInformation(
+                token,
+                class,
+                Some(buffer.as_mut_ptr().cast()),
+                (buffer.len() * 8) as u32,
+                &mut needed,
+            )
+        }
+        .map_err(|error| format!("GetTokenInformation({}): {error}", class.0))?;
+        Ok(buffer)
+    }
+
+    /// Token posture of `pid`, or of this process for `None`.
+    pub(super) fn posture(pid: Option<u32>) -> Result<Posture, String> {
+        let process = match pid {
+            Some(pid) => Some(Handle(
+                unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
+                    .map_err(|error| format!("OpenProcess({pid}): {error}"))?,
+            )),
+            None => None,
+        };
+        let process_handle = process
+            .as_ref()
+            .map_or_else(|| unsafe { GetCurrentProcess() }, |handle| handle.0);
+        let mut token = HANDLE::default();
+        unsafe { OpenProcessToken(process_handle, TOKEN_QUERY, &mut token) }
+            .map_err(|error| format!("OpenProcessToken: {error}"))?;
+        let token = Handle(token);
+
+        let elevation = information(token.0, TokenElevation)?;
+        let elevated =
+            unsafe { (*elevation.as_ptr().cast::<TOKEN_ELEVATION>()).TokenIsElevated } != 0;
+
+        let label = information(token.0, TokenIntegrityLevel)?;
+        let sid = unsafe { (*label.as_ptr().cast::<TOKEN_MANDATORY_LABEL>()).Label.Sid };
+        let integrity_rid = unsafe {
+            let count = *GetSidSubAuthorityCount(sid);
+            *GetSidSubAuthority(sid, u32::from(count) - 1)
+        };
+
+        let mut sid_buffer = [0u64; 12];
+        let mut sid_size = std::mem::size_of_val(&sid_buffer) as u32;
+        let administrators = PSID(sid_buffer.as_mut_ptr().cast());
+        unsafe {
+            CreateWellKnownSid(
+                WinBuiltinAdministratorsSid,
+                None,
+                Some(administrators),
+                &mut sid_size,
+            )
+        }
+        .map_err(|error| format!("CreateWellKnownSid: {error}"))?;
+        let groups = information(token.0, TokenGroups)?;
+        let header = groups.as_ptr().cast::<TOKEN_GROUPS>();
+        let count = unsafe { (*header).GroupCount } as usize;
+        let first = unsafe { std::ptr::addr_of!((*header).Groups).cast::<SID_AND_ATTRIBUTES>() };
+        let administrators_enabled = (0..count).any(|index| {
+            let group = unsafe { *first.add(index) };
+            unsafe { EqualSid(group.Sid, administrators) }.is_ok()
+                && group.Attributes & SE_GROUP_USE_FOR_DENY_ONLY == 0
+                && group.Attributes & SE_GROUP_ENABLED != 0
+        });
+        Ok(Posture {
+            elevated,
+            administrators_enabled,
+            integrity_rid,
+        })
     }
 }
 
@@ -2268,176 +2400,125 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
         assert!(!started.is_error(), "start_session failed: {}", started.raw);
         driver.start_behavior_recording();
 
-        if cfg!(target_os = "windows")
-            && std::env::var("CUA_E2E_WINDOWS_BROWSER_LIMITATION").as_deref()
-                == Ok("hosted_runner_token")
-        {
-            let sentinel = ForegroundSentinel::launch(&mut driver);
-            let (prepared, passed) = sentinel
-                .observe_desktop(|| {
-                    driver.call(
-                        "browser_prepare",
-                        serde_json::json!({
-                            "session": session,
-                            "allow_launch": true,
-                            "profile": {"mode": "isolated_new"},
-                        }),
-                    )
-                })
-                .expect("observe hosted Windows browser limitation");
-            assert_eq!(
-                prepared.structured()["status"],
-                "refused",
-                "{}",
-                prepared.raw
-            );
-            assert_eq!(
-                prepared.structured()["refusal"]["code"],
-                "browser_route_unavailable",
-                "{}",
-                prepared.raw
-            );
-            assert!(
-                prepared.structured()["action"].is_null()
-                    && prepared.structured()["prepared_pid"].is_null()
-                    && prepared.structured()["side_effects"].is_null(),
-                "hosted Windows refusal must precede browser setup: {}",
-                prepared.raw
-            );
-            assert_eq!(
-                profile_entries(&driver_profiles),
-                profiles_before,
-                "hosted Windows refusal must not create an isolated profile"
-            );
-            let ended = driver.call("end_session", serde_json::json!({ "session": session }));
-            assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
-            let mut observation = Observation::refused(
-                RefusalCode::BrowserRouteUnavailable,
-                vec![OracleKind::FixtureState],
-                prepared.text(),
-                Evidence::default(),
-            );
-            observation.passed_oracles.extend(passed);
-            observation
-        } else {
-            let prepared = driver.call(
-                "browser_prepare",
-                serde_json::json!({
-                    "session": session,
-                    "allow_launch": true,
-                    "profile": {"mode": "isolated_new"},
-                }),
-            );
-            assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
-            assert_eq!(
-                prepared.structured()["action"],
-                "launched_isolated_browser",
-                "{}",
-                prepared.raw
-            );
-            assert_eq!(
-                prepared.structured()["side_effects"]["launched_browser"],
-                true
-            );
-            assert_eq!(
-                prepared.structured()["side_effects"]["created_profile"],
-                true
-            );
-            let prepared_json = prepared.raw.to_string();
-            assert!(
-                !prepared_json.contains(&driver_profiles.display().to_string()),
-                "browser_prepare disclosed its private profile path: {}",
-                prepared.raw
-            );
+        let prepared = driver.call(
+            "browser_prepare",
+            serde_json::json!({
+                "session": session,
+                "allow_launch": true,
+                "profile": {"mode": "isolated_new"},
+            }),
+        );
+        assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
+        assert_eq!(
+            prepared.structured()["action"],
+            "launched_isolated_browser",
+            "{}",
+            prepared.raw
+        );
+        assert_eq!(
+            prepared.structured()["side_effects"]["launched_browser"],
+            true
+        );
+        assert_eq!(
+            prepared.structured()["side_effects"]["created_profile"],
+            true
+        );
+        let prepared_json = prepared.raw.to_string();
+        assert!(
+            !prepared_json.contains(&driver_profiles.display().to_string()),
+            "browser_prepare disclosed its private profile path: {}",
+            prepared.raw
+        );
 
-            let prepared_pid = prepared.structured()["prepared_pid"]
-                .as_u64()
-                .expect("prepared browser pid") as u32;
-            let (prepared_window_id, state) =
-                wait_for_exact_browser_binding(&mut driver, prepared_pid, &session)
-                    .expect("isolated browser did not expose an exactly bindable window");
-            let target = state.structured()["target_id"]
-                .as_str()
-                .expect("prepared target id")
-                .to_owned();
-            let tab = state.structured()["tabs"]
-                .as_array()
-                .and_then(|tabs| tabs.iter().find(|tab| tab["active"] == true))
-                .and_then(|tab| tab["tab_id"].as_str())
-                .expect("prepared active tab")
-                .to_owned();
-            let navigated = driver.call(
-                "browser_navigate",
-                serde_json::json!({
-                    "target_id": target,
-                    "tab_id": tab,
-                    "url": target_server.page_url(),
-                    "session": session,
-                }),
-            );
-            assert_eq!(navigated.structured()["status"], "ok", "{}", navigated.raw);
-            wait_for_observed(&target_server, "WEB_HARNESS_MARKER_v1");
+        let prepared_pid = prepared.structured()["prepared_pid"]
+            .as_u64()
+            .expect("prepared browser pid") as u32;
+        #[cfg(target_os = "windows")]
+        assert_windows_isolated_browser_token(prepared_pid);
+        let (prepared_window_id, state) =
+            wait_for_exact_browser_binding(&mut driver, prepared_pid, &session)
+                .expect("isolated browser did not expose an exactly bindable window");
+        let target = state.structured()["target_id"]
+            .as_str()
+            .expect("prepared target id")
+            .to_owned();
+        let tab = state.structured()["tabs"]
+            .as_array()
+            .and_then(|tabs| tabs.iter().find(|tab| tab["active"] == true))
+            .and_then(|tab| tab["tab_id"].as_str())
+            .expect("prepared active tab")
+            .to_owned();
+        let navigated = driver.call(
+            "browser_navigate",
+            serde_json::json!({
+                "target_id": target,
+                "tab_id": tab,
+                "url": target_server.page_url(),
+                "session": session,
+            }),
+        );
+        assert_eq!(navigated.structured()["status"], "ok", "{}", navigated.raw);
+        wait_for_observed(&target_server, "WEB_HARNESS_MARKER_v1");
 
-            let target_window = TargetWindow {
-                pid: prepared_pid,
-                native_id: prepared_window_id,
-            };
-            let sentinel = ForegroundSentinel::launch(&mut driver);
-            sentinel
-                .assert_background_posture(target_window)
-                .expect("establish isolated browser background posture");
-            sentinel
-                .prepare_background_observation(&mut driver, target_window)
-                .expect("restore isolated browser background posture");
-            let (mut observation, passed) = sentinel
-                .observe_background(target_window, || {
-                    let snapshot = driver.call(
-                        "get_browser_state",
-                        serde_json::json!({
-                            "target_id": target,
-                            "tab_id": tab,
-                            "session": session,
-                        }),
-                    );
-                    let click_ref = ref_by_label(&snapshot, "id=btn-increment");
-                    let clicked = driver.call(
-                        "browser_click",
-                        serde_json::json!({
-                            "target_id": target,
-                            "tab_id": tab,
-                            "ref": click_ref,
-                            "input_route": "dom_event",
-                            "session": session,
-                        }),
-                    );
-                    assert_eq!(
-                        clicked.action_effect(),
-                        Some("unverifiable"),
-                        "{}",
-                        clicked.raw
-                    );
-                    wait_for_text(&target_server, "lbl-counter", "counter=1");
-                    Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
-                })
-                .expect("observe isolated browser desktop effects");
-            observation.passed_oracles.extend(passed);
-
-            let ended = driver.call("end_session", serde_json::json!({ "session": session }));
-            assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
-            wait_for_pid_windows_to_close(&mut driver, prepared_pid);
-            let profile_deadline = Instant::now() + Duration::from_secs(5);
-            loop {
-                if profile_entries(&driver_profiles) == profiles_before {
-                    break;
-                }
-                assert!(
-                    Instant::now() < profile_deadline,
-                    "isolated_new profile remained after end_session"
+        let target_window = TargetWindow {
+            pid: prepared_pid,
+            native_id: prepared_window_id,
+        };
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        sentinel
+            .assert_background_posture(target_window)
+            .expect("establish isolated browser background posture");
+        sentinel
+            .prepare_background_observation(&mut driver, target_window)
+            .expect("restore isolated browser background posture");
+        let (mut observation, passed) = sentinel
+            .observe_background(target_window, || {
+                let snapshot = driver.call(
+                    "get_browser_state",
+                    serde_json::json!({
+                        "target_id": target,
+                        "tab_id": tab,
+                        "session": session,
+                    }),
                 );
-                thread::sleep(Duration::from_millis(100));
+                let click_ref = ref_by_label(&snapshot, "id=btn-increment");
+                let clicked = driver.call(
+                    "browser_click",
+                    serde_json::json!({
+                        "target_id": target,
+                        "tab_id": tab,
+                        "ref": click_ref,
+                        "input_route": "dom_event",
+                        "session": session,
+                    }),
+                );
+                assert_eq!(
+                    clicked.action_effect(),
+                    Some("unverifiable"),
+                    "{}",
+                    clicked.raw
+                );
+                wait_for_text(&target_server, "lbl-counter", "counter=1");
+                Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+            })
+            .expect("observe isolated browser desktop effects");
+        observation.passed_oracles.extend(passed);
+
+        let ended = driver.call("end_session", serde_json::json!({ "session": session }));
+        assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
+        wait_for_pid_windows_to_close(&mut driver, prepared_pid);
+        let profile_deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if profile_entries(&driver_profiles) == profiles_before {
+                break;
             }
-            observation
+            assert!(
+                Instant::now() < profile_deadline,
+                "isolated_new profile remained after end_session"
+            );
+            thread::sleep(Duration::from_millis(100));
         }
+        observation
     });
 }
 

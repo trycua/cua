@@ -67,18 +67,20 @@ if either grant is missing.
   </Tab>
   <Tab value="Windows">
 
-Use a normal, non-administrator PowerShell terminal in your logged-in desktop
-session. Install Google Chrome or Microsoft Edge as a system application.
-Run Driver without elevation too: automatic browser discovery requires an
-installation the running account's token cannot modify.
+Use a PowerShell terminal in your logged-in desktop session. Install Google
+Chrome or Microsoft Edge as a system application. Automatic browser discovery
+requires an installation that the token running the browser cannot modify.
 
-An elevated or administrator token can modify `Program Files`, so Driver
-refuses its signed Chrome and Edge. `browser_prepare` then fails with
-`browser_route_unavailable` and a message that says the installed browser is
-writable by the current elevated or administrator token. Some cloud Windows
-images make the first user the built-in Administrator account (SID ending in
-`-500`). That account always runs elevated, even with UAC enabled. Sign in as
-a standard user instead, or run Driver from a non-elevated session.
+Driver can run elevated, as the installer's autostart does on an administrator
+account. An elevated token can modify `Program Files`, so an elevated Driver
+never runs the isolated browser with its own token. It launches Chrome or Edge
+with a standard-user token derived from its own: the same account and desktop,
+with administrator rights removed. This also covers the built-in Administrator
+account that some cloud Windows images create as the first user, and
+administrator accounts with UAC turned off. If Windows cannot provide a
+verified standard-user token, `browser_prepare` fails with
+`browser_route_unavailable` and explains why. Driver never falls back to an
+elevated browser.
 
 ```powershell
 cua-driver --version
@@ -256,7 +258,7 @@ shell call until it finishes. The command manages the test server itself.
 | Problem | What to check |
 | --- | --- |
 | Driver not running or permissions missing | Follow the [Driver setup guide](/how-to-guides/driver/install). |
-| Browser cannot launch | Check the browser installation and desktop-session requirements in your platform tab. On Windows, avoid an elevated Driver process. |
+| Browser cannot launch | Check the browser installation and desktop-session requirements in your platform tab. On Windows, read the `browser_prepare` refusal message; it names the installation or token check that failed. |
 | `browser_prepare` requires a `pid` | Update an older Driver installation before using this example. |
 | `uv` not found | Finish the uv installation and open a new terminal with its installation directory on `PATH`. |
 | API authentication or quota error | Check your TypeSafe key and account access. The connection check can pass even when live access fails. |

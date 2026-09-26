@@ -65,8 +65,9 @@ pub use engine::BrowserEngine;
 pub use platform::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
     BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
-    PrepareAction, PrepareAttachment, PrepareAttachmentKind, PrepareOutcome, PrepareProfile,
-    PrepareProfileMode, PrepareRequest, PrepareSideEffects, PrepareStrategy,
+    IsolatedBrowserProcess, PrepareAction, PrepareAttachment, PrepareAttachmentKind,
+    PrepareOutcome, PrepareProfile, PrepareProfileMode, PrepareRequest, PrepareSideEffects,
+    PrepareStrategy,
 };
 pub use refusal::{BrowserRefusal, BrowserRefusalCode};
 pub use setup_descriptor::{

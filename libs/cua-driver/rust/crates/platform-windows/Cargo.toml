@@ -47,6 +47,9 @@ windows = { version = "0.58", features = [
     "Win32_System_LibraryLoader",
     "Win32_Graphics_OpenGL",
     "Win32_Security",
+    # SaferCreateLevel / SaferComputeTokenFromLevel: derive the standard-user
+    # token an elevated Driver uses to run isolated browsers.
+    "Win32_Security_AppLocker",
     "Win32_System_Com",
     "Win32_Storage_Xps",
     "Win32_Storage_FileSystem",

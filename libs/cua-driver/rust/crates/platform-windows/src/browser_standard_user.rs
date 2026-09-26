@@ -888,6 +888,144 @@ mod tests {
         panic!("DIAGNOSTIC\n{}", report.join("\n"));
     }
 
+    // TEMPORARY diagnostic (removed before review): launch real Chrome with
+    // the Medium and High variants and report its tree, windows, and log.
+    #[test]
+    fn diagnostic_chrome_window_per_integrity() {
+        use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+        use windows::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+            TH32CS_SNAPPROCESS,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{
+            EnumWindows, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible,
+        };
+
+        let chrome =
+            std::path::PathBuf::from(r"C:\Program Files\Google\Chrome\Application\chrome.exe");
+        if !chrome.is_file() {
+            return;
+        }
+        fn tree(root: u32) -> Vec<(u32, String)> {
+            let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.unwrap();
+            let mut all = Vec::new();
+            let mut entry = PROCESSENTRY32W {
+                dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+                ..Default::default()
+            };
+            if unsafe { Process32FirstW(snapshot, &mut entry) }.is_ok() {
+                loop {
+                    let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(0);
+                    all.push((
+                        entry.th32ProcessID,
+                        entry.th32ParentProcessID,
+                        String::from_utf16_lossy(&entry.szExeFile[..len]),
+                    ));
+                    if unsafe { Process32NextW(snapshot, &mut entry) }.is_err() {
+                        break;
+                    }
+                }
+            }
+            drop(OwnedHandle(snapshot));
+            let mut result = vec![];
+            let mut frontier = vec![root];
+            while let Some(pid) = frontier.pop() {
+                for (child, parent, name) in &all {
+                    if *parent == pid && *child != pid {
+                        result.push((*child, name.clone()));
+                        frontier.push(*child);
+                    }
+                }
+            }
+            result
+        }
+        unsafe extern "system" fn collect(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            let out = &mut *(lparam.0 as *mut Vec<(u32, String, bool)>);
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            let mut class = [0u16; 128];
+            let len = GetClassNameW(hwnd, &mut class) as usize;
+            out.push((
+                pid,
+                String::from_utf16_lossy(&class[..len]),
+                IsWindowVisible(hwnd).as_bool(),
+            ));
+            BOOL(1)
+        }
+
+        let driver_token = current_process_token(
+            TOKEN_QUERY
+                | TOKEN_DUPLICATE
+                | TOKEN_ASSIGN_PRIMARY
+                | TOKEN_ADJUST_DEFAULT
+                | TOKEN_ADJUST_PRIVILEGES,
+        )
+        .unwrap();
+        let safer = safer_normal_user_token(driver_token.raw()).unwrap();
+        let high = lua_restricted_token(driver_token.raw(), safer.raw()).unwrap();
+        let medium = lua_restricted_token(driver_token.raw(), safer.raw()).unwrap();
+        set_medium_integrity(medium.raw()).unwrap();
+        let mut report = vec![];
+        for (name, token) in [("lua-medium", medium), ("lua-high", high), ("safer", safer)] {
+            let profile =
+                std::env::temp_dir().join(format!("cua-diag-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&profile);
+            std::fs::create_dir_all(&profile).unwrap();
+            let log = profile.join("chrome_debug.log");
+            let mut command = Command::new(&chrome);
+            command.args([
+                "--remote-debugging-port=0".to_owned(),
+                format!("--user-data-dir={}", profile.display()),
+                "--no-first-run".to_owned(),
+                "--no-default-browser-check".to_owned(),
+                "--disable-extensions".to_owned(),
+                "--enable-logging".to_owned(),
+                "--v=0".to_owned(),
+                format!("--log-file={}", log.display()),
+                "--window-position=40,40".to_owned(),
+                "--window-size=900,640".to_owned(),
+                "about:blank".to_owned(),
+            ]);
+            let mut child = match spawn_with_token(Arc::new(token), &command) {
+                Ok(child) => child,
+                Err(error) => {
+                    report.push(format!("{name}: spawn failed {error}"));
+                    continue;
+                }
+            };
+            std::thread::sleep(std::time::Duration::from_secs(12));
+            let pid = child.id();
+            let mut pids = vec![pid];
+            let descendants = tree(pid);
+            pids.extend(descendants.iter().map(|(p, _)| *p));
+            let mut windows: Vec<(u32, String, bool)> = vec![];
+            unsafe {
+                let _ = EnumWindows(Some(collect), LPARAM(&mut windows as *mut _ as isize));
+            }
+            let mine = windows
+                .into_iter()
+                .filter(|(p, _, _)| pids.contains(p))
+                .collect::<Vec<_>>();
+            let exited = child.try_wait().ok().flatten();
+            let log_text =
+                std::fs::read_to_string(&log).unwrap_or_else(|e| format!("<no log: {e}>"));
+            let tail = log_text
+                .lines()
+                .filter(|l| l.contains("ERROR") || l.contains("FATAL") || l.contains("WARNING"))
+                .take(25)
+                .collect::<Vec<_>>()
+                .join("\n    ");
+            report.push(format!(
+                "{name}: root={pid} exited={exited:?} descendants={descendants:?}\n  windows={mine:?}\n  log:\n    {tail}"
+            ));
+            let _ = std::process::Command::new(system32().join("taskkill.exe"))
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .output();
+            let _ = child.kill();
+        }
+        panic!("DIAGNOSTIC-CHROME\n{}", report.join("\n"));
+    }
+
     #[test]
     fn standard_user_launch_refuses_unforwarded_command_state() {
         let token = Arc::new(current_process_token(TOKEN_QUERY).expect("token"));

@@ -283,11 +283,18 @@ fn windows_from_clients(clients: Vec<Client>, active: &HashSet<i64>) -> Result<V
     let mut windows = Vec::new();
     for c in clients.into_iter().filter(|c| c.mapped) {
         let address = u64::from_str_radix(c.address.strip_prefix("0x").unwrap_or(&c.address), 16)?;
-        let pid = u32::try_from(c.pid)?;
-        let width = u32::try_from(c.size[0])?;
-        let height = u32::try_from(c.size[1])?;
-        if address == 0 || pid == 0 || !valid_dimensions(width, height) || !seen.insert(address) {
-            bail!("invalid or duplicate Hyprland window identity/geometry");
+        if address == 0 || !seen.insert(address) {
+            bail!("invalid or duplicate Hyprland window identity");
+        }
+        let (Ok(pid), Ok(width), Ok(height)) = (
+            u32::try_from(c.pid),
+            u32::try_from(c.size[0]),
+            u32::try_from(c.size[1]),
+        ) else {
+            continue;
+        };
+        if pid == 0 || !valid_dimensions(width, height) {
+            continue;
         }
         windows.push(Window {
             address,
@@ -745,6 +752,87 @@ mod tests {
         assert!(valid_dimensions(3840, 2160));
         assert!(!valid_dimensions(0, 1));
         assert!(!valid_dimensions(u32::MAX, u32::MAX));
+    }
+
+    fn client(address: &str, pid: i64, size: [i32; 2]) -> Client {
+        serde_json::from_value(serde_json::json!({
+            "address": address,
+            "mapped": true,
+            "hidden": false,
+            "pid": pid,
+            "title": "Fixture",
+            "class": "fixture",
+            "at": [0, 0],
+            "size": size,
+            "workspace": {"id": 1},
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn unrepresentable_client_does_not_hide_valid_siblings() {
+        let active = HashSet::from([1]);
+        let windows = windows_from_clients(
+            vec![
+                client("0x10", 42, [800, 600]),
+                client("0x20", 43, [6, -3]),
+                client("0x30", -1, [800, 600]),
+                client("0x40", 44, [0, 600]),
+                client("0x50", 0, [800, 600]),
+                client("0x60", 45, [i32::MAX, i32::MAX]),
+                client("0x70", 46, [640, 480]),
+            ],
+            &active,
+        )
+        .unwrap();
+
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].address, 0x10);
+        assert_eq!(windows[1].address, 0x70);
+    }
+
+    #[test]
+    fn null_and_duplicate_client_addresses_still_fail() {
+        let active = HashSet::from([1]);
+        let null_address =
+            windows_from_clients(vec![client("0x0", 42, [800, 600])], &active).unwrap_err();
+        assert_eq!(
+            null_address.to_string(),
+            "invalid or duplicate Hyprland window identity"
+        );
+
+        let duplicate_address = windows_from_clients(
+            vec![
+                client("0x10", 42, [800, 600]),
+                client("0x10", 43, [800, 600]),
+            ],
+            &active,
+        )
+        .unwrap_err();
+        assert_eq!(
+            duplicate_address.to_string(),
+            "invalid or duplicate Hyprland window identity"
+        );
+
+        let duplicate_unrepresentable = windows_from_clients(
+            vec![client("0x10", 42, [800, 600]), client("0x10", 43, [6, -3])],
+            &active,
+        )
+        .unwrap_err();
+        assert_eq!(
+            duplicate_unrepresentable.to_string(),
+            "invalid or duplicate Hyprland window identity"
+        );
+
+        let unrepresentable_duplicate = windows_from_clients(
+            vec![client("0x20", 43, [6, -3]), client("0x20", 44, [800, 600])],
+            &active,
+        )
+        .unwrap_err();
+        assert_eq!(
+            unrepresentable_duplicate.to_string(),
+            "invalid or duplicate Hyprland window identity"
+        );
     }
 
     fn display_monitor() -> DisplayMonitor {

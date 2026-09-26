@@ -1321,6 +1321,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "windows 0.61.3",
+ "x11rb",
 ]
 
 [[package]]

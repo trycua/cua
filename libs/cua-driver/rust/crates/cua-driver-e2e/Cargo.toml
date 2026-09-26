@@ -49,6 +49,9 @@ libc = "0.2"
 [target.'cfg(target_os = "linux")'.dependencies]
 platform-linux = { path = "../platform-linux" }
 
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+x11rb = "0.13"
+
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 core-foundation = "0.10"
 

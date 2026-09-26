@@ -20,6 +20,9 @@ pub mod tools;
 #[cfg(target_os = "linux")]
 pub mod x11;
 
+#[cfg(any(target_os = "linux", test))]
+mod x11_client_pid;
+
 #[cfg(target_os = "linux")]
 pub mod input;
 

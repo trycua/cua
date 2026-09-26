@@ -20,7 +20,9 @@ struct Setup: AsyncParsableCommand {
 
     @Option(
         name: .customLong("unattended"),
-        help: "Defaults to tahoe. Preset name or YAML path for compatibility and optional post-SSH commands. Built-in presets: sequoia, tahoe.",
+        help: ArgumentHelp(
+            "Defaults to tahoe. Preset name or YAML path for compatibility and optional post-SSH commands. Built-in presets: \(UnattendedConfig.availablePresets().joined(separator: ", "))."
+        ),
         completion: .file(extensions: ["yml", "yaml"]))
     var unattended: String?
 

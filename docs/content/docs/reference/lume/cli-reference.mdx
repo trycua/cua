@@ -39,7 +39,7 @@ Create a new virtual machine
 | `--display` | String | 1024x768 | Display resolution (e.g., 1024x768) |
 | `--ipsw` | String | - | Path to IPSW file or 'latest' for macOS VMs |
 | `--storage` | String | - | VM storage location to use |
-| `--unattended` | String | - | Prepare macOS unattended setup offline after install. Preset name or YAML path is accepted for compatibility. Built-in presets: sequoia, tahoe. Only supported for macOS VMs. |
+| `--unattended` | String | - | Prepare macOS unattended setup offline after install. Preset name or YAML path is accepted for compatibility. Built-in presets: goldengate, sequoia, tahoe. Only supported for macOS VMs. |
 | `--debug-dir` | String | - | Compatibility option; ignored by offline setup. |
 | `--vnc-port` | Int | 0 | Port to use for the temporary verification VNC server. Defaults to 0 (auto-assign). |
 
@@ -392,7 +392,7 @@ Prepare unattended macOS setup
 
 | Name | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `--unattended` | String | tahoe | Defaults to tahoe. Preset name or YAML path for compatibility and optional post-SSH commands. Built-in presets: sequoia, tahoe. |
+| `--unattended` | String | tahoe | Defaults to tahoe. Preset name or YAML path for compatibility and optional post-SSH commands. Built-in presets: goldengate, sequoia, tahoe. |
 | `--storage` | String | - | VM storage location to use or direct path to VM location |
 | `--vnc-port` | Int | 0 | Port to use for the temporary verification VNC server. Defaults to 0 (auto-assign) |
 | `--debug-dir` | String | - | Compatibility option; ignored by offline setup |

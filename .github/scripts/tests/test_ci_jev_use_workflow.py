@@ -7,10 +7,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / ".github/workflows/ci-jev-use.yml"
-STANDARD_USER_SCRIPTS = (
-    "scripts/ci/windows/invoke-standard-user-token.ps1",
-    "scripts/ci/windows/run-jev-use-standard-user.ps1",
-)
+WINDOWS_PROOF_SCRIPT = "scripts/ci/windows/run-jev-use-elevated-autostart.ps1"
+MIN_RELEASED_DRIVER_VERSION = (0, 30, 1)
 
 
 def load() -> dict:
@@ -47,8 +45,45 @@ def test_released_driver_jobs_use_the_canonical_installers() -> None:
     assert "https://cua.ai/driver/install.sh" in macos
     assert "cargo build" not in macos
     assert "https://cua.ai/driver/install.ps1" in windows
-    assert "-NoAutoStart" in windows
     assert "cargo build" not in windows
+
+
+def test_released_driver_jobs_use_default_version_resolution_with_a_floor() -> None:
+    jobs = load()["jobs"]
+    for name in ("released-driver-macos", "released-driver-windows"):
+        text = job_text(name)
+        # No pin: the canonical installer's own resolution picks the release.
+        assert "CUA_DRIVER_RS_VERSION" not in text, name
+        assert "CUA_DRIVER_VERSION" not in text, name
+        assert "-Release" not in text, name
+        floor = jobs[name]["env"]["MIN_RELEASED_DRIVER_VERSION"]
+        assert tuple(int(part) for part in floor.split(".")) >= MIN_RELEASED_DRIVER_VERSION, name
+        assert "older than" in text, name
+    assert "sort -V" in job_text("released-driver-macos")
+    assert "[version]$env:MIN_RELEASED_DRIVER_VERSION" in job_text("released-driver-windows")
+
+
+def test_windows_proves_the_default_elevated_autostart_path() -> None:
+    windows = job_text("released-driver-windows")
+    assert "-NoAutoStart" not in windows
+    assert "-AutoStart:$false" not in windows
+    assert "invoke-standard-user-token.ps1" not in windows
+    assert "run-jev-use-standard-user.ps1" not in windows
+    assert not (ROOT / "scripts/ci/windows/invoke-standard-user-token.ps1").exists()
+    assert "verify-user-session.ps1" in windows
+    assert WINDOWS_PROOF_SCRIPT.replace("/", "\\") in windows
+    script = (ROOT / WINDOWS_PROOF_SCRIPT).read_text(encoding="utf-8")
+    # The default task, started the way the installer tells users to.
+    assert 'Get-ScheduledTask -TaskName "cua-driver-serve"' in script
+    assert '-ne "Highest"' in script
+    assert "autostart kick" in script
+    assert "Start-Process" not in script
+    # Independent token oracle: elevated daemon, de-elevated browsers it launched.
+    assert "TokenIntegrityLevel" in script
+    assert "S-1-5-32-544" in script
+    assert "the autostart daemon must be elevated" in script
+    assert "ran with a privileged token" in script
+    assert "was not launched by a serve daemon" in script
 
 
 def test_released_driver_jobs_run_both_languages_and_audit_the_state_oracle() -> None:
@@ -57,27 +92,15 @@ def test_released_driver_jobs_run_both_languages_and_audit_the_state_oracle() ->
         assert '"observed"] == {"submitted": "jev-guide-mock"}' in text, name
         assert '("typescript", "mock", "verified")' in text, name
     assert "verify_setup.py --typescript" in job_text("released-driver-macos")
-    inner = (ROOT / STANDARD_USER_SCRIPTS[1]).read_text(encoding="utf-8")
+    inner = (ROOT / WINDOWS_PROOF_SCRIPT).read_text(encoding="utf-8")
     assert "verify_setup.py --typescript" in inner
 
 
-def test_windows_proof_runs_from_a_standard_user_token() -> None:
-    windows = job_text("released-driver-windows")
-    assert "verify-user-session.ps1" in windows
-    assert "invoke-standard-user-token.ps1" in windows
-    assert "run-jev-use-standard-user.ps1" in windows
-    helper = (ROOT / STANDARD_USER_SCRIPTS[0]).read_text(encoding="utf-8")
-    assert "SAFER_LEVELID_NORMALUSER = 0x20000" in helper
-    inner = (ROOT / STANDARD_USER_SCRIPTS[1]).read_text(encoding="utf-8")
-    assert "WindowsBuiltInRole]::Administrator" in inner
-    assert "deny only" in inner
-
-
-def test_helper_scripts_trigger_the_workflow() -> None:
+def test_windows_proof_script_triggers_the_workflow() -> None:
     triggers = load()[True]
     for event in ("pull_request", "push"):
-        for path in STANDARD_USER_SCRIPTS:
-            assert path in triggers[event]["paths"], (event, path)
+        assert WINDOWS_PROOF_SCRIPT in triggers[event]["paths"], event
+        assert not any("standard-user" in path for path in triggers[event]["paths"]), event
 
 
 def test_macos_seeds_tcc_only_for_the_released_app_identity() -> None:

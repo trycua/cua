@@ -1138,6 +1138,11 @@ fn crop_png_to_rect(
 ///    first use per session.
 /// 5. X11: existing root-window path.
 pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
+    if is_wayland() && hyprland::is_session() {
+        // The desktop action frame spans every powered output; capture exactly
+        // that frame so screenshot pixels and desktop actions agree.
+        return hyprland::capture_desktop_frame_png();
+    }
     if is_wayland() {
         // Tier 1: the opt-in GNOME compositor helper. It avoids probing
         // wlroots-only protocols and captures the Shell stage without consent.
@@ -1256,6 +1261,49 @@ pub struct VptrSession {
     pub vptr: ZwlrVirtualPointerV1,
     pub output_w: u32,
     pub output_h: u32,
+    /// Layout position of pointer-space (0, 0). Callers pass layout
+    /// coordinates; [`VptrSession::abs`] converts them for `motion_absolute`.
+    pub origin_x: i32,
+    pub origin_y: i32,
+}
+
+impl VptrSession {
+    /// Layout point -> clamped `motion_absolute` coordinates.
+    pub fn abs(&self, x: i32, y: i32) -> (u32, u32) {
+        pointer_abs(
+            self.origin_x,
+            self.origin_y,
+            self.output_w,
+            self.output_h,
+            x,
+            y,
+        )
+    }
+}
+
+pub(crate) fn pointer_abs(
+    origin_x: i32,
+    origin_y: i32,
+    w: u32,
+    h: u32,
+    x: i32,
+    y: i32,
+) -> (u32, u32) {
+    (
+        x.saturating_sub(origin_x)
+            .clamp(0, (w as i32).saturating_sub(1)) as u32,
+        y.saturating_sub(origin_y)
+            .clamp(0, (h as i32).saturating_sub(1)) as u32,
+    )
+}
+
+/// Hyprland: convert a desktop-frame point (from `get_desktop_state`) to
+/// layout coordinates. Other compositors keep the frame at the layout origin.
+fn desktop_to_layout(x: i32, y: i32) -> anyhow::Result<(i32, i32)> {
+    if is_wayland() && hyprland::is_session() {
+        return Ok(hyprland::desktop_frame()?.to_layout(x, y));
+    }
+    Ok((x, y))
 }
 
 /// Bind manager + seat + virtual-pointer + first output, optionally activate a
@@ -1324,7 +1372,14 @@ pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<Vptr
     }
 
     let vptr = mgr.create_virtual_pointer(Some(&seat), &qh, ());
-    let (output_w, output_h) = (state.output_w.max(1), state.output_h.max(1));
+    // Hyprland maps absolute motion across every enabled output, not just the
+    // first wl_output, so size pointer-space to that whole layout.
+    let (origin_x, origin_y, output_w, output_h) = if hyprland::is_session() {
+        let (x, y, w, h) = hyprland::pointer_layout()?;
+        (x, y, w.max(1), h.max(1))
+    } else {
+        (0, 0, state.output_w.max(1), state.output_h.max(1))
+    };
     Ok(VptrSession {
         conn,
         queue,
@@ -1333,6 +1388,8 @@ pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<Vptr
         vptr,
         output_w,
         output_h,
+        origin_x,
+        origin_y,
     })
 }
 
@@ -1560,6 +1617,7 @@ pub fn click_desktop(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<(
         let btn = evdev_button(button as u32);
         return inject_send(&[format!("d {x} {y} {} {btn}", count.max(1))]);
     }
+    let (x, y) = desktop_to_layout(x, y)?;
     with_libei_fallback(
         || click_vptr(None, x, y, count, button),
         || libei_click(x, y, count, button),
@@ -1578,13 +1636,11 @@ fn click_vptr(
     let mut sess = open_vptr_session(window_id)?;
     std::thread::sleep(std::time::Duration::from_millis(40));
     let (w, h) = (sess.output_w, sess.output_h);
-    let (px, py) = if x == 0 && y == 0 {
-        ((w / 2) as i32, (h / 2) as i32)
+    let (px, py) = if x == 0 && y == 0 && !hyprland::is_session() {
+        (w / 2, h / 2)
     } else {
-        (x, y)
+        sess.abs(x, y)
     };
-    let px = px.clamp(0, w as i32 - 1) as u32;
-    let py = py.clamp(0, h as i32 - 1) as u32;
     let btn = evdev_pointer_button(button);
     for i in 0..count.max(1) {
         if i > 0 {
@@ -1605,7 +1661,7 @@ fn click_vptr(
     }
     // Keep the synthetic-cursor registry in sync with the warp we just
     // performed so a subsequent `get_cursor_position` reflects reality.
-    record_synth_cursor(px as i32, py as i32);
+    record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
     sess.vptr.destroy();
     sess.queue.roundtrip(&mut sess.state)?;
     Ok(())
@@ -1726,6 +1782,7 @@ pub fn scroll_desktop(x: i32, y: i32, direction: &str, amount: u32) -> anyhow::R
     if is_inject_mode() {
         return inject_scroll_desktop(x, y, direction, amount);
     }
+    let (x, y) = desktop_to_layout(x, y)?;
     let direction = direction.to_string();
     with_libei_fallback(
         || scroll_vptr(None, Some((x, y)), &direction, amount),
@@ -1746,13 +1803,12 @@ fn scroll_vptr(
 ) -> anyhow::Result<()> {
     let mut sess = open_vptr_session(window_id)?;
     if let Some((x, y)) = point {
-        let px = x.clamp(0, (sess.output_w as i32).saturating_sub(1)) as u32;
-        let py = y.clamp(0, (sess.output_h as i32).saturating_sub(1)) as u32;
+        let (px, py) = sess.abs(x, y);
         sess.vptr
             .motion_absolute(event_time_ms(), px, py, sess.output_w, sess.output_h);
         sess.vptr.frame();
         sess.queue.roundtrip(&mut sess.state)?;
-        record_synth_cursor(px as i32, py as i32);
+        record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
         std::thread::sleep(std::time::Duration::from_millis(15));
     }
     let (axis, sign): (Axis, i32) = match direction.to_ascii_lowercase().as_str() {
@@ -1820,16 +1876,21 @@ pub fn move_cursor_absolute(window_id: Option<u64>, x: i32, y: i32) -> anyhow::R
     )
 }
 
+/// Warp the cursor to a desktop-frame point (the `get_desktop_state` frame).
+pub fn move_cursor_desktop(x: i32, y: i32) -> anyhow::Result<()> {
+    let (x, y) = desktop_to_layout(x, y)?;
+    move_cursor_absolute(None, x, y)
+}
+
 /// wlroots virtual-pointer implementation of [`move_cursor_absolute`].
 fn move_cursor_absolute_vptr(window_id: Option<u64>, x: i32, y: i32) -> anyhow::Result<()> {
     let mut sess = open_vptr_session(window_id)?;
     let (w, h) = (sess.output_w, sess.output_h);
-    let px = x.clamp(0, (w as i32).saturating_sub(1)) as u32;
-    let py = y.clamp(0, (h as i32).saturating_sub(1)) as u32;
+    let (px, py) = sess.abs(x, y);
     sess.vptr.motion_absolute(event_time_ms(), px, py, w, h);
     sess.vptr.frame();
     sess.queue.roundtrip(&mut sess.state)?;
-    record_synth_cursor(px as i32, py as i32);
+    record_synth_cursor(sess.origin_x + px as i32, sess.origin_y + py as i32);
     sess.vptr.destroy();
     sess.queue.roundtrip(&mut sess.state)?;
     Ok(())
@@ -1870,6 +1931,8 @@ pub fn drag_desktop(
     duration_ms: u64,
     button: u8,
 ) -> anyhow::Result<()> {
+    let (from_x, from_y) = desktop_to_layout(from_x, from_y)?;
+    let (to_x, to_y) = desktop_to_layout(to_x, to_y)?;
     with_libei_fallback(
         || drag_vptr(None, from_x, from_y, to_x, to_y, steps, button),
         || {
@@ -1894,12 +1957,8 @@ fn drag_vptr(
     std::thread::sleep(std::time::Duration::from_millis(40));
     let (w, h) = (sess.output_w, sess.output_h);
     let btn = evdev_pointer_button(button);
-    let clamp_xy = |x: i32, y: i32| -> (u32, u32) {
-        (
-            x.clamp(0, w as i32 - 1) as u32,
-            y.clamp(0, h as i32 - 1) as u32,
-        )
-    };
+    let (origin_x, origin_y) = (sess.origin_x, sess.origin_y);
+    let clamp_xy = |x: i32, y: i32| pointer_abs(origin_x, origin_y, w, h, x, y);
     let (fx, fy) = clamp_xy(from_x, from_y);
     sess.vptr.motion_absolute(event_time_ms(), fx, fy, w, h);
     sess.vptr.frame();
@@ -1928,7 +1987,7 @@ fn drag_vptr(
     sess.vptr.frame();
     // Sync the synthetic-cursor registry with the drag endpoint so a
     // subsequent `get_cursor_position` reports where we left the pointer.
-    record_synth_cursor(tx as i32, ty as i32);
+    record_synth_cursor(origin_x + tx as i32, origin_y + ty as i32);
     sess.queue.roundtrip(&mut sess.state)?;
     sess.vptr.destroy();
     sess.queue.roundtrip(&mut sess.state)?;

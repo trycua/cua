@@ -43,16 +43,72 @@ struct Monitor {
     active_workspace: Workspace,
     #[serde(rename = "specialWorkspace")]
     special_workspace: Workspace,
+    /// A monitor in DPMS standby still owns its workspaces, but nothing on it
+    /// is visible to the user.
+    #[serde(rename = "dpmsStatus", default = "powered_by_default")]
+    dpms_status: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 struct DisplayMonitor {
+    #[serde(default)]
+    name: String,
     width: u32,
     height: u32,
     scale: f64,
     x: i32,
     y: i32,
     transform: u32,
+    #[serde(default)]
+    disabled: bool,
+    #[serde(rename = "dpmsStatus", default = "powered_by_default")]
+    dpms_status: bool,
+}
+
+fn powered_by_default() -> bool {
+    true
+}
+
+impl DisplayMonitor {
+    /// Enabled and not in DPMS standby: the user can actually see it.
+    fn powered(&self) -> bool {
+        !self.disabled && self.dpms_status
+    }
+}
+
+/// One powered output inside the desktop frame, in Hyprland layout coordinates.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FrameOutput {
+    pub name: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// The desktop action frame: the bounding box of every powered output
+/// (enabled and not in DPMS standby), in Hyprland layout coordinates.
+/// Desktop-scope screenshots, sizes and actions all use this frame, with
+/// frame pixel (0, 0) at layout point (`x`, `y`). It is re-derived from the
+/// compositor on every call, so monitors turned on or off take effect
+/// immediately.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DesktopFrame {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub outputs: Vec<FrameOutput>,
+}
+
+impl DesktopFrame {
+    pub fn to_layout(&self, x: i32, y: i32) -> (i32, i32) {
+        (self.x.saturating_add(x), self.y.saturating_add(y))
+    }
+
+    pub fn from_layout(&self, x: i32, y: i32) -> (i32, i32) {
+        (x.saturating_sub(self.x), y.saturating_sub(self.y))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -310,7 +366,7 @@ fn valid_dimensions(width: u32, height: u32) -> bool {
     width > 0 && height > 0 && u64::from(width) * u64::from(height) <= MAX_LOGICAL_PIXELS
 }
 
-/// Content-free geometry for the qualified single-output, 1:1 desktop.
+/// Content-free geometry of the desktop frame (see [`DesktopFrame`]).
 /// The common policy adapter uses this for display-scoped observation. Never
 /// substitute a screenshot, XWayland root, or guessed primary monitor here.
 pub fn screen_size() -> Result<(u32, u32, f64)> {
@@ -318,22 +374,174 @@ pub fn screen_size() -> Result<(u32, u32, f64)> {
 }
 
 fn screen_size_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<(u32, u32, f64)> {
-    let [monitor] = monitors.as_slice() else {
-        bail!("Hyprland display identity requires exactly one active output");
-    };
-    if monitor.scale != 1.0 || monitor.transform != 0 || monitor.x != 0 || monitor.y != 0 {
-        bail!("Hyprland display identity requires an unscaled, unrotated output at the origin");
+    let frame = desktop_frame_from_monitors(monitors)?;
+    Ok((frame.width, frame.height, 1.0))
+}
+
+/// Every enabled monitor with its power state, for agents that need to know
+/// which displays are actually on. Positions are relative to the desktop
+/// frame when powered; `None` for monitors outside it (standby).
+pub fn monitor_report() -> Result<serde_json::Value> {
+    let monitors: Vec<DisplayMonitor> = query("j/monitors")?;
+    let frame = desktop_frame_from_monitors(monitors.clone())?;
+    Ok(serde_json::Value::Array(
+        monitors
+            .iter()
+            .filter(|m| !m.disabled)
+            .map(|m| {
+                let (fx, fy) = frame.from_layout(m.x, m.y);
+                serde_json::json!({
+                    "name": m.name,
+                    "width": m.width,
+                    "height": m.height,
+                    "powered": m.powered(),
+                    "frame_x": m.powered().then_some(fx),
+                    "frame_y": m.powered().then_some(fy),
+                })
+            })
+            .collect(),
+    ))
+}
+
+/// Current desktop frame spanning every powered output.
+pub fn desktop_frame() -> Result<DesktopFrame> {
+    desktop_frame_from_monitors(query("j/monitors")?)
+}
+
+fn desktop_frame_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<DesktopFrame> {
+    let powered: Vec<DisplayMonitor> = monitors
+        .into_iter()
+        .filter(DisplayMonitor::powered)
+        .collect();
+    if powered.is_empty() {
+        bail!("Hyprland has no powered output: every monitor is disabled or in DPMS standby");
     }
-    if !valid_dimensions(monitor.width, monitor.height) {
+    for monitor in &powered {
+        if monitor.scale != 1.0 || monitor.transform != 0 {
+            bail!("Hyprland display identity requires unscaled, unrotated outputs");
+        }
+        if !valid_dimensions(monitor.width, monitor.height) {
+            bail!("invalid Hyprland display dimensions");
+        }
+    }
+    let (x, y, width, height) = bounding_box(&powered)?;
+    Ok(DesktopFrame {
+        x,
+        y,
+        width,
+        height,
+        outputs: powered
+            .into_iter()
+            .map(|m| FrameOutput {
+                name: m.name,
+                x: m.x,
+                y: m.y,
+                width: m.width,
+                height: m.height,
+            })
+            .collect(),
+    })
+}
+
+fn bounding_box(monitors: &[DisplayMonitor]) -> Result<(i32, i32, u32, u32)> {
+    let min_x = monitors
+        .iter()
+        .map(|m| i64::from(m.x))
+        .min()
+        .context("no outputs")?;
+    let min_y = monitors
+        .iter()
+        .map(|m| i64::from(m.y))
+        .min()
+        .context("no outputs")?;
+    let max_x = monitors
+        .iter()
+        .map(|m| i64::from(m.x) + i64::from(m.width))
+        .max()
+        .context("no outputs")?;
+    let max_y = monitors
+        .iter()
+        .map(|m| i64::from(m.y) + i64::from(m.height))
+        .max()
+        .context("no outputs")?;
+    let width = u32::try_from(max_x - min_x)?;
+    let height = u32::try_from(max_y - min_y)?;
+    if !valid_dimensions(width, height) {
         bail!("invalid Hyprland display dimensions");
     }
-    Ok((monitor.width, monitor.height, monitor.scale))
+    Ok((i32::try_from(min_x)?, i32::try_from(min_y)?, width, height))
+}
+
+/// Hyprland maps absolute virtual-pointer motion across the bounding box of
+/// every enabled output; DPMS standby does not change the layout. Returns
+/// `(x, y, width, height)` of that box in layout coordinates.
+pub fn pointer_layout() -> Result<(i32, i32, u32, u32)> {
+    let enabled: Vec<DisplayMonitor> = query::<Vec<DisplayMonitor>>("j/monitors")?
+        .into_iter()
+        .filter(|m| !m.disabled)
+        .collect();
+    bounding_box(&enabled)
+}
+
+/// Real pointer position in layout coordinates.
+pub fn cursor_position() -> Result<(i32, i32)> {
+    #[derive(Deserialize)]
+    struct CursorPos {
+        x: f64,
+        y: f64,
+    }
+    let pos: CursorPos = query("j/cursorpos")?;
+    Ok((pos.x.round() as i32, pos.y.round() as i32))
+}
+
+/// Capture the desktop frame: each powered output is copied with `grim -o`
+/// and placed at its layout offset. Areas no powered output covers stay
+/// black. The image is exactly `frame.width` x `frame.height`.
+pub fn capture_desktop_frame_png() -> Result<Vec<u8>> {
+    let frame = desktop_frame()?;
+    let capture = |name: &str| -> Result<Vec<u8>> {
+        let out = std::process::Command::new("grim")
+            .args(["-t", "png", "-o", name, "-"])
+            .output()
+            .context("grim is required for Hyprland desktop capture")?;
+        if !out.status.success() || out.stdout.is_empty() {
+            bail!(
+                "grim could not capture output {name}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        Ok(out.stdout)
+    };
+    if let [only] = frame.outputs.as_slice() {
+        return capture(&only.name);
+    }
+    let mut canvas = image::RgbaImage::new(frame.width, frame.height);
+    for output in &frame.outputs {
+        let png = capture(&output.name)?;
+        let image = image::load_from_memory_with_format(&png, image::ImageFormat::Png)?.to_rgba8();
+        if image.width() != output.width || image.height() != output.height {
+            bail!(
+                "output {} captured at {}x{}, expected {}x{}",
+                output.name,
+                image.width(),
+                image.height(),
+                output.width,
+                output.height
+            );
+        }
+        let (left, top) = frame.from_layout(output.x, output.y);
+        image::imageops::replace(&mut canvas, &image, i64::from(left), i64::from(top));
+    }
+    let mut encoded = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(canvas).write_to(&mut encoded, image::ImageFormat::Png)?;
+    Ok(encoded.into_inner())
 }
 
 pub fn list_windows() -> Result<Vec<Window>> {
     let monitors: Vec<Monitor> = query("j/monitors")?;
     let active = monitors
         .into_iter()
+        .filter(|m| m.dpms_status)
         .flat_map(|m| [m.active_workspace.id, m.special_workspace.id])
         .filter(|id| *id != 0)
         .collect();
@@ -763,18 +971,56 @@ mod tests {
         );
     }
 
+    fn monitor_at(name: &str, x: i32, y: i32) -> DisplayMonitor {
+        let mut monitor = display_monitor();
+        (monitor.name, monitor.x, monitor.y) = (name.to_string(), x, y);
+        monitor
+    }
+
     #[test]
-    fn display_identity_rejects_ambiguous_outputs_and_unsupported_frames() {
+    fn desktop_frame_spans_every_powered_output() {
+        let frame =
+            desktop_frame_from_monitors(vec![monitor_at("A", -1920, 0), monitor_at("B", 0, 0)])
+                .unwrap();
+        assert_eq!(
+            (frame.x, frame.y, frame.width, frame.height),
+            (-1920, 0, 3840, 1080)
+        );
+        assert_eq!(frame.to_layout(1920, 10), (0, 10));
+        assert_eq!(frame.from_layout(-1920, 0), (0, 0));
+        assert_eq!(
+            screen_size_from_monitors(vec![monitor_at("A", 0, 0), monitor_at("B", 1920, 0)])
+                .unwrap(),
+            (3840, 1080, 1.0)
+        );
+    }
+
+    #[test]
+    fn desktop_frame_ignores_outputs_in_standby_or_disabled() {
+        let mut off = monitor_at("A", -1920, 0);
+        off.dpms_status = false;
+        let frame = desktop_frame_from_monitors(vec![off.clone(), monitor_at("B", 0, 0)]).unwrap();
+        assert_eq!((frame.x, frame.width, frame.outputs.len()), (0, 1920, 1));
+        // Only the left monitor on: the frame follows it to its layout offset.
+        let mut right_off = monitor_at("B", 0, 0);
+        right_off.disabled = true;
+        let frame =
+            desktop_frame_from_monitors(vec![monitor_at("A", -1920, 0), right_off]).unwrap();
+        assert_eq!((frame.x, frame.width), (-1920, 1920));
+        assert!(desktop_frame_from_monitors(vec![off]).is_err());
+    }
+
+    #[test]
+    fn display_identity_rejects_missing_and_unsupported_frames() {
         assert!(screen_size_from_monitors(vec![]).is_err());
-        assert!(screen_size_from_monitors(vec![display_monitor(), display_monitor()]).is_err());
         for scale in [0.0, 1.25, 2.0, f64::NAN, f64::INFINITY] {
             let mut monitor = display_monitor();
             monitor.scale = scale;
             assert!(screen_size_from_monitors(vec![monitor]).is_err());
         }
-        for (x, y, transform) in [(100, 0, 0), (0, -100, 0), (0, 0, 1), (0, 0, 7)] {
+        for transform in [1, 7] {
             let mut monitor = display_monitor();
-            (monitor.x, monitor.y, monitor.transform) = (x, y, transform);
+            monitor.transform = transform;
             assert!(screen_size_from_monitors(vec![monitor]).is_err());
         }
     }

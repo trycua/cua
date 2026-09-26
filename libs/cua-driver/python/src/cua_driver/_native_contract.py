@@ -7684,7 +7684,7 @@ class _UniffiFfiConverterSequenceTypeSnapshotImage(_UniffiConverterRustBuffer):
 
 @dataclass
 class WindowStateOutput:
-    def __init__(self, *, pid:int, window_id:int, snapshot_id:typing.Optional[str], app_name:typing.Optional[str], window_title:typing.Optional[str], tree_markdown:typing.Optional[str], elements:typing.Optional[typing.List[WindowElement]], element_count:typing.Optional[int], total_element_count:typing.Optional[int], returned_element_count:typing.Optional[int], filtered_element_count:typing.Optional[int], elements_complete:typing.Optional[bool], degraded:typing.Optional[bool], degraded_reason:typing.Optional[str], truncated:typing.Optional[bool], truncation_reason:typing.Optional[str], screenshot_width:typing.Optional[int], screenshot_height:typing.Optional[int], screenshot_scale:typing.Optional[float], screenshot_mime_type:typing.Optional[str], screenshot_file_path:typing.Optional[str], screenshot_frame_valid:typing.Optional[bool], window_bounds:typing.Optional[WindowBounds], images:typing.List[SnapshotImage]):
+    def __init__(self, *, pid:int, window_id:int, snapshot_id:typing.Optional[str], app_name:typing.Optional[str], window_title:typing.Optional[str], tree_markdown:typing.Optional[str], elements:typing.Optional[typing.List[WindowElement]], element_count:typing.Optional[int], total_element_count:typing.Optional[int], returned_element_count:typing.Optional[int], filtered_element_count:typing.Optional[int], elements_complete:typing.Optional[bool], degraded:typing.Optional[bool], degraded_reason:typing.Optional[str], truncated:typing.Optional[bool], truncation_reason:typing.Optional[str], screenshot_width:typing.Optional[int], screenshot_height:typing.Optional[int], screenshot_scale:typing.Optional[float], screenshot_mime_type:typing.Optional[str], screenshot_file_path:typing.Optional[str], screenshot_frame_valid:typing.Optional[bool], window_bounds:typing.Optional[WindowBounds], document_path:typing.Optional[str], document_edited:typing.Optional[bool], images:typing.List[SnapshotImage]):
         self.pid = pid
         self.window_id = window_id
         self.snapshot_id = snapshot_id
@@ -7708,13 +7708,15 @@ class WindowStateOutput:
         self.screenshot_file_path = screenshot_file_path
         self.screenshot_frame_valid = screenshot_frame_valid
         self.window_bounds = window_bounds
+        self.document_path = document_path
+        self.document_edited = document_edited
         self.images = images
 
 
 
 
     def __str__(self):
-        return "WindowStateOutput(pid={}, window_id={}, snapshot_id={}, app_name={}, window_title={}, tree_markdown={}, elements={}, element_count={}, total_element_count={}, returned_element_count={}, filtered_element_count={}, elements_complete={}, degraded={}, degraded_reason={}, truncated={}, truncation_reason={}, screenshot_width={}, screenshot_height={}, screenshot_scale={}, screenshot_mime_type={}, screenshot_file_path={}, screenshot_frame_valid={}, window_bounds={}, images={})".format(self.pid, self.window_id, self.snapshot_id, self.app_name, self.window_title, self.tree_markdown, self.elements, self.element_count, self.total_element_count, self.returned_element_count, self.filtered_element_count, self.elements_complete, self.degraded, self.degraded_reason, self.truncated, self.truncation_reason, self.screenshot_width, self.screenshot_height, self.screenshot_scale, self.screenshot_mime_type, self.screenshot_file_path, self.screenshot_frame_valid, self.window_bounds, self.images)
+        return "WindowStateOutput(pid={}, window_id={}, snapshot_id={}, app_name={}, window_title={}, tree_markdown={}, elements={}, element_count={}, total_element_count={}, returned_element_count={}, filtered_element_count={}, elements_complete={}, degraded={}, degraded_reason={}, truncated={}, truncation_reason={}, screenshot_width={}, screenshot_height={}, screenshot_scale={}, screenshot_mime_type={}, screenshot_file_path={}, screenshot_frame_valid={}, window_bounds={}, document_path={}, document_edited={}, images={})".format(self.pid, self.window_id, self.snapshot_id, self.app_name, self.window_title, self.tree_markdown, self.elements, self.element_count, self.total_element_count, self.returned_element_count, self.filtered_element_count, self.elements_complete, self.degraded, self.degraded_reason, self.truncated, self.truncation_reason, self.screenshot_width, self.screenshot_height, self.screenshot_scale, self.screenshot_mime_type, self.screenshot_file_path, self.screenshot_frame_valid, self.window_bounds, self.document_path, self.document_edited, self.images)
     def __eq__(self, other):
         if self.pid != other.pid:
             return False
@@ -7762,6 +7764,10 @@ class WindowStateOutput:
             return False
         if self.window_bounds != other.window_bounds:
             return False
+        if self.document_path != other.document_path:
+            return False
+        if self.document_edited != other.document_edited:
+            return False
         if self.images != other.images:
             return False
         return True
@@ -7793,6 +7799,8 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
             screenshot_file_path=_UniffiFfiConverterOptionalString.read(buf),
             screenshot_frame_valid=_UniffiFfiConverterOptionalBoolean.read(buf),
             window_bounds=_UniffiFfiConverterOptionalTypeWindowBounds.read(buf),
+            document_path=_UniffiFfiConverterOptionalString.read(buf),
+            document_edited=_UniffiFfiConverterOptionalBoolean.read(buf),
             images=_UniffiFfiConverterSequenceTypeSnapshotImage.read(buf),
         )
 
@@ -7821,6 +7829,8 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.check_lower(value.screenshot_file_path)
         _UniffiFfiConverterOptionalBoolean.check_lower(value.screenshot_frame_valid)
         _UniffiFfiConverterOptionalTypeWindowBounds.check_lower(value.window_bounds)
+        _UniffiFfiConverterOptionalString.check_lower(value.document_path)
+        _UniffiFfiConverterOptionalBoolean.check_lower(value.document_edited)
         _UniffiFfiConverterSequenceTypeSnapshotImage.check_lower(value.images)
 
     @staticmethod
@@ -7848,6 +7858,8 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalString.write(value.screenshot_file_path, buf)
         _UniffiFfiConverterOptionalBoolean.write(value.screenshot_frame_valid, buf)
         _UniffiFfiConverterOptionalTypeWindowBounds.write(value.window_bounds, buf)
+        _UniffiFfiConverterOptionalString.write(value.document_path, buf)
+        _UniffiFfiConverterOptionalBoolean.write(value.document_edited, buf)
         _UniffiFfiConverterSequenceTypeSnapshotImage.write(value.images, buf)
 
 

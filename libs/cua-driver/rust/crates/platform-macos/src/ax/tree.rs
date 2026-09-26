@@ -12,6 +12,7 @@
 //! - Tree is walked depth-first; element_index is assigned in DFS order.
 
 use super::bindings::*;
+use super::document_state::{collect_within, Deadline, DocumentAttributes, DOCUMENT_STATE_BUDGET};
 use super::window_scope::{decide_window_scope, TopLevelCandidate, WindowScope};
 use core_foundation::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
 use cua_driver_core::walk_budget::{WalkBudget, WalkOutcome};
@@ -149,6 +150,8 @@ pub struct TreeWalkResult {
     /// [`WindowScope::Matched`] comes with an EMPTY walk, so `nodes` never
     /// describes a window other than the requested one.
     pub window_scope: Option<WindowScope>,
+    pub document_path: Option<String>,
+    pub document_edited: Option<bool>,
 }
 
 /// Walk the AX tree of `pid`, optionally filtered to a specific window.
@@ -214,6 +217,8 @@ pub fn walk_tree_budgeted(
     let mut lines: Vec<(usize, String)> = Vec::new(); // (depth, line)
     let mut index_counter = 0usize;
     let mut window_scope: Option<WindowScope> = None;
+    let mut document_path: Option<String> = None;
+    let mut document_edited: Option<bool> = None;
 
     unsafe {
         let app_elem = AXUIElementCreateApplication(pid);
@@ -226,6 +231,8 @@ pub fn walk_tree_budgeted(
                 // No application AX element at all, so a requested window
                 // certainly did not resolve.
                 window_scope: window_id.map(|_| WindowScope::AxUnresolved { ax_window_count: 0 }),
+                document_path: None,
+                document_edited: None,
             };
         }
         set_messaging_timeout(app_elem);
@@ -305,6 +312,17 @@ pub fn walk_tree_budgeted(
                 .iter()
                 .map(|&index| top_level[index])
                 .collect();
+            if let Some(index) = decision.requested_window_index(&candidates, wid) {
+                let state = collect_within(
+                    &AxWindowDocument {
+                        window: top_level[index],
+                    },
+                    DOCUMENT_STATE_BUDGET,
+                );
+                set_messaging_timeout(top_level[index]);
+                document_path = state.path;
+                document_edited = state.edited;
+            }
             window_scope = Some(decision.scope);
             walk
         } else {
@@ -353,6 +371,46 @@ pub fn walk_tree_budgeted(
         truncated: walk.truncated(),
         walk,
         window_scope,
+        document_path,
+        document_edited,
+    }
+}
+
+struct AxWindowDocument {
+    window: AXUIElementRef,
+}
+
+impl AxWindowDocument {
+    unsafe fn budget(element: AXUIElementRef, deadline: &Deadline) -> Option<()> {
+        AXUIElementSetMessagingTimeout(element, deadline.messaging_timeout_seconds()?);
+        Some(())
+    }
+}
+
+impl DocumentAttributes for AxWindowDocument {
+    fn document_url(&self, deadline: &Deadline) -> Option<String> {
+        unsafe {
+            Self::budget(self.window, deadline)?;
+            copy_string_attr(self.window, "AXDocument")
+        }
+    }
+
+    fn edited_on_window(&self, deadline: &Deadline) -> Option<bool> {
+        unsafe {
+            Self::budget(self.window, deadline)?;
+            copy_bool_attr(self.window, "AXEdited")
+        }
+    }
+
+    fn edited_on_close_button(&self, deadline: &Deadline) -> Option<bool> {
+        unsafe {
+            Self::budget(self.window, deadline)?;
+            let close_button = copy_element_attr(self.window, "AXCloseButton")?;
+            let edited = Self::budget(close_button, deadline)
+                .and_then(|()| copy_bool_attr(close_button, "AXEdited"));
+            CFRelease(close_button as CFTypeRef);
+            edited
+        }
     }
 }
 

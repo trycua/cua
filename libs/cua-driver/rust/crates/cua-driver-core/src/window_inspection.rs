@@ -55,6 +55,19 @@ pub fn mark_browser_chrome_capture_coverage(
     });
 }
 
+pub fn attach_document_state(
+    structured: &mut Value,
+    document_path: Option<&str>,
+    document_edited: Option<bool>,
+) {
+    if let Some(path) = document_path {
+        structured["document_path"] = json!(path);
+    }
+    if let Some(edited) = document_edited {
+        structured["document_edited"] = json!(edited);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +141,18 @@ mod tests {
                 "coverage signal leaked a prompt-content field: {public}"
             );
         }
+    }
+
+    #[test]
+    fn unread_document_state_is_absent_rather_than_a_claim() {
+        let mut unknown = json!({"window_id": 4, "pid": 2});
+        let untouched = unknown.clone();
+        attach_document_state(&mut unknown, None, None);
+        assert_eq!(unknown, untouched);
+
+        let mut path_only = untouched;
+        attach_document_state(&mut path_only, Some("/tmp/a.txt"), None);
+        assert_eq!(path_only["document_path"], "/tmp/a.txt");
+        assert!(path_only.get("document_edited").is_none());
     }
 }

@@ -18,6 +18,7 @@
 
 pub mod bindings;
 pub mod cache;
+pub mod document_state;
 pub mod enablement;
 pub mod exact_target;
 pub mod tree;

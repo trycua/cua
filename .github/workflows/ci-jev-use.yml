@@ -11,6 +11,8 @@ on:
       - ".github/workflows/ci-jev-use.yml"
       - ".github/workflows/authorized-live-jev-use.yml"
       - ".github/workflows/authorized-live-jev-use-demo.yml"
+      - "scripts/ci/windows/invoke-standard-user-token.ps1"
+      - "scripts/ci/windows/run-jev-use-standard-user.ps1"
   push:
     branches: [main]
     paths:
@@ -22,8 +24,12 @@ on:
       - ".github/workflows/ci-jev-use.yml"
       - ".github/workflows/authorized-live-jev-use.yml"
       - ".github/workflows/authorized-live-jev-use-demo.yml"
+      - "scripts/ci/windows/invoke-standard-user-token.ps1"
+      - "scripts/ci/windows/run-jev-use-standard-user.ps1"
   workflow_dispatch:
 
+# Pull request code runs only on disposable GitHub-hosted runners. No job in
+# this workflow reads a secret.
 permissions:
   contents: read
 
@@ -285,5 +291,202 @@ jobs:
             ${{ runner.temp }}/jev-use-mock-proof/*.jsonl
             ${{ runner.temp }}/jev-use-mock-proof/visual-fixture/summary.json
             ${{ runner.temp }}/jev-use-mock-proof/visual-fixture/*.jsonl
+          if-no-files-found: error
+          retention-days: 14
+
+  # macOS and Windows prove the example against the released Driver, installed
+  # through the canonical installers exactly as the guide tells users to. The
+  # candidate-source build above stays Linux-only.
+  released-driver-macos:
+    name: macOS released Driver mock E2E
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      CUA_DRIVER_BIN: /Applications/CuaDriver.app/Contents/MacOS/cua-driver
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.15"
+          enable-cache: true
+          cache-dependency-glob: libs/cua-driver/examples/jev-use/uv.lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/examples/jev-use/package-lock.json
+      - name: Install the released Driver with the canonical installer
+        working-directory: ${{ github.workspace }}
+        env:
+          CUA_DRIVER_NO_MODIFY_PATH: "1"
+        run: |
+          /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
+          "$CUA_DRIVER_BIN" --version
+          codesign --verify --strict /Applications/CuaDriver.app
+          test -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+      - name: Install locked example dependencies
+        run: |
+          uv sync --frozen
+          npm ci --ignore-scripts
+      - name: Record Driver state
+        run: |
+          "$CUA_DRIVER_BIN" --version
+          # Informational: the browser-only proof below does not rely on
+          # Accessibility or Screen Recording grants.
+          "$CUA_DRIVER_BIN" permissions status --json || true
+      - name: Run both mock agents through MCP
+        run: |
+          uv run --frozen python verify_mcp_tools.py
+          uv run --frozen python verify_setup.py --typescript --output-dir "$RUNNER_TEMP/jev-use-mock-proof"
+      - name: Audit redacted E2E evidence
+        run: |
+          uv run --frozen python - "$RUNNER_TEMP/jev-use-mock-proof" <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          summary = json.loads((root / "summary.json").read_text())
+          assert summary["complete"] is True
+          assert summary["live_requested"] is False
+          assert summary["typescript_requested"] is True
+          assert {(item["language"], item["provider"], item["outcome"]) for item in summary["checks"]} == {
+              ("python", "mock", "verified"), ("typescript", "mock", "verified")
+          }
+          # verify_setup.py read the fixture's /state endpoint itself; the
+          # runners' own outcome events are not the oracle.
+          assert all(item["observed"] == {"submitted": "jev-guide-mock"} for item in summary["checks"])
+          assert all(item["acted_path"] == "page_structure" for item in summary["checks"])
+          assert all(item["submit_tool"] == "browser_click" for item in summary["checks"])
+          forbidden = ("typesafe_api_key", "authorization", "environment", "image_base64", "screenshot")
+          for path in root.iterdir():
+              if path.name == "summary.json" or path.suffix == ".jsonl":
+                  text = path.read_text().lower()
+                  assert not any(value in text for value in forbidden), path
+          PY
+      - name: Stop the Driver daemon
+        if: always()
+        run: '"$CUA_DRIVER_BIN" stop || true'
+      - name: Upload redacted action evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: jev-use-macos-released-mock
+          path: |
+            ${{ runner.temp }}/jev-use-mock-proof/summary.json
+            ${{ runner.temp }}/jev-use-mock-proof/*.jsonl
+          if-no-files-found: error
+          retention-days: 14
+
+  released-driver-windows:
+    name: Windows released Driver mock E2E
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: libs/cua-driver/examples/jev-use
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.15"
+          enable-cache: true
+          cache-dependency-glob: libs/cua-driver/examples/jev-use/uv.lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/examples/jev-use/package-lock.json
+      - name: Verify the interactive desktop session
+        working-directory: ${{ github.workspace }}
+        run: .\scripts\ci\windows\verify-user-session.ps1
+      - name: Install the released Driver with the canonical installer
+        run: |
+          # -NoAutoStart: the logon task runs at the account's highest token,
+          # which on this administrator account is elevated. The proof starts
+          # the daemon itself from a standard-user token instead.
+          & ([scriptblock]::Create((irm https://cua.ai/driver/install.ps1))) -NoAutoStart -NoPathUpdate
+          $driver = Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver\bin\cua-driver.exe"
+          if (-not (Test-Path -LiteralPath $driver -PathType Leaf)) { throw "installer did not create $driver" }
+          & $driver --version
+          $chrome = Join-Path ${env:ProgramFiles} "Google\Chrome\Application\chrome.exe"
+          if ((Get-AuthenticodeSignature -FilePath $chrome).Status -ne "Valid") { throw "Chrome is not vendor-signed: $chrome" }
+          "CUA_DRIVER_BIN=$driver" >> $env:GITHUB_ENV
+      - name: Install locked example dependencies
+        run: |
+          uv sync --frozen
+          if ($LASTEXITCODE -ne 0) { throw "uv sync failed" }
+          npm.cmd ci --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
+      - name: Run both mock agents through MCP from a standard-user token
+        working-directory: ${{ github.workspace }}
+        run: |
+          # The proof and its evidence live in the user profile, which the
+          # standard-user token can write.
+          $root = Join-Path $env:USERPROFILE "jev-use-ci"
+          $env:JEV_USE_PROOF_DIR = Join-Path $root "proof"
+          $env:JEV_USE_LOG_DIR = Join-Path $root "logs"
+          New-Item -ItemType Directory -Force $env:JEV_USE_LOG_DIR | Out-Null
+          "JEV_USE_PROOF_DIR=$env:JEV_USE_PROOF_DIR" >> $env:GITHUB_ENV
+          "JEV_USE_LOG_DIR=$env:JEV_USE_LOG_DIR" >> $env:GITHUB_ENV
+          $inner = Join-Path $PWD "scripts\ci\windows\run-jev-use-standard-user.ps1"
+          $pwshExe = (Get-Process -Id $PID).Path
+          $transcript = Join-Path $env:JEV_USE_LOG_DIR "proof.log"
+          $command = "cmd.exe /d /s /c `"`"$pwshExe`" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$inner`" > `"$transcript`" 2>&1`""
+          $status = 1
+          try {
+            & .\scripts\ci\windows\invoke-standard-user-token.ps1 -CommandLine $command -WorkingDirectory $PWD -TimeoutSeconds 900
+            $status = $LASTEXITCODE
+          } finally {
+            if (Test-Path $transcript) { Get-Content $transcript }
+          }
+          if ($status -ne 0) { throw "standard-user proof failed with exit code $status" }
+      - name: Audit redacted E2E evidence
+        run: |
+          @'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          summary = json.loads((root / "summary.json").read_text())
+          assert summary["complete"] is True
+          assert summary["live_requested"] is False
+          assert summary["typescript_requested"] is True
+          assert {(item["language"], item["provider"], item["outcome"]) for item in summary["checks"]} == {
+              ("python", "mock", "verified"), ("typescript", "mock", "verified")
+          }
+          # verify_setup.py read the fixture's /state endpoint itself; the
+          # runners' own outcome events are not the oracle.
+          assert all(item["observed"] == {"submitted": "jev-guide-mock"} for item in summary["checks"])
+          assert all(item["acted_path"] == "page_structure" for item in summary["checks"])
+          assert all(item["submit_tool"] == "browser_click" for item in summary["checks"])
+          forbidden = ("typesafe_api_key", "authorization", "environment", "image_base64", "screenshot")
+          for path in root.iterdir():
+              if path.name == "summary.json" or path.suffix == ".jsonl":
+                  text = path.read_text(encoding="utf-8").lower()
+                  assert not any(value in text for value in forbidden), path
+          '@ | uv run --frozen python - $env:JEV_USE_PROOF_DIR
+          if ($LASTEXITCODE -ne 0) { throw "evidence audit failed" }
+      - name: Stop Driver processes
+        if: always()
+        run: Get-Process cua-driver -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+      - name: Upload redacted action evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: jev-use-windows-released-mock
+          path: |
+            ${{ env.JEV_USE_PROOF_DIR }}/summary.json
+            ${{ env.JEV_USE_PROOF_DIR }}/*.jsonl
+            ${{ env.JEV_USE_LOG_DIR }}/*.txt
+            ${{ env.JEV_USE_LOG_DIR }}/*.log
           if-no-files-found: error
           retention-days: 14

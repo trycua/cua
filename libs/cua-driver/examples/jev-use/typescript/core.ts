@@ -1,4 +1,7 @@
 export type Outcome = 'verified' | 'refuted' | 'unknown' | 'abstained' | 'budget_exhausted';
+export type VisualDelivery = 'background' | 'foreground';
+
+export const SUBMIT_IDS: ReadonlySet<string> = new Set(['submit-form', 'submit-form-foreground']);
 
 export type Candidate = Readonly<{
   id: string;
@@ -52,6 +55,16 @@ export type VisualObservation = Readonly<{
   regions: readonly VisualRegion[];
 }>;
 
+export class VisualObservationError extends Error {
+  constructor(
+    message: string,
+    readonly code: string = 'invalid_visual_result'
+  ) {
+    super(message);
+    this.name = 'VisualObservationError';
+  }
+}
+
 function record(value: unknown, message: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(message);
   return value as Record<string, unknown>;
@@ -92,7 +105,10 @@ export function parseVisualRegions(
   if (root.schema !== 'cua.visual_regions_v1') throw new Error('unsupported visual region schema');
   const capture = record(root.capture, 'visual result has no capture provenance');
   if (capture.capture_id !== expectedCaptureId) {
-    throw new Error('visual result is stale or capture-mismatched');
+    throw new VisualObservationError(
+      'visual result is stale or capture-mismatched',
+      'capture_mismatch'
+    );
   }
   const source = record(capture.source, 'visual result has no capture source');
   if (
@@ -100,7 +116,10 @@ export function parseVisualRegions(
     source.pid !== expectedPid ||
     source.window_id !== expectedWindowId
   ) {
-    throw new Error('visual result has a mismatched window target');
+    throw new VisualObservationError(
+      'visual result has a mismatched window target',
+      'capture_mismatch'
+    );
   }
   const screenshot = record(capture.screenshot, 'visual result has no screenshot provenance');
   if (screenshot.mime_type !== 'image/png') {
@@ -208,11 +227,19 @@ function reservedCandidates(): Candidate[] {
   ];
 }
 
+/**
+ * Build the closed candidate set for one decision. Page-structure refs always
+ * win. The capture-bound visual Submit is offered only when no Submit ref
+ * exists. visualDelivery 'foreground' replaces the background visual click with
+ * a distinct submit-form-foreground candidate after Driver refused background
+ * delivery; the chooser must pick it explicitly.
+ */
 export function buildCandidates(
   snapshot: BrowserSnapshot,
   token: string,
   visual?: VisualObservation,
-  captureBoundClick = false
+  captureBoundClick = false,
+  visualDelivery: VisualDelivery = 'background'
 ): Candidate[] {
   const common = { target_id: snapshot.target_id, tab_id: snapshot.tab_id };
   const refs = snapshot.refs ?? [];
@@ -253,10 +280,15 @@ export function buildCandidates(
       const region = matches[0];
       const x = region.x + region.width / 2;
       const y = region.y + region.height / 2;
+      const foreground = visualDelivery === 'foreground';
       candidates.push(
         immutableCandidate({
-          id: 'submit-form',
-          description: 'Submit the form using the unique validated visual Submit region.',
+          id: foreground ? 'submit-form-foreground' : 'submit-form',
+          description: foreground
+            ? 'Submit the form by clicking the unique validated visual Submit region with ' +
+              'foreground delivery, which activates the browser window, because Driver ' +
+              'refused background delivery for the previous visual click.'
+            : 'Submit the form using the unique validated visual Submit region.',
           tool: 'click',
           arguments: {
             pid: visual.pid,
@@ -264,7 +296,7 @@ export function buildCandidates(
             x,
             y,
             capture_id: visual.captureId,
-            delivery_mode: 'background',
+            delivery_mode: visualDelivery,
           },
           captureId: visual.captureId,
           screenshotReference: visual.screenshotReference,
@@ -273,6 +305,10 @@ export function buildCandidates(
     }
   }
   return [...candidates, ...reservedCandidates()];
+}
+
+export function hasExecutableCandidate(candidates: readonly Candidate[]): boolean {
+  return candidates.some((candidate) => candidate.tool !== null);
 }
 
 function asciiLower(value: string): string {
@@ -287,9 +323,11 @@ export function chooseMock(candidates: Candidate[]) {
     ? 'type-verification-value'
     : ids.has('submit-form')
       ? 'submit-form'
-      : ids.has('reobserve')
-        ? 'reobserve'
-        : null;
+      : ids.has('submit-form-foreground')
+        ? 'submit-form-foreground'
+        : ids.has('reobserve')
+          ? 'reobserve'
+          : null;
   return {
     choice: selected,
     confidence: selected ? 1 : 0,

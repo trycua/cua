@@ -6,6 +6,9 @@ from types import MappingProxyType
 from typing import Any, Literal, Mapping
 
 Outcome = Literal["verified", "refuted", "unknown", "abstained", "budget_exhausted"]
+VisualDelivery = Literal["background", "foreground"]
+
+SUBMIT_IDS = frozenset({"submit-form", "submit-form-foreground"})
 
 
 def _freeze(value: Any) -> Any:
@@ -62,7 +65,9 @@ class VisualObservation:
 
 
 class VisualObservationError(ValueError):
-    pass
+    def __init__(self, message: str, code: str = "invalid_visual_result") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def _nonempty(value: Any) -> str:
@@ -94,7 +99,9 @@ def parse_visual_regions(
         raise VisualObservationError("unsupported visual region schema")
     capture = payload.get("capture")
     if not isinstance(capture, dict) or capture.get("capture_id") != expected_capture_id:
-        raise VisualObservationError("visual result is stale or capture-mismatched")
+        raise VisualObservationError(
+            "visual result is stale or capture-mismatched", code="capture_mismatch"
+        )
     source = capture.get("source")
     if (
         not isinstance(source, dict)
@@ -102,7 +109,9 @@ def parse_visual_regions(
         or source.get("pid") != expected_pid
         or source.get("window_id") != expected_window_id
     ):
-        raise VisualObservationError("visual result has a mismatched window target")
+        raise VisualObservationError(
+            "visual result has a mismatched window target", code="capture_mismatch"
+        )
     screenshot = capture.get("screenshot")
     if not isinstance(screenshot, dict) or screenshot.get("mime_type") != "image/png":
         raise VisualObservationError("visual result has invalid screenshot provenance")
@@ -227,7 +236,15 @@ def build_candidates(
     visual: VisualObservation | None = None,
     *,
     capture_bound_click: bool = False,
+    visual_delivery: VisualDelivery = "background",
 ) -> list[Candidate]:
+    """Build the closed candidate set for one decision.
+
+    Page-structure refs always win. The capture-bound visual Submit is offered
+    only when no Submit ref exists. ``visual_delivery="foreground"`` replaces the
+    background visual click with a distinct ``submit-form-foreground`` candidate
+    after Driver refused background delivery; the chooser must pick it explicitly.
+    """
     common = {
         "target_id": snapshot["target_id"],
         "tab_id": snapshot["tab_id"],
@@ -278,10 +295,18 @@ def build_candidates(
         ]
         if len(matches) == 1:
             x, y = visual.screenshot_center(matches[0])
+            foreground = visual_delivery == "foreground"
             candidates.append(
                 Candidate(
-                    "submit-form",
-                    "Submit the form using the unique validated visual Submit region.",
+                    "submit-form-foreground" if foreground else "submit-form",
+                    (
+                        "Submit the form by clicking the unique validated visual Submit "
+                        "region with foreground delivery, which activates the browser "
+                        "window, because Driver refused background delivery for the "
+                        "previous visual click."
+                        if foreground
+                        else "Submit the form using the unique validated visual Submit region."
+                    ),
                     "click",
                     {
                         "pid": visual.pid,
@@ -289,13 +314,17 @@ def build_candidates(
                         "x": x,
                         "y": y,
                         "capture_id": visual.capture_id,
-                        "delivery_mode": "background",
+                        "delivery_mode": visual_delivery,
                     },
                     capture_id=visual.capture_id,
                     screenshot_reference=visual.screenshot_reference,
                 )
             )
     return candidates + _reserved_candidates()
+
+
+def has_executable_candidate(candidates: list[Candidate]) -> bool:
+    return any(candidate.tool is not None for candidate in candidates)
 
 
 def _ascii_lower(value: str) -> str:
@@ -307,7 +336,13 @@ def choose_mock(candidates: list[Candidate]) -> tuple[str | None, float, dict[st
     selected = (
         "type-verification-value"
         if "type-verification-value" in ids
-        else "submit-form" if "submit-form" in ids else "reobserve" if "reobserve" in ids else None
+        else "submit-form"
+        if "submit-form" in ids
+        else "submit-form-foreground"
+        if "submit-form-foreground" in ids
+        else "reobserve"
+        if "reobserve" in ids
+        else None
     )
     probabilities = {candidate.id: float(candidate.id == selected) for candidate in candidates}
     return selected, 1.0 if selected else 0.0, probabilities

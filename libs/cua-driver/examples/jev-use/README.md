@@ -117,6 +117,72 @@ languages. `summary.json` must say `complete: true`; partial results remain
 false. Each runner has four decisions and a 180-second process timeout. These
 are not provider billing caps.
 
+### Prove which path acted
+
+Every `step` event in a runner's JSONL log records the Driver tool that acted
+(`browser_type`, `browser_click`, or `click`), its `delivery_mode` for a visual
+click, and a redacted `visual` record:
+
+```json
+{"status": "skipped", "reason": "page_structure_candidate"}
+{"status": "ok", "capture_id": "...", "region_count": 12}
+{"status": "not_installed", "error_code": "not_installed"}
+{"status": "error", "error_code": "worker_failed"}
+{"status": "unavailable", "error_code": "tool_not_advertised"}
+```
+
+`skipped` means the runner did not capture or parse the window. By default
+(`--visual-observation auto`) it parses visual regions only when the page
+structure offers no executable candidate, because only then can a visual
+region add one. This avoids several seconds of CPU parsing per step on the
+default fixture. `--visual-observation always` restores the per-step parse,
+which also sends regions to Jev alongside page refs, and `off` disables it
+(reason `disabled`). `ok` means a validated `cua.visual_regions_v1`
+observation was available for that decision. `not_installed` is Driver's stable code when the perception
+extension is absent. `error` carries Driver's error code or a local
+`capture_mismatch`, `invalid_visual_result`, `capture_missing`, or
+`driver_error` code. `unavailable` means Driver did not advertise
+`parse_visual_regions` or the capture-bound `click.capture_id` input. The
+record never contains screenshots, screenshot references, region text, or
+credentials. A failed visual observation never stops the run; the runner
+continues on the page-structure path, and the log shows that it did.
+
+The visual Submit candidate first uses `delivery_mode: "background"`. If
+Driver refuses that click with a structured background refusal (a
+`background_*` code such as `background_unavailable`, or
+`escalation.recommended: "foreground"`), the runner does not retry background
+delivery. The refused step is logged with `action_error` and
+`escalation: {"from": "background", "to": "foreground", "reason": ...}`. The
+next step takes a fresh capture and offers a distinct `submit-form-foreground`
+candidate, which the chooser must select explicitly. Foreground delivery
+activates the browser window. Other action errors still end the run as
+`unknown`.
+
+`verify_setup.py` copies this into each `summary.json` check as `submit_tool`,
+`acted_path` (`page_structure` for DOM `browser_click`, `visual` for the
+capture-bound `click`), `submit_delivery_mode`, the per-step
+`visual_statuses`, and any `escalations`.
+
+The default fixture always exposes a semantic `button "Submit"` ref, so its
+Submit step uses `browser_click` even when visual regions are available. To
+prove the capture-bound visual action path, serve the visual fixture, whose
+Submit control is a presentational element with no button ref, and require
+the visual path:
+
+```bash
+uv run --frozen python verify_setup.py --visual-fixture --require-visual-path \
+  --output-dir proof-visual
+```
+
+This fails unless every runner verified the fixture through `click` with the
+exact `capture_id`. It needs a Driver with the cua-perception extension
+installed. Without the extension, the visual fixture cannot be submitted.
+`--expect-visual-status not_installed` checks that fallback instead: every
+step that attempted a visual parse must log `not_installed`, no runner may
+submit, and the run must end without claiming success. Skipped steps do not
+count as attempts, but at least one attempt is required. Continuous integration runs that form on Linux.
+The standalone server also accepts `--visual-fixture`.
+
 ## Run the standalone fixture
 
 For an application or terminal that already owns the server lifecycle, start
@@ -239,8 +305,9 @@ installation and diagnostics,
 for example `cua-driver doctor` and `cua-driver status`, rather than maintaining
 a third copy of the loop.
 
-This fixture exposes semantic browser refs, so the normal proof does not need
-screenshot perception. The optional visual path consumes only the public
+The default fixture exposes semantic browser refs, so the normal proof does
+not need screenshot perception and never acts visually. The visual fixture
+removes the Submit button ref so only the visual candidate can submit. The optional visual path consumes only the public
 `parse_visual_regions` structured result and never adds a model, extension, or
 Driver internals to this example. It validates capture identity, PNG geometry,
 coordinate mapping, region IDs, bounds, content, confidence, and ambiguity

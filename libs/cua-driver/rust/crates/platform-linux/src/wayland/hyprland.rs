@@ -321,13 +321,29 @@ fn screen_size_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<(u32, u32,
     let [monitor] = monitors.as_slice() else {
         bail!("Hyprland display identity requires exactly one active output");
     };
-    if monitor.scale != 1.0 || monitor.transform != 0 || monitor.x != 0 || monitor.y != 0 {
-        bail!("Hyprland display identity requires an unscaled, unrotated output at the origin");
+    // Hyprland reports the mode in the panel's native orientation. Rotated
+    // outputs (wl_output transforms 1-3) are supported by reporting the logical
+    // frame that windows and input use; flipped transforms (4-7) still refuse.
+    if monitor.scale != 1.0 || monitor.transform > 3 || monitor.x != 0 || monitor.y != 0 {
+        bail!("Hyprland display identity requires an unscaled, unflipped output at the origin");
     }
     if !valid_dimensions(monitor.width, monitor.height) {
         bail!("invalid Hyprland display dimensions");
     }
-    Ok((monitor.width, monitor.height, monitor.scale))
+    let (width, height) =
+        super::logical_output_size((monitor.width, monitor.height), monitor.transform);
+    Ok((width, height, monitor.scale))
+}
+
+/// wl_output transform of the single active output. Full-display screencopy
+/// frames arrive in the panel's native orientation; callers use this to turn
+/// them into the logical desktop frame.
+pub fn single_output_transform() -> Result<u32> {
+    let monitors: Vec<DisplayMonitor> = query("j/monitors")?;
+    let [monitor] = monitors.as_slice() else {
+        bail!("Hyprland display identity requires exactly one active output");
+    };
+    Ok(monitor.transform)
 }
 
 pub fn list_windows() -> Result<Vec<Window>> {
@@ -764,6 +780,16 @@ mod tests {
     }
 
     #[test]
+    fn display_identity_reports_the_logical_frame_of_rotated_outputs() {
+        for (transform, expected) in [(1, (1080, 1920)), (2, (1920, 1080)), (3, (1080, 1920))] {
+            let mut monitor = display_monitor();
+            monitor.transform = transform;
+            let (width, height, _) = screen_size_from_monitors(vec![monitor]).unwrap();
+            assert_eq!((width, height), expected, "transform {transform}");
+        }
+    }
+
+    #[test]
     fn display_identity_rejects_ambiguous_outputs_and_unsupported_frames() {
         assert!(screen_size_from_monitors(vec![]).is_err());
         assert!(screen_size_from_monitors(vec![display_monitor(), display_monitor()]).is_err());
@@ -772,7 +798,7 @@ mod tests {
             monitor.scale = scale;
             assert!(screen_size_from_monitors(vec![monitor]).is_err());
         }
-        for (x, y, transform) in [(100, 0, 0), (0, -100, 0), (0, 0, 1), (0, 0, 7)] {
+        for (x, y, transform) in [(100, 0, 0), (0, -100, 0), (0, 0, 4), (0, 0, 7)] {
             let mut monitor = display_monitor();
             (monitor.x, monitor.y, monitor.transform) = (x, y, transform);
             assert!(screen_size_from_monitors(vec![monitor]).is_err());

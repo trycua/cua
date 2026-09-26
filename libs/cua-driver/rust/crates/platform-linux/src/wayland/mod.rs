@@ -393,8 +393,12 @@ struct State {
     // button press at the output centre (over the just-activated window).
     vptr_manager: Option<ZwlrVirtualPointerManagerV1>,
     output: Option<WlOutput>,
+    // Logical (post-transform) output size: virtual-pointer absolute motion
+    // maps onto the output's logical box, so rotated outputs swap axes.
     output_w: u32,
     output_h: u32,
+    output_mode: (u32, u32),
+    output_transform: u32,
     // Native screencopy capture state.
     scrcopy_manager: Option<ZwlrScreencopyManagerV1>,
     shm: Option<WlShm>,
@@ -476,10 +480,22 @@ impl Dispatch<WlOutput, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         // Remember the output resolution so `click` can aim at its centre.
-        if let wl_output::Event::Mode { width, height, .. } = event {
-            state.output_w = width.max(0) as u32;
-            state.output_h = height.max(0) as u32;
+        // Modes are reported in the panel's native orientation; the geometry
+        // transform turns them into the logical frame input coordinates use.
+        match event {
+            wl_output::Event::Mode { width, height, .. } => {
+                state.output_mode = (width.max(0) as u32, height.max(0) as u32);
+            }
+            wl_output::Event::Geometry {
+                transform: WEnum::Value(transform),
+                ..
+            } => {
+                state.output_transform = transform as u32;
+            }
+            _ => return,
         }
+        (state.output_w, state.output_h) =
+            logical_output_size(state.output_mode, state.output_transform);
     }
 }
 
@@ -1152,7 +1168,7 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
         }
         // Tier 2: native wlroots screencopy (fast, zero consent).
         match screenshot_bytes() {
-            Ok(bytes) => return Ok(bytes),
+            Ok(bytes) => return orient_hyprland_display_png(bytes),
             Err(e) => {
                 tracing::debug!(
                     "wlroots screencopy unavailable ({e}); trying ext-image-copy-capture-v1"
@@ -1162,7 +1178,7 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
         // Tier 3: ext-image-copy-capture-v1 (sway 1.10+, labwc 0.8+, niri,
         // hyprland, KDE 6.2+, GNOME 47+).
         match ext_screencopy::screenshot_via_ext_copy() {
-            Ok(bytes) => return Ok(bytes),
+            Ok(bytes) => return orient_hyprland_display_png(bytes),
             Err(e) => {
                 tracing::debug!(
                     "ext-image-copy-capture-v1 unavailable ({e}); trying xdg-desktop-portal"
@@ -1183,6 +1199,43 @@ pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
     // so we don't re-enter screenshot_display_bytes (which routes back here
     // on Wayland — would loop forever).
     crate::capture::screenshot_display_bytes_x11()
+}
+
+/// Logical size of an output whose native mode is `mode` under wl_output
+/// `transform`: quarter turns (odd transforms) swap the axes.
+pub(crate) fn logical_output_size(mode: (u32, u32), transform: u32) -> (u32, u32) {
+    if transform % 2 == 1 {
+        (mode.1, mode.0)
+    } else {
+        mode
+    }
+}
+
+/// Rotate a native-orientation output capture into the logical frame for a
+/// wl_output transform. `image::rotate90` is clockwise, which is what a
+/// transform-1 (portrait) Hyprland output needs. Flipped transforms refuse.
+fn rotate_png_for_output_transform(png: Vec<u8>, transform: u32) -> anyhow::Result<Vec<u8>> {
+    let rotate: fn(&image::DynamicImage) -> image::DynamicImage = match transform {
+        0 => return Ok(png),
+        1 => image::DynamicImage::rotate90,
+        2 => image::DynamicImage::rotate180,
+        3 => image::DynamicImage::rotate270,
+        other => anyhow::bail!("flipped output transform {other} is not supported"),
+    };
+    let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png)?;
+    let mut out = Vec::new();
+    rotate(&img).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;
+    Ok(out)
+}
+
+/// Full-display screencopy returns the output buffer in the panel's native
+/// orientation. On Hyprland, turn it into the logical desktop frame so the
+/// screenshot matches what the user sees and what desktop-scope input uses.
+fn orient_hyprland_display_png(png: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+    if !hyprland::is_session() {
+        return Ok(png);
+    }
+    rotate_png_for_output_transform(png, hyprland::single_output_transform()?)
 }
 
 fn checked_shell_helper_capture(
@@ -3478,6 +3531,61 @@ impl Dispatch<wl_registry::WlRegistry, ()> for ExtProbeState {
 // compatibility with earlier slice constants.
 #[allow(dead_code)]
 const _BTN_LEFT_ALIAS: u32 = BTN_LEFT;
+
+#[cfg(test)]
+mod output_transform_tests {
+    use super::{logical_output_size, rotate_png_for_output_transform};
+
+    #[test]
+    fn logical_output_size_swaps_axes_for_quarter_turns() {
+        assert_eq!(logical_output_size((2560, 1080), 0), (2560, 1080));
+        assert_eq!(logical_output_size((2560, 1080), 1), (1080, 2560));
+        assert_eq!(logical_output_size((2560, 1080), 2), (2560, 1080));
+        assert_eq!(logical_output_size((2560, 1080), 3), (1080, 2560));
+        assert_eq!(logical_output_size((2560, 1080), 5), (1080, 2560));
+    }
+
+    fn two_pixel_png() -> Vec<u8> {
+        // Native frame: red on the left, blue on the right.
+        let mut img = image::RgbaImage::new(2, 1);
+        img.put_pixel(0, 0, image::Rgba([255, 0, 0, 255]));
+        img.put_pixel(1, 0, image::Rgba([0, 0, 255, 255]));
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        png
+    }
+
+    fn decode(png: &[u8]) -> image::RgbaImage {
+        image::load_from_memory_with_format(png, image::ImageFormat::Png)
+            .unwrap()
+            .to_rgba8()
+    }
+
+    #[test]
+    fn capture_rotation_follows_the_output_transform() {
+        let red = image::Rgba([255, 0, 0, 255]);
+        let blue = image::Rgba([0, 0, 255, 255]);
+        let same = rotate_png_for_output_transform(two_pixel_png(), 0).unwrap();
+        assert_eq!(same, two_pixel_png());
+        let quarter = decode(&rotate_png_for_output_transform(two_pixel_png(), 1).unwrap());
+        assert_eq!(quarter.dimensions(), (1, 2));
+        assert_eq!(
+            (*quarter.get_pixel(0, 0), *quarter.get_pixel(0, 1)),
+            (red, blue)
+        );
+        let half = decode(&rotate_png_for_output_transform(two_pixel_png(), 2).unwrap());
+        assert_eq!((*half.get_pixel(0, 0), *half.get_pixel(1, 0)), (blue, red));
+        let three = decode(&rotate_png_for_output_transform(two_pixel_png(), 3).unwrap());
+        assert_eq!(three.dimensions(), (1, 2));
+        assert_eq!(
+            (*three.get_pixel(0, 0), *three.get_pixel(0, 1)),
+            (blue, red)
+        );
+        assert!(rotate_png_for_output_transform(two_pixel_png(), 5).is_err());
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -2556,7 +2556,12 @@ fn canonical_existing_file(raw: &str) -> Result<String, ToolResult> {
 /// The deepest existing ancestor is canonicalized first, so symlinked parents
 /// are captured in the approved identity. Only normal path components may be
 /// appended after that ancestor; lexical parent traversal never enters a
-/// protected-resource digest.
+/// protected-resource digest. The caller replaces the raw argument with this
+/// canonical path, so the tool writes exactly the approved location.
+///
+/// A deepest existing ancestor that is itself a symbolic link to a directory
+/// (macOS `/tmp` -> `/private/tmp`) is resolved like any other symlinked
+/// parent. A link to a non-directory is refused.
 fn canonical_proposed_path(raw: &str) -> Result<String, ToolResult> {
     let path = expanded_path(raw)?;
     if path.exists() {
@@ -2580,6 +2585,11 @@ fn canonical_proposed_path(raw: &str) -> Result<String, ToolResult> {
                 ))
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotADirectory => {
+                return Err(protected_scope_refusal(
+                    "an ancestor of the output path is not a directory",
+                ))
+            }
             Err(_) => {
                 return Err(protected_scope_refusal(
                     "the output path could not be inspected safely",
@@ -2594,11 +2604,13 @@ fn canonical_proposed_path(raw: &str) -> Result<String, ToolResult> {
             .parent()
             .ok_or_else(|| protected_scope_refusal("the output path has no existing ancestor"))?;
     }
-    let metadata = std::fs::symlink_metadata(existing)
+    // Follow a symlinked ancestor: `exists()` above already resolved it, and
+    // `canonicalize` below records its target in the approved identity.
+    let metadata = std::fs::metadata(existing)
         .map_err(|_| protected_scope_refusal("the output ancestor is unavailable"))?;
     if !metadata.is_dir() {
         return Err(protected_scope_refusal(
-            "the output path's existing ancestor is not a directory",
+            "the output path's deepest existing ancestor is not a directory",
         ));
     }
     let mut canonical = std::fs::canonicalize(existing)
@@ -4544,6 +4556,55 @@ resources:
         assert_eq!(unknown.is_error, Some(true));
         assert_eq!(hits.load(Ordering::SeqCst), 3);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proposed_output_scope_resolves_a_symlinked_deepest_ancestor() {
+        // Mirrors macOS `/tmp/x.png`, where `/tmp` links to `/private/tmp`.
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("private-tmp");
+        std::fs::create_dir(&target).unwrap();
+        let link = root.path().join("tmp");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let proposed = link.join("x.png");
+
+        let canonical = canonical_proposed_path(proposed.to_str().unwrap()).unwrap();
+
+        assert_eq!(
+            canonical,
+            std::fs::canonicalize(&target)
+                .unwrap()
+                .join("x.png")
+                .to_string_lossy()
+        );
+        assert!(!proposed.exists());
+        // The same file already existing was always resolved; both agree.
+        std::fs::write(target.join("x.png"), b"").unwrap();
+        assert_eq!(
+            canonical_proposed_path(proposed.to_str().unwrap()).unwrap(),
+            canonical
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proposed_output_scope_refuses_a_symlinked_ancestor_that_is_not_a_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("file");
+        std::fs::write(&file, b"").unwrap();
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        let proposed = link.join("x.png");
+
+        let refusal = canonical_proposed_path(proposed.to_str().unwrap()).unwrap_err();
+
+        let text = serde_json::to_string(&refusal).unwrap();
+        assert!(
+            text.contains("an ancestor of the output path is not a directory"),
+            "{text}"
+        );
+        assert!(!file.with_file_name("x.png").exists());
     }
 
     #[test]

@@ -393,8 +393,11 @@ enum CommandDocExtractor {
             ],
             options: [
                 OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "timeout", shortName: nil, help: "Seconds to wait for a graceful shutdown before forcing power off", type: "Int", defaultValue: "10", isOptional: false),
             ],
-            flags: [],
+            flags: [
+                FlagDoc(name: "force", shortName: nil, help: "Power off the VM immediately instead of attempting a graceful shutdown first", defaultValue: false),
+            ],
             subcommands: []
         )
     }

@@ -270,17 +270,27 @@ final class Server: @unchecked Sendable {
                         "Processing stop VM request",
                         metadata: ["method": request.method, "path": request.path])
                     var storage: String? = nil
+                    var force = false
+                    var timeout = VM.defaultStopTimeout
                     if let bodyData = request.body, !bodyData.isEmpty {
                         do {
                             if let json = try JSONSerialization.jsonObject(with: bodyData)
-                                as? [String: Any],
-                                let bodyStorage = json["storage"] as? String
+                                as? [String: Any]
                             {
-                                storage = bodyStorage
+                                if let bodyStorage = json["storage"] as? String {
+                                    storage = bodyStorage
+                                }
+                                if let bodyForce = json["force"] as? Bool {
+                                    force = bodyForce
+                                }
+                                if let bodyTimeout = json["timeout"] as? NSNumber {
+                                    timeout = max(bodyTimeout.doubleValue, 0)
+                                }
                             }
                         } catch {}
                     }
-                    return try await self.handleStopVM(name: name, storage: storage)
+                    return try await self.handleStopVM(
+                        name: name, storage: storage, force: force, timeout: timeout)
                 }),
             Route(
                 method: "POST", path: "/lume/vms/:name/setup",

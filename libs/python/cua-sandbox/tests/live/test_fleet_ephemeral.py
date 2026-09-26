@@ -22,7 +22,7 @@ from tests.live.fleet_e2e_support import (
 
 IMAGE = (
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04"
-    "@sha256:80fff8a40f217a460cef7a60161adb3899eabd02c3451f18926b84d1f81b8da2"
+    "@sha256:c67f330f287b0e5124f57c64bcf06a7e4b90208186c3036e1312b15d854f6d13"
 )
 
 

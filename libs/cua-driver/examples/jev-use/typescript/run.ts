@@ -322,6 +322,7 @@ async function run(args: Arguments): Promise<Outcome> {
         const event = {
           event: 'step',
           step,
+          backend: jevConfig.backend,
           candidate: candidate.id,
           confidence: answer.confidence,
           probabilities: answer.probabilities,
@@ -339,6 +340,7 @@ async function run(args: Arguments): Promise<Outcome> {
           event: 'outcome',
           outcome: 'abstained',
           step,
+          backend: jevConfig.backend,
           confidence: answer.confidence,
           probabilities: answer.probabilities,
         });
@@ -356,6 +358,7 @@ async function run(args: Arguments): Promise<Outcome> {
             event: 'outcome',
             outcome: 'unknown',
             step,
+            backend: jevConfig.backend,
             phase: 'action',
             error: error instanceof Error ? error.name : 'UnknownError',
           });
@@ -366,6 +369,7 @@ async function run(args: Arguments): Promise<Outcome> {
       const event = {
         event: 'step',
         step,
+        backend: jevConfig.backend,
         candidate: candidate.id,
         confidence: answer.confidence,
         probabilities: answer.probabilities,

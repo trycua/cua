@@ -310,7 +310,7 @@ fn valid_dimensions(width: u32, height: u32) -> bool {
     width > 0 && height > 0 && u64::from(width) * u64::from(height) <= MAX_LOGICAL_PIXELS
 }
 
-/// Content-free geometry for the qualified single-output, 1:1 desktop.
+/// Content-free logical geometry for a qualified single-output desktop.
 /// The common policy adapter uses this for display-scoped observation. Never
 /// substitute a screenshot, XWayland root, or guessed primary monitor here.
 pub fn screen_size() -> Result<(u32, u32, f64)> {
@@ -321,13 +321,32 @@ fn screen_size_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<(u32, u32,
     let [monitor] = monitors.as_slice() else {
         bail!("Hyprland display identity requires exactly one active output");
     };
-    if monitor.scale != 1.0 || monitor.transform != 0 || monitor.x != 0 || monitor.y != 0 {
-        bail!("Hyprland display identity requires an unscaled, unrotated output at the origin");
+    if !monitor.scale.is_finite() || monitor.scale <= 0.0 {
+        bail!("invalid Hyprland display scale");
+    }
+    if monitor.transform != 0 || monitor.x != 0 || monitor.y != 0 {
+        bail!("Hyprland display identity requires an unrotated output at the origin");
     }
     if !valid_dimensions(monitor.width, monitor.height) {
         bail!("invalid Hyprland display dimensions");
     }
-    Ok((monitor.width, monitor.height, monitor.scale))
+
+    let logical_width = (f64::from(monitor.width) / monitor.scale).round();
+    let logical_height = (f64::from(monitor.height) / monitor.scale).round();
+    if !logical_width.is_finite()
+        || !logical_height.is_finite()
+        || logical_width < 1.0
+        || logical_height < 1.0
+        || logical_width > f64::from(u32::MAX)
+        || logical_height > f64::from(u32::MAX)
+    {
+        bail!("invalid Hyprland logical display dimensions");
+    }
+    let (logical_width, logical_height) = (logical_width as u32, logical_height as u32);
+    if !valid_dimensions(logical_width, logical_height) {
+        bail!("invalid Hyprland logical display dimensions");
+    }
+    Ok((logical_width, logical_height, monitor.scale))
 }
 
 pub fn list_windows() -> Result<Vec<Window>> {
@@ -764,10 +783,21 @@ mod tests {
     }
 
     #[test]
+    fn display_identity_accepts_fractional_scale_logical_geometry() {
+        let mut monitor = display_monitor();
+        (monitor.width, monitor.height, monitor.scale) = (2160, 1350, 1.6666666);
+
+        assert_eq!(
+            screen_size_from_monitors(vec![monitor]).unwrap(),
+            (1296, 810, 1.6666666)
+        );
+    }
+
+    #[test]
     fn display_identity_rejects_ambiguous_outputs_and_unsupported_frames() {
         assert!(screen_size_from_monitors(vec![]).is_err());
         assert!(screen_size_from_monitors(vec![display_monitor(), display_monitor()]).is_err());
-        for scale in [0.0, 1.25, 2.0, f64::NAN, f64::INFINITY] {
+        for scale in [0.0, f64::NAN, f64::INFINITY] {
             let mut monitor = display_monitor();
             monitor.scale = scale;
             assert!(screen_size_from_monitors(vec![monitor]).is_err());

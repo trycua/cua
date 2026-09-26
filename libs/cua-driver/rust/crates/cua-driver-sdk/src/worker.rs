@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 pub const PRIVATE_WORKER_PROTOCOL_VERSION: u32 = 1;
@@ -110,7 +111,7 @@ pub(crate) struct ValidatedWorkerOptions {
 }
 
 struct WorkerProcess {
-    child: Child,
+    child: Arc<Mutex<Child>>,
     stdin: Option<ChildStdin>,
     stdout: Option<BufReader<ChildStdout>>,
     next_request_id: u64,
@@ -120,20 +121,55 @@ struct WorkerProcess {
 impl WorkerProcess {
     fn stop_and_reap(&mut self) {
         self.stdin.take();
-        match self.child.try_wait() {
+        let mut child = self.child.lock().unwrap();
+        match child.try_wait() {
             Ok(Some(_)) => {}
             Ok(None) | Err(_) => {
-                let _ = self.child.kill();
-                let _ = self.child.wait();
+                let _ = child.kill();
+                let _ = child.wait();
             }
         }
         self.stopped = true;
     }
 }
 
+// Use an OS-thread deadline rather than the host runtime's optional time driver
+// or its potentially saturated blocking pool. Dropping the sender cancels the
+// wait, so a graceful shutdown does not retain a sleeping thread for its budget.
+struct ShutdownDeadline {
+    _cancel: std::sync::mpsc::Sender<()>,
+    expired: tokio::sync::oneshot::Receiver<()>,
+}
+
+impl ShutdownDeadline {
+    fn new(deadline: Instant) -> std::io::Result<Self> {
+        let (cancel, cancelled) = std::sync::mpsc::channel();
+        let (notify, expired) = tokio::sync::oneshot::channel();
+        std::thread::Builder::new()
+            .name("cua-private-worker-deadline".into())
+            .spawn(move || {
+                if matches!(
+                    cancelled.recv_timeout(deadline.saturating_duration_since(Instant::now())),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                ) {
+                    let _ = notify.send(());
+                }
+            })?;
+        Ok(Self {
+            _cancel: cancel,
+            expired,
+        })
+    }
+}
+
 pub(crate) struct PrivateWorkerClient {
     generation: String,
     process: Mutex<WorkerProcess>,
+    // Keep the exact owned Child accessible even while a request holds the pipe
+    // lock in a blocking write/read. No PID lookup or process-group signalling.
+    child: Arc<Mutex<Child>>,
+    shutdown_started: AtomicBool,
+    cleanup_started: AtomicBool,
     shutdown_timeout: Duration,
 }
 
@@ -166,15 +202,19 @@ impl PrivateWorkerClient {
         let stdout = child.stdout.take().ok_or_else(|| DriverError::Worker {
             reason: "private worker stdout was not piped".into(),
         })?;
+        let child = Arc::new(Mutex::new(child));
         let client = Arc::new(Self {
             generation,
             process: Mutex::new(WorkerProcess {
-                child,
+                child: Arc::clone(&child),
                 stdin: Some(stdin),
                 stdout: Some(BufReader::new(stdout)),
                 next_request_id: 1,
                 stopped: false,
             }),
+            child,
+            shutdown_started: AtomicBool::new(false),
+            cleanup_started: AtomicBool::new(false),
             shutdown_timeout: options.shutdown_timeout,
         });
 
@@ -209,11 +249,15 @@ impl PrivateWorkerClient {
     }
 
     pub(crate) fn is_available(&self) -> bool {
+        if self.shutdown_started.load(Ordering::Acquire) {
+            return false;
+        }
         let mut process = self.process.lock().unwrap();
         if process.stopped {
             return false;
         }
-        match process.child.try_wait() {
+        let status = process.child.lock().unwrap().try_wait();
+        match status {
             Ok(None) => true,
             Ok(Some(_)) | Err(_) => {
                 process.stopped = true;
@@ -274,36 +318,161 @@ impl PrivateWorkerClient {
     }
 
     pub(crate) async fn shutdown(self: &Arc<Self>) -> Result<(), DriverError> {
-        let client = self.clone();
-        tokio::task::spawn_blocking(move || client.shutdown_sync())
-            .await
-            .map_err(|error| DriverError::Worker {
-                reason: format!("join private worker shutdown: {error}"),
-            })?
+        let deadline = Instant::now()
+            .checked_add(self.shutdown_timeout)
+            .ok_or_else(|| DriverError::Configuration {
+                reason: "private-worker shutdown timeout exceeds the platform clock range".into(),
+            })?;
+        if self.shutdown_started.load(Ordering::Acquire) {
+            return Err(DriverError::Shutdown);
+        }
+        // Allocate the fallible watchdog before retiring the client or submitting
+        // work. A thread-spawn failure leaves admission open for a later retry.
+        let mut timer = ShutdownDeadline::new(deadline).map_err(|error| DriverError::Worker {
+            reason: format!("schedule private worker shutdown deadline: {error}"),
+        })?;
+        if self.shutdown_started.swap(true, Ordering::AcqRel) {
+            return Err(DriverError::Shutdown);
+        }
+        // 0 = not transmitted, 1 = transmission may have started, 2 = expired.
+        // The expiry gate also prevents a queued task from writing after timeout.
+        let transmission = Arc::new(AtomicU8::new(0));
+        let client = Arc::clone(self);
+        let progress = Arc::clone(&transmission);
+        let mut task =
+            tokio::task::spawn_blocking(move || client.shutdown_sync_until(deadline, &progress));
+        tokio::select! {
+            // Preserve timeout_at's preference for a completed task; the task
+            // itself only reports success after observing exit by the deadline.
+            biased;
+            result = &mut task => match result {
+                Ok(result) => result,
+                Err(error) => {
+                    self.schedule_cleanup()?;
+                    Err(DriverError::Worker {
+                        reason: format!("join private worker shutdown: {error}"),
+                    })
+                }
+            },
+            _ = &mut timer.expired => {
+                let started = transmission.swap(2, Ordering::AcqRel) == 1;
+                // Abort removes queued work; an already-running closure retains
+                // its Arc until it returns. Cleanup does not use Tokio's pool.
+                task.abort();
+                self.schedule_cleanup()?;
+                Err(Self::shutdown_deadline_error(started))
+            }
+        }
     }
 
-    fn shutdown_sync(&self) -> Result<(), DriverError> {
-        let response = self.request_sync("shutdown", None, None, None);
-        let mut process = self.process.lock().unwrap();
-        process.stdin.take();
-        let deadline = std::time::Instant::now() + self.shutdown_timeout;
+    fn shutdown_deadline_error(started: bool) -> DriverError {
+        DriverError::ActionInterrupted {
+            completion: if started {
+                ActionCompletion::Unknown
+            } else {
+                ActionCompletion::NotStarted
+            },
+            reason: if started {
+                "private worker shutdown exceeded its deadline; graceful exit was not observed"
+            } else {
+                "private worker shutdown deadline expired before transmission"
+            }
+            .into(),
+        }
+    }
+
+    fn lock_process_until(&self, deadline: Instant) -> Option<MutexGuard<'_, WorkerProcess>> {
         loop {
-            match process.child.try_wait() {
+            if Instant::now() >= deadline {
+                return None;
+            }
+            match self.process.try_lock() {
+                Ok(process) => return Some(process),
+                Err(TryLockError::Poisoned(error)) => return Some(error.into_inner()),
+                Err(TryLockError::WouldBlock) => std::thread::sleep(
+                    Duration::from_millis(5)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                ),
+            }
+        }
+    }
+
+    fn schedule_cleanup(&self) -> Result<(), DriverError> {
+        if self.cleanup_started.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+        let child = Arc::clone(&self.child);
+        // The cleanup thread retains the Child through wait(), including when
+        // the caller's deadline expires or its last client reference is dropped.
+        // Never hold the request/pipe lock while waiting to acquire this owner.
+        if let Err(error) = std::thread::Builder::new()
+            .name("cua-private-worker-cleanup".into())
+            .spawn(move || {
+                let mut child = child
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if !matches!(child.try_wait(), Ok(Some(_))) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            })
+        {
+            self.cleanup_started.store(false, Ordering::Release);
+            return Err(DriverError::Worker {
+                reason: format!("schedule private worker cleanup: {error}"),
+            });
+        }
+        Ok(())
+    }
+
+    fn shutdown_sync_until(
+        &self,
+        deadline: Instant,
+        transmission: &AtomicU8,
+    ) -> Result<(), DriverError> {
+        let response = self.request_with_deadline(
+            ChannelRequest {
+                protocol_version: PRIVATE_WORKER_PROTOCOL_VERSION,
+                request_id: 0, // Assigned under the request lock below.
+                generation: self.generation.clone(),
+                operation: "shutdown".into(),
+                name: None,
+                arguments: None,
+                session_handle: None,
+            },
+            self.shutdown_timeout,
+            Some((deadline, transmission)),
+        );
+        if let Err(error) = response {
+            self.schedule_cleanup()?;
+            return Err(error);
+        }
+        let Some(mut process) = self.lock_process_until(deadline) else {
+            self.schedule_cleanup()?;
+            return Err(Self::shutdown_deadline_error(true));
+        };
+        process.stdin.take();
+        loop {
+            let status = self.child.lock().unwrap().try_wait();
+            if Instant::now() >= deadline || self.cleanup_started.load(Ordering::Acquire) {
+                self.schedule_cleanup()?;
+                return Err(Self::shutdown_deadline_error(true));
+            }
+            match status {
                 Ok(Some(_)) => {
                     process.stopped = true;
-                    return response.map(|_| ());
+                    return Ok(());
                 }
-                Ok(None) if std::time::Instant::now() < deadline => {
-                    drop(process);
-                    std::thread::sleep(Duration::from_millis(20));
-                    process = self.process.lock().unwrap();
-                }
+                Ok(None) if Instant::now() < deadline => std::thread::sleep(
+                    Duration::from_millis(5)
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                ),
                 Ok(None) => {
-                    process.stop_and_reap();
-                    return response.map(|_| ());
+                    self.schedule_cleanup()?;
+                    return Err(Self::shutdown_deadline_error(true));
                 }
                 Err(error) => {
-                    process.stopped = true;
+                    self.schedule_cleanup()?;
                     return Err(DriverError::Worker {
                         reason: format!("wait for private worker: {error}"),
                     });
@@ -337,6 +506,9 @@ impl PrivateWorkerClient {
         arguments: Option<Value>,
         session_handle: Option<String>,
     ) -> Result<Value, DriverError> {
+        if self.shutdown_started.load(Ordering::Acquire) {
+            return Err(DriverError::Shutdown);
+        }
         let request_id = {
             let mut process = self.process.lock().unwrap();
             let request_id = process.next_request_id;
@@ -362,11 +534,40 @@ impl PrivateWorkerClient {
         request: ChannelRequest,
         timeout: Duration,
     ) -> Result<Value, DriverError> {
-        let mut process = self.process.lock().unwrap();
+        self.request_with_deadline(request, timeout, None)
+    }
+
+    fn request_with_deadline(
+        &self,
+        mut request: ChannelRequest,
+        timeout: Duration,
+        shutdown: Option<(Instant, &AtomicU8)>,
+    ) -> Result<Value, DriverError> {
+        let mut process = if let Some((deadline, _)) = shutdown {
+            self.lock_process_until(deadline)
+                .ok_or_else(|| Self::shutdown_deadline_error(false))?
+        } else {
+            self.process.lock().unwrap()
+        };
+        if shutdown.is_none() && self.shutdown_started.load(Ordering::Acquire) {
+            return Err(DriverError::Shutdown);
+        }
+        if shutdown.is_some() {
+            request.request_id = process.next_request_id;
+            process.next_request_id = process.next_request_id.saturating_add(1);
+        }
         if process.stopped {
             return Err(DriverError::Shutdown);
         }
-        if process.child.try_wait().ok().flatten().is_some() {
+        if process
+            .child
+            .lock()
+            .unwrap()
+            .try_wait()
+            .ok()
+            .flatten()
+            .is_some()
+        {
             process.stopped = true;
             return Err(DriverError::ActionInterrupted {
                 completion: ActionCompletion::NotStarted,
@@ -378,6 +579,15 @@ impl PrivateWorkerClient {
             reason: format!("serialize private worker request: {error}"),
         })?;
         let stdin = process.stdin.as_mut().ok_or(DriverError::Shutdown)?;
+        if let Some((deadline, transmission)) = shutdown {
+            if Instant::now() >= deadline
+                || transmission
+                    .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+                    .is_err()
+            {
+                return Err(Self::shutdown_deadline_error(false));
+            }
+        }
         if let Err(error) = stdin
             .write_all(line.as_bytes())
             .and_then(|()| stdin.write_all(b"\n"))
@@ -396,15 +606,25 @@ impl PrivateWorkerClient {
             reason: "private worker response reader is unavailable".into(),
         })?;
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
-        std::thread::spawn(move || {
+        let reader = std::thread::spawn(move || {
             let mut stdout = stdout;
             let mut line = String::new();
             let result = stdout.read_line(&mut line);
             let _ = tx.send((stdout, result, line));
         });
-        let (stdout, read, response_line) = match rx.recv_timeout(timeout) {
+        let remaining = shutdown.map_or(timeout, |(deadline, _)| {
+            deadline.saturating_duration_since(Instant::now())
+        });
+        let (stdout, read, response_line) = match rx.recv_timeout(remaining) {
             Ok(response) => response,
             Err(_) => {
+                if shutdown.is_some() {
+                    self.schedule_cleanup()?;
+                    // Retain this running shutdown task and its client until
+                    // the blocking reader releases its pipe after termination.
+                    let _ = reader.join();
+                    return Err(Self::shutdown_deadline_error(true));
+                }
                 process.stop_and_reap();
                 return Err(DriverError::ActionInterrupted {
                     completion: ActionCompletion::Unknown,
@@ -544,6 +764,9 @@ pub(crate) fn validate_worker_options(
         inherit_stderr,
     })
 }
+
+#[cfg(test)]
+mod shutdown_tests;
 
 #[cfg(test)]
 mod tests {

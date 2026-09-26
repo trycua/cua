@@ -49,6 +49,14 @@ fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
 fn desktop_point_window_resolver() -> cua_driver_core::window_target::DesktopPointWindowResolver {
     Arc::new(move |pid, x, y| {
         let pid = u32::try_from(pid).ok()?;
+        // Window geometry is in layout coordinates; on Hyprland the desktop
+        // frame starts at the top-left powered output, not the layout origin.
+        let (x, y) = if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
+            let frame = crate::wayland::hyprland::desktop_frame().ok()?;
+            (x + f64::from(frame.x), y + f64::from(frame.y))
+        } else {
+            (x, y)
+        };
         topmost_window_at(&crate::wayland::list_windows_dispatch(Some(pid)), pid, x, y)
     })
 }
@@ -11927,6 +11935,41 @@ impl Tool for GetScreenSizeTool {
         })
         .await;
         match result {
+            Ok(Ok((w, h, scale)))
+                if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() =>
+            {
+                // Tell the agent which monitors are actually on: the desktop
+                // frame covers powered monitors only and changes as they turn
+                // on or off, so re-read it after any display change.
+                let monitors = crate::wayland::hyprland::monitor_report().unwrap_or(json!([]));
+                let describe = |m: &Value| {
+                    let name = m["name"].as_str().unwrap_or("?");
+                    match (
+                        m["powered"].as_bool(),
+                        m["frame_x"].as_i64(),
+                        m["frame_y"].as_i64(),
+                    ) {
+                        (Some(true), Some(x), Some(y)) => format!(
+                            "{name} {}x{} on, at ({x},{y}) in the desktop frame",
+                            m["width"], m["height"]
+                        ),
+                        _ => format!("{name} off (standby), not in the desktop frame"),
+                    }
+                };
+                let lines: Vec<String> = monitors
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(describe)
+                    .collect();
+                ToolResult::text(format!(
+                    "✅ Desktop frame: {w}x{h} points @ {scale}x, spanning every monitor that is on.\n{}",
+                    lines.join("\n")
+                ))
+                .with_structured(json!({
+                    "width": w, "height": h, "scale_factor": scale, "monitors": monitors,
+                }))
+            }
             // Matches Swift text format 1:1.
             Ok(Ok((w, h, scale))) => {
                 ToolResult::text(format!("✅ Main display: {w}x{h} points @ {scale}x"))
@@ -12249,6 +12292,19 @@ impl Tool for GetCursorPositionTool {
         {
             return result;
         }
+        // Hyprland reports the real pointer over IPC; return it in the
+        // desktop-frame coordinates that get_desktop_state and desktop actions use.
+        if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
+            let position = tokio::task::spawn_blocking(|| -> anyhow::Result<(i32, i32)> {
+                let (x, y) = crate::wayland::hyprland::cursor_position()?;
+                Ok(crate::wayland::hyprland::desktop_frame()?.from_layout(x, y))
+            })
+            .await;
+            if let Ok(Ok((x, y))) = position {
+                return ToolResult::text(format!("✅ Cursor at ({x}, {y}) in the desktop frame"))
+                    .with_structured(json!({ "x": x, "y": y, "source": "compositor" }));
+            }
+        }
         // Native Wayland: there's no protocol for clients to query the real
         // global cursor position. Fall back to the synthetic registry that
         // records every `motion_absolute` this process emits.
@@ -12334,10 +12390,8 @@ impl Tool for MoveCursorTool {
                 "xtest_desktop"
             };
             let result = if wayland {
-                tokio::task::spawn_blocking(move || {
-                    crate::wayland::move_cursor_absolute(None, xi, yi)
-                })
-                .await
+                tokio::task::spawn_blocking(move || crate::wayland::move_cursor_desktop(xi, yi))
+                    .await
             } else {
                 tokio::task::spawn_blocking(move || crate::input::send_move_xtest_desktop(xi, yi))
                     .await

@@ -68,17 +68,27 @@ def main():
     def notification_stop():
         shell("cmd", "statusbar", "expand-notifications")
         try:
-            shell("uiautomator", "dump", "/data/local/tmp/cua-driver/notification.xml")
-            tree = ET.fromstring(shell("cat", "/data/local/tmp/cua-driver/notification.xml"))
-            rows = [row for row in tree.iter("node")
-                    if row.get("resource-id") == "com.android.systemui:id/expandableNotificationRow"
-                    and any(node.get("text") == "Cua Android session" for node in row.iter("node"))]
-            assert len(rows) == 1, "Expected one Cua session notification"
-            buttons = [node for node in rows[0].iter("node")
-                       if node.get("text") == "Stop" and node.get("clickable") == "true"]
+            def center(node):
+                x1, y1, x2, y2 = map(int, re.findall(r"\d+", node.get("bounds")))
+                return (x1 + x2) // 2, (y1 + y2) // 2
+
+            for attempt in range(2):
+                shell("uiautomator", "dump", "/data/local/tmp/cua-driver/notification.xml")
+                tree = ET.fromstring(shell("cat", "/data/local/tmp/cua-driver/notification.xml"))
+                rows = [row for row in tree.iter("node")
+                        if row.get("resource-id") == "com.android.systemui:id/expandableNotificationRow"
+                        and any(node.get("text") == "Cua Android session" for node in row.iter("node"))]
+                assert len(rows) == 1, "Expected one Cua session notification"
+                buttons = [node for node in rows[0].iter("node")
+                           if node.get("text") == "Stop" and node.get("clickable") == "true"]
+                expand = [node for node in rows[0].iter("node")
+                          if node.get("content-desc") == "Expand" and node.get("clickable") == "true"]
+                if buttons or attempt or len(expand) != 1:
+                    break
+                # The shade auto-expands only its top notification; expand this row when others sit above it.
+                shell("input", "-d", "0", "tap", *center(expand[0]))
             assert len(buttons) == 1, "Expected the expanded notification's Stop action"
-            x1, y1, x2, y2 = map(int, re.findall(r"\d+", buttons[0].get("bounds")))
-            shell("input", "-d", "0", "tap", (x1 + x2) // 2, (y1 + y2) // 2)
+            shell("input", "-d", "0", "tap", *center(buttons[0]))
             poll(lambda: state().get("service", {}).get("status") == "Stopped")
         finally:
             shell("cmd", "statusbar", "collapse")

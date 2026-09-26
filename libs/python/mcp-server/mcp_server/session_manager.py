@@ -169,28 +169,30 @@ class SessionManager:
 
         # Check if session exists and is not shutting down
         async with self._session_lock:
-            if session_id in self._sessions:
-                session = self._sessions[session_id]
-                if session.is_shutting_down:
-                    raise RuntimeError(f"Session {session_id} is shutting down")
-                session.last_activity = time.time()
-                computer = session.computer
-            else:
-                # Create new session
-                if len(self._sessions) >= self.max_concurrent_sessions:
-                    raise RuntimeError(
-                        f"Maximum concurrent sessions ({self.max_concurrent_sessions}) reached"
-                    )
+            session = self._existing_session_locked(session_id)
 
-                computer = await self._computer_pool.acquire()
-                session = SessionInfo(
-                    session_id=session_id,
-                    computer=computer,
-                    created_at=time.time(),
-                    last_activity=time.time(),
-                )
-                self._sessions[session_id] = session
-                logger.info(f"Created new session: {session_id}")
+        if session is None:
+            # Acquire outside the lock: when the pool is exhausted, acquire() waits
+            # for a release, and releases only happen under _session_lock.
+            computer = await self._computer_pool.acquire()
+            async with self._session_lock:
+                try:
+                    session = self._existing_session_locked(session_id)
+                except Exception:
+                    await self._computer_pool.release(computer)
+                    raise
+                if session is not None:
+                    # Another caller created this session while we waited.
+                    await self._computer_pool.release(computer)
+                else:
+                    session = SessionInfo(
+                        session_id=session_id,
+                        computer=computer,
+                        created_at=time.time(),
+                        last_activity=time.time(),
+                    )
+                    self._sessions[session_id] = session
+                    logger.info(f"Created new session: {session_id}")
 
         try:
             yield session
@@ -199,6 +201,23 @@ class SessionManager:
             async with self._session_lock:
                 if session_id in self._sessions:
                     self._sessions[session_id].last_activity = time.time()
+
+    def _existing_session_locked(self, session_id: str) -> Optional[SessionInfo]:
+        """Return a live session, or None if a new one may be created.
+
+        The caller must hold ``_session_lock``.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            if len(self._sessions) >= self.max_concurrent_sessions:
+                raise RuntimeError(
+                    f"Maximum concurrent sessions ({self.max_concurrent_sessions}) reached"
+                )
+            return None
+        if session.is_shutting_down:
+            raise RuntimeError(f"Session {session_id} is shutting down")
+        session.last_activity = time.time()
+        return session
 
     async def register_task(self, session_id: str, task_id: str) -> None:
         """Register a task for a session."""

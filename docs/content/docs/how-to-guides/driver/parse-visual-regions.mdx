@@ -1,6 +1,6 @@
 ---
 title: 'Parse visual regions with Cua Driver'
-description: 'Install the optional perception preview, parse one retained screenshot, take one bounded action, and reobserve.'
+description: 'Install the optional perception extension, parse one retained screenshot, take one bounded action, and reobserve.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -10,10 +10,10 @@ accessibility tree or typed browser state does not identify the target. Cua
 Driver keeps capture and action authority; the optional perception extension
 turns one retained screenshot into model-neutral regions.
 
-<Callout type="warning" title="Developer preview">
-  The `cua-perception` extension is separate from the default Cua Driver install. Verified-catalog
-  publication and the exact initial OCR/model artifact are still pending release verification. This
-  page does not identify an artifact URL or claim that a stable release is available.
+<Callout type="info" title="Separate extension">
+  The `cua-perception` extension is separate from the default Cua Driver install. Each release is
+  published as a `cua-perception-v<version>` GitHub release with one signed catalog and archive per
+  platform. Pick the release by that tag; it is never the repository's Latest release.
 </Callout>
 
 <Callout type="warning" title="License precautions">
@@ -39,7 +39,7 @@ cua-driver describe parse_visual_regions
 ```
 
 The default local Driver remains MIT licensed and works without this extension.
-The candidate records its OmniParser detector artifact as AGPL-3.0-only and its
+The extension's ledgers record its OmniParser detector artifact as AGPL-3.0-only and its
 PP-OCR detector and recognizer artifacts as Apache-2.0. The packaged CPU ONNX
 Runtime must identify its exact version, hash, license, and notices. Inspect the
 catalog, manifest, SBOM, model ledger, source ledger, and built artifact rather
@@ -48,13 +48,23 @@ detector under AGPL-3.0-only with its corresponding source bundled; further
 distribution and remote service require the applicable notices, corresponding
 source and conversion material, and AGPL network source path. See the repository's [perception
 third-party notices](https://github.com/trycua/cua/blob/main/libs/cua-driver/docs/perception-third-party-notices.md).
-Installing the preview does not add Python, and neither Driver nor the extension
+Installing the extension does not add Python, and neither Driver nor the extension
 requires a Jev credential.
 
 ## Inspect the extension
 
-Use the catalog distributed with the reviewed release candidate, then read the
-candidate metadata before changing local state:
+Open the newest `cua-perception-v<version>` release on
+[GitHub](https://github.com/trycua/cua/releases?q=cua-perception-v) and download
+the catalog and archive for your platform into one directory. Driver resolves
+the archive beside the catalog.
+
+| Platform | Catalog | Archive |
+| --- | --- | --- |
+| macOS arm64 | `cua-perception-<version>-aarch64-apple-darwin.catalog.json` | `cua-perception-<version>-aarch64-apple-darwin.tar.gz` |
+| Linux x64 | `cua-perception-<version>-x86_64-unknown-linux-gnu.catalog.json` | `cua-perception-<version>-x86_64-unknown-linux-gnu.tar.gz` |
+| Windows x64 | `cua-perception-<version>-x86_64-pc-windows-msvc.catalog.json` | `cua-perception-<version>-x86_64-pc-windows-msvc.tar.gz` |
+
+Read the signed metadata before changing local state:
 
 ```bash
 cua-driver extension inspect cua-perception --catalog <catalog.json>
@@ -102,7 +112,7 @@ action-coordinate mapping together. A current accessibility `snapshot_id` is
 not a visual `capture_id`.
 
 Use `get_desktop_state` only when the workflow explicitly authorizes desktop
-capture and a narrower window target cannot represent the task. If the preview
+capture and a narrower window target cannot represent the task. If the extension
 requires a native-resolution source and refuses a resized capture, follow the
 returned error and the exact build's configuration description; do not rescale
 regions yourself.
@@ -195,7 +205,7 @@ The worker receives only the admitted screenshot and bounded parse options. It
 does not receive desktop capture, accessibility, browser, input,
 credential-store, or action authority.
 
-## Update or remove the preview
+## Update or remove the extension
 
 Inspect replacement metadata before updating:
 

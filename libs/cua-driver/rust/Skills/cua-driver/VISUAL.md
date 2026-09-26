@@ -5,23 +5,21 @@ text or icons that accessibility and typed browser state do not expose. The
 tool returns model-neutral observations. It does not decide that a region is
 interactive, choose an action, or grant permission to act.
 
-This capability is a developer preview delivered by the separately installed
-`cua-perception` extension. It is absent from the default Cua Driver
-installation. The default local Driver remains MIT licensed. The reviewed
-candidate records the OmniParser detector artifact as AGPL-3.0-only and the
-PP-OCR detector and recognizer as Apache-2.0. The packaged ONNX Runtime must
+This capability is delivered by the separately installed `cua-perception`
+extension. It is absent from the default Cua Driver installation. The default
+local Driver remains MIT licensed. The extension's ledgers record the
+OmniParser detector artifact as AGPL-3.0-only and the PP-OCR detector and
+recognizer as Apache-2.0. The packaged ONNX Runtime must
 report its exact version, hash, license, and notices. Inspect the exact catalog,
 manifest, SBOM, source ledger, model ledger, and built artifact rather than
-applying the Driver license to them. Publication remains blocked while the
-OmniParser ledger says `license-review-required`; distribution and remote
-service require the applicable notices, corresponding source/conversion
+applying the Driver license to them. Distribution and remote service require the applicable notices, corresponding source/conversion
 material, and AGPL network source path.
 
 ## Inspect before installing
 
 Never install the extension merely because a parse returned `not_installed`.
-Use the catalog distributed with the reviewed release candidate, then inspect
-the exact candidate:
+Use the signed catalog for this platform from a `cua-perception-v<version>`
+GitHub release, downloaded beside its archive, then inspect the exact artifact:
 
 ```bash
 cua-driver extension inspect cua-perception --catalog <catalog.json>
@@ -41,10 +39,9 @@ after inspecting the proposed replacement. Use
 `cua-driver extension remove cua-perception` to remove extension-owned artifacts
 when they are not in use.
 
-Verified-catalog publication and the exact initial OCR/model artifact are still
-pending release verification. If `inspect` cannot present authenticated
-metadata for the exact artifact, stop. Do not invent an artifact URL, substitute
-an unsigned archive, or describe the preview as a stable release.
+If `inspect` cannot present authenticated metadata for the exact artifact,
+stop. Do not invent an artifact URL, substitute an unsigned archive, or infer
+availability from the repository's Latest release.
 
 Installation is never a side effect of Driver startup, capture, parsing, or
 update checks. Parsing does not download code or model weights. The extension
@@ -60,7 +57,7 @@ runtime:
 
 1. Capture the exact native window with `get_window_state`, or an explicitly
    authorized desktop with `get_desktop_state`. Use a
-   native-resolution capture when the preview requires it and retain the
+   native-resolution capture when the extension requires it and retain the
    returned `capture_id`, target, dimensions, and action-coordinate mapping.
 2. Call `parse_visual_regions` with that `capture_id` and bounded options. For
    example, request only `text`, set `min_confidence`, and cap `max_regions`.
@@ -97,7 +94,7 @@ move, scroll, navigation, display-layout change, or target-identity change.
 
 - `not_installed`: the optional `cua-perception` extension is absent. Continue with
   accessibility, browser, or caller-owned visual reasoning unless the user has
-  chosen to inspect and install the preview.
+  chosen to inspect and install the extension.
 - `capture_not_found`, `capture_expired`, `capture_stale`, or
   `capture_generation_mismatch`: take a fresh capture and parse that new ID.
 - `unsupported_target` or `unsupported_platform`: use another observation

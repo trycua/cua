@@ -291,19 +291,28 @@ extension Server {
         }
     }
 
-    func handleStopVM(name: String, storage: String? = nil) async throws -> HTTPResponse {
+    func handleStopVM(
+        name: String,
+        storage: String? = nil,
+        force: Bool = false,
+        timeout: TimeInterval = VM.defaultStopTimeout
+    ) async throws -> HTTPResponse {
         // Record telemetry
         TelemetryClient.shared.record(event: TelemetryEvent.apiVMStop)
 
         Logger.info(
-            "Stopping VM", metadata: ["name": name, "storage": String(describing: storage)])
+            "Stopping VM",
+            metadata: [
+                "name": name, "storage": String(describing: storage), "force": "\(force)",
+            ])
 
         do {
             Logger.info("Creating VM controller", metadata: ["name": name])
             let vmController = LumeController()
 
             Logger.info("Calling stopVM on controller", metadata: ["name": name])
-            try await vmController.stopVM(name: name, storage: storage)
+            try await vmController.stopVM(
+                name: name, storage: storage, force: force, timeout: timeout)
 
             Logger.info(
                 "VM stopped, waiting 5 seconds for locks to clear", metadata: ["name": name])

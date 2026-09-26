@@ -71,6 +71,15 @@ class VM {
     // their one-shot lock lookup more time than list/get's latency-bound probe.
     private let runLockProbe: RunLockProbe = LsofRunLockProbe(timeout: 10)
 
+    /// Default number of seconds a graceful `stop` waits for the owning process
+    /// to exit before escalating to a forced power-off.
+    nonisolated static let defaultStopTimeout: TimeInterval = 10
+
+    /// Signal handlers that let an external `stop` (SIGTERM) or an interactive
+    /// Ctrl-C (SIGINT) shut this run down cleanly. Installed only by the process
+    /// that actually owns the running VM.
+    private var shutdownSignalSources: [DispatchSourceSignal] = []
+
     // MARK: - Initialization
 
     init(
@@ -466,6 +475,11 @@ class VM {
                             "error": error.localizedDescription,
                         ])
                 }
+
+                // The AppKit run loop swallows SIGINT, so install explicit
+                // handlers that turn an external `stop` (SIGTERM) or an
+                // interactive Ctrl-C (SIGINT) into a clean shutdown.
+                installShutdownSignalHandlers()
             }
 
             // Write VNC config into VM via SSH (background task).
@@ -702,9 +716,52 @@ class VM {
             ])
     }
 
+    /// Installs SIGTERM/SIGINT handlers that request a clean VM shutdown. Only
+    /// the process that owns the running VM calls this. Ignoring the default
+    /// disposition first lets the dispatch source observe the signal instead of
+    /// the process being terminated (or, for SIGINT under AppKit, ignored).
+    @MainActor
+    private func installShutdownSignalHandlers() {
+        guard shutdownSignalSources.isEmpty else { return }
+        for signalNumber in [SIGTERM, SIGINT] {
+            signal(signalNumber, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
+            source.setEventHandler { [weak self] in
+                Task { @MainActor in
+                    await self?.requestGracefulShutdown()
+                }
+            }
+            source.resume()
+            shutdownSignalSources.append(source)
+        }
+    }
+
+    @MainActor
+    private func removeShutdownSignalHandlers() {
+        for source in shutdownSignalSources {
+            source.cancel()
+        }
+        shutdownSignalSources.removeAll()
+    }
+
+    /// Stops the running VM in response to a shutdown signal. Returning from the
+    /// framework's stop lets `run`'s lifecycle wait complete, which drives the
+    /// normal session teardown and process exit.
+    @MainActor
+    private func requestGracefulShutdown() async {
+        Logger.info(
+            "Received shutdown signal; stopping VM", metadata: ["name": vmDirContext.name])
+        guard let service = virtualizationService else { return }
+        if service.state == .running || service.state == .paused {
+            try? await service.stop()
+        }
+    }
+
     private func cleanupSession() async {
         guard !sessionCleanedUp else { return }
         sessionCleanedUp = true
+
+        removeShutdownSignalHandlers()
 
         // Detach native display before releasing the framework VM.
         if nativeAttachRegistered {
@@ -733,13 +790,30 @@ class VM {
 
     @MainActor
     func stop() async throws {
+        try await stop(force: false, timeout: VM.defaultStopTimeout)
+    }
+
+    /// Stops the VM.
+    ///
+    /// When this process owns the running VM, the framework stops it directly.
+    /// Otherwise `stop` resolves the process holding the config-file run lock
+    /// (typically a detached `lume run`) and signals it: by default it requests
+    /// a graceful shutdown and waits up to `timeout` seconds before escalating to
+    /// a forced power-off. `force` skips the graceful phase and powers the VM off
+    /// immediately.
+    @MainActor
+    func stop(force: Bool, timeout: TimeInterval) async throws {
         guard vmDirContext.initialized else {
             throw VMError.notInitialized(vmDirContext.name)
         }
 
-        Logger.info("Attempting to stop VM", metadata: ["name": vmDirContext.name])
+        Logger.info(
+            "Attempting to stop VM",
+            metadata: ["name": vmDirContext.name, "force": "\(force)"])
 
-        // If we have a virtualization service, try to stop it cleanly first
+        // If we own the running VM in this process, stop it directly. The
+        // framework's stop is an immediate power-off, so it serves both the
+        // graceful and forced requests.
         if let service = virtualizationService {
             do {
                 Logger.info(
@@ -763,36 +837,24 @@ class VM {
             }
         }
 
-        // Try to open config file to get file descriptor
+        // Cross-process stop: another process owns the VM and holds the
+        // config-file run lock. Resolve that owner directly from the lock probe.
+        // We intentionally do not open the config file ourselves first: doing so
+        // would make this process a second holder and pollute the lsof probe.
         Logger.info(
-            "Attempting to access config file lock",
+            "Resolving process holding the config-file run lock",
             metadata: [
                 "path": vmDirContext.dir.configPath.path,
                 "name": vmDirContext.name,
             ])
-        let fileHandle = try? FileHandle(forReadingFrom: vmDirContext.dir.configPath.url)
-        guard let fileHandle = fileHandle else {
-            Logger.info(
-                "Failed to open config file - VM may not be running",
-                metadata: ["name": vmDirContext.name])
-
-            // Even though we couldn't open the file, try to force unlock anyway
-            unlockConfigFile()
-
-            throw VMError.notRunning(vmDirContext.name)
-        }
-
-        // Get the PID of the process holding the lock
-        Logger.info(
-            "Finding process holding lock on config file", metadata: ["name": vmDirContext.name])
-        guard let pid = runLockProbe.lockOwnerPID(ofFileAt: vmDirContext.dir.configPath.path)
+        guard let pid = runLockProbe.lockOwnerPID(ofFileAt: vmDirContext.dir.configPath.path),
+            pid > 0, pid != getpid()
         else {
-            try? fileHandle.close()
             Logger.info(
-                "Failed to find process holding lock - VM may not be running",
+                "No live process holds the run lock - VM is not running",
                 metadata: ["name": vmDirContext.name])
 
-            // Even though we couldn't find the process, try to force unlock
+            // Clear any stale advisory lock so a later run can reacquire it.
             unlockConfigFile()
 
             throw VMError.notRunning(vmDirContext.name)
@@ -802,70 +864,90 @@ class VM {
             "Found process \(pid) holding lock on config file",
             metadata: ["name": vmDirContext.name])
 
-        // First try graceful shutdown with SIGINT
-        if kill(pid, SIGINT) == 0 {
-            Logger.info("Sent SIGINT to VM process \(pid)", metadata: ["name": vmDirContext.name])
-        }
-
-        // Wait for process to stop with timeout
-        var attempts = 0
-        while attempts < 10 {
+        if force {
             Logger.info(
-                "Waiting for process \(pid) to terminate (attempt \(attempts + 1)/10)",
+                "Force stop requested; powering off process \(pid) immediately",
                 metadata: ["name": vmDirContext.name])
-            try await Task.sleep(nanoseconds: 1_000_000_000)
-
-            // Check if process still exists
-            if kill(pid, 0) != 0 {
-                // Process is gone, do final cleanup
-                Logger.info("Process \(pid) has terminated", metadata: ["name": vmDirContext.name])
-                virtualizationService = nil
-                vncService.stop()
-                try? fileHandle.close()
-
-                // Force unlock the config file
-                unlockConfigFile()
-
-                Logger.info(
-                    "VM stopped successfully via process termination",
-                    metadata: ["name": vmDirContext.name])
-                return
-            }
-            attempts += 1
+            try await forcePowerOff(pid: pid)
+            return
         }
 
-        // If graceful shutdown failed, force kill the process
+        // Graceful first: ask the owner to shut down. SIGTERM is honored by the
+        // run process (its handler triggers a clean stop); even without a handler
+        // its default disposition terminates the process, so unlike SIGINT — which
+        // the AppKit run loop swallows — the VM never lingers.
+        if kill(pid, SIGTERM) == 0 {
+            Logger.info(
+                "Sent SIGTERM to VM process \(pid) for graceful shutdown",
+                metadata: ["name": vmDirContext.name])
+        }
+
+        if await waitForProcessExit(pid: pid, timeout: timeout) {
+            Logger.info(
+                "Process \(pid) exited after graceful shutdown",
+                metadata: ["name": vmDirContext.name])
+            finalizeCrossProcessStop()
+            Logger.info(
+                "VM stopped successfully via process termination",
+                metadata: ["name": vmDirContext.name])
+            return
+        }
+
         Logger.info(
-            "Graceful shutdown failed, forcing termination of process \(pid)",
+            "Graceful shutdown did not complete within \(Int(timeout))s; forcing power-off of process \(pid)",
             metadata: ["name": vmDirContext.name])
-        if kill(pid, SIGKILL) == 0 {
-            Logger.info("Sent SIGKILL to process \(pid)", metadata: ["name": vmDirContext.name])
+        try await forcePowerOff(pid: pid)
+    }
 
-            // Wait a moment for the process to be fully killed
-            try await Task.sleep(nanoseconds: 2_000_000_000)
+    /// Polls until `pid` is no longer signalable or `timeout` elapses.
+    /// Returns `true` if the process exited within the budget.
+    @MainActor
+    private func waitForProcessExit(pid: pid_t, timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(max(timeout, 0))
+        repeat {
+            if kill(pid, 0) != 0 {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        } while Date() < deadline
+        return kill(pid, 0) != 0
+    }
 
-            // Do final cleanup
-            virtualizationService = nil
-            vncService.stop()
-            try? fileHandle.close()
+    /// SIGKILLs `pid`, confirms it is gone, and releases this VM's local state.
+    @MainActor
+    private func forcePowerOff(pid: pid_t) async throws {
+        if kill(pid, 0) != 0 {
+            // The owner already exited between resolving it and now.
+            finalizeCrossProcessStop()
+            Logger.info(
+                "Process \(pid) already terminated", metadata: ["name": vmDirContext.name])
+            return
+        }
 
-            // Force unlock the config file
-            unlockConfigFile()
+        _ = kill(pid, SIGKILL)
+        Logger.info("Sent SIGKILL to process \(pid)", metadata: ["name": vmDirContext.name])
 
+        if await waitForProcessExit(pid: pid, timeout: 5) {
+            finalizeCrossProcessStop()
             Logger.info("VM forcefully stopped", metadata: ["name": vmDirContext.name])
             return
         }
 
-        // If we get here, something went very wrong
-        try? fileHandle.close()
+        // SIGKILL cannot be caught, so surviving it means the process is wedged
+        // in the kernel. Release our side anyway so the run lock is not orphaned.
+        finalizeCrossProcessStop()
         Logger.error(
-            "Failed to stop VM - could not terminate process \(pid)",
+            "Failed to stop VM - process \(pid) did not terminate",
             metadata: ["name": vmDirContext.name])
+        throw VMError.internalError("Failed to stop VM process \(pid)")
+    }
 
-        // As a last resort, try to force unlock
+    /// Releases the resources a cross-process stop is responsible for cleaning up.
+    @MainActor
+    private func finalizeCrossProcessStop() {
+        virtualizationService = nil
+        vncService.stop()
         unlockConfigFile()
-
-        throw VMError.internalError("Failed to stop VM process")
     }
 
     // Helper method to forcibly clear any locks on the config file

@@ -750,6 +750,7 @@ fn is_extended(vk: VIRTUAL_KEY) -> bool {
             | VK_RIGHT
             | VK_RCONTROL
             | VK_RMENU
+            | VK_LWIN
             | VK_RWIN
             | VK_NUMLOCK
             | VK_SNAPSHOT

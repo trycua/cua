@@ -1,0 +1,93 @@
+---
+title: Local Android backend for Cua Driver
+authors:
+  - f-trycua
+created: 2026-09-08
+last_updated: 2026-09-09
+status: review
+discussion: https://github.com/trycua/cua/issues/3673
+---
+
+# Local Android backend for Cua Driver
+
+## Decision under review
+
+Implement a local experimental Android runtime and Kotlin client SDK, with
+explicit `cua-driver --device SERIAL` host routing and a phone-local client.
+There is no OS command namespace. Existing unqualified desktop commands retain
+their behavior. The maintainer selected this prototype; stable API adoption
+remains under review and is not implied by the experiment.
+
+## Architecture
+
+An explicitly started development runtime runs under Android's authorized shell
+identity. It owns one virtual display, an ImageReader capture path, session
+lifecycle, admission, and action evidence. Host requests arrive through ADB and
+an on-device client over a local socket with peer UID checks. Android app clients
+obtain a shell-registered Binder through a provider with signing identity checks;
+the runtime independently admits the demo UID. Response pipes bound frame IPC.
+A session ID is never a credential.
+The same runtime executes both routes. No control TCP listener is exposed.
+
+Use Kotlin for Android framework access. The initial wire extension is
+`cua.android.v0`: request ID, operation, session ID, and strictly checked params;
+responses include status, structured data/error, and execution evidence.
+Requested/actual delivery and effect vocabulary follows the shared Driver
+contract. This extension does not add Android to existing closed desktop enums
+or claim the complete desktop ToolRegistry authorization contract is implemented.
+
+## Boundaries
+
+Only an explicitly installed and started helper can exercise shell-granted
+capabilities. Ordinary APK installation does not grant control of other apps.
+Caller authentication, app allowlists, session generations, current target
+placement, snapshot geometry, bounded operations, and expiry are enforced by
+the runtime. Unknown fields and unsupported operations refuse rather than
+falling back to the main display or another transport. Capture excludes secure
+content as required by Android. Logs must omit screenshots and typed content
+unless an operator explicitly requests test evidence.
+
+## Initial slice and remaining work
+
+The first slice proves create/launch/capture/tap/stop with two synthetic apps.
+Use an expiring session and serialized bounded operations; publish lifecycle
+limits. Native event acceptance is an unverifiable effect until independent
+fixture evidence confirms the result. Raw text, accessibility refs, concurrent
+IME isolation, physical phone support, and general
+third-party app qualification remain separate acceptance gates. The experimental
+SDK uses typed coroutine operations over a synchronous transport. The demo's
+user-started foreground service owns renewal and cleanup across Activity
+recreation and backgrounding. Stop drains pending requests and confirms cleanup
+before honoring a queued Start. Deterministic tests cover the creation and
+cleanup races. Process death relies on runtime lease expiry;
+it never silently adopts or recreates a session. These experimental bindings
+remain separate from stable API adoption and complete SDK qualification.
+
+The follow-up local demo adds a device-owned visual agent loop for selected
+OpenCalc and Tasks.org releases. One virtual workspace can own a bounded set of
+app tasks and switch between them without adopting tasks from another display.
+Static capture requests a new compositor frame rather than extending a cached
+timestamp. Inference is relayed by a loopback-only, authenticated host service;
+the Android foreground service owns decisions, lease renewal, SDK input, and
+cleanup. The model can format actions but cannot run host commands. The agent
+rechecks exact screenshot pixels and target/runtime identity before acting, and
+distinguishes model-declared completion from a blocked task. Independent visual
+inspection remains required to establish the requested application outcome.
+This does not introduce a Fleet dependency or a stable Android API guarantee.
+
+## Validation
+
+Build reproducible APKs and host bridge. Check request rejection, caller denial,
+stale handles, target placement, bounded input, frame dimensions, main/target
+fixture state, and cleanup. Repeat through an on-device app. Preserve desktop
+dispatch with focused host tests; do not replace canonical desktop certification
+with Android smoke evidence. No stable release or merge is authorized by a
+passing experiment alone.
+
+## Alternatives and unresolved decisions
+
+A new `android` CLI verb was rejected. A framework fork, full desktop daemon port,
+and multiple public display streams are deferred. Validate virtual-display flags,
+focus/IME behavior, app/service lifetime, Binder transport lifecycle,
+shared schema generation, and preview frame IPC cost before declaring stable
+capabilities. Runtime reconnection must not imply exactly-once effects.

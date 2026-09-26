@@ -1,0 +1,45 @@
+---
+title: DeepInfra
+description: Use DeepInfra-hosted open models with Cua Driver through Claude Code, Hermes, or another OpenAI-compatible harness.
+icon: Server
+---
+
+DeepInfra hosts open-weight models such as DeepSeek, Qwen, Kimi, and GLM behind an OpenAI-compatible API and an Anthropic-compatible Messages API. Cua Driver does not connect to DeepInfra directly. Point an agent harness at DeepInfra, then register Cua Driver in that harness over MCP.
+
+| Start here when…                    | Recommended path                                                                                                                                                                                         |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| You use Claude Code                 | Follow DeepInfra's [Anthropic SDK & Claude Code guide](https://docs.deepinfra.com/integrations/anthropic), then [connect Claude Code to Cua Driver](/use-cua-with/claude-code)                           |
+| You use Hermes Agent                | Follow DeepInfra's [Hermes Agent guide](https://docs.deepinfra.com/integrations/hermes-agent), then use Hermes's [built-in Computer Use toolset](/use-cua-with/hermes)                                   |
+| You use another MCP-capable harness | Configure the harness with DeepInfra's [OpenAI-compatible endpoint](https://docs.deepinfra.com/chat/overview), then [add Cua Driver over MCP](/how-to-guides/driver/connect-your-agent#generic-mcp-json) |
+
+Cua Driver supplies desktop state and actions. The harness owns the DeepInfra connection, reasoning loop, and tool selection.
+
+## Claude Code
+
+Claude Code reads an Anthropic-compatible endpoint from its environment. Set DeepInfra's base URL and your API key, then name a DeepInfra model:
+
+```bash
+export ANTHROPIC_BASE_URL=https://api.deepinfra.com/anthropic
+export ANTHROPIC_AUTH_TOKEN=<your DeepInfra API key>
+claude --model deepseek-ai/DeepSeek-V4.1-Flash
+```
+
+DeepInfra's guide shows the equivalent `settings.json` `env` block and the `ANTHROPIC_DEFAULT_*_MODEL` variables that map Claude Code's model tiers to DeepInfra models. Register Cua Driver in that same Claude Code installation as described in [Claude Code](/use-cua-with/claude-code).
+
+## OpenAI-compatible harnesses
+
+For a harness that accepts a custom OpenAI-compatible provider, use these values:
+
+| Setting  | Value                                                                                       |
+| -------- | ------------------------------------------------------------------------------------------- |
+| Base URL | `https://api.deepinfra.com/v1/openai`                                                       |
+| API key  | Your DeepInfra API key, usually through an environment variable such as `DEEPINFRA_API_KEY` |
+| Model    | A DeepInfra model id, for example `deepseek-ai/DeepSeek-V4.1-Flash`                         |
+
+DeepInfra serves the Chat Completions API. A harness that only speaks the OpenAI Responses API cannot use this endpoint.
+
+## Choose a model
+
+Computer use sends a screenshot and the tool schemas on most turns. Start with a DeepInfra model whose [model page](https://deepinfra.com/models) lists image input and tool calling, such as `deepseek-ai/DeepSeek-V4.1-Flash`, and keep the exposed Cua Driver tools small as described in [Run a local model with Cua Driver](/how-to-guides/driver/run-with-local-model#keep-context-use-under-control).
+
+Upstream: DeepInfra's [chat completions](https://docs.deepinfra.com/chat/overview), [vision](https://docs.deepinfra.com/chat/vision), and [tool calling](https://docs.deepinfra.com/chat/tool-calling) documentation.

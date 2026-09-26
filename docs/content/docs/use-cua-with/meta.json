@@ -12,6 +12,7 @@
     "qwen",
     "kimi",
     "minimax",
+    "deepinfra",
     "---Agent harnesses---",
     "claude-code",
     "codex",

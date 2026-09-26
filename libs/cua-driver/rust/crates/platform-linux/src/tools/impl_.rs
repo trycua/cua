@@ -1642,6 +1642,7 @@ impl Tool for GetWindowStateTool {
                     }
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
+                    structured["screenshot_frame_valid"] = json!(true);
                     if let Some(ow) = orig_w {
                         if ow > 0 {
                             structured["frame_scale"] = json!(w as f64 / ow as f64);

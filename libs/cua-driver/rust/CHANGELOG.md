@@ -11,6 +11,7 @@
 
 ### Bug Fixes
 
+* **cua-driver:** keep the agent cursor out of desktop captures ([#4199](https://github.com/trycua/cua/issues/4199)) ([fa5ded7](https://github.com/trycua/cua/commit/fa5ded76dc407af1c8a41413a0e556142135fddb)), closes [#4194](https://github.com/trycua/cua/issues/4194). This change is also contained in the `cua-driver-rs-v0.30.0` tag, whose release was never published.
 * **cua-driver:** launch isolated browsers de-elevated from an elevated Windows Driver ([#4234](https://github.com/trycua/cua/issues/4234)) ([6650ac5](https://github.com/trycua/cua/commit/6650ac56c5912d60379805deb46a2ccc3cc749e3))
 
 ## [0.30.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.29.1...cua-driver-rs-v0.30.0) (2026-09-26)

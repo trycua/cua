@@ -126,6 +126,12 @@ Inspect a replacement before running `extension update`. Remove only the
 extension-owned installation with `extension remove cua-perception`. Neither
 operation changes the default Driver or an external `cua-som` installation.
 
+Install, update, and remove take effect on a running Driver without a restart.
+A running daemon or `cua-driver mcp` session checks the installed extension
+before each `parse_visual_regions` call and fully reverifies it whenever the
+installation changed. A parse that is already running finishes with the version
+it started with.
+
 ## Capture-bound parse and action
 
 Keep capture, parse, action, and reobservation on one persistent MCP connection

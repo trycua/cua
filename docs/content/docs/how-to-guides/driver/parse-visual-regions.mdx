@@ -79,6 +79,10 @@ Installation is never triggered by capture, parsing, Driver startup, or an
 update check. A parse on a default installation returns `not_installed`; it does
 not download a worker or model.
 
+You do not need to restart Cua Driver after installing. An already running
+daemon or MCP session reverifies the installed extension on its next
+`parse_visual_regions` call.
+
 ## Capture a fresh target
 
 Use one persistent MCP connection or one typed SDK runtime for capture, parse,
@@ -208,6 +212,10 @@ cua-driver extension remove cua-perception
 ```
 
 Removal does not alter the default Driver or external `cua-som` installations.
+
+Update and removal also take effect on a running Driver without a restart. A
+parse that is already running finishes with the version it started with; the
+next parse uses the updated version or returns `not_installed`.
 
 ## Use an external chooser
 

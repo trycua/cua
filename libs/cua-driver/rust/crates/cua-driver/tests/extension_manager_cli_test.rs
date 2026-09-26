@@ -676,6 +676,46 @@ fn review_signed_lifecycle_is_distinct_fail_closed_and_rollback_safe() {
     );
     assert!(!replay.status.success());
     assert!(String::from_utf8_lossy(&replay.stderr).contains("anti-rollback"));
+
+    // Removing the extension must not strand the user: the exact signed
+    // catalog that is already trusted can be reinstalled, while the original,
+    // older catalog stays refused.
+    let remove = run(&home, &["extension", "remove", "perception"]);
+    assert!(
+        remove.status.success(),
+        "{}",
+        String::from_utf8_lossy(&remove.stderr)
+    );
+    let rollback_install = run(
+        &home,
+        &[
+            "extension",
+            "install",
+            "perception",
+            "--catalog",
+            catalog.to_str().unwrap(),
+        ],
+    );
+    assert!(!rollback_install.status.success());
+    assert!(String::from_utf8_lossy(&rollback_install.stderr).contains("older than"));
+    let reinstall = run(
+        &home,
+        &[
+            "extension",
+            "install",
+            "perception",
+            "--catalog",
+            update_catalog.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        reinstall.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reinstall.stderr)
+    );
+    let status = run(&home, &["extension", "status", "perception", "--json"]);
+    let status_json: Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(status_json["active_version"], "1.2.4");
 }
 
 #[cfg(feature = "review-trust-root")]

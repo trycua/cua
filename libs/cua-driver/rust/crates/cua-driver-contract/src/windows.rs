@@ -238,6 +238,8 @@ pub struct ElementFrame {
 pub struct WindowElement {
     pub element_index: u64,
     pub role: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subrole: Option<String>,
     pub depth: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub element_token: Option<String>,
@@ -256,6 +258,8 @@ pub struct WindowElement {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actions: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_actions: Option<Vec<ElementCustomAction>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_index: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frame: Option<ElementFrame>,
@@ -263,6 +267,12 @@ pub struct WindowElement {
     pub min: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+pub struct ElementCustomAction {
+    pub name: String,
+    pub raw: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]

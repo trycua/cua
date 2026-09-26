@@ -217,9 +217,13 @@ pub fn ensure_ax_action_enabled(element_ptr: usize, action: &str) -> anyhow::Res
     ensure_ax_enabled(enabled, action)
 }
 
-/// Perform an AX action on a cached element.
+/// Perform an AX action on a cached element. A custom action the element
+/// publishes is addressed by its readable name or its envelope; everything
+/// else goes through the documented alias table.
 pub fn perform_ax_action(element_ptr: usize, action: &str) -> anyhow::Result<()> {
-    let ax_action = map_action(action);
+    let advertised = unsafe { copy_action_names(element_ptr as AXUIElementRef) };
+    let ax_action =
+        crate::ax::actions::custom_wire_name(&advertised, action).unwrap_or(map_action(action));
     ensure_ax_action_enabled(element_ptr, ax_action)?;
     let err = unsafe { perform_action(element_ptr as AXUIElementRef, ax_action) };
 

@@ -42,6 +42,8 @@ let kSliderValueAID = "lbl-slider-value"
 let kCheckboxAID = "chk-agree"
 let kCheckStateAID = "lbl-chk-state"
 let kSelectionStateAID = "lbl-selection-state"
+let kRowHelpGroupAID = "grp-row-help"
+let kRowHelpGroupStateAID = "lbl-group-state"
 let kContextButtonAID = "btn-context"
 let kMenuActionAID = "lbl-menu-action"
 let kScrollerAID = "scroll-tall"
@@ -54,6 +56,29 @@ let kMenuItemTitle = "Harness Test Item"
 let kSecondaryWindowTitle = "CuaTestHarness AppKit Secondary"
 let kSheetWindowTitle = "CuaTestHarness AppKit Sheet"
 let kFloatingWindowTitle = "CuaTestHarness AppKit Floating"
+
+/// The Reminders row-group shape: an `AXGroup` that carries the application's
+/// own `AXHelp` explaining what its press does, and advertises that press.
+final class HelpfulGroupView: NSView {
+    var onPress: () -> Void = {}
+
+    override func isAccessibilityElement() -> Bool { true }
+
+    override func accessibilityRole() -> NSAccessibility.Role? { .group }
+
+    override func accessibilityLabel() -> String? { "row detail" }
+
+    override func accessibilityHelp() -> String? {
+        "To mark the row as done, press Control-Option-Space."
+    }
+
+    override func accessibilityActionNames() -> [NSAccessibility.Action] { [.press] }
+
+    override func accessibilityPerformPress() -> Bool {
+        onPress()
+        return true
+    }
+}
 
 // MARK: - Controller
 
@@ -72,6 +97,9 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     let selectionItems = ["alpha", "beta", "gamma"]
     let selectionTable = NSTableView()
     let selectionStateLabel = NSTextField(labelWithString: "selection=none")
+    let rowHelpGroup = HelpfulGroupView()
+    let rowHelpGroupStateLabel = NSTextField(labelWithString: "group_pressed=0")
+    var rowHelpGroupPresses = 0
     let menuActionLabel = NSTextField(labelWithString: "menu_action=none")
     let scrollOffsetLabel = NSTextField(labelWithString: "scroll_offset=0")
     let accelCountLabel = NSTextField(labelWithString: "accel_fired=0")
@@ -245,6 +273,25 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         ])
         content.addArrangedSubview(checkRow)
 
+        // group_with_help — an AXGroup with its own AXHelp and an advertised
+        // press, so a collapsed layout container is observable from the tree.
+        content.addArrangedSubview(sectionLabel("group_with_help"))
+        rowHelpGroup.setAccessibilityIdentifier(kRowHelpGroupAID)
+        rowHelpGroup.translatesAutoresizingMaskIntoConstraints = false
+        rowHelpGroup.onPress = { [weak self] in self?.onRowHelpGroupPress() }
+        rowHelpGroupStateLabel.setAccessibilityIdentifier(kRowHelpGroupStateAID)
+        rowHelpGroupStateLabel.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        let groupRow = NSStackView()
+        groupRow.orientation = .horizontal
+        groupRow.spacing = 12
+        groupRow.addArrangedSubview(rowHelpGroup)
+        groupRow.addArrangedSubview(rowHelpGroupStateLabel)
+        NSLayoutConstraint.activate([
+            rowHelpGroup.widthAnchor.constraint(equalToConstant: 60),
+            rowHelpGroup.heightAnchor.constraint(equalToConstant: 28),
+        ])
+        content.addArrangedSubview(groupRow)
+
         // context_menu — NSButton with an attached NSMenu. Right-click opens the
         // native contextual menu; selecting an item updates menu_action=.
         content.addArrangedSubview(sectionLabel("context_menu"))
@@ -373,6 +420,11 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     @objc private func onReset() {
         counterValue = 0
         counterLabel.stringValue = "counter=0"
+    }
+
+    private func onRowHelpGroupPress() {
+        rowHelpGroupPresses += 1
+        rowHelpGroupStateLabel.stringValue = "group_pressed=\(rowHelpGroupPresses)"
     }
 
     @objc private func onExit() {

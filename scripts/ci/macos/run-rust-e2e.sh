@@ -349,6 +349,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     snapshot_publication::harness_appkit_pending_snapshot_cannot_retarget_token \
     harness_appkit_invoke_menu_live_path \
     harness_appkit_text_input \
+    harness_appkit_a_content_bearing_group_stays_addressable \
     harness_appkit_element_foreground_press_key_commits_edit \
     harness_appkit_modified_click_preserves_selection \
     harness_appkit_type_text_background \

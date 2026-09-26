@@ -802,6 +802,51 @@ fn harness_appkit_text_input() {
     );
 }
 
+/// `AXScrollArea`/`AXGroup` collapsed before the walk read the node's
+/// title, description, help or actions, so a group carrying the app's own
+/// explanation of a row — Reminders' `help="To mark as completed, press
+/// Control-Option-Space."` — never reached a caller and could not be
+/// addressed. The collapse now waits until the node is known to hold nothing.
+#[test]
+#[ignore]
+fn harness_appkit_a_content_bearing_group_stays_addressable() {
+    run_background_case(
+        "group_with_help",
+        DriverRoute::MacosAxAction,
+        |pid, wid, driver| {
+            let before = snapshot_elements(driver, pid, wid);
+            assert!(
+                before
+                    .tree_text()
+                    .contains("help=\"To mark the row as done, press Control-Option-Space.\""),
+                "the group's own help never reached the tree:\n{}",
+                before.tree_text()
+            );
+            let pressed = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "element_token": element_token_by_id(&before, "grp-row-help"),
+                    "action": "press"
+                }),
+            );
+            assert!(
+                !pressed.is_error(),
+                "group press failed: {}",
+                pressed.text()
+            );
+            std::thread::sleep(Duration::from_millis(300));
+            let after = snapshot_elements(driver, pid, wid);
+            assert!(
+                after.tree_text().contains("group_pressed=1"),
+                "the collapsed group was not addressable:\n{}",
+                after.tree_text()
+            );
+        },
+    );
+}
+
 #[test]
 #[ignore]
 fn harness_appkit_element_foreground_press_key_commits_edit() {

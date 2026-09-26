@@ -1,4 +1,4 @@
-"""Shared response handling for computer-server HTTP transports."""
+"""Shared response handling for computer-server transports."""
 
 from __future__ import annotations
 
@@ -34,7 +34,10 @@ def parse_command_response(text: str) -> Dict[str, Any]:
 
 def decode_screenshot_response(payload: Dict[str, Any]) -> bytes:
     """Decode computer-server's accepted screenshot response shapes."""
-    encoded = payload.get("image_data", payload.get("base64_image", payload.get("result", "")))
+    encoded = payload.get(
+        "image_data",
+        payload.get("base64_image", payload.get("result", payload.get("screenshot", ""))),
+    )
     if isinstance(encoded, dict):
         encoded = encoded.get("image_data", encoded.get("base64_image", encoded.get("base64", "")))
     return base64.b64decode(encoded)

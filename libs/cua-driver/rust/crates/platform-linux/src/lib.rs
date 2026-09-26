@@ -72,6 +72,11 @@ pub mod wayland;
 // Keeping it un-gated lets the unit tests run on any host.
 pub mod terminal;
 
+// Pure background pixel-click routing facts; un-gated so their unit tests run
+// on every host.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod at_point_policy;
+
 #[cfg(target_os = "linux")]
 pub mod xauth;
 

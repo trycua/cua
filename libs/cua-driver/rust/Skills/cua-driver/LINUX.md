@@ -197,7 +197,13 @@ takes the focus-free AT-SPI `do_action`-at-point path (`x11_atspi`), exactly
 like the macOS/Windows background pixel click. It falls to the MPX
 virtual-pointer path (`x11_pixel`) only for non-AX surfaces, **and that path
 needs a real Xorg + `/dev/uinput`** — under Xvnc / minimal containers without
-uinput, escalate to `delivery_mode:"foreground"`. (`type_text` in the
+uinput, escalate to `delivery_mode:"foreground"`. The AT-SPI path only fires
+a control under the point: when the hit test finds nothing deeper than the
+application's own frame or window (Chromium page content before its AT-SPI
+tree is populated), no action is fired. Chromium/Electron targets without a
+real focus-free pointer return `background_unavailable` before the capture is
+consumed, so retry the same capture-bound click with
+`delivery_mode:"foreground"` when foreground input is authorized. (`type_text` in the
 `background` rung is focus-dependent for non-editable widgets; that's the one
 genuine background limitation, and `foreground` is the documented escalation.)
 

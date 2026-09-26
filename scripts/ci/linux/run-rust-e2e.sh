@@ -363,6 +363,26 @@ if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
     cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test desktop_scope_linux_test -- \
       --ignored --nocapture --test-threads=1
+  if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+    run_test x11-unpublished-pid \
+      cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+        --test x11_unpublished_pid_linux_test -- \
+        --ignored --nocapture --test-threads=1
+  else
+    limitation="The unpublished-_NET_WM_PID case maps a bare X11 client and runs in the canonical X11 lane."
+    jq -n \
+      --arg reason "${limitation}" \
+      '{
+        schema: "cua-e2e-limitation-v1",
+        platform: "linux",
+        display_server: "wayland",
+        harness: "x11-bare-client",
+        test: "x11-unpublished-pid",
+        status: "not_applicable",
+        reason: $reason
+      }' > "${ARTIFACT_DIR}/x11-unpublished-pid-limitation.json"
+    echo "[LIMITATION] x11-unpublished-pid: ${limitation}"
+  fi
 fi
 
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then

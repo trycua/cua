@@ -8,9 +8,13 @@
 //! user token from its own token instead: the same user, logon session, and
 //! desktop, with `BUILTIN\Administrators` and the other groups that
 //! `runas /trustlevel:0x20000` disables set to deny-only, administrative
-//! privileges removed, and Medium integrity, marked as a UAC-filtered token.
-//! Every protection check is then made for that derived token, and the
-//! browser runs with it.
+//! privileges removed, and Medium integrity. Every protection check is then
+//! made for that derived token, and the browser runs with it.
+//!
+//! Verification checks the properties Windows uses for access decisions:
+//! group membership, privileges, and integrity level. It does not require
+//! `TokenElevation` to be false. Windows keeps reporting that flag from the
+//! elevated source token, and the flag grants no access by itself.
 //!
 //! The Win32 adapter gathers token facts and this module decides. It has no
 //! Win32 dependencies so its unit tests run on any host.
@@ -33,7 +37,9 @@ pub(crate) enum AdministratorsMembership {
 /// Security-relevant facts about one access token.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TokenFacts {
-    /// `TokenElevation` reported the token as elevated.
+    /// `TokenElevation` reported the token as elevated. Used to decide
+    /// whether the Driver is elevated; a derived token inherits this flag from
+    /// its source token, so it is not a verification criterion for one.
     pub elevated: bool,
     pub integrity_rid: u32,
     pub administrators: AdministratorsMembership,
@@ -85,14 +91,12 @@ pub(crate) fn privileges_beyond_standard_user(privileges: &[String]) -> Vec<&str
 /// Require the derived browser token to be a standard-user token that sits
 /// below the Driver. Integrity ordering matters: Windows forbids a lower
 /// integrity process from writing to a higher integrity process, so the
-/// browser cannot tamper with the elevated Driver process.
+/// browser cannot tamper with the elevated Driver process. `derived.elevated`
+/// is deliberately ignored (see the module documentation).
 pub(crate) fn validate_standard_user_token(
     driver: &TokenFacts,
     derived: &TokenFacts,
 ) -> Result<(), String> {
-    if derived.elevated {
-        return Err("the derived token is still elevated".to_owned());
-    }
     if derived.administrators == AdministratorsMembership::Enabled {
         return Err("the derived token still has BUILTIN\\Administrators enabled".to_owned());
     }
@@ -320,12 +324,16 @@ mod tests {
     }
 
     #[test]
-    fn derived_token_must_not_be_elevated_or_administrator() {
-        let mut elevated = standard_user();
-        elevated.elevated = true;
-        assert!(validate_standard_user_token(&elevated_admin(), &elevated)
-            .unwrap_err()
-            .contains("still elevated"));
+    fn derived_token_is_judged_by_groups_not_the_inherited_elevation_flag() {
+        // A SAFER token derived from an elevated token keeps TokenElevation
+        // set; with Administrators deny-only, standard privileges, and Medium
+        // integrity it is still a standard-user token.
+        let mut inherited_flag = standard_user();
+        inherited_flag.elevated = true;
+        assert_eq!(
+            validate_standard_user_token(&elevated_admin(), &inherited_flag),
+            Ok(())
+        );
         let mut admin = standard_user();
         admin.administrators = AdministratorsMembership::Enabled;
         assert!(validate_standard_user_token(&elevated_admin(), &admin)

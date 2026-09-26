@@ -1,16 +1,19 @@
 //! Win32 side of the standard-user launch for isolated browsers.
 //!
-//! An elevated Driver derives a standard-user token from its own process
-//! token: a UAC-style (LUA) restricted token with every privilege except
-//! `SeChangeNotifyPrivilege` removed and, as deny-only, `BUILTIN\Administrators`
-//! plus every group that the SAFER "Normal User" level (the level
-//! `runas /trustlevel:0x20000` uses) sets to deny-only. It is then lowered to
-//! Medium integrity and verified before use. A SAFER token alone is not used
-//! because Windows keeps reporting it as elevated. The browser is
+//! An elevated Driver derives a standard-user token from its own process token
+//! with the SAFER "Normal User" level (the level `runas /trustlevel:0x20000`
+//! uses): `BUILTIN\Administrators` and the other administrative groups become
+//! deny-only and administrative privileges are removed. The Driver then lowers
+//! the token to Medium integrity, removes any remaining privilege a standard
+//! user does not hold, and verifies the result before use. The browser is
 //! created with that token, the installation protection probes run while
 //! impersonating it, and file work inside the browser-writable profile runs
 //! while impersonating it. The Driver never falls back to its own elevated
 //! token. Decision rules live in `browser_launch_token`.
+//!
+//! A restricted token from `CreateRestrictedToken` (with or without
+//! `LUA_TOKEN`/`DISABLE_MAX_PRIVILEGE`) is deliberately not used: Chrome's
+//! sandbox cannot launch its GPU and renderer processes under one.
 
 use std::ffi::c_void;
 use std::os::windows::ffi::OsStrExt;
@@ -32,15 +35,14 @@ use windows::Win32::Security::AppLocker::{
     SAFER_SCOPEID_USER,
 };
 use windows::Win32::Security::{
-    AdjustTokenPrivileges, CreateRestrictedToken, CreateWellKnownSid, EqualSid, GetLengthSid,
-    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, ImpersonateLoggedOnUser,
-    LookupPrivilegeNameW, RevertToSelf, SecurityImpersonation, SetTokenInformation, TokenElevation,
-    TokenGroups, TokenImpersonationLevel, TokenIntegrityLevel, TokenPrivileges,
-    WinBuiltinAdministratorsSid, WinMediumLabelSid, DISABLE_MAX_PRIVILEGE, LUA_TOKEN,
-    LUID_AND_ATTRIBUTES, PSID, SAFER_LEVEL_HANDLE, SECURITY_IMPERSONATION_LEVEL,
-    SE_PRIVILEGE_REMOVED, SID_AND_ATTRIBUTES, TOKEN_ACCESS_MASK, TOKEN_ADJUST_DEFAULT,
-    TOKEN_ADJUST_PRIVILEGES, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_ELEVATION, TOKEN_GROUPS,
-    TOKEN_INFORMATION_CLASS, TOKEN_MANDATORY_LABEL, TOKEN_PRIVILEGES, TOKEN_QUERY,
+    AdjustTokenPrivileges, CreateWellKnownSid, EqualSid, GetLengthSid, GetSidSubAuthority,
+    GetSidSubAuthorityCount, GetTokenInformation, ImpersonateLoggedOnUser, LookupPrivilegeNameW,
+    RevertToSelf, SecurityImpersonation, SetTokenInformation, TokenElevation, TokenGroups,
+    TokenImpersonationLevel, TokenIntegrityLevel, TokenPrivileges, WinBuiltinAdministratorsSid,
+    WinMediumLabelSid, LUID_AND_ATTRIBUTES, PSID, SAFER_LEVEL_HANDLE, SECURITY_IMPERSONATION_LEVEL,
+    SE_PRIVILEGE_REMOVED, SID_AND_ATTRIBUTES, TOKEN_ACCESS_MASK, TOKEN_ASSIGN_PRIMARY,
+    TOKEN_DUPLICATE, TOKEN_ELEVATION, TOKEN_GROUPS, TOKEN_INFORMATION_CLASS, TOKEN_MANDATORY_LABEL,
+    TOKEN_PRIVILEGES, TOKEN_QUERY,
 };
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, FILE_DELETE_CHILD,
@@ -148,17 +150,8 @@ fn current_process_token(access: TOKEN_ACCESS_MASK) -> Result<OwnedHandle, Strin
 
 /// Derive, harden, and verify the standard-user token for `driver`.
 fn derive_verified_standard_user_token(driver: &TokenFacts) -> Result<OwnedHandle, String> {
-    // The restricted token inherits these access rights; it needs them to
-    // lower its integrity, remove privileges, impersonate, and be assigned.
-    let driver_token = current_process_token(
-        TOKEN_QUERY
-            | TOKEN_DUPLICATE
-            | TOKEN_ASSIGN_PRIMARY
-            | TOKEN_ADJUST_DEFAULT
-            | TOKEN_ADJUST_PRIVILEGES,
-    )?;
-    let safer = safer_normal_user_token(driver_token.raw())?;
-    let derived = lua_restricted_token(driver_token.raw(), safer.raw())?;
+    let driver_token = current_process_token(TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY)?;
+    let derived = safer_normal_user_token(driver_token.raw())?;
     let facts = token_facts(derived.raw())?;
     if facts.integrity_rid > MEDIUM_INTEGRITY_RID {
         set_medium_integrity(derived.raw())?;
@@ -167,113 +160,13 @@ fn derive_verified_standard_user_token(driver: &TokenFacts) -> Result<OwnedHandl
     let verified = token_facts(derived.raw())?;
     validate_standard_user_token(driver, &verified).map_err(|reason| {
         format!(
-            "{reason}; derived token: elevated={}, integrity=0x{:04x}, administrators={:?}, \
-             privileges=[{}]",
-            verified.elevated,
+            "{reason}; derived token: integrity=0x{:04x}, administrators={:?}, privileges=[{}]",
             verified.integrity_rid,
             verified.administrators,
             verified.privileges.join(", ")
         )
     })?;
     Ok(derived)
-}
-
-#[cfg(test)]
-fn restricted_token_with_flags(
-    driver_token: HANDLE,
-    safer: HANDLE,
-    flags: u32,
-) -> Result<OwnedHandle, String> {
-    let mut sid_buffer = [0u64; 12];
-    let mut sid_size = std::mem::size_of_val(&sid_buffer) as u32;
-    let administrators = PSID(sid_buffer.as_mut_ptr().cast());
-    unsafe {
-        CreateWellKnownSid(
-            WinBuiltinAdministratorsSid,
-            PSID::default(),
-            administrators,
-            &mut sid_size,
-        )
-    }
-    .map_err(|error| error.to_string())?;
-    let groups = token_information(safer, TokenGroups)?;
-    let header = groups.as_ptr().cast::<TOKEN_GROUPS>();
-    let count = unsafe { (*header).GroupCount } as usize;
-    let first = unsafe { std::ptr::addr_of!((*header).Groups).cast::<SID_AND_ATTRIBUTES>() };
-    let mut disable = vec![SID_AND_ATTRIBUTES {
-        Sid: administrators,
-        Attributes: 0,
-    }];
-    for index in 0..count {
-        let group = unsafe { *first.add(index) };
-        if group.Attributes & SE_GROUP_USE_FOR_DENY_ONLY != 0 {
-            disable.push(SID_AND_ATTRIBUTES {
-                Sid: group.Sid,
-                Attributes: 0,
-            });
-        }
-    }
-    let mut restricted = HANDLE::default();
-    unsafe {
-        CreateRestrictedToken(
-            driver_token,
-            windows::Win32::Security::CREATE_RESTRICTED_TOKEN_FLAGS(flags),
-            Some(&disable),
-            None,
-            None,
-            &mut restricted,
-        )
-    }
-    .map_err(|error| error.to_string())?;
-    Ok(OwnedHandle(restricted))
-}
-
-/// Create a LUA restricted token from `driver_token` that disables, as
-/// deny-only, Administrators and every group `safer` holds as deny-only.
-fn lua_restricted_token(driver_token: HANDLE, safer: HANDLE) -> Result<OwnedHandle, String> {
-    let mut sid_buffer = [0u64; 12];
-    let mut sid_size = std::mem::size_of_val(&sid_buffer) as u32;
-    let administrators = PSID(sid_buffer.as_mut_ptr().cast());
-    unsafe {
-        CreateWellKnownSid(
-            WinBuiltinAdministratorsSid,
-            PSID::default(),
-            administrators,
-            &mut sid_size,
-        )
-    }
-    .map_err(|error| format!("could not build the Administrators SID: {error}"))?;
-    // `disable` points into `groups`, which stays alive until the token exists.
-    let groups = token_information(safer, TokenGroups)?;
-    let header = groups.as_ptr().cast::<TOKEN_GROUPS>();
-    let count = unsafe { (*header).GroupCount } as usize;
-    let first = unsafe { std::ptr::addr_of!((*header).Groups).cast::<SID_AND_ATTRIBUTES>() };
-    let mut disable = vec![SID_AND_ATTRIBUTES {
-        Sid: administrators,
-        Attributes: 0,
-    }];
-    for index in 0..count {
-        let group = unsafe { *first.add(index) };
-        if group.Attributes & SE_GROUP_USE_FOR_DENY_ONLY != 0 {
-            disable.push(SID_AND_ATTRIBUTES {
-                Sid: group.Sid,
-                Attributes: 0,
-            });
-        }
-    }
-    let mut restricted = HANDLE::default();
-    unsafe {
-        CreateRestrictedToken(
-            driver_token,
-            DISABLE_MAX_PRIVILEGE | LUA_TOKEN,
-            Some(&disable),
-            None,
-            None,
-            &mut restricted,
-        )
-    }
-    .map_err(|error| format!("CreateRestrictedToken failed: {error}"))?;
-    Ok(OwnedHandle(restricted))
 }
 
 fn safer_normal_user_token(driver_token: HANDLE) -> Result<OwnedHandle, String> {
@@ -738,7 +631,6 @@ mod tests {
         };
         let derived = token_facts(token.raw()).expect("derived facts");
         assert_eq!(validate_standard_user_token(&driver, &derived), Ok(()));
-        assert!(!derived.elevated, "{derived:?}");
         assert_ne!(
             derived.administrators,
             AdministratorsMembership::Enabled,
@@ -773,6 +665,26 @@ mod tests {
             Err(error) => assert_eq!(error.code(), E_ACCESSDENIED, "{error}"),
         }
 
+        // The derived token cannot open the elevated Driver process to write
+        // its memory or inject a thread.
+        let driver_pid = unsafe { windows::Win32::System::Threading::GetCurrentProcessId() };
+        let opened = with_impersonation(&token, || unsafe {
+            windows::Win32::System::Threading::OpenProcess(
+                windows::Win32::System::Threading::PROCESS_VM_WRITE
+                    | windows::Win32::System::Threading::PROCESS_CREATE_THREAD,
+                false,
+                driver_pid,
+            )
+        })
+        .expect("impersonate the standard-user token");
+        match opened {
+            Ok(handle) => {
+                drop(OwnedHandle(handle));
+                panic!("the standard-user token must not be able to write the Driver process");
+            }
+            Err(error) => assert_eq!(error.code(), E_ACCESSDENIED, "{error}"),
+        }
+
         // The thread is back on the Driver's token afterwards.
         let mut thread_token = HANDLE::default();
         assert!(
@@ -800,298 +712,6 @@ mod tests {
         command.args(["/d", "/c", "exit 7"]);
         let mut child = spawn_with_token(token, &command).expect("spawn with token");
         assert_eq!(child.wait().expect("wait").code(), Some(7));
-    }
-
-    // TEMPORARY diagnostic (removed before review): report the desktop and
-    // process security the derived token must satisfy on this host.
-    #[test]
-    fn diagnostic_desktop_and_process_admission() {
-        use windows::Win32::Security::Authorization::{
-            ConvertSecurityDescriptorToStringSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1,
-            SE_KERNEL_OBJECT, SE_OBJECT_TYPE, SE_WINDOW_OBJECT,
-        };
-        use windows::Win32::Security::{
-            DACL_SECURITY_INFORMATION, LABEL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
-            PSECURITY_DESCRIPTOR,
-        };
-        use windows::Win32::System::StationsAndDesktops::{
-            GetProcessWindowStation, GetThreadDesktop, OpenDesktopW, OpenWindowStationW,
-            DESKTOP_CONTROL_FLAGS, DESKTOP_CREATEWINDOW, DESKTOP_READOBJECTS, DESKTOP_WRITEOBJECTS,
-        };
-        use windows::Win32::System::Threading::{
-            GetCurrentProcessId, GetCurrentThreadId, OpenProcess, PROCESS_CREATE_THREAD,
-            PROCESS_VM_WRITE,
-        };
-
-        fn sddl(handle: HANDLE, kind: SE_OBJECT_TYPE) -> String {
-            let mut descriptor = PSECURITY_DESCRIPTOR::default();
-            let info =
-                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION;
-            let status = unsafe {
-                GetSecurityInfo(
-                    handle,
-                    kind,
-                    info,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(&mut descriptor),
-                )
-            };
-            if status.0 != 0 {
-                return format!("GetSecurityInfo error {}", status.0);
-            }
-            let mut text = PWSTR::null();
-            match unsafe {
-                ConvertSecurityDescriptorToStringSecurityDescriptorW(
-                    descriptor,
-                    SDDL_REVISION_1,
-                    info,
-                    &mut text,
-                    None,
-                )
-            } {
-                Ok(()) => unsafe { text.to_string().unwrap_or_default() },
-                Err(error) => format!("convert error {error}"),
-            }
-        }
-
-        let mut report = Vec::new();
-        let lua = std::process::Command::new(system32().join("reg.exe"))
-            .args([
-                "query",
-                r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System",
-                "/v",
-                "EnableLUA",
-            ])
-            .output()
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
-            .unwrap_or_default();
-        report.push(format!("EnableLUA: {lua}"));
-        let winsta = unsafe { GetProcessWindowStation() }.expect("winsta");
-        let desktop = unsafe { GetThreadDesktop(GetCurrentThreadId()) }.expect("desktop");
-        report.push(format!(
-            "winsta sddl: {}",
-            sddl(HANDLE(winsta.0), SE_WINDOW_OBJECT)
-        ));
-        report.push(format!(
-            "desktop sddl: {}",
-            sddl(HANDLE(desktop.0), SE_WINDOW_OBJECT)
-        ));
-        report.push(format!(
-            "driver process sddl: {}",
-            sddl(unsafe { GetCurrentProcess() }, SE_KERNEL_OBJECT)
-        ));
-
-        let driver_token = current_process_token(
-            TOKEN_QUERY
-                | TOKEN_DUPLICATE
-                | TOKEN_ASSIGN_PRIMARY
-                | TOKEN_ADJUST_DEFAULT
-                | TOKEN_ADJUST_PRIVILEGES,
-        )
-        .expect("driver token");
-        report.push(format!(
-            "driver facts: {:?}",
-            token_facts(driver_token.raw())
-        ));
-        let safer = safer_normal_user_token(driver_token.raw()).expect("safer");
-        report.push(format!("safer facts: {:?}", token_facts(safer.raw())));
-        let high = lua_restricted_token(driver_token.raw(), safer.raw()).expect("lua high");
-        let medium = lua_restricted_token(driver_token.raw(), safer.raw()).expect("lua medium");
-        set_medium_integrity(medium.raw()).expect("medium");
-        let pid = unsafe { GetCurrentProcessId() };
-        for (name, token) in [
-            ("lua-high", &high),
-            ("lua-medium", &medium),
-            ("safer", &safer),
-        ] {
-            report.push(format!("{name} facts: {:?}", token_facts(token.raw())));
-            let result = with_impersonation(token, || {
-                let winsta = unsafe {
-                    OpenWindowStationW(windows::core::w!("WinSta0"), false, 0x0020 | 0x0002)
-                }
-                .map(|_| "ok".to_owned())
-                .unwrap_or_else(|error| error.to_string());
-                let desktop = unsafe {
-                    OpenDesktopW(
-                        windows::core::w!("Default"),
-                        DESKTOP_CONTROL_FLAGS(0),
-                        false,
-                        DESKTOP_CREATEWINDOW.0 | DESKTOP_READOBJECTS.0 | DESKTOP_WRITEOBJECTS.0,
-                    )
-                }
-                .map(|_| "ok".to_owned())
-                .unwrap_or_else(|error| error.to_string());
-                let process =
-                    unsafe { OpenProcess(PROCESS_VM_WRITE | PROCESS_CREATE_THREAD, false, pid) }
-                        .map(|handle| {
-                            drop(OwnedHandle(handle));
-                            "OPENED".to_owned()
-                        })
-                        .unwrap_or_else(|error| error.to_string());
-                format!("winsta={winsta} desktop={desktop} driver_process_write={process}")
-            });
-            report.push(format!("{name}: {result:?}"));
-        }
-        panic!("DIAGNOSTIC\n{}", report.join("\n"));
-    }
-
-    // TEMPORARY diagnostic (removed before review): launch real Chrome with
-    // the Medium and High variants and report its tree, windows, and log.
-    #[test]
-    fn diagnostic_chrome_window_per_integrity() {
-        use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
-        use windows::Win32::System::Diagnostics::ToolHelp::{
-            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
-            TH32CS_SNAPPROCESS,
-        };
-        use windows::Win32::UI::WindowsAndMessaging::{
-            EnumWindows, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible,
-        };
-
-        let chrome =
-            std::path::PathBuf::from(r"C:\Program Files\Google\Chrome\Application\chrome.exe");
-        if !chrome.is_file() {
-            return;
-        }
-        fn tree(root: u32) -> Vec<(u32, String)> {
-            let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.unwrap();
-            let mut all = Vec::new();
-            let mut entry = PROCESSENTRY32W {
-                dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
-                ..Default::default()
-            };
-            if unsafe { Process32FirstW(snapshot, &mut entry) }.is_ok() {
-                loop {
-                    let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(0);
-                    all.push((
-                        entry.th32ProcessID,
-                        entry.th32ParentProcessID,
-                        String::from_utf16_lossy(&entry.szExeFile[..len]),
-                    ));
-                    if unsafe { Process32NextW(snapshot, &mut entry) }.is_err() {
-                        break;
-                    }
-                }
-            }
-            drop(OwnedHandle(snapshot));
-            let mut result = vec![];
-            let mut frontier = vec![root];
-            while let Some(pid) = frontier.pop() {
-                for (child, parent, name) in &all {
-                    if *parent == pid && *child != pid {
-                        result.push((*child, name.clone()));
-                        frontier.push(*child);
-                    }
-                }
-            }
-            result
-        }
-        unsafe extern "system" fn collect(hwnd: HWND, lparam: LPARAM) -> BOOL {
-            let out = &mut *(lparam.0 as *mut Vec<(u32, String, bool)>);
-            let mut pid = 0u32;
-            GetWindowThreadProcessId(hwnd, Some(&mut pid));
-            let mut class = [0u16; 128];
-            let len = GetClassNameW(hwnd, &mut class) as usize;
-            out.push((
-                pid,
-                String::from_utf16_lossy(&class[..len]),
-                IsWindowVisible(hwnd).as_bool(),
-            ));
-            BOOL(1)
-        }
-
-        let driver_token = current_process_token(
-            TOKEN_QUERY
-                | TOKEN_DUPLICATE
-                | TOKEN_ASSIGN_PRIMARY
-                | TOKEN_ADJUST_DEFAULT
-                | TOKEN_ADJUST_PRIVILEGES,
-        )
-        .unwrap();
-        let variant = |flags: u32, safer_base: bool, medium: bool| -> OwnedHandle {
-            let safer = safer_normal_user_token(driver_token.raw()).unwrap();
-            let token = if safer_base {
-                safer
-            } else {
-                restricted_token_with_flags(driver_token.raw(), safer.raw(), flags).unwrap()
-            };
-            let facts = token_facts(token.raw()).unwrap();
-            if medium {
-                set_medium_integrity(token.raw()).unwrap();
-            }
-            remove_privileges(token.raw(), &facts).unwrap();
-            token
-        };
-        let variants = vec![
-            ("safer-medium", variant(0, true, true)),
-            ("plain-medium", variant(0, false, true)),
-            ("plain-high", variant(0, false, false)),
-            ("dmp-medium", variant(1, false, true)),
-            ("safer-high", variant(0, true, false)),
-        ];
-        let mut report = vec![];
-        for (name, token) in variants {
-            report.push(format!("{name} facts: {:?}", token_facts(token.raw())));
-            let profile =
-                std::env::temp_dir().join(format!("cua-diag-{name}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&profile);
-            std::fs::create_dir_all(&profile).unwrap();
-            let log = profile.join("chrome_debug.log");
-            let mut command = Command::new(&chrome);
-            command.args([
-                "--remote-debugging-port=0".to_owned(),
-                format!("--user-data-dir={}", profile.display()),
-                "--no-first-run".to_owned(),
-                "--no-default-browser-check".to_owned(),
-                "--disable-extensions".to_owned(),
-                "--enable-logging".to_owned(),
-                "--v=0".to_owned(),
-                format!("--log-file={}", log.display()),
-                "--window-position=40,40".to_owned(),
-                "--window-size=900,640".to_owned(),
-                "about:blank".to_owned(),
-            ]);
-            let mut child = match spawn_with_token(Arc::new(token), &command) {
-                Ok(child) => child,
-                Err(error) => {
-                    report.push(format!("{name}: spawn failed {error}"));
-                    continue;
-                }
-            };
-            std::thread::sleep(std::time::Duration::from_secs(12));
-            let pid = child.id();
-            let mut pids = vec![pid];
-            let descendants = tree(pid);
-            pids.extend(descendants.iter().map(|(p, _)| *p));
-            let mut windows: Vec<(u32, String, bool)> = vec![];
-            unsafe {
-                let _ = EnumWindows(Some(collect), LPARAM(&mut windows as *mut _ as isize));
-            }
-            let mine = windows
-                .into_iter()
-                .filter(|(p, _, _)| pids.contains(p))
-                .collect::<Vec<_>>();
-            let exited = child.try_wait().ok().flatten();
-            let log_text =
-                std::fs::read_to_string(&log).unwrap_or_else(|e| format!("<no log: {e}>"));
-            let tail = log_text
-                .lines()
-                .filter(|l| l.contains("ERROR") || l.contains("FATAL") || l.contains("WARNING"))
-                .take(25)
-                .collect::<Vec<_>>()
-                .join("\n    ");
-            report.push(format!(
-                "{name}: root={pid} exited={exited:?} descendants={descendants:?}\n  windows={mine:?}\n  log:\n    {tail}"
-            ));
-            let _ = std::process::Command::new(system32().join("taskkill.exe"))
-                .args(["/PID", &pid.to_string(), "/T", "/F"])
-                .output();
-            let _ = child.kill();
-        }
-        panic!("DIAGNOSTIC-CHROME\n{}", report.join("\n"));
     }
 
     #[test]

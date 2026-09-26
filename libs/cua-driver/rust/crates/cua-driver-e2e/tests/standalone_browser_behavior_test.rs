@@ -1507,8 +1507,8 @@ fn prepare_isolated_case(browser: &str) -> CaseSpec {
 /// Independent oracle for the Windows isolated-browser token boundary. The
 /// ephemeral test daemon inherits this test process's token, so the test
 /// token stands in for the Driver's. An elevated Driver must run the browser
-/// with a standard-user token: not elevated, Administrators not enabled, and
-/// Medium (or lower) integrity below the Driver's.
+/// with a standard-user token: Administrators not enabled and Medium (or
+/// lower) integrity below the Driver's.
 #[cfg(target_os = "windows")]
 fn assert_windows_isolated_browser_token(browser_pid: u32) {
     let driver = windows_token_oracle::posture(None).expect("read the Driver token");
@@ -1521,8 +1521,11 @@ fn assert_windows_isolated_browser_token(browser_pid: u32) {
             "this job must run the Driver elevated to prove the standard-user browser launch: {driver:?}"
         );
     }
+    // `elevated` is only logged: a standard-user token derived from an
+    // elevated token inherits Windows' TokenElevation flag, which grants no
+    // access; Administrators and integrity decide access.
     assert!(
-        !browser.elevated && !browser.administrators_enabled && browser.integrity_rid <= 0x2000,
+        !browser.administrators_enabled && browser.integrity_rid <= 0x2000,
         "the isolated browser must run with a standard-user token: {browser:?}"
     );
     if driver.privileged() {

@@ -46,6 +46,10 @@ use super::types::{
 struct FixtureState {
     oopif_supported: bool,
     oopif_present: bool,
+    oopif_frame_count: usize,
+    oopif_auto_attach_enabled: bool,
+    oopif_sessions_live: bool,
+    oopif_two_inputs: bool,
     emit_rogue_attach: bool,
     main_url: String,
     main_loader: String,
@@ -59,7 +63,19 @@ struct FixtureState {
     semantic_full_dom_fails: bool,
     semantic_full_dom_times_out: bool,
     semantic_truncated_dom: bool,
+    main_oopif_backend_collision: bool,
+    fail_oopif_document: bool,
+    fail_oopif_frame_tree: bool,
+    oopif_document_delay: std::time::Duration,
+    fail_disable_auto_attach: bool,
     screenshot_data: String,
+    screenshot_delay: std::time::Duration,
+    fail_screenshot: bool,
+    navigate_after_main_dom: bool,
+    navigate_during_screenshot: bool,
+    navigate_iframe_during_screenshot: bool,
+    navigate_oopif_during_screenshot: bool,
+    unprove_oopif_during_screenshot: bool,
     viewport_css_width: f64,
     viewport_css_height: f64,
     tab_visible: bool,
@@ -72,6 +88,10 @@ impl Default for FixtureState {
         Self {
             oopif_supported: true,
             oopif_present: true,
+            oopif_frame_count: 1,
+            oopif_auto_attach_enabled: false,
+            oopif_sessions_live: false,
+            oopif_two_inputs: false,
             emit_rogue_attach: false,
             main_url: "https://fixture.test/".into(),
             main_loader: "L_MAIN_1".into(),
@@ -85,7 +105,19 @@ impl Default for FixtureState {
             semantic_full_dom_fails: false,
             semantic_full_dom_times_out: false,
             semantic_truncated_dom: false,
+            main_oopif_backend_collision: false,
+            fail_oopif_document: false,
+            fail_oopif_frame_tree: false,
+            oopif_document_delay: std::time::Duration::ZERO,
+            fail_disable_auto_attach: false,
             screenshot_data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZJrAAAAAASUVORK5CYII=".into(),
+            screenshot_delay: std::time::Duration::ZERO,
+            fail_screenshot: false,
+            navigate_after_main_dom: false,
+            navigate_during_screenshot: false,
+            navigate_iframe_during_screenshot: false,
+            navigate_oopif_during_screenshot: false,
+            unprove_oopif_during_screenshot: false,
             viewport_css_width: 800.0,
             viewport_css_height: 600.0,
             tab_visible: true,
@@ -188,6 +220,30 @@ fn main_document() -> Value {
             }]
         }
     })
+}
+
+fn main_document_with_oopif_backend_collision() -> Value {
+    let mut document = main_document();
+    document["root"]["children"][0]["children"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "nodeType": 1,
+            "nodeName": "BUTTON",
+            "backendNodeId": 100,
+            "attributes": ["aria-label", "Main collision"],
+        }));
+    document
+}
+
+fn main_collision_ax_tree() -> Value {
+    json!({"nodes": [
+        {"nodeId": "main-root", "ignored": false,
+         "role": {"value": "RootWebArea"}, "childIds": ["main-collision"]},
+        {"nodeId": "main-collision", "parentId": "main-root", "ignored": false,
+         "backendDOMNodeId": 100, "role": {"value": "button"},
+         "name": {"value": "Main collision"}, "childIds": []}
+    ]})
 }
 
 /// Large application document used to prove that hidden retained controls do
@@ -389,8 +445,8 @@ fn semantic_layout_snapshot(backends: &[i64], bounds: &[[f64; 4]]) -> Value {
     })
 }
 
-fn oopif_document() -> Value {
-    json!({
+fn oopif_document(two_inputs: bool) -> Value {
+    let mut document = json!({
         "root": {
             "nodeType": 9,
             "nodeName": "#document",
@@ -408,7 +464,19 @@ fn oopif_document() -> Value {
                 }]
             }]
         }
-    })
+    });
+    if two_inputs {
+        document["root"]["children"][0]["children"]
+            .as_array_mut()
+            .expect("OOPIF fixture children")
+            .push(json!({
+                "nodeType": 1,
+                "nodeName": "INPUT",
+                "backendNodeId": 101,
+                "attributes": ["id", "ad-destination", "type", "text"],
+            }));
+    }
+    document
 }
 
 fn fixture_handler(state: SharedState) -> MockHandler {
@@ -422,6 +490,9 @@ fn fixture_handler(state: SharedState) -> MockHandler {
         let sess = call.session_id.clone().unwrap_or_default();
         let is_tab = sess.starts_with("tab-sess-");
         let is_oopif = sess.starts_with("oopif-sess-");
+        if is_oopif && !st.oopif_sessions_live {
+            return MockReply::err(-32000, "detached OOPIF session");
+        }
 
         match call.method.as_str() {
             "Target.getTargets" => MockReply::ok(json!({
@@ -458,18 +529,24 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     }]
                 }
             })),
-            "Page.getFrameTree" if is_oopif => MockReply::ok(json!({
-                "frameTree": {
-                    "frame": {
-                        "id": "F_OOPIF",
-                        "loaderId": st.oopif_loader.clone(),
-                        "url": "https://ads.example/frame",
-                    }
+            "Page.getFrameTree" if is_oopif => {
+                if st.fail_oopif_frame_tree {
+                    MockReply::err(-32000, "OOPIF frame tree fixture failure")
+                } else {
+                    MockReply::ok(json!({
+                        "frameTree": {
+                            "frame": {
+                                "id": "F_OOPIF",
+                                "loaderId": st.oopif_loader.clone(),
+                                "url": "https://ads.example/frame",
+                            }
+                        }
+                    }))
                 }
-            })),
+            }
             "DOM.getDocument" if is_tab => {
                 let depth = call.params["depth"].as_i64().unwrap_or(-1);
-                if st.semantic_full_dom_times_out && (depth == -1 || depth > 8) {
+                let reply = if st.semantic_full_dom_times_out && (depth == -1 || depth > 8) {
                     MockReply::err(-32000, "CDP DOM.getDocument timed out after 20s")
                 } else if st.semantic_full_dom_fails && (depth == -1 || depth > 8) {
                     MockReply::err(-32000, "Object reference chain is too long")
@@ -478,21 +555,37 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 } else {
                     MockReply::ok(if st.semantic_large_page {
                         large_semantic_document()
+                    } else if st.main_oopif_backend_collision {
+                        main_document_with_oopif_backend_collision()
                     } else {
                         main_document()
                     })
+                };
+                if st.navigate_after_main_dom {
+                    st.navigate_after_main_dom = false;
+                    st.main_loader = "L_MAIN_AFTER_DOM".into();
                 }
+                reply
             }
             "DOM.describeNode" if is_tab && call.params["backendNodeId"] == 999 => {
                 MockReply::ok(json!({
                     "node": large_semantic_document()["root"]["children"][0].clone()
                 }))
             }
-            "DOM.getDocument" if is_oopif => MockReply::ok(oopif_document()),
+            "DOM.getDocument" if is_oopif => {
+                let reply = if st.fail_oopif_document {
+                    MockReply::err(-32000, "OOPIF document fixture failure")
+                } else {
+                    MockReply::ok(oopif_document(st.oopif_two_inputs))
+                };
+                reply.with_delay(st.oopif_document_delay)
+            }
             "Accessibility.getFullAXTree" if is_tab => {
                 let frame_id = call.params["frameId"].as_str().unwrap_or("F_MAIN");
                 if st.semantic_large_page {
                     MockReply::ok(large_semantic_ax_tree(frame_id))
+                } else if st.main_oopif_backend_collision && frame_id == "F_MAIN" {
+                    MockReply::ok(main_collision_ax_tree())
                 } else {
                     MockReply::ok(json!({"nodes": []}))
                 }
@@ -521,6 +614,11 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                         bounds.push([20.0, 2_000.0 + id as f64 * 40.0, 160.0, 30.0]);
                     }
                     MockReply::ok(semantic_layout_snapshot(&backends, &bounds))
+                } else if st.main_oopif_backend_collision {
+                    MockReply::ok(semantic_layout_snapshot(
+                        &[100],
+                        &[[40.0, 40.0, 180.0, 36.0]],
+                    ))
                 } else {
                     MockReply::ok(semantic_layout_snapshot(&[], &[]))
                 }
@@ -548,7 +646,28 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 }))
             }
             "Page.captureScreenshot" if is_tab => {
-                MockReply::ok(json!({"data": st.screenshot_data.clone()}))
+                if st.navigate_during_screenshot {
+                    st.navigate_during_screenshot = false;
+                    st.main_loader = "L_MAIN_DURING_SCREENSHOT".into();
+                }
+                if st.navigate_iframe_during_screenshot {
+                    st.navigate_iframe_during_screenshot = false;
+                    st.iframe_loader = "L_IFRAME_DURING_SCREENSHOT".into();
+                }
+                if st.navigate_oopif_during_screenshot {
+                    st.navigate_oopif_during_screenshot = false;
+                    st.oopif_loader = "L_OOPIF_DURING_SCREENSHOT".into();
+                }
+                if st.unprove_oopif_during_screenshot {
+                    st.unprove_oopif_during_screenshot = false;
+                    st.fail_oopif_frame_tree = true;
+                }
+                if st.fail_screenshot {
+                    MockReply::err(-32000, "screenshot fixture failure")
+                } else {
+                    MockReply::ok(json!({"data": st.screenshot_data.clone()}))
+                        .with_delay(st.screenshot_delay)
+                }
             }
             "Page.navigate" if is_tab => MockReply::ok(json!({
                 "frameId": "F_MAIN",
@@ -556,28 +675,48 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             })),
             "Target.setAutoAttach" if is_tab => {
                 if call.params["autoAttach"].as_bool() == Some(false) {
-                    return MockReply::ok(json!({}));
+                    return if st.fail_disable_auto_attach {
+                        MockReply::err(-32000, "auto-attach disable fixture failure")
+                    } else {
+                        st.oopif_auto_attach_enabled = false;
+                        st.oopif_sessions_live = false;
+                        MockReply::ok(json!({}))
+                    };
                 }
                 if !st.oopif_supported {
                     return MockReply::method_not_found("Target.setAutoAttach");
                 }
+                // Chromium treats setting the already-enabled state as a
+                // no-op and does not re-announce existing child targets.
+                if st.oopif_auto_attach_enabled {
+                    return MockReply::ok(json!({}));
+                }
+                st.oopif_auto_attach_enabled = true;
                 let mut events = Vec::new();
                 if st.oopif_present {
-                    st.oopif_sessions += 1;
-                    events.push(MockEvent {
-                        method: "Target.attachedToTarget".into(),
-                        session_id: Some(sess.clone()),
-                        params: json!({
-                            "sessionId": format!("oopif-sess-{}", st.oopif_sessions),
-                            "targetInfo": {
-                                "targetId": "T_OOPIF",
-                                "type": "iframe",
-                                "url": "https://ads.example/frame",
-                                "attached": true,
-                            },
-                            "waitingForDebugger": false,
-                        }),
-                    });
+                    st.oopif_sessions_live = true;
+                    for index in 0..st.oopif_frame_count {
+                        st.oopif_sessions += 1;
+                        let target_id = if index == 0 {
+                            "T_OOPIF".to_owned()
+                        } else {
+                            format!("T_OOPIF_{}", index + 1)
+                        };
+                        events.push(MockEvent {
+                            method: "Target.attachedToTarget".into(),
+                            session_id: Some(sess.clone()),
+                            params: json!({
+                                "sessionId": format!("oopif-sess-{}", st.oopif_sessions),
+                                "targetInfo": {
+                                    "targetId": target_id,
+                                    "type": "iframe",
+                                    "url": "https://ads.example/frame",
+                                    "attached": true,
+                                },
+                                "waitingForDebugger": false,
+                            }),
+                        });
+                    }
                 }
                 if st.emit_rogue_attach {
                     // A child announced on a session we never proved.
@@ -613,11 +752,17 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 }
                 MockReply::ok(json!({})).with_events(events)
             }
+            "Target.detachFromTarget" if call.session_id.is_none() => {
+                st.oopif_auto_attach_enabled = false;
+                st.oopif_sessions_live = false;
+                MockReply::ok(json!({}))
+            }
+            "Target.detachFromTarget" if is_tab => MockReply::ok(json!({})),
             "DOM.scrollIntoViewIfNeeded" => MockReply::ok(json!({})),
             "DOM.getBoxModel" => {
                 let backend = call.params["backendNodeId"].as_i64().unwrap_or(0);
                 let known = if is_oopif {
-                    backend == 100
+                    backend == 100 || (st.oopif_two_inputs && backend == 101)
                 } else {
                     [10, 20, 21, 30].contains(&backend)
                 };
@@ -1406,6 +1551,22 @@ fn recorded_calls(f: &Fixture, method: &str) -> Vec<(Option<String>, Value)> {
         .collect()
 }
 
+async fn wait_for_auto_attach_disabled(f: &Fixture) {
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if recorded_calls(f, "Target.setAutoAttach")
+                .iter()
+                .any(|(_, params)| params["autoAttach"] == false)
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for auto-attach cleanup");
+}
+
 // ── Snapshot composition ─────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -1521,17 +1682,33 @@ async fn semantic_snapshot_can_capture_an_inactive_tab_without_activation_calls(
     )));
 
     let state = f.state.lock().unwrap();
-    assert!(state.calls.iter().any(|(_, method, params)| {
-        method == "Page.captureScreenshot"
-            && params["format"] == "png"
-            && params["fromSurface"] == true
-            && params["captureBeyondViewport"] == false
-            && params["clip"]["x"] == 0.0
-            && params["clip"]["y"] == 0.0
-            && params["clip"]["width"] == 800.0
-            && params["clip"]["height"] == 600.0
-            && params["clip"]["scale"] == 1.0
-    }));
+    let capture_session = state
+        .calls
+        .iter()
+        .find_map(|(session, method, params)| {
+            (method == "Page.captureScreenshot"
+                && params["format"] == "png"
+                && params["fromSurface"] == true
+                && params["captureBeyondViewport"] == false
+                && params["clip"]["x"] == 0.0
+                && params["clip"]["y"] == 0.0
+                && params["clip"]["width"] == 800.0
+                && params["clip"]["height"] == 600.0
+                && params["clip"]["scale"] == 1.0)
+                .then(|| session.clone())
+        })
+        .flatten()
+        .expect("tab screenshot call");
+    assert!(state
+        .calls
+        .iter()
+        .filter(|(_, method, _)| { method == "Page.getFrameTree" })
+        .all(|(session, _, _)| {
+            session.as_deref() == Some(capture_session.as_str())
+                || session
+                    .as_deref()
+                    .is_some_and(|session| session.starts_with("oopif-sess-"))
+        }));
     assert!(state.calls.iter().all(|(_, method, _)| {
         method != "Target.activateTarget" && method != "Page.bringToFront"
     }));
@@ -1623,6 +1800,615 @@ async fn requested_tab_screenshot_refuses_malformed_image_data() {
         .content
         .iter()
         .all(|content| !matches!(content, Content::Image { .. })));
+}
+
+#[tokio::test]
+async fn semantic_snapshot_refuses_if_the_main_document_changes_during_collection() {
+    let f = fixture_with(|state| state.navigate_after_main_dom = true).await;
+    let (target, tab) = bind(&f).await;
+
+    let raced = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(raced["status"], "refused", "{raced}");
+    assert_eq!(raced["refusal"]["code"], "browser_ref_stale", "{raced}");
+
+    let retry = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(retry["status"], "ok", "{retry}");
+}
+
+#[tokio::test]
+async fn semantic_snapshot_does_not_emit_pixels_from_a_different_document() {
+    let f = fixture_with(|state| state.navigate_during_screenshot = true).await;
+    let (target, tab) = bind(&f).await;
+    let result = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2",
+            "include_screenshot": true
+        }))
+        .await;
+    let raced = structured(&result);
+    assert_eq!(raced["status"], "refused", "{raced}");
+    assert_eq!(raced["refusal"]["code"], "browser_ref_stale", "{raced}");
+    assert!(result
+        .content
+        .iter()
+        .all(|content| !matches!(content, Content::Image { .. })));
+
+    let retry = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(retry["status"], "ok", "{retry}");
+}
+
+#[tokio::test]
+async fn semantic_snapshot_refuses_if_an_included_same_process_frame_navigates() {
+    let f = fixture_with(|state| {
+        state.semantic_large_page = true;
+        state.navigate_iframe_during_screenshot = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let result = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2",
+            "include_screenshot": true
+        }))
+        .await;
+
+    let refusal = structured(&result);
+    assert_eq!(refusal["status"], "refused", "{refusal}");
+    assert_eq!(refusal["refusal"]["code"], "browser_ref_stale");
+    assert!(result
+        .content
+        .iter()
+        .all(|content| !matches!(content, Content::Image { .. })));
+}
+
+#[tokio::test]
+async fn semantic_snapshot_refuses_if_an_included_oopif_navigates() {
+    let f = fixture_with(|state| state.navigate_oopif_during_screenshot = true).await;
+    let (target, tab) = bind(&f).await;
+    let result = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2",
+            "include_screenshot": true
+        }))
+        .await;
+
+    let refusal = structured(&result);
+    assert_eq!(refusal["status"], "refused", "{refusal}");
+    assert_eq!(refusal["refusal"]["code"], "browser_ref_stale");
+    assert!(result
+        .content
+        .iter()
+        .all(|content| !matches!(content, Content::Image { .. })));
+    wait_for_auto_attach_disabled(&f).await;
+    assert!(recorded_calls(&f, "Target.detachFromTarget").is_empty());
+}
+
+#[tokio::test]
+async fn semantic_snapshot_refuses_if_an_included_oopif_becomes_unprovable() {
+    let f = fixture_with(|state| state.unprove_oopif_during_screenshot = true).await;
+    let (target, tab) = bind(&f).await;
+    let result = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2",
+            "include_screenshot": true
+        }))
+        .await;
+
+    let refusal = structured(&result);
+    assert_eq!(refusal["status"], "refused", "{refusal}");
+    assert_eq!(
+        refusal["refusal"]["code"], "browser_route_unavailable",
+        "{refusal}"
+    );
+    assert!(result
+        .content
+        .iter()
+        .all(|content| !matches!(content, Content::Image { .. })));
+    wait_for_auto_attach_disabled(&f).await;
+}
+
+#[tokio::test]
+async fn cancelled_semantic_child_collection_disables_owned_auto_attach() {
+    let f = fixture_with(|state| {
+        state.oopif_frame_count = 3;
+        state.oopif_document_delay = std::time::Duration::from_millis(100);
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+
+    let cancelled = tokio::time::timeout(
+        std::time::Duration::from_millis(20),
+        GetBrowserStateTool::new(f.engine.clone()).invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2"
+        })),
+    )
+    .await;
+    assert!(
+        cancelled.is_err(),
+        "fixture must cancel during OOPIF semantic collection"
+    );
+
+    wait_for_auto_attach_disabled(&f).await;
+    assert!(recorded_calls(&f, "Target.setAutoAttach")
+        .iter()
+        .any(|(_, params)| params["autoAttach"] == false));
+    assert!(
+        recorded_calls(&f, "Target.detachFromTarget").is_empty(),
+        "successful auto-attach shutdown already detaches its child sessions"
+    );
+}
+
+#[tokio::test]
+async fn failed_auto_attach_shutdown_still_attempts_every_child_detach() {
+    let f = fixture_with(|state| {
+        state.oopif_frame_count = 3;
+        state.fail_disable_auto_attach = true;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+
+    let refusal = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(refusal["status"], "refused", "{refusal}");
+    assert_eq!(
+        refusal["refusal"]["code"], "browser_route_unavailable",
+        "{refusal}"
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            let detaches = recorded_calls(&f, "Target.detachFromTarget");
+            let child_detaches = detaches
+                .iter()
+                .filter(|(_, params)| {
+                    params["sessionId"]
+                        .as_str()
+                        .is_some_and(|session| session.starts_with("oopif-sess-"))
+                })
+                .count();
+            let parent_detaches = detaches
+                .iter()
+                .filter(|(session, params)| {
+                    session.is_none()
+                        && params["sessionId"]
+                            .as_str()
+                            .is_some_and(|session| session.starts_with("tab-sess-"))
+                })
+                .count();
+            if child_detaches == 3 && parent_detaches == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("disable failure must not suppress child detach attempts");
+}
+
+#[tokio::test]
+async fn semantic_oopif_work_is_bounded_but_all_attached_sessions_are_cleaned_up() {
+    let extra_frames = 4;
+    let f = fixture_with(|state| {
+        state.oopif_frame_count = super::engine::MAX_SEMANTIC_OOPIF_FRAMES + extra_frames;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+
+    let snapshot = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(snapshot["status"], "ok", "{snapshot}");
+    assert_eq!(
+        snapshot["oopif"]["frames"],
+        super::engine::MAX_SEMANTIC_OOPIF_FRAMES
+    );
+    assert_eq!(snapshot["snapshot"]["complete"], false);
+    assert_eq!(
+        snapshot["snapshot"]["omitted"]["unprovable_frame"],
+        extra_frames
+    );
+    assert_eq!(
+        recorded_calls(&f, "DOM.getDocument")
+            .iter()
+            .filter(|(session, _)| session
+                .as_deref()
+                .is_some_and(|session| session.starts_with("oopif-sess-")))
+            .count(),
+        super::engine::MAX_SEMANTIC_OOPIF_FRAMES
+    );
+    assert!(recorded_calls(&f, "Target.setAutoAttach")
+        .iter()
+        .any(|(_, params)| params["autoAttach"] == false));
+    assert!(recorded_calls(&f, "Target.detachFromTarget").is_empty());
+}
+
+#[tokio::test]
+async fn stale_scope_ref_cannot_alias_a_reused_backend_id_after_navigation() {
+    let f = fixture_with(|state| state.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let scope_ref = first["content_refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "Visible message")
+        .and_then(|entry| entry["ref"].as_str())
+        .expect("heading content ref")
+        .to_owned();
+    let dom_calls_before = recorded_calls(&f, "DOM.getDocument").len();
+
+    // The replacement fixture deliberately reuses the same backend node ids.
+    f.state.lock().unwrap().main_loader = "L_MAIN_2".into();
+    let stale = semantic_snapshot_with(&f, &target, &tab, json!({"scope_ref": scope_ref})).await;
+    assert_eq!(stale["status"], "refused", "{stale}");
+    assert_eq!(stale["refusal"]["code"], "browser_ref_stale", "{stale}");
+    assert_eq!(
+        recorded_calls(&f, "DOM.getDocument").len(),
+        dom_calls_before,
+        "stale scope must refuse before collecting the replacement document"
+    );
+    assert!(
+        f.engine
+            .store
+            .resolve_ref(SESSION, &target, &tab, &scope_ref)
+            .is_ok(),
+        "refusal may retain the old namespace because every use re-proves identity"
+    );
+}
+
+#[tokio::test]
+async fn oopif_scope_uses_frame_identity_when_backend_ids_collide() {
+    let f = fixture_with(|state| state.main_oopif_backend_collision = true).await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let oopif_ref = first["refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["frame"] == "oopif" && entry["name"] == "Embedded input")
+        .and_then(|entry| entry["ref"].as_str())
+        .expect("OOPIF input ref")
+        .to_owned();
+    assert!(
+        first["refs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["frame"] == "main" && entry["name"] == "Main collision"),
+        "fixture must expose the colliding main-frame node: {first}"
+    );
+
+    let scoped = semantic_snapshot_with(&f, &target, &tab, json!({"scope_ref": oopif_ref})).await;
+    assert_eq!(scoped["status"], "ok", "{scoped}");
+    assert_eq!(scoped["snapshot"]["scope"], "subtree", "{scoped}");
+    assert!(
+        scoped["refs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["frame"] == "oopif" && entry["name"] == "Embedded input"),
+        "the exact OOPIF scope was not selected: {scoped}"
+    );
+    assert!(
+        scoped["refs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|entry| entry["name"] != "Main collision"),
+        "the colliding main-frame backend id escaped the OOPIF scope: {scoped}"
+    );
+}
+
+#[tokio::test]
+async fn oopif_scope_refuses_when_its_exact_child_cannot_be_collected() {
+    let f = fixture_with(|state| state.main_oopif_backend_collision = true).await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let oopif_ref = first["refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["frame"] == "oopif" && entry["name"] == "Embedded input")
+        .and_then(|entry| entry["ref"].as_str())
+        .expect("OOPIF input ref")
+        .to_owned();
+    f.state.lock().unwrap().fail_oopif_document = true;
+
+    let scoped = semantic_snapshot_with(&f, &target, &tab, json!({"scope_ref": oopif_ref})).await;
+    assert_eq!(scoped["status"], "refused", "{scoped}");
+    assert_eq!(scoped["refusal"]["code"], "browser_ref_stale", "{scoped}");
+    assert!(
+        f.engine
+            .store
+            .resolve_ref(SESSION, &target, &tab, &oopif_ref)
+            .is_ok(),
+        "failed scoped collection must not replace the prior namespace"
+    );
+}
+
+#[tokio::test]
+async fn failed_continuation_screenshot_leaves_the_token_usable() {
+    let f = fixture_with(|state| state.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let token = first["snapshot"]["continuation"]
+        .as_str()
+        .expect("large fixture continuation")
+        .to_owned();
+    f.state.lock().unwrap().fail_screenshot = true;
+
+    let failed = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2",
+            "continuation": token,
+            "include_screenshot": true
+        }))
+        .await;
+    let refusal = structured(&failed);
+    assert_eq!(refusal["status"], "refused", "{refusal}");
+    assert_eq!(
+        refusal["refusal"]["code"], "browser_route_unavailable",
+        "{refusal}"
+    );
+    assert!(failed
+        .content
+        .iter()
+        .all(|content| !matches!(content, Content::Image { .. })));
+
+    f.state.lock().unwrap().fail_screenshot = false;
+    let retry = semantic_snapshot_with(
+        &f,
+        &target,
+        &tab,
+        json!({"continuation": token, "include_screenshot": true}),
+    )
+    .await;
+    assert_eq!(retry["status"], "ok", "{retry}");
+    assert_eq!(retry["snapshot"]["scope"], "continuation", "{retry}");
+    assert_eq!(retry["screenshot"]["mime_type"], "image/png", "{retry}");
+}
+
+#[tokio::test]
+async fn continuation_navigation_during_screenshot_does_not_consume_the_token() {
+    let f = fixture_with(|state| state.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let token = first["snapshot"]["continuation"]
+        .as_str()
+        .expect("large fixture continuation")
+        .to_owned();
+    f.state.lock().unwrap().navigate_during_screenshot = true;
+
+    let result = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2",
+            "continuation": token,
+            "include_screenshot": true
+        }))
+        .await;
+    let stale = structured(&result);
+    assert_eq!(stale["status"], "refused", "{stale}");
+    assert_eq!(stale["refusal"]["code"], "browser_ref_stale", "{stale}");
+    assert!(result
+        .content
+        .iter()
+        .all(|content| !matches!(content, Content::Image { .. })));
+    assert!(
+        f.engine
+            .store
+            .resolve_semantic_continuation(SESSION, &target, &tab, &token)
+            .is_ok(),
+        "navigation refusal must happen before continuation commit"
+    );
+}
+
+#[tokio::test]
+async fn continuation_refuses_if_an_included_oopif_navigates_during_screenshot() {
+    let f = fixture_with(|state| state.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let token = first["snapshot"]["continuation"]
+        .as_str()
+        .expect("large fixture continuation")
+        .to_owned();
+    f.state.lock().unwrap().calls.clear();
+    f.state.lock().unwrap().navigate_oopif_during_screenshot = true;
+
+    let result = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2",
+            "continuation": token,
+            "include_screenshot": true
+        }))
+        .await;
+    let stale = structured(&result);
+    assert_eq!(stale["status"], "refused", "{stale}");
+    assert_eq!(stale["refusal"]["code"], "browser_ref_stale", "{stale}");
+    assert!(result
+        .content
+        .iter()
+        .all(|content| !matches!(content, Content::Image { .. })));
+    assert!(
+        f.engine
+            .store
+            .resolve_semantic_continuation(SESSION, &target, &tab, &token)
+            .is_ok(),
+        "child-frame navigation refusal must happen before continuation commit"
+    );
+    wait_for_auto_attach_disabled(&f).await;
+}
+
+#[tokio::test]
+async fn failed_fresh_screenshot_preserves_the_existing_snapshot_namespace() {
+    let f = fixture_with(|state| state.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let token = first["snapshot"]["continuation"]
+        .as_str()
+        .expect("large fixture continuation")
+        .to_owned();
+    f.state.lock().unwrap().fail_screenshot = true;
+
+    let failed = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2",
+            "include_screenshot": true
+        }))
+        .await;
+    assert_eq!(structured(&failed)["status"], "refused");
+    assert!(failed
+        .content
+        .iter()
+        .all(|content| !matches!(content, Content::Image { .. })));
+
+    f.state.lock().unwrap().fail_screenshot = false;
+    let retry = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
+    assert_eq!(retry["status"], "ok", "{retry}");
+}
+
+#[tokio::test]
+async fn cancelled_continuation_screenshot_leaves_the_token_usable() {
+    let f = fixture_with(|state| state.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let token = first["snapshot"]["continuation"]
+        .as_str()
+        .expect("large fixture continuation")
+        .to_owned();
+    f.state.lock().unwrap().screenshot_delay = std::time::Duration::from_millis(100);
+
+    let cancelled = tokio::time::timeout(
+        std::time::Duration::from_millis(20),
+        GetBrowserStateTool::new(f.engine.clone()).invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2",
+            "continuation": token,
+            "include_screenshot": true
+        })),
+    )
+    .await;
+    assert!(
+        cancelled.is_err(),
+        "fixture must cancel during screenshot capture"
+    );
+
+    f.state.lock().unwrap().screenshot_delay = std::time::Duration::ZERO;
+    let retry = semantic_snapshot_with(
+        &f,
+        &target,
+        &tab,
+        json!({"continuation": token, "include_screenshot": true}),
+    )
+    .await;
+    assert_eq!(retry["status"], "ok", "{retry}");
+    assert_eq!(retry["snapshot"]["scope"], "continuation", "{retry}");
+    assert_eq!(retry["screenshot"]["mime_type"], "image/png", "{retry}");
+}
+
+#[tokio::test]
+async fn cancelled_fresh_screenshot_preserves_the_existing_snapshot_namespace() {
+    let f = fixture_with(|state| state.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let token = first["snapshot"]["continuation"]
+        .as_str()
+        .expect("large fixture continuation")
+        .to_owned();
+    f.state.lock().unwrap().screenshot_delay = std::time::Duration::from_millis(100);
+
+    let cancelled = tokio::time::timeout(
+        std::time::Duration::from_millis(20),
+        GetBrowserStateTool::new(f.engine.clone()).invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "snapshot_format": "semantic_v2",
+            "include_screenshot": true
+        })),
+    )
+    .await;
+    assert!(
+        cancelled.is_err(),
+        "fixture must cancel during screenshot capture"
+    );
+
+    f.state.lock().unwrap().screenshot_delay = std::time::Duration::ZERO;
+    let retry = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
+    assert_eq!(retry["status"], "ok", "{retry}");
+}
+
+#[tokio::test]
+async fn concurrent_semantic_continuation_has_exactly_one_winner() {
+    let f = fixture_with(|state| {
+        state.semantic_large_page = true;
+        state.screenshot_delay = std::time::Duration::from_millis(50);
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let token = first["snapshot"]["continuation"]
+        .as_str()
+        .expect("large fixture continuation")
+        .to_owned();
+    let args = json!({
+        "target_id": target,
+        "tab_id": tab,
+        "session": SESSION,
+        "snapshot_format": "semantic_v2",
+        "continuation": token,
+        "include_screenshot": true
+    });
+    let left_tool = GetBrowserStateTool::new(f.engine.clone());
+    let right_tool = GetBrowserStateTool::new(f.engine.clone());
+    let (left, right) = tokio::join!(left_tool.invoke(args.clone()), right_tool.invoke(args),);
+    let statuses = [
+        structured(&left)["status"].as_str(),
+        structured(&right)["status"].as_str(),
+    ];
+    assert!(
+        statuses.contains(&Some("ok")),
+        "left={:?}, right={:?}",
+        structured(&left),
+        structured(&right)
+    );
+    assert!(
+        statuses.contains(&Some("refused")),
+        "left={:?}, right={:?}",
+        structured(&left),
+        structured(&right)
+    );
+    let image_count = [&left, &right]
+        .into_iter()
+        .flat_map(|result| &result.content)
+        .filter(|content| matches!(content, Content::Image { .. }))
+        .count();
+    assert_eq!(image_count, 1);
+    assert_eq!(recorded_calls(&f, "Page.captureScreenshot").len(), 1);
 }
 
 #[tokio::test]
@@ -2037,6 +2823,7 @@ async fn click_routes_oopif_refs_through_the_contained_child_session() {
     let (target, tab) = bind(&f).await;
     let snap = snapshot(&f, &target, &tab).await;
     let oopif_ref = ref_of(&snap, "oopif", "ad-input");
+    f.state.lock().unwrap().calls.clear();
 
     let result = BrowserClickTool::new(f.engine.clone())
         .invoke(json!({
@@ -2064,6 +2851,63 @@ async fn click_routes_oopif_refs_through_the_contained_child_session() {
     assert_eq!(focus_emulation[1].1["enabled"], false);
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+    wait_for_auto_attach_disabled(&f).await;
+    let state = f.state.lock().unwrap();
+    let calls = &state.calls;
+    let last_dispatch = calls
+        .iter()
+        .rposition(|(_, method, _)| method == "Input.dispatchMouseEvent")
+        .expect("mouse dispatch");
+    let cleanup = calls
+        .iter()
+        .position(|(_, method, params)| {
+            method == "Target.setAutoAttach" && params["autoAttach"] == false
+        })
+        .expect("auto-attach cleanup");
+    assert!(
+        cleanup > last_dispatch,
+        "the child-session lease must remain attached through dispatch: {calls:?}"
+    );
+}
+
+#[tokio::test]
+async fn two_ref_drag_in_one_oopif_reuses_one_owned_child_session() {
+    let f = fixture_with(|state| state.oopif_two_inputs = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let origin = ref_of(&snap, "oopif", "ad-input");
+    let destination = ref_of(&snap, "oopif", "ad-destination");
+    f.state.lock().unwrap().calls.clear();
+
+    let result = BrowserPointerTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+            "action": "drag",
+            "ref": origin,
+            "destination_ref": destination.clone()
+        }))
+        .await;
+    let outcome = structured(&result);
+    assert_eq!(outcome["status"], "ok", "{outcome}");
+    assert_eq!(outcome["frame"], "oopif");
+    assert_eq!(outcome["destination_ref"], destination);
+
+    let enables = recorded_calls(&f, "Target.setAutoAttach")
+        .into_iter()
+        .filter(|(_, params)| params["autoAttach"] == true)
+        .count();
+    assert_eq!(
+        enables, 1,
+        "the second ref must reuse the exact frame's live attachment"
+    );
+    let mouse = recorded_calls(&f, "Input.dispatchMouseEvent");
+    assert!(!mouse.is_empty());
+    assert!(mouse.iter().all(|(session, _)| session
+        .as_deref()
+        .is_some_and(|session| session.starts_with("oopif-sess-"))));
+    wait_for_auto_attach_disabled(&f).await;
 }
 
 #[tokio::test]

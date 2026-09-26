@@ -304,6 +304,12 @@ The guest helper refuses to write unless `sysctl -n hw.model` reports a
 permission identity from `/Applications/CuaDriverLocal.app`, writes only the
 Accessibility and Screen Recording entries for that app, restarts `tccd`, and
 verifies both entries.
+It accepts a designated requirement that pins a certificate leaf or root hash
+(local stable signing) or the exact Apple-anchored Developer ID requirement of a
+notarized release (`anchor apple generic` with a 10-character team ID). It
+rejects ad hoc `cdhash` requirements unless `--allow-adhoc` is passed. To seed
+the released app, pass `--app /Applications/CuaDriver.app --expected-client
+com.trycua.driver`. The host wrapper parses `lume get` with `jq`.
 
 After seeding, restart `CuaDriverLocal.app` before checking permission status if
 `install-local --autostart` or an earlier probe may have started the daemon:

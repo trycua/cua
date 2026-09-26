@@ -387,11 +387,11 @@ cursor observer where the environment supports one.
 
 The native Wayland lane also runs one latency-attribution cell against
 `tests/fixtures/apps/linux/wayland-presentation`, a repository-owned raw
-Wayland client. It owns its own `wl_surface`, so one Driver action maps to
-exactly one content update, and `wp_presentation.feedback` is requested for
-that update alone. The cell joins the Driver's own request/return stamps with
-the fixture's input, state-change, commit, and compositor-presented stamps in
-one `CLOCK_MONOTONIC` domain, and retains every raw row under
+Wayland client. It owns its own `wl_surface` and requests
+`wp_presentation.feedback` for each fixture-owned content commit. The cell
+joins the Driver's own request/return stamps with
+the fixture's input, state-change, commit, callback-receipt, and
+compositor-presented stamps in one `CLOCK_MONOTONIC` domain, and retains raw rows under
 `artifacts/cua-driver/linux/wayland-presentation/`.
 
 This exists to say which side of the presentation boundary owns a wait, not to
@@ -403,10 +403,10 @@ publish a performance number. Read it accordingly:
 - a compositor advertising a presentation clock other than `CLOCK_MONOTONIC`
   yields `clock_mismatch` rows with presentation deltas withheld rather than
   compared across clock domains;
-- `post_present_wait_ns` is signed on purpose. A negative value means the
+- `return_minus_present_ns` is signed on purpose. A negative value means the
   Driver returned before the compositor presented the update;
-- summaries report every sample, median, max, and deadline misses. They report
-  no percentiles: one fixture run cannot support them;
+- one presented action and the no-op and discarded controls produce raw rows;
+  `summary.json` retains outcome and deadline-miss counts;
 - a `discarded` row is ordinary compositor behaviour, not a fault: an update
   superseded within the same refresh is never shown. It is retained as evidence
   but measures no presentation, so the cell repeats that action instead of

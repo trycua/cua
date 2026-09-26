@@ -2,8 +2,8 @@
 # Stage the Wayland presentation-timestamp latency fixture for cua-driver tests.
 #
 # The fixture is a raw Wayland client rather than a toolkit app on purpose: it
-# owns its own wl_surface, so one Driver action maps to exactly one content
-# update and wp_presentation.feedback can be requested for that update alone.
+# owns its own wl_surface, so wp_presentation.feedback can be requested for
+# each fixture-owned content commit.
 #
 # Build output is copied into
 # libs/cua-driver/rust/test-apps/harness-wayland-presentation/ with the

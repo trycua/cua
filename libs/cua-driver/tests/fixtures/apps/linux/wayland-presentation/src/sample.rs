@@ -104,6 +104,8 @@ impl Presentation {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Feedback {
     Presented {
+        /// Local callback receipt, sampled in the fixture's monotonic clock.
+        feedback_received_ns: u64,
         presented_ns: u64,
         refresh_ns: u32,
         sequence: u64,
@@ -111,7 +113,9 @@ pub enum Feedback {
         /// `None` when `wp_presentation` never advertised a clock id.
         clock_id: Option<u32>,
     },
-    Discarded,
+    Discarded {
+        feedback_received_ns: u64,
+    },
     Timeout,
 }
 
@@ -138,7 +142,7 @@ impl Pending {
 }
 
 /// Deltas the fixture can derive on its own. Cross-boundary deltas that need
-/// the Driver's own timestamps (`dispatch_to_app`, `post_present_wait`) are
+/// the Driver's own timestamps (`dispatch_to_app`, `return_minus_present`) are
 /// left to the runner, which owns those stamps.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Derived {
@@ -172,6 +176,8 @@ pub struct Sample {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub surface_commit_ns: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub feedback_received_ns: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub presented_ns: Option<u64>,
     pub counter_before: u64,
     pub counter_after: u64,
@@ -193,6 +199,7 @@ pub fn finalize(pending: &Pending, feedback: Feedback, deadline_ns: u64) -> Samp
     let mut note = String::new();
     let mut presentation = None;
     let mut presented_ns = None;
+    let mut feedback_received_ns = None;
 
     let outcome = if !pending.mutated() || pending.surface_commit_ns.is_none() {
         // A delivered-but-inert input, or any action that committed nothing.
@@ -201,7 +208,10 @@ pub fn finalize(pending: &Pending, feedback: Feedback, deadline_ns: u64) -> Samp
         Outcome::NoMutation
     } else {
         match feedback {
-            Feedback::Discarded => {
+            Feedback::Discarded {
+                feedback_received_ns: receipt,
+            } => {
+                feedback_received_ns = Some(receipt);
                 note.push_str("compositor discarded or superseded this content update");
                 Outcome::Discarded
             }
@@ -210,12 +220,14 @@ pub fn finalize(pending: &Pending, feedback: Feedback, deadline_ns: u64) -> Samp
                 Outcome::Timeout
             }
             Feedback::Presented {
+                feedback_received_ns: receipt,
                 presented_ns: stamp,
                 refresh_ns,
                 sequence,
                 flags,
                 clock_id,
             } => {
+                feedback_received_ns = Some(receipt);
                 let clock = clock_id.unwrap_or(0);
                 let record = Presentation::new(clock, refresh_ns, sequence, flags);
                 let commit = pending.surface_commit_ns.unwrap_or(0);
@@ -264,6 +276,7 @@ pub fn finalize(pending: &Pending, feedback: Feedback, deadline_ns: u64) -> Samp
         fixture_input_received_ns: pending.input_received_ns,
         fixture_state_changed_ns: pending.state_changed_ns,
         surface_commit_ns: pending.surface_commit_ns,
+        feedback_received_ns,
         presented_ns,
         counter_before: pending.counter_before,
         counter_after: pending.counter_after,
@@ -301,6 +314,7 @@ mod tests {
 
     fn presented(stamp: u64, clock: Option<u32>) -> Feedback {
         Feedback::Presented {
+            feedback_received_ns: stamp + 100,
             presented_ns: stamp,
             refresh_ns: 16_666_666,
             sequence: 42,
@@ -319,6 +333,7 @@ mod tests {
         assert_eq!(sample.fixture_outcome, Outcome::Verified);
         assert!(sample.fixture_outcome.is_presented_mutation());
         assert_eq!(sample.presented_ns, Some(10_000));
+        assert_eq!(sample.feedback_received_ns, Some(10_100));
         assert_eq!(sample.derived.input_to_state_ns, Some(200));
         assert_eq!(sample.derived.app_to_commit_ns, Some(1_000));
         assert_eq!(sample.derived.commit_to_present_ns, Some(8_000));
@@ -336,10 +351,17 @@ mod tests {
 
     #[test]
     fn discarded_update_is_never_counted_as_presented() {
-        let sample = finalize(&pending(Region::Active, true), Feedback::Discarded, DEADLINE);
+        let sample = finalize(
+            &pending(Region::Active, true),
+            Feedback::Discarded {
+                feedback_received_ns: 10_100,
+            },
+            DEADLINE,
+        );
         assert_eq!(sample.fixture_outcome, Outcome::Discarded);
         assert!(!sample.fixture_outcome.is_presented_mutation());
         assert_eq!(sample.presented_ns, None);
+        assert_eq!(sample.feedback_received_ns, Some(10_100));
         assert_eq!(sample.derived.commit_to_present_ns, None);
         assert_eq!(sample.derived.input_to_present_ns, None);
         assert_eq!(sample.deadline_miss, None);
@@ -353,6 +375,7 @@ mod tests {
         let sample = finalize(&pending(Region::Active, true), Feedback::Timeout, DEADLINE);
         assert_eq!(sample.fixture_outcome, Outcome::Timeout);
         assert_eq!(sample.presented_ns, None);
+        assert_eq!(sample.feedback_received_ns, None);
         assert_eq!(sample.presentation, None);
     }
 
@@ -365,6 +388,7 @@ mod tests {
         );
         assert_eq!(sample.fixture_outcome, Outcome::ClockMismatch);
         assert_eq!(sample.presented_ns, None);
+        assert_eq!(sample.feedback_received_ns, Some(10_100));
         assert_eq!(sample.derived.commit_to_present_ns, None);
         let presentation = sample.presentation.expect("presentation metadata");
         assert_eq!(presentation.clock_id, 7);
@@ -373,7 +397,11 @@ mod tests {
 
     #[test]
     fn unadvertised_presentation_clock_is_not_assumed_to_be_monotonic() {
-        let sample = finalize(&pending(Region::Active, true), presented(10_000, None), DEADLINE);
+        let sample = finalize(
+            &pending(Region::Active, true),
+            presented(10_000, None),
+            DEADLINE,
+        );
         assert_eq!(sample.fixture_outcome, Outcome::ClockMismatch);
         assert_eq!(sample.presented_ns, None);
         assert_eq!(sample.presentation.expect("metadata").clock_id, 0);
@@ -409,7 +437,11 @@ mod tests {
     fn a_mutation_whose_commit_is_unknown_cannot_be_presented() {
         let mut pending = pending(Region::Active, true);
         pending.surface_commit_ns = None;
-        let sample = finalize(&pending, presented(10_000, Some(CLOCK_MONOTONIC_ID)), DEADLINE);
+        let sample = finalize(
+            &pending,
+            presented(10_000, Some(CLOCK_MONOTONIC_ID)),
+            DEADLINE,
+        );
         assert_eq!(sample.fixture_outcome, Outcome::NoMutation);
         assert_eq!(sample.presented_ns, None);
     }
@@ -443,7 +475,9 @@ mod tests {
         // Withheld deltas are absent rather than zero-filled.
         let discarded = serde_json::to_value(finalize(
             &pending(Region::Active, true),
-            Feedback::Discarded,
+            Feedback::Discarded {
+                feedback_received_ns: 10_100,
+            },
             DEADLINE,
         ))
         .expect("serialize discarded row");

@@ -43,16 +43,14 @@ const TITLE_PREFIX: &str = "CuaTestHarness Presentation";
 /// Presentation-feedback reporting deadline handed to the fixture.
 const DEADLINE_MS: u64 = 1_000;
 
-/// Repeats of the measured action. Small on purpose: this cell proves causal
-/// attribution, and reporting extreme percentiles from a handful of
-/// observations would be misleading.
-const REPEATS: usize = 5;
+/// One presented action is enough for this first causal-evidence slice.
+const REPEATS: usize = 1;
 
 /// How many actions may be issued to collect [`REPEATS`] presented samples. A
 /// discarded update is legitimate and retained, but it measures no
 /// presentation, so it is repeated rather than counted. The cap keeps a lane
 /// that never presents from looping instead of reporting that plainly.
-const MAX_ATTEMPTS: usize = REPEATS * 4;
+const MAX_ATTEMPTS: usize = 4;
 
 /// `CLOCK_MONOTONIC`, the same clock the fixture stamps its rows with.
 fn monotonic_ns() -> u64 {
@@ -67,7 +65,7 @@ fn monotonic_ns() -> u64 {
         .saturating_add(stamp.tv_nsec as u64)
 }
 
-/// Runner-derived deltas. These are signed: `post_present_wait_ns` is
+/// Runner-derived deltas. These are signed: `return_minus_present_ns` is
 /// negative exactly when the Driver returned before the compositor presented
 /// the update, which is a real and interesting observation rather than an
 /// error to clamp away.
@@ -81,7 +79,7 @@ struct RowDeltas {
     #[serde(skip_serializing_if = "Option::is_none")]
     request_to_present_ns: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    post_present_wait_ns: Option<i64>,
+    return_minus_present_ns: Option<i64>,
     request_to_return_ns: i64,
 }
 
@@ -99,6 +97,8 @@ struct EvidenceRow {
     fixture_state_changed_ns: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     surface_commit_ns: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    feedback_received_ns: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     presented_ns: Option<u64>,
     driver_returned_ns: u64,
@@ -130,7 +130,7 @@ fn join(sample: &Value, request_started_ns: u64, driver_returned_ns: u64) -> Evi
         commit_to_present_ns: presented
             .and_then(|presented| commit.map(|commit| difference(presented, commit))),
         request_to_present_ns: presented.map(|presented| difference(presented, request_started_ns)),
-        post_present_wait_ns: presented
+        return_minus_present_ns: presented
             .map(|presented| difference(driver_returned_ns, presented)),
         request_to_return_ns: difference(driver_returned_ns, request_started_ns),
     };
@@ -152,6 +152,7 @@ fn join(sample: &Value, request_started_ns: u64, driver_returned_ns: u64) -> Evi
         fixture_input_received_ns: input,
         fixture_state_changed_ns: number("fixture_state_changed_ns"),
         surface_commit_ns: commit,
+        feedback_received_ns: number("feedback_received_ns"),
         presented_ns: presented,
         driver_returned_ns,
         presentation: sample.get("presentation").cloned(),
@@ -172,9 +173,7 @@ fn join(sample: &Value, request_started_ns: u64, driver_returned_ns: u64) -> Evi
     }
 }
 
-/// Summaries justified by a small sample count: every observation is retained
-/// alongside these, and no percentile is reported. Extreme percentiles need
-/// far more observations than one fixture run produces.
+/// A count of the retained raw rows, without latency statistics from one run.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 struct Summary {
     rows: usize,
@@ -187,30 +186,6 @@ struct Summary {
     other: usize,
     deadline_ns: u64,
     deadline_misses: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    median_request_to_present_ns: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_request_to_present_ns: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    median_commit_to_present_ns: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_commit_to_present_ns: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    median_post_present_wait_ns: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_post_present_wait_ns: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    median_request_to_return_ns: Option<i64>,
-}
-
-/// The lower median of the observed values, so every reported number is a
-/// value that was actually measured rather than an interpolation.
-fn median(values: &mut Vec<i64>) -> Option<i64> {
-    if values.is_empty() {
-        return None;
-    }
-    values.sort_unstable();
-    Some(values[(values.len() - 1) / 2])
 }
 
 fn summarize(rows: &[EvidenceRow], deadline_ns: u64) -> Summary {
@@ -219,10 +194,6 @@ fn summarize(rows: &[EvidenceRow], deadline_ns: u64) -> Summary {
         deadline_ns,
         ..Summary::default()
     };
-    let mut request_to_present = Vec::new();
-    let mut commit_to_present = Vec::new();
-    let mut post_present_wait = Vec::new();
-    let mut request_to_return = Vec::new();
     for row in rows {
         match row.fixture_outcome.as_str() {
             "verified" => summary.verified += 1,
@@ -233,32 +204,15 @@ fn summarize(rows: &[EvidenceRow], deadline_ns: u64) -> Summary {
             "no_mutation" => summary.no_mutation += 1,
             _ => summary.other += 1,
         }
-        request_to_return.push(row.derived.request_to_return_ns);
-        // Only a presented mutation contributes to presentation statistics. A
-        // discarded or timed-out update has no presentation time to average.
-        if !row.presented_mutation() {
-            continue;
-        }
-        if let Some(value) = row.derived.request_to_present_ns {
-            if value > i64::try_from(deadline_ns).unwrap_or(i64::MAX) {
-                summary.deadline_misses += 1;
-            }
-            request_to_present.push(value);
-        }
-        if let Some(value) = row.derived.commit_to_present_ns {
-            commit_to_present.push(value);
-        }
-        if let Some(value) = row.derived.post_present_wait_ns {
-            post_present_wait.push(value);
+        if row.presented_mutation()
+            && row
+                .derived
+                .request_to_present_ns
+                .is_some_and(|value| value > i64::try_from(deadline_ns).unwrap_or(i64::MAX))
+        {
+            summary.deadline_misses += 1;
         }
     }
-    summary.max_request_to_present_ns = request_to_present.iter().copied().max();
-    summary.max_commit_to_present_ns = commit_to_present.iter().copied().max();
-    summary.max_post_present_wait_ns = post_present_wait.iter().copied().max();
-    summary.median_request_to_present_ns = median(&mut request_to_present);
-    summary.median_commit_to_present_ns = median(&mut commit_to_present);
-    summary.median_post_present_wait_ns = median(&mut post_present_wait);
-    summary.median_request_to_return_ns = median(&mut request_to_return);
     summary
 }
 
@@ -550,43 +504,6 @@ fn write_evidence(directory: &Path, rows: &[EvidenceRow], summary: &Summary) {
         serde_json::to_vec_pretty(summary).expect("serialize summary"),
     )
     .expect("retain summary");
-    let optional = |value: Option<i64>| {
-        value
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "n/a".to_owned())
-    };
-    let markdown = format!(
-        "# Wayland presentation latency\n\n\
-         Raw rows: `rows.jsonl` ({} retained).\n\n\
-         | Measure | Median (ns) | Max (ns) |\n\
-         | --- | ---: | ---: |\n\
-         | request -> present | {} | {} |\n\
-         | commit -> present | {} | {} |\n\
-         | post-present wait | {} | {} |\n\
-         | request -> return | {} | - |\n\n\
-         Outcomes: verified {}, discarded {}, timeout {}, clock_mismatch {}, \
-         implausible {}, no_mutation {}, other {}.\n\n\
-         Deadline {} ns, misses {}.\n\n\
-         No percentiles are reported: this sample count cannot support them.\n",
-        summary.rows,
-        optional(summary.median_request_to_present_ns),
-        optional(summary.max_request_to_present_ns),
-        optional(summary.median_commit_to_present_ns),
-        optional(summary.max_commit_to_present_ns),
-        optional(summary.median_post_present_wait_ns),
-        optional(summary.max_post_present_wait_ns),
-        optional(summary.median_request_to_return_ns),
-        summary.verified,
-        summary.discarded,
-        summary.timeout,
-        summary.clock_mismatch,
-        summary.implausible,
-        summary.no_mutation,
-        summary.other,
-        summary.deadline_ns,
-        summary.deadline_misses,
-    );
-    std::fs::write(directory.join("summary.md"), markdown).expect("retain summary markdown");
 }
 
 #[test]
@@ -676,9 +593,15 @@ fn wayland_presentation_feedback_attributes_action_latency_across_the_boundary()
                 continue;
             }
             assert!(
-                row.presented_ns.is_some() && row.surface_commit_ns.is_some(),
-                "attempt {attempt}: a verified row must carry both its commit and its \
-                 presentation timestamp: {row:?}"
+                row.presented_ns.is_some()
+                    && row.surface_commit_ns.is_some()
+                    && row.feedback_received_ns.is_some(),
+                "attempt {attempt}: a verified row must carry commit, presentation, \
+                 and callback-receipt timestamps: {row:?}"
+            );
+            assert!(
+                row.feedback_received_ns >= row.presented_ns,
+                "attempt {attempt}: receipt must follow presentation in the same clock: {row:?}"
             );
             assert!(
                 row.derived.commit_to_present_ns.unwrap_or(-1) >= 0,
@@ -727,15 +650,28 @@ fn wayland_presentation_feedback_attributes_action_latency_across_the_boundary()
         );
         rows.push(inert_row);
 
-        // 3. A superseded content update is not counted as presented. The
-        //    compositor may legitimately present both updates; what must never
-        //    happen is a discarded update carrying a presentation time.
+        // 3. The first of two commits sent in one flush is superseded. Keep
+        //    that discarded update as evidence without counting it as shown.
         let counter_before = state_counter(&fixture.state).expect("fixture state");
         let probe = click_region(&mut driver, &fixture, "supersede", 2);
         assert_eq!(
             probe.iter().filter(|row| row.supersede_probe).count(),
             1,
             "exactly one of the two probe updates is the superseded candidate: {probe:?}"
+        );
+        assert_eq!(
+            probe
+                .iter()
+                .filter(|row| row.fixture_outcome == "discarded")
+                .count(),
+            1,
+            "the supersede control must retain an actual discarded row: {probe:?}"
+        );
+        assert!(
+            probe
+                .iter()
+                .any(|row| row.supersede_probe && row.fixture_outcome == "discarded"),
+            "the first content update must be the one discarded: {probe:?}"
         );
         for row in &probe {
             assert!(
@@ -747,8 +683,9 @@ fn wayland_presentation_feedback_attributes_action_latency_across_the_boundary()
                 assert!(
                     row.presented_ns.is_none()
                         && row.derived.commit_to_present_ns.is_none()
-                        && row.derived.request_to_present_ns.is_none(),
-                    "a discarded update must carry no presentation time: {row:?}"
+                        && row.derived.request_to_present_ns.is_none()
+                        && row.feedback_received_ns.is_some(),
+                    "a discarded update retains callback receipt but no presentation time: {row:?}"
                 );
             }
         }
@@ -801,11 +738,7 @@ fn wayland_presentation_feedback_attributes_action_latency_across_the_boundary()
             "the measured action must produce at least {REPEATS} presented \
              mutations: {summary:?}"
         );
-        assert!(
-            summary.median_commit_to_present_ns.is_some()
-                && summary.median_request_to_present_ns.is_some(),
-            "presentation statistics must be derivable from the retained rows: {summary:?}"
-        );
+        assert!(rows.iter().any(EvidenceRow::presented_mutation));
         Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
     });
 }
@@ -835,18 +768,29 @@ mod evidence_tests {
         if let Some(presented) = presented {
             value["presented_ns"] = json!(presented);
         }
+        if matches!(
+            outcome,
+            "verified" | "discarded" | "clock_mismatch" | "implausible"
+        ) {
+            value["feedback_received_ns"] = json!(21_000);
+        }
         value
     }
 
     #[test]
     fn joining_derives_every_delta_the_evidence_supports() {
-        let row = join(&sample("verified", Some(3_000), Some(20_000)), 1_000, 25_000);
+        let row = join(
+            &sample("verified", Some(3_000), Some(20_000)),
+            1_000,
+            25_000,
+        );
         assert_eq!(row.derived.dispatch_to_app_ns, 1_000);
         assert_eq!(row.derived.app_to_commit_ns, Some(1_000));
         assert_eq!(row.derived.commit_to_present_ns, Some(17_000));
         assert_eq!(row.derived.request_to_present_ns, Some(19_000));
-        assert_eq!(row.derived.post_present_wait_ns, Some(5_000));
+        assert_eq!(row.derived.return_minus_present_ns, Some(5_000));
         assert_eq!(row.derived.request_to_return_ns, 24_000);
+        assert_eq!(row.feedback_received_ns, Some(21_000));
         assert!(row.presented_mutation());
     }
 
@@ -854,8 +798,12 @@ mod evidence_tests {
     fn a_driver_returning_before_presentation_is_reported_as_a_negative_wait() {
         // This is the observation the fixture exists to make possible: the
         // Driver returned 5 us before the compositor presented the update.
-        let row = join(&sample("verified", Some(3_000), Some(20_000)), 1_000, 15_000);
-        assert_eq!(row.derived.post_present_wait_ns, Some(-5_000));
+        let row = join(
+            &sample("verified", Some(3_000), Some(20_000)),
+            1_000,
+            15_000,
+        );
+        assert_eq!(row.derived.return_minus_present_ns, Some(-5_000));
     }
 
     #[test]
@@ -865,7 +813,7 @@ mod evidence_tests {
             assert!(!row.presented_mutation(), "{outcome}");
             assert_eq!(row.derived.commit_to_present_ns, None, "{outcome}");
             assert_eq!(row.derived.request_to_present_ns, None, "{outcome}");
-            assert_eq!(row.derived.post_present_wait_ns, None, "{outcome}");
+            assert_eq!(row.derived.return_minus_present_ns, None, "{outcome}");
             // The application-owned half of the timeline survives.
             assert_eq!(row.derived.app_to_commit_ns, Some(1_000), "{outcome}");
         }
@@ -879,15 +827,28 @@ mod evidence_tests {
         assert!(!row.mutated);
         assert_eq!(row.derived.app_to_commit_ns, None);
         assert_eq!(row.derived.request_to_present_ns, None);
+        assert_eq!(row.feedback_received_ns, None);
         assert_eq!(row.derived.request_to_return_ns, 24_000);
     }
 
     #[test]
-    fn only_presented_mutations_reach_the_presentation_statistics() {
+    fn only_presented_mutations_count_as_verified() {
         let rows = vec![
-            join(&sample("verified", Some(3_000), Some(20_000)), 1_000, 25_000),
-            join(&sample("verified", Some(3_000), Some(40_000)), 1_000, 45_000),
-            join(&sample("verified", Some(3_000), Some(30_000)), 1_000, 35_000),
+            join(
+                &sample("verified", Some(3_000), Some(20_000)),
+                1_000,
+                25_000,
+            ),
+            join(
+                &sample("verified", Some(3_000), Some(40_000)),
+                1_000,
+                45_000,
+            ),
+            join(
+                &sample("verified", Some(3_000), Some(30_000)),
+                1_000,
+                35_000,
+            ),
             join(&sample("discarded", Some(3_000), None), 1_000, 900_000_000),
             join(&sample("no_mutation", None, None), 1_000, 25_000),
         ];
@@ -896,15 +857,7 @@ mod evidence_tests {
         assert_eq!(summary.verified, 3);
         assert_eq!(summary.discarded, 1);
         assert_eq!(summary.no_mutation, 1);
-        // 19_000 / 29_000 / 39_000 — the discarded and inert rows contribute
-        // nothing, so neither can flatter or inflate a presentation number.
-        assert_eq!(summary.median_request_to_present_ns, Some(29_000));
-        assert_eq!(summary.max_request_to_present_ns, Some(39_000));
-        assert_eq!(summary.median_commit_to_present_ns, Some(27_000));
         assert_eq!(summary.deadline_misses, 0);
-        // Every row contributes to the Driver-owned round trip, including the
-        // slow discarded one.
-        assert_eq!(summary.median_request_to_return_ns, Some(34_000));
     }
 
     #[test]
@@ -920,40 +873,11 @@ mod evidence_tests {
     }
 
     #[test]
-    fn an_empty_run_reports_no_statistics_instead_of_zeros() {
+    fn an_empty_run_reports_no_rows() {
         let summary = summarize(&[], 1_000_000_000);
         assert_eq!(summary.rows, 0);
-        assert_eq!(summary.median_request_to_present_ns, None);
-        assert_eq!(summary.max_commit_to_present_ns, None);
+        assert_eq!(summary.verified, 0);
         let encoded = serde_json::to_value(&summary).expect("serialize summary");
-        assert!(encoded.get("median_request_to_present_ns").is_none());
         assert_eq!(encoded["rows"], 0);
-    }
-
-    #[test]
-    fn the_median_is_an_observed_value_not_an_interpolation() {
-        assert_eq!(median(&mut vec![]), None);
-        assert_eq!(median(&mut vec![7]), Some(7));
-        assert_eq!(median(&mut vec![9, 1]), Some(1));
-        assert_eq!(median(&mut vec![5, 1, 9]), Some(5));
-        assert_eq!(median(&mut vec![4, 1, 9, 5]), Some(4));
-    }
-
-    #[test]
-    fn summaries_report_no_percentiles() {
-        let rows = vec![join(
-            &sample("verified", Some(3_000), Some(20_000)),
-            1_000,
-            25_000,
-        )];
-        let encoded = serde_json::to_value(summarize(&rows, 1_000_000_000))
-            .expect("serialize summary")
-            .to_string();
-        for forbidden in ["p95", "p99", "percentile"] {
-            assert!(
-                !encoded.contains(forbidden),
-                "small runs must not report {forbidden}: {encoded}"
-            );
-        }
     }
 }

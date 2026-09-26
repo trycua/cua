@@ -1578,7 +1578,7 @@ mod windows_token_oracle {
                 token,
                 class,
                 Some(buffer.as_mut_ptr().cast()),
-                (buffer.len() * 8) as u32,
+                needed,
                 &mut needed,
             )
         }

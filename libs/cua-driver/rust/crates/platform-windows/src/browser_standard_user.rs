@@ -318,7 +318,7 @@ fn token_information(token: HANDLE, class: TOKEN_INFORMATION_CLASS) -> Result<Ve
             token,
             class,
             Some(buffer.as_mut_ptr().cast()),
-            (buffer.len() * 8) as u32,
+            needed,
             &mut needed,
         )
     }

@@ -96,10 +96,23 @@ pub(crate) fn capture_dispatch_click_target(window_id: u64, pid: u32, x: i32, y:
 }
 
 #[cfg(target_os = "windows")]
-pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
+/// Per-turn application state for trajectory recording, walked under the
+/// shared `get_window_state` budget. The walk reports the shared walk fields so
+/// the turn evidence says when the tree is partial. UIA's bulk cache fetch is
+/// not interruptible per node; the recorder's backstop bounds it.
+pub fn app_state_json_for(
+    window_id: Option<u64>,
+    pid: Option<i64>,
+    budget: cua_driver_core::recording::StateCaptureBudget,
+) -> Option<Vec<u8>> {
     let pid = u32::try_from(pid?).ok()?;
     let hwnd = resolve_window_for_recording(window_id, Some(pid.into()))?;
-    let result = crate::uia::walk_tree(hwnd, None);
+    let mut walk = cua_driver_core::walk_budget::WalkBudget::new(
+        budget.timeout_ms,
+        crate::uia::DEFAULT_MAX_TOTAL_ELEMENTS,
+    );
+    let result =
+        crate::uia::walk_tree_budgeted(hwnd, None, crate::uia::DEFAULT_MAX_DEPTH, &mut walk);
     let kind = if result.nodes.iter().any(|node| node.msaa_role.is_some()) {
         SnapshotKind::Msaa
     } else {
@@ -111,12 +124,13 @@ pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Ve
         .iter()
         .filter(|n| n.element_index.is_some())
         .count();
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "pid": pid,
         "window_id": hwnd,
         "element_count": element_count,
         "tree_markdown": result.tree_markdown,
     });
+    walk.outcome().apply(&mut payload);
     serde_json::to_vec_pretty(&payload).ok()
 }
 
@@ -165,7 +179,11 @@ pub fn element_window_local_xy(
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn app_state_json_for(_window_id: Option<u64>, _pid: Option<i64>) -> Option<Vec<u8>> {
+pub fn app_state_json_for(
+    _window_id: Option<u64>,
+    _pid: Option<i64>,
+    _budget: cua_driver_core::recording::StateCaptureBudget,
+) -> Option<Vec<u8>> {
     None
 }
 #[cfg(not(target_os = "windows"))]

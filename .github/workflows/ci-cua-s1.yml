@@ -54,8 +54,8 @@ jobs:
 
       - name: Check formatting and lint
         run: |
-          uv run --frozen ruff format --check src tests ../evals ../training
-          uv run --frozen ruff check src tests ../evals ../training
+          uv run --frozen ruff format --check src tests ../evals ../training ../ci
+          uv run --frozen ruff check src tests ../evals ../training ../ci
 
       - name: Check package imports
         run: |

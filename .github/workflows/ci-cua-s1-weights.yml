@@ -1,0 +1,236 @@
+name: "CI: cua-s1 weights"
+
+# Weights-backed Cua-S1-4B checks on a standard GitHub-hosted Linux runner.
+# The pinned public weights (~9.5 GB, no token) are downloaded from Hugging
+# Face on every run and verified against libs/cua-s1/ci/weights.lock.json.
+# They are deliberately not stored in the Actions cache: the repository's
+# 10 GB cache limit would evict every other workflow's cache.
+on:
+  schedule:
+    - cron: "37 4 * * *"
+  workflow_dispatch:
+    inputs:
+      dtype:
+        description: "Torch dtype for CPU inference (float32 does not fit in 16 GB)"
+        required: false
+        type: choice
+        default: bfloat16
+        options:
+          - bfloat16
+          - float16
+  pull_request:
+    paths:
+      - "libs/cua-s1/**"
+      - "libs/cua-driver/examples/jev-use/python/choose_action.py"
+      - "libs/cua-driver/examples/jev-use/python/choose_decision.py"
+      - "libs/cua-driver/examples/jev-use/python/decision_models.py"
+      - "libs/cua-driver/examples/jev-use/python/jev_adapter.py"
+      - "libs/cua-driver/examples/jev-use/verify_decision_cli.py"
+      - "libs/cua-driver/examples/jev-use/fixtures/jev-choice-*"
+      - ".github/workflows/ci-cua-s1-weights.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-s1-weights-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CUA_TELEMETRY_ENABLED: "false"
+  HF_HUB_DISABLE_TELEMETRY: "1"
+  PYTHONHASHSEED: "0"
+  WANDB_MODE: disabled
+
+jobs:
+  smoke:
+    name: S1 chooser smoke with pinned weights (CPU, text + multimodal)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        dtype: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.dtype) || '["bfloat16","float16"]') }}
+    env:
+      S1_DEVICE: cpu
+      S1_DTYPE: ${{ matrix.dtype }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: libs/cua-s1/python
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Free disk space for the weights and the CUDA-enabled torch wheel
+        working-directory: .
+        run: |
+          set -euo pipefail
+          df -h /
+          # Preinstalled toolchains this job never uses.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          df -h /
+          {
+            echo "S1_MODELS=$RUNNER_TEMP/s1-models"
+            echo "S1_EVIDENCE=$RUNNER_TEMP/s1-evidence"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/s1-models" "$RUNNER_TEMP/s1-evidence"
+
+      - name: Record runner hardware
+        working-directory: .
+        run: |
+          set -euo pipefail
+          {
+            echo "cpu_model=$(lscpu | sed -n 's/^Model name: *//p' | head -n1)"
+            echo "nproc=$(nproc)"
+            echo "mem_total_mb=$(free -m | awk '/^Mem:/ {print $2}')"
+            echo "mem_available_mb=$(free -m | awk '/^Mem:/ {print $7}')"
+            flags="$(grep -m1 '^flags' /proc/cpuinfo)"
+            for flag in avx2 avx512f avx512_bf16 amx_bf16 avx512_fp16; do
+              if grep -qw "$flag" <<<"$flags"; then echo "$flag=yes"; else echo "$flag=no"; fi
+            done
+            echo "disk_free=$(df -h / | awk 'NR==2 {print $4}')"
+          } | tee "$S1_EVIDENCE/runner.env"
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: libs/cua-s1/python/uv.lock
+
+      - name: Install the pinned four-b inference environment
+        run: uv sync --frozen --extra four-b
+
+      - name: Download and verify the pinned weights
+        run: |
+          set -euo pipefail
+          .venv/bin/python ../ci/fetch_pinned_weights.py --dest "$S1_MODELS" \
+            | tee "$S1_EVIDENCE/weights.json"
+          du -sh "$S1_MODELS"/*
+          df -h /
+
+      - name: Run the documented chooser smoke (cold process per decision)
+        env:
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: |
+          set -euo pipefail
+          export S1_BASE_MODEL_PATH="$S1_MODELS/Qwen3.5-4B"
+          export S1_ADAPTER_PATH="$S1_MODELS/cua-s1-4b-0.2"
+          jev=../../cua-driver/examples/jev-use
+          : > "$S1_EVIDENCE/cold.jsonl"
+          for modality in text multimodal; do
+            for fixture in positive negative; do
+              args=(--model s1)
+              if [[ "$fixture" == negative ]]; then
+                args+=(--fixture negative --expected-id abstain)
+                png="$jev/fixtures/jev-choice-negative-v1.png"
+              else
+                png="$jev/fixtures/jev-choice-request-v1.png"
+              fi
+              if [[ "$modality" == multimodal ]]; then
+                args+=(--screenshot "$png")
+              fi
+              echo "::group::$modality $fixture"
+              timing="$S1_EVIDENCE/cold-$modality-$fixture.time"
+              status=0
+              /usr/bin/time -v -o "$timing" \
+                .venv/bin/python "$jev/verify_decision_cli.py" "${args[@]}" \
+                > "$S1_EVIDENCE/cold-$modality-$fixture.out" || status=$?
+              cat "$S1_EVIDENCE/cold-$modality-$fixture.out"
+              wall="$(sed -n 's/.*Elapsed (wall clock) time (h:mm:ss or m:ss): //p' "$timing")"
+              rss_kb="$(sed -n 's/.*Maximum resident set size (kbytes): //p' "$timing")"
+              jq -nc --arg modality "$modality" --arg fixture "$fixture" \
+                --arg wall "$wall" --argjson rss_kb "${rss_kb:-0}" --argjson status "$status" \
+                --arg out "$(cat "$S1_EVIDENCE/cold-$modality-$fixture.out")" \
+                '{modality: $modality, fixture: $fixture, exit: $status, wall: $wall,
+                  peak_rss_mb: ($rss_kb / 1024 | floor), output: $out}' \
+                >> "$S1_EVIDENCE/cold.jsonl"
+              echo "::endgroup::"
+              if [[ "$status" != 0 ]]; then
+                echo "::error::documented S1 smoke failed: $modality $fixture"
+                exit 1
+              fi
+              grep -Fq '@16818868b0cc7813808aae4e87b417657046ab79:'"$modality" \
+                "$S1_EVIDENCE/cold-$modality-$fixture.out"
+            done
+          done
+
+      - name: Measure warm per-decision latency
+        env:
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: |
+          set -euo pipefail
+          export S1_BASE_MODEL_PATH="$S1_MODELS/Qwen3.5-4B"
+          export S1_ADAPTER_PATH="$S1_MODELS/cua-s1-4b-0.2"
+          for modality in text multimodal; do
+            echo "::group::warm $modality"
+            S1_MODALITY="$modality" /usr/bin/time -v -o "$S1_EVIDENCE/warm-$modality.time" \
+              .venv/bin/python ../ci/warm_chooser.py --smoke --repeats 3 \
+              > "$S1_EVIDENCE/warm-$modality.json"
+            cat "$S1_EVIDENCE/warm-$modality.json"
+            echo "::endgroup::"
+          done
+
+      - name: Publish latency and memory summary
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os, statistics
+          from pathlib import Path
+
+          evidence = Path(os.environ["S1_EVIDENCE"])
+          def read(name):
+              path = evidence / name
+              return path.read_text() if path.exists() else ""
+          runner = dict(line.split("=", 1) for line in read("runner.env").splitlines() if "=" in line)
+          print(f"## Cua-S1-4B weights smoke ({os.environ['S1_DEVICE']}, {os.environ['S1_DTYPE']})\n")
+          print(f"Runner: {runner.get('cpu_model', '?')}, {runner.get('nproc', '?')} vCPU, "
+                f"{runner.get('mem_total_mb', '?')} MB RAM; avx512_bf16={runner.get('avx512_bf16', '?')}, "
+                f"amx_bf16={runner.get('amx_bf16', '?')}\n")
+          weights = read("weights.json")
+          if weights:
+              for artifact in json.loads(weights)["artifacts"]:
+                  print(f"- `{artifact['repo_id']}@{artifact['revision'][:12]}`: {artifact['files']} files, "
+                        f"{artifact['bytes'] / 1e9:.2f} GB, downloaded in {artifact['download_s']} s, "
+                        f"verified={artifact['verified']}")
+              print()
+          cold = [json.loads(line) for line in read("cold.jsonl").splitlines() if line.strip()]
+          if cold:
+              print("### Documented smoke (`verify_decision_cli.py --model s1`, one cold process per decision)\n")
+              print("| Modality | Fixture | Result | Wall (load + decision) | Peak RSS |")
+              print("| --- | --- | --- | --- | --- |")
+              for row in cold:
+                  result = row["output"] if row["exit"] == 0 else f"exit {row['exit']}"
+                  print(f"| {row['modality']} | {row['fixture']} | `{result}` | {row['wall']} | {row['peak_rss_mb']} MB |")
+              print()
+          print("### Warm decisions (model resident; `libs/cua-s1/ci/warm_chooser.py --smoke`)\n")
+          print("| Modality | Load | Fixture | Choice | Latency per decision (ms) | Peak RSS |")
+          print("| --- | --- | --- | --- | --- | --- |")
+          for modality in ("text", "multimodal"):
+              raw = read(f"warm-{modality}.json").strip()
+              if not raw:
+                  print(f"| {modality} | not run | | | | |")
+                  continue
+              report = json.loads(raw.splitlines()[-1])
+              for fixture in ("positive", "negative"):
+                  rows = [d for d in report["decisions"] if d["fixture"] == fixture]
+                  latencies = [d["latency_ms"] for d in rows if "latency_ms" in d]
+                  choice = ", ".join(sorted({f"{d.get('selected_id')} ({'ok' if d['ok'] else 'FAIL'})" for d in rows}))
+                  median = statistics.median(latencies) if latencies else "n/a"
+                  print(f"| {modality} | {report['load_s']} s | {fixture} | {choice} | "
+                        f"median {median} (all: {latencies}) | {report['peak_rss_mb']} MB |")
+          PY
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: cua-s1-weights-smoke-${{ matrix.dtype }}
+          path: ${{ runner.temp }}/s1-evidence
+          if-no-files-found: ignore
+          retention-days: 14

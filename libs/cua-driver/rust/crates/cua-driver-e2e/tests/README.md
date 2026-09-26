@@ -29,6 +29,7 @@ action, addressing mode, delivery mode, or OS-specific window-system case.
 | `cross_platform_behavior_test.rs` | Shared Electron/Tauri/WKWebView action matrix |
 | `desktop_scope_<os>_test.rs` | Platform window/desktop scope contract |
 | `installed_app_*_test.rs`, `standalone_browser_behavior_test.rs` | Installed apps and browsers |
+| `perception_capture_loop_test.rs` | Optional perception capture, parse, capture-bound click, and reobserve loop |
 | `*_<os>_test.rs`, `hyprland_*_test.rs`, `wayland_*_test.rs` | Platform- or compositor-specific desktop rows |
 
 ## Harness Requirements

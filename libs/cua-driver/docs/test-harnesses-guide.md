@@ -629,7 +629,7 @@ Scripts and their tests live next to their owner:
   harness apps, not a test directory. The fixture build scripts `cd` into it,
   so its tracked README and `.gitignore` must stay.
 
-Perception tests have three owners, and each tests different code:
+Perception tests have four owners, and each tests different code:
 
 | Directory | Owns | Run by |
 | --- | --- | --- |
@@ -637,5 +637,6 @@ Perception tests have three owners, and each tests different code:
 | `libs/cua-driver/rust/crates/cua-perception/scripts/tests/` | Model artifact tooling and quality measurement scripts | `ci-cua-perception-release.yml` |
 | `libs/cua-driver/tests/perception-demo/` | Visual demo evidence sanitizing, caching, and envelopes | `ci-test-scripts.yml` |
 | `.github/scripts/tests/test_cua_perception_*.py`, `test_perception_release.py` | Perception release, review-trigger, and review-pipeline workflows and `.github/scripts` helpers | `ci-test-scripts.yml`, `ci-cua-perception-release.yml` |
+| `libs/cua-driver/rust/crates/cua-driver-e2e/tests/perception_capture_loop_test.rs` | Driver's desktop capture, parse, capture-bound click, and reobserve loop with a deterministic developer-only worker | Capture lane of the canonical macOS, Windows, and Linux X11 desktop E2E |
 
 Add a perception test to the directory that owns the code it exercises.

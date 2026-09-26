@@ -1,0 +1,13 @@
+[package]
+name = "cua-perception-worker-restrictions"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }

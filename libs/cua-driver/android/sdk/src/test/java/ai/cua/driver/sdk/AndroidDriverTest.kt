@@ -109,7 +109,29 @@ class AndroidDriverTest {
         failure<IllegalArgumentException> { sdk.swipe("session", "snapshot", 0, 0, 1, 1, 1001, "req") }
         failure<IllegalArgumentException> { sdk.inspectSession("", "req") }
         failure<IllegalArgumentException> { sdk.capabilities("x".repeat(129)) }
+        for (activity in listOf("Main", ".Main", "com.example..Main", "com.example.1Main", "x.".repeat(128) + "y")) {
+            failure<IllegalArgumentException> { sdk.launchApp("session", "com.example.app", activity, "req") }
+        }
         assertEquals(0, calls)
+    }
+
+    @Test fun explicitActivityLaunchSendsAndReadsBackTheComponent() = runBlocking {
+        val detail = "com.example.app.DetailActivity"
+        fun target(activity: Any) = JSONObject().put("target_id", "target").put("task_id", 4).put("display_id", 2)
+            .put("package", "com.example.app").put("activity", activity)
+        val sent = mutableListOf<JSONObject>()
+        fun sdk(data: JSONObject) = AndroidDriver(DriverTransport { op, _, p, id ->
+            assertEquals("app.launch", op); sent += p; envelope(id, data).put("action", action())
+        })
+        assertEquals(detail, sdk(target(detail)).launchApp("session", "com.example.app", detail, "req").data.activity)
+        assertEquals(detail, sent.last().getString("activity"))
+        // Package-only launch stays unchanged on the wire and reports whatever started the owned task.
+        assertEquals(detail, sdk(target(detail)).launchApp("session", "com.example.app", requestId = "req").data.activity)
+        assertFalse(sent.last().has("activity"))
+        for (wrong in listOf<Any>("com.example.app.MainActivity", JSONObject.NULL)) {
+            failure<DriverUncertainException> { sdk(target(wrong)).launchApp("session", "com.example.app", detail, "req") }
+        }
+        Unit
     }
 
     @Test fun frameAndPreviewHaveDistinctSnapshotSemantics() = runBlocking {

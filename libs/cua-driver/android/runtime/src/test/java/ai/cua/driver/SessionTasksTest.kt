@@ -49,6 +49,27 @@ class SessionTasksTest {
         }
     }
 
+    @Test fun selectedActivityBindsToTheOwnedTaskAndRefusesAConflictingSelection() {
+        val tasks = SessionTasks(setOf(first, second), 7)
+        val detail = "$first.DetailActivity"
+        val one = TaskPlacement(1, 7, first, first, detail)
+        assertNull(tasks.prepare(first, emptyList(), detail))
+        tasks.admit(first, emptySet(), one)
+        assertEquals(detail, tasks.activity(first))
+        assertEquals(1, tasks.prepare(first, listOf(one), detail))
+        // Package-only launch keeps switching to the owned task, whatever Activity started it.
+        assertEquals(1, tasks.prepare(first, listOf(one)))
+        refuses("launch_target_conflict") { tasks.prepare(first, listOf(one), "$first.MainActivity") }
+        assertEquals(detail, tasks.activity(first))
+        // Placement faults still win over the selection check.
+        refuses("target_placement_changed") { tasks.prepare(first, listOf(TaskPlacement(1, 0, first, first, detail)), detail) }
+        // A package-only first launch binds its default Activity; an explicit different one then conflicts.
+        val two = TaskPlacement(2, 7, second, second, "$second.MainActivity")
+        tasks.admit(second, setOf(1), two)
+        assertEquals(2, tasks.prepare(second, listOf(one, two), "$second.MainActivity"))
+        refuses("launch_target_conflict") { tasks.prepare(second, listOf(one, two), "$second.DetailActivity") }
+    }
+
     @Test fun unrelatedTaskOnSessionDisplayBlocksLaunch() {
         val tasks = SessionTasks(setOf(first, second), 7)
         refuses("display_has_unowned_task") { tasks.prepare(first, listOf(placement(9, second))) }

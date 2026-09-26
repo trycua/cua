@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 
 pub const CONTRACT_VERSION: &str = "cua.android.v0";
 const PACKAGE_PATTERN: &str = "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$";
+const ACTIVITY_PATTERN: &str = "^[A-Za-z_][A-Za-z0-9_$]*(\\.[A-Za-z_][A-Za-z0-9_$]*)+$";
 
 #[derive(Debug, Deserialize, JsonSchema)]
 enum ContractVersion {
@@ -38,6 +39,12 @@ fn id_schema(_: &mut schemars::SchemaGenerator) -> Schema {
 
 fn label_schema(_: &mut schemars::SchemaGenerator) -> Schema {
     json!({"type":"string", "maxLength":128})
+        .try_into()
+        .unwrap()
+}
+
+fn activity_schema(_: &mut schemars::SchemaGenerator) -> Schema {
+    json!({"type":"string", "maxLength":256, "pattern":ACTIVITY_PATTERN})
         .try_into()
         .unwrap()
 }
@@ -87,6 +94,10 @@ pub struct CreateSessionParams {
 pub struct LaunchAppParams {
     #[schemars(regex(pattern = "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+$"))]
     pub package: String,
+    /// Fully qualified exported Activity inside `package`; absent launches the default launcher Activity.
+    #[serde(default)]
+    #[schemars(schema_with = "activity_schema")]
+    pub activity: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -157,6 +168,21 @@ fn package(value: &str) -> Result<(), String> {
     )
 }
 
+/// A fully qualified Java class name; the package always comes from the separate `package` field.
+fn activity(value: &str) -> Result<(), String> {
+    let valid_segment = |s: &str| {
+        s.as_bytes()
+            .first()
+            .is_some_and(|b| b.is_ascii_alphabetic() || *b == b'_')
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'$')
+    };
+    check(
+        value.len() <= 256 && value.contains('.') && value.split('.').all(valid_segment),
+        "invalid Android activity class name",
+    )
+}
+
 fn coordinates(values: &[f64]) -> Result<(), String> {
     check(
         values.iter().all(|v| v.is_finite() && *v >= 0.0),
@@ -219,7 +245,13 @@ pub fn validate_request(value: &Value) -> Result<(), String> {
                 )?;
             }
         }
-        "app.launch" => package(&params::<LaunchAppParams>(&request.params)?.package)?,
+        "app.launch" => {
+            let p: LaunchAppParams = params(&request.params)?;
+            package(&p.package)?;
+            if request.params.get("activity").is_some() {
+                activity(p.activity.as_deref().ok_or("activity must be a string")?)?;
+            }
+        }
         "snapshot" | "preview" => id(&params::<SnapshotParams>(&request.params)?.target_id)?,
         "tap" => {
             let p: TapParams = params(&request.params)?;
@@ -359,6 +391,11 @@ mod tests {
             (1080, 1920, 320)
         );
         validate_request(&request("app.launch", json!({"package":"ai.example"}))).unwrap();
+        validate_request(&request(
+            "app.launch",
+            json!({"package":"ai.example","activity":"ai.example.DetailActivity"}),
+        ))
+        .unwrap();
         for op in ["snapshot", "preview"] {
             validate_request(&request(op, json!({"target_id":"t"}))).unwrap();
         }
@@ -456,6 +493,28 @@ mod tests {
         }
         for name in ["ai.example", "A_1.2._"] {
             package(name).unwrap();
+        }
+        let too_long = format!("ai.{}", "x".repeat(254));
+        for value in [
+            Value::Null,
+            json!(1),
+            json!("Main"),
+            json!(".Main"),
+            json!("ai..Main"),
+            json!("ai.Main."),
+            json!("ai.1Main"),
+            json!("ai.Ma-in"),
+            json!("ai/.Main"),
+            json!(too_long),
+        ] {
+            let p = json!({"package":"ai.example","activity":value});
+            assert!(
+                validate_request(&request("app.launch", p.clone())).is_err(),
+                "{p}"
+            );
+        }
+        for name in ["ai.example.Main", "_a.B$Inner", "a.b.c.D_2"] {
+            activity(name).unwrap();
         }
     }
 

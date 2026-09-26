@@ -2264,8 +2264,9 @@ mod tests {
                 .expect(
                     "an elevated Driver selects a protected browser for its standard-user token",
                 );
+            let selected_path = selected.strip_prefix(r"\\?\").unwrap_or(&selected);
             assert!(
-                candidates.iter().any(|(candidate, _, _, _)| selected
+                candidates.iter().any(|(candidate, _, _, _)| selected_path
                     .eq_ignore_ascii_case(&candidate.to_string_lossy())),
                 "selected executable must be a trusted candidate: {selected}"
             );

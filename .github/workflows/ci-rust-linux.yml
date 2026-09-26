@@ -161,6 +161,13 @@ jobs:
             cargo test -p platform-linux \
             x11_overlay_owner_stays_click_through_across_cursor_lifecycle_and_randr \
             --locked -- --ignored --nocapture
+      - name: Run X11 desktop capture overlay-exclusion regression
+        working-directory: libs/cua-driver/rust
+        run: |
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            cargo test -p platform-linux \
+            x11_desktop_capture_hides_the_resting_overlay_and_restores_it \
+            --locked -- --ignored --nocapture
       - name: Run X11 clipboard round-trip regression
         working-directory: libs/cua-driver/rust
         run: |

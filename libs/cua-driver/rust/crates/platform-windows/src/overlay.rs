@@ -596,7 +596,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     set_timer_resolution_raised(true);
 
     // Store hwnd and rx globally for the wnd_proc callback.
-    OVERLAY_HWND.store(hwnd.0 as isize, std::sync::atomic::Ordering::Relaxed);
+    OVERLAY_HWND.store(hwnd.0 as isize, std::sync::atomic::Ordering::Release);
     *CMD_RX_WIN.lock().unwrap() = Some(rx);
     LAST_ZTICK.store(0, std::sync::atomic::Ordering::Relaxed);
     let _ = Z_ORDER.set(WinZOrderEnforcer {
@@ -1395,6 +1395,93 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
             let _ = target;
         }
     }
+}
+
+// ── Capture exclusion (Windows adapter of cursor_overlay::capture_exclusion) ─
+
+/// Name reported in `agent_overlay_capture.method` for the Windows mechanism.
+pub const CAPTURE_EXCLUSION_METHOD: &str = "win32_display_affinity_exclude_from_capture";
+
+/// Keeps the overlay out of the Driver's own desktop BitBlt.
+///
+/// `WDA_EXCLUDEFROMCAPTURE` removes the window from every capture path DWM
+/// serves — GDI `BitBlt` of the screen DC included — while it stays on the
+/// monitor. It is applied only for the duration of one Driver desktop capture:
+/// a permanent affinity would also hide the cursor from screen recorders and
+/// from the Driver's own recordings, which must keep showing it.
+///
+/// The affinity is Windows 10 2004+ only. Older builds reject it; the capture
+/// then runs anyway and reports `not_excluded` with the system error.
+pub struct CaptureExcluder;
+
+impl cursor_overlay::capture_exclusion::OverlayCaptureExcluder for CaptureExcluder {
+    type Hidden = isize;
+
+    fn exclude(&self) -> cursor_overlay::capture_exclusion::ExclusionStart<isize> {
+        use cursor_overlay::capture_exclusion::ExclusionStart;
+        let hwnd = OVERLAY_HWND.load(std::sync::atomic::Ordering::Acquire);
+        if hwnd == 0 {
+            return ExclusionStart::NotPresent;
+        }
+        match set_capture_excluded(hwnd, true) {
+            Ok(()) => ExclusionStart::Excluded {
+                method: CAPTURE_EXCLUSION_METHOD,
+                hidden: hwnd,
+            },
+            Err(reason) => ExclusionStart::Unsupported { reason },
+        }
+    }
+
+    fn restore(&self, hwnd: isize) {
+        if let Err(error) = set_capture_excluded(hwnd, false) {
+            tracing::warn!("Win32 overlay: could not restore capture visibility: {error}");
+        }
+    }
+}
+
+/// Apply or clear `WDA_EXCLUDEFROMCAPTURE` and wait for DWM to compose a frame
+/// with the new affinity, so the very next screen read already honors it.
+/// `SetWindowDisplayAffinity` accepts any window of the calling process, not
+/// only windows of the calling thread.
+#[cfg(target_os = "windows")]
+fn set_capture_excluded(hwnd_isize: isize, excluded: bool) -> Result<(), String> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::DwmFlush;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
+    };
+    let hwnd = HWND(hwnd_isize as *mut _);
+    let affinity = if excluded {
+        WDA_EXCLUDEFROMCAPTURE
+    } else {
+        WDA_NONE
+    };
+    unsafe { SetWindowDisplayAffinity(hwnd, affinity) }.map_err(|error| {
+        format!(
+            "SetWindowDisplayAffinity({}) failed on the agent cursor overlay: {error}; \
+             excluding it from desktop captures requires Windows 10 version 2004 or later",
+            if excluded {
+                "WDA_EXCLUDEFROMCAPTURE"
+            } else {
+                "WDA_NONE"
+            }
+        )
+    })?;
+    if excluded {
+        // One flush can land on a composition pass that started before the
+        // affinity changed; the second is the first frame composed after it.
+        for _ in 0..2 {
+            if unsafe { DwmFlush() }.is_err() {
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_capture_excluded(_hwnd_isize: isize, _excluded: bool) -> Result<(), String> {
+    Err("window display affinity is only available on Windows".into())
 }
 
 // ── Headless unit tests for the Windows adapter ───────────────────────────

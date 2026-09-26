@@ -251,6 +251,7 @@ impl<S: RenderEntry, P> RenderMap<S, P> {
             OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }) => self.apply_command(key, cmd),
             OverlayMsg::Remove(key) => self.remove(key),
             OverlayMsg::Revive(key) => self.revive(key),
+            OverlayMsg::Wake => MsgOutcome::Ignored,
         }
     }
 
@@ -452,6 +453,18 @@ mod tests {
             }
         );
         assert_eq!(map.cursors.len(), 2);
+    }
+
+    #[test]
+    fn wake_changes_no_render_state() {
+        let mut map = map();
+        map.apply_msg(move_msg("sessA", 10.0, 10.0));
+        let cursors = map.cursors.len();
+        let last_active = map.last_active.clone();
+        assert_eq!(map.apply_msg(OverlayMsg::Wake), MsgOutcome::Ignored);
+        assert_eq!(map.cursors.len(), cursors);
+        assert_eq!(map.last_active, last_active);
+        assert!(map.ended.is_empty());
     }
 
     #[test]

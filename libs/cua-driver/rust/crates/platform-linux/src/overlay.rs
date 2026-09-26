@@ -120,6 +120,47 @@ fn should_start_x11_overlay(wayland_display_present: bool) -> bool {
     !wayland_display_present
 }
 
+/// Set while the X11 owner thread is running its render loop over a mapped
+/// overlay window; only then can a desktop capture ask it to hide.
+static X11_OVERLAY_LIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether an X11 overlay window exists that a desktop capture must hide.
+pub(crate) fn x11_overlay_live() -> bool {
+    X11_OVERLAY_LIVE.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// Wake the X11 owner thread so it services a capture hold now instead of on
+/// its next maintenance tick.
+pub(crate) fn wake_x11_overlay() {
+    let _ = try_send_x11_message(CMD_TX.get(), OverlayMsg::Wake);
+}
+
+/// The explicit limitation for Driver desktop captures on a Wayland session
+/// whose agent cursor is drawn by the compositor (layer-shell surface or
+/// GNOME Shell helper). `None` when no Wayland overlay is active.
+pub(crate) fn wayland_capture_limitation() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        if !crate::wayland::is_wayland() {
+            return None;
+        }
+        let backend = match WAYLAND_OVERLAY_BACKEND.get() {
+            Some(WaylandOverlayBackend::LayerShell) => "layer-shell surface",
+            Some(WaylandOverlayBackend::SemanticShellHelper)
+            | Some(WaylandOverlayBackend::LegacyShellHelper) => "GNOME Shell helper",
+            Some(WaylandOverlayBackend::None) | None => return None,
+        };
+        Some(format!(
+            "on Wayland the agent cursor is drawn by the compositor ({backend}) into the same \
+             output the desktop capture reads, and the Driver cannot leave it out"
+        ))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum WaylandOverlayBackend {
     SemanticShellHelper,
@@ -337,7 +378,7 @@ fn dispatch_wayland_overlay_message(msg: &OverlayMsg) -> WaylandOverlayBackend {
                     dispatch_shell_helper_command(&command.key, &command.cmd, semantic);
                 }
                 OverlayMsg::Remove(_) => crate::wayland::shell_helper::hide_cursor(),
-                OverlayMsg::Revive(_) => {}
+                OverlayMsg::Revive(_) | OverlayMsg::Wake => {}
             }
         }
         WaylandOverlayBackend::LayerShell if !crate::wayland::overlay::forward(msg) => {
@@ -1188,6 +1229,13 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
         win,
         root,
     };
+    // Whether the last paint left a non-empty bounding shape on screen, so a
+    // desktop capture knows there is something to hide and wait for.
+    let mut overlay_shaped = false;
+    // A Driver desktop capture is reading the root: paint nothing.
+    let mut capture_held = false;
+    let mut repaint_after_capture = false;
+    let _live = X11OverlayLiveGuard::start();
 
     loop {
         // Idle fast path: no Pixmap allocation, RGBA→BGRA copy, XShape update,
@@ -1350,17 +1398,55 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
             z_enforcer.reassert(pinned_wid);
         }
 
+        // A Driver desktop capture wants the overlay out of the root image:
+        // empty the shape, confirm the server applied it, and report what the
+        // capture needs to find pixels a slow window has not repainted yet.
+        if let Some(generation) = crate::overlay_capture::CAPTURE_HOLD.unanswered_request() {
+            use crate::overlay_capture::{HiddenOverlay, HoldAnswer};
+            let answer = if overlay_shaped {
+                match blank_x11_overlay_shape(&conn, win, true) {
+                    Ok(()) => {
+                        overlay_shaped = false;
+                        HoldAnswer::Hidden(HiddenOverlay {
+                            was_shown: true,
+                            composited: compositor_present,
+                            residual: backdrop.residual_patches(Instant::now()),
+                        })
+                    }
+                    Err(e) => HoldAnswer::Failed(format!("{e:#}")),
+                }
+            } else {
+                HoldAnswer::Hidden(HiddenOverlay {
+                    was_shown: false,
+                    composited: compositor_present,
+                    residual: Vec::new(),
+                })
+            };
+            capture_held = matches!(answer, HoldAnswer::Hidden(_));
+            crate::overlay_capture::CAPTURE_HOLD.answer(generation, answer);
+        }
+        if capture_held && !crate::overlay_capture::CAPTURE_HOLD.is_requested() {
+            capture_held = false;
+            repaint_after_capture = true;
+        }
+
         // Render after a command, during an active animation/fade, and once
         // more as the final active state settles. This leaves the X11 window in
         // its completed/cleared state before the next blocking receive.
         let mut paint_deferred = false;
-        if had_msg
+        if capture_held {
+            // Held for a capture: the frame is owed, so keep ticking and let
+            // arrivals wait until it is actually on screen.
+            paint_deferred = true;
+        } else if had_msg
             || screen_changed
             || compositor_changed
             || hover_changed
             || frame_tick_needed
             || next_frame_tick_needed
+            || repaint_after_capture
         {
+            repaint_after_capture = false;
             let tiles = {
                 let guard = RENDER.lock().unwrap();
                 guard.as_ref().map(render_x11_tiles)
@@ -1379,7 +1465,12 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
                     screen_changed,
                     &mut backdrop,
                 ) {
-                    Ok(outcome) => paint_deferred = outcome == X11PaintOutcome::Deferred,
+                    Ok(outcome) => {
+                        paint_deferred = outcome == X11PaintOutcome::Deferred;
+                        if outcome == X11PaintOutcome::Painted {
+                            overlay_shaped = !tiles.is_empty();
+                        }
+                    }
                     Err(e) => {
                         // A broken X11 connection cannot recover inside this
                         // owner thread. Exit instead of spinning at frame cadence
@@ -1422,6 +1513,27 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
 
     conn.free_gc(gc_id).ok();
     conn.flush().ok();
+}
+
+/// Publishes [`X11_OVERLAY_LIVE`] for the render loop's lifetime, however the
+/// loop ends, and releases a capture waiting on a hold that will never be
+/// answered.
+#[cfg(target_os = "linux")]
+struct X11OverlayLiveGuard;
+
+#[cfg(target_os = "linux")]
+impl X11OverlayLiveGuard {
+    fn start() -> Self {
+        X11_OVERLAY_LIVE.store(true, std::sync::atomic::Ordering::Release);
+        Self
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for X11OverlayLiveGuard {
+    fn drop(&mut self) {
+        X11_OVERLAY_LIVE.store(false, std::sync::atomic::Ordering::Release);
+    }
 }
 
 // ── Z-order enforcer (Linux impl of cursor_overlay::ZOrderEnforcer) ──────
@@ -1874,6 +1986,24 @@ impl X11BackdropCache {
             }
             self.frames.pop_back();
         }
+    }
+
+    /// Every retained painted rect, newest first, for a desktop capture to
+    /// find pixels a window has not repainted since the overlay hid.
+    fn residual_patches(&self, now: Instant) -> Vec<crate::overlay_capture::ResidualPatch> {
+        self.frames
+            .iter()
+            .filter(|frame| !frame.expired(now))
+            .flat_map(|frame| frame.saved.iter())
+            .map(|saved| crate::overlay_capture::ResidualPatch {
+                x: i32::from(saved.bounds.x),
+                y: i32::from(saved.bounds.y),
+                width: usize::from(saved.bounds.width),
+                height: usize::from(saved.bounds.height),
+                under: saved.under.clone(),
+                uploaded: saved.uploaded.clone(),
+            })
+            .collect()
     }
 
     fn record_frame(
@@ -2962,6 +3092,205 @@ mod tests {
         );
         wait_for_bounding_shape(&conn, overlay, false, "RandR repair")?;
         assert_click_through(&conn, root, overlay, target, "RandR repair")?;
+        Ok(())
+    }
+
+    /// D-WL5: a desktop capture taken while the cursor and its session pill
+    /// rest over a control must not contain them, while the screen (and any
+    /// external capture) keeps showing them before and after.
+    #[test]
+    #[ignore = "requires a live X11 server (run under xvfb-run)"]
+    fn x11_desktop_capture_hides_the_resting_overlay_and_restores_it() -> anyhow::Result<()> {
+        use cursor_overlay::capture_exclusion::{
+            capture_excluding_overlays, AgentOverlayCaptureStatus,
+        };
+        use x11rb::connection::Connection;
+        use x11rb::protocol::shape::{ConnectionExt as ShapeConnectionExt, SK};
+        use x11rb::protocol::xproto::{
+            AtomEnum, ConnectionExt as XprotoConnectionExt, CreateWindowAux, ImageFormat, Window,
+            WindowClass,
+        };
+
+        const BACKGROUND: u32 = 0x00c8_c8c8;
+        const PROBE: (i16, i16, u16, u16) = (120, 120, 240, 120);
+
+        fn find_named_window(
+            conn: &impl Connection,
+            root: Window,
+            expected_name: &[u8],
+        ) -> anyhow::Result<Window> {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                for window in conn.query_tree(root)?.reply()?.children {
+                    let name = conn
+                        .get_property(
+                            false,
+                            window,
+                            AtomEnum::WM_NAME,
+                            AtomEnum::STRING,
+                            0,
+                            u32::MAX,
+                        )?
+                        .reply()?;
+                    if name.value == expected_name {
+                        return Ok(window);
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            anyhow::bail!("timed out waiting for the overlay window")
+        }
+
+        fn wait_for_shape(
+            conn: &impl Connection,
+            overlay: Window,
+            phase: &str,
+        ) -> anyhow::Result<()> {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                if !conn
+                    .shape_get_rectangles(overlay, SK::BOUNDING)?
+                    .reply()?
+                    .rectangles
+                    .is_empty()
+                {
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            anyhow::bail!("overlay bounding shape stayed empty during {phase}")
+        }
+
+        /// Pixels in the probe rect of a root-sized BGRX/RGBA buffer that are
+        /// not the target window's background.
+        fn foreign_pixels(pixel: impl Fn(usize, usize) -> [u8; 3]) -> usize {
+            let (x0, y0, w, h) = PROBE;
+            let mut count = 0;
+            for y in y0 as usize..y0 as usize + h as usize {
+                for x in x0 as usize..x0 as usize + w as usize {
+                    if pixel(x, y) != [0xc8, 0xc8, 0xc8] {
+                        count += 1;
+                    }
+                }
+            }
+            count
+        }
+
+        fn live_foreign_pixels(conn: &impl Connection, root: Window) -> anyhow::Result<usize> {
+            let (x0, y0, w, h) = PROBE;
+            let image = conn
+                .get_image(ImageFormat::Z_PIXMAP, root, x0, y0, w, h, !0u32)?
+                .reply()?;
+            let stride = usize::from(w) * 4;
+            Ok(foreign_pixels(|x, y| {
+                let offset = (y - y0 as usize) * stride + (x - x0 as usize) * 4;
+                let bgrx = &image.data[offset..offset + 3];
+                [bgrx[2], bgrx[1], bgrx[0]]
+            }))
+        }
+
+        let (conn, screen_num) = x11rb::connect(None)?;
+        let screen = &conn.setup().roots[screen_num];
+        let root = screen.root;
+        let target = conn.generate_id()?;
+        conn.create_window(
+            screen.root_depth,
+            target,
+            root,
+            0,
+            0,
+            480,
+            360,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            screen.root_visual,
+            &CreateWindowAux::new()
+                .background_pixel(BACKGROUND)
+                .override_redirect(1u32),
+        )?
+        .check()?;
+        conn.map_window(target)?.check()?;
+        conn.flush()?;
+        anyhow::ensure!(
+            live_foreign_pixels(&conn, root)? == 0,
+            "the probe rect is not a solid target background before the cursor shows"
+        );
+
+        let cursor_id = "d-wl5-capture-exclusion-probe";
+        init(CursorConfig {
+            cursor_id: cursor_id.to_owned(),
+            ..CursorConfig::default()
+        });
+        run_on_thread();
+        let overlay = find_named_window(
+            &conn,
+            root,
+            format!("Cua.AgentCursorOverlay.{cursor_id}").as_bytes(),
+        )?;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !crate::overlay::x11_overlay_live() {
+            anyhow::ensure!(Instant::now() < deadline, "overlay loop never went live");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        send_command(OverlayCommand::SetEnabled(true));
+        send_command(OverlayCommand::SetSessionLabel(
+            "ga-r5-window-772012bf".into(),
+        ));
+        send_command(OverlayCommand::SnapTo {
+            x: 200.0,
+            y: 160.0,
+            heading_radians: None,
+        });
+        wait_for_shape(&conn, overlay, "cursor show")?;
+        // Let the arrival and the pill settle into their resting frame.
+        std::thread::sleep(Duration::from_millis(400));
+        conn.configure_window(
+            overlay,
+            &x11rb::protocol::xproto::ConfigureWindowAux::new()
+                .stack_mode(x11rb::protocol::xproto::StackMode::ABOVE),
+        )?;
+        conn.flush()?;
+        let visible_before = live_foreign_pixels(&conn, root)?;
+        anyhow::ensure!(
+            visible_before >= 50,
+            "the resting cursor and pill are not visible on screen ({visible_before} pixels)"
+        );
+
+        let (png, report) =
+            capture_excluding_overlays(&crate::overlay_capture::OverlayExcluder, |hidden| {
+                let png = crate::capture::screenshot_display_bytes()?;
+                Ok::<_, anyhow::Error>(crate::overlay_capture::verify_hidden_capture(png, hidden))
+            })?;
+        anyhow::ensure!(
+            report.status == AgentOverlayCaptureStatus::Excluded,
+            "desktop capture did not exclude the overlay: {report:?}"
+        );
+        let image = image::load_from_memory(&png)?.to_rgba8();
+        let in_capture = foreign_pixels(|x, y| {
+            let [r, g, b, _] = image.get_pixel(x as u32, y as u32).0;
+            [r, g, b]
+        });
+        eprintln!("visible_before={visible_before} in_capture={in_capture} report={report:?}");
+        anyhow::ensure!(
+            in_capture == 0,
+            "desktop capture still contains {in_capture} overlay pixels over the target"
+        );
+
+        wait_for_shape(&conn, overlay, "restore after capture")?;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let visible_after = live_foreign_pixels(&conn, root)?;
+            if visible_after >= 50 {
+                eprintln!("visible_after={visible_after}");
+                break;
+            }
+            anyhow::ensure!(
+                Instant::now() < deadline,
+                "the cursor did not come back after the capture ({visible_after} pixels)"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
         Ok(())
     }
 

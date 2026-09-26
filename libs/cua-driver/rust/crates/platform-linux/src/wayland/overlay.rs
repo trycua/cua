@@ -163,6 +163,7 @@ fn map_overlay_msg(msg: &OverlayMsg) -> Option<WlOverlayCmd> {
             cmd: kc.cmd.clone(),
         }),
         OverlayMsg::Revive(key) => Some(WlOverlayCmd::Revive(key.clone())),
+        OverlayMsg::Wake => None,
     }
 }
 

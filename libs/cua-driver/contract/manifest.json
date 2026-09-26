@@ -172,6 +172,29 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {
@@ -608,6 +631,29 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {
@@ -2085,6 +2131,29 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {
@@ -2289,6 +2358,29 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {
@@ -2925,6 +3017,29 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {
@@ -3678,6 +3793,29 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {
@@ -3948,6 +4086,29 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {
@@ -4465,6 +4626,29 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {
@@ -4851,6 +5035,29 @@
       "success_output_schema": {
         "additionalProperties": false,
         "properties": {
+          "committed": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "const": "committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_committed",
+                    "type": "string"
+                  },
+                  {
+                    "const": "unproven",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "delivery": {
             "additionalProperties": false,
             "properties": {

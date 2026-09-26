@@ -28,7 +28,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(20);
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Connection-scoped command policy. Grant-owned personal-profile sockets
 /// always use the reviewed set below; callers cannot opt out or relax it.
@@ -256,6 +256,12 @@ impl Drop for CdpConnection {
 impl CdpConnection {
     pub async fn connect(ws_url: &str) -> anyhow::Result<Self> {
         validate_loopback_ws_url(ws_url).map_err(|e| anyhow::anyhow!(e))?;
+        // Chrome approval-mode endpoints (the chrome://settings "Remote
+        // debugging" toggle) show a native per-connection consent dialog while
+        // the upgrade handshake is pending; the handshake only completes once
+        // the user allows it. No Origin header must be sent: the approval
+        // server rejects any Origin with 403. CONNECT_TIMEOUT is intentionally
+        // generous so the user has time to accept the dialog.
         let (ws, _resp) =
             tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(ws_url))
                 .await

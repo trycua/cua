@@ -1059,6 +1059,32 @@ mod tests {
     }
 
     #[test]
+    fn pi_marker_creates_shared_link_and_codex_reuses_it() {
+        let home = tempdir().unwrap();
+        let parent = home.path().join(".agents/skills");
+        let pi_marker = home.path().join(".pi/agent");
+        let local_skill = home.path().join(".cua-driver/skills/cua-driver");
+
+        std::fs::create_dir_all(&pi_marker).unwrap();
+        std::fs::create_dir_all(&local_skill).unwrap();
+
+        assert_eq!(
+            link_agent_paths("Pi", &parent, Some(&pi_marker), &local_skill).unwrap(),
+            LinkStatus::Created
+        );
+        assert!(parent.join("cua-driver").exists());
+
+        // Codex and Pi intentionally share ~/.agents/skills. Once Pi has
+        // created the managed link, the Codex path must converge on that same
+        // link rather than creating or replacing another skill entry.
+        assert_eq!(
+            link_agent_paths("Codex", &parent, None, &local_skill).unwrap(),
+            LinkStatus::Existing
+        );
+        assert!(parent.join("cua-driver").exists());
+    }
+
+    #[test]
     fn prime_agent_target_matches_its_native_global_skill_directory() {
         let target = AGENTS
             .iter()

@@ -302,6 +302,22 @@ fn positional_args(args: &[String]) -> Vec<&str> {
     positionals
 }
 
+/// True when argv runs a long-lived transport rather than a finite command:
+/// `mcp`, `serve`, or a bare invocation (which runs MCP). `--help` and
+/// `--version` always print and exit, so they are finite.
+pub fn is_long_lived_transport_command(args: &[String]) -> bool {
+    if args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "--help" | "-h" | "--version" | "-V"))
+    {
+        return false;
+    }
+    matches!(
+        positional_args(args).first().copied(),
+        None | Some("mcp" | "serve")
+    )
+}
+
 fn finite_command_name_from_args(args: &[String]) -> Option<&'static str> {
     if args
         .iter()
@@ -4864,6 +4880,38 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn only_transports_skip_the_finite_broken_pipe_contract() {
+        for transport in [
+            &[][..],
+            &["mcp"],
+            &["serve"],
+            &["serve", "--socket", "/tmp/s"],
+        ] {
+            assert!(
+                is_long_lived_transport_command(&args(transport)),
+                "{transport:?}"
+            );
+        }
+        for finite in [
+            &["status"][..],
+            &["list-tools"],
+            &["describe", "click"],
+            &["dump-docs", "--type", "cli"],
+            &["extension", "inspect", "cua-perception"],
+            &["telemetry", "status"],
+            &["click", "{}"],
+            &["--help"],
+            &["mcp", "--help"],
+            &["--version"],
+        ] {
+            assert!(
+                !is_long_lived_transport_command(&args(finite)),
+                "{finite:?}"
+            );
+        }
     }
 
     #[test]

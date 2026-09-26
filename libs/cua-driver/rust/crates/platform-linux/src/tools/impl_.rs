@@ -1151,11 +1151,12 @@ impl Tool for GetWindowStateTool {
         let explicit_max_image_dimension = max_image_dimension.is_some();
         let max_dim = {
             let cfg = self.state.config.read().unwrap();
-            crate::capture_action_frame::resolve_max_image_dimension(
-                cfg.max_image_dimension,
-                max_dimension,
+            cua_driver_core::image_utils::ImageDimensionLimits {
+                configured: cfg.max_image_dimension,
+                legacy_max_dimension: max_dimension,
                 max_image_dimension,
-            )
+            }
+            .resolve()
         };
         // `capture_mode` is DEPRECATED and ignored — get_window_state always
         // returns BOTH the AT-SPI tree and a screenshot now, so the agent grounds
@@ -1755,11 +1756,6 @@ mod get_window_state_actions_tests;
 pub struct LaunchAppTool;
 static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
-fn contains_remote_debugging_flag(value: &str) -> bool {
-    let lower = value.to_ascii_lowercase();
-    lower.contains("--remote-debugging-port") || lower.contains("--remote-debugging-pipe")
-}
-
 /// Spawn a launcher command line (an executable plus arguments, e.g. an XDG
 /// `Exec=` value with field codes stripped) in the background and return the
 /// child pid.
@@ -1921,10 +1917,10 @@ impl Tool for LaunchAppTool {
             .into_iter()
             .chain(name_opt.as_deref())
             .chain(additional_arguments.iter().map(String::as_str))
-            .any(contains_remote_debugging_flag)
+            .any(cua_driver_core::launch_guard::contains_remote_debugging_flag)
         {
             return ToolResult::error(
-                "Chromium remote-debugging flags moved to browser_prepare so DevTools is never enabled on an unproven user profile",
+                cua_driver_core::launch_guard::REMOTE_DEBUGGING_LAUNCH_REFUSAL,
             );
         }
 
@@ -2785,12 +2781,9 @@ fn type_text_ax_result(pid: u32, text_len: usize, route: &str) -> ToolResult {
 /// own argv. Reads `/proc`; cheap and only invoked on the rare AT-SPI confirm.
 fn is_chromium_embedder(pid: u32) -> bool {
     fn argv_is_chromium_helper(p: u32) -> bool {
-        match fs::read(format!("/proc/{p}/cmdline")) {
-            Ok(raw) => String::from_utf8_lossy(&raw).split('\0').any(|arg| {
-                arg == "--type=renderer" || arg == "--type=zygote" || arg == "--type=gpu-process"
-            }),
-            Err(_) => false,
-        }
+        fs::read(format!("/proc/{p}/cmdline"))
+            .map(|raw| crate::at_point_policy::cmdline_is_chromium_helper(&raw))
+            .unwrap_or(false)
     }
     // Single-process / the embedder itself carrying a Chromium switch.
     if argv_is_chromium_helper(pid) {
@@ -12052,7 +12045,20 @@ impl Tool for GetDesktopStateTool {
             // Capture the full display at native size first. When the
             // compositor consumes logical input coordinates, normalize the
             // image below so screenshot pixels still land exactly.
-            let native_png = crate::capture::screenshot_display_bytes()?;
+            //
+            // The agent reads this image, so the Driver's own cursor and
+            // session pill are hidden around the grab (or the limitation is
+            // reported) instead of being baked over the controls it reads.
+            let (native_png, overlay_capture) =
+                cursor_overlay::capture_exclusion::capture_excluding_overlays(
+                    &crate::overlay_capture::OverlayExcluder,
+                    |hidden| {
+                        let png = crate::capture::screenshot_display_bytes()?;
+                        Ok::<_, anyhow::Error>(crate::overlay_capture::verify_hidden_capture(
+                            png, hidden,
+                        ))
+                    },
+                )?;
             let (native_w, native_h) = crate::capture::png_dimensions_pub(&native_png)?;
             // True screen size. On a pure-Wayland session (native backend
             // opted in, no X11 DISPLAY) the capture above came from the
@@ -12116,6 +12122,7 @@ impl Tool for GetDesktopStateTool {
                 written,
                 windows,
                 capture_id,
+                overlay_capture,
             ))
         })
         .await;
@@ -12131,6 +12138,7 @@ impl Tool for GetDesktopStateTool {
                 written,
                 windows,
                 capture_id,
+                overlay_capture,
             ))) => {
                 let frame_scale = if shot_w > 0 {
                     f64::from(screen_w) / f64::from(shot_w)
@@ -12150,6 +12158,7 @@ impl Tool for GetDesktopStateTool {
                     "screenshot_mime_type": "image/png",
                     "windows": windows.iter().map(window_record_json).collect::<Vec<_>>(),
                     "capture_id": capture_id,
+                    "agent_overlay_capture": overlay_capture,
                 });
                 if (frame_scale - 1.0).abs() > 0.001 {
                     // Capped: the uncapped capture is the action frame.
@@ -12160,7 +12169,7 @@ impl Tool for GetDesktopStateTool {
                     content.push(cua_driver_core::protocol::Content::image_png(b64));
                 }
                 let window_lines = desktop_window_lines(&windows, frame_scale);
-                let frame_note = if (frame_scale - 1.0).abs() > 0.001 {
+                let mut frame_note = if (frame_scale - 1.0).abs() > 0.001 {
                     format!(
                         "; x/y for scope:\"desktop\" actions are pixels of THIS screenshot \
                          (mapped ×{frame_scale:.2} back to the screen automatically)"
@@ -12168,6 +12177,10 @@ impl Tool for GetDesktopStateTool {
                 } else {
                     String::new()
                 };
+                cursor_overlay::capture_exclusion::append_summary_note(
+                    &mut frame_note,
+                    &overlay_capture,
+                );
                 if let Some(path) = written {
                     structured["screenshot_file_path"] = json!(path);
                     content.push(cua_driver_core::protocol::Content::text(format!(
@@ -14046,9 +14059,6 @@ pub fn build_registry_with_provider(
 
 #[cfg(test)]
 mod click_button_schema_tests;
-
-#[cfg(test)]
-mod browser_launch_guard_tests;
 
 #[cfg(test)]
 mod pid_window_target_tests;

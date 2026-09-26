@@ -219,27 +219,15 @@ def _guest_seed_assignment(name: str) -> str:
     return match.group("body")
 
 
-def test_tcc_guest_seed_grants_both_driver_permissions() -> None:
-    text = SEED_TCC_GUEST.read_text(encoding="utf-8")
-    sql_body = _guest_seed_assignment("SQL")
-    assert re.search(
-        r"\('kTCCServiceAccessibility','\$\{CLIENT_SQL\}',\$\{CLIENT_TYPE\},2,2,1,",
-        sql_body,
-    )
-    assert re.search(
-        r"\('kTCCServiceScreenCapture','\$\{CLIENT_SQL\}',\$\{CLIENT_TYPE\},2,2,1,",
-        sql_body,
-    )
-    assert "auth_value" in sql_body
-    assert "csreq" in sql_body
-    assert "allowed" not in sql_body
-    assert "auth_value=2" in text
-    assert "com.trycua.driver.local" in text
-
-
 def test_tcc_guest_seed_sql_executes_against_modern_tcc_schema(tmp_path: Path) -> None:
     sql_body = _guest_seed_assignment("SQL")
     verify_sql = _guest_seed_assignment("VERIFY_SQL")
+    # The seed targets the local developer build unless told otherwise.
+    assert re.search(
+        r'^EXPECTED_CLIENT="\$\{CUA_TCC_EXPECTED_CLIENT:-com\.trycua\.driver\.local\}"$',
+        SEED_TCC_GUEST.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
     client = "com.trycua.driver.local"
     client_type = "0"
     csreq_hex = "01020304"
@@ -282,8 +270,12 @@ def test_tcc_guest_seed_sql_executes_against_modern_tcc_schema(tmp_path: Path) -
              ORDER BY service
             """
         ).fetchall()
+        # Verification counts only allowed grants, not rows that merely exist.
+        conn.execute("UPDATE access SET auth_value=0 WHERE service='kTCCServiceScreenCapture'")
+        denied_count = conn.execute(verify_sql).fetchone()[0]
 
     assert row_count == 2
+    assert denied_count == 1
     assert rows == [
         (
             "kTCCServiceAccessibility",
@@ -314,14 +306,132 @@ def test_tcc_guest_seed_requires_certificate_backed_requirement_by_default() -> 
     assert "^Signature=adhoc$" in text
     assert 'certificate (leaf|root) = H"[[:xdigit:]]{40}"' in text
     assert "is not signed with a certificate-backed identity" in text
+    assert 'classify_designated_requirement "${REQUIREMENT}" "${SIGNING_IDENTIFIER}"' in text
 
 
-def test_tcc_host_seed_accepts_multiple_vms() -> None:
-    text = SEED_TCC.read_text(encoding="utf-8")
-    assert 'VMS+=("$1")' in text
-    assert 'for vm in "${VMS[@]}"; do' in text
-    assert "seed-tcc-guest.sh" in text
-    assert "CUA_TCC_READ_SUDO_PASSWORD=1" in text
+# The designated requirement codesign derives for the released, notarized
+# CuaDriver.app (Developer ID Application: Cua AI, Inc.).
+RELEASED_DEVELOPER_ID_DR = (
+    'identifier "com.trycua.driver" and anchor apple generic and '
+    "certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and "
+    "certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and "
+    "certificate leaf[subject.OU] = YCK386LBJ7"
+)
+LOCAL_LEAF_HASH_DR = (
+    'identifier "com.trycua.driver.local" and '
+    'certificate leaf = H"0123456789abcdef0123456789abcdef01234567"'
+)
+
+
+def _classify_requirement(requirement: str, identifier: str = "") -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            'script="$1" requirement="$2" identifier="$3"; set --; '
+            'source "$script"; classify_designated_requirement "$requirement" "$identifier"',
+            "classify-test",
+            str(SEED_TCC_GUEST),
+            requirement,
+            identifier,
+        ],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CUA_TCC_SEED_LIB_ONLY": "1"},
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("requirement", "identifier", "kind"),
+    [
+        pytest.param(RELEASED_DEVELOPER_ID_DR, "com.trycua.driver", "developer-id", id="released-developer-id"),
+        pytest.param(RELEASED_DEVELOPER_ID_DR, "", "developer-id", id="released-developer-id-no-identifier"),
+        pytest.param(
+            RELEASED_DEVELOPER_ID_DR.replace("= YCK386LBJ7", '= "YCK386LBJ7"'),
+            "com.trycua.driver",
+            "developer-id",
+            id="quoted-team-id",
+        ),
+        pytest.param(LOCAL_LEAF_HASH_DR, "com.trycua.driver.local", "leaf-hash", id="local-leaf-hash"),
+        pytest.param(
+            'identifier "com.trycua.driver.local" and anchor apple generic and '
+            'certificate root = H"89abcdef0123456789abcdef0123456789abcdef"',
+            "com.trycua.driver.local",
+            "leaf-hash",
+            id="root-hash",
+        ),
+    ],
+)
+def test_tcc_guest_seed_accepts_certificate_backed_requirements(
+    requirement: str, identifier: str, kind: str
+) -> None:
+    completed = _classify_requirement(requirement, identifier)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == kind
+
+
+@pytest.mark.parametrize(
+    ("requirement", "identifier"),
+    [
+        pytest.param('cdhash H"0123456789abcdef0123456789abcdef01234567"', "", id="adhoc-cdhash"),
+        pytest.param(
+            'identifier "com.trycua.driver.local" and cdhash H"0123456789abcdef0123456789abcdef01234567"',
+            "com.trycua.driver.local",
+            id="adhoc-identifier-cdhash",
+        ),
+        pytest.param("", "", id="empty"),
+        pytest.param(
+            RELEASED_DEVELOPER_ID_DR.replace("YCK386LBJ7", "YCK386LBJ"),
+            "com.trycua.driver",
+            id="short-team-id",
+        ),
+        pytest.param(
+            RELEASED_DEVELOPER_ID_DR.replace("YCK386LBJ7", "yck386lbj7"),
+            "com.trycua.driver",
+            id="lowercase-team-id",
+        ),
+        pytest.param(
+            RELEASED_DEVELOPER_ID_DR.replace("YCK386LBJ7", "YCK386LBJ7 or cdhash H\"00\""),
+            "com.trycua.driver",
+            id="trailing-disjunction",
+        ),
+        pytest.param(
+            RELEASED_DEVELOPER_ID_DR.replace("= YCK386LBJ7", '= "YCK386LBJ7'),
+            "com.trycua.driver",
+            id="unbalanced-quote",
+        ),
+        pytest.param(
+            RELEASED_DEVELOPER_ID_DR.replace("anchor apple generic and ", ""),
+            "com.trycua.driver",
+            id="missing-apple-anchor",
+        ),
+        pytest.param(
+            RELEASED_DEVELOPER_ID_DR.replace('identifier "com.trycua.driver" and ', ""),
+            "",
+            id="missing-identifier",
+        ),
+        pytest.param(RELEASED_DEVELOPER_ID_DR, "com.trycua.driver.local", id="identifier-mismatch"),
+    ],
+)
+def test_tcc_guest_seed_rejects_non_certificate_backed_requirements(
+    requirement: str, identifier: str
+) -> None:
+    completed = _classify_requirement(requirement, identifier)
+    assert completed.returncode == 1
+    assert completed.stdout.strip() == "rejected"
+
+
+def test_tcc_guest_seed_library_mode_fails_closed_when_executed() -> None:
+    completed = subprocess.run(
+        ["bash", str(SEED_TCC_GUEST)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CUA_TCC_SEED_LIB_ONLY": "1"},
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "valid only when this script is sourced" in completed.stderr
 
 
 @pytest.mark.parametrize(
@@ -339,6 +449,42 @@ def test_harness_guides_route_automated_tcc_through_guarded_helper(document: Pat
     assert "rows alone" in text or "helper exit alone" in text
 
 
+def test_tcc_host_seed_parses_lume_json_with_jq_not_python() -> None:
+    text = SEED_TCC.read_text(encoding="utf-8")
+    assert "python3 -c" not in text
+    assert "command -v python3" not in text
+    assert "command -v jq" in text
+    assert "jq -r --arg name" in text
+
+
+@requires_jq
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ('[{"status":"stopped","ipAddress":null}]', "expected running VM with an IP"),
+        ('[{"status":"running","ipAddress":"192.0.2.10","sshAvailable":false}]', "SSH is not available yet"),
+        ("[]", "lume get returned no VM record"),
+    ],
+)
+def test_tcc_host_seed_refuses_unready_vms(tmp_path: Path, payload: str, message: str) -> None:
+    fake_bin = tmp_path / "bin"
+    for tool in ("scp", "ssh"):
+        _write_executable(fake_bin / tool, "exit 99\n")
+    _write_executable(fake_bin / "lume", f"printf '%s\\n' '{payload}'\n")
+    completed = subprocess.run(
+        ["bash", str(SEED_TCC), "--timeout", "5", "worker-a"],
+        capture_output=True,
+        stdin=subprocess.DEVNULL,
+        text=True,
+        env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+        check=False,
+    )
+    assert completed.returncode != 0
+    assert f"worker-a: {message}" in completed.stderr
+    assert "installing guest TCC seeder" not in completed.stdout
+
+
+@requires_jq
 def test_tcc_host_seed_runs_the_guest_helper_once_per_vm(tmp_path: Path) -> None:
     fake_bin = tmp_path / "bin"
     fake_lume = fake_bin / "lume"
@@ -432,24 +578,19 @@ def test_target_dir_is_owned_by_source_sha_and_run(tmp_path: Path) -> None:
     assert other.stdout.strip() == str(tmp_path / "cargo-target" / SHA_B / "run-1")
 
 
-def test_target_dir_never_lands_in_the_workspace(tmp_path: Path) -> None:
+def test_default_target_dir_is_a_user_cache_outside_the_workspace(tmp_path: Path) -> None:
     completed = _run(
         RUN_ALL,
         f'resolve_cargo_target_dir "{SHA_A}" "run-1"',
-        env={"CUA_E2E_CARGO_TARGET_ROOT": str(tmp_path / "cargo-target")},
+        # An empty override takes the runner's default, like an unset one.
+        env={"CUA_E2E_CARGO_TARGET_ROOT": "", "HOME": str(tmp_path)},
     )
+    assert completed.returncode == 0, completed.stderr
     resolved = Path(completed.stdout.strip())
-    assert resolved.is_absolute()
+    assert resolved == (
+        tmp_path / "Library/Caches/cua-driver-e2e/cargo-target" / SHA_A / "run-1"
+    )
     assert REPO_ROOT not in resolved.parents
-
-
-def test_consecutive_same_sha_runs_get_distinct_namespaces(tmp_path: Path) -> None:
-    env = {"CUA_E2E_CARGO_TARGET_ROOT": str(tmp_path / "cargo-target")}
-    first = _run(RUN_ALL, f'resolve_cargo_target_dir "{SHA_A}" "run-1"', env=env)
-    second = _run(RUN_ALL, f'resolve_cargo_target_dir "{SHA_A}" "run-2"', env=env)
-    assert first.returncode == 0, first.stderr
-    assert second.returncode == 0, second.stderr
-    assert first.stdout != second.stdout
 
 
 def test_relative_target_root_is_refused() -> None:
@@ -1069,15 +1210,6 @@ wait "$child_pid"
         time.sleep(0.05)
     else:
         pytest.fail(f"timed-out child process {child_pid} is still alive")
-
-
-def test_bounded_command_requires_python_and_uses_process_group_kills() -> None:
-    text = RUN_ALL.read_text(encoding="utf-8")
-    function = text.split("run_bounded_command() {", 1)[1].split("\n}\n", 1)[0]
-    assert "command -v python3" in function
-    assert "subprocess.Popen(sys.argv[3:], start_new_session=True)" in function
-    assert function.count("os.killpg(process.pid") == 2
-    assert "osascript python3 security xcrun" in text
 
 
 def test_required_keychains_keep_terminal_prompt_fallback() -> None:

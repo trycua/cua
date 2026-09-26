@@ -8,16 +8,25 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import {
   buildCandidates,
   classify,
+  hasExecutableCandidate,
   parseVisualRegions,
+  SUBMIT_IDS,
   validateChoice,
+  VisualObservationError,
   type BrowserSnapshot,
+  type Candidate,
+  type VisualDelivery,
   type Outcome,
   type VisualObservation,
 } from './core.js';
+import { driverEnvironment } from './driver_env.js';
 import { chooseLive, chooseMockAdapter } from './jev_adapter.js';
+
+type VisualMode = 'auto' | 'always' | 'off';
 
 type Arguments = {
   provider: 'mock' | 'live';
+  visualObservation: VisualMode;
   fixtureUrl: string;
   token?: string;
   maxSteps: number;
@@ -28,6 +37,7 @@ type Arguments = {
 function parseArgs(argv: string[]): Arguments {
   const result: Arguments = {
     provider: 'mock',
+    visualObservation: 'auto',
     fixtureUrl: 'http://127.0.0.1:8765/',
     maxSteps: 4,
     dryRun: false,
@@ -40,6 +50,13 @@ function parseArgs(argv: string[]): Arguments {
     else if (value === '--max-steps') result.maxSteps = Number(argv[++index]);
     else if (value === '--dry-run') result.dryRun = true;
     else if (value === '--log') result.log = argv[++index];
+    else if (value === '--visual-observation') {
+      const mode = argv[++index];
+      if (mode !== 'auto' && mode !== 'always' && mode !== 'off') {
+        throw new Error('--visual-observation must be auto, always, or off');
+      }
+      result.visualObservation = mode;
+    }
     else throw new Error(`unknown argument: ${value}`);
   }
   if (!Number.isInteger(result.maxSteps) || result.maxSteps < 1) {
@@ -72,6 +89,17 @@ export function selectTabId(tabs: Record<string, any>[]): string {
   return String(tabs.find((tab) => tab.active)?.tab_id ?? tabs[0].tab_id);
 }
 
+export class DriverToolError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+    readonly recommendedDelivery?: string
+  ) {
+    super(message);
+    this.name = 'DriverToolError';
+  }
+}
+
 export class Driver {
   constructor(
     private readonly client: Client,
@@ -83,7 +111,20 @@ export class Driver {
       name,
       arguments: { ...args, session: this.session },
     });
-    if (result.isError) throw new Error(`${name} failed: ${JSON.stringify(result.content)}`);
+    if (result.isError) {
+      const structured = result.structuredContent as Record<string, unknown> | undefined;
+      const code = typeof structured?.code === 'string' && structured.code ? structured.code : undefined;
+      const escalation = structured?.escalation as Record<string, unknown> | undefined;
+      const recommended =
+        typeof escalation?.recommended === 'string' && escalation.recommended
+          ? escalation.recommended
+          : undefined;
+      throw new DriverToolError(
+        `${name} failed: ${JSON.stringify(result.content)}`,
+        code,
+        recommended
+      );
+    }
     const data = result.structuredContent as Record<string, any> | undefined;
     if (!data) throw new Error(`${name} returned no structured result`);
     if (data.status === 'refused' || data.refusal) {
@@ -100,19 +141,66 @@ export function supportsCaptureBoundClick(
   return Boolean(click?.inputSchema?.properties?.capture_id);
 }
 
-export async function optionalVisualObservation(
+/**
+ * Return Driver's code when it refused a background visual click. Only a
+ * structured refusal counts: a background_* error code or an explicit
+ * escalation.recommended === 'foreground'. Anything else stays a failure.
+ */
+export function backgroundRefusalCode(candidate: Candidate, error: unknown): string | undefined {
+  if (candidate.tool !== 'click' || candidate.arguments.delivery_mode !== 'background') {
+    return undefined;
+  }
+  if (!(error instanceof DriverToolError)) return undefined;
+  if (error.code?.startsWith('background_')) return error.code;
+  if (error.recommendedDelivery === 'foreground') return error.code ?? 'foreground_recommended';
+  return undefined;
+}
+
+export type VisualStatus = {
+  status: 'ok' | 'not_installed' | 'error' | 'unavailable' | 'skipped';
+  reason?: string;
+  error_code?: string;
+  capture_id?: string;
+  region_count?: number;
+};
+
+/**
+ * Build the redacted per-step visual record written to the JSONL log. It never
+ * contains screenshots, screenshot references, region text, or secrets.
+ */
+export function visualStatus(
+  status: VisualStatus['status'],
+  errorCode?: string,
+  visual?: VisualObservation,
+  reason?: string
+): VisualStatus {
+  const result: VisualStatus = { status };
+  if (reason) result.reason = reason;
+  if (errorCode) result.error_code = errorCode;
+  if (visual) {
+    result.capture_id = visual.captureId;
+    result.region_count = visual.regions.length;
+  }
+  return result;
+}
+
+/**
+ * Take an optional visual observation and report what happened. Failures never
+ * stop the run: the caller continues on the page-structure path, but the
+ * returned status makes the fallback observable.
+ */
+export async function observeVisual(
   driver: Driver,
   pid: number,
   windowId: number,
   availableTools: ReadonlySet<string>,
   captureBoundClick: boolean
-): Promise<VisualObservation | undefined> {
-  if (
-    !captureBoundClick ||
-    !availableTools.has('get_window_state') ||
-    !availableTools.has('parse_visual_regions')
-  ) {
-    return undefined;
+): Promise<{ visual?: VisualObservation; status: VisualStatus }> {
+  if (!captureBoundClick) {
+    return { status: visualStatus('unavailable', 'capture_bound_click_unsupported') };
+  }
+  if (!availableTools.has('get_window_state') || !availableTools.has('parse_visual_regions')) {
+    return { status: visualStatus('unavailable', 'tool_not_advertised') };
   }
   try {
     const capture = await driver.call('get_window_state', {
@@ -120,15 +208,81 @@ export async function optionalVisualObservation(
       window_id: windowId,
       include_accessibility_tree: false,
     });
-    if (typeof capture.capture_id !== 'string') return undefined;
+    if (typeof capture.capture_id !== 'string') {
+      return { status: visualStatus('error', 'capture_missing') };
+    }
     const result = await driver.call('parse_visual_regions', {
       capture_id: capture.capture_id,
       options: { kinds: ['text', 'icon'], min_confidence: 0.8, max_regions: 100 },
     });
-    return parseVisualRegions(result, capture.capture_id, pid, windowId);
-  } catch {
-    return undefined;
+    const visual = parseVisualRegions(result, capture.capture_id, pid, windowId);
+    return { visual, status: visualStatus('ok', undefined, visual) };
+  } catch (error: unknown) {
+    if (error instanceof DriverToolError) {
+      if (error.code === 'not_installed') {
+        return { status: visualStatus('not_installed', 'not_installed') };
+      }
+      return { status: visualStatus('error', error.code ?? 'driver_error') };
+    }
+    if (error instanceof VisualObservationError) {
+      return { status: visualStatus('error', error.code) };
+    }
+    // parseVisualRegions reports other contract violations as plain errors.
+    if (error instanceof Error && /^(visual (result|region)|unsupported visual)/.test(error.message)) {
+      return { status: visualStatus('error', 'invalid_visual_result') };
+    }
+    return { status: visualStatus('error', 'driver_error') };
   }
+}
+
+export async function optionalVisualObservation(
+  driver: Driver,
+  pid: number,
+  windowId: number,
+  availableTools: ReadonlySet<string>,
+  captureBoundClick: boolean
+): Promise<VisualObservation | undefined> {
+  return (await observeVisual(driver, pid, windowId, availableTools, captureBoundClick)).visual;
+}
+
+/**
+ * Build one step's candidates, parsing visual regions only when useful. In
+ * auto mode the capture and parse run only when the page structure offers no
+ * executable candidate, because only then can a visual region add one. always
+ * restores the per-step parse; off never parses.
+ */
+export async function candidatesForStep(
+  driver: Driver,
+  snapshot: BrowserSnapshot,
+  token: string,
+  pid: number,
+  windowId: number,
+  availableTools: ReadonlySet<string>,
+  captureBoundClick: boolean,
+  visualMode: VisualMode = 'auto',
+  visualDelivery: VisualDelivery = 'background'
+): Promise<{ candidates: Candidate[]; visual?: VisualObservation; status: VisualStatus }> {
+  let candidates = buildCandidates(snapshot, token, undefined, captureBoundClick, visualDelivery);
+  if (visualMode === 'off') {
+    return { candidates, status: visualStatus('skipped', undefined, undefined, 'disabled') };
+  }
+  if (visualMode === 'auto' && hasExecutableCandidate(candidates)) {
+    return {
+      candidates,
+      status: visualStatus('skipped', undefined, undefined, 'page_structure_candidate'),
+    };
+  }
+  const { visual, status } = await observeVisual(
+    driver,
+    pid,
+    windowId,
+    availableTools,
+    captureBoundClick
+  );
+  if (visual) {
+    candidates = buildCandidates(snapshot, token, visual, captureBoundClick, visualDelivery);
+  }
+  return { candidates, visual, status };
 }
 
 async function fixtureState(fixtureUrl: string): Promise<{ submitted: string | null }> {
@@ -170,9 +324,11 @@ async function run(args: Arguments): Promise<Outcome> {
   const transport = new StdioClientTransport({
     command: process.env.CUA_DRIVER_BIN ?? 'cua-driver',
     args: ['mcp'],
+    env: driverEnvironment(),
   });
   const client = new Client({ name: 'cua-driver-jev-use-example', version: '0.1.0' });
   const history: Record<string, unknown>[] = [];
+  let visualDelivery: VisualDelivery = 'background';
   if (args.log) await writeFile(args.log, '', 'utf8');
   await resetFixture(args.fixtureUrl);
 
@@ -214,16 +370,28 @@ async function run(args: Arguments): Promise<Outcome> {
         tab_id: tabId,
         snapshot_format: 'semantic_v2',
       })) as BrowserSnapshot;
-      const visual = await optionalVisualObservation(
+      const {
+        candidates,
+        visual,
+        status: visualRecord,
+      } = await candidatesForStep(
         driver,
+        snapshot,
+        token,
         pid,
         Number(window.window_id),
         availableTools,
-        captureBoundClick
+        captureBoundClick,
+        args.visualObservation,
+        visualDelivery
       );
-      const candidates = buildCandidates(snapshot, token, visual, captureBoundClick);
       if (!candidates.length) {
-        await writeEvent(args.log, { event: 'outcome', outcome: 'abstained', step });
+        await writeEvent(args.log, {
+          event: 'outcome',
+          outcome: 'abstained',
+          step,
+          visual: visualRecord,
+        });
         return 'abstained';
       }
       const answer =
@@ -244,6 +412,8 @@ async function run(args: Arguments): Promise<Outcome> {
           decision_ms: decisionMs,
           action_ms: 0,
           dry_run: args.dryRun,
+          tool: null,
+          visual: visualRecord,
         };
         history.push(event);
         await writeEvent(args.log, event);
@@ -257,6 +427,7 @@ async function run(args: Arguments): Promise<Outcome> {
           step,
           confidence: answer.confidence,
           probabilities: answer.probabilities,
+          visual: visualRecord,
         });
         return 'abstained';
       }
@@ -268,12 +439,38 @@ async function run(args: Arguments): Promise<Outcome> {
           if (!candidate.tool) throw new Error('selected candidate has no executable tool');
           await driver.call(candidate.tool, candidate.arguments);
         } catch (error: unknown) {
+          const refusal = backgroundRefusalCode(candidate, error);
+          if (refusal) {
+            // Do not retry background. The next step takes a fresh capture and
+            // offers a distinct foreground candidate.
+            visualDelivery = 'foreground';
+            const event = {
+              event: 'step',
+              step,
+              candidate: candidate.id,
+              confidence: answer.confidence,
+              probabilities: answer.probabilities,
+              decision_ms: decisionMs,
+              action_ms: Math.round((performance.now() - actionStarted) * 100) / 100,
+              dry_run: args.dryRun,
+              tool: candidate.tool,
+              delivery_mode: 'background',
+              action_error: refusal,
+              escalation: { from: 'background', to: 'foreground', reason: refusal },
+              visual: visualRecord,
+            };
+            history.push(event);
+            await writeEvent(args.log, event);
+            continue;
+          }
           await writeEvent(args.log, {
             event: 'outcome',
             outcome: 'unknown',
             step,
             phase: 'action',
             error: error instanceof Error ? error.name : 'UnknownError',
+            tool: candidate.tool,
+            visual: visualRecord,
           });
           return 'unknown';
         }
@@ -288,11 +485,14 @@ async function run(args: Arguments): Promise<Outcome> {
         decision_ms: decisionMs,
         action_ms: actionMs,
         dry_run: args.dryRun,
+        tool: candidate.tool,
+        delivery_mode: candidate.arguments.delivery_mode ?? null,
+        visual: visualRecord,
       };
       history.push(event);
       await writeEvent(args.log, event);
       if (args.dryRun) return 'unknown';
-      if (candidate.id === 'submit-form') {
+      if (SUBMIT_IDS.has(candidate.id)) {
         for (let attempt = 0; attempt < 20; attempt += 1) {
           const oracle = await fixtureState(args.fixtureUrl);
           const outcome = classify(oracle.submitted, token, step, args.maxSteps);

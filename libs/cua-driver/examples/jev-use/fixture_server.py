@@ -27,6 +27,18 @@ output { display:block; margin-top:20px; font-family:monospace; }
 <button type="submit">Submit</button></form>
 <output>status=waiting</output></main></html>"""
 
+# Visual-path variant: identical form, but Submit is a presentational element
+# with no button role, so the page-structure snapshot exposes no Submit ref and
+# only the capture-bound visual candidate can submit the form.
+VISUAL_SUBMIT = (
+    b'<div role="presentation" style="display:inline-block;box-sizing:border-box;'
+    b'font:inherit;margin:8px;padding:16px 28px;background:#e5e5e5;'
+    b'border:1px solid #999;cursor:pointer" '
+    b'onclick="this.closest(\'form\').requestSubmit()">Submit</div>'
+)
+VISUAL_PAGE = PAGE.replace(b'<button type="submit">Submit</button>', VISUAL_SUBMIT)
+assert VISUAL_PAGE != PAGE
+
 
 class FixtureState:
     def __init__(self) -> None:
@@ -51,7 +63,8 @@ class FixtureHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/":
-            self._send(HTTPStatus.OK, "text/html; charset=utf-8", PAGE)
+            page = VISUAL_PAGE if self.server.visual else PAGE
+            self._send(HTTPStatus.OK, "text/html; charset=utf-8", page)
         elif self.path == "/state":
             self._send(
                 HTTPStatus.OK,
@@ -94,16 +107,22 @@ class FixtureHandler(BaseHTTPRequestHandler):
 
 
 class FixtureServer(ThreadingHTTPServer):
-    def __init__(self, address: tuple[str, int]) -> None:
+    def __init__(self, address: tuple[str, int], *, visual: bool = False) -> None:
         self.state = FixtureState()
+        self.visual = visual
         super().__init__(address, FixtureHandler)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--visual-fixture",
+        action="store_true",
+        help="serve a Submit control with no DOM button ref so only the visual path can submit",
+    )
     args = parser.parse_args()
-    server = FixtureServer(("127.0.0.1", args.port))
+    server = FixtureServer(("127.0.0.1", args.port), visual=args.visual_fixture)
     print(f"Fixture ready at http://127.0.0.1:{server.server_port}/", flush=True)
     try:
         server.serve_forever()

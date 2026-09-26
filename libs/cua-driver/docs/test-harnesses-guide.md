@@ -318,6 +318,7 @@ the Lume gate runs after its repo-local matrix.
 | Installed app launch      | `installed_app_launch_macos_test.rs`   | Calculator and TextEdit                 |
 | Installed app AX delivery | `installed_app_textedit_macos_test.rs` | TextEdit                                |
 | Exact window activation   | `bring_to_front_macos_test.rs`         | Repo-local AppKit and SwiftUI apps      |
+| Pointer-reading toolkit   | `tk_pointer_click_macos_test.rs`       | Tk visual-only canvas (skips sans Tk)   |
 | Capture contract          | `capture_contract_test.rs`             | Installed driver and macOS capture APIs |
 | Desktop scope             | `desktop_scope_macos_test.rs`          | macOS window and desktop scope          |
 | Standalone browsers       | `standalone_browser_behavior_test.rs`  | Installed Google Chrome and Edge        |
@@ -629,7 +630,7 @@ Scripts and their tests live next to their owner:
   harness apps, not a test directory. The fixture build scripts `cd` into it,
   so its tracked README and `.gitignore` must stay.
 
-Perception tests have three owners, and each tests different code:
+Perception tests have four owners, and each tests different code:
 
 | Directory | Owns | Run by |
 | --- | --- | --- |
@@ -637,5 +638,6 @@ Perception tests have three owners, and each tests different code:
 | `libs/cua-driver/rust/crates/cua-perception/scripts/tests/` | Model artifact tooling and quality measurement scripts | `ci-cua-perception-release.yml` |
 | `libs/cua-driver/tests/perception-demo/` | Visual demo evidence sanitizing, caching, and envelopes | `ci-test-scripts.yml` |
 | `.github/scripts/tests/test_cua_perception_*.py`, `test_perception_release.py` | Perception release, review-trigger, and review-pipeline workflows and `.github/scripts` helpers | `ci-test-scripts.yml`, `ci-cua-perception-release.yml` |
+| `libs/cua-driver/rust/crates/cua-driver-e2e/tests/perception_capture_loop_test.rs` | Driver's desktop capture, parse, capture-bound click, and reobserve loop with a deterministic developer-only worker | Capture lane of the canonical macOS, Windows, and Linux X11 desktop E2E |
 
 Add a perception test to the directory that owns the code it exercises.

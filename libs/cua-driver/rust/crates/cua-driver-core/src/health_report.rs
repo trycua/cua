@@ -193,6 +193,22 @@ impl CheckEntry {
         }
         self
     }
+
+    /// The `binary_version` check. The version is a compiled-in constant, so
+    /// reaching this code already implies the binary built; it always passes.
+    pub fn binary_version() -> Self {
+        Self::pass(
+            NAME_BINARY_VERSION,
+            format!("cua-driver {}", env!("CARGO_PKG_VERSION")),
+        )
+    }
+
+    /// The `session_active` check. The server is servicing this MCP call, so
+    /// by construction the session is up. The check exists so consumers can
+    /// hard-code a canonical "is the server reachable?" signal.
+    pub fn session_active() -> Self {
+        Self::pass(NAME_SESSION_ACTIVE, "MCP session is active.")
+    }
 }
 
 /// Top-level `health_report` payload.
@@ -470,6 +486,22 @@ impl Tool for HealthReportTool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn shared_constant_checks_always_pass_with_canonical_names() {
+        let version = CheckEntry::binary_version();
+        assert_eq!(version.name, NAME_BINARY_VERSION);
+        assert_eq!(version.status, CheckStatus::Pass);
+        assert_eq!(
+            version.message,
+            format!("cua-driver {}", env!("CARGO_PKG_VERSION"))
+        );
+
+        let session = CheckEntry::session_active();
+        assert_eq!(session.name, NAME_SESSION_ACTIVE);
+        assert_eq!(session.status, CheckStatus::Pass);
+        assert_eq!(session.message, "MCP session is active.");
+    }
 
     // A platform-agnostic fixture provider used to exercise the
     // dispatcher, filter, and rollup logic without touching any real

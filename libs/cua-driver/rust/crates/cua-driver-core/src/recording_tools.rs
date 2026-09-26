@@ -62,6 +62,17 @@ impl Tool for StartRecordingTool {
                 - `click.png` — for dispatched click-family actions only, `before.png` \
                   with a red marker at the click point. A call refused before target \
                   resolution is explicitly not applicable instead.\n\n\
+                The per-turn accessibility walk is bounded like `get_window_state`: \
+                `state_timeout_ms` (default 1000) caps each before/after walk, a walk \
+                that runs out of budget records the PARTIAL tree, and `evidence.json` \
+                carries `truncated`, `truncation_reason`, `nodes_visited`, \
+                `nodes_pending` and `timeout_ms` for that phase. A provider that stops \
+                answering is abandoned after the budget plus a short grace and the \
+                phase is classified `state_capture_timeout`. Actions refused before \
+                dispatch (for example an unknown or expired `capture_id`) skip the \
+                state walk; their state is classified `not_applicable` / \
+                `action_refused_before_dispatch`. Pass `include_accessibility_tree: \
+                false` to record screenshots and actions without state.\n\n\
                 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn \
                 numbering restarts at 1 each time recording is (re-)started.\n\n\
                 **Video is off by default.** Pass `record_video: true` to also \
@@ -69,9 +80,14 @@ impl Tool for StartRecordingTool {
                 30 fps) for the lifetime of the session. The recording is torn \
                 down automatically when the MCP client disconnects.\n\n\
                 **macOS uses native ScreenCaptureKit** (daemon-owned SCStream + \
-                SCRecordingOutput) so video inherits the daemon's Screen \
-                Recording grant — no extra TCC prompt, no ffmpeg subprocess. \
-                Requires macOS 15.0+.\n\n\
+                SCRecordingOutput) under the daemon's Screen Recording grant, \
+                with no ffmpeg subprocess. Requires macOS 15.0+. On macOS 26 \
+                (Tahoe), the first direct capture can also show a one-time \
+                consent asking to let Cua Driver bypass the system private \
+                window picker and directly access your screen and audio; \
+                choose Allow, or run `cua-driver permissions grant` beforehand \
+                to answer it up front. The recorder captures screen video only \
+                and does not enable system-audio capture.\n\n\
                 **Windows + Linux use an ffmpeg subprocess** (`gdigrab` / \
                 `x11grab` + libx264). Requires ffmpeg on PATH (winget install \
                 Gyan.FFmpeg / apt install ffmpeg); when ffmpeg is missing or \
@@ -97,8 +113,28 @@ impl Tool for StartRecordingTool {
                             Default: false. Set to true to also capture the main \
                             display to recording.mp4 (otherwise only the per-turn \
                             screenshots + JSON are recorded). On macOS this uses native \
-                            ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on \
-                            Windows + Linux it requires ffmpeg on PATH."
+                            ScreenCaptureKit (macOS 15.0+); macOS 26 can show a one-time \
+                            direct screen-capture consent on first use (see \
+                            `cua-driver permissions grant`). On Windows + Linux it \
+                            requires ffmpeg on PATH."
+                    },
+                    "state_timeout_ms": {
+                        "type": "integer",
+                        "minimum": crate::tool_schema::TIMEOUT_MS_MIN,
+                        "maximum": crate::tool_schema::TIMEOUT_MS_MAX,
+                        "default": crate::recording::TURN_STATE_TIMEOUT_MS_DEFAULT,
+                        "description": "Wall-clock budget in milliseconds for EACH per-turn \
+                            before/after accessibility walk (same default and bounds as \
+                            get_window_state's timeout_ms). A walk that runs out records \
+                            the partial tree and marks it truncated in evidence.json."
+                    },
+                    "include_accessibility_tree": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "Default true. Set false to skip the per-turn \
+                            before/after accessibility walks entirely; screenshots, \
+                            click markers and action.json are still recorded and state \
+                            is classified `state_capture_disabled`."
                     }
                 },
                 "additionalProperties": false
@@ -122,10 +158,17 @@ impl Tool for StartRecordingTool {
         // (session_end) only stops the recording its own session started.
         let owner = args.opt_str("_session_id");
 
-        match self.session.start(
+        let state_budget = args.bool_or("include_accessibility_tree", true).then(|| {
+            crate::recording::StateCaptureBudget {
+                timeout_ms: crate::tool_schema::resolve_timeout_ms(args.get("state_timeout_ms")),
+            }
+        });
+
+        match self.session.start_with_state_budget(
             output_dir.as_deref().unwrap(),
             record_video,
             owner.as_deref(),
+            state_budget,
         ) {
             Ok(()) => {
                 let state = self.session.current_state();
@@ -615,6 +658,45 @@ impl Tool for InstallFfmpegTool {
                 ToolResult::error(format!("ffmpeg install failed: {e}\nCommand: {display}"))
             }
             Err(e) => ToolResult::error(format!("install task error: {e}")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn start_recording_resolves_the_per_turn_state_budget() {
+        let session = Arc::new(RecordingSession::new());
+        let tool = StartRecordingTool::new(session.clone());
+        let properties = &tool.def().input_schema["properties"];
+        assert_eq!(properties["state_timeout_ms"]["default"], 1000);
+        assert_eq!(properties["include_accessibility_tree"]["default"], true);
+
+        let directory = tempfile::tempdir().unwrap();
+        let dir = directory.path().to_str().unwrap();
+        for (args, expected) in [
+            (json!({"output_dir": dir}), Some(1000)),
+            (
+                json!({"output_dir": dir, "state_timeout_ms": 250}),
+                Some(250),
+            ),
+            // Clamped to the shared timeout_ms bounds.
+            (json!({"output_dir": dir, "state_timeout_ms": 1}), Some(100)),
+            (
+                json!({"output_dir": dir, "include_accessibility_tree": false}),
+                None,
+            ),
+        ] {
+            let result = tool.invoke(args.clone()).await;
+            assert_ne!(result.is_error, Some(true), "{args}");
+            assert_eq!(
+                session.state_budget().map(|budget| budget.timeout_ms),
+                expected,
+                "{args}"
+            );
+            session.stop_owner(None).unwrap();
         }
     }
 }

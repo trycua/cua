@@ -32,6 +32,7 @@ use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::{CFRelease, CFTypeRef};
 
+use super::pixel_route::PixelClickRoute;
 use super::ToolState;
 
 pub struct ClickTool {
@@ -1055,6 +1056,12 @@ impl Tool for ClickTool {
             // requested foreground click without a window id still degrades to
             // background, matching the existing contract and result label.
             let fg = delivery_mode.is_foreground() && window_id.is_some();
+            // Background delivery cannot satisfy a toolkit that reads the
+            // hardware pointer; refuse before any activation or dispatch.
+            let route = match super::pixel_route::resolve(pid, fg, window_id, "mouse_click").await {
+                Ok(route) => route,
+                Err(refusal) => return refusal,
+            };
             let activation_policy = pixel_activation_policy(&button_str, fg, window_id.is_some());
 
             // Observe side effects without restoring a stale foreground app
@@ -1099,11 +1106,14 @@ impl Tool for ClickTool {
                             cursor_key,
                             cursor_overlay::OverlayCommand::ClickPulse { x: screen_x, y: screen_y },
                         );
-                        let has_modifiers = !mods_owned.is_empty();
                         let do_click = move || -> anyhow::Result<()> {
                             let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                            if fg && !m.is_empty() {
-                                return crate::input::mouse::click_at_xy_desktop_with_modifiers_preserving_cursor(
+                            if route == PixelClickRoute::ForegroundHid {
+                                // Warp the hardware pointer to the mapped global
+                                // point and post at the HID tap. The pointer stays
+                                // at the target, as on Windows and X11, so apps that
+                                // read the pointer when handling the event see it.
+                                return crate::input::mouse::click_at_xy_desktop_with_modifiers(
                                     screen_x,
                                     screen_y,
                                     count,
@@ -1146,26 +1156,19 @@ impl Tool for ClickTool {
                                 }
                             }
                         };
-                        // Foreground rung: brief front → click → restore.
-                        // Returns whether the window was ACTUALLY fronted, so the
-                        // reported `path` honestly reflects the rung that ran.
-                        let dispatched = match (fg, window_id, has_modifiers) {
-                            (true, Some(wid), true) => {
+                        // Foreground rung: front the exact window → HID click →
+                        // restore the prior front process. The HID tap has no
+                        // pid addressing, so activation must be proven (the
+                        // window is AX-focused) or no input is sent.
+                        let dispatched = match (route, window_id) {
+                            (PixelClickRoute::ForegroundHid, Some(wid)) => {
                                 crate::input::skylight::with_foreground_hid_activation(
                                     pid as libc::pid_t,
                                     wid,
                                     do_click,
                                 )
-                                .map(|_| true)
                             }
-                            (true, Some(wid), false) => {
-                                crate::input::skylight::with_foreground_assist(
-                                    pid as libc::pid_t,
-                                    wid,
-                                    do_click,
-                                )
-                            }
-                            _ => do_click().map(|_| false),
+                            _ => do_click(),
                         };
                         let cleanup = if let Some(context) = target_focus {
                             // Let the target consume the queued up before ending
@@ -1175,9 +1178,9 @@ impl Tool for ClickTool {
                         } else {
                             Ok(())
                         };
-                        let fronted = dispatched?;
+                        dispatched?;
                         cleanup?;
-                        Ok::<_, anyhow::Error>((fronted, synthetic_target_focus))
+                        Ok::<_, anyhow::Error>(synthetic_target_focus)
                     })
                     .await
                 },
@@ -1192,26 +1195,30 @@ impl Tool for ClickTool {
                 _ => "click",
             };
             match result {
-                Ok(Ok((fronted, synthetic_target_focus))) => {
-                    // `with_foreground_assist` returns `false` when the fronting SPIs
-                    // were unavailable and it clicked WITHOUT activation — report the
-                    // background path in that case so `path` reflects the rung that ran.
-                    let (path, mode_label) = if fg && fronted {
-                        ("cgevent_fg", "foreground CGEvent")
+                Ok(Ok(synthetic_target_focus)) => {
+                    let target = if route == PixelClickRoute::ForegroundHid {
+                        format!("at screen-point ({screen_x:.0},{screen_y:.0}) for pid {pid}")
                     } else {
-                        ("cgevent", "background CGEvent")
+                        format!("to pid {pid}")
                     };
                     ToolResult::text(format!(
-                        "✅ Posted {button_label} to pid {pid} ({mode_label}; \
-                         not driver-verified — confirm via screenshot).{}",
+                        "✅ Posted {button_label} {target} ({}).{}",
+                        super::pixel_route::delivery_note(route),
                         changes.result_suffix()
                     ))
                     .with_structured(serde_json::json!({
-                        "path": path,
+                        "path": super::pixel_route::path_label(route),
                         "verified": false,
                         "effect": "unverifiable",
                         "synthetic_target_focus": synthetic_target_focus
                     }))
+                }
+                Ok(Err(e)) if route == PixelClickRoute::ForegroundHid => {
+                    super::pixel_route::foreground_unavailable(
+                        button_label,
+                        window_id.unwrap_or_default(),
+                        &e.to_string(),
+                    )
                 }
                 Ok(Err(e)) => ToolResult::error(format!("{button_label} failed: {e}")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),

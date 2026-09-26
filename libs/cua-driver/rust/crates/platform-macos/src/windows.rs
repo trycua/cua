@@ -235,7 +235,7 @@ fn enumerate_windows(options: u32, layers: LayerFilter) -> WindowEnumeration {
         };
 
         // z_index: CGWindowList front-to-back → assign reverse index.
-        let z_index = z_index_from_front_to_back(total, idx);
+        let z_index = cua_driver_core::window_target::z_index_from_front_to_back(total, idx);
 
         results.push(WindowInfo {
             window_id,
@@ -289,10 +289,6 @@ fn window_on_current_space(
     current_space_id: Option<u64>,
 ) -> Option<bool> {
     Some(space_ids?.contains(&current_space_id?))
-}
-
-fn z_index_from_front_to_back(total: usize, position: usize) -> usize {
-    total.saturating_sub(position)
 }
 
 fn get_bounds_num(
@@ -411,15 +407,6 @@ pub fn resolve_main_window_id(pid: i32) -> anyhow::Result<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn cg_front_to_back_order_normalizes_to_higher_is_frontmost() {
-        let indices: Vec<_> = (0..3)
-            .map(|position| z_index_from_front_to_back(3, position))
-            .collect();
-        assert_eq!(indices, vec![3, 2, 1]);
-        assert!(indices[0] > indices[2]);
-    }
 
     #[test]
     fn space_membership_checks_all_spaces_for_a_window() {

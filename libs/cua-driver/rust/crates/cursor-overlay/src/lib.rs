@@ -8,9 +8,11 @@
 
 pub mod badge_glyphs;
 pub mod bezier;
+pub mod capture_exclusion;
 pub mod capture_utils;
 pub mod motion;
 pub mod path_planner;
+pub mod render_map;
 pub mod render_state;
 pub mod session_badge;
 pub mod theme;
@@ -21,6 +23,10 @@ pub use badge_glyphs::{BadgeChip, BadgeGlyph};
 pub use bezier::CubicBezier;
 pub use motion::{MotionConfig, Spring};
 pub use path_planner::{PathPlanner, PathState, PlannedPath};
+pub use render_map::{
+    keyed_config, seed_position, CursorMap, MsgOutcome, RenderEntry, RenderMap, ScreenFrame,
+    DEFAULT_CURSOR_KEY, SEED_OFFSET,
+};
 pub use render_state::{
     paint_cursor, render_frame, FocusRect, RenderStateCore, SESSION_BADGE_FADE_SECS,
     SESSION_BADGE_HOLD_SECS,
@@ -325,6 +331,10 @@ pub enum OverlayMsg {
     /// This deliberately does not recreate a cursor; the next command does so
     /// lazily after the successful `start_session` boundary.
     Revive(CursorKey),
+    /// No state change: wakes a parked render loop so it services an
+    /// out-of-band request (such as hiding for a Driver desktop capture)
+    /// without waiting for its next maintenance tick.
+    Wake,
 }
 
 /// Commands sent from MCP tool handlers to the overlay's render thread.

@@ -13,15 +13,13 @@
 //!
 //! Before this, the overlay was a process-wide singleton (one `RenderState`),
 //! so concurrent MCP sessions clobbered each other last-writer-wins → one
-//! shared cursor. It now keeps a keyed [`RenderMap`] (`IndexMap<CursorKey,
-//! RenderState>`): each declared `session` owns its own cursor with its own
-//! visual state, and the ~125 Hz tick composites them all into the single layered
-//! window. `IndexMap` gives deterministic insertion-ordered iteration = stable
-//! per-session z-order frame to frame. The lifecycle (lazy create, per-key
-//! arrival isolation, `session_end` removal, resurrection tombstone) mirrors
-//! `platform_macos::cursor::overlay` so the two platforms behave identically;
-//! the shared `cursor_overlay::{CursorKey, KeyedOverlayCommand, OverlayMsg}`
-//! types are the same ones macOS uses.
+//! shared cursor. It now keeps the shared keyed [`cursor_overlay::RenderMap`]:
+//! each declared `session` owns its own cursor with its own visual state, and
+//! the ~125 Hz tick composites them all into the single layered window in the
+//! map's stable insertion (z) order. The lifecycle (lazy create, `session_end`
+//! removal, resurrection tombstone, revival, default guard, sentinel seed) and
+//! the frame-tick predicate live in `cursor_overlay` so every platform behaves
+//! identically; this adapter adds per-key arrival waiters and Win32 plumbing.
 //!
 //! ## Cross-platform note (2026-05 dedup audit)
 //!
@@ -32,15 +30,14 @@
 
 #![allow(non_snake_case, non_upper_case_globals)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use cursor_overlay::{
-    CursorConfig, CursorKey, KeyedOverlayCommand, MotionConfig, OverlayCommand, OverlayMsg,
-    RenderStateCore, ZOrderEnforcer,
+    CursorConfig, CursorKey, KeyedOverlayCommand, MotionConfig, MsgOutcome, OverlayCommand,
+    OverlayMsg, RenderEntry, RenderStateCore, ScreenFrame, ZOrderEnforcer,
 };
-use indexmap::IndexMap;
 
 // ── Global channel ────────────────────────────────────────────────────────
 
@@ -77,17 +74,23 @@ fn arrival_fire(key: &CursorKey) {
     }
 }
 
+/// Drop a removed session's waiter; the dropped sender releases its await.
+fn arrival_cancel(key: &CursorKey) {
+    if let Ok(mut guard) = ARRIVAL_TX.lock() {
+        if let Some(map) = guard.as_mut() {
+            map.remove(key);
+        }
+    }
+}
+
 // ── Keyed render collection ───────────────────────────────────────────────
 
-/// The keyed, insertion-ordered collection of owned cursors that the render
-/// loop composites every tick. Insertion order = stable z-order (later keys
-/// paint on top). Virtual-screen geometry + the `WM_TIMER` dt stamp are
-/// hoisted here (screen-global, written once in `run_overlay_thread`).
-struct RenderMap {
-    cursors: IndexMap<CursorKey, RenderState>,
-    /// Virtual screen dimensions set after window creation (Win32 DIPs).
-    /// `virt_x/y` are subtracted from each cursor's `core.pos` when rendering
-    /// so the pixmap is laid out in window-local coordinates.
+/// Virtual-screen geometry and timing kept beside the shared keyed render map
+/// (screen-global, written once in `run_overlay_thread`).
+struct WinScreen {
+    /// Virtual screen bounds (Win32 DIPs). `virt_x/y` are subtracted from each
+    /// cursor's `core.pos` when rendering so the pixmap is laid out in
+    /// window-local coordinates.
     virt_x: i32,
     virt_y: i32,
     virt_w: i32,
@@ -96,79 +99,32 @@ struct RenderMap {
     /// timer resolution defaults to 15ms so a hardcoded 8ms would run the
     /// animation at half speed).
     last_tick: Instant,
-    /// Frozen launch-time config used as the template for lazily-created cursors.
-    template: CursorConfig,
-    /// Render-side tombstone of ended session cursor keys. A `Cmd`
-    /// for a key in here is dropped WITHOUT get-or-create, so an in-flight
-    /// click/move from another task that lands AFTER the owning session's
-    /// `Remove` can never resurrect the just-removed cursor. An explicit
-    /// owner-checked revival clears the tombstone. "default" is never
-    /// tombstoned for legacy direct platform calls.
-    ended: HashSet<CursorKey>,
-    /// Cursor key whose target the overlay should currently sit above. A single
-    /// layered window can occupy only one z-band, so the most-recently-touched
-    /// cursor wins (mirrors macOS). `None` until the first PinAbove/Cmd.
-    last_active: Option<CursorKey>,
 }
 
-/// Build the `RenderState` for a lazily-created session cursor from the
-/// process launch template.
-fn render_state_for_key(template: &CursorConfig, key: &str) -> RenderState {
-    let mut config = template.clone();
-    config.cursor_id = key.to_owned();
-    RenderState::new(config)
-}
-
-/// Apply one inbound [`OverlayMsg`] to the render map (drain step). Factored
-/// out as a pure function so the per-session ownership + removal lifecycle is
-/// unit-testable without any Win32 window.
-///
-/// Returns the resolved cursor key for a `Cmd` (so the caller can track the
-/// last-active key for z-order pinning); `None` for a lifecycle message.
-fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
-    match msg {
-        OverlayMsg::Remove(key) => {
-            // The "default" cursor backs the anonymous / one-shot path and must
-            // survive every session_end + the daemon lifetime.
-            if key != "default" {
-                map.cursors.shift_remove(&key);
-                if let Ok(mut guard) = ARRIVAL_TX.lock() {
-                    if let Some(m) = guard.as_mut() {
-                        m.remove(&key);
-                    }
-                }
-                if map.last_active.as_deref() == Some(key.as_str()) {
-                    map.last_active = None;
-                }
-                // Tombstone the key so a late in-flight Cmd from another task
-                // cannot re-create the just-removed cursor.
-                map.ended.insert(key);
-            }
-            None
-        }
-        OverlayMsg::Revive(key) => {
-            if key != "default" {
-                map.ended.remove(&key);
-            }
-            None
-        }
-        OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }) => {
-            // Drop a command for an already-ended session WITHOUT get-or-create
-            // — this is the resurrection guard. Without it, a ClickPulse/MoveTo
-            // landing after Remove would re-insert (and re-leak) the cursor.
-            if map.ended.contains(&key) {
-                return None;
-            }
-            let template = map.template.clone();
-            let k = key.clone();
-            let rs = map
-                .cursors
-                .entry(key)
-                .or_insert_with(|| render_state_for_key(&template, &k));
-            rs.apply_command(cmd);
-            Some(k)
-        }
+impl WinScreen {
+    fn frame(&self) -> Option<ScreenFrame> {
+        (self.virt_w > 0 && self.virt_h > 0).then(|| {
+            ScreenFrame::new(
+                f64::from(self.virt_x),
+                f64::from(self.virt_y),
+                f64::from(self.virt_w),
+                f64::from(self.virt_h),
+            )
+        })
     }
+}
+
+type RenderMap = cursor_overlay::RenderMap<RenderState, WinScreen>;
+
+/// Drain one message into the shared map, releasing a removed session's
+/// arrival waiter. Returns the commanded key (also recorded as the map's
+/// `last_active`).
+fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
+    let outcome = map.apply_msg(msg);
+    if let MsgOutcome::Removed { key, .. } = &outcome {
+        arrival_cancel(key);
+    }
+    outcome.applied_key().cloned()
 }
 
 pub fn init(cfg: CursorConfig) {
@@ -180,19 +136,16 @@ pub fn init(cfg: CursorConfig) {
             .expect("cursor overlay sender is initialized exactly once");
         *CMD_RX_CELL.lock().unwrap() = Some(rx);
         *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
-        let mut cursors = IndexMap::new();
-        cursors.insert("default".to_owned(), RenderState::new(cfg.clone()));
-        *RENDER.lock().unwrap() = Some(RenderMap {
-            cursors,
-            virt_x: 0,
-            virt_y: 0,
-            virt_w: 1920,
-            virt_h: 1080,
-            last_tick: Instant::now(),
-            template: cfg,
-            ended: HashSet::new(),
-            last_active: None,
-        });
+        *RENDER.lock().unwrap() = Some(RenderMap::new(
+            cfg,
+            WinScreen {
+                virt_x: 0,
+                virt_y: 0,
+                virt_w: 1920,
+                virt_h: 1080,
+                last_tick: Instant::now(),
+            },
+        ));
     });
     cua_driver_core::cursor_events::install_cursor_event_sink(std::sync::Arc::new(
         |event: cua_driver_core::cursor_events::CursorEvent| {
@@ -322,12 +275,8 @@ pub fn is_enabled(key: &str) -> bool {
         .lock()
         .ok()
         .and_then(|g| {
-            g.as_ref().and_then(|m| {
-                m.cursors
-                    .get(key)
-                    .or_else(|| m.cursors.get("default"))
-                    .map(|rs| rs.core.visible)
-            })
+            g.as_ref()
+                .and_then(|m| m.cursor_or_default(key).map(|rs| rs.core.visible))
         })
         .unwrap_or(false)
 }
@@ -360,12 +309,8 @@ pub fn current_motion(key: &str) -> MotionConfig {
         .lock()
         .ok()
         .and_then(|g| {
-            g.as_ref().and_then(|m| {
-                m.cursors
-                    .get(key)
-                    .or_else(|| m.cursors.get("default"))
-                    .map(|rs| rs.core.motion.clone())
-            })
+            g.as_ref()
+                .and_then(|m| m.cursor_or_default(key).map(|rs| rs.core.motion.clone()))
         })
         .unwrap_or_default()
 }
@@ -381,10 +326,7 @@ pub fn current_theme_state(
 )> {
     let guard = RENDER.lock().ok()?;
     let map = guard.as_ref()?;
-    let state = map
-        .cursors
-        .get(key)
-        .or_else(|| map.cursors.get("default"))?;
+    let state = map.cursor_or_default(key)?;
     let (id, version, profile, fallback) = state.core.active_theme_metadata();
     Some((id, version, profile, fallback, state.core.visual.clone()))
 }
@@ -414,45 +356,8 @@ fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool
     let Some(map) = guard.as_mut() else {
         return false;
     };
-    seed_start_in_map(map, key, target_x, target_y)
-}
-
-/// Pure seed step operating on a borrowed [`RenderMap`] — factored out so the
-/// get-or-create + clamp logic is unit-testable without the global `RENDER`
-/// static or a Win32 window.
-fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target_y: f64) -> bool {
-    const SEED_OFFSET: f64 = 140.0;
-    let (virt_x, virt_y) = (map.virt_x as f64, map.virt_y as f64);
-    let (virt_w, virt_h) = (map.virt_w as f64, map.virt_h as f64);
-    // Respect the resurrection guard: never seed (and thus re-create) a cursor
-    // whose session already ended.
-    if map.ended.contains(key) {
-        return false;
-    }
-    let template = map.template.clone();
-    let k = key.clone();
-    let rs = map
-        .cursors
-        .entry(key.clone())
-        .or_insert_with(|| render_state_for_key(&template, &k));
-    if !(rs.core.cfg.enabled && rs.core.pos.0 < -50.0) {
-        return false;
-    }
-    let mut sx = target_x - SEED_OFFSET;
-    let mut sy = target_y - SEED_OFFSET;
-    // Clamp into the virtual-screen frame so the seed never starts off-display.
-    if virt_w > 0.0 && virt_h > 0.0 {
-        sx = sx.clamp(virt_x + 2.0, virt_x + virt_w - 2.0);
-        sy = sy.clamp(virt_y + 2.0, virt_y + virt_h - 2.0);
-        // If clamping collapsed the seed onto the target (target in a corner),
-        // nudge the other way so there is still a visible glide distance.
-        if (sx - target_x).abs() < 8.0 && (sy - target_y).abs() < 8.0 {
-            sx = (target_x + SEED_OFFSET).min(virt_x + virt_w - 2.0);
-            sy = (target_y + SEED_OFFSET).min(virt_y + virt_h - 2.0);
-        }
-    }
-    rs.core.pos = (sx, sy);
-    true
+    let frame = map.platform.frame();
+    map.seed_start_if_sentinel(key, target_x, target_y, frame)
 }
 
 /// Animate the overlay cursor for `key` to `(x, y)` and suspend until the
@@ -538,59 +443,43 @@ pub fn run_on_thread() {
 //
 // The platform-agnostic fields + tick + apply_command + render pipeline live
 // in `cursor_overlay::render_state`. What stays here is just the per-cursor
-// wrapper; the virtual-screen geometry + dt stamp moved up to `RenderMap`.
+// wrapper; the virtual-screen geometry + dt stamp live in `WinScreen`.
 
 struct RenderState {
     core: RenderStateCore,
 }
 
-impl RenderState {
-    fn new(cfg: CursorConfig) -> Self {
+impl RenderEntry for RenderState {
+    fn from_config(cfg: CursorConfig) -> Self {
         RenderState {
             core: RenderStateCore::new(cfg),
         }
     }
 
-    /// Advance the motion state by `dt`. Returns `true` the tick the planned
-    /// path completes, so the WM_TIMER handler can fire the arrival oneshot
-    /// that unblocks `animate_cursor_to`.
-    fn tick(&mut self, dt: f64) -> bool {
-        self.core.tick_motion(dt)
+    fn core(&self) -> &RenderStateCore {
+        &self.core
     }
 
-    fn apply_command(&mut self, cmd: OverlayCommand) {
+    fn core_mut(&mut self) -> &mut RenderStateCore {
+        &mut self.core
+    }
+
+    fn apply_command(&mut self, cmd: OverlayCommand) -> bool {
         // Windows uses the non-sentinel-snap behaviour for both MoveTo and
         // ClickPulse: every command updates `self.pos` unconditionally.
         // `ShowFocusRect` is not rendered on Windows — `apply_command_base`
         // returns `false` for it and we silently drop it here.
-        let _ = self.core.apply_command_base(cmd, false, false);
+        self.core.apply_command_base(cmd, false, false)
     }
 
-    /// True while the render loop must keep ticking at frame cadence because
-    /// the next tick can still change pixels: an in-flight glide path, a
-    /// spring-settle, a click pulse, or an idle-fade actively fading
-    /// (`0.004 <= idle_alpha < 1.0`). A brand-new sentinel cursor (off-screen
-    /// at `(-200, -200)`), a cursor that has already faded to
-    /// `idle_alpha ≈ 0`, AND a cursor resting at constant `idle_alpha == 1.0`
-    /// waiting out the idle-hide countdown are all non-rendering states: the
-    /// countdown phase leaves every frame pixel-identical, so compositing a
-    /// full virtual-screen pixmap through it burned ~1 core for the whole
-    /// `idle_hide_ms` window after every action (render-gate fix; the
-    /// countdown itself is advanced by [`RenderState::in_idle_countdown`]
-    /// ticks at the slow cadence).
-    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-    fn needs_frame_tick(&self) -> bool {
-        self.core.path.is_some()
-            || self.core.spring.is_some()
-            || self.core.click_t.is_some()
-            || self.core.session_badge_needs_frame_tick()
-            || (self.core.motion.idle_hide_ms > 0.0
-                && self.core.visible
-                && self.core.pos.0 >= -100.0
-                && self.core.idle_alpha >= 0.004
-                && self.core.idle_alpha < 1.0)
-    }
+    // `tick` (arrival on path end) and `needs_frame_tick` use the shared
+    // defaults. The shared predicate keeps a revealed cursor with resting
+    // motion (the float bob) at the ACTIVE cadence, and parks a reduced-motion
+    // cursor through its constant-alpha idle-hide countdown; that countdown is
+    // advanced by [`RenderState::in_idle_countdown`] at the slow IDLE cadence.
+}
 
+impl RenderState {
     /// True while the cursor rests on-screen at full alpha with idle-hide
     /// pending: pixels are static (alpha pinned at 1.0) but `idle_secs` must
     /// keep accruing wall-clock time so the fade still starts on schedule.
@@ -606,16 +495,6 @@ impl RenderState {
             && self.core.pos.0 >= -100.0
             && self.core.idle_alpha >= 1.0
     }
-}
-
-/// True if ANY owned cursor still needs frame ticks (animation / fade in
-/// progress). When this is false the render loop is fully quiescent: the last
-/// emitted frame already left the layered window in its resting / cleared
-/// state, so the timer can drop to a slow idle cadence and skip the expensive
-/// composite + `UpdateLayeredWindow` until the next command wakes it.
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn render_map_needs_frame_tick(map: &RenderMap) -> bool {
-    map.cursors.values().any(RenderState::needs_frame_tick)
 }
 
 // ── Win32 message-loop thread ─────────────────────────────────────────────
@@ -642,11 +521,13 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     {
         let mut guard = RENDER.lock().unwrap();
         if let Some(map) = guard.as_mut() {
-            map.virt_x = virt_x;
-            map.virt_y = virt_y;
-            map.virt_w = virt_w;
-            map.virt_h = virt_h;
-            map.last_tick = Instant::now();
+            map.platform = WinScreen {
+                virt_x,
+                virt_y,
+                virt_w,
+                virt_h,
+                last_tick: Instant::now(),
+            };
         }
     }
 
@@ -715,7 +596,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     set_timer_resolution_raised(true);
 
     // Store hwnd and rx globally for the wnd_proc callback.
-    OVERLAY_HWND.store(hwnd.0 as isize, std::sync::atomic::Ordering::Relaxed);
+    OVERLAY_HWND.store(hwnd.0 as isize, std::sync::atomic::Ordering::Release);
     *CMD_RX_WIN.lock().unwrap() = Some(rx);
     LAST_ZTICK.store(0, std::sync::atomic::Ordering::Relaxed);
     let _ = Z_ORDER.set(WinZOrderEnforcer {
@@ -971,13 +852,14 @@ thread_local! {
 /// painted and nothing stale to erase — skip the present entirely).
 #[cfg(target_os = "windows")]
 fn composite_dirty(map: &RenderMap) -> Option<DirtyRect> {
-    let (w, h) = (map.virt_w.max(1), map.virt_h.max(1));
+    let screen = &map.platform;
+    let (w, h) = (screen.virt_w.max(1), screen.virt_h.max(1));
     SURFACE.with(|cell| {
         let mut slot = cell.borrow_mut();
         if slot.as_ref().map(|s| (s.virt_x, s.virt_y, s.w, s.h))
-            != Some((map.virt_x, map.virt_y, w, h))
+            != Some((screen.virt_x, screen.virt_y, w, h))
         {
-            *slot = unsafe { WinSurface::create(map.virt_x, map.virt_y, w, h) };
+            *slot = unsafe { WinSurface::create(screen.virt_x, screen.virt_y, w, h) };
             FIRST_PRESENT.with(|first| first.set(true));
         }
         let surf = slot.as_mut()?;
@@ -989,8 +871,8 @@ fn composite_dirty(map: &RenderMap) -> Option<DirtyRect> {
             if !rs.core.visible || rs.core.pos.0 < -100.0 || rs.core.idle_alpha < 0.004 {
                 continue;
             }
-            let cx = (rs.core.pos.0 - map.virt_x as f64).round() as i32;
-            let cy = (rs.core.pos.1 - map.virt_y as f64).round() as i32;
+            let cx = (rs.core.pos.0 - screen.virt_x as f64).round() as i32;
+            let cy = (rs.core.pos.1 - screen.virt_y as f64).round() as i32;
             let custom_theme = rs
                 .core
                 .theme
@@ -1023,8 +905,8 @@ fn composite_dirty(map: &RenderMap) -> Option<DirtyRect> {
             cursor_overlay::paint_cursor(
                 &mut surf.pixmap,
                 &rs.core,
-                map.virt_x as f64,
-                map.virt_y as f64,
+                screen.virt_x as f64,
+                screen.virt_y as f64,
                 None, // focus-rect is macOS-only
                 1.0,
             );
@@ -1118,7 +1000,7 @@ unsafe fn present_surface(hwnd: windows::Win32::Foundation::HWND, dirty: DirtyRe
 // allocated a virtual-screen pixmap, swizzled it pixel-by-pixel, and blitted
 // it with UpdateLayeredWindow — burning 60–85% of a core with the cursor
 // static (issue #1808). `TIMER_PERIOD_MS` is the cadence the timer is currently
-// armed at; the WM_TIMER handler flips it based on `render_map_needs_frame_tick`.
+// armed at; the WM_TIMER handler flips it based on `RenderMap::needs_frame_tick`.
 const TIMER_ID: usize = 1;
 const TIMER_MS_ACTIVE: u32 = 8; // ~125 Hz, matches the C# reference render rate
 const TIMER_MS_HOVER: u32 = 80; // low-cost hardware-pointer hover sampling
@@ -1206,26 +1088,24 @@ unsafe extern "system" fn wnd_proc(
             let (upload, arrived, pinned_wid, needs_tick, needs_hover_poll) = {
                 let mut guard = RENDER.lock().unwrap();
                 if let Some(map) = guard.as_mut() {
-                    // Drain the channel via get-or-create; track the last-touched
-                    // key so the z-order pin follows the most-recent cursor.
+                    // Drain the channel via get-or-create; the shared map
+                    // tracks the last-touched key for z-order pinning.
                     let mut had_msg = false;
                     if let Ok(rx_guard) = CMD_RX_WIN.try_lock() {
                         if let Some(ref rx) = *rx_guard {
                             while let Ok(m) = rx.try_recv() {
                                 had_msg = true;
-                                if let Some(k) = apply_msg(map, m) {
-                                    map.last_active = Some(k);
-                                }
+                                apply_msg(map, m);
                             }
                         }
                     }
 
                     let now = Instant::now();
-                    let real_dt = now.duration_since(map.last_tick).as_secs_f64();
+                    let real_dt = now.duration_since(map.platform.last_tick).as_secs_f64();
                     // Clamped dt for the motion physics: a large gap between
                     // ticks must not teleport an in-flight glide.
                     let dt = real_dt.clamp(0.0, 0.05);
-                    map.last_tick = now;
+                    map.platform.last_tick = now;
 
                     // Tick every cursor; record the ones that just arrived.
                     let mut arrived: Vec<CursorKey> = Vec::new();
@@ -1258,7 +1138,7 @@ unsafe extern "system" fn wnd_proc(
                     }
 
                     // After ticking: does any cursor still need frame ticks?
-                    let needs_tick = render_map_needs_frame_tick(map);
+                    let needs_tick = map.needs_frame_tick();
                     let needs_hover_poll = map
                         .cursors
                         .values()
@@ -1517,40 +1397,117 @@ impl ZOrderEnforcer for WinZOrderEnforcer {
     }
 }
 
-// ── Headless unit tests for the keyed render collection ───────────────────
+// ── Capture exclusion (Windows adapter of cursor_overlay::capture_exclusion) ─
+
+/// Name reported in `agent_overlay_capture.method` for the Windows mechanism.
+pub const CAPTURE_EXCLUSION_METHOD: &str = "win32_display_affinity_exclude_from_capture";
+
+/// Keeps the overlay out of the Driver's own desktop BitBlt.
+///
+/// `WDA_EXCLUDEFROMCAPTURE` removes the window from every capture path DWM
+/// serves — GDI `BitBlt` of the screen DC included — while it stays on the
+/// monitor. It is applied only for the duration of one Driver desktop capture:
+/// a permanent affinity would also hide the cursor from screen recorders and
+/// from the Driver's own recordings, which must keep showing it.
+///
+/// The affinity is Windows 10 2004+ only. Older builds reject it; the capture
+/// then runs anyway and reports `not_excluded` with the system error.
+pub struct CaptureExcluder;
+
+impl cursor_overlay::capture_exclusion::OverlayCaptureExcluder for CaptureExcluder {
+    type Hidden = isize;
+
+    fn exclude(&self) -> cursor_overlay::capture_exclusion::ExclusionStart<isize> {
+        use cursor_overlay::capture_exclusion::ExclusionStart;
+        let hwnd = OVERLAY_HWND.load(std::sync::atomic::Ordering::Acquire);
+        if hwnd == 0 {
+            return ExclusionStart::NotPresent;
+        }
+        match set_capture_excluded(hwnd, true) {
+            Ok(()) => ExclusionStart::Excluded {
+                method: CAPTURE_EXCLUSION_METHOD,
+                hidden: hwnd,
+            },
+            Err(reason) => ExclusionStart::Unsupported { reason },
+        }
+    }
+
+    fn restore(&self, hwnd: isize) {
+        if let Err(error) = set_capture_excluded(hwnd, false) {
+            tracing::warn!("Win32 overlay: could not restore capture visibility: {error}");
+        }
+    }
+}
+
+/// Apply or clear `WDA_EXCLUDEFROMCAPTURE` and wait for DWM to compose a frame
+/// with the new affinity, so the very next screen read already honors it.
+/// `SetWindowDisplayAffinity` accepts any window of the calling process, not
+/// only windows of the calling thread.
+#[cfg(target_os = "windows")]
+fn set_capture_excluded(hwnd_isize: isize, excluded: bool) -> Result<(), String> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::DwmFlush;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
+    };
+    let hwnd = HWND(hwnd_isize as *mut _);
+    let affinity = if excluded {
+        WDA_EXCLUDEFROMCAPTURE
+    } else {
+        WDA_NONE
+    };
+    unsafe { SetWindowDisplayAffinity(hwnd, affinity) }.map_err(|error| {
+        format!(
+            "SetWindowDisplayAffinity({}) failed on the agent cursor overlay: {error}; \
+             excluding it from desktop captures requires Windows 10 version 2004 or later",
+            if excluded {
+                "WDA_EXCLUDEFROMCAPTURE"
+            } else {
+                "WDA_NONE"
+            }
+        )
+    })?;
+    if excluded {
+        // One flush can land on a composition pass that started before the
+        // affinity changed; the second is the first frame composed after it.
+        for _ in 0..2 {
+            if unsafe { DwmFlush() }.is_err() {
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_capture_excluded(_hwnd_isize: isize, _excluded: bool) -> Result<(), String> {
+    Err("window display affinity is only available on Windows".into())
+}
+
+// ── Headless unit tests for the Windows adapter ───────────────────────────
 //
-// These prove the per-session ownership data model, the session_end removal
-// lifecycle, the "default" guard, the resurrection tombstone, and the
-// sentinel seed WITHOUT any Win32 window. The on-screen rendering
-// (UpdateLayeredWindow) still needs a real display and is verified separately.
+// The keyed lifecycle (ownership, removal, default guard, tombstone, revival,
+// stable z-order), the sentinel seed, and the shared frame-tick predicate are
+// covered once in `cursor_overlay::render_map`. These tests cover what this
+// adapter adds: the dirty-rect envelope, virtual-screen seeding, the IDLE
+// cadence countdown, and arrival release on removal. On-screen rendering
+// (UpdateLayeredWindow) needs a real display and is verified separately.
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn keyed_render_state_carries_the_session_color_identity() {
-        let state = render_state_for_key(&CursorConfig::default(), "session-blueprint");
-        assert_eq!(state.core.cfg.cursor_id, "session-blueprint");
-    }
-
     fn empty_map() -> RenderMap {
-        let mut cursors = IndexMap::new();
-        cursors.insert(
-            "default".to_owned(),
-            RenderState::new(CursorConfig::default()),
-        );
-        RenderMap {
-            cursors,
-            virt_x: 0,
-            virt_y: 0,
-            virt_w: 100,
-            virt_h: 100,
-            last_tick: Instant::now(),
-            template: CursorConfig::default(),
-            ended: HashSet::new(),
-            last_active: None,
-        }
+        RenderMap::new(
+            CursorConfig::default(),
+            WinScreen {
+                virt_x: 0,
+                virt_y: 0,
+                virt_w: 100,
+                virt_h: 100,
+                last_tick: Instant::now(),
+            },
+        )
     }
 
     fn move_msg(key: &str, x: f64, y: f64) -> OverlayMsg {
@@ -1564,6 +1521,17 @@ mod tests {
         })
     }
 
+    fn settle(map: &mut RenderMap) {
+        for _ in 0..2000 {
+            map.tick_all(0.016);
+            if map.cursors.values().all(|rs| {
+                rs.core.path.is_none() && rs.core.spring.is_none() && rs.core.click_t.is_none()
+            }) {
+                break;
+            }
+        }
+    }
+
     #[test]
     fn default_dirty_envelope_covers_edge_clamped_session_badges() {
         assert!(
@@ -1573,301 +1541,89 @@ mod tests {
     }
 
     #[test]
-    fn idle_countdown_does_not_request_frame_ticks_but_fade_does() {
+    fn seed_clamps_into_a_virtual_screen_left_of_the_primary() {
         let mut map = empty_map();
-        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+        map.platform.virt_x = -1920;
+        map.platform.virt_w = 3840;
+        map.platform.virt_h = 1080;
+        let frame = map.platform.frame();
+        assert!(map.seed_start_if_sentinel("sessA", -1800.0, 500.0, frame));
+        assert_eq!(map.cursors["sessA"].core.pos, (-1918.0, 360.0));
 
-        // Run the glide + spring settle to completion.
+        map.platform.virt_w = 0;
+        assert_eq!(map.platform.frame(), None);
+    }
+
+    #[test]
+    fn removal_through_the_adapter_resolves_no_pin_key() {
+        let mut map = empty_map();
+        assert_eq!(
+            apply_msg(&mut map, move_msg("sessA", 10.0, 10.0)).as_deref(),
+            Some("sessA")
+        );
+        assert_eq!(
+            apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned())),
+            None
+        );
+        assert_eq!(map.last_active, None);
+    }
+
+    // Before the shared predicate, a landed Windows cursor dropped to the IDLE
+    // cadence for the whole idle-hide delay and its resting bob froze.
+    #[test]
+    fn resting_cursor_keeps_the_active_cadence_for_its_bob() {
+        let mut map = empty_map();
+        map.seed_start_if_sentinel("sessA", 60.0, 60.0, map.platform.frame());
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
+        settle(&mut map);
+        let rs = &map.cursors["sessA"];
+        assert!(rs.core.path.is_none() && rs.core.spring.is_none());
+        assert_eq!(rs.core.idle_alpha, 1.0);
+        assert!(rs.core.has_resting_motion());
+        assert!(map.needs_frame_tick(), "the resting bob needs frames");
+    }
+
+    #[test]
+    fn reduced_motion_countdown_parks_at_idle_cadence_but_fade_ticks() {
+        let mut map = empty_map();
+        map.seed_start_if_sentinel("sessA", 60.0, 60.0, map.platform.frame());
+        map.cursors
+            .get_mut("sessA")
+            .unwrap()
+            .core
+            .visual
+            .reduced_motion = cursor_overlay::ReducedMotion::On;
+        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
         for _ in 0..2000 {
-            for rs in map.cursors.values_mut() {
-                rs.tick(0.016);
-            }
-            if !render_map_needs_frame_tick(&map) {
+            map.tick_all(0.016);
+            if !map.needs_frame_tick() {
                 break;
             }
         }
-        let rs = &map.cursors["sessA"];
-        assert!(
-            rs.core.path.is_none() && rs.core.spring.is_none(),
-            "glide must have completed"
-        );
 
-        // Landed cursor at constant alpha 1.0, idle-hide pending: this is the
-        // countdown phase. Pixels cannot change, so it must NOT demand frame
-        // ticks (the render-gate fix — previously this phase composited the
-        // full virtual screen at frame cadence for the whole idle_hide_ms
-        // window), but it must still be ticked for wall-clock accrual.
-        assert!((rs.core.idle_alpha - 1.0).abs() < f64::EPSILON);
-        assert!(
-            !render_map_needs_frame_tick(&map),
-            "constant-alpha countdown must not request frame ticks"
-        );
-        assert!(
-            rs.in_idle_countdown(),
-            "landed cursor with idle-hide pending must report in_idle_countdown"
-        );
-
-        // Advance idle_secs to the fade window: the fade animates pixels, so
-        // frame ticks are required again until alpha reaches ~0.
-        let fade_start = map.cursors["sessA"].core.motion.idle_hide_ms / 1000.0;
-        for rs in map.cursors.values_mut() {
-            rs.core.idle_secs = fade_start;
-        }
-        for rs in map.cursors.values_mut() {
-            rs.tick(0.016);
-        }
+        // Landed cursor at constant alpha 1.0, idle-hide pending: pixels
+        // cannot change, so it must NOT demand frame ticks (the render-gate
+        // fix), but it must still be ticked for wall-clock accrual.
         let rs = &map.cursors["sessA"];
+        assert!(rs.core.path.is_none() && rs.core.spring.is_none());
+        assert_eq!(rs.core.idle_alpha, 1.0);
+        assert!(!map.needs_frame_tick());
+        assert!(rs.in_idle_countdown());
+
+        // The fade animates pixels, so frame ticks return until alpha ~0.
+        let rs = map.cursors.get_mut("sessA").unwrap();
+        rs.core.idle_secs = rs.core.motion.idle_hide_ms / 1000.0;
+        rs.tick(0.016);
         assert!(rs.core.idle_alpha < 1.0 && rs.core.idle_alpha >= 0.004);
-        assert!(
-            rs.needs_frame_tick(),
-            "an actively fading cursor must request frame ticks"
-        );
+        assert!(rs.needs_frame_tick());
         assert!(!rs.in_idle_countdown());
 
-        // Run the fade out: fully hidden must be quiescent again.
         for _ in 0..60 {
-            for rs in map.cursors.values_mut() {
-                rs.tick(0.016);
-            }
+            map.tick_all(0.016);
         }
         assert!(
-            !render_map_needs_frame_tick(&map),
+            !map.needs_frame_tick(),
             "fully faded cursor must be quiescent"
-        );
-    }
-
-    #[test]
-    fn two_sessions_produce_two_distinct_render_entries() {
-        let mut map = empty_map();
-        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
-        apply_msg(&mut map, move_msg("sessB", 42.0, 24.0));
-        // default + sessA + sessB = 3 distinct owned cursors. The pre-port
-        // regression: a single RenderState would clobber these to one cursor.
-        assert_eq!(map.cursors.len(), 3);
-        assert!(map.cursors.contains_key("sessA"));
-        assert!(map.cursors.contains_key("sessB"));
-        assert!(map.cursors.contains_key("default"));
-    }
-
-    #[test]
-    fn session_end_removes_only_that_session() {
-        let mut map = empty_map();
-        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
-        apply_msg(&mut map, move_msg("sessB", 20.0, 20.0));
-        assert_eq!(map.cursors.len(), 3);
-
-        // session_end(A): A gone, B + default retained.
-        apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
-        assert!(!map.cursors.contains_key("sessA"));
-        assert!(map.cursors.contains_key("sessB"));
-        assert!(map.cursors.contains_key("default"));
-        assert_eq!(map.cursors.len(), 2);
-
-        // Remove("default") is guarded — default survives.
-        apply_msg(&mut map, OverlayMsg::Remove("default".to_owned()));
-        assert!(map.cursors.contains_key("default"));
-
-        // Remove of an absent key is a harmless no-op.
-        let before = map.cursors.len();
-        apply_msg(&mut map, OverlayMsg::Remove("never-existed".to_owned()));
-        assert_eq!(map.cursors.len(), before);
-    }
-
-    #[test]
-    fn lazily_created_cursors_inherit_the_selected_theme() {
-        let mut map = empty_map();
-        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
-        apply_msg(&mut map, move_msg("sessB", 20.0, 20.0));
-        assert_eq!(
-            map.cursors["sessA"].core.cfg.theme_id,
-            map.cursors["default"].core.cfg.theme_id
-        );
-        assert_eq!(
-            map.cursors["sessB"].core.cfg.theme_id,
-            map.cursors["default"].core.cfg.theme_id
-        );
-    }
-
-    #[test]
-    fn insertion_order_is_stable_z_order() {
-        let mut map = empty_map();
-        apply_msg(&mut map, move_msg("first", 1.0, 1.0));
-        apply_msg(&mut map, move_msg("second", 2.0, 2.0));
-        // Re-touching "first" must NOT move it to the back (IndexMap keeps the
-        // original slot), so z-order is stable frame to frame.
-        apply_msg(&mut map, move_msg("first", 3.0, 3.0));
-        let keys: Vec<&String> = map.cursors.keys().collect();
-        assert_eq!(keys, vec!["default", "first", "second"]);
-    }
-
-    #[test]
-    fn tombstone_blocks_resurrection_after_remove() {
-        let mut map = empty_map();
-        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
-        assert_eq!(map.cursors.len(), 2); // default + sessA
-
-        apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
-        assert!(!map.cursors.contains_key("sessA"));
-        assert_eq!(map.cursors.len(), 1);
-
-        // A late in-flight Cmd for the ended session must be dropped WITHOUT
-        // re-inserting (no get-or-create resurrection).
-        let resolved = apply_msg(&mut map, move_msg("sessA", 99.0, 99.0));
-        assert!(
-            resolved.is_none(),
-            "ended-session Cmd must be dropped, not resolved"
-        );
-        assert!(
-            !map.cursors.contains_key("sessA"),
-            "tombstone must block resurrection"
-        );
-        assert_eq!(map.cursors.len(), 1);
-    }
-
-    #[test]
-    fn explicit_revival_clears_tombstone_and_recreates_lazily() {
-        let mut map = empty_map();
-        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
-        apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
-        assert!(apply_msg(&mut map, move_msg("sessA", 20.0, 20.0)).is_none());
-
-        apply_msg(&mut map, OverlayMsg::Revive("sessA".to_owned()));
-        assert!(!map.cursors.contains_key("sessA"));
-        assert!(!map.ended.contains("sessA"));
-
-        let resolved = apply_msg(&mut map, move_msg("sessA", 30.0, 30.0));
-        assert_eq!(resolved.as_deref(), Some("sessA"));
-        assert!(map.cursors.contains_key("sessA"));
-    }
-
-    #[test]
-    fn default_is_never_tombstoned() {
-        let mut map = empty_map();
-        apply_msg(&mut map, OverlayMsg::Remove("default".to_owned()));
-        assert!(map.cursors.contains_key("default"));
-        assert!(!map.ended.contains("default"));
-
-        let resolved = apply_msg(&mut map, move_msg("default", 5.0, 5.0));
-        assert_eq!(resolved.as_deref(), Some("default"));
-        assert!(map.cursors.contains_key("default"));
-    }
-
-    #[test]
-    fn seed_moves_sentinel_cursor_on_screen_for_first_action() {
-        let mut map = empty_map(); // 100x100 frame at origin
-                                   // No "sessA" cursor exists yet — the seed must get-or-create it.
-        let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
-        assert!(seeded, "sentinel cursor must be seeded");
-        let pos = map.cursors["sessA"].core.pos;
-        assert!(
-            pos.0 > -50.0 && pos.1 > -50.0,
-            "seed must be on-screen, got {pos:?}"
-        );
-        assert!(
-            (pos.0 - 60.0).abs() > 4.0 || (pos.1 - 60.0).abs() > 4.0,
-            "seed must differ from target to produce a visible glide, got {pos:?}"
-        );
-    }
-
-    #[test]
-    fn seed_is_noop_when_cursor_already_on_screen() {
-        let mut map = empty_map();
-        seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
-        map.cursors.get_mut("sessA").unwrap().core.pos = (30.0, 30.0);
-        let seeded_again = seed_start_in_map(&mut map, &"sessA".to_owned(), 80.0, 80.0);
-        assert!(!seeded_again, "on-screen cursor must not be re-seeded");
-        assert_eq!(
-            map.cursors["sessA"].core.pos,
-            (30.0, 30.0),
-            "pos must be untouched"
-        );
-    }
-
-    #[test]
-    fn seed_does_not_resurrect_ended_session() {
-        let mut map = empty_map();
-        map.ended.insert("sessA".to_owned());
-        let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
-        assert!(!seeded, "ended session must not be seeded");
-        assert!(
-            !map.cursors.contains_key("sessA"),
-            "ended session must not be resurrected"
-        );
-    }
-
-    #[test]
-    fn sentinel_cursor_is_quiescent_no_frame_tick() {
-        // A brand-new `mcp`/`serve` with no agent activity holds only the
-        // "default" cursor at the off-screen sentinel (-200, -200). It must NOT
-        // request frame ticks, so the render timer can drop to the slow idle
-        // cadence instead of compositing a full-screen pixmap at ~125 Hz
-        // (issue #1808 idle-CPU burn).
-        let map = empty_map();
-        assert!(
-            !render_map_needs_frame_tick(&map),
-            "an untouched sentinel-only overlay must be quiescent"
-        );
-    }
-
-    #[test]
-    fn animating_cursor_requests_frame_ticks() {
-        // After a MoveTo, the cursor has an in-flight path → the loop must keep
-        // ticking at frame cadence so the glide actually animates.
-        let mut map = empty_map();
-        apply_msg(&mut map, move_msg("sessA", 60.0, 60.0));
-        assert!(
-            render_map_needs_frame_tick(&map),
-            "a cursor with an in-flight glide must request frame ticks"
-        );
-        assert!(
-            map.cursors["sessA"].needs_frame_tick(),
-            "the animating cursor itself must report needs_frame_tick"
-        );
-    }
-
-    #[test]
-    fn click_pulse_requests_frame_ticks_then_goes_quiescent() {
-        let mut map = empty_map();
-        // ClickPulse seeds click_t = Some(0.0) → active.
-        apply_msg(
-            &mut map,
-            OverlayMsg::Cmd(KeyedOverlayCommand {
-                key: "sessA".to_owned(),
-                cmd: OverlayCommand::ClickPulse { x: 10.0, y: 10.0 },
-            }),
-        );
-        assert!(
-            render_map_needs_frame_tick(&map),
-            "click pulse must keep ticking"
-        );
-
-        // Disable idle-hide so the only activity source is the click pulse, then
-        // advance time past the pulse: the cursor must fall quiescent so the
-        // loop can park.
-        for rs in map.cursors.values_mut() {
-            rs.core.motion.idle_hide_ms = 0.0;
-        }
-        for _ in 0..120 {
-            for rs in map.cursors.values_mut() {
-                rs.tick(0.016);
-            }
-        }
-        assert!(
-            !render_map_needs_frame_tick(&map),
-            "after the click pulse finishes the overlay must go quiescent"
-        );
-    }
-
-    #[test]
-    fn remove_clears_last_active_for_that_key() {
-        let mut map = empty_map();
-        let k = apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
-        map.last_active = k;
-        assert_eq!(map.last_active.as_deref(), Some("sessA"));
-        apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
-        assert_eq!(
-            map.last_active, None,
-            "removing the active cursor must clear last_active"
         );
     }
 }

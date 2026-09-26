@@ -9,6 +9,13 @@ name: "CD: Cua Driver (cross-platform)"
 # Bare binaries let curlable installers do
 # `curl -L .../cua-driver-rs-vN-darwin-universal-binary.tar.gz | tar -xz`
 # without needing to unpack a directory structure first.
+#
+# Stable releases follow Release Please with no manual publish step. Merging
+# the release pull request creates the `cua-driver-rs-v*` tag and a draft
+# release. That tag push runs this workflow, which builds every artifact, runs
+# the canonical desktop E2E suites against the exact tag SHA, and publishes the
+# draft only when the builds, release checks, and E2E gates all pass.
+# Nightly workflow_call runs and manual dispatches build candidates only.
 
 on:
   workflow_call:
@@ -64,11 +71,6 @@ on:
         required: false
         type: boolean
         default: true
-      publish:
-        description: "Publish an existing immutable version tag after successful builds"
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -82,17 +84,48 @@ concurrency:
 
 jobs:
   # Certify PR-first attribution from the exact immutable candidate before
-  # starting any platform build. Publish recovery dispatches use current
-  # release-control tooling while keeping all release inputs pinned to the tag.
-  # Manual non-publishing builds intentionally remain available for iteration.
+  # starting any platform build. Manual build-only dispatches intentionally
+  # remain available for iteration and skip this check.
   release-attribution-preflight:
     name: release attribution preflight
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.candidate.outputs.version }}
     steps:
+      # Release safety (#4109): a run that can publish must produce notarized
+      # macOS artifacts. 0.28.3 shipped an unsigned CuaDriver.app because a
+      # publishing run disabled notarization, which broke every fresh macOS
+      # install. Fail before any build instead of discovering it afterwards.
+      - name: Refuse to publish without macOS notarization
+        env:
+          CAN_PUBLISH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v') }}
+          DO_NOTARIZE: ${{ startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.notarize == true }}
+        run: |
+          echo "can publish: ${CAN_PUBLISH}; notarize macOS: ${DO_NOTARIZE}"
+          if [[ "$CAN_PUBLISH" == "true" && "$DO_NOTARIZE" != "true" ]]; then
+            echo "::error title=Release safety::This run can publish a Cua Driver release, but macOS notarization is disabled. Publishing requires signed, notarized macOS artifacts (#4109)."
+            exit 1
+          fi
+
+      - name: Resolve candidate version
+        id: candidate
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$CHANNEL" == "nightly" ]]; then
+            VERSION="$INPUT_VERSION"
+          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          else
+            VERSION="$INPUT_VERSION"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+          ref: ${{ inputs.source_ref || github.ref }}
 
       - name: Check out release control tooling
         uses: actions/checkout@v4
@@ -108,8 +141,6 @@ jobs:
           set -euo pipefail
           if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
             VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
-          elif [[ "${{ inputs.publish }}" == "true" ]]; then
-            VERSION="${{ inputs.version }}"
           else
             echo "No immutable release candidate requested; skipping attribution preflight."
             exit 0
@@ -208,7 +239,7 @@ jobs:
             libxkbcommon-dev
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+          ref: ${{ inputs.source_ref || github.ref }}
       - name: Stage nightly artifact version
         if: inputs.channel == 'nightly'
         run: python3 .github/scripts/release_channels.py apply-version --component cua-driver-rs --version "${{ inputs.version }}"
@@ -229,7 +260,7 @@ jobs:
             VERSION="${{ inputs.version }}"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
         with:
           targets: ${{ matrix.target }}
       - uses: actions/cache@v4
@@ -299,7 +330,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+          ref: ${{ inputs.source_ref || github.ref }}
       - name: Stage nightly artifact version
         if: inputs.channel == 'nightly'
         shell: bash
@@ -321,7 +352,7 @@ jobs:
             VERSION="${{ inputs.version }}"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
         with:
           targets: ${{ matrix.target }}
       # rustup can drop non-host std components while updating an existing
@@ -480,7 +511,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+          ref: ${{ inputs.source_ref || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -546,9 +577,22 @@ jobs:
       DO_NOTARIZE: ${{ startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.notarize == true }}
       KEYCHAIN_PASSWORD: temporary-cd-keychain-pwd
     steps:
+      - name: Assert notarization for publishable builds
+        env:
+          CAN_PUBLISH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v') }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* && "$DO_NOTARIZE" != "true" ]]; then
+            echo "::error title=Release safety::Tag builds must notarize the macOS artifacts."
+            exit 1
+          fi
+          if [[ "$CAN_PUBLISH" == "true" && "$DO_NOTARIZE" != "true" ]]; then
+            echo "::error title=Release safety::A publishable build must notarize the macOS artifacts (#4109)."
+            exit 1
+          fi
+          echo "notarize macOS: ${DO_NOTARIZE}"
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+          ref: ${{ inputs.source_ref || github.ref }}
       - name: Preflight Computer History provisioning profile
         if: env.DO_NOTARIZE == 'true'
         env:
@@ -640,7 +684,7 @@ jobs:
             exit 1
           fi
           echo "Imported $CERT_COUNT Developer ID Application certificate(s)"
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
       - name: Ensure Rust targets are installed
@@ -931,19 +975,20 @@ jobs:
   # Source/build-kit assets only: native plugin certification is a separate gate.
   # Nightly builds rewrite Cargo versions in the worktree, so they cannot supply
   # a committed, stable-version source archive under the same provenance contract.
+  # Only the stable tag push publishes, so only that run generates these assets.
+  # Nightly workflow_call runs inherit the caller's non-push event name.
   build-hyprland-plugin-source:
     name: pinned Hyprland plugin source
     needs: release-attribution-preflight
     if: >-
-      inputs.channel != 'nightly' &&
-      (startsWith(github.ref, 'refs/tags/cua-driver-rs-v') ||
-       (github.event_name == 'workflow_dispatch' && inputs.publish == true))
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ inputs.source_ref || github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+          ref: ${{ inputs.source_ref || github.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -964,7 +1009,7 @@ jobs:
           SOURCE_VERSION=$(git show "${SHA}:libs/cua-driver/rust/Cargo.toml" | \
             python3 -c 'import sys, tomllib; print(tomllib.loads(sys.stdin.read())["workspace"]["package"]["version"])')
           test "$VERSION" = "$SOURCE_VERSION"
-          # Historical tags predating the bundler retain Driver-only recovery.
+          # Sources predating the bundler keep Driver-only assets.
           # An existing helper that fails generation is never silently skipped.
           if ! git cat-file -e "${SHA}:libs/cua-driver/hyprland-plugin/packaging/release/bundle.py"; then
             echo "Legacy source has no plugin bundler; preserving Driver-only release."
@@ -994,10 +1039,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Keep the verifier available when maintainers recover an older
-          # immutable tag that predates this script. Candidate artifacts still
-          # come from that exact tag; the release control comes from the commit
-          # that defined this workflow run.
+          # Candidate artifacts come from the exact source; the verifier comes
+          # from the commit that defined this workflow run.
           ref: ${{ inputs.source_ref || github.workflow_sha }}
 
       - name: Determine version
@@ -1015,6 +1058,8 @@ jobs:
       - name: Download candidate archives
         uses: actions/download-artifact@v4
         with:
+          # E2E release gates upload evidence into this same run.
+          pattern: cua-driver-rs-*
           path: artifacts
 
       - name: Verify installer-facing archive contract
@@ -1085,27 +1130,133 @@ jobs:
           CUA_DRIVER_EXPECTED_VERSION: ${{ steps.version.outputs.version }}
         run: npm run verify
 
+  # ── Automatic desktop E2E release gate ─────────────────────────────────────
+  # The stable tag push certifies the exact tag SHA with the canonical hosted
+  # desktop suites before `release` may publish. These jobs call the same
+  # workflows maintainers dispatch for pull request evidence. They start after
+  # the attribution preflight and run in parallel with the artifact builds.
+  # Under a tag push, github.sha is the tagged commit; `release` re-verifies
+  # that the published tag resolves to that same SHA. Nightly workflow_call
+  # runs inherit the caller's non-push event name and skip the gate.
+  e2e-linux:
+    name: release gate / Linux E2E
+    needs: release-attribution-preflight
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/e2e-rust-linux.yml
+    with:
+      ref: ${{ github.sha }}
+
+  e2e-windows:
+    name: release gate / Windows E2E
+    needs: release-attribution-preflight
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/e2e-rust-windows.yml
+    with:
+      ref: ${{ github.sha }}
+
+  e2e-macos:
+    name: release gate / macOS hosted E2E
+    needs: release-attribution-preflight
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/e2e-rust-macos.yml
+    with:
+      source_sha: ${{ github.sha }}
+
+  e2e-standalone-browsers:
+    name: release gate / standalone browser E2E
+    needs: release-attribution-preflight
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/e2e-rust-standalone-browsers.yml
+    with:
+      ref: ${{ github.sha }}
+
+  # ── Release signature gate ──────────────────────────────────────────────────
+  # Release safety (#4109): verify the exact uploaded archives the way the
+  # operating systems do, on their own runners, before the release job can
+  # upload anything. The release job needs both jobs and has no always()
+  # bypass, so a skipped or failed verification blocks publication. macOS
+  # verification runs whenever the build is notarized; a non-notarized manual
+  # build skips it and therefore can never reach the release job.
+  verify-macos-release-signatures:
+    name: macOS release signatures
+    needs: [release-attribution-preflight, build-macos-universal]
+    if: startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.notarize == true
+    uses: ./.github/workflows/cua-driver-release-signatures.yml
+    with:
+      version: ${{ needs.release-attribution-preflight.outputs.version }}
+      source: artifacts
+      verify_macos: true
+      verify_windows: false
+
+  verify-windows-release-signatures:
+    name: Windows release signatures
+    needs: [release-attribution-preflight, build-windows]
+    uses: ./.github/workflows/cua-driver-release-signatures.yml
+    with:
+      version: ${{ needs.release-attribution-preflight.outputs.version }}
+      source: artifacts
+      verify_macos: false
+      verify_windows: true
+
   # ── Release ──────────────────────────────────────────────────────────────────
-  # Tag pushes build immutable candidate artifacts only. Publishing is an
-  # explicit second step after the exact tag SHA passes the interactive E2E
-  # matrices and install-local smokes. This keeps Release Please from making a
-  # GitHub release (and therefore PyPI/npm SDK packages) public before that
-  # evidence exists.
+  # The stable tag push that Release Please creates publishes its own draft
+  # release. No manual dispatch is involved: `release` runs only on that tag
+  # push and only after every build, release check, and E2E gate succeeds, so
+  # the GitHub release (and therefore the PyPI/npm SDK packages) never becomes
+  # public before that evidence exists. Nightly and manual build-only runs skip
+  # it.
   release:
     needs:
-      [build-linux, build-windows, build-macos-universal, verify-windows-node-runtime, verify-release-artifacts, verify-mcp-client-discovery, build-hyprland-plugin-source]
-    if: github.event_name == 'workflow_dispatch' && inputs.publish == true
+      - build-linux
+      - build-windows
+      - build-macos-universal
+      - verify-windows-node-runtime
+      - verify-release-artifacts
+      - verify-mcp-client-discovery
+      - build-hyprland-plugin-source
+      - verify-macos-release-signatures
+      - verify-windows-release-signatures
+      - e2e-linux
+      - e2e-windows
+      - e2e-macos
+      - e2e-standalone-browsers
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
+      - name: Refuse to publish unverified or unnotarized artifacts
+        env:
+          DO_NOTARIZE: ${{ startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs.notarize == true }}
+          MACOS_SIGNATURES: ${{ needs.verify-macos-release-signatures.result }}
+          WINDOWS_SIGNATURES: ${{ needs.verify-windows-release-signatures.result }}
+        run: |
+          echo "notarize: ${DO_NOTARIZE}; macOS signatures: ${MACOS_SIGNATURES}; Windows signatures: ${WINDOWS_SIGNATURES}"
+          if [[ "$DO_NOTARIZE" != "true" || "$MACOS_SIGNATURES" != "success" || "$WINDOWS_SIGNATURES" != "success" ]]; then
+            echo "::error title=Release safety::Publishing requires notarized macOS artifacts and passing signature verification (#4109)."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref }}
+          ref: ${{ github.ref }}
 
-      # Recovery dispatches may target an immutable tag created before the
-      # current release tooling existed. Keep release inputs pinned to that tag,
-      # but run orchestration helpers from the exact workflow revision that was
-      # dispatched.
+      # Release inputs stay pinned to the tag checkout above; orchestration
+      # helpers run from the workflow revision in a separate checkout.
       - name: Check out release control tooling
         uses: actions/checkout@v4
         with:
@@ -1116,11 +1267,11 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
-          else
-            VERSION="${{ inputs.version }}"
+          if [[ "$GITHUB_REF" != refs/tags/cua-driver-rs-v* ]]; then
+            echo "Publication requires a cua-driver-rs-v* tag push, got $GITHUB_REF" >&2
+            exit 1
           fi
+          VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
           TAG="cua-driver-rs-v${VERSION}"
           SHA=$(git rev-parse HEAD)
           TAG_SHA=$(git rev-list -n 1 "$TAG")
@@ -1128,13 +1279,20 @@ jobs:
             echo "Checked-out source $SHA does not match $TAG ($TAG_SHA)" >&2
             exit 1
           fi
+          # The E2E gates certified github.sha; publish only that exact commit.
+          if [[ "$SHA" != "$GITHUB_SHA" ]]; then
+            echo "$TAG ($SHA) is not the E2E-certified commit ($GITHUB_SHA)" >&2
+            exit 1
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
-      - name: Download all artifacts
+      # Download only release candidates; E2E gate evidence shares this run.
+      - name: Download candidate release artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: "{cua-driver-rs-*,cua-hyprland-plugin-source}"
           path: artifacts
 
       - name: Verify checked-in release versions
@@ -1168,7 +1326,8 @@ jobs:
           python3 release-control/.github/scripts/update_cua_driver_installer_version.py \
             --version "$VERSION" \
             --shell-path release-upload/_install-rust.sh \
-            --powershell-path release-upload/install.ps1
+            --powershell-path release-upload/install.ps1 \
+            --withdrawn-path release-control/.github/release-state/cua-driver-rs-withdrawn-versions
 
           # Uninstaller scripts — single canonical file per shell (no
           # `_uninstall-rust.sh` helper). uninstall.sh handles Rust (the only
@@ -1227,7 +1386,7 @@ jobs:
               cmp "$EXPECTED" "release-upload/$(basename "$EXPECTED")"
             done
           else
-            # Legacy tag recovery has no plugin source job or plugin assets.
+            # Legacy sources without the bundler have no plugin assets.
             test "${#PLUGIN_ASSETS[@]}" -eq 0
           fi
 
@@ -1351,6 +1510,41 @@ jobs:
           fi
           exit 1
 
+  # ── Post-publication verification ───────────────────────────────────────────
+  # Release safety (#4109): the canonical installers resolve the baked version,
+  # so it may only advance to a release whose real published bytes install.
+  # Verify the public assets' signatures and run the canonical installers,
+  # pinned to the new version, on macOS, Linux, and Windows. The installer
+  # bake below needs both and has no always() bypass.
+  verify-published-signatures:
+    name: published release signatures
+    needs: release
+    uses: ./.github/workflows/cua-driver-release-signatures.yml
+    with:
+      version: ${{ needs.release.outputs.version }}
+      source: release
+
+  verify-published-installers:
+    name: published release installers
+    needs: release
+    uses: ./.github/workflows/ci-cua-driver-installer-compat.yml
+    with:
+      versions: ${{ needs.release.outputs.version }}
+
+  advance-installer-version:
+    name: advance public installer version
+    needs: [release, verify-published-signatures, verify-published-installers]
+    runs-on: ubuntu-latest
+    steps:
+      # The orchestration helpers and the withdrawn list come from the exact
+      # workflow revision; the installer files come from the latest main.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.workflow_sha }}
+          path: release-control
+          persist-credentials: false
+
       - name: Generate post-publication GitHub App token
         id: post-publish-app-token
         uses: actions/create-github-app-token@v1
@@ -1361,9 +1555,10 @@ jobs:
           repositories: ${{ github.event.repository.name }}
 
       - name: Advance public installer version on main
+        working-directory: release-control
         env:
           GH_TOKEN: ${{ steps.post-publish-app-token.outputs.token }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.release.outputs.version }}
         run: |
           git remote set-url origin \
             "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
@@ -1375,11 +1570,12 @@ jobs:
             UPDATE_ROOT="${RUNNER_TEMP}/cua-installer-version-${ATTEMPT}"
             git worktree add --detach "$UPDATE_ROOT" origin/main
 
-            python3 release-control/.github/scripts/update_cua_driver_installer_version.py \
+            python3 .github/scripts/update_cua_driver_installer_version.py \
               --version "$VERSION" \
               --shell-path "$UPDATE_ROOT/libs/cua-driver/scripts/_install-rust.sh" \
               --powershell-path "$UPDATE_ROOT/libs/cua-driver/scripts/install.ps1" \
               --state-path "$UPDATE_ROOT/.github/release-state/cua-driver-rs-published-version" \
+              --withdrawn-path "$UPDATE_ROOT/.github/release-state/cua-driver-rs-withdrawn-versions" \
               --allow-newer
 
             if git -C "$UPDATE_ROOT" diff --quiet -- \
@@ -1391,7 +1587,7 @@ jobs:
             fi
 
             bash -n "$UPDATE_ROOT/libs/cua-driver/scripts/_install-rust.sh"
-            python3 release-control/.github/scripts/validate_release_versions.py \
+            python3 .github/scripts/validate_release_versions.py \
               --repo-root "$UPDATE_ROOT" \
               --product driver
             git -C "$UPDATE_ROOT" diff --check

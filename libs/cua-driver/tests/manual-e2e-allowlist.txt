@@ -24,7 +24,6 @@ harness_libreoffice_test::harness_lo_vcl_font_color_expand_opens_picker | Option
 # macOS-only browser regressions that failed on their first routed run. Restore
 # them to the Darwin list in scripts/ci/run-rust-standalone-browser-e2e.sh with
 # the product fix.
-standalone_browser_behavior_test::standalone_browser_native_omnibox_select_all | Fails on first routed run: Cmd+A selection lost before pixel type_text (#4125)
 standalone_browser_behavior_test::standalone_browser_generic_type_text_completion | Fails on first routed run: native snapshot omits the page editor (#4126)
 standalone_browser_behavior_test::standalone_browser_web_type_text_verification | Fails on first routed run: native snapshot omits the page editor (#4126)
 

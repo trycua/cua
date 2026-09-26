@@ -50,7 +50,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-rust-linux-${{ github.workflow }}-${{ github.ref }}
+  group: ci-rust-linux-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -120,7 +120,7 @@ jobs:
           node-version: "22"
       - name: Verify shared fixture scroll journal
         run: node --test libs/cua-driver/tests/fixtures/shared/web/journal.test.cjs
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           workspaces: "libs/cua-driver/rust -> target"
@@ -160,6 +160,13 @@ jobs:
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             cargo test -p platform-linux \
             x11_overlay_owner_stays_click_through_across_cursor_lifecycle_and_randr \
+            --locked -- --ignored --nocapture
+      - name: Run X11 desktop capture overlay-exclusion regression
+        working-directory: libs/cua-driver/rust
+        run: |
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+            cargo test -p platform-linux \
+            x11_desktop_capture_hides_the_resting_overlay_and_restores_it \
             --locked -- --ignored --nocapture
       - name: Run X11 clipboard round-trip regression
         working-directory: libs/cua-driver/rust

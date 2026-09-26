@@ -11,7 +11,8 @@ use async_trait::async_trait;
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
     BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+    ExistingProfileSetupRequest, IsolatedBrowserProcess, PrepareAction, PrepareOutcome,
+    PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -23,6 +24,15 @@ use cua_driver_core::browser::{
     existing_profile_setup_descriptor, is_firefox, parse_devtools_active_port, BrowserCursorTracker,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+use crate::browser_isolated_selection::{
+    decide_isolated_browser, InstallationWriteAccess, IsolatedBrowserDecision,
+    IsolatedCandidateFacts, NO_PROTECTED_BROWSER_MESSAGE,
+};
+use crate::browser_standard_user::{
+    browser_launch_context, require_profile_writable, spawn_with_token, with_impersonation,
+    BrowserLaunchContext,
+};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, E_ACCESSDENIED, FILETIME, HWND, RECT};
 use windows::Win32::Storage::FileSystem::{
@@ -215,12 +225,32 @@ fn authenticode_output(executable: &std::path::Path) -> std::io::Result<std::pro
         .output()
 }
 
+/// Result of probing one path for write-class rights held by the calling
+/// thread's effective token.
+enum WriteProbe {
+    Denied,
+    Granted(&'static str),
+    Failed(String),
+}
+
 fn current_token_write_denial_reason(path: &std::path::Path, directory: bool) -> Option<String> {
+    match current_token_write_probe(path, directory) {
+        WriteProbe::Denied => None,
+        WriteProbe::Granted(name) => Some(format!("current token was granted {name}")),
+        WriteProbe::Failed(reason) => Some(reason),
+    }
+}
+
+fn current_token_write_probe(path: &std::path::Path, directory: bool) -> WriteProbe {
     use std::os::windows::ffi::OsStrExt;
 
-    // This launch boundary protects the current agent token from executing a
-    // browser tree that it can modify. Other principals that can replace an
-    // installed browser are outside this runtime authorization boundary.
+    // This launch boundary keeps the token that runs the browser (the
+    // Driver's own token, or the standard-user token an elevated Driver
+    // derives) from executing a browser tree that it can modify. The probe
+    // uses the calling thread's effective token, so a caller impersonating
+    // the standard-user token probes for that token. Principals more
+    // privileged than the launch token that can replace an installed browser
+    // are outside this runtime authorization boundary.
     let wide = path
         .as_os_str()
         .encode_wide()
@@ -267,45 +297,107 @@ fn current_token_write_denial_reason(path: &std::path::Path, directory: bool) ->
         } {
             Ok(handle) => {
                 let _ = unsafe { CloseHandle(handle) };
-                return Some(format!("current token was granted {name}"));
+                return WriteProbe::Granted(name);
             }
             Err(error) if error.code() == E_ACCESSDENIED => {}
-            Err(error) => return Some(format!("{name} probe failed closed: {error}")),
+            Err(error) => {
+                return WriteProbe::Failed(format!("{name} probe failed closed: {error}"))
+            }
         }
     }
-    None
+    WriteProbe::Denied
 }
 
-fn current_token_cannot_write(path: &std::path::Path, directory: bool) -> bool {
-    current_token_write_denial_reason(path, directory).is_none()
+fn windows_installation_write_access(
+    executable: &std::path::Path,
+    trusted_root: &std::path::Path,
+) -> InstallationWriteAccess {
+    windows_installation_write_access_with_probe(
+        executable,
+        trusted_root,
+        current_token_write_probe,
+    )
 }
 
+/// Probe the installation for the token that will run the browser. For a
+/// standard-user launch every probe runs while impersonating that token; if
+/// impersonation fails the candidate is `Untrusted` (fail closed).
+fn launch_token_installation_write_access(
+    context: &BrowserLaunchContext,
+    executable: &std::path::Path,
+    trusted_root: &std::path::Path,
+) -> InstallationWriteAccess {
+    match context {
+        BrowserLaunchContext::Driver => windows_installation_write_access(executable, trusted_root),
+        BrowserLaunchContext::StandardUser(token) => with_impersonation(token, || {
+            windows_installation_write_access(executable, trusted_root)
+        })
+        .unwrap_or(InstallationWriteAccess::Untrusted),
+    }
+}
+
+#[cfg(test)]
 fn trusted_windows_installation(
     executable: &std::path::Path,
     trusted_root: &std::path::Path,
 ) -> bool {
-    trusted_windows_installation_with_probe(executable, trusted_root, current_token_cannot_write)
+    windows_installation_write_access(executable, trusted_root)
+        == InstallationWriteAccess::Protected
 }
 
+#[cfg(test)]
 fn trusted_windows_installation_with_probe(
     executable: &std::path::Path,
     trusted_root: &std::path::Path,
     mut cannot_write: impl FnMut(&std::path::Path, bool) -> bool,
 ) -> bool {
-    if !executable.starts_with(trusted_root) || !cannot_write(executable, false) {
-        return false;
+    windows_installation_write_access_with_probe(executable, trusted_root, |path, directory| {
+        if cannot_write(path, directory) {
+            WriteProbe::Denied
+        } else {
+            WriteProbe::Granted("test_write")
+        }
+    }) == InstallationWriteAccess::Protected
+}
+
+/// Walk the executable and every ancestor up to `trusted_root`, requiring
+/// each probe to deny write access. The first non-denied probe decides the
+/// rejection kind: a granted right is `WritableByLaunchToken`, a failed probe
+/// is `Untrusted` (fail closed).
+fn windows_installation_write_access_with_probe(
+    executable: &std::path::Path,
+    trusted_root: &std::path::Path,
+    mut probe: impl FnMut(&std::path::Path, bool) -> WriteProbe,
+) -> InstallationWriteAccess {
+    let rejection = |result: WriteProbe| match result {
+        WriteProbe::Denied => None,
+        WriteProbe::Granted(_) => Some(InstallationWriteAccess::WritableByLaunchToken),
+        WriteProbe::Failed(_) => Some(InstallationWriteAccess::Untrusted),
+    };
+    if !executable.starts_with(trusted_root) {
+        return InstallationWriteAccess::Untrusted;
+    }
+    if let Some(rejected) = rejection(probe(executable, false)) {
+        return rejected;
     }
     let mut current = executable.parent();
     while let Some(directory) = current {
-        if !cannot_write(directory, true) {
-            return false;
+        if let Some(rejected) = rejection(probe(directory, true)) {
+            return rejected;
         }
         if directory == trusted_root {
-            return true;
+            return InstallationWriteAccess::Protected;
         }
         current = directory.parent();
     }
-    false
+    InstallationWriteAccess::Untrusted
+}
+
+fn isolated_browser_product_name(executable: &std::path::Path) -> &'static str {
+    match browser_product(&executable.to_string_lossy()) {
+        BrowserProduct::MicrosoftEdge => "Edge",
+        _ => "Chrome",
+    }
 }
 
 fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
@@ -1236,24 +1328,89 @@ where
 #[async_trait]
 impl BrowserPlatform for WindowsBrowserPlatform {
     fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
+        // An elevated Driver runs the browser with a derived standard-user
+        // token, so installation protection is proven for that token.
+        let context = browser_launch_context()?;
+        let mut facts = Vec::new();
+        let mut executables = Vec::new();
         for (candidate, trusted_root, expected_cn, expected_org) in isolated_browser_candidates()? {
+            let product = isolated_browser_product_name(&candidate);
             let Ok(executable) = select_isolated_browser_executable([candidate.clone()]) else {
+                facts.push(IsolatedCandidateFacts::missing(product));
+                executables.push(None);
                 continue;
             };
-            if trusted_windows_installation(&candidate, &trusted_root)
+            let write_access =
+                launch_token_installation_write_access(&context, &candidate, &trusted_root);
+            // The signature of a writable candidate is read only to explain
+            // the refusal; such a candidate is never launched.
+            let vendor_signed = write_access != InstallationWriteAccess::Untrusted
                 && has_trusted_authenticode_identity(
                     std::path::Path::new(&executable),
                     expected_cn,
                     expected_org,
-                )
-            {
-                return Ok(executable);
+                );
+            let fact = IsolatedCandidateFacts {
+                product,
+                installed: true,
+                write_access,
+                vendor_signed,
+            };
+            let launchable = fact.launchable();
+            facts.push(fact);
+            executables.push(Some(executable));
+            if launchable {
+                break;
             }
         }
-        Err(refusal(
-            BrowserRefusalCode::BrowserRouteUnavailable,
-            "no vendor-signed protected Chromium executable is available for isolated launch",
-        ))
+        match decide_isolated_browser(&facts, context.kind()) {
+            IsolatedBrowserDecision::Launch(index) => executables[index].take().ok_or_else(|| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    NO_PROTECTED_BROWSER_MESSAGE,
+                )
+            }),
+            IsolatedBrowserDecision::Refuse(message) => Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                message,
+            )),
+        }
+    }
+
+    fn spawn_isolated_browser(
+        &self,
+        mut command: std::process::Command,
+        profile: &std::path::Path,
+    ) -> Result<Box<dyn IsolatedBrowserProcess>, BrowserRefusal> {
+        match browser_launch_context()? {
+            BrowserLaunchContext::Driver => command
+                .spawn()
+                .map(|child| Box::new(child) as Box<dyn IsolatedBrowserProcess>)
+                .map_err(|error| {
+                    refusal(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        format!("could not launch an isolated browser process: {error}"),
+                    )
+                }),
+            BrowserLaunchContext::StandardUser(token) => {
+                require_profile_writable(&token, profile)?;
+                tracing::info!(
+                    "launching the isolated browser with a standard-user token derived from the \
+                     elevated Driver token"
+                );
+                spawn_with_token(token, &command)
+                    .map(|child| Box::new(child) as Box<dyn IsolatedBrowserProcess>)
+                    .map_err(|error| {
+                        refusal(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            format!(
+                                "could not launch the isolated browser with the standard-user \
+                                 token: {error}"
+                            ),
+                        )
+                    })
+            }
+        }
     }
 
     async fn visualize_browser_action(&self, action: BrowserVisualAction) {
@@ -2009,6 +2166,52 @@ mod tests {
     }
 
     #[test]
+    fn installation_write_access_distinguishes_granted_from_failed_probes() {
+        let root = std::path::Path::new(r"C:\Program Files");
+        let executable = root.join(r"Google\Chrome\Application\chrome.exe");
+
+        assert_eq!(
+            windows_installation_write_access_with_probe(&executable, root, |_, _| {
+                WriteProbe::Denied
+            }),
+            InstallationWriteAccess::Protected
+        );
+        assert_eq!(
+            windows_installation_write_access_with_probe(&executable, root, |path, directory| {
+                if directory && path == root {
+                    WriteProbe::Granted("add_file")
+                } else {
+                    WriteProbe::Denied
+                }
+            }),
+            InstallationWriteAccess::WritableByLaunchToken
+        );
+        assert_eq!(
+            windows_installation_write_access_with_probe(&executable, root, |_, directory| {
+                if directory {
+                    WriteProbe::Denied
+                } else {
+                    WriteProbe::Failed("write_data probe failed closed".to_owned())
+                }
+            }),
+            InstallationWriteAccess::Untrusted
+        );
+        assert_eq!(
+            windows_installation_write_access_with_probe(
+                std::path::Path::new(r"D:\UserControlled\chrome.exe"),
+                root,
+                |_, _| WriteProbe::Denied,
+            ),
+            InstallationWriteAccess::Untrusted
+        );
+        assert_eq!(isolated_browser_product_name(&executable), "Chrome");
+        assert_eq!(
+            isolated_browser_product_name(&root.join(r"Microsoft\Edge\Application\msedge.exe")),
+            "Edge"
+        );
+    }
+
+    #[test]
     fn installed_vendor_browser_tree_is_accepted_only_for_a_nonwritable_token() {
         let candidates = isolated_browser_candidates().expect("trusted Known Folder roots");
         let installed = candidates
@@ -2044,6 +2247,31 @@ mod tests {
                 "Windows CI image must provide signed Chrome or Edge; diagnostics: {diagnostics:?}"
             );
         };
+
+        // An elevated host (GitHub-hosted Windows runs tests elevated) must
+        // prove the vendor tree protected from the derived standard-user
+        // token and select it end to end, instead of refusing.
+        let context = browser_launch_context().expect("browser launch context");
+        if matches!(context, BrowserLaunchContext::StandardUser(_)) {
+            assert_eq!(
+                launch_token_installation_write_access(&context, &installed.0, &installed.1),
+                InstallationWriteAccess::Protected,
+                "the standard-user launch token must not be able to modify {}",
+                installed.0.display()
+            );
+            let selected = WindowsBrowserPlatform::default()
+                .isolated_browser_executable()
+                .expect(
+                    "an elevated Driver selects a protected browser for its standard-user token",
+                );
+            let selected_path = selected.strip_prefix(r"\\?\").unwrap_or(&selected);
+            assert!(
+                candidates.iter().any(|(candidate, _, _, _)| selected_path
+                    .eq_ignore_ascii_case(&candidate.to_string_lossy())),
+                "selected executable must be a trusted candidate: {selected}"
+            );
+            return;
+        }
 
         if !trusted_windows_installation(&installed.0, &installed.1) {
             let mut diagnostics = vec![(

@@ -1,13 +1,4 @@
-use super::{exact_window_ownership_result, z_index_from_front_to_back};
-
-#[test]
-fn enum_windows_front_to_back_order_normalizes_to_higher_is_frontmost() {
-    let indices: Vec<_> = (0..3)
-        .map(|position| z_index_from_front_to_back(3, position))
-        .collect();
-    assert_eq!(indices, vec![2, 1, 0]);
-    assert!(indices[0] > indices[2]);
-}
+use super::exact_window_ownership_result;
 
 #[test]
 fn explicit_pid_hwnd_guard_refuses_wrong_or_stale_owners() {

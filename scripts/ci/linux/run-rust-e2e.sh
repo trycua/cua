@@ -363,6 +363,49 @@ if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
     cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test desktop_scope_linux_test -- \
       --ignored --nocapture --test-threads=1
+  if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+    run_test x11-unpublished-pid \
+      cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+        --test x11_unpublished_pid_linux_test -- \
+        --ignored --nocapture --test-threads=1
+  else
+    limitation="The unpublished-_NET_WM_PID case maps a bare X11 client and runs in the canonical X11 lane."
+    jq -n \
+      --arg reason "${limitation}" \
+      '{
+        schema: "cua-e2e-limitation-v1",
+        platform: "linux",
+        display_server: "wayland",
+        harness: "x11-bare-client",
+        test: "x11-unpublished-pid",
+        status: "not_applicable",
+        reason: $reason
+      }' > "${ARTIFACT_DIR}/x11-unpublished-pid-limitation.json"
+    echo "[LIMITATION] x11-unpublished-pid: ${limitation}"
+  fi
+  if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+    run_test perception-capture-loop \
+      cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+        --test perception_capture_loop_test -- \
+        --ignored --nocapture --test-threads=1
+  else
+    # The perception loop is certified in the canonical X11 lane. Wayland
+    # window capture and pointer routes differ per compositor and are not yet
+    # part of this row, so record the coverage gap instead of a vacuous pass.
+    limitation="The perception capture-loop row is certified on X11; Wayland compositor lanes do not run it yet."
+    jq -n \
+      --arg reason "${limitation}" \
+      '{
+        schema: "cua-e2e-limitation-v1",
+        platform: "linux",
+        display_server: "wayland",
+        harness: "electron",
+        test: "perception-capture-loop",
+        status: "not_covered",
+        reason: $reason
+      }' > "${ARTIFACT_DIR}/perception-capture-loop-limitation.json"
+    echo "[LIMITATION] perception-capture-loop: ${limitation}"
+  fi
 fi
 
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then

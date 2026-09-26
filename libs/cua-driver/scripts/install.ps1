@@ -123,8 +123,17 @@ $ThemeBinaryName = "cua-cursor-theme.exe"
 # where the baked line hasn't been updated yet.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-$Script:CuaDriverRsBakedVersion = "0.28.3" # published-installer-version
+$Script:CuaDriverRsBakedVersion = "0.29.1" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
+#
+# Withdrawn releases (for example, a release published without valid
+# signatures) are never selected: an explicit pin is refused, and API
+# resolution skips them. This must mirror
+# .github/release-state/cua-driver-rs-withdrawn-versions, which records the
+# reasons; validate_release_versions.py enforces the match.
+# ~~~ WITHDRAWN_VERSIONS: mirrors the release-state list — do not edit alone ~~~
+$Script:CuaDriverRsWithdrawnVersions = @('0.28.3') # withdrawn-installer-versions
+# ~~~ END_WITHDRAWN_VERSIONS ~~~
 $CursorThemeRequiredFrom = [version]"0.12.7"
 
 # ---------- Path resolution ------------------------------------------------
@@ -913,6 +922,18 @@ function Resolve-ExplicitRelease([string]$value, [string]$source) {
     exit 1
 }
 
+function Test-WithdrawnVersion([string]$version) {
+    return [bool]($Script:CuaDriverRsWithdrawnVersions -contains $version)
+}
+
+function Assert-NotWithdrawnPin([hashtable]$release) {
+    if (Test-WithdrawnVersion $release.Version) {
+        Write-ErrorStep "$($release.Tag) was withdrawn and must not be installed; pin a different release"
+        Write-ErrorStep "  or remove the pin to install the current release."
+        exit 1
+    }
+}
+
 function Get-LatestVersionFromApi {
     # Highest SemVer $TagPrefix* version published on the repo, or $null when
     # the API is unreachable or has no matching tag. Never exits: callers
@@ -946,7 +967,15 @@ function Get-LatestVersionFromApi {
                 if ($Script:CuaDriverRsSelectedChannel -eq 'nightly') {
                     return $_.tag_name -match "^$([regex]::Escape($selectedPrefix))([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*)$"
                 }
-                return $_.tag_name -match "^$([regex]::Escape($selectedPrefix))([0-9]+\.[0-9]+\.[0-9]+)$"
+                if ($_.tag_name -notmatch "^$([regex]::Escape($selectedPrefix))([0-9]+\.[0-9]+\.[0-9]+)$") {
+                    return $false
+                }
+                # Withdrawn releases stay published for audit, but must never be chosen.
+                if (Test-WithdrawnVersion $_.tag_name.Substring($selectedPrefix.Length)) {
+                    Write-WarningStep "skipping withdrawn release $($_.tag_name)"
+                    return $false
+                }
+                return $true
             })
             if ($batch.Count -lt 100) { break }
         }
@@ -1020,6 +1049,7 @@ function Resolve-Version {
         $v = $release.Version
         $Script:CuaDriverRsReleaseTag = $release.Tag
         Write-Step "using version from `$env:CUA_DRIVER_RS_VERSION: $($release.Tag)"
+        Assert-NotWithdrawnPin $release
         $Script:CuaDriverRsVersionSource = 'env'
         return $v
     }
@@ -1028,6 +1058,7 @@ function Resolve-Version {
         $v = $release.Version
         $Script:CuaDriverRsReleaseTag = $release.Tag
         Write-Step "using -Release $($release.Tag)"
+        Assert-NotWithdrawnPin $release
         $Script:CuaDriverRsVersionSource = 'release-arg'
         return $v
     }
@@ -1037,10 +1068,18 @@ function Resolve-Version {
     if ($Script:CuaDriverRsSelectedChannel -eq 'stable' -and $Script:CuaDriverRsBakedVersion) {
         $v = $Script:CuaDriverRsBakedVersion -replace '^v', ''
         Assert-StableVersion $v 'baked release'
-        Write-Step "using baked release: $TagPrefix$v"
-        $Script:CuaDriverRsReleaseTag = "$TagPrefix$v"
-        $Script:CuaDriverRsVersionSource = 'baked'
-        return $v
+        if (Test-WithdrawnVersion $v) {
+            # Release validation never lets a withdrawn version be baked; an old
+            # or hand-edited installer copy that still names one resolves through
+            # the API, which skips every withdrawn release.
+            Write-WarningStep "baked release $TagPrefix$v was withdrawn; resolving the newest eligible release instead"
+        }
+        else {
+            Write-Step "using baked release: $TagPrefix$v"
+            $Script:CuaDriverRsReleaseTag = "$TagPrefix$v"
+            $Script:CuaDriverRsVersionSource = 'baked'
+            return $v
+        }
     }
     $v = Get-LatestVersionFromApi
     if (-not $v) {

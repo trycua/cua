@@ -35,6 +35,8 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 image = { workspace = true }
 base64 = { workspace = true }
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
 tokio = { workspace = true, features = ["full"] }
 jsonschema = { version = "0.46", default-features = false }
 tempfile = "3"
@@ -47,6 +49,9 @@ libc = "0.2"
 [target.'cfg(target_os = "linux")'.dependencies]
 platform-linux = { path = "../platform-linux" }
 
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+x11rb = "0.13"
+
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 core-foundation = "0.10"
 
@@ -54,5 +59,7 @@ core-foundation = "0.10"
 platform-windows = { path = "../platform-windows" }
 windows = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }

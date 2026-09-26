@@ -18,8 +18,15 @@ form-oriented user-interface tasks.
 
 **Intended scope:** research on form-oriented user-interface tasks.
 
-**Status:** research profile. Source code only; no weights, training
-datasets, or checkpoint artifact manifest distributed.
+**Status:** research profile. The public Hugging Face repository
+[`cua-ai/cua-s1-forms`](https://huggingface.co/cua-ai/cua-s1-forms)
+(revision `4a7a9f42a3d42e6dfbd111c0c843e37ac50f1332`, MIT) publishes a
+related `tinyx` form checkpoint with 706,048 parameters as a safetensors and
+JSON pair that loads with `cua_s1.model.load_checkpoint`. Older revisions
+also ship a pickle `.pt` copy, which `cua_s1` refuses by design (#3977); it
+was removed at the pinned revision. The results on that repository's card are its
+own and are not reproduced in this component. No training dataset or
+checkpoint artifact manifest is distributed here.
 
 **Model design:** the reference `tinyx` configuration uses a byte-level
 transformer encoder with an option-attention classification head. For each
@@ -65,7 +72,10 @@ Evaluation below).
 
 **Status:** research profile. Inference-only Python implementation
 (`cua_s1.four_b`). Adapter weights at
-[`cua-ai/cua-s1-4b-0.1`](https://huggingface.co/cua-ai/cua-s1-4b-0.1).
+[`cua-ai/cua-s1-4b-0.1`](https://huggingface.co/cua-ai/cua-s1-4b-0.1),
+pinned to revision `3ebffb9868f31a1d54140948cb2434d35f35b281`, which has a
+model card and declares Apache-2.0 for the adapters only; `Qwen/Qwen3.5-4B`
+keeps its own license.
 
 **Decoding contract:** a chat-template prompt asks the model to answer with
 a single letter identifying the chosen option; each option letter is a
@@ -99,7 +109,10 @@ complete, or correctly scoped.
 decisions, not specific to form-filling.
 
 **Status:** research profile. Source code (`cua_s1.nano`). Weights at
-[`cua-ai/cua-s1-nano-0.1`](https://huggingface.co/cua-ai/cua-s1-nano-0.1).
+[`cua-ai/cua-s1-nano-0.1`](https://huggingface.co/cua-ai/cua-s1-nano-0.1),
+pinned to revision `abbd98492307dc20373f79f7141725412df63c42`, which has a
+model card and declares Apache-2.0. The weights are trained from scratch; the
+frozen vision backbone is not redistributed and keeps its own license.
 
 **Model design:** a from-scratch, single-pass option-attention classifier
 with approximately 855,000 trainable parameters. Scores every candidate
@@ -165,7 +178,9 @@ and `multimodal/` subdirectories under the same HF repo, exactly as
 
 **Status:** research profile. Inference-only Python implementation
 (`cua_s1.four_b`). Adapter weights at
-[`cua-ai/cua-s1-4b-0.2`](https://huggingface.co/cua-ai/cua-s1-4b-0.2).
+[`cua-ai/cua-s1-4b-0.2`](https://huggingface.co/cua-ai/cua-s1-4b-0.2),
+pinned to revision `16818868b0cc7813808aae4e87b417657046ab79`, Apache-2.0
+for the adapter only.
 
 **Decoding contract:** identical to `cua-s1-4b-0.1`'s.
 
@@ -197,6 +212,84 @@ measured on 13 single-widget research environments under a hard step cap,
 with 6 excluded because they are not reliably rewardable under the provider
 used.
 
+## Verification scope and known failure modes
+
+This section records what has been checked outside the offline benchmark and
+what has not. The download and setup commands are in the README's
+[Get the weights and run inference](README.md#get-the-weights-and-run-inference)
+section.
+
+**Pinned inputs.** Every result below used `Qwen/Qwen3.5-4B` at
+`851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a`, `cua-s1-4b-0.2` at
+`16818868b0cc7813808aae4e87b417657046ab79`, and `cua-s1-4b-0.1` at
+`88d8b8a90c2da4470d005cc23ec8665a6442ebe1` (adapter weights byte-identical to
+the currently pinned `3ebffb9868f31a1d54140948cb2434d35f35b281`), loaded by
+`cua_s1.four_b` through the jev-use closed-candidate chooser with the `four-b` lock (torch 2.14.0,
+Transformers 5.17.0, PEFT 0.21.0).
+
+**Local fixture runs (2026-09-25).** One Apple M1 Ultra host with 128 GB of
+unified memory, macOS 26, Python 3.12, `mps`. Each row is one deterministic
+decision per fixture; the value is the selected option's probability. The
+positive and negative requests are the checked-in
+`libs/cua-driver/examples/jev-use/fixtures/jev-choice-request-v1.json` and
+`jev-choice-negative-v1.json`. The 12-region, 8-candidate request and the
+synthetic screenshots used for the multimodal rows are not checked in.
+
+| Model and modality                  | dtype      | Positive (expects `submit-form`) | Negative (expects `abstain`) | 8-candidate (expects `click-r11`) |
+| ----------------------------------- | ---------- | -------------------------------- | ---------------------------- | --------------------------------- |
+| `cua-s1-4b-0.2` text                | `float16`  | `submit-form` 0.975              | `abstain` 0.430              | `click-r11` 0.932                 |
+| `cua-s1-4b-0.2` text                | `bfloat16` | `submit-form` 0.973              | `abstain` 0.455              | not run                           |
+| `cua-s1-4b-0.2` multimodal          | `float16`  | `submit-form` 0.979              | `abstain` 0.857              | `click-r11` 0.984                 |
+| `cua-s1-4b-0.1` text                | `float16`  | `abstain` 0.418 (wrong)          | `abstain` 0.437              | `click-r9` 0.159 (wrong)          |
+| `cua-s1-4b-0.1` multimodal          | `float16`  | `abstain` 0.561 (wrong)          | `abstain` 0.569              | `click-r0` 0.283 (wrong)          |
+| `Qwen/Qwen3.5-4B`, no adapter, text | `float16`  | `submit-form` 0.426              | `abstain` 0.745              | `click-r2` 0.523 (wrong)          |
+
+These are runtime smokes on three synthetic requests, not an accuracy
+estimate. The base model without an adapter passes the two checked-in
+fixtures, so passing them does not by itself show adapter quality.
+
+**Desktop counterexample.** In an earlier private primary-desktop probe,
+packaged OmniParser observed `Send`, the only action candidate required an
+exact `Save`, and `cua-s1-4b-0.2` text selected that action with probability
+0.777 instead of abstaining. No click was dispatched. A caller must not treat
+a high S1 score as proof that a candidate's condition holds; see
+`libs/cua-driver/examples/jev-use/decision-models.md`.
+
+**Not yet covered.**
+
+- Cua-S1 is not yet covered by canonical Cua Driver desktop E2E on any
+  platform. The fixture runs above involve no Cua Driver session, so no
+  Driver version applies to them.
+- No CI job loads real weights. `CI: cua-s1` runs the unit suite with fake
+  models on Ubuntu with Python 3.11, 3.12, and 3.13, checks that the `four-b`
+  dependencies import, and runs the unit suite with the `four-b` extra on
+  macOS arm64.
+- 4B inference on Linux, Windows, and CUDA has not been measured. On the
+  macOS host above, `cpu` with `float32` took 19.5 to 50.2 s per warm
+  decision while other workloads loaded the host (see the README's hardware
+  table).
+- `cua-s1-nano-0.1` and `cua-s1-forms` load with the package's safetensors
+  loaders, but no chooser or Driver integration runs them, and they were not
+  part of the fixture runs.
+- Peak memory for 4B inference has not been measured. The base weights alone
+  are 9.32 GB, so 8 GB hosts and guests cannot load the model.
+
+**Known failure modes.**
+
+- `cua-s1-4b-0.1` abstained on the positive fixture in both modalities and
+  chose the wrong target on the 8-candidate request.
+- `cua-s1-4b-0.2` can select an action whose stated condition does not match
+  the observation, as in the desktop counterexample above.
+- On Apple silicon with Transformers 5.17.0 and torch 2.14.0, `mps` with
+  `float16` crashed or hung during weight loading with Transformers'
+  concurrent loader (#4198). `cua_s1.four_b` now loads `mps` weights
+  sequentially; the fixture runs above used sequential loading.
+- The one-letter-per-option readout supports at most 26 options. The
+  chooser returns `option_limit` instead of truncating.
+- The chooser's `model` field names the adapter, its revision when it can be
+  read locally, and the modality (#4204), but not the base model. Evidence
+  logs must record the base revision separately.
+
 ## Limitations (all checkpoints)
 
 Computer-use behavior can fail because of unfamiliar layouts, changed
@@ -218,8 +311,9 @@ idempotent.
 
 ## Evaluation methodology notes
 
-No model result is claimed by this source-only component beyond what is
-published in `libs/cua-bench-s1/README.md`. Offline evaluation utilities
+No model result is claimed by this component beyond what is published in
+`libs/cua-bench-s1/README.md` and the runtime smokes recorded in
+[Verification scope and known failure modes](#verification-scope-and-known-failure-modes). Offline evaluation utilities
 report abstention, coverage, selective accuracy, wrong actions, wrong
 targets, and unsafe actions. Synthetic splits are disjoint by form
 signature, and model selection uses validation rather than test results. A
@@ -242,8 +336,12 @@ See [`SECURITY.md`](SECURITY.md) for threat-model and reporting guidance.
 
 ## Data, architecture, and licensing
 
-This component does not grant rights to future checkpoint weights, external
-training data, or unlisted third-party materials. A checkpoint release must
+This component does not grant rights to checkpoint weights, external
+training data, or unlisted third-party materials. At the pinned revisions,
+the Hugging Face repositories declare these licenses: `cua-s1-4b-0.2` and
+`cua-s1-4b-0.1` Apache-2.0 (adapters only), `cua-s1-nano-0.1` Apache-2.0,
+`cua-s1-forms` MIT, and `Qwen/Qwen3.5-4B` Apache-2.0 under Qwen's own terms. A
+checkpoint release must
 document its exact artifact license, data provenance, and applicable
 third-party notices before distribution or use decisions are made. The source
 code is MIT-licensed, but an official checkpoint may use separate terms that

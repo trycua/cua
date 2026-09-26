@@ -34,6 +34,7 @@ pub(crate) mod get_screen_size;
 mod health_report;
 mod move_cursor;
 mod page;
+mod pixel_route;
 pub(crate) mod px_frame;
 mod set_config;
 mod type_text_chars;
@@ -150,37 +151,14 @@ pub use cua_driver_core::element_cache::{
     SnapshotBoundZoomContext as ZoomContext, SnapshotBoundZoomRegistry as ZoomRegistry,
 };
 
-/// Input delivery modality — the agent-selected rung of the best-effort-background
-/// ladder, passed per call (never a stored/config setting).
+/// The shared per-call delivery mode; see [`cua_driver_core::delivery`].
 ///
-/// - `Background` (default): post synthetic input to the pid without fronting.
-/// - `Foreground`: briefly front the target window, act, then restore the prior
-///   frontmost (see [`crate::input::skylight::with_foreground_assist`]). The
-///   agent's vision-driven last resort — and the only way `click` reaches a
-///   foreground rung. Orthogonal to addressing (`element_index` vs `x/y`, which
-///   selects AX vs pixel).
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum DeliveryMode {
-    #[default]
-    Background,
-    Foreground,
-}
-
-impl DeliveryMode {
-    /// Parse the per-call `delivery_mode` argument. Anything other than an
-    /// explicit case-insensitive `"foreground"` resolves to `Background` — the
-    /// correct default, so an omitted/garbage value never silently fronts.
-    pub fn parse(arg: Option<&str>) -> Self {
-        match arg {
-            Some(s) if s.eq_ignore_ascii_case("foreground") => Self::Foreground,
-            _ => Self::Background,
-        }
-    }
-
-    pub fn is_foreground(self) -> bool {
-        matches!(self, Self::Foreground)
-    }
-}
+/// On macOS, `Foreground` briefly fronts the target window, acts, then
+/// restores the prior frontmost (see
+/// [`crate::input::skylight::with_foreground_assist`]). It is the only way
+/// `click` reaches a foreground rung and is orthogonal to addressing
+/// (`element_index` vs `x/y`, which selects AX vs pixel).
+pub use cua_driver_core::delivery::DeliveryMode;
 
 /// Convert a pure background-input refusal into the structured refusal result
 /// shape shared by exact-target tools: `code`, `effect: "refused"`, the
@@ -298,8 +276,10 @@ pub(crate) async fn finish_window_observation(
 
 /// px-focus for the keyboard family (type_text / press_key / hotkey): focus the
 /// element at (x,y) before a keystroke — the *element px action* form of a
-/// keyboard tool. Prefer non-destructive AX focus so an existing selection is
-/// retained; the foreground rung falls back to a real pixel click when needed.
+/// keyboard tool. When the exact window's focused element already covers the
+/// point, nothing is clicked, so a Cmd+A selection survives a follow-up
+/// type_text or Cmd+V. Otherwise prefer non-destructive AX focus; the
+/// foreground rung falls back to a real pixel click when needed.
 /// Reuses ClickTool's exact coordinate translation and delivery mode.
 /// `Ok(())` on success; `Err(ToolResult)` short-circuits the caller.
 #[allow(clippy::too_many_arguments)]
@@ -332,6 +312,14 @@ pub(crate) async fn focus_by_pixel(
                 )
                 .await?;
         }
+    }
+    // The requested field may already hold keyboard focus, for example after
+    // a pixel hotkey Cmd+A. Any focus action is then redundant, and the real
+    // click fallback would be destructive: Chromium's omnibox hit-tests to an
+    // enclosing AXGroup that rejects AXFocused, so the fallback click moved
+    // the caret and dropped the selection (#4125).
+    if focused_element_holds_point(pid, window_id, x, y, true).await {
+        return Ok(());
     }
     if let Some(ref s) = session {
         click_args["session"] = serde_json::json!(s);
@@ -414,6 +402,21 @@ pub(crate) async fn focus_by_pixel(
 /// conservative direction: an unprovable focus escalates to the stronger rung
 /// rather than being reported as success.
 async fn pixel_focus_landed(pid: i32, window_id: Option<u32>, x: f64, y: f64) -> bool {
+    focused_element_holds_point(pid, window_id, x, y, false).await
+}
+
+/// Whether the application's focused element covers the window-local pixel
+/// `(x, y)` of `window_id`. With `require_window`, the focused element must
+/// also belong to that exact window, so focus held by a same-process sibling
+/// window that overlaps the point never counts as the requested target.
+/// Unprovable answers are `false`.
+async fn focused_element_holds_point(
+    pid: i32,
+    window_id: Option<u32>,
+    x: f64,
+    y: f64,
+    require_window: bool,
+) -> bool {
     let Some(wid) = window_id else {
         return false;
     };
@@ -427,11 +430,16 @@ async fn pixel_focus_landed(pid: i32, window_id: Option<u32>, x: f64, y: f64) ->
                 return false;
             };
             let rect = crate::ax::bindings::element_screen_rect(focused);
+            let focused_window = if require_window {
+                crate::ax::exact_target::element_window_id(focused)
+            } else {
+                Some(wid)
+            };
             core_foundation::base::CFRelease(focused as core_foundation::base::CFTypeRef);
             let Some(rect) = rect else {
                 return false;
             };
-            point_within_rect(rect, screen_x, screen_y)
+            focused_window == Some(wid) && point_within_rect(rect, screen_x, screen_y)
         }
     })
     .await

@@ -1246,6 +1246,46 @@
       "success_output_schema": {
         "additionalProperties": true,
         "properties": {
+          "agent_overlay_capture": {
+            "additionalProperties": false,
+            "properties": {
+              "method": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "oneOf": [
+                  {
+                    "const": "excluded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_present",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_excluded",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "display": {
             "type": "string"
           },
@@ -3054,7 +3094,7 @@
       },
       "input_schema": {
         "additionalProperties": false,
-        "description": "Transport-free request. Runtime use requires the future capture registry.",
+        "description": "Parse one immutable screenshot capture. Pass the `capture_id` returned by\n`get_window_state` or `get_desktop_state`; the Driver capture registry\nresolves it to the exact pixels and action-coordinate transform.",
         "properties": {
           "capture_id": {
             "minLength": 1,

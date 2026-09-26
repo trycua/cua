@@ -33,7 +33,14 @@ The example prefers browser DOM evidence. It also recognizes the public
 tool and the capture-bound `click.capture_id` input. The agent obtains the
 capture from `get_window_state` and sends its exact ID with the visual click;
 it never falls back to unbound coordinates. The optional path is not required
-for this form. See
+for this form: its Submit button has a DOM reference, so the agent submits
+with `browser_click` and skips the visual parse. The agent parses visual
+regions only when the page offers no action. If Driver refuses a background
+visual click, the next step offers an explicit foreground click instead of
+retrying in the background. Each logged step records which tool acted and a
+`visual` status (`skipped`, `ok`, `not_installed`, `error`, or `unavailable`). To prove the visual action path with the perception
+extension installed, add `--visual-fixture --require-visual-path` to
+`verify_setup.py`; that test page has no Submit button reference. See
 [Capture and delivery modalities](/concepts/capture-and-delivery-modalities) for
 the observation modes Cua Driver supports.
 
@@ -60,10 +67,20 @@ if either grant is missing.
   </Tab>
   <Tab value="Windows">
 
-Use a normal, non-administrator PowerShell terminal in your logged-in desktop
-session. Install Google Chrome or Microsoft Edge as a system application.
-Run Driver without elevation too: automatic browser discovery requires an
-installation the running account's token cannot modify.
+Use a PowerShell terminal in your logged-in desktop session. Install Google
+Chrome or Microsoft Edge as a system application. Automatic browser discovery
+requires an installation that the token running the browser cannot modify.
+
+Driver can run elevated, as the installer's autostart does on an administrator
+account. An elevated token can modify `Program Files`, so an elevated Driver
+never runs the isolated browser with its own token. It launches Chrome or Edge
+with a standard-user token derived from its own: the same account and desktop,
+with administrator rights removed. This also covers the built-in Administrator
+account that some cloud Windows images create as the first user, and
+administrator accounts with UAC turned off. If Windows cannot provide a
+verified standard-user token, `browser_prepare` fails with
+`browser_route_unavailable` and explains why. Driver never falls back to an
+elevated browser.
 
 ```powershell
 cua-driver --version
@@ -241,7 +258,7 @@ shell call until it finishes. The command manages the test server itself.
 | Problem | What to check |
 | --- | --- |
 | Driver not running or permissions missing | Follow the [Driver setup guide](/how-to-guides/driver/install). |
-| Browser cannot launch | Check the browser installation and desktop-session requirements in your platform tab. On Windows, avoid an elevated Driver process. |
+| Browser cannot launch | Check the browser installation and desktop-session requirements in your platform tab. On Windows, read the `browser_prepare` refusal message; it names the installation or token check that failed. |
 | `browser_prepare` requires a `pid` | Update an older Driver installation before using this example. |
 | `uv` not found | Finish the uv installation and open a new terminal with its installation directory on `PATH`. |
 | API authentication or quota error | Check your TypeSafe key and account access. The connection check can pass even when live access fails. |

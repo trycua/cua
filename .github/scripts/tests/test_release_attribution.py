@@ -15,6 +15,7 @@ from release_attribution import (
     _change_contributors,
     build_manifest,
     changelog_references_change,
+    commits_in_range,
     find_previous_tag,
     is_perception_only_diff,
     linked_issue_numbers,
@@ -692,6 +693,42 @@ def _commit(root: Path, path: str, content: str, subject: str) -> str:
     git(root, "add", ".")
     git(root, "commit", "-m", subject)
     return git(root, "rev-parse", "HEAD")
+
+
+def test_change_detection_skips_only_excluded_crate_and_companion_commits(tmp_path: Path):
+    """Driver nightlies ignore Perception-only changes, even with lockfile companions."""
+    driver = "libs/cua-driver"
+    perception = "libs/cua-driver/rust/crates/cua-perception"
+    lockfile = "libs/cua-driver/rust/Cargo.lock"
+    git(tmp_path, "init")
+    git(tmp_path, "config", "user.name", "Release Test")
+    git(tmp_path, "config", "user.email", "release@example.com")
+    _commit(tmp_path, f"{driver}/src.rs", "base\n", "chore: seed fixture")
+    git(tmp_path, "tag", "base")
+
+    def change(subject: str, *paths: str) -> None:
+        for path in paths:
+            target = tmp_path / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(f"{subject}\n")
+        git(tmp_path, "add", ".")
+        git(tmp_path, "commit", "-m", subject)
+
+    change("perception only", f"{perception}/src/lib.rs")
+    change("perception with lockfile", f"{perception}/Cargo.toml", lockfile)
+    change("perception with driver source", f"{perception}/src/lib.rs", lockfile, f"{driver}/src.rs")
+    change("lockfile only", lockfile)
+    change("driver only", f"{driver}/src.rs")
+
+    commits = commits_in_range(
+        tmp_path, "base", "HEAD", [driver], [perception], [lockfile]
+    )
+
+    assert [commit.subject for commit in commits] == [
+        "perception with driver source",
+        "lockfile only",
+        "driver only",
+    ]
 
 
 def test_previous_tag_ignores_a_higher_abandoned_version_tag(tmp_path: Path):

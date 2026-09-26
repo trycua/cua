@@ -12,7 +12,7 @@ on:
     inputs:
       dtype:
         # bfloat16 uses the runner's AVX512-BF16; float16 has no native CPU
-        # support there and is several times slower. float32 weights (18.7 GB)
+        # support there and is about 8x slower. float32 weights (18.7 GB)
         # do not fit in the runner's 16 GB of memory.
         description: "Torch dtype for CPU inference"
         required: false
@@ -336,7 +336,13 @@ jobs:
           set -euo pipefail
           vmstat -S M 5 > "$RUNNER_TEMP/vmstat.log" &
           vmstat_pid=$!
-          trap 'kill "$vmstat_pid" 2>/dev/null || true' EXIT
+          # Top CPU and memory consumers, to explain any latency outlier.
+          while sleep 15; do
+            date -u +%H:%M:%S
+            ps -eo pcpu,rss,comm --sort=-pcpu | head -n 8
+          done > "$RUNNER_TEMP/top.log" 2>&1 &
+          top_pid=$!
+          trap 'kill "$vmstat_pid" "$top_pid" 2>/dev/null || true' EXIT
           xvfb-run -a --server-args="-screen 0 1920x1080x24" \
             dbus-run-session -- bash -lc \
             "openbox >/tmp/cua-openbox.log 2>&1 & picom --backend xrender --config /dev/null >/tmp/cua-picom.log 2>&1 & sleep 2; scripts/ci/linux/run-rust-e2e.sh"
@@ -353,7 +359,7 @@ jobs:
               jq -r '
                 "| Measure | Value |", "| --- | --- |",
                 "| Extension | cua-perception \(.extension.version) (\(.extension.trust)) |",
-                "| S1 checkpoint | `\(.s1.model)` (load \(.s1.load_s) s, peak RSS \(.s1.peak_rss_mb) MB) |",
+                "| S1 checkpoint | `\(.s1.model)` (load \(.s1.load_s) s, resident copy \(.s1.resident_s) s, warm-up decision \(.s1.warmup_ms) ms, anonymous RSS \(.s1.rss_anon_mb) MB) |",
                 "| Regions parsed / candidates | \(.regions_parsed) / \(.candidates) |",
                 "| S1 choice | `\(.selected_id)` \(.selected_text | tojson) (confidence \(.confidence)) |",
                 "| Parse (warm worker) | \(.parse_ms) ms (first parse \(.warm_parse_ms) ms) |",
@@ -375,7 +381,7 @@ jobs:
               cat "$artifacts/summary.md"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-          cp "$RUNNER_TEMP/vmstat.log" "$artifacts/" 2>/dev/null || true
+          cp "$RUNNER_TEMP/vmstat.log" "$RUNNER_TEMP/top.log" "$artifacts/" 2>/dev/null || true
 
       - name: Upload row evidence
         if: always()

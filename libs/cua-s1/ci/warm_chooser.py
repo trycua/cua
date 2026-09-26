@@ -10,6 +10,8 @@ E2E row, using the repository's validation and scoring code unchanged
 
 Configuration is the chooser's: `S1_BASE_MODEL_PATH`, `S1_ADAPTER_PATH`,
 `S1_DEVICE`, `S1_DTYPE`, and `S1_MODALITY` (one modality per process).
+`S1_RESIDENT=0` keeps the weights memory-mapped instead of copying them into
+process memory (see `make_resident`).
 
 Serve mode (default) prints one `{"ready": true, ...}` line after loading,
 then reads one JSON object per stdin line:
@@ -74,6 +76,38 @@ def peak_rss_mb() -> float:
     return round(peak / (1024 * 1024 if sys.platform == "darwin" else 1024), 1)
 
 
+def make_resident(model: Any) -> None:
+    """Copy memory-mapped weights into process memory.
+
+    Transformers maps the safetensors shards and loads same-dtype CPU weights
+    as file-backed pages. Under desktop memory pressure (Driver, browser,
+    OmniParser worker, video recorder) the kernel evicts those clean pages,
+    and every forward pass rereads up to 9 GB from disk. Anonymous copies stay
+    resident; one tensor is copied at a time, so the peak cost is one tensor.
+    """
+    import torch
+
+    with torch.no_grad():
+        for tensor in [*model.parameters(), *model.buffers()]:
+            tensor.data = tensor.data.clone()
+
+
+def rss_breakdown_mb() -> dict[str, float]:
+    """Current anonymous and file-backed resident memory (Linux only)."""
+    try:
+        status = Path("/proc/self/status").read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    values = {}
+    for line in status.splitlines():
+        key, _, rest = line.partition(":")
+        if key in {"RssAnon", "RssFile"}:
+            values[key.lower().replace("rss", "rss_") + "_mb"] = round(
+                int(rest.split()[0]) / 1024, 1
+            )
+    return values
+
+
 class WarmChooser:
     def __init__(self) -> None:
         base = Path(os.environ["S1_BASE_MODEL_PATH"]).expanduser()
@@ -104,6 +138,12 @@ class WarmChooser:
         )
         self.scorer.load()
         self.load_s = round(time.perf_counter() - started, 2)
+        self.resident_s: float | None = None
+        self.warmup_ms: int | None = None
+        if os.environ.get("S1_RESIDENT", "1") != "0":
+            started = time.perf_counter()
+            make_resident(self.scorer._model)
+            self.resident_s = round(time.perf_counter() - started, 2)
 
     def decide(self, raw: Any, screenshot: str | None) -> tuple[dict[str, Any], int]:
         if len(json.dumps(raw).encode()) > MAX_INPUT_BYTES:
@@ -136,11 +176,14 @@ class WarmChooser:
             "device": self.device,
             "dtype": self.dtype,
             "load_s": self.load_s,
+            "resident_s": self.resident_s,
+            "warmup_ms": self.warmup_ms,
             "torch": torch.__version__,
             "torch_threads": torch.get_num_threads(),
             "cpu_count": os.cpu_count(),
             "machine": platform.machine(),
             "peak_rss_mb": peak_rss_mb(),
+            **rss_breakdown_mb(),
         }
 
 
@@ -245,6 +288,7 @@ def main(argv: list[str] | None = None) -> int:
             str(JEV_USE / "fixtures" / f"{stem}.png") if chooser.modality == "multimodal" else None
         )
         _, latency_ms = chooser.decide(request, screenshot)
+        chooser.warmup_ms = latency_ms
         print(f"warmup decision: {latency_ms} ms", file=sys.stderr, flush=True)
     return serve(chooser, protocol)
 

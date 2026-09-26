@@ -1262,6 +1262,25 @@ mod observation_tests {
         assert_eq!(arguments["_transport_session_id"], "mcp-trusted-lease");
     }
 
+    #[tokio::test]
+    async fn server_dispatches_ping_request_as_empty_result() {
+        let provider = CapturingProvider {
+            arguments: Mutex::new(None),
+        };
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "ping"
+        }))
+        .unwrap();
+
+        let response = handle_request(request, serde_json::json!(2), &provider).await;
+        let value = serde_json::to_value(response).unwrap();
+        assert_eq!(value["jsonrpc"], "2.0");
+        assert_eq!(value["id"], 2);
+        assert_eq!(value["result"], serde_json::json!({}));
+    }
+
     #[test]
     fn successful_mixed_output_is_shape_only() {
         let response = Response::ok(

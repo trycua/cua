@@ -1569,4 +1569,72 @@ mod tests {
             "tool_observation_owner": "proxy"
         })));
     }
+
+    #[tokio::test]
+    async fn proxy_io_handles_initialize_and_ping_probe_sequence() {
+        let input = concat!(
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-probe","version":"1.0"}}}"#,
+            "\n",
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            "\n",
+            r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#,
+            "\n"
+        );
+        let cached_tools = Arc::new(serde_json::json!({"tools": []}));
+        let mut writer = Vec::new();
+
+        run_proxy_io(
+            BufReader::new(input.as_bytes()),
+            &mut writer,
+            "dummy.sock",
+            &cached_tools,
+            "session-probe",
+            false,
+        )
+        .await
+        .unwrap();
+
+        let output_str = String::from_utf8(writer).unwrap();
+        let lines: Vec<&str> = output_str.lines().collect();
+        assert_eq!(
+            lines.len(),
+            2,
+            "initialize and ping must each produce a response; notifications are dropped: {output_str}"
+        );
+
+        let init_resp: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(init_resp["jsonrpc"], "2.0");
+        assert_eq!(init_resp["id"], 1);
+        assert!(init_resp["result"]["capabilities"].is_object());
+
+        let ping_resp: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(ping_resp["jsonrpc"], "2.0");
+        assert_eq!(ping_resp["id"], 2);
+        assert_eq!(ping_resp["result"], serde_json::json!({}));
+    }
+
+    #[tokio::test]
+    async fn proxy_dispatches_ping_request_as_empty_result() {
+        let req: Request = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 42,
+            "method": "ping"
+        }))
+        .unwrap();
+        let cached_tools = Arc::new(serde_json::json!({"tools": []}));
+        let response = handle_proxy_request(
+            req,
+            serde_json::json!(42),
+            "dummy.sock",
+            &cached_tools,
+            "session-ping",
+            false,
+        )
+        .await;
+
+        let value = serde_json::to_value(response).unwrap();
+        assert_eq!(value["jsonrpc"], "2.0");
+        assert_eq!(value["id"], 42);
+        assert_eq!(value["result"], serde_json::json!({}));
+    }
 }

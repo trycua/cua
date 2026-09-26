@@ -996,6 +996,11 @@ fn structured_delivery_mode(
         Some("background") if structured.get("delivery_mode").is_some() => {
             Some(ActualDelivery::Background)
         }
+        // A producer that dispatched but cannot establish what was delivered
+        // says so explicitly; the route label alone would overstate it.
+        Some("unknown") if structured.get("delivery_mode").is_some() => {
+            Some(ActualDelivery::Unknown)
+        }
         // A requested background mode alone is not proof when the legacy
         // producer returned no route. Keep it unknown until the path branch
         // below establishes background delivery.
@@ -1749,6 +1754,34 @@ mod tests {
                 "route": "synthetic_events",
                 "delivery": {"mode": "background"},
                 "evidence": [{"kind": "value_readback"}],
+            })
+        );
+    }
+
+    /// A producer that dispatched an action whose reply establishes neither
+    /// delivery nor a no-op publishes that, rather than letting its route
+    /// label claim the action was delivered in the mode it asked for.
+    #[test]
+    fn a_dispatch_with_an_indeterminate_reply_publishes_an_unknown_delivery() {
+        let record = ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({"delivery_mode": "background"}),
+            &serde_json::json!({
+                "path": "ax",
+                "verified": false,
+                "effect": "unverifiable",
+                "delivery_mode": "unknown",
+            }),
+        )
+        .expect("an unverifiable AX dispatch should normalize");
+
+        assert_eq!(record.actual_delivery, Some(ActualDelivery::Unknown));
+        assert_eq!(
+            serde_json::to_value(record.public_result().expect("public result")).unwrap(),
+            serde_json::json!({
+                "effect": "unverifiable",
+                "route": "accessibility",
+                "delivery": {"mode": "unknown"},
             })
         );
     }

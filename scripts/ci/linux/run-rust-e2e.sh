@@ -51,6 +51,9 @@ export CUA_E2E_DECLARATIONS_FILE="${DECLARATIONS_FILE}"
 export CUA_E2E_ENVIRONMENT_FILE="${ENVIRONMENT_FILE}"
 export CUA_E2E_RESULTS_FILE="${RESULTS_FILE}"
 export CUA_E2E_RECORDINGS_ROOT="${RECORDING_ROOT}"
+# Cells that retain their own raw evidence files (for example the Wayland
+# presentation latency rows) write them under this directory.
+export CUA_E2E_ARTIFACT_DIR="${ARTIFACT_DIR}"
 export CUA_TEST_WORKSPACE_ROOT="${RUST_ROOT}"
 export CUA_TEST_DRIVER_BIN="${RUST_ROOT}/target/release/cua-driver"
 export CUA_TEST_APPS_ROOT="${RUST_ROOT}/test-apps"
@@ -121,7 +124,7 @@ if [[ "${BUILD_FIXTURES}" == 1 ]]; then
     shared) FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri}" ;;
     native)
       if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
-        FIXTURE_TARGETS="electron,gtk3"
+        FIXTURE_TARGETS="electron,gtk3,wayland-presentation"
       else
         FIXTURE_TARGETS="electron,gtk3,gtk4"
       fi
@@ -131,6 +134,8 @@ if [[ "${BUILD_FIXTURES}" == 1 ]]; then
       FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri},gtk3"
       if [[ -z "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]]; then
         FIXTURE_TARGETS+=",gtk4"
+      else
+        FIXTURE_TARGETS+=",wayland-presentation"
       fi
       ;;
   esac
@@ -155,6 +160,10 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
   )
   if [[ -z "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]]; then
     required_fixtures+=("${CUA_TEST_APPS_ROOT}/harness-gtk4/CuaTestHarness.Gtk4")
+  else
+    required_fixtures+=(
+      "${CUA_TEST_APPS_ROOT}/harness-wayland-presentation/CuaTestHarness.WaylandPresentation"
+    )
   fi
 fi
 for fixture in "${required_fixtures[@]}"; do
@@ -303,6 +312,67 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
         --test wayland_overlay_idle_test -- \
         --ignored --exact wayland_overlay_quiesces_and_recovers_after_capture_and_cursor_activity \
         --nocapture --test-threads=1
+
+    # Native Wayland only, matching the condition under which this
+    # fixture is built and required above. The XWayland lane exports
+    # both DISPLAY and WAYLAND_DISPLAY and never stages this binary, so
+    # probing it there would exec a missing file and fail the lane.
+    if [[ -z "${DISPLAY:-}" ]]; then
+      # Presentation-timestamp latency evidence. The fixture probe commits one
+      # content update and waits for the compositor to complete its feedback, so
+      # a lane that cannot attribute a presentation records a typed limitation
+      # instead of reporting a missing measurement as a fast action. Advertising
+      # wp_presentation is not enough on its own: a headless wlroots 0.15 session
+      # advertises the protocol and completes no feedback, because no output ever
+      # reaches a real presentation. wlroots 0.17 (the hosted lane's sway 1.9)
+      # completes it in CLOCK_MONOTONIC.
+      bash "${SCRIPT_DIR}/test-wayland-presentation-probe-result.sh"
+      presentation_fixture="${CUA_TEST_APPS_ROOT}/harness-wayland-presentation/CuaTestHarness.WaylandPresentation"
+      presentation_probe="${ARTIFACT_DIR}/wayland-presentation-probe.jsonl"
+      rm -f "${presentation_probe}"
+      set +e
+      "${presentation_fixture}" --journal "${presentation_probe}" --probe \
+        > "${ARTIFACT_DIR}/wayland-presentation-probe.log" 2>&1
+      presentation_probe_status=$?
+      set -e
+      presentation_probe_result="$(bash "${SCRIPT_DIR}/wayland-presentation-probe-result.sh" \
+        "${presentation_probe_status}" "${presentation_probe}")"
+      if [[ "${presentation_probe_result}" == ready ]]; then
+        run_test wayland-presentation-latency \
+          cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+            --test wayland_presentation_latency_test -- \
+            --ignored --nocapture --test-threads=1
+      elif [[ "${presentation_probe_result}" != error ]]; then
+        case "${presentation_probe_result}" in
+          clock_mismatch)
+            limitation="Compositor presentation clock differs from the fixture's CLOCK_MONOTONIC; cross-clock latency evidence is unavailable in this lane." ;;
+          feedback_unavailable)
+            limitation="Compositor advertises wp_presentation but completed no feedback for a committed content update; presentation-timestamp latency evidence is unavailable in this lane." ;;
+          protocol_unavailable)
+            limitation="Compositor does not implement stable wp_presentation; presentation-timestamp latency evidence is unavailable in this lane." ;;
+        esac
+        jq -n \
+          --arg reason "${limitation}" \
+          --arg outcome "${presentation_probe_result}" \
+          --slurpfile probe "${presentation_probe}" \
+          '{
+            schema: "cua-e2e-limitation-v1",
+            platform: "linux",
+            display_server: "wayland",
+            harness: "wayland-presentation",
+            test: "wayland-presentation-latency",
+            status: "not_applicable",
+            outcome: $outcome,
+            reason: $reason,
+            probe: ($probe | map(select(.kind == "probe")) | last)
+          }' > "${ARTIFACT_DIR}/wayland-presentation-latency-limitation.json"
+        echo "[LIMITATION] wayland-presentation-latency: ${limitation}"
+      else
+        echo "wayland presentation fixture probe failed or returned invalid evidence (status ${presentation_probe_status})" >&2
+        cat "${ARTIFACT_DIR}/wayland-presentation-probe.log" >&2
+        FAILURE_COUNT=$((FAILURE_COUNT + 1))
+      fi
+    fi
   else
     # X11 never starts the Wayland layer-shell overlay thread, so its absence
     # there proves nothing about --no-overlay. Record the limitation instead

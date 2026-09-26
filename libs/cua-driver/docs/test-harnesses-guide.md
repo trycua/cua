@@ -362,6 +362,7 @@ Runner: `scripts/ci/linux/run-rust-e2e.sh`
 | Native controls   | `harness_gtk3_test.rs`            | Repo-local GTK3 app       |
 | Capture contract  | `capture_contract_test.rs`        | Linux capture backend     |
 | Desktop scope     | `desktop_scope_linux_test.rs`     | X11/Wayland desktop scope |
+| Presentation latency | `wayland_presentation_latency_test.rs` | Repo-local raw Wayland client |
 
 Linux has separate X11 and Wayland concerns. Nix supplies the reproducible
 build and desktop environment, but the E2E test still needs an actual X11 or
@@ -381,6 +382,50 @@ occlusion, sentinel input isolation, liveness, and fixture-state oracles remain
 mandatory. [Issue #2194](https://github.com/trycua/cua/issues/2194) tracks
 compositor, portal/libei, sentinel, and capture-based ways to add a proven
 cursor observer where the environment supports one.
+
+#### Presentation-timestamp latency evidence
+
+The native Wayland lane also runs one latency-attribution cell against
+`tests/fixtures/apps/linux/wayland-presentation`, a repository-owned raw
+Wayland client. It owns its own `wl_surface` and requests
+`wp_presentation.feedback` for each fixture-owned content commit. The cell
+joins the Driver's own request/return stamps with
+the fixture's input, state-change, commit, callback-receipt, and
+compositor-presented stamps in one `CLOCK_MONOTONIC` domain, and retains raw rows under
+`artifacts/cua-driver/linux/wayland-presentation/`.
+
+This exists to say which side of the presentation boundary owns a wait, not to
+publish a performance number. Read it accordingly:
+
+- only a `verified` row proves a presented mutation. `discarded`, `timeout`,
+  `clock_mismatch`, `implausible`, and `no_mutation` rows are retained and
+  never counted as presented;
+- a compositor advertising a presentation clock other than `CLOCK_MONOTONIC`
+  yields `clock_mismatch` rows with presentation deltas withheld rather than
+  compared across clock domains;
+- `return_minus_present_ns` is signed on purpose. A negative value means the
+  Driver returned before the compositor presented the update;
+- one presented action and the no-op and discarded controls produce raw rows;
+  a refused Driver action must produce no fixture input or sample;
+  `summary.json` retains outcome and deadline-miss counts;
+- a `discarded` row is ordinary compositor behaviour, not a fault: an update
+  superseded within the same refresh is never shown. It is retained as evidence
+  but measures no presentation, so the cell repeats that action instead of
+  counting it, and fails only if it cannot gather its samples at all;
+- a compositor with an incomparable presentation clock, or one that cannot
+  attribute a presentation, records a typed limitation
+  (`wayland-presentation-latency-limitation.json`) instead of a missing
+  measurement. The runner decides this from the fixture's own `--probe` mode,
+  which commits one content update and waits for feedback rather than trusting
+  that the global is advertised. That distinction is load-bearing: a headless
+  wlroots 0.15 session (sway 1.7) advertises `wp_presentation` and completes no
+  feedback, because no output ever reaches a real presentation, so every action
+  would otherwise time out and read as a slow Driver. The hosted lane's sway
+  1.9 (wlroots 0.17) completes feedback in `CLOCK_MONOTONIC`, which is what
+  makes its rows comparable with the fixture's own stamps.
+
+One lane's rows are not a cross-compositor performance claim, and this cell
+changes no desktop action semantics or public Driver contract.
 
 ## AX, PX, and Delivery
 

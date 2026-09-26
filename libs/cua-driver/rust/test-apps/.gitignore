@@ -16,3 +16,8 @@ harness-winui3/
 harness-webview/
 harness-electron/
 harness-tauri/
+
+# Locally-built Wayland presentation-timestamp fixture (see
+# ../../tests/fixtures/apps/linux/wayland-presentation/build.sh). One Rust
+# binary, staged under its deterministic CuaTestHarness name.
+harness-wayland-presentation/

@@ -36,13 +36,17 @@ def test_release_pr_sync_uses_crate_metadata_and_updates_the_lockfile() -> None:
     assert "jq -r '.[\\\".\\\"]'" not in source
 
 
+ANCHOR_SCRIPT = ROOT / ".github/scripts/anchor_perception_release_tag.sh"
+
+
 def test_candidate_tag_is_exact_lightweight_main_anchor_without_a_release() -> None:
     _, workflow = load_workflow(RELEASE_WORKFLOW)
     steps = workflow["jobs"]["release-please"]["steps"]
     tag_step = step(
         workflow, "Anchor a merged Perception version with a lightweight tag"
     )
-    script = tag_step["run"]
+    assert tag_step["run"] == "bash .github/scripts/anchor_perception_release_tag.sh"
+    script = ANCHOR_SCRIPT.read_text()
 
     tag_index = steps.index(tag_step)
     for release_step in (
@@ -62,13 +66,13 @@ def test_candidate_tag_is_exact_lightweight_main_anchor_without_a_release() -> N
     assert tag_step["env"]["VERSION_PATH"] == VERSION_PATH
     assert "validate_release_versions.py --product perception" in script
     assert 'git merge-base --is-ancestor "$BEFORE_SHA" "$GITHUB_SHA"' in script
-    assert 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main' in script
+    assert 'git merge-base --is-ancestor "$TARGET_SHA" origin/main' in script
     assert "Perception version must increase" in script
     assert 'TAG="cua-perception-v$VERSION"' in script
     assert 'tag_type" != "commit"' in script
-    assert 'tag_sha" != "$GITHUB_SHA"' in script
+    assert 'tag_sha" != "$expected_sha"' in script
     assert '-f ref="refs/tags/$TAG"' in script
-    assert '-f sha="$GITHUB_SHA"' in script
+    assert '-f sha="$TARGET_SHA"' in script
     assert "--method PATCH" not in script
     assert "gh release" not in script
     assert "/releases" not in script

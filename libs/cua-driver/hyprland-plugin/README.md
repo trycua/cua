@@ -38,7 +38,9 @@ tree and uninstrumented module hash at
 `1133a06e4f205cf80188a7ac9e41102f37611fea`. Raw background qualification is
 limited to native Calc from `libreoffice-fresh 26.2.5-3`, Inkscape `1.4.4-6`,
 the plain compiled `evdev`/`pc105`/`us` keymap, and the two seats `Cua-Agent`
-and `Cua-Agent-2`. The proof covers the recorded actions and observation
+and `Cua-Agent-2`. (This local branch builds four lanes, adding
+`Cua-Agent-3`/`Cua-Agent-4` on `cua-input-v3-3.sock`/`-4.sock`; the retained
+proof and the live certification harnesses under `tests/` cover two lanes only.) The proof covers the recorded actions and observation
 intervals. Chromium, Electron, and XWayland raw background input remain
 unqualified; semantic AT-SPI actions are separate.
 

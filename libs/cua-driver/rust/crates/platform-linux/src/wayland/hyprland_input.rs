@@ -17,7 +17,24 @@ const TIMEOUT: Duration = Duration::from_secs(3);
 const CANCELLATION_POLL: Duration = Duration::from_millis(25);
 const TEXT_ACTION_GAP: Duration = Duration::from_millis(25);
 const MAX_PACKET: usize = 2048;
-const MAX_LANES: usize = 2;
+/// Independent compositor lanes (sockets + `Cua-Agent*` seats). Must match the
+/// plugin's `kInputLanes`. Lanes 0/1 keep the names of the two-lane build.
+pub(crate) const MAX_LANES: usize = 4;
+/// Lanes every plugin build exposes. A missing socket for a higher lane means
+/// an older two-lane plugin: it is treated as busy, never as a connect error.
+const LEGACY_LANES: usize = 2;
+const PRODUCTION_SOCKETS: [&str; MAX_LANES] = [
+    "cua-input-v3.sock",
+    "cua-input-v3-2.sock",
+    "cua-input-v3-3.sock",
+    "cua-input-v3-4.sock",
+];
+const EXPERIMENT_SOCKETS: [&str; MAX_LANES] = [
+    "cua-input-test.sock",
+    "cua-input-test-2.sock",
+    "cua-input-test-3.sock",
+    "cua-input-test-4.sock",
+];
 const MAX_STALE_GEOMETRY_RETRIES: usize = 1;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -146,13 +163,13 @@ impl std::fmt::Display for ActionCancelled {
 
 impl std::error::Error for ActionCancelled {}
 
-/// Both reservations are explicitly occupied; no target or action was sent.
+/// Every reservation is explicitly occupied; no target or action was sent.
 #[derive(Debug)]
 pub(crate) struct LaneBusy;
 
 impl std::fmt::Display for LaneBusy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("both isolated input lanes are in use; end an owning session first")
+        f.write_str("all isolated input lanes are in use; end an owning session first")
     }
 }
 
@@ -188,15 +205,27 @@ pub fn enabled() -> bool {
         && super::hyprland::is_session()
         && (protocol() == InputProtocol::Experiment
             || (0..MAX_LANES).any(|lane| {
-                socket_path(lane).ok().is_some_and(|path| {
-                    std::fs::symlink_metadata(path)
-                        .ok()
-                        .is_some_and(|metadata| {
-                            metadata.file_type().is_socket()
-                                && metadata.uid() == unsafe { libc::geteuid() }
-                        })
-                })
+                socket_path(lane)
+                    .ok()
+                    .is_some_and(|path| owned_socket(&path))
             }))
+}
+
+fn owned_socket(path: &std::path::Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .ok()
+        .is_some_and(|metadata| {
+            metadata.file_type().is_socket() && metadata.uid() == unsafe { libc::geteuid() }
+        })
+}
+
+/// The background app gate `execute_*` applies before claiming a lane, for
+/// callers that must refuse a whole batch before dispatching any of it.
+pub(crate) fn background_admission(pid: u32) -> std::result::Result<(), &'static str> {
+    if protocol() == InputProtocol::Production {
+        super::hyprland_compatibility::qualify(pid)?;
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -222,13 +251,14 @@ impl InputProtocol {
     }
 
     fn socket_name(self, lane: usize) -> Result<&'static str> {
-        Ok(match (self, lane) {
-            (Self::Production, 0) => "cua-input-v3.sock",
-            (Self::Production, 1) => "cua-input-v3-2.sock",
-            (Self::Experiment, 0) => "cua-input-test.sock",
-            (Self::Experiment, 1) => "cua-input-test-2.sock",
-            _ => bail!("invalid isolated input lane"),
-        })
+        let names = match self {
+            Self::Production => &PRODUCTION_SOCKETS,
+            Self::Experiment => &EXPERIMENT_SOCKETS,
+        };
+        names
+            .get(lane)
+            .copied()
+            .context("invalid isolated input lane")
     }
 }
 
@@ -1113,8 +1143,14 @@ fn execute_actions_routed(
     }
     if slot.is_none() {
         *slot = Some(claim_available(|lane| {
+            let path = socket_path(lane)?;
+            // An older two-lane plugin has no socket for the higher lanes.
+            // Nothing is sent to an absent endpoint, so skipping it is safe.
+            if lane >= LEGACY_LANES && !owned_socket(&path) {
+                return Ok(None);
+            }
             Client::connect(
-                socket_path(lane)?,
+                path,
                 owner.clone(),
                 pid,
                 address,
@@ -2021,9 +2057,10 @@ mod tests {
         assert!(session_client("default").is_err());
         let a = session_client("input-pool-test-a").unwrap();
         let b = session_client("input-pool-test-b").unwrap();
-        let pool = Arc::new(Mutex::new([None, None]));
+        let pool = Arc::new(Mutex::new(Default::default()));
         *a.client.lock().unwrap() = Some(claim_available(|lane| fake_claim(lane, &pool)).unwrap());
         *b.client.lock().unwrap() = Some(claim_available(|lane| fake_claim(lane, &pool)).unwrap());
+        let (extra, _held) = fill_extra_lanes("input-pool-test", Some(&pool));
         assert!(!Arc::ptr_eq(&a, &b));
         assert!(Arc::ptr_eq(
             &a,
@@ -2049,6 +2086,9 @@ mod tests {
         ));
         cleanup_session("input-pool-test-b");
         cleanup_session("input-pool-test-c");
+        for owner in &extra {
+            cleanup_session(owner);
+        }
         let runtime = session_client("__cua_runtime_test:pending").unwrap();
         let other = session_client("__cua_runtime_other:pending").unwrap();
         cleanup_runtime("__cua_runtime_test:");
@@ -2092,7 +2132,7 @@ mod tests {
                 assert_eq!(attempts, [0]);
                 *slot = result.ok();
             }
-            let pool = Arc::new(Mutex::new([None, None]));
+            let pool = Arc::new(Mutex::new(Default::default()));
             let third = session_client("input-failed-third").unwrap();
             *third.client.lock().unwrap() =
                 Some(claim_available(|lane| fake_claim(lane, &pool)).unwrap());
@@ -2106,12 +2146,13 @@ mod tests {
     #[test]
     fn failed_reconnect_reclaims_only_the_empty_owner() {
         let _pool_test = POOL_TEST_LOCK.lock().unwrap();
-        let pool = Arc::new(Mutex::new([None, None]));
+        let pool = Arc::new(Mutex::new(Default::default()));
         for owner in ["input-reconnect-a", "input-reconnect-b"] {
             let client = session_client(owner).unwrap();
             *client.client.lock().unwrap() =
                 Some(claim_available(|lane| fake_claim(lane, &pool)).unwrap());
         }
+        let (extra, _held) = fill_extra_lanes("input-reconnect", Some(&pool));
         assert!(session_client("input-reconnect-c")
             .err()
             .unwrap()
@@ -2134,30 +2175,37 @@ mod tests {
         ] {
             cleanup_session(owner);
         }
+        for owner in &extra {
+            cleanup_session(owner);
+        }
     }
 
     #[test]
     fn closed_idle_peers_do_not_exhaust_local_lanes() {
         let _pool_test = POOL_TEST_LOCK.lock().unwrap();
-        let pool = Arc::new(Mutex::new([None, None]));
+        let pool = Arc::new(Mutex::new(Default::default()));
         for owner in ["input-idle-a", "input-idle-b"] {
             let client = session_client(owner).unwrap();
             *client.client.lock().unwrap() =
                 Some(claim_available(|lane| fake_claim(lane, &pool)).unwrap());
         }
+        // Extra owners hold no Arc here, so they are idle like a and b.
+        let (extra, held) = fill_extra_lanes("input-idle", Some(&pool));
+        drop(held);
         assert!(session_client("input-idle-c")
             .err()
             .unwrap()
             .is::<LaneBusy>());
         // The compositor revokes both idle connections; neither owner calls
         // again to discover EOF or explicitly clean up its cached client.
-        *pool.lock().unwrap() = [None, None];
+        *pool.lock().unwrap() = Default::default();
         let c = session_client("input-idle-c").unwrap();
         *c.client.lock().unwrap() = Some(claim_available(|lane| fake_claim(lane, &pool)).unwrap());
         assert_eq!(c.client.lock().unwrap().as_ref().unwrap().lane, Some(0));
         let clients = clients().lock().unwrap();
         assert!(!clients.contains_key("input-idle-a"));
         assert!(!clients.contains_key("input-idle-b"));
+        assert!(extra.iter().all(|owner| !clients.contains_key(owner)));
         drop(clients);
         cleanup_session("input-idle-c");
     }
@@ -2287,12 +2335,14 @@ mod tests {
     #[test]
     fn live_idle_peers_with_pending_packets_keep_their_lanes() {
         let _pool_test = POOL_TEST_LOCK.lock().unwrap();
-        let pool = Arc::new(Mutex::new([None, None]));
+        let pool = Arc::new(Mutex::new(Default::default()));
         for owner in ["input-live-a", "input-live-b"] {
             let client = session_client(owner).unwrap();
             *client.client.lock().unwrap() =
                 Some(claim_available(|lane| fake_claim(lane, &pool)).unwrap());
         }
+        let (extra, held) = fill_extra_lanes("input-live", Some(&pool));
+        drop(held);
         {
             let pool = pool.lock().unwrap();
             pool[0].as_ref().unwrap().send(b"").unwrap();
@@ -2314,6 +2364,9 @@ mod tests {
         drop(slot);
         cleanup_session("input-live-b");
         cleanup_session("input-live-c");
+        for owner in &extra {
+            cleanup_session(owner);
+        }
     }
 
     #[test]
@@ -2337,6 +2390,7 @@ mod tests {
         });
         waiting.recv().unwrap();
         let b = session_client("input-pending-b").unwrap();
+        let (extra, _held) = fill_extra_lanes("input-pending", None);
         assert!(session_client("input-pending-c")
             .err()
             .unwrap()
@@ -2354,6 +2408,9 @@ mod tests {
         assert!(Arc::ptr_eq(&b, &session_client("input-pending-b").unwrap()));
         drop(c);
         for owner in [owner, "input-pending-b", "input-pending-c"] {
+            cleanup_session(owner);
+        }
+        for owner in &extra {
             cleanup_session(owner);
         }
     }
@@ -2992,9 +3049,84 @@ mod tests {
         result.map(|claimed| claimed.then_some(client))
     }
 
+    /// Occupies lanes beyond the two named owners so a test reaches the pool
+    /// limit whatever `MAX_LANES` is. Returned owners must be cleaned up.
+    fn fill_extra_lanes(
+        prefix: &str,
+        pool: Option<&Arc<Mutex<[Option<socket2::Socket>; MAX_LANES]>>>,
+    ) -> (Vec<String>, Vec<Arc<SessionClient>>) {
+        let mut owners = Vec::new();
+        let mut held = Vec::new();
+        for index in 2..MAX_LANES {
+            let owner = format!("{prefix}-extra-{index}");
+            let client = session_client(&owner).unwrap();
+            if let Some(pool) = pool {
+                *client.client.lock().unwrap() =
+                    Some(claim_available(|lane| fake_claim(lane, pool)).unwrap());
+            }
+            held.push(client);
+            owners.push(owner);
+        }
+        (owners, held)
+    }
+
+    #[test]
+    fn socket_and_seat_names_keep_legacy_lanes_and_add_numbered_lanes() {
+        assert_eq!(MAX_LANES, 4);
+        assert_eq!(
+            InputProtocol::Production.socket_name(0).unwrap(),
+            "cua-input-v3.sock"
+        );
+        assert_eq!(
+            InputProtocol::Production.socket_name(1).unwrap(),
+            "cua-input-v3-2.sock"
+        );
+        assert_eq!(
+            InputProtocol::Production.socket_name(2).unwrap(),
+            "cua-input-v3-3.sock"
+        );
+        assert_eq!(
+            InputProtocol::Production.socket_name(3).unwrap(),
+            "cua-input-v3-4.sock"
+        );
+        assert_eq!(
+            InputProtocol::Experiment.socket_name(0).unwrap(),
+            "cua-input-test.sock"
+        );
+        assert_eq!(
+            InputProtocol::Experiment.socket_name(1).unwrap(),
+            "cua-input-test-2.sock"
+        );
+        assert_eq!(
+            InputProtocol::Experiment.socket_name(3).unwrap(),
+            "cua-input-test-4.sock"
+        );
+        assert!(InputProtocol::Experiment.socket_name(MAX_LANES).is_err());
+    }
+
+    #[test]
+    fn missing_higher_lane_sockets_are_busy_not_errors() {
+        // A two-lane plugin: both legacy lanes busy, higher sockets absent.
+        let pool: Arc<Mutex<[Option<socket2::Socket>; MAX_LANES]>> =
+            Arc::new(Mutex::new(Default::default()));
+        let _a = claim_available(|lane| fake_claim(lane, &pool)).unwrap();
+        let _b = claim_available(|lane| fake_claim(lane, &pool)).unwrap();
+        let absent = std::path::Path::new("/nonexistent/cua-input-v3-3.sock");
+        let mut attempts = Vec::new();
+        let result = claim_available(|lane| {
+            attempts.push(lane);
+            if lane >= LEGACY_LANES && !owned_socket(absent) {
+                return Ok(None);
+            }
+            fake_claim(lane, &pool)
+        });
+        assert!(result.err().unwrap().is::<LaneBusy>());
+        assert_eq!(attempts, (0..MAX_LANES).collect::<Vec<_>>());
+    }
+
     #[test]
     fn independent_claimants_use_compositor_reservations_and_disconnect_reuses_lane() {
-        let pool = Arc::new(Mutex::new([None, None]));
+        let pool = Arc::new(Mutex::new(Default::default()));
         let mut attempts = Vec::new();
         let a = claim_available(|lane| {
             attempts.push(lane);
@@ -3011,6 +3143,18 @@ mod tests {
         .unwrap();
         assert_eq!(b.lane, Some(1));
         assert_eq!(attempts, [0, 1]);
+        let mut extra = Vec::new();
+        for expected in 2..MAX_LANES {
+            attempts.clear();
+            let claimed = claim_available(|lane| {
+                attempts.push(lane);
+                fake_claim(lane, &pool)
+            })
+            .unwrap();
+            assert_eq!(claimed.lane, Some(expected));
+            assert_eq!(attempts, (0..=expected).collect::<Vec<_>>());
+            extra.push(claimed);
+        }
         attempts.clear();
         assert!(claim_available(|lane| {
             attempts.push(lane);
@@ -3019,7 +3163,7 @@ mod tests {
         .err()
         .unwrap()
         .is::<LaneBusy>());
-        assert_eq!(attempts, [0, 1]);
+        assert_eq!(attempts, (0..MAX_LANES).collect::<Vec<_>>());
         drop(a);
         let c = claim_available(|lane| fake_claim(lane, &pool)).unwrap();
         assert_eq!(c.lane, Some(0));

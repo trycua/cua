@@ -365,16 +365,92 @@ pub struct DesktopStateOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub screenshot_file_path: Option<String>,
+    /// Whether the Driver's own overlay pixels (agent cursor, session pill)
+    /// were kept out of this capture. Absent from producers that predate the
+    /// report.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_overlay_capture: Option<AgentOverlayCapture>,
     #[serde(flatten)]
     pub extensions: BTreeMap<String, Value>,
 }
 
+/// How a Driver-owned desktop capture treated Driver-owned overlay pixels.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentOverlayCaptureStatus {
+    /// Overlay windows were on screen and were kept out of the pixels.
+    Excluded,
+    /// No Driver overlay pixels were on screen, so there was nothing to keep out.
+    NotPresent,
+    /// Overlay pixels may be in the capture; `reason` says why.
+    NotExcluded,
+}
+
+/// Report attached to desktop captures about Driver-owned overlay pixels.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AgentOverlayCapture {
+    pub status: AgentOverlayCaptureStatus,
+    /// Native mechanism that kept the overlay out, when `status` is `excluded`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    /// Why the overlay could not be kept out, when `status` is `not_excluded`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl AgentOverlayCapture {
+    pub fn excluded(method: impl Into<String>) -> Self {
+        Self {
+            status: AgentOverlayCaptureStatus::Excluded,
+            method: Some(method.into()),
+            reason: None,
+        }
+    }
+
+    pub fn not_present() -> Self {
+        Self {
+            status: AgentOverlayCaptureStatus::NotPresent,
+            method: None,
+            reason: None,
+        }
+    }
+
+    pub fn not_excluded(reason: impl Into<String>) -> Self {
+        Self {
+            status: AgentOverlayCaptureStatus::NotExcluded,
+            method: None,
+            reason: Some(reason.into()),
+        }
+    }
+
+    /// Whether the capture is free of Driver overlay pixels.
+    pub fn is_clean(&self) -> bool {
+        self.status != AgentOverlayCaptureStatus::NotExcluded
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        match (self.status, &self.method, &self.reason) {
+            (AgentOverlayCaptureStatus::Excluded, Some(_), None)
+            | (AgentOverlayCaptureStatus::NotPresent, None, None)
+            | (AgentOverlayCaptureStatus::NotExcluded, None, Some(_)) => Ok(()),
+            _ => Err(
+                "agent_overlay_capture: excluded requires only method, not_excluded requires \
+                 only reason, not_present carries neither"
+                    .into(),
+            ),
+        }
+    }
+}
+
 impl ToolOutput for DesktopStateOutput {
     fn validate(&self) -> Result<(), String> {
-        if self.screenshot_mime_type == "image/png" {
-            Ok(())
-        } else {
-            Err("screenshot_mime_type must be image/png".into())
+        if self.screenshot_mime_type != "image/png" {
+            return Err("screenshot_mime_type must be image/png".into());
+        }
+        match &self.agent_overlay_capture {
+            Some(report) => report.validate(),
+            None => Ok(()),
         }
     }
 }

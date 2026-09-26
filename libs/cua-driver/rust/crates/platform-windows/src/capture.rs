@@ -742,6 +742,18 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
     }
 }
 
+/// Capture the primary display for the agent, with the Driver's own cursor
+/// overlay kept out of the pixels, and report how that went.
+pub fn screenshot_display_bytes_excluding_overlay() -> Result<(
+    Vec<u8>,
+    cursor_overlay::capture_exclusion::AgentOverlayCapture,
+)> {
+    use cursor_overlay::capture_exclusion::{capture_excluding_overlays, ResidualCheck};
+    capture_excluding_overlays(&crate::overlay::CaptureExcluder, |_| {
+        Ok((screenshot_display_bytes()?, ResidualCheck::Clean))
+    })
+}
+
 /// Capture primary display, returning (base64_png, width, height).
 pub fn screenshot_display() -> Result<(String, u32, u32)> {
     let png_bytes = screenshot_display_bytes()?;

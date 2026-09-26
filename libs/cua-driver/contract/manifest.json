@@ -1246,6 +1246,46 @@
       "success_output_schema": {
         "additionalProperties": true,
         "properties": {
+          "agent_overlay_capture": {
+            "additionalProperties": false,
+            "properties": {
+              "method": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "oneOf": [
+                  {
+                    "const": "excluded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_present",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_excluded",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "display": {
             "type": "string"
           },

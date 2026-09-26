@@ -257,12 +257,13 @@ a high S1 score as proof that a candidate's condition holds; see
   platform. The fixture runs above involve no Cua Driver session, so no
   Driver version applies to them.
 - No CI job loads real weights. `CI: cua-s1` runs the unit suite with fake
-  models on Ubuntu and Python 3.12, and checks that the `four-b` dependencies
-  import. Python 3.11 and 3.13 were checked locally only (116 unit tests pass
-  on each with `--extra four-b --extra pdf`).
-- 4B inference on Linux, Windows, CUDA, and CPU has not been measured. CPU
-  loading with `float16` and `float32` was observed to succeed on macOS;
-  decision latency on CPU was not recorded.
+  models on Ubuntu with Python 3.11, 3.12, and 3.13, checks that the `four-b`
+  dependencies import, and runs the unit suite with the `four-b` extra on
+  macOS arm64.
+- 4B inference on Linux, Windows, and CUDA has not been measured. On the
+  macOS host above, `cpu` with `float32` took 19.5 to 50.2 s per warm
+  decision while other workloads loaded the host (see the README's hardware
+  table).
 - `cua-s1-nano-0.1` and `cua-s1-forms` load with the package's safetensors
   loaders, but no chooser or Driver integration runs them, and they were not
   part of the fixture runs.
@@ -275,13 +276,15 @@ a high S1 score as proof that a candidate's condition holds; see
   chose the wrong target on the 8-candidate request.
 - `cua-s1-4b-0.2` can select an action whose stated condition does not match
   the observation, as in the desktop counterexample above.
-- On Apple silicon with Transformers 5.17.0 and torch 2.14.0,
-  `mps` with `float16` crashed or hung during weight loading in six of six
-  runs unless `HF_DEACTIVATE_ASYNC_LOAD=1` was set. `bfloat16` loaded.
+- On Apple silicon with Transformers 5.17.0 and torch 2.14.0, `mps` with
+  `float16` crashed or hung during weight loading with Transformers'
+  concurrent loader (#4198). `cua_s1.four_b` now loads `mps` weights
+  sequentially; the fixture runs above used sequential loading.
 - The one-letter-per-option readout supports at most 26 options. The
   chooser returns `option_limit` instead of truncating.
-- The chooser reports `model` as `cua-s1-4b-local` for every adapter, so
-  evidence logs must record the adapter revision separately.
+- The chooser's `model` field names the adapter, its revision when it can be
+  read locally, and the modality (#4204), but not the base model. Evidence
+  logs must record the base revision separately.
 
 ## Limitations (all checkpoints)
 

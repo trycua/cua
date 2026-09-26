@@ -122,9 +122,9 @@ S1_DEVICE=cpu S1_DTYPE=float16 \
   < fixtures/jev-choice-request-v1.json
 ```
 
-On Apple silicon, use `S1_DEVICE=mps S1_DTYPE=bfloat16`. With Transformers
-5.17.0, `mps` with `float16` crashed or hung during weight loading unless
-`HF_DEACTIVATE_ASYNC_LOAD=1` was set.
+On Apple silicon, use `S1_DEVICE=mps` with the default `float16` or with
+`bfloat16`. `cua_s1` loads `mps` weights sequentially, because Transformers'
+concurrent loader crashed or hung with `mps` and `float16` (#4198).
 
 The S1 text adapter renders OmniParser regions, including confidence and
 interactivity, as text and labels the result

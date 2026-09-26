@@ -128,8 +128,10 @@ Layouts and loaders:
 - `cua-s1-forms` contains a `tinyx` checkpoint (`cua-s1-forms.safetensors`
   plus `cua-s1-forms.json`, 706,048 parameters). Load it with
   `cua_s1.model.load_checkpoint`. The repository also ships a pickle
-  `cua-s1-forms.pt`, which `cua_s1` refuses to load by design (see #3977);
-  exclude it from downloads.
+  `cua-s1-forms.pt`, which `cua_s1` refuses to load by design (see #3977).
+  Exclude it from downloads (`--exclude "*.pt"`) and load only the
+  safetensors pair. Unpickling a checkpoint can run arbitrary code, so do not
+  open the `.pt` file with `torch.load` or `pickle`.
 - The Apache-2.0 license on `cua-s1-4b-0.2` covers only the adapter. The base
   model is governed by its own license and is downloaded from Qwen's
   repository, not redistributed by Cua. At the pinned revisions,
@@ -147,22 +149,38 @@ memory has not been measured.
 
 The only measured 4B runs so far used one Apple M1 Ultra host with 128 GB of
 unified memory, macOS 26, Python 3.12, torch 2.14.0, and Transformers 5.17.0
-from the `four-b` lock, with `HF_DEACTIVATE_ASYNC_LOAD=1` (see
+from the `four-b` lock, with sequential weight loading on `mps` (see
 [Known local issues](#known-local-issues)). Each decision is one forward pass;
 times are medians of five warm calls:
 
 | Adapter and modality       | Device and dtype  | Load time | 3-candidate fixture | 12-region, 8-candidate request |
 | -------------------------- | ----------------- | --------- | ------------------- | ------------------------------ |
 | `cua-s1-4b-0.2` text       | `mps`, `float16`  | 16.3 s    | 1.07 s              | 2.83 s                         |
-| `cua-s1-4b-0.2` text       | `mps`, `bfloat16` | 6.8 s     | 1.23 s              | not run                        |
+| `cua-s1-4b-0.2` text       | `mps`, `bfloat16` | 6.8 s     | 1.23 s              | 3.23 s                         |
 | `cua-s1-4b-0.2` multimodal | `mps`, `float16`  | 4.8 s     | 5.55 s              | 5.81 s                         |
+| `cua-s1-4b-0.2` multimodal | `mps`, `bfloat16` | 3.7 s     | 6.70 s              | 6.66 s                         |
+| `cua-s1-4b-0.2` text       | `cpu`, `float32`  | 18.3 s    | 19.5 s              | 32.1 s                         |
+| `cua-s1-4b-0.2` multimodal | `cpu`, `float32`  | 7.8 s     | 34.2 s              | 50.2 s                         |
 
-Load times depend on whether the weights were already in the operating-system
-file cache; the multimodal row loaded after the text rows. CPU and CUDA latency have not been measured. Qwen3.5 logs that it falls back
-to reference PyTorch kernels because `causal_conv1d` and
-`flash-linear-attention` are not installed; both are CUDA-oriented packages.
-A cold command-line invocation spends most of its wall time loading the
-model, so a live loop should keep one process and its `FourBModel` resident.
+Multimodal rows used 1280x800 screenshots; a 2560x1600 screenshot took 22 to
+30 s per decision on `mps`, so downscale large captures before scoring. The
+CPU rows ran while other workloads kept the host's load average near 16, so
+treat them as an upper bound rather than a CPU benchmark. Load times depend
+on whether the weights were already in the operating-system file cache; rows
+measured after the first load were faster. CUDA latency and Linux or Windows
+hosts have not been measured. Qwen3.5 logs that it falls back to reference
+PyTorch kernels because `causal_conv1d` and `flash-linear-attention` are not
+installed; both are CUDA-oriented packages.
+
+Plan live loops around the Cua Driver's 60-second capture lifetime: the
+decision must return, and the action must be dispatched with the same
+`capture_id`, before the capture expires. A cold `choose_decision.py`
+invocation, which loads the model for one decision, took 10 to 35 s of wall
+time on `mps` and 30 to 43 s on `cpu`. Keep one process with a loaded
+`FourBModel` resident (for example, a small local service) and send each
+decision to it; warm `mps` decisions then take about 1 to 3 s for text and 6 s
+for multimodal. On CPU, a single warm decision can take 20 to 50 s, which leaves
+little or no margin inside the capture lifetime.
 
 ### 1. Create the pinned environment
 
@@ -175,8 +193,8 @@ uv sync --frozen --project libs/cua-s1/python --python 3.12 \
 ```
 
 The lock resolves torch 2.14.0, Transformers 5.17.0, PEFT 0.21.0, and
-torchvision 0.29.0. The `pdf` extra is included so that the full unit suite
-passes in the same environment. The `four-b` extra cannot share an
+torchvision 0.29.0. The `pdf` extra is optional for inference; it adds PDF
+entity extraction and its tests. The `four-b` extra cannot share an
 environment with `nano-vision`, `four-b-train`, `four-b-rl`, or `all`.
 
 Confirm the environment without loading any model weights:
@@ -226,17 +244,23 @@ downloading. The equivalent Python call is
 ### 3. Run the smoke decision
 
 The [jev-use closed-candidate chooser](../cua-driver/examples/jev-use/decision-models.md)
-loads Cua-S1-4B from local directories. It reads four environment variables:
+loads Cua-S1-4B from local directories. It reads these environment variables:
 
-| Variable             | Required | Default   | Meaning                                                              |
-| -------------------- | -------- | --------- | -------------------------------------------------------------------- |
-| `S1_BASE_MODEL_PATH` | Yes      | None      | Local directory containing `Qwen/Qwen3.5-4B`                         |
-| `S1_ADAPTER_PATH`    | Yes      | None      | Local adapter root, such as `cua-s1-4b-0.2`                          |
-| `S1_DEVICE`          | No       | `cpu`     | Torch device passed to Transformers, such as `cpu`, `cuda`, or `mps` |
-| `S1_DTYPE`           | No       | `float16` | Torch dtype name, such as `float16`, `bfloat16`, or `float32`        |
+| Variable              | Required | Default   | Meaning                                                                 |
+| --------------------- | -------- | --------- | ----------------------------------------------------------------------- |
+| `S1_BASE_MODEL_PATH`  | Yes      | None      | Local directory containing `Qwen/Qwen3.5-4B`                            |
+| `S1_ADAPTER_PATH`     | Yes      | None      | Local adapter root, such as `cua-s1-4b-0.2`                             |
+| `S1_DEVICE`           | No       | `cpu`     | Torch device passed to Transformers, such as `cpu`, `cuda`, or `mps`    |
+| `S1_DTYPE`            | No       | `float16` | Torch dtype name, such as `float16`, `bfloat16`, or `float32`           |
+| `S1_MODALITY`         | No       | `text`    | `text` or `multimodal`; `--s1-modality` overrides it                    |
+| `S1_ADAPTER_ID`       | No       | Detected  | Adapter name reported in `model`, such as `cua-ai/cua-s1-4b-0.2`        |
+| `S1_ADAPTER_REVISION` | No       | Detected  | Adapter revision reported in `model` when it cannot be detected locally |
 
-The chooser always uses the text adapter. It rejects paths that are not
-existing directories and never downloads weights itself.
+The multimodal adapter also needs `--screenshot <png>` and
+`--screenshot-capture-id <capture_id>` from the same capture as the request.
+The chooser supports only the 4B adapters; `cua-s1-nano-0.1` and
+`cua-s1-forms` fail setup. It rejects paths that are not existing directories
+and never downloads weights itself.
 
 From the repository root, run the verifier. It pipes the checked-in
 `fixtures/jev-choice-request-v1.json` request to `choose_decision.py` with the
@@ -245,7 +269,7 @@ same Python interpreter, validates the response, and prints a summary:
 ```bash
 export S1_BASE_MODEL_PATH="$S1_MODELS/Qwen3.5-4B"
 export S1_ADAPTER_PATH="$S1_MODELS/cua-s1-4b-0.2"
-export S1_DEVICE=cpu S1_DTYPE=float16   # on Apple silicon: S1_DEVICE=mps S1_DTYPE=bfloat16
+export S1_DEVICE=cpu S1_DTYPE=float16   # on Apple silicon: S1_DEVICE=mps
 
 libs/cua-s1/python/.venv/bin/python \
   libs/cua-driver/examples/jev-use/verify_decision_cli.py --model s1
@@ -254,13 +278,15 @@ libs/cua-s1/python/.venv/bin/python \
 Expected output on success:
 
 ```text
-{"model": "cua-s1-4b-local", "kind": "selected", "selected_id": "submit-form"}
+{"model": "cua-s1-4b-0.2@16818868b0cc7813808aae4e87b417657046ab79:text", "kind": "selected", "selected_id": "submit-form"}
 ```
 
 The verifier exits nonzero if the response is not a `cua.decision_choice_v1`
 object, names a different `capture_id`, omits or adds a candidate, or selects
 anything other than `submit-form`. To check the checked-in negative fixture,
-add `--fixture negative --expected-id abstain`.
+add `--fixture negative --expected-id abstain`. To run the multimodal
+adapter, add `--screenshot <png>` with an image of the fixture's form; the
+verifier binds it to the fixture's capture ID.
 
 To see the full response, run the chooser directly:
 
@@ -274,13 +300,15 @@ It prints one JSON object with this shape; the probabilities are
 model-dependent:
 
 ```text
-{"schema":"cua.decision_choice_v1","kind":"selected","capture_id":"capture-fixture-1","selected_id":"submit-form","model":"cua-s1-4b-local","confidence":0.97,"probabilities":{"submit-form":0.97,"reobserve":0.02,"abstain":0.01},"reason":null}
+{"schema":"cua.decision_choice_v1","kind":"selected","capture_id":"capture-fixture-1","selected_id":"submit-form","model":"cua-s1-4b-0.2@16818868b0cc7813808aae4e87b417657046ab79:text","confidence":0.97,"probabilities":{"submit-form":0.97,"reobserve":0.02,"abstain":0.01},"reason":null}
 ```
 
 `kind` is one of `selected`, `reobserve`, `abstain`, or `error`. The
 `probabilities` keys are exactly the request's candidate IDs. `model` is
-`cua-s1-4b-local` for every adapter, so record the adapter revision
-separately. Replace `--model s1` with `--model mock` in either command to
+`<adapter>[@<revision>]:<modality>`; the revision comes from the metadata that
+`hf download --local-dir` writes or from a Hugging Face cache snapshot path,
+and is omitted when neither is present. The base model is not part of it, so
+record the base revision with your evidence. Replace `--model s1` with `--model mock` in either command to
 check the plumbing without weights.
 
 This smoke proves that the environment, pinned weights, and chooser load and
@@ -292,13 +320,12 @@ the recorded results and limits.
 
 ### Known local issues
 
-- On Apple silicon, `S1_DEVICE=mps S1_DTYPE=float16` crashed with
-  `SIGSEGV` or hung during weight loading in six of six runs with
-  Transformers 5.17.0 and torch 2.14.0. The crash occurs in Transformers'
-  concurrent weight-loading path. Use `S1_DTYPE=bfloat16`, or set
-  `HF_DEACTIVATE_ASYNC_LOAD=1` before loading with `float16`; both loaded
-  reliably in the recorded runs. `cpu` with `float16` or `float32` also
-  loaded.
+- On Apple silicon, Transformers 5's concurrent weight loader crashed with
+  `SIGSEGV` or hung when loading the 4B base with `mps` and `float16`
+  (#4198). `FourBModel` now sets `HF_DEACTIVATE_ASYNC_LOAD=1` for `mps`
+  loads, so `S1_DEVICE=mps` works with the default `float16` and with
+  `bfloat16`. If you set `HF_DEACTIVATE_ASYNC_LOAD` yourself, your value is
+  kept; do not set it to a false value on `mps`.
 - The chooser supports at most 26 candidates, including `reobserve` and
   `abstain`. A larger request returns `kind: "error"` with
   `reason: "option_limit"`.

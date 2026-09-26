@@ -71,9 +71,32 @@ pub fn with_runtime_scope<T>(scope: String, action: impl FnOnce() -> T) -> T {
     action()
 }
 
-fn desktop_action_coordinator() -> &'static tokio::sync::Mutex<()> {
-    static COORDINATOR: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    COORDINATOR.get_or_init(|| tokio::sync::Mutex::new(()))
+/// Process-wide physical-action coordinator. Coordinated actions hold it
+/// exclusively (one at a time, as upstream). Implementation-attested
+/// independent background lanes hold it shared: they run alongside each other
+/// but never alongside a coordinated action. tokio's RwLock is fair, so a
+/// queued exclusive action is not starved by a stream of shared ones.
+fn desktop_action_coordinator() -> &'static tokio::sync::RwLock<()> {
+    static COORDINATOR: OnceLock<tokio::sync::RwLock<()>> = OnceLock::new();
+    COORDINATOR.get_or_init(|| tokio::sync::RwLock::new(()))
+}
+
+/// How a physical action is admitted through [`desktop_action_coordinator`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DesktopCoordination {
+    /// Not a physical action, or an overlay-only cursor move: no admission.
+    None,
+    /// Attested independent lane: shared admission.
+    Shared,
+    /// Primary input lane: exclusive admission.
+    Exclusive,
+}
+
+/// Held admission; dropped right after the physical action completes.
+#[allow(dead_code)]
+enum DesktopAdmission {
+    Shared(tokio::sync::RwLockReadGuard<'static, ()>),
+    Exclusive(tokio::sync::RwLockWriteGuard<'static, ()>),
 }
 
 fn active_text_input_pids() -> &'static Mutex<HashSet<i64>> {
@@ -506,6 +529,10 @@ pub trait Tool: Send + Sync {
     /// that independent route is unavailable; it must never fall back to
     /// global input. Caller fields alone cannot establish this guarantee.
     /// Existing platform routes conservatively retain global coordination.
+    /// An attested lane is admitted in shared mode: concurrently with other
+    /// independent lanes, never concurrently with a coordinated action.
+    /// macOS attests only when `CUA_DRIVER_PARALLEL_BACKGROUND=1`
+    /// (see [`crate::parallel_background`]).
     fn has_independent_input_lane(&self, _args: &Value) -> bool {
         false
     }
@@ -1540,23 +1567,30 @@ impl ToolRegistry {
                 "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
             );
         let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
-        let _desktop_action = if requires_desktop_coordination(
+        let coordinator = desktop_action_coordinator();
+        // Avoid yielding the dispatch task when the process-wide input
+        // lane is uncontended. On Windows, that yield creates a window in
+        // which the foreground target can lose keyboard eligibility
+        // between the fixture's focus proof and SendInput. Contended
+        // runtimes still wait and serialize through the same lock.
+        let _desktop_action = match desktop_coordination(
             resolved_name,
             &args,
             tool.has_independent_input_lane(&args),
         ) {
-            let coordinator = desktop_action_coordinator();
-            // Avoid yielding the dispatch task when the process-wide input
-            // lane is uncontended. On Windows, that yield creates a window in
-            // which the foreground target can lose keyboard eligibility
-            // between the fixture's focus proof and SendInput. Contended
-            // runtimes still wait and serialize through the same mutex.
-            Some(match coordinator.try_lock() {
-                Ok(guard) => guard,
-                Err(_) => coordinator.lock().await,
-            })
-        } else {
-            None
+            DesktopCoordination::None => None,
+            DesktopCoordination::Shared => {
+                Some(DesktopAdmission::Shared(match coordinator.try_read() {
+                    Ok(guard) => guard,
+                    Err(_) => coordinator.read().await,
+                }))
+            }
+            DesktopCoordination::Exclusive => {
+                Some(DesktopAdmission::Exclusive(match coordinator.try_write() {
+                    Ok(guard) => guard,
+                    Err(_) => coordinator.write().await,
+                }))
+            }
         };
         let pending_turn = should_record
             .then(|| {
@@ -2653,19 +2687,33 @@ fn is_physical_desktop_action(tool: &str) -> bool {
     )
 }
 
-fn requires_desktop_coordination(tool: &str, args: &Value, independent_lane: bool) -> bool {
-    if !is_physical_desktop_action(tool) {
-        return false;
-    }
-    // Only an implementation-attested, exact-window background route can
-    // leave the shared lane. Explicit desktop and foreground calls never do.
-    let exact_background_window = args["pid"].as_u64().is_some_and(|pid| pid > 0)
-        && args["window_id"].as_u64().is_some_and(|id| id > 0)
+/// `move_cursor` outside desktop scope drives only the agent-cursor overlay
+/// (a click-through window fed through a channel and a mutex-guarded keyed
+/// render map); it never touches the real pointer or any input queue, so
+/// concurrent sessions may glide their cursors at the same time.
+fn is_overlay_only_cursor_move(tool: &str, args: &Value) -> bool {
+    tool == "move_cursor"
         && args["scope"] != "desktop"
         && args.pointer("/target/kind").and_then(Value::as_str) != Some("desktop")
-        && args["delivery_mode"] != "foreground"
-        && args["dispatch"] != "foreground";
-    !(independent_lane && exact_background_window)
+}
+
+fn desktop_coordination(tool: &str, args: &Value, independent_lane: bool) -> DesktopCoordination {
+    if !is_physical_desktop_action(tool) || is_overlay_only_cursor_move(tool, args) {
+        return DesktopCoordination::None;
+    }
+    // Only an implementation-attested, exact-window background route can
+    // leave the exclusive lane. Explicit desktop and foreground calls never do.
+    if independent_lane && crate::parallel_background::is_exact_background_window(args) {
+        DesktopCoordination::Shared
+    } else {
+        DesktopCoordination::Exclusive
+    }
+}
+
+/// True when the call must be admitted exclusively on the primary input lane.
+#[cfg(test)]
+fn requires_desktop_coordination(tool: &str, args: &Value, independent_lane: bool) -> bool {
+    desktop_coordination(tool, args, independent_lane) == DesktopCoordination::Exclusive
 }
 
 /// Bucket that owns the processes a call is allowed to terminate.
@@ -4812,7 +4860,7 @@ resources:
             let active = active.clone();
             let max_active = max_active.clone();
             tasks.push(tokio::spawn(async move {
-                let _admission = desktop_action_coordinator().lock().await;
+                let _admission = desktop_action_coordinator().write().await;
                 let now = active.fetch_add(1, Ordering::SeqCst) + 1;
                 max_active.fetch_max(now, Ordering::SeqCst);
                 tokio::task::yield_now().await;
@@ -4850,6 +4898,177 @@ resources:
             &serde_json::json!({"independent_input_lane": true}),
             false
         ));
+    }
+
+    const PARALLEL_BACKGROUND_TOOLS: [&str; 7] = [
+        "click",
+        "double_click",
+        "right_click",
+        "scroll",
+        "type_text",
+        "press_key",
+        "set_value",
+    ];
+
+    /// The macOS attestation with the switch injected (no process env reads).
+    fn macos_coordination(
+        enabled: bool,
+        tool: &str,
+        args: &serde_json::Value,
+    ) -> super::DesktopCoordination {
+        super::desktop_coordination(
+            tool,
+            args,
+            crate::parallel_background::independent_lane_with(enabled, tool, args),
+        )
+    }
+
+    #[test]
+    fn parallel_background_off_keeps_every_physical_action_exclusive() {
+        use super::requires_desktop_coordination;
+        use super::DesktopCoordination::Exclusive;
+        let exact = serde_json::json!({"pid": 10, "window_id": 20, "element_index": 1});
+        for tool in PARALLEL_BACKGROUND_TOOLS {
+            assert_eq!(macos_coordination(false, tool, &exact), Exclusive, "{tool}");
+            assert!(requires_desktop_coordination(
+                tool,
+                &exact,
+                crate::parallel_background::independent_lane_with(false, tool, &exact)
+            ));
+        }
+    }
+
+    #[test]
+    fn parallel_background_on_admits_exact_background_windows_shared() {
+        use super::requires_desktop_coordination;
+        use super::DesktopCoordination::Shared;
+        for args in [
+            serde_json::json!({"pid": 10, "window_id": 20, "element_index": 1}),
+            serde_json::json!({"pid": 10, "window_id": 20, "element_index": 1, "delivery_mode": "background"}),
+        ] {
+            for tool in PARALLEL_BACKGROUND_TOOLS {
+                assert_eq!(
+                    macos_coordination(true, tool, &args),
+                    Shared,
+                    "{tool} {args}"
+                );
+                assert!(!requires_desktop_coordination(
+                    tool,
+                    &args,
+                    crate::parallel_background::independent_lane_with(true, tool, &args)
+                ));
+            }
+        }
+        // Right/middle pixel clicks are PID-routed only.
+        let right_px =
+            serde_json::json!({"pid": 10, "window_id": 20, "x": 4, "y": 5, "button": "right"});
+        assert_eq!(macos_coordination(true, "click", &right_px), Shared);
+    }
+
+    #[test]
+    fn parallel_background_on_keeps_foreground_desktop_and_global_routes_exclusive() {
+        use super::DesktopCoordination::Exclusive;
+        let exact = serde_json::json!({"pid": 10, "window_id": 20, "element_index": 1});
+        for fields in [
+            serde_json::json!({"delivery_mode": "foreground"}),
+            serde_json::json!({"dispatch": "foreground"}),
+            serde_json::json!({"scope": "desktop"}),
+            serde_json::json!({"target": {"kind": "desktop"}}),
+            serde_json::json!({"pid": 0}),
+            serde_json::json!({"pid": null}),
+            serde_json::json!({"window_id": null}),
+        ] {
+            let mut args = exact.clone();
+            args.as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            for tool in PARALLEL_BACKGROUND_TOOLS {
+                assert_eq!(
+                    macos_coordination(true, tool, &args),
+                    Exclusive,
+                    "{tool} {args}"
+                );
+            }
+        }
+        // Left pixel clicks activate the target without raising it.
+        let left_px = serde_json::json!({"pid": 10, "window_id": 20, "x": 4, "y": 5});
+        assert_eq!(macos_coordination(true, "click", &left_px), Exclusive);
+        // Tools that can touch the real pointer, global HID, or activation.
+        for tool in [
+            "hotkey",
+            "drag",
+            "mouse_drag",
+            "parallel_mouse_drag",
+            "mouse_button_down",
+            "mouse_button_up",
+            "bring_to_front",
+            "set_window_frame",
+        ] {
+            assert_eq!(macos_coordination(true, tool, &exact), Exclusive, "{tool}");
+        }
+    }
+
+    #[test]
+    fn overlay_only_move_cursor_never_takes_the_desktop_lane() {
+        use super::requires_desktop_coordination;
+        use super::DesktopCoordination::{Exclusive, None};
+        // Independent of the parallel-background switch and of attestation.
+        for independent in [false, true] {
+            for args in [
+                serde_json::json!({"x": 1, "y": 2}),
+                serde_json::json!({"x": 1, "y": 2, "scope": "window"}),
+                serde_json::json!({"x": 1, "y": 2, "session": "a"}),
+            ] {
+                assert_eq!(
+                    super::desktop_coordination("move_cursor", &args, independent),
+                    None
+                );
+                assert!(!requires_desktop_coordination(
+                    "move_cursor",
+                    &args,
+                    independent
+                ));
+            }
+            for args in [
+                serde_json::json!({"x": 1, "y": 2, "scope": "desktop"}),
+                serde_json::json!({"x": 1, "y": 2, "target": {"kind": "desktop"}}),
+            ] {
+                assert_eq!(
+                    super::desktop_coordination("move_cursor", &args, independent),
+                    Exclusive,
+                    "{args}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn shared_admissions_overlap_but_exclusive_admission_waits_for_them() {
+        use std::time::Duration;
+        // A private lock of the coordinator's exact type keeps this hermetic
+        // against other tests admitting through the process-wide instance.
+        fn same_type<T>(_: &T, _: &T) {}
+        let coordinator: &'static tokio::sync::RwLock<()> =
+            Box::leak(Box::new(tokio::sync::RwLock::new(())));
+        same_type(coordinator, desktop_action_coordinator());
+        let first = coordinator.read().await;
+        let second = tokio::time::timeout(Duration::from_millis(200), coordinator.read())
+            .await
+            .expect("independent lanes must be admitted concurrently");
+        let mut exclusive = tokio::spawn(async move {
+            let _guard = coordinator.write().await;
+        });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut exclusive)
+                .await
+                .is_err(),
+            "a coordinated action must wait for in-flight independent lanes"
+        );
+        drop((first, second));
+        tokio::time::timeout(Duration::from_secs(2), exclusive)
+            .await
+            .expect("exclusive admission proceeds once shared lanes drain")
+            .unwrap();
     }
 
     #[test]

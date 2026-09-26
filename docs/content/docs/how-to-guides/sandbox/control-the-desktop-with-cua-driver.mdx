@@ -25,7 +25,9 @@ SDK. Both examples below connect Driver to the same advertised guest service.
   not elevate permissions or make every operation available on every desktop.
 
 No Fleet image is implied to provide this capability. Qualify the exact guest
-artifact and matching Driver bindings before relying on it.
+artifact and matching Driver bindings before relying on it. For a pinned image
+and service configuration that supports this path, see [Run Omarchy on Cloud
+Fleet](/how-to-guides/sandbox/run-omarchy-on-cloud-fleet).
 
 ## Connect and inspect the desktop
 
@@ -35,11 +37,12 @@ artifact and matching Driver bindings before relying on it.
 Install the Sandbox SDK with its optional Driver dependency:
 
 ```bash
-python -m pip install --extra-index-url https://wheels.cua.ai/simple 'cua-sandbox[driver]'
+python -m pip install 'cua-sandbox[driver]==0.7.0'
 ```
 
-Claim from the existing pool, then connect the typed Driver through its
-advertised `mcp` service:
+Claim from the existing pool, use the Sandbox interfaces for guest files and
+commands, then connect typed Driver through the same claim's advertised `mcp`
+service:
 
 ```python
 from cua_driver import GetScreenSizeInput
@@ -47,7 +50,11 @@ from cua_driver import GetScreenSizeInput
 
 async def inspect_desktop(pool):
     async with pool.claim(service="server") as sb:
-        # sb.shell, sb.files, and sb.terminal continue to use computer-server.
+        await sb.files.write_text("/tmp/cua-driver-example.txt", "same guest")
+        check = await sb.shell.run("cat /tmp/cua-driver-example.txt")
+        if not check.success or check.stdout.strip() != "same guest":
+            raise RuntimeError("Sandbox file and shell check failed")
+
         async with sb.driver.connect(service="mcp", transport="mcp") as driver:
             result = await driver.get_screen_size(
                 GetScreenSizeInput(session=None)
@@ -56,6 +63,11 @@ async def inspect_desktop(pool):
                 raise RuntimeError(result.text)
             print(result.text)
 ```
+
+The file and shell calls use `computer-server`; the Driver call uses the typed
+`mcp` connection. Both routes are bound to the same claimed guest. Use
+`sb.shell`, `sb.files`, and `sb.terminal` for their respective capabilities
+rather than routing them through Driver.
 
 Exiting the inner context closes Driver before the outer claim context releases
 the claim.

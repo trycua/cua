@@ -2506,24 +2506,18 @@ fn foreground_structured(
 
 /// Fold a foreground transaction's post-check into a result: the report
 /// itself, `focus_after` at the top level, and an `evidence` item so the
-/// observation survives the public-record reduction. Focus that stayed in
-/// the target process AND a window that appeared / closed in it is
-/// `window_change` evidence and an `effect: confirmed`; focus that left the
-/// process is a suspected no-op; anything else stays unverifiable with a
-/// `native_api_result` item.
+/// observation survives the public-record reduction. A window that appeared
+/// or closed in the target process is `window_change` evidence and an
+/// `effect: confirmed` wherever the focus sits afterwards (the OK button of a
+/// dialog destroys the very window that held the focus, and closing the last
+/// window of a process leaves the focus to the window manager); without a
+/// window change, focus that left the process is a suspected no-op and
+/// anything else stays unverifiable with a `native_api_result` item.
 fn apply_foreground_report(v: &mut Value, report: &crate::input::ForegroundReport) {
     v["foreground"] = report.to_json();
     v["focus_after"] = json!(report.focus_after.as_str());
-    if report.focus_after == crate::input::FocusAfter::Elsewhere {
-        v["effect"] = json!("suspected_noop");
-        v["warning"] = json!(
-            "input focus left the target process before the post-check; the input \
-             may have reached another window. Verify with a screenshot."
-        );
-        return;
-    }
-    let evidence = match (&report.window_change, report.focus_kept()) {
-        (Some(change), true) => {
+    let evidence = match &report.window_change {
+        Some(change) => {
             v["effect"] = json!("confirmed");
             v["verified"] = json!(true);
             json!({
@@ -2531,7 +2525,15 @@ fn apply_foreground_report(v: &mut Value, report: &crate::input::ForegroundRepor
                 "detail": format!("focus_after={}; {change}", report.focus_after.as_str()),
             })
         }
-        _ => json!({
+        None if report.focus_after == crate::input::FocusAfter::Elsewhere => {
+            v["effect"] = json!("suspected_noop");
+            v["warning"] = json!(
+                "input focus left the target process before the post-check; the input \
+                 may have reached another window. Verify with a screenshot."
+            );
+            return;
+        }
+        None => json!({
             "kind": "native_api_result",
             "detail": format!(
                 "real input delivered to the activated window (focus_after={}); no window \
@@ -5793,7 +5795,7 @@ impl ClickTool {
                     .unwrap_or((sx.round() as i32, sy.round() as i32));
                 match result {
                     Ok(Ok(((), report))) => {
-                        let confirmed = report.focus_kept() && report.window_change.is_some();
+                        let confirmed = report.window_change.is_some();
                         let result = ToolResult::text(format!(
                             "Clicked element [{idx}] (pid {pid}) with a real pointer click \
                              (delivery_mode=foreground, focus_after={}){}{}",

@@ -212,10 +212,14 @@ const WINDOW_CHANGE_DEADLINE: Duration = Duration::from_millis(800);
 /// (`_NET_WM_NAME` arrives a moment after the map) so the summary names it.
 const WINDOW_CHANGE_TITLE_GRACE: Duration = Duration::from_millis(60);
 
-/// How long the post-check retries an empty core focus (`None` /
-/// `PointerRoot`): a popup destroyed by the click leaves the focus unset for
-/// a beat before the toolkit re-focuses its toplevel.
-const FOCUS_RETRY: Duration = Duration::from_millis(250);
+/// How long the post-check retries a core focus that says nothing about
+/// where input went: `None` / `PointerRoot`, or a window of the window
+/// manager's own X client. A popup destroyed by the click leaves the focus
+/// unset for a beat before the toolkit re-focuses its toplevel, and mutter
+/// parks the focus on its `no_focus_window` while it picks the next window
+/// after a dialog closes (measured on GNOME 42: from ~500 ms after the close
+/// for ~200 ms).
+const FOCUS_RETRY: Duration = Duration::from_millis(500);
 
 /// Post-action observation bounds: `WINDOW_CHANGE_DEADLINE` /
 /// `WINDOW_CHANGE_POLL` unless the embedding host set
@@ -307,6 +311,17 @@ struct X11 {
     root: Window,
     net_active_window: u32,
     net_wm_pid: u32,
+    resource_id_mask: u32,
+    /// The window manager's `_NET_SUPPORTING_WM_CHECK` window, when one is
+    /// advertised: any window sharing its X client base belongs to the WM.
+    wm_check_window: Option<Window>,
+}
+
+/// Whether two X resource ids were allocated by the same client: the server
+/// hands each client a base and lets it fill in the bits under
+/// `resource_id_mask`.
+fn same_x11_client(a: Window, b: Window, resource_id_mask: u32) -> bool {
+    a & !resource_id_mask == b & !resource_id_mask
 }
 
 impl X11 {
@@ -315,17 +330,38 @@ impl X11 {
             anyhow!("{CODE_UNAVAILABLE}: cannot open DISPLAY to verify X11 input focus: {e}")
         })?;
         let root = conn.setup().roots[screen].root;
+        let resource_id_mask = conn.setup().resource_id_mask;
         let net_active_window = conn
             .intern_atom(false, b"_NET_ACTIVE_WINDOW")?
             .reply()?
             .atom;
         let net_wm_pid = conn.intern_atom(false, b"_NET_WM_PID")?.reply()?.atom;
+        let wm_check = conn
+            .intern_atom(false, b"_NET_SUPPORTING_WM_CHECK")?
+            .reply()?
+            .atom;
+        let wm_check_window = conn
+            .get_property(false, root, wm_check, AtomEnum::WINDOW, 0, 1)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .and_then(|reply| reply.value32()?.next())
+            .filter(|w| *w != 0);
         Ok(Self {
             conn,
             root,
             net_active_window,
             net_wm_pid,
+            resource_id_mask,
+            wm_check_window,
         })
+    }
+
+    /// The focus sits on a window the window manager created for itself
+    /// (mutter's `no_focus_window` between two focused clients): a parking
+    /// spot, not a destination.
+    fn held_by_window_manager(&self, focused: Window) -> bool {
+        self.wm_check_window
+            .is_some_and(|check| same_x11_client(focused, check, self.resource_id_mask))
     }
 
     fn active_window(&self) -> Option<Window> {
@@ -594,11 +630,32 @@ fn confirm_phase(target: Window, settle: Duration) -> Result<ConfirmOutcome> {
     }
 }
 
+/// Poll `read_focus` until it names a window that is not a parking spot
+/// (`read_focus` already drops `None` / `PointerRoot`; `parked` marks the
+/// window manager's own windows) or `deadline` passes.
+fn await_focus_destination(
+    deadline: Instant,
+    mut read_focus: impl FnMut() -> Option<Window>,
+    parked: impl Fn(Window) -> bool,
+) -> Option<Window> {
+    loop {
+        if let Some(focused) = read_focus().filter(|f| !parked(*f)) {
+            return Some(focused);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 /// Where the focus sits after the body. `pid_windows` is the target
 /// process's window set read after the body (managed windows and popups):
 /// focus inside any of them is `SamePid` even when neither the target nor
 /// the focused window carries `_NET_WM_PID` (a VCL popup menu closed by the
-/// click, the popup that the click opened).
+/// click, the popup that the click opened). A focus that is unset or parked
+/// on the window manager's own window for the whole `FOCUS_RETRY` is
+/// `Unknown`: it names no client the input could have reached.
 fn post_check(
     target: Window,
     target_pid: Option<u32>,
@@ -607,15 +664,12 @@ fn post_check(
     let Ok(x) = X11::open() else {
         return FocusAfter::Unknown;
     };
-    let retry_until = Instant::now() + FOCUS_RETRY;
-    let focused = loop {
-        if let Some(focused) = x.focused() {
-            break focused;
-        }
-        if Instant::now() >= retry_until {
-            return FocusAfter::Elsewhere;
-        }
-        std::thread::sleep(Duration::from_millis(25));
+    let Some(focused) = await_focus_destination(
+        Instant::now() + FOCUS_RETRY,
+        || x.focused(),
+        |focused| x.held_by_window_manager(focused),
+    ) else {
+        return FocusAfter::Unknown;
     };
     if x.is_within(focused, target) {
         return FocusAfter::Target;
@@ -813,6 +867,61 @@ mod tests {
         let (_after, change) = wait_for_window_change(Some(u32::MAX), &before, bounds);
         assert_eq!(change, None);
         assert!(started.elapsed() < WINDOW_CHANGE_DEADLINE);
+    }
+
+    /// mutter's `no_focus_window` (0x1600058) and its `_NET_SUPPORTING_WM_CHECK`
+    /// window (0x1600006) share the client base above the 21-bit resource mask;
+    /// a LibreOffice toplevel (0x3e00096) does not.
+    #[test]
+    fn wm_windows_share_the_wm_check_client_base() {
+        let mask = 0x1f_ffff;
+        assert!(same_x11_client(0x160_0058, 0x160_0006, mask));
+        assert!(!same_x11_client(0x3e0_0096, 0x160_0006, mask));
+    }
+
+    /// The focus sequence mutter produces after a focused dialog closes:
+    /// unset, then parked on its own window, then the next toplevel. The
+    /// post-check waits the parking out and reports the toplevel.
+    #[test]
+    fn focus_parked_on_the_window_manager_is_waited_out() {
+        let mask = 0x1f_ffff;
+        let wm_check = 0x160_0006;
+        let mut readings = [None, Some(0x160_0058), Some(0x160_0058), Some(0x3e0_0096)].into_iter();
+        let focused = await_focus_destination(
+            Instant::now() + Duration::from_secs(2),
+            || readings.next().flatten(),
+            |w| same_x11_client(w, wm_check, mask),
+        );
+        assert_eq!(focused, Some(0x3e0_0096));
+    }
+
+    /// A focus that never leaves the window manager names no destination:
+    /// `None` at the deadline, never the parking window itself.
+    #[test]
+    fn focus_left_on_the_window_manager_is_unknown_at_the_deadline() {
+        let mask = 0x1f_ffff;
+        let deadline = Instant::now() + Duration::from_millis(80);
+        let focused = await_focus_destination(
+            deadline,
+            || Some(0x160_0058),
+            |w| same_x11_client(w, 0x160_0006, mask),
+        );
+        assert_eq!(focused, None);
+        assert!(Instant::now() >= deadline);
+    }
+
+    /// A focus already on a client window returns on the first read: the
+    /// happy path pays no retry.
+    #[test]
+    fn settled_focus_returns_without_waiting() {
+        let started = Instant::now();
+        let focused = await_focus_destination(
+            started + Duration::from_secs(2),
+            || Some(0x3e0_0096),
+            |_| false,
+        );
+        assert_eq!(focused, Some(0x3e0_0096));
+        assert!(started.elapsed() < Duration::from_millis(25));
     }
 
     #[test]

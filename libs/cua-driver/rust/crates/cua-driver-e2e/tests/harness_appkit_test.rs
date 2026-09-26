@@ -1276,7 +1276,7 @@ fn harness_appkit_counter() {
 }
 
 /// Resolve the native AppKit button from a screenshot-space PX target, then
-/// deliver through the background-safe AX hit-test bridge while another app
+/// deliver exactly one pointer click (not AXPress) while another app
 /// remains fully foreground.
 #[test]
 #[ignore]
@@ -1284,7 +1284,7 @@ fn harness_appkit_counter_px_background() {
     run_background_case_targeting(
         "left_click",
         Targeting::Px,
-        DriverRoute::MacosAxAction,
+        DriverRoute::MacosCgEventPid,
         |pid, wid, driver| {
             let config = driver.call(
                 "set_config",
@@ -1396,6 +1396,11 @@ fn harness_appkit_counter_px_background() {
                 !response.is_error(),
                 "AppKit PX background click failed: {}",
                 response.text()
+            );
+            assert_eq!(
+                response.structured()["route"],
+                "synthetic_events",
+                "coordinate click must not be short-circuited by AXPress"
             );
             std::thread::sleep(Duration::from_millis(200));
             assert!(

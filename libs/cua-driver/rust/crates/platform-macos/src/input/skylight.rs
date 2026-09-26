@@ -228,9 +228,9 @@ pub fn is_available() -> bool {
     post_to_pid_fn().is_some()
 }
 
-/// `true` when the focus-without-raise SPIs resolved, including either the
+/// `true` when the target-only synthetic-focus SPIs resolved, including either the
 /// modern window-owner PSN lookup or the deprecated pid fallback.
-pub fn is_focus_without_raise_available() -> bool {
+pub fn is_synthetic_target_focus_available() -> bool {
     let has_psn_lookup = (connection_id_fn().is_some()
         && get_window_owner_fn().is_some()
         && get_connection_psn_fn().is_some())
@@ -488,141 +488,171 @@ impl SpaceQuery {
     }
 }
 
-// ── Focus-without-raise ───────────────────────────────────────────────────────
+// ── Target-only synthetic focus ───────────────────────────────────────────────
 
-/// Activate `target_pid`'s window `target_wid` without raising any windows
-/// or triggering Space-follow. Ported from yabai's
-/// `window_manager_focus_window_without_raise`.
-///
-/// Recipe:
-/// 1. `_SLPSGetFrontProcess` → capture current front PSN.
-/// 2. `SLSGetWindowOwner + SLSGetConnectionPSN` → target PSN, with
-///    `GetProcessForPID(target_pid)` as an older-system fallback.
-/// 3. Post 248-byte defocus record to front PSN (`bytes[0x8a] = 0x02`).
-/// 4. Post 248-byte focus record to target PSN (`bytes[0x8a] = 0x01`,
-///    `bytes[0x3c..0x3f]` = `target_wid` little-endian).
-///
-/// Deliberately skips `SLPSSetFrontProcessWithOptions` — see the Swift
-/// reference `FocusWithoutRaise.swift` for why omitting it keeps
-/// Chromium's user-activation gate open.
-///
-/// Returns `true` when all SPIs resolved and both posts succeeded.
-pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
-    let post_fn = match post_event_record_to_fn() {
-        Some(f) => f,
-        None => return false,
-    };
-    let get_front = match get_front_process_fn() {
-        Some(f) => f,
-        None => return false,
-    };
-    // 8-byte PSN buffers (two UInt32s).
-    let mut prev_psn = [0u8; 8];
-    let mut target_psn = [0u8; 8];
-
-    let ok_prev = unsafe { get_front(prev_psn.as_mut_ptr() as *mut c_void) } == 0;
-    if !ok_prev {
-        return false;
-    }
-
-    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
-        return false;
-    }
-
-    // Build the 248-byte event buffer.
-    let mut buf = [0u8; 0xF8];
-    buf[0x04] = 0xF8;
-    buf[0x08] = 0x0D;
-    // Stamp target window id in little-endian at bytes 0x3c–0x3f.
-    buf[0x3C] = (target_wid & 0xFF) as u8;
-    buf[0x3D] = ((target_wid >> 8) & 0xFF) as u8;
-    buf[0x3E] = ((target_wid >> 16) & 0xFF) as u8;
-    buf[0x3F] = ((target_wid >> 24) & 0xFF) as u8;
-
-    // Step 3: defocus previous front.
-    buf[0x8A] = 0x02;
-    let defocus_ok = unsafe { post_fn(prev_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
-
-    // Step 4: focus target.
-    buf[0x8A] = 0x01;
-    let focus_ok = unsafe { post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
-
-    defocus_ok && focus_ok
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SyntheticFocusCommand {
+    psn: [u8; 8],
+    window_id: u32,
+    focused: bool,
 }
 
-/// Reverse [`activate_without_raise`] once a background click is delivered:
-/// defocus `target_wid` and hand key focus back to `previous_pid`'s key window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SyntheticTargetFocusPlan {
+    activate_target: SyntheticFocusCommand,
+    deactivate_target: SyntheticFocusCommand,
+}
+
+/// Opaque cleanup token for a target-only synthetic-focus session.
 ///
-/// The no-raise recipe posts a defocus record to the user's front process.
-/// That process stays frontmost as far as NSWorkspace reports, but its key
-/// window stops receiving keyboard input until the user clicks it again, so
-/// the activation-based restore never fires. Returns `true` when both posts
-/// succeeded.
-pub fn restore_focus_after_without_raise(
-    previous_pid: pid_t,
+/// The token deliberately contains only the target identity. Structurally, the
+/// cleanup path cannot send a focus record to whichever application happens to
+/// be in the real foreground.
+#[derive(Debug)]
+pub struct SyntheticTargetFocusContext {
+    deactivate_target: Option<SyntheticFocusCommand>,
+}
+
+impl Drop for SyntheticTargetFocusContext {
+    fn drop(&mut self) {
+        // Error/cancellation safety: never leave the target believing it is
+        // active merely because event construction or task joining failed.
+        // The explicit end path below remains preferable because it also gives
+        // AppKit one short settle interval after the record is posted.
+        let _ = finish_synthetic_target_focus(
+            &mut self.deactivate_target,
+            current_front_process_psn(),
+            post_synthetic_focus_command,
+        );
+    }
+}
+
+fn synthetic_target_focus_plan(target_psn: [u8; 8], target_wid: u32) -> SyntheticTargetFocusPlan {
+    SyntheticTargetFocusPlan {
+        activate_target: SyntheticFocusCommand {
+            psn: target_psn,
+            window_id: target_wid,
+            focused: true,
+        },
+        deactivate_target: SyntheticFocusCommand {
+            psn: target_psn,
+            window_id: target_wid,
+            focused: false,
+        },
+    }
+}
+
+fn synthetic_focus_record(window_id: u32, focused: bool) -> [u8; 0xF8] {
+    let mut record = [0u8; 0xF8];
+    record[0x04] = 0xF8;
+    record[0x08] = 0x0D;
+    record[0x3C..0x40].copy_from_slice(&window_id.to_le_bytes());
+    record[0x8A] = if focused { 0x01 } else { 0x02 };
+    record
+}
+
+fn current_front_process_psn() -> Option<[u8; 8]> {
+    let get_front = get_front_process_fn()?;
+    let mut psn = [0u8; 8];
+    (unsafe { get_front(psn.as_mut_ptr() as *mut c_void) } == 0).then_some(psn)
+}
+
+fn should_deactivate_synthetic_target(
+    current_front_psn: Option<[u8; 8]>,
+    target_psn: [u8; 8],
+) -> bool {
+    // Unknown is fail-safe for user intervention: leaving a process-local
+    // synthetic belief behind is preferable to deactivating a target the user
+    // may just have made genuinely frontmost.
+    current_front_psn.is_some_and(|front_psn| front_psn != target_psn)
+}
+
+fn post_synthetic_focus_command(command: &SyntheticFocusCommand) -> anyhow::Result<()> {
+    let post = post_event_record_to_fn()
+        .ok_or_else(|| anyhow::anyhow!("target-only synthetic focus is unavailable"))?;
+    let record = synthetic_focus_record(command.window_id, command.focused);
+    let status = unsafe { post(command.psn.as_ptr() as *const c_void, record.as_ptr()) };
+    if status != 0 {
+        anyhow::bail!("target-only synthetic focus event failed with OSStatus {status}");
+    }
+    Ok(())
+}
+
+/// Make only `target_pid`'s exact window synthetically active for event routing.
+///
+/// This is intentionally not the traditional yabai/Cua
+/// "focus-without-raise" sequence. That sequence first posted a defocus record
+/// to the user's real foreground process; even though WindowServer did not
+/// raise the target, AppKit delivered `resignActive`/`resignKey` and could move
+/// the user's first responder. A background action must not mutate that state.
+///
+/// The returned context must be passed to [`end_synthetic_target_focus`] after
+/// the target renderer has consumed the final input event.
+pub fn begin_synthetic_target_focus(
     target_pid: pid_t,
     target_wid: u32,
-) -> bool {
-    let Some(post_fn) = post_event_record_to_fn() else {
-        return false;
-    };
-    let Some(previous_wid) = key_window_of_pid(previous_pid) else {
-        return false;
-    };
-    let mut previous_psn = [0u8; 8];
-    let mut target_psn = [0u8; 8];
-    if !get_process_psn_for_window(previous_wid, previous_pid, &mut previous_psn)
-        || !get_process_psn_for_window(target_wid, target_pid, &mut target_psn)
-    {
-        return false;
+) -> anyhow::Result<Option<SyntheticTargetFocusContext>> {
+    if !is_synthetic_target_focus_available() {
+        anyhow::bail!("target-only synthetic focus is unavailable");
     }
 
-    let mut buf = focus_record(target_wid);
-    buf[0x8A] = 0x02;
-    let defocus_ok = unsafe { post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        anyhow::bail!(
+            "could not resolve pid {target_pid} window {target_wid} for target-only synthetic focus"
+        );
+    }
 
-    let mut buf = focus_record(previous_wid);
-    buf[0x8A] = 0x01;
-    let focus_ok = unsafe { post_fn(previous_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
-
-    defocus_ok && focus_ok
-}
-
-/// The 248-byte focus/defocus event record with `wid` stamped little-endian at
-/// bytes 0x3c–0x3f. The caller sets the direction byte at 0x8a.
-fn focus_record(wid: u32) -> [u8; 0xF8] {
-    let mut buf = [0u8; 0xF8];
-    buf[0x04] = 0xF8;
-    buf[0x08] = 0x0D;
-    buf[0x3C..0x40].copy_from_slice(&wid.to_le_bytes());
-    buf
-}
-
-/// The CGWindowID of `pid`'s key window: its `AXFocusedWindow`, else its
-/// frontmost on-screen layer-0 window.
-fn key_window_of_pid(pid: pid_t) -> Option<u32> {
-    use crate::ax::bindings::{ax_get_window_id, copy_element_attr, AXUIElementCreateApplication};
-    let focused = unsafe {
-        let app = AXUIElementCreateApplication(pid);
-        if app.is_null() {
-            None
-        } else {
-            let window = copy_element_attr(app, "AXFocusedWindow");
-            core_foundation::base::CFRelease(app as _);
-            window.and_then(|window| {
-                let wid = ax_get_window_id(window);
-                core_foundation::base::CFRelease(window as _);
-                wid
-            })
-        }
+    let front = current_front_process_psn().ok_or_else(|| {
+        anyhow::anyhow!("could not verify the real foreground before synthetic focus")
+    })?;
+    if front == target_psn {
+        // A process-wide focus record could disturb another window in the
+        // user's active app. Its event queue is already active.
+        return Ok(None);
+    }
+    let plan = synthetic_target_focus_plan(target_psn, target_wid);
+    let context = SyntheticTargetFocusContext {
+        deactivate_target: Some(plan.deactivate_target),
     };
-    focused.or_else(|| {
-        crate::windows::visible_windows()
-            .into_iter()
-            .filter(|w| w.pid == pid && w.layer == 0 && w.is_on_screen)
-            .max_by_key(|w| w.z_index)
-            .map(|w| w.window_id)
-    })
+    // Arm cleanup before posting: a failed SPI can still have side effects.
+    post_synthetic_focus_command(&plan.activate_target)?;
+    std::thread::sleep(std::time::Duration::from_millis(40));
+    Ok(Some(context))
+}
+
+/// Remove the synthetic event-routing state installed on the target only.
+pub fn end_synthetic_target_focus(mut context: SyntheticTargetFocusContext) -> anyhow::Result<()> {
+    finish_synthetic_target_focus(
+        &mut context.deactivate_target,
+        current_front_process_psn(),
+        post_synthetic_focus_command,
+    )?;
+    std::thread::sleep(std::time::Duration::from_millis(40));
+    Ok(())
+}
+
+// Keep the cleanup token armed on a failed query/post so Drop can retry.
+// Injecting the two OS observations makes failure paths testable without
+// sending any events to the user's desktop.
+fn finish_synthetic_target_focus(
+    pending: &mut Option<SyntheticFocusCommand>,
+    front_psn: Option<[u8; 8]>,
+    post: impl FnOnce(&SyntheticFocusCommand) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let Some(command) = pending.as_ref() else {
+        return Ok(());
+    };
+    if front_psn.is_none() {
+        anyhow::bail!("could not verify the real foreground during synthetic focus cleanup");
+    }
+    if should_deactivate_synthetic_target(front_psn, command.psn) {
+        post(command)?;
+    }
+    // True foreground ownership supersedes the synthetic state. Never send a
+    // deactivation to a target which the user has made genuinely frontmost.
+    *pending = None;
+    Ok(())
 }
 
 // ── NSMenu shortcut activation ────────────────────────────────────────────────
@@ -974,7 +1004,93 @@ pub fn with_menu_shortcut_activation(
 
 #[cfg(test)]
 mod tests {
-    use super::{make_key_window_record, preserves_exact_existing_focus};
+    use super::{
+        finish_synthetic_target_focus, make_key_window_record, preserves_exact_existing_focus,
+        should_deactivate_synthetic_target, synthetic_focus_record, synthetic_target_focus_plan,
+    };
+
+    #[test]
+    fn synthetic_focus_plan_addresses_only_the_target() {
+        let target_psn = [1, 2, 3, 4, 5, 6, 7, 8];
+        let plan = synthetic_target_focus_plan(target_psn, 0x7856_3412);
+
+        assert_eq!(plan.activate_target.psn, target_psn);
+        assert_eq!(plan.deactivate_target.psn, target_psn);
+        assert_eq!(plan.activate_target.window_id, 0x7856_3412);
+        assert_eq!(plan.deactivate_target.window_id, 0x7856_3412);
+        assert!(plan.activate_target.focused);
+        assert!(!plan.deactivate_target.focused);
+    }
+
+    #[test]
+    fn synthetic_focus_records_encode_exact_window_and_transition() {
+        let activate = synthetic_focus_record(0x7856_3412, true);
+        let deactivate = synthetic_focus_record(0x7856_3412, false);
+
+        assert_eq!(activate.len(), 0xF8);
+        assert_eq!(activate[0x04], 0xF8);
+        assert_eq!(activate[0x08], 0x0D);
+        assert_eq!(&activate[0x3C..0x40], &[0x12, 0x34, 0x56, 0x78]);
+        assert_eq!(activate[0x8A], 0x01);
+        assert_eq!(deactivate[0x8A], 0x02);
+    }
+
+    #[test]
+    fn synthetic_focus_cleanup_preserves_a_real_user_takeover() {
+        let target = [1, 2, 3, 4, 5, 6, 7, 8];
+        let other = [8, 7, 6, 5, 4, 3, 2, 1];
+
+        assert!(!should_deactivate_synthetic_target(Some(target), target));
+        assert!(should_deactivate_synthetic_target(Some(other), target));
+        assert!(
+            !should_deactivate_synthetic_target(None, target),
+            "an unknown real foreground must fail safe for user intervention"
+        );
+    }
+
+    #[test]
+    fn synthetic_focus_cleanup_retries_failed_post_then_disarms() {
+        let target = [1; 8];
+        let mut pending = Some(synthetic_target_focus_plan(target, 42).deactivate_target);
+        assert!(
+            finish_synthetic_target_focus(&mut pending, Some([2; 8]), |_| {
+                anyhow::bail!("injected post failure")
+            })
+            .is_err()
+        );
+        assert!(pending.is_some(), "failure must preserve the cleanup token");
+        let mut posts = 0;
+        finish_synthetic_target_focus(&mut pending, Some([2; 8]), |command| {
+            assert_eq!(command.psn, target);
+            assert!(!command.focused);
+            posts += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert!(pending.is_none());
+        finish_synthetic_target_focus(&mut pending, Some([2; 8]), |_| {
+            posts += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(posts, 1, "successful cleanup must not post twice");
+    }
+
+    #[test]
+    fn synthetic_focus_cleanup_uncertainty_and_takeover_never_post() {
+        let target = [1; 8];
+        let mut pending = Some(synthetic_target_focus_plan(target, 42).deactivate_target);
+        assert!(finish_synthetic_target_focus(&mut pending, None, |_| {
+            panic!("must not deactivate when foreground is unknown")
+        })
+        .is_err());
+        assert!(pending.is_some());
+        finish_synthetic_target_focus(&mut pending, Some(target), |_| {
+            panic!("must not deactivate a real foreground target")
+        })
+        .unwrap();
+        assert!(pending.is_none(), "takeover supersedes synthetic ownership");
+    }
 
     #[test]
     fn make_key_records_address_only_the_exact_window() {

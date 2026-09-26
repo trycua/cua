@@ -26,12 +26,11 @@ use std::sync::Arc;
 use crate::apps;
 use crate::ax::bindings::{
     copy_action_names, copy_bool_attr, copy_children, copy_element_attr, copy_string_attr,
-    element_at_screen_position, element_screen_rect, kAXErrorSuccess, AXUIElementPerformAction,
-    AXUIElementRef,
+    element_at_screen_position, element_screen_rect, AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
-use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
+use core_foundation::base::{CFRelease, CFTypeRef};
 
 use super::pixel_route::PixelClickRoute;
 use super::ToolState;
@@ -48,16 +47,24 @@ impl ClickTool {
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
-/// Focus posture for the raw pixel transport after AX hit-testing has failed.
+/// Focus posture for coordinate-addressed pointer delivery.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PixelActivationPolicy {
     /// Standard background delivery: suppress activation of the target.
     SuppressTarget,
-    /// Left-click with a concrete window: intentionally make the target
-    /// AppKit-active without raising it, while suppressing every other app.
-    AllowTargetWithoutRaise,
+    /// Left-click with a concrete window: temporarily arm only the target
+    /// event queue without deactivating the user's foreground application.
+    SyntheticTargetFocus,
     /// Explicit foreground rung owns its brief activation and restoration.
     ForegroundAssist,
+}
+
+impl PixelActivationPolicy {
+    fn suppresses_activation(self) -> bool {
+        // Target-only focus never activates a real foreground application.
+        // Restoring the old foreground here would fight the user's own switch.
+        self == Self::SuppressTarget
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -143,32 +150,9 @@ fn pixel_activation_policy(
     if effective_foreground {
         PixelActivationPolicy::ForegroundAssist
     } else if button == "left" && has_window {
-        PixelActivationPolicy::AllowTargetWithoutRaise
+        PixelActivationPolicy::SyntheticTargetFocus
     } else {
         PixelActivationPolicy::SuppressTarget
-    }
-}
-
-/// Return the prior foreground pid that should be restored after a raw
-/// background pixel click.
-///
-/// This decision deliberately depends on observed application state rather
-/// than the private focus recipe's return value. The recipe can be unavailable
-/// or partially fail while the raw click still makes the target AppKit-active;
-/// in that case the allow-target suppression lease will not restore it for us.
-fn background_pixel_restore_pid(
-    activation_policy: PixelActivationPolicy,
-    prior_front: Option<i32>,
-    target_pid: i32,
-    observed_front: Option<i32>,
-) -> Option<i32> {
-    if activation_policy == PixelActivationPolicy::AllowTargetWithoutRaise
-        && prior_front != Some(target_pid)
-        && observed_front == Some(target_pid)
-    {
-        prior_front
-    } else {
-        None
     }
 }
 
@@ -979,8 +963,7 @@ impl Tool for ClickTool {
 
             // Pin the overlay above the target window BEFORE animating so
             // the cursor is already sandwiched correctly while it glides in.
-            // Both PX deliveries below (AX hit-test and routed events) share
-            // this glide, so the cursor shows whichever one lands the click.
+            // Explicit AX focus and routed pointer clicks share this glide.
             if let Some(wid) = window_id {
                 crate::cursor::overlay::send_command(
                     cursor_key.clone(),
@@ -998,17 +981,18 @@ impl Tool for ClickTool {
                 .cursor_registry
                 .note_press(&cursor_key, screen_x, screen_y);
 
-            // A background PX action can still use an accessibility delivery
-            // backend after resolving the requested screen point. This keeps
-            // targeting (PX) orthogonal to delivery (AX) and avoids making a
-            // Chromium/AppKit window key merely to satisfy first-mouse rules.
-            if !delivery_mode.is_foreground()
+            // A coordinate click promises pointer events at that position.
+            // AXPress may report success without mouse/pointer down/up (canvas
+            // and custom handlers), so it must never short-circuit or precede
+            // the pointer stream. Only the explicit non-click focus operation
+            // uses AX hit-testing; element-addressed clicks retain AXPress.
+            if action == "focus"
+                && !delivery_mode.is_foreground()
                 && window_id.is_some()
                 && button_str == "left"
                 && count == 1
                 && modifiers.is_empty()
             {
-                let focus_only = action == "focus";
                 let hit_test_wid = window_id.expect("guarded by window_id.is_some() above");
                 let ax_result = tokio::task::spawn_blocking(move || unsafe {
                     let Some(element) = element_at_screen_position(pid, screen_x, screen_y) else {
@@ -1017,19 +1001,13 @@ impl Tool for ClickTool {
                     // The pid-scoped hit-test can resolve an element from a
                     // same-process sibling overlapping the requested point.
                     // Require proven ancestry in the requested window before
-                    // acting; otherwise fall through to the routed pixel path
-                    // (already gated for this exact window).
+                    // focusing. A failed focus request must not become a click.
                     if crate::ax::exact_target::element_window_id(element) != Some(hit_test_wid) {
                         CFRelease(element as _);
                         return Ok(false);
                     }
-                    let delivered = if focus_only {
-                        crate::input::ax_actions::focus_element(element as usize).is_ok()
-                    } else {
-                        let press = core_foundation::string::CFString::new("AXPress");
-                        AXUIElementPerformAction(element, press.as_concrete_TypeRef())
-                            == kAXErrorSuccess
-                    };
+                    let delivered =
+                        crate::input::ax_actions::focus_element(element as usize).is_ok();
                     CFRelease(element as _);
                     Ok(delivered)
                 })
@@ -1043,9 +1021,8 @@ impl Tool for ClickTool {
                                 y: screen_y,
                             },
                         );
-                        let label = if focus_only { "focused" } else { "pressed" };
                         return ToolResult::text(format!(
-                            "✅ PX hit-test {label} the background element via AX."
+                            "✅ PX hit-test focused the background element via AX."
                         ))
                         .with_structured(serde_json::json!({
                             "path": "ax",
@@ -1053,7 +1030,7 @@ impl Tool for ClickTool {
                             "effect": "unverifiable"
                         }));
                     }
-                    Ok(Ok(false)) if focus_only => {
+                    Ok(Ok(false)) => {
                         return ToolResult::error(
                             "Background PX focus is unavailable at the requested point.".to_owned(),
                         )
@@ -1061,13 +1038,17 @@ impl Tool for ClickTool {
                             "code": "background_unavailable"
                         }));
                     }
-                    Ok(Err(error)) if focus_only => {
+                    Ok(Err(error)) => {
                         return ToolResult::error(format!("Background PX focus failed: {error}"))
                             .with_structured(serde_json::json!({
                                 "code": "background_unavailable"
                             }));
                     }
-                    _ => {}
+                    Err(error) => {
+                        return ToolResult::error(format!(
+                            "Background PX focus task failed: {error}"
+                        ));
+                    }
                 }
             }
 
@@ -1083,63 +1064,14 @@ impl Tool for ClickTool {
             };
             let activation_policy = pixel_activation_policy(&button_str, fg, window_id.is_some());
 
-            // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
-            // A pixel click can land on a "Sign In" button that opens a sheet
-            // or a Safari link that activates a new tab — same side-effect
-            // shape as the AX path, so we wrap identically.
+            // Observe side effects without restoring a stale foreground app
+            // during target-only focus: the user may switch windows mid-click.
             let prior_front = apps::frontmost_pid();
-            let snapshot = match activation_policy {
-                PixelActivationPolicy::SuppressTarget => {
-                    WindowChangeDetector::snapshot(prior_front)
-                }
-                PixelActivationPolicy::AllowTargetWithoutRaise => {
-                    WindowChangeDetector::snapshot_allowing_activation(prior_front, pid)
-                }
-                PixelActivationPolicy::ForegroundAssist => {
-                    WindowChangeDetector::snapshot_without_suppression(prior_front)
-                }
+            let snapshot = if activation_policy.suppresses_activation() {
+                WindowChangeDetector::snapshot(prior_front)
+            } else {
+                WindowChangeDetector::snapshot_without_suppression(prior_front)
             };
-
-            // Restore the Swift background-click prologue that was left
-            // disconnected in the original Rust port. It makes an opaque
-            // target AppKit-active without raising/restacking its window, which
-            // is required by Chromium gates and remote-HID proxies such as
-            // iPhone Mirroring. Re-pin after the focus record because changing
-            // AppKit active state can disturb overlay ordering.
-            let focus_without_raise =
-                if activation_policy == PixelActivationPolicy::AllowTargetWithoutRaise {
-                    let wid = window_id.expect("activation policy requires window_id");
-                    match tokio::task::spawn_blocking(move || {
-                        crate::input::mouse::prepare_background_pixel_click(pid, wid)
-                    })
-                    .await
-                    {
-                        Ok(activated) => {
-                            crate::cursor::overlay::send_command(
-                                cursor_key.clone(),
-                                cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-                            );
-                            activated
-                        }
-                        Err(error) => {
-                            return ToolResult::error(format!(
-                                "Background click activation task failed: {error}"
-                            ));
-                        }
-                    }
-                } else {
-                    false
-                };
-
-            // Pulse only after the activation settle so it visually coincides
-            // with the real target click rather than the private focus prelude.
-            crate::cursor::overlay::send_command(
-                cursor_key.clone(),
-                cursor_overlay::OverlayCommand::ClickPulse {
-                    x: screen_x,
-                    y: screen_y,
-                },
-            );
 
             let mods_owned = modifiers.clone();
             // Surface 5: route to the right/middle CGEvent primitives when
@@ -1147,7 +1079,7 @@ impl Tool for ClickTool {
             // routed `click_at_xy_with_window_local` for back-compat.
             let button_kind = button_str.clone();
             let result = focus_guard::with_focus_suppressed(
-                if activation_policy == PixelActivationPolicy::SuppressTarget {
+                if activation_policy.suppresses_activation() {
                     Some(pid)
                 } else {
                     None
@@ -1156,6 +1088,24 @@ impl Tool for ClickTool {
                 "click.pixel",
                 || async move {
                     tokio::task::spawn_blocking(move || {
+                        // Keep target focus alive through the complete pointer
+                        // sequence, then clean it up in this same blocking task.
+                        let target_focus = if activation_policy == PixelActivationPolicy::SyntheticTargetFocus {
+                            let wid = window_id.expect("activation policy requires window_id");
+                            let context = crate::input::mouse::prepare_background_pixel_click(pid, wid)?;
+                            crate::cursor::overlay::send_command(
+                                cursor_key.clone(),
+                                cursor_overlay::OverlayCommand::PinAbove(wid as u64),
+                            );
+                            context
+                        } else {
+                            None
+                        };
+                        let synthetic_target_focus = target_focus.is_some();
+                        crate::cursor::overlay::send_command(
+                            cursor_key,
+                            cursor_overlay::OverlayCommand::ClickPulse { x: screen_x, y: screen_y },
+                        );
                         let do_click = move || -> anyhow::Result<()> {
                             let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
                             if route == PixelClickRoute::ForegroundHid {
@@ -1210,7 +1160,7 @@ impl Tool for ClickTool {
                         // restore the prior front process. The HID tap has no
                         // pid addressing, so activation must be proven (the
                         // window is AX-focused) or no input is sent.
-                        match (route, window_id) {
+                        let dispatched = match (route, window_id) {
                             (PixelClickRoute::ForegroundHid, Some(wid)) => {
                                 crate::input::skylight::with_foreground_hid_activation(
                                     pid as libc::pid_t,
@@ -1219,49 +1169,23 @@ impl Tool for ClickTool {
                                 )
                             }
                             _ => do_click(),
-                        }
+                        };
+                        let cleanup = if let Some(context) = target_focus {
+                            // Let the target consume the queued up before ending
+                            // its synthetic active state, including on dispatch error.
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                            crate::input::skylight::end_synthetic_target_focus(context)
+                        } else {
+                            Ok(())
+                        };
+                        dispatched?;
+                        cleanup?;
+                        Ok::<_, anyhow::Error>(synthetic_target_focus)
                     })
                     .await
                 },
             )
             .await;
-
-            // The no-raise record can make NSWorkspace report the target as
-            // active even though its window never moved in z-order. Once the
-            // click has been queued, restore the prior app if the target is
-            // still reported frontmost. Base this on observed state, not
-            // `focus_without_raise`: the private recipe can report failure
-            // after partially activating the target, and the raw click can
-            // self-activate even when that recipe is unavailable. Do not
-            // overwrite a different app here; the wildcard suppression lease
-            // handles genuine side effects.
-            if activation_policy == PixelActivationPolicy::AllowTargetWithoutRaise
-                && prior_front != Some(pid)
-            {
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                if let Some(previous_pid) = background_pixel_restore_pid(
-                    activation_policy,
-                    prior_front,
-                    pid,
-                    apps::frontmost_pid(),
-                ) {
-                    let _ = apps::activate_pid(previous_pid);
-                } else if let (Some(previous_pid), Some(wid)) = (prior_front, window_id) {
-                    // The prior app is still frontmost, but the no-raise
-                    // recipe posted it a defocus record: hand its key window
-                    // focus back so the user's typing keeps landing there.
-                    if focus_without_raise && apps::frontmost_pid() == Some(previous_pid) {
-                        let _ = tokio::task::spawn_blocking(move || {
-                            crate::input::skylight::restore_focus_after_without_raise(
-                                previous_pid,
-                                pid,
-                                wid,
-                            )
-                        })
-                        .await;
-                    }
-                }
-            }
 
             let changes = super::finish_window_observation(snapshot).await;
 
@@ -1271,7 +1195,7 @@ impl Tool for ClickTool {
                 _ => "click",
             };
             match result {
-                Ok(Ok(())) => {
+                Ok(Ok(synthetic_target_focus)) => {
                     let target = if route == PixelClickRoute::ForegroundHid {
                         format!("at screen-point ({screen_x:.0},{screen_y:.0}) for pid {pid}")
                     } else {
@@ -1286,7 +1210,7 @@ impl Tool for ClickTool {
                         "path": super::pixel_route::path_label(route),
                         "verified": false,
                         "effect": "unverifiable",
-                        "focus_without_raise": focus_without_raise
+                        "synthetic_target_focus": synthetic_target_focus
                     }))
                 }
                 Ok(Err(e)) if route == PixelClickRoute::ForegroundHid => {
@@ -1665,10 +1589,10 @@ mod tests {
     /// without raising it. Other background buttons retain strict suppression,
     /// and the explicit foreground rung owns its separate activation.
     #[test]
-    fn raw_background_left_click_restores_focus_without_raise_policy() {
+    fn raw_background_left_click_uses_target_only_focus_policy() {
         assert_eq!(
             pixel_activation_policy("left", false, true),
-            PixelActivationPolicy::AllowTargetWithoutRaise
+            PixelActivationPolicy::SyntheticTargetFocus
         );
         assert_eq!(
             pixel_activation_policy("left", false, false),
@@ -1688,41 +1612,10 @@ mod tests {
         );
     }
 
-    /// The no-foreground contract must not depend on the private activation
-    /// recipe reporting full success. If that recipe is unavailable or only
-    /// partially succeeds but the target is nevertheless observed frontmost,
-    /// restore the user's prior app.
     #[test]
-    fn failed_private_activation_still_restores_observed_target_focus() {
-        assert_eq!(
-            background_pixel_restore_pid(
-                PixelActivationPolicy::AllowTargetWithoutRaise,
-                Some(7),
-                42,
-                Some(42),
-            ),
-            Some(7)
-        );
-
-        assert_eq!(
-            background_pixel_restore_pid(
-                PixelActivationPolicy::AllowTargetWithoutRaise,
-                Some(7),
-                42,
-                Some(99),
-            ),
-            None,
-            "do not overwrite an unrelated app that became frontmost"
-        );
-        assert_eq!(
-            background_pixel_restore_pid(
-                PixelActivationPolicy::SuppressTarget,
-                Some(7),
-                42,
-                Some(42),
-            ),
-            None,
-            "strict-suppression paths retain their existing ownership"
-        );
+    fn target_only_focus_does_not_suppress_user_window_switches() {
+        assert!(!pixel_activation_policy("left", false, true).suppresses_activation());
+        assert!(!pixel_activation_policy("left", true, true).suppresses_activation());
+        assert!(pixel_activation_policy("right", false, true).suppresses_activation());
     }
 }

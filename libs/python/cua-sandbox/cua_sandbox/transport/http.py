@@ -7,6 +7,7 @@ and returns an SSE stream with a single ``data: {...}`` frame containing the res
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 from typing import Any, Dict, Optional
 
@@ -153,7 +154,9 @@ class HTTPTransport(Transport):
 
     async def pty_send(self, pid: int, data: str) -> None:
         assert self._client is not None, "Transport not connected"
-        resp = await self._client.post(f"/pty/{pid}/stdin", json={"data": data})
+        # /pty/{pid}/stdin base64-decodes ``data`` before writing to the PTY.
+        encoded = base64.b64encode(data.encode("utf-8")).decode("ascii")
+        resp = await self._client.post(f"/pty/{pid}/stdin", json={"data": encoded})
         resp.raise_for_status()
 
     async def pty_kill(self, pid: int) -> bool:

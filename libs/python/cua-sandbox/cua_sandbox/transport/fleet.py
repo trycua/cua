@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import math
 from typing import Any, Dict, List, Optional
@@ -237,7 +238,9 @@ class FleetTransport(Transport):
         return response.json()
 
     async def pty_send(self, pid: int, data: str) -> None:
-        response = await self._request("POST", f"/pty/{pid}/stdin", json_body={"data": data})
+        # /pty/{pid}/stdin base64-decodes ``data`` before writing to the PTY.
+        encoded = base64.b64encode(data.encode("utf-8")).decode("ascii")
+        response = await self._request("POST", f"/pty/{pid}/stdin", json_body={"data": encoded})
         response.raise_for_status()
 
     async def pty_kill(self, pid: int) -> bool:

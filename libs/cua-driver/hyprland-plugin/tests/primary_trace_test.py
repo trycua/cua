@@ -2,17 +2,7 @@ import unittest
 import copy
 from unittest.mock import Mock, patch
 from primary_trace import Trace, analyze
-
-
-def trace(*events):
-    rows = [[i + 1, i * 1_000_000, kind, x, y, actor, state]
-            for i, (kind, x, y, actor, state) in enumerate(events)]
-    return dict(hook=True, active=False, overflow=False, timed_out=False,
-                count=len(rows), events=rows)
-
-
-START = ('start', 100, 200, 0, 0)
-STOP = ('stop', 100, 200, 0, 0)
+from proof_fixtures import START, STOP, primary_trace as trace
 
 
 class TraceTest(unittest.TestCase):
@@ -139,7 +129,8 @@ class TraceTest(unittest.TestCase):
             self.assertEqual(analyze(bad)['result'], 'inconclusive')
 
     def test_primary_focus_keys_and_releases_fail(self):
-        for kind in ('pointer_focus', 'keyboard_enter', 'keyboard_key', 'pointer_button'):
+        for kind in ('pointer_focus', 'keyboard_focus', 'keyboard_enter', 'keyboard_key',
+                     'pointer_button', 'pointer_axis'):
             self.assertEqual(analyze(trace(START, (kind, 100, 200, 0, 0), STOP))['result'], 'failed')
 
     def test_real_overlap_is_measured_from_dispatch_not_animation(self):
@@ -150,9 +141,14 @@ class TraceTest(unittest.TestCase):
         self.assertEqual(result['agent_drag_overlap_ms'], 1)
 
     def test_controlled_motion_must_match_every_command_in_order(self):
-        data = trace(START, ('cursor', 120, 200, 0, 0), ('cursor', 100, 200, 0, 0), STOP)
-        self.assertEqual(analyze(data, expected_motion=[[120, 200], [100, 200]])['result'], 'passed')
-        self.assertEqual(analyze(data, expected_motion=[[100, 200]])['result'], 'failed')
+        route = [[120, 200], [100, 200]]
+        events = [('cursor', *point, 0, 0) for point in route]
+        self.assertEqual(analyze(trace(START, *events, STOP), expected_motion=route)['result'], 'passed')
+        self.assertEqual(analyze(trace(START, *events, STOP), expected_motion=[[100, 200]])['result'], 'failed')
+        for rows in (events[:1], list(reversed(events)), [events[0], ('cursor', 150, 200, 0, 0), events[1]],
+                     [events[0], ('pointer_axis', 120, 200, 0, 0), events[1]]):
+            with self.subTest(rows=rows):
+                self.assertEqual(analyze(trace(START, *rows, STOP), expected_motion=route)['result'], 'failed')
 
     def test_controlled_motion_reconciles_all_observed_positions(self):
         moved = ('cursor', 120, 200, 0, 0)

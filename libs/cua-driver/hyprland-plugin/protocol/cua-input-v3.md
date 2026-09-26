@@ -64,10 +64,12 @@ The request sequence for every Driver-admitted action is:
 `TARGET` binds the exact live native top-level surface, generates a fresh token,
 and grants at most five seconds of steady-clock technical lifetime. It first
 retires any unused previous grant. It refuses unavailable desktops, primary
-focus on the target's Wayland client, another lane targeting that client, and
-unsupported keymaps. A discovered address is an input to attestation, not a
-surface lifetime token. Surface unmap, destruction, or replacement invalidates
-the binding. Geometry changes increment the revision and refuse stale actions.
+focus on the target's Wayland client, and another lane targeting that client.
+Background seats always publish a private canonical `evdev`/`pc105`/`us`
+keymap, so user layout options and remaps do not alter agent key semantics. A
+discovered address is an input to attestation, not a surface lifetime token.
+Surface unmap, destruction, or replacement invalidates the binding. Geometry
+changes increment the revision and refuse stale actions.
 
 The complete operation requests are:
 
@@ -126,6 +128,9 @@ their lanes before either selects a target, without retrying any input.
 
 Target replacement, unmap, destruction, geometry change, primary-client
 conflict, and desktop/keymap/configuration transitions clear passive focus.
+An observed physical keymap transition cancels existing authority, but fresh
+background admission after that transition uses the unchanged private agent
+keymap.
 The five-second action grant does not extend to passive focus. These boundaries
 may still end focus before a stalled client processes its events; dispatch
 acknowledgement is not an application-processing fence. Verify the application's
@@ -168,8 +173,10 @@ Before taking over primary input, the plugin must refuse held physical keys or
 buttons, active grabs, pointer constraints, and drag-and-drop. It requires a
 single primary seat binding, excluding its own agent seats by resource identity,
 and refuses binding or input-resource changes during dispatch. Keyboard delivery
-requires neutral primary modifiers and layout group zero; latched or locked
-modifiers refuse before activation. Foreground drag
+requires the physical keymap to match canonical `evdev`/`pc105`/`us`, with
+neutral primary modifiers and layout group zero; remaps, latched or locked
+modifiers refuse before activation. Foreground pointer-only actions do not
+depend on the physical keyboard layout. Foreground drag
 cancellation on primary-input and focus transitions remains subject to review
 and native verification; do not infer background isolation from this route.
 Foreground results use foreground delivery metadata. A drag cancellation after

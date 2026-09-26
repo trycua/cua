@@ -250,6 +250,7 @@ pub fn contracts() -> Vec<ToolContract> {
         cursor_semantics: None,
         input_schema: VerifyStateInput::input_schema(),
         success_output_schema: Some(VerifyStateOutput::output_schema()),
+        error_output_schema: None,
         output_validator: crate::validate_typed_output::<VerifyStateOutput>,
     }]
 }

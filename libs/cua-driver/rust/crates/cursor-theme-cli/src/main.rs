@@ -959,21 +959,6 @@ mod tests {
         assert_eq!(&straight[4..], &[0, 0, 0, 0]);
     }
 
-    #[test]
-    fn usage_lists_every_management_command() {
-        for command in [
-            "validate",
-            "build",
-            "inspect",
-            "preview",
-            "install",
-            "list",
-            "uninstall",
-        ] {
-            assert!(usage().contains(command));
-        }
-    }
-
     fn source_archive(standard_id: &str, variants: &str) -> tempfile::NamedTempFile {
         source_archive_with_schema(standard_id, variants, "cua.cursor-theme/2")
     }

@@ -23,6 +23,46 @@ const uniffiIsDebug =
 
 // Public interface members begin here.
 
+/**
+ * The `secret_files` key (and in-guest file name, `/run/cua/env-token`)
+ * that carries the cua-env-driver token for a claimed sandbox.
+ */
+export function claimEnvTokenKey(): string {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterString.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cyclops_sdk_fn_func_claim_env_token_key(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * The label key a fleet's claims share, for callers that filter or clean up
+ * with raw Kubernetes tooling instead of `list_fleet_claims`.
+ */
+export function fleetLabelKey(): string {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterString.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cyclops_sdk_fn_func_fleet_label_key(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
 export function healthyPoolDisplayStatus(): PoolDisplayStatus {
     return ((__rb: Uint8Array) => {
         try {
@@ -50,6 +90,25 @@ export function poolDisplayStatus(pool: Pool): PoolDisplayStatus {
             /*caller:*/ (callStatus) => {
                 return nativeModule().uniffi_cyclops_sdk_fn_func_pool_display_status(
         FfiConverterTypePool.lower(pool, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+/**
+ * The name prefix every tenant registry pull Secret must carry.
+ */
+export function registrySecretNamePrefix(): string {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterString.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cyclops_sdk_fn_func_registry_secret_name_prefix(
                 callStatus);
             },
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
@@ -303,7 +362,23 @@ export type CreateClaimRequest = {
      * DNS-label validation); left unset, the client generates a random
      * `claim-<petname>` so concurrent leases and retries cannot collide.
      */
-    name?: string
+    name?: string,
+    /**
+     * Labels stamped onto the created claim's metadata verbatim. Grouping
+     * helpers (for example fleet fan-out) rely on this to tag related claims
+     * so they can be listed back by label within a namespace.
+     */
+    labels?: Map<string, string>,
+    /**
+     * Files delivered into the bound sandbox under `/run/cua/<key>` (mode
+     * 0600) once the claim binds, without restarting it. The key
+     * `claim_env_token_key()` (`env-token`) carries the cua-env-driver token.
+     * The client stores them in a claim-scoped `cua-claim-<claim>` Secret
+     * that the claim references by `spec.secretRef`; `delete_claim` removes
+     * it. The pool's template must set `vmTemplate.claimSecrets`. Values are
+     * never serialized with the request nor printed by `Debug`.
+     */
+    secretFiles?: Map<string, string>
 }
 
 /**
@@ -311,7 +386,9 @@ export type CreateClaimRequest = {
  */
 export const CreateClaimRequest = (() => {
     const defaults = () => ({
-        name: undefined
+        name: undefined,
+        labels: undefined,
+        secretFiles: undefined
     });
     const create = (() => {
         return uniffiCreateRecord<CreateClaimRequest, ReturnType<typeof defaults>>(defaults);
@@ -330,18 +407,24 @@ const FfiConverterTypeCreateClaimRequest = (() => {
             return {
                 pool: FfiConverterTypePool.read(from),
                 spec: FfiConverterOptionalTypeClaimSpec.read(from),
-                name: FfiConverterOptionalString.read(from)
+                name: FfiConverterOptionalString.read(from),
+                labels: FfiConverterOptionalMapStringString.read(from),
+                secretFiles: FfiConverterOptionalMapStringString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterTypePool.write(value.pool, into);
             FfiConverterOptionalTypeClaimSpec.write(value.spec, into);
             FfiConverterOptionalString.write(value.name, into);
+            FfiConverterOptionalMapStringString.write(value.labels, into);
+            FfiConverterOptionalMapStringString.write(value.secretFiles, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterTypePool.allocationSize(value.pool) +
              FfiConverterOptionalTypeClaimSpec.allocationSize(value.spec) +
-             FfiConverterOptionalString.allocationSize(value.name);
+             FfiConverterOptionalString.allocationSize(value.name) +
+             FfiConverterOptionalMapStringString.allocationSize(value.labels) +
+             FfiConverterOptionalMapStringString.allocationSize(value.secretFiles);
 
         }
     };
@@ -385,6 +468,78 @@ const FfiConverterTypeCreatePoolRequest = (() => {
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.namespace) +
              FfiConverterTypeOSGymSandboxWarmPoolSpec.allocationSize(value.spec);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * Credentials for one registry, stored as a `cua-registry-*` pull Secret.
+ */
+export type CreateRegistrySecretRequest = {
+    /**
+     * Pool namespace the Secret is created in. It must already exist (the
+     * pool's namespace, created by `create_pool`, or by `create_namespace`).
+     */
+    namespace: string,
+    /**
+     * Full Secret name, `cua-registry-<dns-label>`.
+     */
+    name: string,
+    /**
+     * Registry host the credentials are for, as image refs spell it, e.g.
+     * `ghcr.io`, `registry.example.com:5000` or `docker.io`.
+     */
+    registry: string,
+    username: string,
+    /**
+     * Password or access token. Never serialized by `Debug`.
+     */
+    password: string
+}
+
+/**
+ * Generated factory for {@link CreateRegistrySecretRequest} record objects.
+ */
+export const CreateRegistrySecretRequest = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CreateRegistrySecretRequest, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CreateRegistrySecretRequest>,
+    });
+})();
+
+const FfiConverterTypeCreateRegistrySecretRequest = (() => {
+    type TypeName = CreateRegistrySecretRequest;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                namespace: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                registry: FfiConverterString.read(from),
+                username: FfiConverterString.read(from),
+                password: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.namespace, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.registry, into);
+            FfiConverterString.write(value.username, into);
+            FfiConverterString.write(value.password, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.namespace) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.registry) +
+             FfiConverterString.allocationSize(value.username) +
+             FfiConverterString.allocationSize(value.password);
 
         }
     };
@@ -808,6 +963,99 @@ const FfiConverterTypeCyclopsTokenProviderConfiguration = (() => {
              FfiConverterUInt32.allocationSize(value.poolPollLimit) +
              FfiConverterUInt64.allocationSize(value.claimPollIntervalMs) +
              FfiConverterUInt32.allocationSize(value.claimPollLimit);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * A fleet's identity plus the claims currently known to belong to it.
+ */
+export type FleetClaims = {
+    fleetId: string,
+    claims: Array<Claim>
+}
+
+/**
+ * Generated factory for {@link FleetClaims} record objects.
+ */
+export const FleetClaims = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<FleetClaims, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<FleetClaims>,
+    });
+})();
+
+const FfiConverterTypeFleetClaims = (() => {
+    type TypeName = FleetClaims;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                fleetId: FfiConverterString.read(from),
+                claims: FfiConverterSequenceTypeClaim.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.fleetId, into);
+            FfiConverterSequenceTypeClaim.write(value.claims, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.fleetId) +
+             FfiConverterSequenceTypeClaim.allocationSize(value.claims);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * One pool's share of a fleet: claim `replicas` sandboxes from the warm pool
+ * named `pool`. On this platform the pool name is also its namespace.
+ */
+export type FleetPoolRequest = {
+    pool: string,
+    replicas: number
+}
+
+/**
+ * Generated factory for {@link FleetPoolRequest} record objects.
+ */
+export const FleetPoolRequest = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<FleetPoolRequest, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<FleetPoolRequest>,
+    });
+})();
+
+const FfiConverterTypeFleetPoolRequest = (() => {
+    type TypeName = FleetPoolRequest;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                pool: FfiConverterString.read(from),
+                replicas: FfiConverterUInt32.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.pool, into);
+            FfiConverterUInt32.write(value.replicas, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.pool) +
+             FfiConverterUInt32.allocationSize(value.replicas);
 
         }
     };
@@ -1386,6 +1634,193 @@ const FfiConverterTypePoolDisplayStatus = (() => {
             return FfiConverterTypePoolDisplayStatusKind.allocationSize(value.kind) +
              FfiConverterString.allocationSize(value.label) +
              FfiConverterString.allocationSize(value.indicator);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * A created registry pull Secret. Carries no credential: Secrets are
+ * write-only through the gateway.
+ */
+export type RegistrySecret = {
+    namespace: string,
+    name: string,
+    registry: string
+}
+
+/**
+ * Generated factory for {@link RegistrySecret} record objects.
+ */
+export const RegistrySecret = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<RegistrySecret, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<RegistrySecret>,
+    });
+})();
+
+const FfiConverterTypeRegistrySecret = (() => {
+    type TypeName = RegistrySecret;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                namespace: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                registry: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.namespace, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.registry, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.namespace) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.registry);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * A registry ref pinned by the gateway (`GET /api/images/resolve`).
+ */
+export type ResolvedImage = {
+    /**
+     * The ref as requested.
+     */
+    reference: string,
+    /**
+     * The ref actually resolved: for a canonical image and runtime
+     * `kubevirt` this is the containerDisk sibling (`…:24.04-disk`).
+     */
+    resolvedRef: string,
+    /**
+     * `repo@sha256:…` of the manifest (or index) to run.
+     */
+    pinnedRef: string,
+    digest: string,
+    /**
+     * `rootfs` (docker/gVisor), `containerdisk` (KubeVirt) or `unknown`.
+     */
+    variant: string,
+    /**
+     * The linux/amd64 child manifest digest when the ref is an index.
+     */
+    platformDigest?: string,
+    mediaType: string
+}
+
+/**
+ * Generated factory for {@link ResolvedImage} record objects.
+ */
+export const ResolvedImage = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ResolvedImage, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ResolvedImage>,
+    });
+})();
+
+const FfiConverterTypeResolvedImage = (() => {
+    type TypeName = ResolvedImage;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                reference: FfiConverterString.read(from),
+                resolvedRef: FfiConverterString.read(from),
+                pinnedRef: FfiConverterString.read(from),
+                digest: FfiConverterString.read(from),
+                variant: FfiConverterString.read(from),
+                platformDigest: FfiConverterOptionalString.read(from),
+                mediaType: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.reference, into);
+            FfiConverterString.write(value.resolvedRef, into);
+            FfiConverterString.write(value.pinnedRef, into);
+            FfiConverterString.write(value.digest, into);
+            FfiConverterString.write(value.variant, into);
+            FfiConverterOptionalString.write(value.platformDigest, into);
+            FfiConverterString.write(value.mediaType, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.reference) +
+             FfiConverterString.allocationSize(value.resolvedRef) +
+             FfiConverterString.allocationSize(value.pinnedRef) +
+             FfiConverterString.allocationSize(value.digest) +
+             FfiConverterString.allocationSize(value.variant) +
+             FfiConverterOptionalString.allocationSize(value.platformDigest) +
+             FfiConverterString.allocationSize(value.mediaType);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * Where a native client opens its own WebSocket to a sandbox service through
+ * the gateway's `/api/svc` proxy. `url` is the `ws(s)://` endpoint;
+ * `auth_header_name`/`auth_header_value` carry the bearer the socket's HTTP
+ * upgrade request must send. Deliberately not serde-serializable: the value
+ * holds a live credential and must not be logged or persisted.
+ */
+export type ServiceStreamTarget = {
+    url: string,
+    authHeaderName: string,
+    authHeaderValue: string
+}
+
+/**
+ * Generated factory for {@link ServiceStreamTarget} record objects.
+ */
+export const ServiceStreamTarget = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ServiceStreamTarget, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ServiceStreamTarget>,
+    });
+})();
+
+const FfiConverterTypeServiceStreamTarget = (() => {
+    type TypeName = ServiceStreamTarget;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                url: FfiConverterString.read(from),
+                authHeaderName: FfiConverterString.read(from),
+                authHeaderValue: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.url, into);
+            FfiConverterString.write(value.authHeaderName, into);
+            FfiConverterString.write(value.authHeaderValue, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.url) +
+             FfiConverterString.allocationSize(value.authHeaderName) +
+             FfiConverterString.allocationSize(value.authHeaderValue);
 
         }
     };
@@ -2750,17 +3185,46 @@ const uniffiCallbackInterfaceAccessTokenProvider: { vtable: any; register: () =>
 
 export interface CyclopsClientLike {
 
+/**
+ * The bearer this client would send on its next authenticated request,
+ * for callers that open their own connection to the gateway (for example
+ * a native WebSocket). `force_refresh` bypasses any cached token; a
+ * static access token is returned as-is. The value is a raw token — the
+ * caller attaches it as `authorization: Bearer <token>`.
+ */
+    accessToken(forceRefresh: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
     createClaim(request: CreateClaimRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Claim>;
+/**
+ * Fan out `create_claim` calls across the requested warm pools, tagging
+ * every claim with `cua.ai/fleet=<fleet_id>` so the group can be listed
+ * back later. Duplicate pool entries are aggregated before any network
+ * call. Claims are created sequentially; if one creation fails the error
+ * is returned immediately and claims already created keep their fleet
+ * label, so `list_fleet_claims` still finds them for retry or cleanup.
+ */
+    createFleetClaims(fleetId: string, requests: Array<FleetPoolRequest>, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetClaims>;
     createImage(namespace: string, manifest: PreservedJsonLike, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<PreservedJsonLike>;
     createNamespace(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Namespace>;
     createPool(request: CreatePoolRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Pool>;
+/**
+ * Create (or replace) a `cua-registry-*` dockerconfigjson pull Secret.
+ * On a name conflict the old Secret is deleted and the new one created,
+ * since the gateway admits no Secret update.
+ */
+    createRegistrySecret(request: CreateRegistrySecretRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<RegistrySecret>;
     createSignedServiceUrl(request: CreateSignedServiceUrlRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SignedServiceUrl>;
     createTemplate(request: CreateTemplateRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Template>;
     createUserApiKey(request: CreateUserApiKeyRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<NewUserApiKey>;
+/**
+ * Delete the claim and, when it references a claim-scoped Secret
+ * (`secret_files`), that Secret too. The pool-operator also owner-refs
+ * the Secret to the claim, so garbage collection is the backstop.
+ */
     deleteClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     deleteImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     deleteNamespace(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     deletePool(pool: Pool, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+    deleteRegistrySecret(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     deleteTemplate(template: Template, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     deleteUserApiKey(id: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     getClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Claim>;
@@ -2769,6 +3233,13 @@ export interface CyclopsClientLike {
     getPool(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Pool>;
     getTemplate(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Template>;
     listClaims(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<Claim>>;
+/**
+ * The fleet's claims within one namespace: enumerate the namespace's
+ * claims and keep those labeled `cua.ai/fleet=<fleet_id>`. A fleet that
+ * spans several pools spans that many namespaces (one pool per
+ * namespace), so call this once per member pool.
+ */
+    listFleetClaims(namespace: string, fleetId: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<FleetClaims>;
     listImages(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<PreservedJsonLike>>;
     listNamespaces(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<Namespace>>;
     listPools(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<Pool>>;
@@ -2787,8 +3258,22 @@ export interface CyclopsClientLike {
  * can be mutated through the SDK.
  */
     renewClaim(claim: Claim, shutdownTime: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Claim>;
+/**
+ * Pin a public registry ref to a digest server-side. `runtime` (`gvisor`,
+ * `kubevirt`, `macos`) selects the variant for canonical cua images:
+ * `kubevirt` maps `ghcr.io/trycua/linux:24.04` to its `-disk` sibling.
+ */
+    resolveImage(reference: string, runtime: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ResolvedImage>;
     revokeSignedServiceUrl(signedServiceUrl: SignedServiceUrl, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
     serviceRequest(sandbox: Sandbox, service: string, path: string, request: HttpRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HttpResponse>;
+/**
+ * Where a native client opens its own WebSocket to a sandbox service:
+ * the gateway's `/api/svc` proxy forwards the HTTP upgrade, so the
+ * returned `ws(s)://` URL plus the returned bearer header are all a
+ * Rust or Swift caller needs to dial the socket directly.
+ * `service_request` stays the path for unary requests.
+ */
+    serviceWebsocketUrl(sandbox: Sandbox, service: string, path: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ServiceStreamTarget>;
     updatePool(pool: Pool, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Pool>;
     updateTemplate(template: Template, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Template>;
 /**
@@ -2912,6 +3397,45 @@ private constructor(pointer: UniffiHandle) {
 
 
 
+/**
+ * The bearer this client would send on its next authenticated request,
+ * for callers that open their own connection to the gateway (for example
+ * a native WebSocket). `force_refresh` bypasses any cached token; a
+ * static access token is returned as-is. The value is a raw token — the
+ * caller attaches it as `authorization: Bearer <token>`.
+ */
+    async accessToken(forceRefresh: boolean, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cyclops_sdk_fn_method_cyclopsclient_access_token(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterBool.lower(forceRefresh, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
     async createClaim(request: CreateClaimRequest, asyncOpts_?: { signal: AbortSignal }): Promise<Claim> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
@@ -2932,6 +3456,46 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeClaim.lift.bind(FfiConverterTypeClaim),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Fan out `create_claim` calls across the requested warm pools, tagging
+ * every claim with `cua.ai/fleet=<fleet_id>` so the group can be listed
+ * back later. Duplicate pool entries are aggregated before any network
+ * call. Claims are created sequentially; if one creation fails the error
+ * is returned immediately and claims already created keep their fleet
+ * label, so `list_fleet_claims` still finds them for retry or cleanup.
+ */
+    async createFleetClaims(fleetId: string, requests: Array<FleetPoolRequest>, asyncOpts_?: { signal: AbortSignal }): Promise<FleetClaims> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cyclops_sdk_fn_method_cyclopsclient_create_fleet_claims(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(fleetId, nativeModule().rustbuffer_alloc),FfiConverterSequenceTypeFleetPoolRequest.lower(requests, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeFleetClaims.lift.bind(FfiConverterTypeFleetClaims),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
@@ -3040,6 +3604,43 @@ private constructor(pointer: UniffiHandle) {
     }
     }
 
+/**
+ * Create (or replace) a `cua-registry-*` dockerconfigjson pull Secret.
+ * On a name conflict the old Secret is deleted and the new one created,
+ * since the gateway admits no Secret update.
+ */
+    async createRegistrySecret(request: CreateRegistrySecretRequest, asyncOpts_?: { signal: AbortSignal }): Promise<RegistrySecret> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cyclops_sdk_fn_method_cyclopsclient_create_registry_secret(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeCreateRegistrySecretRequest.lower(request, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeRegistrySecret.lift.bind(FfiConverterTypeRegistrySecret),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
     async createSignedServiceUrl(request: CreateSignedServiceUrlRequest, asyncOpts_?: { signal: AbortSignal }): Promise<SignedServiceUrl> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
@@ -3136,6 +3737,11 @@ private constructor(pointer: UniffiHandle) {
     }
     }
 
+/**
+ * Delete the claim and, when it references a claim-scoped Secret
+ * (`secret_files`), that Secret too. The pool-operator also owner-refs
+ * the Secret to the claim, so garbage collection is the backstop.
+ */
     async deleteClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
@@ -3225,6 +3831,33 @@ private constructor(pointer: UniffiHandle) {
             /*rustFutureFunc:*/ () => {
                 return nativeModule().uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool(
                     uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypePool.lower(pool, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+    async deleteRegistrySecret(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_registry_secret(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
                 );
             },
             /*pollFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_poll_void,
@@ -3478,6 +4111,44 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterSequenceTypeClaim.lift.bind(FfiConverterSequenceTypeClaim),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * The fleet's claims within one namespace: enumerate the namespace's
+ * claims and keep those labeled `cua.ai/fleet=<fleet_id>`. A fleet that
+ * spans several pools spans that many namespaces (one pool per
+ * namespace), so call this once per member pool.
+ */
+    async listFleetClaims(namespace: string, fleetId: string, asyncOpts_?: { signal: AbortSignal }): Promise<FleetClaims> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cyclops_sdk_fn_method_cyclopsclient_list_fleet_claims(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),FfiConverterString.lower(fleetId, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeFleetClaims.lift.bind(FfiConverterTypeFleetClaims),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
@@ -3818,6 +4489,43 @@ private constructor(pointer: UniffiHandle) {
     }
     }
 
+/**
+ * Pin a public registry ref to a digest server-side. `runtime` (`gvisor`,
+ * `kubevirt`, `macos`) selects the variant for canonical cua images:
+ * `kubevirt` maps `ghcr.io/trycua/linux:24.04` to its `-disk` sibling.
+ */
+    async resolveImage(reference: string, runtime: string | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<ResolvedImage> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cyclops_sdk_fn_method_cyclopsclient_resolve_image(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(reference, nativeModule().rustbuffer_alloc),FfiConverterOptionalString.lower(runtime, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeResolvedImage.lift.bind(FfiConverterTypeResolvedImage),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
     async revokeSignedServiceUrl(signedServiceUrl: SignedServiceUrl, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
     try {
@@ -3865,6 +4573,45 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeHttpResponse.lift.bind(FfiConverterTypeHttpResponse),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * Where a native client opens its own WebSocket to a sandbox service:
+ * the gateway's `/api/svc` proxy forwards the HTTP upgrade, so the
+ * returned `ws(s)://` URL plus the returned bearer header are all a
+ * Rust or Swift caller needs to dial the socket directly.
+ * `service_request` stays the path for unary requests.
+ */
+    async serviceWebsocketUrl(sandbox: Sandbox, service: string, path: string, asyncOpts_?: { signal: AbortSignal }): Promise<ServiceStreamTarget> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cyclops_sdk_fn_method_cyclopsclient_service_websocket_url(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeSandbox.lower(sandbox, nativeModule().rustbuffer_alloc),FfiConverterString.lower(service, nativeModule().rustbuffer_alloc),FfiConverterString.lower(path, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeServiceStreamTarget.lift.bind(FfiConverterTypeServiceStreamTarget),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
@@ -4323,6 +5070,9 @@ const FfiConverterOptionalTypeClaimSpec = new FfiConverterOptional(FfiConverterT
 // FfiConverter for Array<string>
 const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
 
+// FfiConverter for Array<Claim>
+const FfiConverterSequenceTypeClaim = new FfiConverterArray(FfiConverterTypeClaim);
+
 // FfiConverter for Array<HttpHeader>
 const FfiConverterSequenceTypeHttpHeader = new FfiConverterArray(FfiConverterTypeHttpHeader);
 
@@ -4341,8 +5091,8 @@ const FfiConverterSequenceTypeImageUploadFileRequest = new FfiConverterArray(Ffi
 // FfiConverter for Array<ImageUploadInstruction>
 const FfiConverterSequenceTypeImageUploadInstruction = new FfiConverterArray(FfiConverterTypeImageUploadInstruction);
 
-// FfiConverter for Array<Claim>
-const FfiConverterSequenceTypeClaim = new FfiConverterArray(FfiConverterTypeClaim);
+// FfiConverter for Array<FleetPoolRequest>
+const FfiConverterSequenceTypeFleetPoolRequest = new FfiConverterArray(FfiConverterTypeFleetPoolRequest);
 
 // FfiConverter for Array<PreservedJsonLike>
 const FfiConverterSequenceTypePreservedJson = new FfiConverterArray(FfiConverterTypePreservedJson);
@@ -4381,11 +5131,20 @@ function uniffiEnsureInitialized() {
     if (bindingsContractVersion !== scaffoldingContractVersion) {
         throw new UniffiInternalError.ContractVersionMismatch(scaffoldingContractVersion, bindingsContractVersion);
     }
+    if (nativeModule().uniffi_cyclops_sdk_checksum_func_claim_env_token_key() !== 8887) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_func_claim_env_token_key");
+    }
+    if (nativeModule().uniffi_cyclops_sdk_checksum_func_fleet_label_key() !== 5219) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_func_fleet_label_key");
+    }
     if (nativeModule().uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status() !== 3094) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status");
     }
     if (nativeModule().uniffi_cyclops_sdk_checksum_func_pool_display_status() !== 8587) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_func_pool_display_status");
+    }
+    if (nativeModule().uniffi_cyclops_sdk_checksum_func_registry_secret_name_prefix() !== 63379) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_func_registry_secret_name_prefix");
     }
     if (nativeModule().uniffi_cyclops_sdk_checksum_func_removed_pool_display_status() !== 48761) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_func_removed_pool_display_status");
@@ -4420,8 +5179,14 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client() !== 49301) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client");
     }
+    if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_access_token() !== 4889) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_access_token");
+    }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim() !== 23330) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim");
+    }
+    if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_fleet_claims() !== 11135) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_fleet_claims");
     }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image() !== 51053) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image");
@@ -4432,6 +5197,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool() !== 48557) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool");
     }
+    if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_registry_secret() !== 5524) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_registry_secret");
+    }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url() !== 17810) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url");
     }
@@ -4441,7 +5209,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key() !== 9174) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key");
     }
-    if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() !== 20460) {
+    if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() !== 52233) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim");
     }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image() !== 24680) {
@@ -4452,6 +5220,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool() !== 31235) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool");
+    }
+    if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_registry_secret() !== 778) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_registry_secret");
     }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template() !== 54852) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template");
@@ -4476,6 +5247,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims() !== 7802) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims");
+    }
+    if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_fleet_claims() !== 14544) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_fleet_claims");
     }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images() !== 31215) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images");
@@ -4507,11 +5281,17 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim() !== 17505) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim");
     }
+    if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_resolve_image() !== 1395) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_resolve_image");
+    }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_revoke_signed_service_url() !== 59989) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_revoke_signed_service_url");
     }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() !== 46699) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request");
+    }
+    if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_websocket_url() !== 47537) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_websocket_url");
     }
     if (nativeModule().uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool() !== 17695) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool");
@@ -4544,6 +5324,7 @@ export default Object.freeze({
     FfiConverterTypeClaim,
     FfiConverterTypeCreateClaimRequest,
     FfiConverterTypeCreatePoolRequest,
+    FfiConverterTypeCreateRegistrySecretRequest,
     FfiConverterTypeCreateSignedServiceUrlRequest,
     FfiConverterTypeCreateTemplateRequest,
     FfiConverterTypeCreateUserApiKeyRequest,
@@ -4551,6 +5332,8 @@ export default Object.freeze({
     FfiConverterTypeCyclopsConfiguration,
     FfiConverterTypeCyclopsCredentials,
     FfiConverterTypeCyclopsTokenProviderConfiguration,
+    FfiConverterTypeFleetClaims,
+    FfiConverterTypeFleetPoolRequest,
     FfiConverterTypeHttpClient,
     FfiConverterTypeHttpError,
     FfiConverterTypeHttpHeader,
@@ -4566,10 +5349,13 @@ export default Object.freeze({
     FfiConverterTypePoolDisplayStatus,
     FfiConverterTypePoolDisplayStatusKind,
     FfiConverterTypePresignedPut,
+    FfiConverterTypeRegistrySecret,
+    FfiConverterTypeResolvedImage,
     FfiConverterTypeResourceMetadata,
     FfiConverterTypeSandbox,
     FfiConverterTypeSdkBuildError,
     FfiConverterTypeSdkError,
+    FfiConverterTypeServiceStreamTarget,
     FfiConverterTypeSignedServiceUrl,
     FfiConverterTypeTemplate,
     FfiConverterTypeUserApiKey,

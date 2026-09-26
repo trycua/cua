@@ -1,6 +1,7 @@
 // Used by desktop_fault_policy_test.py, which inserts actual production bodies.
 // Transport effects are counted here; native protocol/app behavior is separate.
 #include "drag_geometry.hpp"
+#include "foreground_route.hpp"
 #include "input_grant.hpp"
 #include "passive_pointer_target.hpp"
 
@@ -25,6 +26,7 @@ struct Client {
     std::weak_ptr<Window> window;
     std::weak_ptr<Surface> surface;
     uint64_t approved_deadline = 42, revision = 1;
+    InputRoute route = InputRoute::independent;
 };
 struct Pointer {
     bool dead = false, resource_live = true;
@@ -34,8 +36,6 @@ struct Pointer {
 };
 struct Drag { Client* client; DragGeometry geometry{1}; };
 struct Trace { void mark(const char*, unsigned) {} };
-enum class ForegroundFailureReason { none };
-struct ForegroundFailure { ForegroundFailureReason reason; };
 void wl_event_source_remove(void*) {}
 int close(int) { return 0; }
 std::string refusal(std::string_view reason) { return std::string(reason); }
@@ -48,7 +48,7 @@ struct Lane {
     static constexpr bool kProduction = true;
     bool suspended = false, session = true, layout = true, target_live = true;
     bool primary_busy = false, peer_busy = false, refresh_ok = true;
-    bool foreground_started = false, keyboard_focus = true;
+    bool foreground_started = false, foreground_needs_keyboard = false, keyboard_focus = true;
     unsigned lane = 0, held_button = 272, releases = 0, leaves = 0;
     uint64_t capabilities = 8, desktop_generation = 1;
     Trace* trace = nullptr;
@@ -97,6 +97,13 @@ struct Lane {
     }
     void leave_keyboard() { held_keys.clear(); keyboard_focus = false; }
     void cleanup_socket() {}
+    void make_layout_sensitive() {
+        lease->route = InputRoute::primary_foreground;
+        capabilities = 2;
+        foreground_needs_keyboard = true;
+        grant.arm(2, Clock::now());
+        expires = grant.deadline();
+    }
     // PRODUCTION_METHODS
     void check_inert(bool retained = true) const {
         check(!lease && !drag && !held_button && held_keys.empty() && !keyboard_focus &&
@@ -122,7 +129,7 @@ int main() {
     for (bool session_fault : {true, false}) {
         for (int path = 0; path < 3; ++path) {
             Lane l;
-            if (session_fault) l.session = false; else l.layout = false;
+            if (session_fault) l.session = false; else { l.layout = false; l.make_layout_sensitive(); }
             if (path == 0) l.guard_targets();
             if (path == 1) l.target_refusal(*l.lease);
             if (path == 2) l.action_refusal(*l.lease);

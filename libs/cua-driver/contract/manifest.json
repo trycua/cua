@@ -57,6 +57,11 @@
                   "required": [
                     "y"
                   ]
+                },
+                {
+                  "required": [
+                    "capture_id"
+                  ]
                 }
               ]
             },
@@ -73,6 +78,11 @@
               "right",
               "middle"
             ],
+            "type": "string"
+          },
+          "capture_id": {
+            "default": null,
+            "minLength": 1,
             "type": "string"
           },
           "count": {
@@ -201,6 +211,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -237,6 +268,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -265,6 +302,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -604,6 +647,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -640,6 +704,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -668,6 +738,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -931,21 +1007,28 @@
             "type": "object"
           },
           "position": {
-            "properties": {
-              "x": {
-                "format": "double",
-                "type": "number"
+            "anyOf": [
+              {
+                "properties": {
+                  "x": {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  "y": {
+                    "format": "double",
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "type": "object"
               },
-              "y": {
-                "format": "double",
-                "type": "number"
+              {
+                "type": "null"
               }
-            },
-            "required": [
-              "x",
-              "y"
-            ],
-            "type": "object"
+            ]
           },
           "session": {
             "type": "string"
@@ -1143,6 +1226,11 @@
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "max_image_dimension": {
+            "description": "Optional long-edge cap for the returned PNG, in pixels. Omitted or 0\nreturns the full-size capture. When the cap downsizes the image,\ndesktop-scope x/y taken from it are mapped back automatically.",
+            "minimum": 0,
+            "type": "integer"
+          },
           "screenshot_out_file": {
             "description": "Write the PNG here instead of returning base64.",
             "type": "string"
@@ -1509,6 +1597,11 @@
             "minimum": 1,
             "type": "integer"
           },
+          "max_image_dimension": {
+            "description": "Optional per-call long-edge ceiling. Zero requests native resolution;\nomit it to preserve the configured session or global behavior.",
+            "minimum": 0,
+            "type": "integer"
+          },
           "pid": {
             "maximum": 4294967295,
             "minimum": 1,
@@ -1522,6 +1615,12 @@
           },
           "session": {
             "type": "string"
+          },
+          "timeout_ms": {
+            "description": "Wall-clock budget for the accessibility walk in milliseconds\n(default 1000 on every platform). A walk that runs out returns a\npartial tree flagged `truncated` rather than failing.",
+            "maximum": 120000,
+            "minimum": 100,
+            "type": "integer"
           },
           "window_id": {
             "minimum": 1,
@@ -1985,6 +2084,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -2021,6 +2141,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -2049,6 +2175,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2156,6 +2288,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -2192,6 +2345,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -2220,6 +2379,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2759,6 +2924,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -2795,6 +2981,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -2823,11 +3015,520 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
           "effect",
           "route"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "parse_visual_regions",
+      "description": "Parse one immutable registered capture into model-neutral text and icon regions.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "capabilities": [
+        "visual.regions.parse",
+        "screen.capture.registry.read"
+      ],
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": false
+      },
+      "schema_mode": "canonical_runtime",
+      "cursor_semantics": {
+        "action": "observe"
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "description": "Transport-free request. Runtime use requires the future capture registry.",
+        "properties": {
+          "capture_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "options": {
+            "additionalProperties": false,
+            "default": {},
+            "description": "Optional, model-neutral controls for one bounded parse.",
+            "properties": {
+              "kinds": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "text",
+                        "icon"
+                      ]
+                    },
+                    "maxItems": 2,
+                    "minItems": 1,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "max_regions": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "min_confidence": {
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [],
+            "type": "object"
+          }
+        },
+        "required": [
+          "capture_id"
+        ],
+        "type": "object"
+      },
+      "success_output_schema": {
+        "additionalProperties": true,
+        "properties": {
+          "capture": {
+            "properties": {
+              "action_coordinate_space": {
+                "oneOf": [
+                  {
+                    "properties": {
+                      "kind": {
+                        "const": "screenshot_pixels",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "properties": {
+                      "kind": {
+                        "const": "affine",
+                        "type": "string"
+                      },
+                      "m11": {
+                        "format": "double",
+                        "type": "number"
+                      },
+                      "m12": {
+                        "format": "double",
+                        "type": "number"
+                      },
+                      "m21": {
+                        "format": "double",
+                        "type": "number"
+                      },
+                      "m22": {
+                        "format": "double",
+                        "type": "number"
+                      },
+                      "tx": {
+                        "format": "double",
+                        "type": "number"
+                      },
+                      "ty": {
+                        "format": "double",
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "m11",
+                      "m12",
+                      "m21",
+                      "m22",
+                      "tx",
+                      "ty"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "capture_id": {
+                "type": "string"
+              },
+              "captured_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "screenshot": {
+                "properties": {
+                  "height": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "mime_type": {
+                    "const": "image/png"
+                  },
+                  "reference": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "width": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "reference",
+                  "width",
+                  "height",
+                  "mime_type"
+                ],
+                "type": "object"
+              },
+              "source": {
+                "oneOf": [
+                  {
+                    "properties": {
+                      "kind": {
+                        "const": "window",
+                        "type": "string"
+                      },
+                      "pid": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "window_id": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "pid",
+                      "window_id"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "properties": {
+                      "display_id": {
+                        "const": "primary"
+                      },
+                      "kind": {
+                        "const": "primary_desktop",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "display_id"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "capture_id",
+              "source",
+              "screenshot",
+              "action_coordinate_space"
+            ],
+            "type": "object"
+          },
+          "parser": {
+            "properties": {
+              "backend": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "extension_id": {
+                "type": "string"
+              },
+              "extension_version": {
+                "type": "string"
+              },
+              "fixture_sha256": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "model_id": {
+                "type": "string"
+              },
+              "model_manifest_sha256": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "model_source_revision": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "model_version": {
+                "type": "string"
+              },
+              "onnx_runtime_library_sha256": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "onnx_runtime_version": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "runtime": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "extension_id",
+              "extension_version",
+              "model_id",
+              "model_version"
+            ],
+            "type": "object"
+          },
+          "regions": {
+            "items": {
+              "properties": {
+                "bounds": {
+                  "properties": {
+                    "height": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "width": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "x": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "y": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "width",
+                    "height"
+                  ],
+                  "type": "object"
+                },
+                "confidence": {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "group_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "interactive": {
+                  "type": "boolean"
+                },
+                "kind": {
+                  "enum": [
+                    "text",
+                    "icon"
+                  ],
+                  "type": "string"
+                },
+                "label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "parent_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "reading_order": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "bounds",
+                "confidence",
+                "interactive"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schema": {
+            "const": "cua.visual_regions_v1"
+          },
+          "timing": {
+            "properties": {
+              "duration_ms": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "inference_ms": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "preprocess_ms": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "duration_ms"
+            ],
+            "type": "object"
+          },
+          "warnings": {
+            "items": {
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema",
+          "capture",
+          "parser",
+          "regions",
+          "timing"
+        ],
+        "type": "object"
+      },
+      "error_output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "not_installed",
+              "capture_not_found",
+              "capture_expired",
+              "capture_stale",
+              "capture_generation_mismatch",
+              "unsupported_target",
+              "unsupported_platform",
+              "incompatible_protocol",
+              "invalid_frame",
+              "worker_launch_failed",
+              "worker_crashed",
+              "worker_cancelled",
+              "timeout",
+              "resource_limit_exceeded",
+              "artifact_invalid",
+              "inference_failed"
+            ],
+            "type": "string"
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable"
         ],
         "type": "object"
       }
@@ -2976,6 +3677,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -3012,6 +3734,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -3040,6 +3768,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3213,6 +3947,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -3249,6 +4004,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -3277,6 +4038,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3697,6 +4464,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -3733,6 +4521,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -3761,6 +4555,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -4050,6 +4850,27 @@
             ],
             "type": "string"
           },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "escalation": {
             "additionalProperties": false,
             "properties": {
@@ -4086,6 +4907,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -4114,6 +4941,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [

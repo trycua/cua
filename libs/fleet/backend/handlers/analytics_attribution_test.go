@@ -33,7 +33,8 @@ func TestRecordFleetAttributionBindsExternalFirstTouch(t *testing.T) {
 		Values: map[string]string{
 			"utm_source":   "x",
 			"utm_medium":   "organic-social",
-			"utm_campaign": "openclaw-2-launch",
+			"utm_campaign": "cursor-cloud-fleets",
+			"utm_content":  "thread-post-5",
 		},
 	}, &auth.User{ID: "subject-1", Email: "person@example.test", EmailVerified: true, AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser})
 	response := httptest.NewRecorder()
@@ -49,8 +50,29 @@ func TestRecordFleetAttributionBindsExternalFirstTouch(t *testing.T) {
 	}
 	if event.SetOnce[productanalytics.FirstTouchUTMSourceProperty] != "x" ||
 		event.SetOnce[productanalytics.FirstTouchUTMMediumProperty] != "organic-social" ||
-		event.SetOnce[productanalytics.FirstTouchUTMCampaignProperty] != "openclaw-2-launch" {
+		event.SetOnce[productanalytics.FirstTouchUTMCampaignProperty] != "cursor-cloud-fleets" ||
+		event.SetOnce[productanalytics.FirstTouchContentIDProperty] != "thread-post-5" {
 		t.Fatalf("set once = %#v", event.SetOnce)
+	}
+}
+
+func TestValidateFleetAttributionContentAliases(t *testing.T) {
+	now := time.Now()
+	for _, values := range []map[string]string{
+		{"content_id": "thread-post-5"},
+		{"utm_content": "thread-post-5"},
+		{"content_id": "thread-post-5", "utm_content": "thread-post-5"},
+	} {
+		setOnce, valid := validateFleetAttribution(fleetAttributionRecord{Version: 1, CapturedAt: now.UnixMilli(), Values: values}, now)
+		if !valid || setOnce[productanalytics.FirstTouchContentIDProperty] != "thread-post-5" {
+			t.Fatalf("values/setOnce/valid = %#v/%#v/%v", values, setOnce, valid)
+		}
+	}
+
+	if _, valid := validateFleetAttribution(fleetAttributionRecord{
+		Version: 1, CapturedAt: now.UnixMilli(), Values: map[string]string{"content_id": "legacy", "utm_content": "standard"},
+	}, now); valid {
+		t.Fatal("conflicting content aliases must be rejected")
 	}
 }
 

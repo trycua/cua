@@ -11,6 +11,7 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-contract/**"
       - "libs/cua-driver/rust/crates/cua-driver-core/**"
       - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
+      - "libs/cua-driver/rust/crates/cua-driver-e2e/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
@@ -32,6 +33,7 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-contract/**"
       - "libs/cua-driver/rust/crates/cua-driver-core/**"
       - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
+      - "libs/cua-driver/rust/crates/cua-driver-e2e/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-linux/**"
@@ -48,7 +50,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-rust-linux-${{ github.workflow }}-${{ github.ref }}
+  group: ci-rust-linux-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -73,6 +75,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: arch-pacman
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build exact candidate and native package tests
         working-directory: libs/cua-driver/rust
         run: |
@@ -117,10 +120,11 @@ jobs:
           node-version: "22"
       - name: Verify shared fixture scroll journal
         run: node --test libs/cua-driver/tests/fixtures/shared/web/journal.test.cjs
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           workspaces: "libs/cua-driver/rust -> target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
@@ -130,14 +134,16 @@ jobs:
             imagemagick xvfb xauth x11-utils ffmpeg
       - name: Run Linux Rust tests
         working-directory: libs/cua-driver/rust
-        run: cargo test -p cua-driver -p cua-driver-contract -p cua-driver-core -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-linux --all-targets --locked
+        env:
+          CUA_TEST_REQUIRE_DRIVER_BIN: "1"
+        run: cargo test -p cua-driver -p cua-driver-e2e -p cua-driver-contract -p cua-driver-core -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-linux --all-targets --locked
       - name: Compile and link an async-io embedded host
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver-sdk --test async_io_embedding --locked
       - name: Verify final-frame extraction without a desktop
         working-directory: libs/cua-driver/rust
         run: |
-          cargo test -p cua-driver --test e2e_environment_preflight_test --locked -- \
+          cargo test -p cua-driver-e2e --test e2e_environment_preflight_test --locked -- \
             --ignored --exact last_frame_extraction_handles_long_final_duration_and_invalid_input --nocapture
       - name: Run X11 keyboard tap timing regression
         working-directory: libs/cua-driver/rust
@@ -155,6 +161,12 @@ jobs:
             cargo test -p platform-linux \
             x11_overlay_owner_stays_click_through_across_cursor_lifecycle_and_randr \
             --locked -- --ignored --nocapture
+      - name: Run X11 clipboard round-trip regression
+        working-directory: libs/cua-driver/rust
+        run: |
+          xvfb-run -a cargo test -p platform-linux --lib \
+            clipboard::tests::native_clipboard_round_trips_text_on_x11 \
+            --locked -- --ignored --exact --nocapture
       - name: Run X11 MIT-SHM capture correctness and performance regression
         working-directory: libs/cua-driver/rust
         run: |

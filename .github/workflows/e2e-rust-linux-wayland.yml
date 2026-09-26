@@ -35,10 +35,17 @@ permissions:
   contents: read
   actions: read
 
+# Identical dispatches queue behind the running certification instead of
+# racing it. In-progress runs are never cancelled.
+concurrency:
+  group: e2e-rust-linux-wayland-${{ github.ref }}-${{ inputs.ref }}-${{ inputs.environment }}-${{ inputs.lane }}-${{ inputs.cell_filter }}
+  cancel-in-progress: false
+
 jobs:
   source:
     name: "Resolve exact source"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
       lanes: ${{ steps.resolve.outputs.lanes }}
@@ -80,7 +87,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.source.outputs.sha }}
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       - name: Install Sway and Rust build dependencies
         if: startsWith(inputs.environment, 'sway')
         shell: bash

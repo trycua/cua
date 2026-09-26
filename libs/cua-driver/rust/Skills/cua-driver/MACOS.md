@@ -8,7 +8,9 @@ you're driving an app on macOS.
 
 ## The no-foreground contract
 
-**The user's frontmost app MUST NOT change.** This is the whole
+**Background window actions must preserve the user's frontmost app.**
+Foreground and desktop actions follow the authorization boundary in
+[RUNTIME.md](RUNTIME.md#foreground-boundary). This is the whole
 reason cua-driver exists. Users pay for the right to keep typing in
 their editor while an agent drives another app in the background.
 Violate this rule and every other nice property the driver gives
@@ -108,18 +110,15 @@ is safe even for apps that normally foreground on media-load
 | Move or resize one exact window       | `set_window_frame({pid, window_id, x, y, width, height})`                              | `osascript` position/size writes or title-bar dragging      |
 | Click / type / scroll / keys          | `click`, `type_text`, `scroll`, `press_key`, `hotkey`                                  | `osascript`, `cliclick`, raw `CGEvent`, `open <url>`        |
 | Drag / drag-and-drop / marquee select | `drag({pid, from_x, from_y, to_x, to_y})` (pixel-only — macOS AX has no semantic drag) | `cliclick dd:`, `osascript drag`                            |
-| Screenshot                            | `screenshot` or the PNG in `get_window_state`                                          | `screencapture`                                             |
+| Screenshot                            | `get_window_state` (window) or authorized `get_desktop_state` (desktop)                | `screencapture`                                             |
 | Quit an app                           | ask the user first, then `hotkey({pid, keys:["cmd","q"]})`                             | `kill`, `killall`, `pkill`                                  |
 | Hand a file/URL to an app             | `launch_app({bundle_id, urls:[<path>]})`                                               | `open -a <App> <path>`, `open <url>`                        |
 
 ### The narrow carve-out
 
-The **only** legitimate use of `osascript -e 'tell app X to
-activate'` is when the user **explicitly** asked for frontmost
-state ("bring Chrome to the front", "make it frontmost", "I want
-to see X"). Reaching for it because a tool call returned something
-confusing is wrong — that's the skill's classic foot-in-the-door
-failure mode and it steals focus every time.
+For authorized foreground input, use the Cua action's
+`delivery_mode:"foreground"`. For requested persistent foreground state, use
+`bring_to_front`. Neither requires a shell activation workaround.
 
 When a cua-driver call surprises you, diagnose cua-driver first:
 
@@ -243,11 +242,11 @@ editor state.
      the user should click **+**, add `/Applications/CuaDriver.app` (or
      `/Applications/CuaDriverLocal.app`), enable it, and rerun the command.
 
-## Resolve target pid — always via `launch_app`
+## Resolve the requested application
 
-**Always start with `launch_app`**, whether or not the target is already
-running. It's idempotent (relaunching returns the existing pid with no
-side effects) and gives you the pid in one call — no `list_apps` hop.
+Reuse a discovered live target when available. Otherwise use `launch_app`
+when launch is requested or implied, then select the returned window. If the
+window has not appeared yet, bound retries of `list_windows`.
 
 - `launch_app({bundle_id: "com.apple.finder"})` — preferred, unambiguous.
 - `launch_app({name: "Calculator"})` — when bundle_id isn't known.
@@ -342,14 +341,10 @@ loop wants "real HID origin".
 
 The working pattern:
 
-1. Bring the target frontmost (a brief `osascript activate` is
-   acceptable here — this is the carve-out the skill's osascript
-   gate allows).
-2. `CGEvent.post(tap: .cghidEventTap)` with a leading `mouseMoved`
-   event (~30 ms before the click). `cua-driver click` when the
-   target is frontmost automatically takes this path.
-3. Accept that the real cursor visibly moves — `cghidEventTap` is
-   the system HID stream, the cursor warps to the click point.
+1. Observe the target and the background route's refusal or lack of effect.
+2. Obtain authorization for visible foreground control if not already given.
+3. Retry only the necessary Cua action with `delivery_mode:"foreground"`,
+   then verify from fresh state. Do not inject raw CGEvents or use shell activation.
 
 There is no backgrounded path that reaches these apps today.
 
@@ -364,7 +359,7 @@ There is no backgrounded path that reaches these apps today.
   left-click — a known Chromium renderer-IPC limitation that affects
   every non-HID-tap synthesis path. For context menus on
   AX-addressable elements (links, buttons, toolbar items), use
-  `right_click({pid, element_index})` instead.
+  `right_click({pid, element_token})` instead.
 
 ### Known text-input limits (Catalyst + Electron)
 

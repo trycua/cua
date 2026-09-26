@@ -18,7 +18,6 @@ time = { workspace = true }
 # Insertion-ordered map for the keyed per-session cursor render collection.
 # IndexMap gives deterministic iteration order = stable cursor z-order frame
 # to frame (a plain HashMap would flicker overlapping cursors).
-indexmap = "2"
 cua-driver-core = { path = "../cua-driver-core" }
 cua-driver-contract = { path = "../cua-driver-contract" }
 cursor-overlay = { path = "../cursor-overlay" }
@@ -39,6 +38,8 @@ objc2-foundation = { version = "0.2", features = [
     "NSThread", "NSObject", "NSValue",
     "NSAppleEventDescriptor", "NSNotification", "NSOperation",
     "NSURL", "NSDate", "NSError",
+    # Cursor image bytes for system cursor shape classification.
+    "NSData",
     "block2", "libc",
 ] }
 objc2-app-kit = { version = "0.2", features = [
@@ -50,6 +51,8 @@ objc2-app-kit = { version = "0.2", features = [
     # one-line action label, NSPanel/NSImageCell are reachable via
     # transitive deps.
     "NSImage", "NSImageView", "NSTextField", "NSControl", "NSCell",
+    # System cursor shape reporting (cursor_shape adapter).
+    "NSCursor",
     "block2", "libc",
 ] }
 

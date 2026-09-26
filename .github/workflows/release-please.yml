@@ -13,6 +13,7 @@ on:
         default: automatic
         options:
           - automatic
+          - cua-perception
           - cua-driver-rs
           - lume
           - sandbox
@@ -59,7 +60,7 @@ jobs:
           inputs.component == 'automatic' &&
           inputs.bump != 'automatic'
         run: |
-          echo "::error::Select cua-driver-rs, lume, or sandbox when forcing a bump type."
+          echo "::error::Select cua-perception, cua-driver-rs, lume, or sandbox when forcing a bump type."
           exit 1
 
       - name: Reject manifest tags outside main history
@@ -78,6 +79,16 @@ jobs:
           echo "path=$(jq -r .path <<<"$REQUEST")" >> "$GITHUB_OUTPUT"
           echo "current_version=$(jq -r .current_version <<<"$REQUEST")" >> "$GITHUB_OUTPUT"
           echo "release_as=$(jq -r '.release_as // ""' <<<"$REQUEST")" >> "$GITHUB_OUTPUT"
+
+      - name: Anchor a merged Perception version with a lightweight tag
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BEFORE_SHA: ${{ github.event.before }}
+          VERSION_PATH: libs/cua-driver/rust/crates/cua-perception/VERSION
+        # The tag push starts cd-cua-perception.yml, which publishes the
+        # release. A missed tag heals on the next main push.
+        run: bash .github/scripts/anchor_perception_release_tag.sh
 
       # release-please-action v4.4.1, embedding release-please 17.3.0.
       - name: Open or update automatic release pull requests
@@ -132,11 +143,13 @@ jobs:
             PR=$(gh pr view "$number" --json headRefName,headRepositoryOwner,files)
             DRIVER=$(echo "$PR" | jq -r \
               '.files | any(.path == "libs/cua-driver/rust/VERSION")')
+            PERCEPTION=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/cua-driver/rust/crates/cua-perception/VERSION")')
             LUME=$(echo "$PR" | jq -r \
               '.files | any(.path == "libs/lume/VERSION")')
             SANDBOX=$(echo "$PR" | jq -r \
               '.files | any(.path == "libs/python/cua-sandbox/VERSION")')
-            if [[ "$DRIVER" != "true" && "$LUME" != "true" && "$SANDBOX" != "true" ]]; then
+            if [[ "$DRIVER" != "true" && "$PERCEPTION" != "true" && "$LUME" != "true" && "$SANDBOX" != "true" ]]; then
               continue
             fi
 
@@ -176,6 +189,9 @@ jobs:
               if [[ "$DRIVER" == "true" ]]; then
                 COMPONENT_ARGS+=(--component cua-driver-rs)
               fi
+              if [[ "$PERCEPTION" == "true" ]]; then
+                COMPONENT_ARGS+=(--component cua-perception)
+              fi
               if [[ "$LUME" == "true" ]]; then
                 COMPONENT_ARGS+=(--component lume)
               fi
@@ -194,7 +210,15 @@ jobs:
                 exit 1
               fi
             fi
-            if [[ "$DRIVER" == "true" ]]; then
+            if [[ "$PERCEPTION" == "true" ]]; then
+              PERCEPTION_VERSION=$(tr -d '[:space:]' < \
+                libs/cua-driver/rust/crates/cua-perception/VERSION)
+              cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \
+                -p cua-perception --precise "$PERCEPTION_VERSION"
+              python3 .github/scripts/validate_release_versions.py --product perception
+              git add libs/cua-driver/rust/Cargo.lock
+              COMMIT_MESSAGE="chore(cua-perception): synchronize release lockfile"
+            elif [[ "$DRIVER" == "true" ]]; then
               DRIVER_VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/VERSION)
               cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \
                 -p cua-driver --precise "$DRIVER_VERSION"
@@ -211,6 +235,13 @@ jobs:
               COMMIT_MESSAGE="chore(lume): synchronize release documentation"
             else
               python3 .github/scripts/validate_release_versions.py --product sandbox
+              # The Sandbox reference records the package version, so regenerate
+              # it with the release version. Lifecycle scripts stay disabled
+              # because this step holds the release app token.
+              npx --yes pnpm@9.0.4 --dir docs install --frozen-lockfile --ignore-scripts
+              node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library sandbox
+              git add docs/content/docs/reference/sandbox-sdk/runtime-support.mdx \
+                docs/content/docs/reference/sandbox-sdk/os-image-catalog.mdx
               COMMIT_MESSAGE="chore(sandbox): synchronize release metadata"
             fi
             if git diff --cached --quiet; then
@@ -222,7 +253,12 @@ jobs:
               git push --force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD" \
                 origin "HEAD:refs/heads/$BRANCH"
             fi
-          done < <(gh pr list --state open --base main --limit 100 --json number --jq '.[].number')
+          # Search by head branch: an unfiltered list returns only the newest
+          # 100 open pull requests and can silently skip an older release PR.
+          done < <(gh pr list --state open --base main \
+            --search "head:release-please--branches--" --limit 100 \
+            --json number,headRefName \
+            --jq '.[] | select(.headRefName | startswith("release-please--branches--")) | .number')
 
       - name: Verify repository release versions
         run: python3 .github/scripts/validate_release_versions.py --product all

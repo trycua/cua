@@ -51,6 +51,16 @@ def physical_gate(emulator_status):
     return None if emulator_status == "pass" else "emulator_phase_" + emulator_status
 
 
+def verdict(phases):
+    """`full` only when both phases pass; an explicit emulator-only run says so instead."""
+    emulator, physical = phases["emulator"]["status"], phases["physical"]["status"]
+    if emulator == "pass" and physical == "pass":
+        return "full", 0
+    if emulator == "pass" and physical == "not_selected":
+        return "emulator_only", 0
+    return "incomplete", 1
+
+
 def redact(text, serials):
     for role, serial in serials.items():
         text = text.replace(serial, "<" + role + ">")
@@ -83,12 +93,17 @@ def refuse(message):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--emulator", required=True, help="adb serial of the emulator; always runs first")
-    p.add_argument("--physical", help="adb serial of the physical phone; runs only after the emulator passes")
+    phone = p.add_mutually_exclusive_group(required=True)
+    phone.add_argument("--physical", help="adb serial of the physical phone; runs only after the emulator passes")
+    phone.add_argument("--emulator-only", action="store_true",
+                       help="qualify the emulator alone; the receipt reports emulator_only, never full")
     p.add_argument("--driver", type=pathlib.Path, required=True)
     p.add_argument("--evidence-dir", type=pathlib.Path, required=True)
     p.add_argument("--runs", type=int, default=2)
     p.add_argument("--lifecycle", action="store_true", help="also run lifecycle-smoke.py on the emulator")
     args = p.parse_args()
+    if args.runs < 1:
+        refuse("--runs must be at least 1")
     evidence = args.evidence_dir.resolve()
     repo = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--show-toplevel"], capture_output=True, text=True)
     if repo.returncode == 0 and evidence.is_relative_to(pathlib.Path(repo.stdout.strip())) and subprocess.run(
@@ -213,11 +228,11 @@ def main():
         (evidence / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
         print(role + ": " + receipt["phases"][role]["status"], flush=True)
     if "physical" not in serials:
-        receipt["phases"]["physical"] = {"status": "not_selected"}
-        (evidence / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
-    passed = all(phase["status"] == "pass" for role, phase in receipt["phases"].items() if role in serials)
-    print("Receipt: " + str(evidence / "receipt.json"))
-    sys.exit(0 if passed else 1)
+        receipt["phases"]["physical"] = {"status": "not_selected", "reason": "--emulator-only"}
+    receipt["qualification"], code = verdict(receipt["phases"])
+    (evidence / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    print("qualification: " + receipt["qualification"] + "\nReceipt: " + str(evidence / "receipt.json"))
+    sys.exit(code)
 
 
 if __name__ == "__main__":

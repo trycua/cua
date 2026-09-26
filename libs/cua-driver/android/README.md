@@ -223,7 +223,10 @@ python3 scripts/qualify.py --emulator emulator-5554 --physical PHONE_SERIAL \
   --driver ../rust/target/debug/cua-driver --evidence-dir /tmp/android-qualification
 ```
 
-Both devices are admitted before anything is installed. A physical phone passed
+`--physical` is required. Pass `--emulator-only` instead to qualify the
+emulator alone; the receipt then reports `emulator_only`, never `full`.
+`--runs` must be at least 1. Both devices are admitted before anything is
+installed. A physical phone passed
 as `--emulator` (or an emulator passed as `--physical`), an offline or
 unauthorized device, the same serial for both roles, and an evidence directory
 that Git would track are refused with exit code 2. A device whose API level the
@@ -232,7 +235,8 @@ skipped. The physical phase runs only after the emulator phase passes;
 otherwise it is recorded as `blocked`. Before each phase the harness re-hashes
 the APKs and Driver and compares every installed package's bytes with them.
 
-`receipt.json` names devices by role only. It records source revision, artifact
+`receipt.json` names devices by role only. Its top-level `qualification` is
+`full` only when both phases pass, and `incomplete` (exit 1) otherwise. It records source revision, artifact
 digests, installed identity, API level, display and fold state, each step's
 result, the Driver's own unsupported and unverified capabilities, cleanup
 residue, and on failure the redacted tail of the failing step's log. On the

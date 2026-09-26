@@ -35,6 +35,14 @@ class QualifyTest(unittest.TestCase):
         for status in ("fail", "unsupported"):
             self.assertEqual(qualify.physical_gate(status), "emulator_phase_" + status)
 
+    def test_only_two_passing_phases_are_a_full_qualification(self):
+        def phases(emulator, physical):
+            return {"emulator": {"status": emulator}, "physical": {"status": physical}}
+        self.assertEqual(qualify.verdict(phases("pass", "pass")), ("full", 0))
+        self.assertEqual(qualify.verdict(phases("pass", "not_selected")), ("emulator_only", 0))
+        for emulator, physical in (("pass", "fail"), ("pass", "unsupported"), ("fail", "blocked"), ("fail", "not_selected")):
+            self.assertEqual(qualify.verdict(phases(emulator, physical)), ("incomplete", 1))
+
     def test_receipt_text_names_devices_by_role_only(self):
         text = "adb: device 'PHONE1' not found; emulator-5554 ok"
         redacted = qualify.redact(text, {"emulator": "emulator-5554", "physical": "PHONE1"})

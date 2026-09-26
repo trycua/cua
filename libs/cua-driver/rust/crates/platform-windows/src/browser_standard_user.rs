@@ -1,9 +1,12 @@
 //! Win32 side of the standard-user launch for isolated browsers.
 //!
-//! An elevated Driver derives a standard-user token from its own process token
-//! with the SAFER "Normal User" level (the level `runas /trustlevel:0x20000`
-//! uses), lowers it to Medium integrity, removes any privilege a standard
-//! user does not hold, and verifies the result before use. The browser is
+//! An elevated Driver derives a standard-user token from its own process
+//! token: a UAC-style (LUA) restricted token with every privilege except
+//! `SeChangeNotifyPrivilege` removed and, as deny-only, `BUILTIN\Administrators`
+//! plus every group that the SAFER "Normal User" level (the level
+//! `runas /trustlevel:0x20000` uses) sets to deny-only. It is then lowered to
+//! Medium integrity and verified before use. A SAFER token alone is not used
+//! because Windows keeps reporting it as elevated. The browser is
 //! created with that token, the installation protection probes run while
 //! impersonating it, and file work inside the browser-writable profile runs
 //! while impersonating it. The Driver never falls back to its own elevated
@@ -29,14 +32,15 @@ use windows::Win32::Security::AppLocker::{
     SAFER_SCOPEID_USER,
 };
 use windows::Win32::Security::{
-    AdjustTokenPrivileges, CreateWellKnownSid, EqualSid, GetLengthSid, GetSidSubAuthority,
-    GetSidSubAuthorityCount, GetTokenInformation, ImpersonateLoggedOnUser, LookupPrivilegeNameW,
-    RevertToSelf, SecurityImpersonation, SetTokenInformation, TokenElevation, TokenGroups,
-    TokenImpersonationLevel, TokenIntegrityLevel, TokenPrivileges, WinBuiltinAdministratorsSid,
-    WinMediumLabelSid, LUID_AND_ATTRIBUTES, PSID, SAFER_LEVEL_HANDLE, SECURITY_IMPERSONATION_LEVEL,
-    SE_PRIVILEGE_REMOVED, SID_AND_ATTRIBUTES, TOKEN_ACCESS_MASK, TOKEN_ASSIGN_PRIMARY,
-    TOKEN_DUPLICATE, TOKEN_ELEVATION, TOKEN_GROUPS, TOKEN_INFORMATION_CLASS, TOKEN_MANDATORY_LABEL,
-    TOKEN_PRIVILEGES, TOKEN_QUERY,
+    AdjustTokenPrivileges, CreateRestrictedToken, CreateWellKnownSid, EqualSid, GetLengthSid,
+    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, ImpersonateLoggedOnUser,
+    LookupPrivilegeNameW, RevertToSelf, SecurityImpersonation, SetTokenInformation, TokenElevation,
+    TokenGroups, TokenImpersonationLevel, TokenIntegrityLevel, TokenPrivileges,
+    WinBuiltinAdministratorsSid, WinMediumLabelSid, DISABLE_MAX_PRIVILEGE, LUA_TOKEN,
+    LUID_AND_ATTRIBUTES, PSID, SAFER_LEVEL_HANDLE, SECURITY_IMPERSONATION_LEVEL,
+    SE_PRIVILEGE_REMOVED, SID_AND_ATTRIBUTES, TOKEN_ACCESS_MASK, TOKEN_ADJUST_DEFAULT,
+    TOKEN_ADJUST_PRIVILEGES, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_ELEVATION, TOKEN_GROUPS,
+    TOKEN_INFORMATION_CLASS, TOKEN_MANDATORY_LABEL, TOKEN_PRIVILEGES, TOKEN_QUERY,
 };
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, FILE_DELETE_CHILD,
@@ -144,16 +148,82 @@ fn current_process_token(access: TOKEN_ACCESS_MASK) -> Result<OwnedHandle, Strin
 
 /// Derive, harden, and verify the standard-user token for `driver`.
 fn derive_verified_standard_user_token(driver: &TokenFacts) -> Result<OwnedHandle, String> {
-    let driver_token = current_process_token(TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY)?;
-    let derived = safer_normal_user_token(driver_token.raw())?;
+    // The restricted token inherits these access rights; it needs them to
+    // lower its integrity, remove privileges, impersonate, and be assigned.
+    let driver_token = current_process_token(
+        TOKEN_QUERY
+            | TOKEN_DUPLICATE
+            | TOKEN_ASSIGN_PRIMARY
+            | TOKEN_ADJUST_DEFAULT
+            | TOKEN_ADJUST_PRIVILEGES,
+    )?;
+    let safer = safer_normal_user_token(driver_token.raw())?;
+    let derived = lua_restricted_token(driver_token.raw(), safer.raw())?;
     let facts = token_facts(derived.raw())?;
     if facts.integrity_rid > MEDIUM_INTEGRITY_RID {
         set_medium_integrity(derived.raw())?;
     }
     remove_privileges(derived.raw(), &facts)?;
     let verified = token_facts(derived.raw())?;
-    validate_standard_user_token(driver, &verified)?;
+    validate_standard_user_token(driver, &verified).map_err(|reason| {
+        format!(
+            "{reason}; derived token: elevated={}, integrity=0x{:04x}, administrators={:?}, \
+             privileges=[{}]",
+            verified.elevated,
+            verified.integrity_rid,
+            verified.administrators,
+            verified.privileges.join(", ")
+        )
+    })?;
     Ok(derived)
+}
+
+/// Create a LUA restricted token from `driver_token` that disables, as
+/// deny-only, Administrators and every group `safer` holds as deny-only.
+fn lua_restricted_token(driver_token: HANDLE, safer: HANDLE) -> Result<OwnedHandle, String> {
+    let mut sid_buffer = [0u64; 12];
+    let mut sid_size = std::mem::size_of_val(&sid_buffer) as u32;
+    let administrators = PSID(sid_buffer.as_mut_ptr().cast());
+    unsafe {
+        CreateWellKnownSid(
+            WinBuiltinAdministratorsSid,
+            PSID::default(),
+            administrators,
+            &mut sid_size,
+        )
+    }
+    .map_err(|error| format!("could not build the Administrators SID: {error}"))?;
+    // `disable` points into `groups`, which stays alive until the token exists.
+    let groups = token_information(safer, TokenGroups)?;
+    let header = groups.as_ptr().cast::<TOKEN_GROUPS>();
+    let count = unsafe { (*header).GroupCount } as usize;
+    let first = unsafe { std::ptr::addr_of!((*header).Groups).cast::<SID_AND_ATTRIBUTES>() };
+    let mut disable = vec![SID_AND_ATTRIBUTES {
+        Sid: administrators,
+        Attributes: 0,
+    }];
+    for index in 0..count {
+        let group = unsafe { *first.add(index) };
+        if group.Attributes & SE_GROUP_USE_FOR_DENY_ONLY != 0 {
+            disable.push(SID_AND_ATTRIBUTES {
+                Sid: group.Sid,
+                Attributes: 0,
+            });
+        }
+    }
+    let mut restricted = HANDLE::default();
+    unsafe {
+        CreateRestrictedToken(
+            driver_token,
+            DISABLE_MAX_PRIVILEGE | LUA_TOKEN,
+            Some(&disable),
+            None,
+            None,
+            &mut restricted,
+        )
+    }
+    .map_err(|error| format!("CreateRestrictedToken failed: {error}"))?;
+    Ok(OwnedHandle(restricted))
 }
 
 fn safer_normal_user_token(driver_token: HANDLE) -> Result<OwnedHandle, String> {

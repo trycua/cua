@@ -6,10 +6,11 @@
 //! any administrator when UAC is off) can modify `Program Files`, so such a
 //! Driver never runs the browser with its own token. It derives a standard
 //! user token from its own token instead: the same user, logon session, and
-//! desktop, with `BUILTIN\Administrators` set to deny-only, administrative
-//! privileges removed, and Medium integrity. This is the token level that
-//! `runas /trustlevel:0x20000` uses. Every protection check is then made for
-//! that derived token, and the browser runs with it.
+//! desktop, with `BUILTIN\Administrators` and the other groups that
+//! `runas /trustlevel:0x20000` disables set to deny-only, administrative
+//! privileges removed, and Medium integrity, marked as a UAC-filtered token.
+//! Every protection check is then made for that derived token, and the
+//! browser runs with it.
 //!
 //! The Win32 adapter gathers token facts and this module decides. It has no
 //! Win32 dependencies so its unit tests run on any host.

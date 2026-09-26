@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 temporary="$(mktemp -d "${TMPDIR:-/tmp}/cyclops-live-cleanup-test.XXXXXX")"
 trap 'rm -rf "$temporary"' EXIT
 
@@ -69,7 +69,7 @@ export CUA_CLIENT_ID="client-id"
 export CUA_CLIENT_SECRET="client-secret"
 export CYCLOPS_NAMESPACE="sdk-example-python-1-1"
 
-"$repo_root/cyclops-cs/scripts/cleanup-live-sdk-example.sh"
+"$workspace_dir/scripts/cleanup-live-sdk-example.sh"
 
 cat > "$temporary/expected.log" <<'EXPECTED'
 POST https://auth.example/protocol/openid-connect/token
@@ -85,7 +85,7 @@ printf 'live SDK cleanup regression checks passed.\n'
 
 : > "$CLEANUP_TEST_LOG"
 export CLEANUP_LIST_STATUS=403
-"$repo_root/cyclops-cs/scripts/cleanup-live-sdk-example.sh"
+"$workspace_dir/scripts/cleanup-live-sdk-example.sh"
 unset CLEANUP_LIST_STATUS
 cat > "$temporary/forbidden-expected.log" <<'FORBIDDEN_EXPECTED'
 POST https://auth.example/protocol/openid-connect/token
@@ -99,7 +99,7 @@ diff -u "$temporary/forbidden-expected.log" "$CLEANUP_TEST_LOG"
 rm -f "$CLEANUP_TEST_LOG.namespace-delete-attempts"
 export CLEANUP_RETRY_DELAY_SECONDS=0
 export CLEANUP_NAMESPACE_DELETE_FAILURES=2
-"$repo_root/cyclops-cs/scripts/cleanup-live-sdk-example.sh"
+"$workspace_dir/scripts/cleanup-live-sdk-example.sh"
 cat > "$temporary/retry-expected.log" <<'RETRY_EXPECTED'
 POST https://auth.example/protocol/openid-connect/token
 GET https://run.example/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/sdk-example-python-1-1/osgymsandboxclaims
@@ -115,7 +115,7 @@ diff -u "$temporary/retry-expected.log" "$CLEANUP_TEST_LOG"
 : > "$CLEANUP_TEST_LOG"
 rm -f "$CLEANUP_TEST_LOG.namespace-delete-attempts"
 export CLEANUP_NAMESPACE_DELETE_FAILURES=10
-if "$repo_root/cyclops-cs/scripts/cleanup-live-sdk-example.sh" 2> "$temporary/persistent-stderr.log"; then
+if "$workspace_dir/scripts/cleanup-live-sdk-example.sh" 2> "$temporary/persistent-stderr.log"; then
   echo "expected cleanup to fail when the namespace delete keeps returning 502" >&2
   exit 1
 fi

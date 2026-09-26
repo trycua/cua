@@ -9,9 +9,9 @@ import subprocess
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[2]
-GO_OUTPUT = ROOT / "cyclops-cs/sdk-bindings/go-uniffi/cyclops_sdk_schema/cyclops_sdk_schema.go"
-NODE_OUTPUT = ROOT / "cyclops-cs/sdk-bindings/ts-uniffi/cyclops_sdk_schema.ts"
+ROOT = Path(__file__).resolve().parents[1]
+GO_OUTPUT = ROOT / "sdk-bindings/go-uniffi/cyclops_sdk_schema/cyclops_sdk_schema.go"
+NODE_OUTPUT = ROOT / "sdk-bindings/ts-uniffi/cyclops_sdk_schema.ts"
 BUILDER_NAME = "Builder"
 GO_BUILDER_TYPE = re.compile(
     r"^type (?P<name>[A-Za-z_][A-Za-z0-9_]*Builder) (?:struct|interface)",

@@ -105,7 +105,9 @@ const embedded = new EmbeddedCuaDriverHost(
 const connection = await embedded.start();
 const driver = CuaDriver.connect(connection.socketPath);
 // Application calls use driver; an agent runtime uses connection.mcp.
-driver.uniffiDestroy();
+if (CuaDriver.instanceOf(driver)) {
+  driver.uniffiDestroy();
+}
 await embedded.stop();
 embedded.uniffiDestroy();
 ```

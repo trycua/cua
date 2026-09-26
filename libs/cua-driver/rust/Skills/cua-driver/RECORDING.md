@@ -54,7 +54,17 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
 
 - `before_state.json` and `after_state.json` — application accessibility
   state immediately before and after the action. They carry the same
-  `tree_markdown` and `element_count` shape as `get_window_state`.
+  `tree_markdown` and `element_count` shape as `get_window_state`. Each walk
+  is bounded by `start_recording`'s `state_timeout_ms` (default 1000, like
+  `get_window_state`'s `timeout_ms`). A walk that runs out of time keeps the
+  partial tree, and `evidence.json` marks that phase `truncated` with
+  `truncation_reason`, `nodes_visited`, `nodes_pending`, and `timeout_ms`. If
+  an accessibility provider stops answering, the turn continues without
+  state and records `state_capture_timeout`. For an action refused before
+  dispatch, such as a click with an unknown or expired `capture_id`, the
+  state walk is skipped and the state is recorded as `not_applicable` with
+  the classification `action_refused_before_dispatch`. Pass
+  `include_accessibility_tree: false` to record without state.
 - `before.png` and `after.png` — target-window images immediately before
   and after the action. Window capture remains scoped to the target when
   another window covers it.

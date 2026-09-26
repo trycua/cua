@@ -78,3 +78,10 @@ def test_helper_scripts_trigger_the_workflow() -> None:
     for event in ("pull_request", "push"):
         for path in STANDARD_USER_SCRIPTS:
             assert path in triggers[event]["paths"], (event, path)
+
+
+def test_macos_seeds_tcc_only_for_the_released_app_identity() -> None:
+    macos = job_text("released-driver-macos")
+    assert "seed-tcc-guest.sh" in macos
+    assert "--app /Applications/CuaDriver.app --expected-client com.trycua.driver\n" in macos
+    assert "install-local.sh" not in macos

@@ -334,12 +334,29 @@ jobs:
         run: |
           uv sync --frozen
           npm ci --ignore-scripts
-      - name: Record Driver state
+      - name: Grant the released Driver its TCC permissions
+        working-directory: ${{ github.workspace }}
         run: |
-          "$CUA_DRIVER_BIN" --version
-          # Informational: the browser-only proof below does not rely on
-          # Accessibility or Screen Recording grants.
-          "$CUA_DRIVER_BIN" permissions status --json || true
+          # Driver gates every action, including browser_prepare, on its
+          # Accessibility and Screen Recording grants, which a user approves
+          # in System Settings. Hosted macOS runners are disposable SIP-off
+          # VirtualMacs, so seed those two grants for the released,
+          # Developer ID-signed app only. The seeder binds each grant to the
+          # app's designated requirement; no pull request code receives them.
+          "$CUA_DRIVER_BIN" stop >/dev/null 2>&1 || true
+          bash libs/cua-driver/tests/runners/macos-lume/seed-tcc-guest.sh \
+            --app /Applications/CuaDriver.app --expected-client com.trycua.driver
+          open -n -g -a CuaDriver --args serve
+          for _ in $(seq 1 60); do
+            if "$CUA_DRIVER_BIN" permissions status --json > "$RUNNER_TEMP/permissions.json" 2>/dev/null \
+                && jq -e '.accessibility == true and .screen_recording == true' "$RUNNER_TEMP/permissions.json" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/permissions.json"
+          jq -e '.accessibility == true and .screen_recording == true' "$RUNNER_TEMP/permissions.json" >/dev/null
+          "$CUA_DRIVER_BIN" status
       - name: Run both mock agents through MCP
         run: |
           uv run --frozen python verify_mcp_tools.py

@@ -265,6 +265,13 @@ impl Tool for ClickTool {
         def()
     }
 
+    /// Opt-in (`CUA_DRIVER_PARALLEL_BACKGROUND=1`) independent lane for
+    /// exact-window background routes that stay AX / PID-routed; see
+    /// `cua_driver_core::parallel_background`.
+    fn has_independent_input_lane(&self, args: &Value) -> bool {
+        cua_driver_core::parallel_background::macos_independent_lane(&self.def().name, args)
+    }
+
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
 
@@ -1066,6 +1073,18 @@ impl Tool for ClickTool {
                             .with_structured(serde_json::json!({
                                 "code": "background_unavailable"
                             }));
+                    }
+                    // A panicked hit-test task must not fall through to the
+                    // raw pixel rung, which activates the target: background
+                    // focus stays AX-only (type_text / press_key x,y rely on
+                    // this for their parallel-background lane attestation).
+                    Err(error) if focus_only => {
+                        return ToolResult::error(format!(
+                            "Background PX focus task failed: {error}"
+                        ))
+                        .with_structured(serde_json::json!({
+                            "code": "background_unavailable"
+                        }));
                     }
                     _ => {}
                 }

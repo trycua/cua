@@ -113,6 +113,13 @@ impl Tool for ScrollTool {
         def()
     }
 
+    /// Opt-in (`CUA_DRIVER_PARALLEL_BACKGROUND=1`) independent lane for
+    /// exact-window background routes that stay AX / PID-routed; see
+    /// `cua_driver_core::parallel_background`.
+    fn has_independent_input_lane(&self, args: &Value) -> bool {
+        cua_driver_core::parallel_background::macos_independent_lane(&self.def().name, args)
+    }
+
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
         if args.opt_str("scope").as_deref() == Some("desktop")

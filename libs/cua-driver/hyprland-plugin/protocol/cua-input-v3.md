@@ -1,6 +1,6 @@
 # Local input protocol v3 candidate
 
-This opt-in candidate connects Driver's existing per-action admission to two
+This opt-in candidate connects Driver's existing per-action admission to four
 independent compositor seats. The accepted extension adds a distinct exact-target
 primary-seat foreground route. It is not native certification or a release
 announcement. The default plugin build remains discovery-only, and discovery
@@ -15,8 +15,11 @@ challenge, or separate per-window permission workflow in v3.
 
 ## Transport and lane ownership
 
-The private Hyprland instance directory contains `cua-input-v3.sock` and
-`cua-input-v3-2.sock`. Each endpoint uses Linux `SOCK_SEQPACKET`, checks
+The private Hyprland instance directory contains four lane endpoints:
+`cua-input-v3.sock`, `cua-input-v3-2.sock`, `cua-input-v3-3.sock`, and
+`cua-input-v3-4.sock` (`kInputLanes` in the plugin, `MAX_LANES` in Driver;
+the two-lane build exposed only the first two, with identical names). Each
+endpoint uses Linux `SOCK_SEQPACKET`, checks
 `SO_PEERCRED` for the compositor UID, and owns one lane. Socket permissions are
 `0600`; the instance directory must be owned by that user and private. Driver
 also verifies the peer against the selected compositor instance.
@@ -32,11 +35,12 @@ Each socket accepts at most eight connections. A connection must send `HELLO`
 within five seconds and must not remain idle for more than 60 seconds. A
 successful `CLAIM` reserves the endpoint for that connection until EOF,
 timeout, or a desktop/configuration lifecycle transition. Repeated `CLAIM` on
-the same connection is idempotent. Driver may try the second endpoint only
+the same connection is idempotent. Driver may try the next endpoint only
 after an explicit `lane_busy` reply, before target selection or dispatch.
 Connection failures and unknown delivery results do not permit retries.
 
-The v3 seats are `Cua-Agent` and `Cua-Agent-2`. Driver excludes these from its
+The v3 seats are `Cua-Agent`, `Cua-Agent-2`, `Cua-Agent-3`, and
+`Cua-Agent-4`. Driver excludes these from its
 foreground virtual-input routes. Seat ownership does not come from public
 session labels. The signed experiment uses separate sockets, protocol 0, and
 its original seat names.
@@ -123,7 +127,7 @@ capabilities, or remaining grant/expiry state. After a connection's first
 successful `TARGET`, its reservation protects its hover even after STOP,
 CANCEL, or target invalidation. Existing target owners and active peers still
 cause `agent_target_busy`; ordinary dispatch and conflict checks never evict
-them. This permits opposite-order reuse when both new connections reserve
+them. This permits opposite-order reuse when new connections reserve
 their lanes before either selects a target, without retrying any input.
 
 Target replacement, unmap, destruction, geometry change, primary-client
@@ -192,10 +196,10 @@ lifecycle admission, without a separate approval UI.
 
 `CANCEL` and `STOP` both require the connection's lane claim. They revoke only
 that endpoint's pending/current action, invalidate its target, and release its
-synthetic held state. They preserve the reservation and other lane. A drag
+synthetic held state. They preserve the reservation and the other lanes. A drag
 receives its cancellation result before the command acknowledgement. A new
 unclaimed control connection cannot cancel a runtime's lane. V3 has no global
-socket stop command; plugin disable or unload explicitly stops both lanes.
+socket stop command; plugin disable or unload explicitly stops every lane.
 
 These commands belong to the private plugin wire, not the public MCP tool
 surface. Likewise, EOF below means the owned plugin connection closes. Closing
@@ -249,7 +253,7 @@ production does not expose `TRACE_START`, `TRACE_STOP`, or `TRACE_READ`.
 
 Portable grant, lifecycle, discovery, and transport tests do not prove native
 seat delivery or keymap qualification. Certification must build the actual
-native implementation and verify each supported app/operation, both lanes,
+native implementation and verify each supported app/operation, every lane,
 independent primary interaction, stale/refusal paths, partial delivery,
 cleanup, and surviving-client recovery at the exact candidate SHA. Include
 both instrumented evidence and an uninstrumented production-package smoke.

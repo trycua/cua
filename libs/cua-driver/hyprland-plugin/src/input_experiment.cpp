@@ -222,7 +222,7 @@ struct InputExperiment::Impl {
     WP<IKeyboard> physical_keyboard;
     CHyprSignalListener keymap_listener;
     unsigned lane;
-    std::array<Impl*, 2> peers{};
+    std::array<Impl*, kInputLanes> peers{};
     PrimaryTrace* trace = nullptr;
     bool foreground_started = false, foreground_activating = false;
     bool foreground_keyboard_used = false;
@@ -240,9 +240,9 @@ struct InputExperiment::Impl {
         if (public_key.size() != 32)
             throw std::runtime_error("invalid test operator public key");
 #endif
-        path = directory + (kProduction ?
-            (lane == 0 ? "/cua-input-v3.sock" : "/cua-input-v3-2.sock") :
-            (lane == 0 ? "/cua-input-test.sock" : "/cua-input-test-2.sock"));
+        // Lane 0/1 names are unchanged from the two-lane build.
+        const std::string suffix = lane == 0 ? std::string{} : std::format("-{}", lane + 1);
+        path = directory + (kProduction ? "/cua-input-v3" : "/cua-input-test") + suffix + ".sock";
         if (path.size() >= sizeof(sockaddr_un::sun_path))
             throw std::runtime_error("input socket path too long");
         // No private key or input-enabled default exists in this component.
@@ -461,9 +461,10 @@ struct InputExperiment::Impl {
         seat->wl->setGetPointer([&self](CWlSeat* r, std::uint32_t child) { self.add_pointer(r, child); });
         seat->wl->setGetKeyboard([&self](CWlSeat* r, std::uint32_t child) { self.add_keyboard(r, child); });
         seat->wl->setGetTouch([&self](CWlSeat* r, std::uint32_t child) { self.add_touch(r, child); });
-        if (version >= 2) seat->wl->sendName(kProduction ?
-            (self.lane == 0 ? "Cua-Agent" : "Cua-Agent-2") :
-            (self.lane == 0 ? "Cua-Test-Agent" : "Cua-Test-Agent-2"));
+        // Lane 0/1 names are unchanged from the two-lane build.
+        const std::string seat_name = std::string(kProduction ? "Cua-Agent" : "Cua-Test-Agent") +
+            (self.lane == 0 ? std::string{} : std::format("-{}", self.lane + 1));
+        if (version >= 2) seat->wl->sendName(seat_name.c_str());
         seat->wl->sendCapabilities(static_cast<wl_seat_capability>(self.retired ? 0 :
             WL_SEAT_CAPABILITY_POINTER | (self.keyboard_state ? WL_SEAT_CAPABILITY_KEYBOARD : 0)));
         self.seats.push_back(std::move(seat));
@@ -1407,7 +1408,10 @@ struct InputExperiment::DesktopListeners {
 InputExperiment::InputExperiment(const std::string& directory, void* plugin) {
     SeatLifetime lifetime(directory);
     for (unsigned i = 0; i < lanes_.size(); ++i) lanes_[i] = std::make_unique<Impl>(directory, i);
-    for (auto& lane : lanes_) { lane->peers = {lanes_[0].get(), lanes_[1].get()}; lane->start(); }
+    for (auto& lane : lanes_) {
+        for (std::size_t i = 0; i < lanes_.size(); ++i) lane->peers[i] = lanes_[i].get();
+        lane->start();
+    }
 #if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT_TRACE)
     trace_ = std::make_unique<PrimaryTrace>(plugin, [this](wl_resource* resource) {
         for (unsigned i = 0; i < lanes_.size(); ++i) {
@@ -1429,7 +1433,7 @@ InputExperiment::~InputExperiment() {
     trace_.reset();
     // Intentional process-lifetime ownership: callbacks, removed global, and
     // remaining client-owned resources cannot outlive their Impl. The instance
-    // marker refuses replacement modules, so this retains at most two lanes.
+    // marker refuses replacement modules, so this retains at most kInputLanes lanes.
     for (auto& lane : lanes_) (void)lane.release();
 }
 void InputExperiment::suspend() {
@@ -1446,7 +1450,16 @@ void InputExperiment::resume() {
 }
 std::string InputExperiment::status_json() const {
     std::string states;
+    bool transport_ready = true, lease_active = false;
+    std::size_t seat_resources = 0, pointer_resources = 0, keyboard_resources = 0;
+    std::uint64_t dispatches = 0;
     for (const auto& lane : lanes_) {
+        transport_ready = transport_ready && !lane->suspended;
+        lease_active = lease_active || lane->lease != nullptr;
+        seat_resources += lane->seats.size();
+        pointer_resources += lane->pointers.size();
+        keyboard_resources += lane->keyboards.size();
+        dispatches += lane->dispatches;
         if (!states.empty()) states += ',';
         const bool pointer_focus = std::ranges::any_of(lane->pointers, [](const auto& p) { return !p->dead && bool(p->focus); });
         const bool keyboard_focus = std::ranges::any_of(lane->keyboards, [](const auto& k) { return !k->dead && bool(k->focus); });
@@ -1456,8 +1469,7 @@ std::string InputExperiment::status_json() const {
     }
     // Aggregate legacy fields remain available to existing test probes.
     return std::format(R"({{"protocol":{},"test_only":{},"seat_lifetime":"compositor","upgrade":"desktop_restart","transport_ready":{},"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"lanes":[{}]}})",
-        kProduction ? 3 : 0, !kProduction, !lanes_[0]->suspended && !lanes_[1]->suspended, lanes_[0]->epoch, lanes_[0]->lease != nullptr || lanes_[1]->lease != nullptr,
-        lanes_[0]->seats.size() + lanes_[1]->seats.size(), lanes_[0]->pointers.size() + lanes_[1]->pointers.size(),
-        lanes_[0]->keyboards.size() + lanes_[1]->keyboards.size(), lanes_[0]->dispatches + lanes_[1]->dispatches, states);
+        kProduction ? 3 : 0, !kProduction, transport_ready, lanes_[0]->epoch, lease_active,
+        seat_resources, pointer_resources, keyboard_resources, dispatches, states);
 }
 } // namespace cua::hyprland

@@ -1,6 +1,12 @@
 //! Keep synthetic delivery seats out of the existing foreground input path.
 //! Preserve the legacy last-advertised-seat choice among ordinary seats.
 
+/// Exact v3 plugin seat names: `Cua-Agent`, then `Cua-Agent-<n>` per lane.
+fn is_production_agent_seat(name: &str) -> bool {
+    name == "Cua-Agent"
+        || (2..=super::hyprland_input::MAX_LANES).any(|lane| name == format!("Cua-Agent-{lane}"))
+}
+
 pub(super) struct Seats<T> {
     entries: Vec<(T, Option<String>)>,
 }
@@ -32,8 +38,7 @@ impl<T: Clone + PartialEq> Seats<T> {
                 !entry.1.as_deref().is_some_and(|name| {
                     name == "Cua-Test-Agent"
                         || name.starts_with("Cua-Test-Agent-")
-                        || name == "Cua-Agent"
-                        || name == "Cua-Agent-2"
+                        || is_production_agent_seat(name)
                 })
             })
             .map(|entry| entry.0.clone())
@@ -74,7 +79,13 @@ mod tests {
     #[test]
     fn production_seats_never_replace_the_primary_seat() {
         let mut seats = Seats::default();
-        for (id, name) in [(1, "seat0"), (2, "Cua-Agent"), (3, "Cua-Agent-2")] {
+        for (id, name) in [
+            (1, "seat0"),
+            (2, "Cua-Agent"),
+            (3, "Cua-Agent-2"),
+            (4, "Cua-Agent-3"),
+            (5, "Cua-Agent-4"),
+        ] {
             seats.add(id);
             seats.name(&id, name.into());
         }

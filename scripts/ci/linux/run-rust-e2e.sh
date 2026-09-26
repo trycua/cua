@@ -178,7 +178,7 @@ run_report() {
 
 echo "[PREFLIGHT] Linux desktop, fixture, AX, capture, and video"
 set +e
-(cd "${RUST_ROOT}" && cargo test -p cua-driver \
+(cd "${RUST_ROOT}" && cargo test -p cua-driver-e2e \
   "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
   --test e2e_environment_preflight_test -- \
   --ignored --exact canonical_e2e_environment_is_ready --nocapture --test-threads=1) \
@@ -256,7 +256,7 @@ run_computer_history_gate() {
   fi
 
   run_test computer-history-encrypted-lifecycle \
-    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+    cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test computer_history_cross_platform_test -- \
       --ignored --exact encrypted_history_survives_restart_and_cryptographically_purges \
       --nocapture --test-threads=1
@@ -280,41 +280,58 @@ if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
     cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test private_worker_test -- --test-threads=1
   run_test shared-behavior-matrix \
-    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+    cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test cross_platform_behavior_test -- \
       --ignored --exact shared_web_action_matrix_is_state_verified \
       --nocapture --test-threads=1
   run_test embedded-browser-routes \
-    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+    cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test cross_platform_behavior_test -- \
       --ignored --exact embedded_browser_routes_are_exact_or_refused \
       --nocapture --test-threads=1
 fi
 
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
-  run_test wayland-overlay-idle-no-overlay \
-    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
-      --test wayland_overlay_idle_test -- \
-      --ignored --exact no_overlay_flag_never_starts_wayland_overlay_thread \
-      --nocapture --test-threads=1
   if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    run_test wayland-overlay-idle-no-overlay \
+      cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+        --test wayland_overlay_idle_test -- \
+        --ignored --exact no_overlay_flag_never_starts_wayland_overlay_thread \
+        --nocapture --test-threads=1
     run_test wayland-overlay-idle-recovery \
-      cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
         --test wayland_overlay_idle_test -- \
         --ignored --exact wayland_overlay_quiesces_and_recovers_after_capture_and_cursor_activity \
         --nocapture --test-threads=1
+  else
+    # X11 never starts the Wayland layer-shell overlay thread, so its absence
+    # there proves nothing about --no-overlay. Record the limitation instead
+    # of reporting a vacuous pass.
+    limitation="The Wayland overlay lifecycle cases need a native Wayland session; X11 cannot start the layer-shell overlay thread."
+    jq -n \
+      --arg reason "${limitation}" \
+      '{
+        schema: "cua-e2e-limitation-v1",
+        platform: "linux",
+        display_server: "x11",
+        harness: "wayland-overlay",
+        test: "wayland-overlay-idle",
+        status: "not_applicable",
+        reason: $reason
+      }' > "${ARTIFACT_DIR}/wayland-overlay-idle-limitation.json"
+    echo "[LIMITATION] wayland-overlay-idle: ${limitation}"
   fi
   run_test agent-cursor-showcase \
-    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+    cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test agent_cursor_showcase_test -- \
       --ignored --nocapture --test-threads=1
   run_test gtk3-native-harness \
-    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+    cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test harness_gtk3_test -- \
       --ignored --nocapture --test-threads=1
   if [[ -z "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]]; then
     run_test gtk4-target-selection \
-      cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
         --test harness_gtk4_test -- \
         --ignored --nocapture --test-threads=1
   else
@@ -339,13 +356,56 @@ fi
 
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
   run_test capture-contract \
-    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+    cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test capture_contract_test -- \
       --ignored --nocapture --test-threads=1
   run_test desktop-scope \
-    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+    cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test desktop_scope_linux_test -- \
       --ignored --nocapture --test-threads=1
+  if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+    run_test x11-unpublished-pid \
+      cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+        --test x11_unpublished_pid_linux_test -- \
+        --ignored --nocapture --test-threads=1
+  else
+    limitation="The unpublished-_NET_WM_PID case maps a bare X11 client and runs in the canonical X11 lane."
+    jq -n \
+      --arg reason "${limitation}" \
+      '{
+        schema: "cua-e2e-limitation-v1",
+        platform: "linux",
+        display_server: "wayland",
+        harness: "x11-bare-client",
+        test: "x11-unpublished-pid",
+        status: "not_applicable",
+        reason: $reason
+      }' > "${ARTIFACT_DIR}/x11-unpublished-pid-limitation.json"
+    echo "[LIMITATION] x11-unpublished-pid: ${limitation}"
+  fi
+  if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+    run_test perception-capture-loop \
+      cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+        --test perception_capture_loop_test -- \
+        --ignored --nocapture --test-threads=1
+  else
+    # The perception loop is certified in the canonical X11 lane. Wayland
+    # window capture and pointer routes differ per compositor and are not yet
+    # part of this row, so record the coverage gap instead of a vacuous pass.
+    limitation="The perception capture-loop row is certified on X11; Wayland compositor lanes do not run it yet."
+    jq -n \
+      --arg reason "${limitation}" \
+      '{
+        schema: "cua-e2e-limitation-v1",
+        platform: "linux",
+        display_server: "wayland",
+        harness: "electron",
+        test: "perception-capture-loop",
+        status: "not_covered",
+        reason: $reason
+      }' > "${ARTIFACT_DIR}/perception-capture-loop-limitation.json"
+    echo "[LIMITATION] perception-capture-loop: ${limitation}"
+  fi
 fi
 
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then

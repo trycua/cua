@@ -972,13 +972,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shutdown_joins_lifecycle_maintenance() {
+    async fn shutdown_stops_lifecycle_maintenance() {
         let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
         let runtime = DriverRuntime::create(standard_options()).unwrap();
-        assert!(runtime.lifecycle_maintenance.lock().unwrap().is_some());
+        // The maintenance thread owns the only receiver, so sends fail once it
+        // exits. This proves the thread stopped; it cannot distinguish the join
+        // from the thread's own prompt exit after the stop signal.
+        let probe = runtime
+            .lifecycle_maintenance
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("runtime creation starts lifecycle maintenance")
+            .shutdown
+            .clone();
 
         runtime.shutdown().await;
 
         assert!(runtime.lifecycle_maintenance.lock().unwrap().is_none());
+        assert!(
+            probe.send(()).is_err(),
+            "lifecycle maintenance is still running after shutdown"
+        );
     }
 }

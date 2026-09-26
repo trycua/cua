@@ -1007,21 +1007,28 @@
             "type": "object"
           },
           "position": {
-            "properties": {
-              "x": {
-                "format": "double",
-                "type": "number"
+            "anyOf": [
+              {
+                "properties": {
+                  "x": {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  "y": {
+                    "format": "double",
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "type": "object"
               },
-              "y": {
-                "format": "double",
-                "type": "number"
+              {
+                "type": "null"
               }
-            },
-            "required": [
-              "x",
-              "y"
-            ],
-            "type": "object"
+            ]
           },
           "session": {
             "type": "string"
@@ -3047,7 +3054,7 @@
       },
       "input_schema": {
         "additionalProperties": false,
-        "description": "Transport-free request. Runtime use requires the future capture registry.",
+        "description": "Parse one immutable screenshot capture. Pass the `capture_id` returned by\n`get_window_state` or `get_desktop_state`; the Driver capture registry\nresolves it to the exact pixels and action-coordinate transform.",
         "properties": {
           "capture_id": {
             "minLength": 1,

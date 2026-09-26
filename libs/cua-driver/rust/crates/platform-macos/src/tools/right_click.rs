@@ -232,9 +232,21 @@ impl Tool for RightClickTool {
         };
 
         let fg = delivery_mode.is_foreground() && window_id.is_some();
+        let route = match super::pixel_route::resolve(pid, fg, window_id, "mouse_right_click").await
+        {
+            Ok(route) => route,
+            Err(refusal) => return refusal,
+        };
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             let do_it = move || -> anyhow::Result<()> {
                 let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                if route == super::pixel_route::PixelClickRoute::ForegroundHid {
+                    // Warp the hardware pointer and post at the HID tap; see
+                    // `pixel_route` for the cross-platform foreground contract.
+                    return crate::input::mouse::click_at_xy_desktop_with_modifiers(
+                        screen_x, screen_y, 1, "right", &m,
+                    );
+                }
                 if let Some(wid) = window_id {
                     crate::input::mouse::right_click_at_xy_with_window_local(
                         pid,
@@ -249,26 +261,36 @@ impl Tool for RightClickTool {
                     crate::input::mouse::right_click_at_xy(pid, screen_x, screen_y, &m)
                 }
             };
-            // Foreground rung: brief front → right-click → restore prior frontmost.
-            match (fg, window_id) {
-                (true, Some(wid)) => {
-                    crate::input::skylight::with_foreground_assist(pid as libc::pid_t, wid, do_it)?;
-                    Ok(())
+            // Foreground rung: front the exact window → HID right-click →
+            // restore the prior frontmost. No input is sent unless the exact
+            // window is proven focused.
+            match (route, window_id) {
+                (super::pixel_route::PixelClickRoute::ForegroundHid, Some(wid)) => {
+                    crate::input::skylight::with_foreground_hid_activation(
+                        pid as libc::pid_t,
+                        wid,
+                        do_it,
+                    )
                 }
                 _ => do_it(),
             }
         })
         .await;
-        let mode_label = if fg {
-            " (delivery_mode:foreground)"
-        } else {
-            ""
-        };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Right-clicked{mod_suffix} at ({screen_x:.1}, {screen_y:.1}){mode_label}."))
-                .with_structured(serde_json::json!({
-                    "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
-                })),
+            Ok(Ok(())) => ToolResult::text(format!(
+                "Right-clicked{mod_suffix} at ({screen_x:.1}, {screen_y:.1}) ({}).",
+                super::pixel_route::delivery_note(route)
+            ))
+            .with_structured(serde_json::json!({
+                "path": super::pixel_route::path_label(route), "verified": false, "effect": "unverifiable"
+            })),
+            Ok(Err(e)) if route == super::pixel_route::PixelClickRoute::ForegroundHid => {
+                super::pixel_route::foreground_unavailable(
+                    "Right-click",
+                    window_id.unwrap_or_default(),
+                    &e.to_string(),
+                )
+            }
             Ok(Err(e)) => ToolResult::error(format!("Right-click failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }

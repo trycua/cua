@@ -1271,6 +1271,9 @@ fn canonical_manifest_path(path: &Path) -> Result<String, String> {
             }
             Ok(_) => return Err("path contains an unavailable filesystem entry".to_owned()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotADirectory => {
+                return Err("an ancestor of the path is not a directory".to_owned())
+            }
             Err(error) => return Err(error.to_string()),
         }
         let name = existing
@@ -1281,9 +1284,11 @@ fn canonical_manifest_path(path: &Path) -> Result<String, String> {
             .parent()
             .ok_or_else(|| "path has no existing ancestor".to_owned())?;
     }
-    let metadata = std::fs::symlink_metadata(existing).map_err(|error| error.to_string())?;
+    // Follow a symlinked deepest ancestor (macOS `/tmp` -> `/private/tmp`);
+    // `canonicalize` below records its resolved target.
+    let metadata = std::fs::metadata(existing).map_err(|error| error.to_string())?;
     if !metadata.is_dir() {
-        return Err("existing ancestor is not a directory".to_owned());
+        return Err("deepest existing ancestor is not a directory".to_owned());
     }
     let mut canonical = std::fs::canonicalize(existing).map_err(|error| error.to_string())?;
     for component in suffix.into_iter().rev() {
@@ -1719,6 +1724,31 @@ allow:
                 }),
             )
             .unwrap();
+    }
+
+    #[cfg(all(feature = "yaml", unix))]
+    #[test]
+    fn manifest_paths_resolve_a_symlinked_deepest_ancestor() {
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("private-tmp");
+        std::fs::create_dir(&target).unwrap();
+        let link = root.path().join("tmp");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert_eq!(
+            canonical_manifest_path(&link.join("out.png")).unwrap(),
+            std::fs::canonicalize(&target)
+                .unwrap()
+                .join("out.png")
+                .to_string_lossy()
+        );
+        let file = root.path().join("file");
+        std::fs::write(&file, b"").unwrap();
+        let file_link = root.path().join("file-link");
+        std::os::unix::fs::symlink(&file, &file_link).unwrap();
+        assert_eq!(
+            canonical_manifest_path(&file_link.join("out.png")).unwrap_err(),
+            "an ancestor of the path is not a directory"
+        );
     }
 
     #[cfg(feature = "yaml")]

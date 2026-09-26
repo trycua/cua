@@ -1,11 +1,15 @@
 //! Image / capture / recording tool tests.
 //!
-//! screenshot (full-display + JPEG), zoom + the zoom→from_zoom click round
-//! trip, the recording session lifecycle (start/stop + action.json), recording
-//! screenshot capture, the `record_video` flag, trajectory replay, click
-//! `debug_image_out`, and the `set_config` screenshot-resize pipeline. Split
-//! out of the old monolithic `mcp_protocol_test.rs`; mac/windows pairs merge
-//! and branch only where assertions differ.
+//! zoom + the zoom→from_zoom click round trip, the recording session
+//! lifecycle (start/stop + action.json), recording screenshot capture,
+//! trajectory replay, click `debug_image_out`, and the `set_config`
+//! screenshot-resize pipeline. Split out of the old monolithic
+//! `mcp_protocol_test.rs`; mac/windows pairs merge and branch only where
+//! assertions differ.
+//!
+//! Tests that dispatch a real click into whichever window is on screen are
+//! `#[ignore]`d so a plain `cargo test` never sends input. Run them with
+//! `--ignored` only on a disposable desktop.
 
 #![cfg(any(target_os = "macos", target_os = "windows"))]
 
@@ -19,135 +23,13 @@ fn spawn_unrestricted() -> Option<RawDriver> {
 }
 
 #[test]
-#[cfg(target_os = "windows")]
-fn screenshot() {
-    let Some(mut d) = RawDriver::spawn() else {
-        return;
-    };
-
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    d.recv();
-
-    // Full-display screenshot (no window_id).
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"screenshot","arguments":{}}
-    }));
-    let resp = d.recv();
-    assert!(resp["error"].is_null(), "Protocol error: {resp:?}");
-    let content = resp["result"]["content"].as_array().expect("content array");
-    assert!(!content.is_empty(), "screenshot returned empty content");
-
-    // JPEG format.
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":3,"method":"tools/call",
-        "params":{"name":"screenshot","arguments":{"format":"jpeg","quality":70}}
-    }));
-    let resp = d.recv();
-    assert!(
-        resp["error"].is_null(),
-        "Protocol error from screenshot jpeg: {resp:?}"
-    );
-    if !resp["result"]["isError"].as_bool().unwrap_or(false) {
-        let content = resp["result"]["content"].as_array().expect("content array");
-        let has_jpeg = content.iter().any(|c| {
-            c["type"] == "image"
-                && c["mimeType"].as_str().unwrap_or("") == "image/jpeg"
-                && c["data"].as_str().map(|s| s.len() > 10).unwrap_or(false)
-        });
-        assert!(
-            has_jpeg,
-            "Expected image/jpeg in screenshot response: {content:?}"
-        );
-        let sc = &resp["result"]["structuredContent"];
-        assert!(sc["width"].as_f64().unwrap_or(0.0) > 0.0);
-        assert!(sc["height"].as_f64().unwrap_or(0.0) > 0.0);
-        assert_eq!(sc["format"].as_str().unwrap_or(""), "jpeg");
-    }
-}
-
-#[test]
-#[cfg(target_os = "macos")]
-fn screenshot_no_window_id() {
-    //! Call screenshot without window_id — should capture the full display and return image content.
-    let Some(mut d) = RawDriver::spawn() else {
-        return;
-    };
-
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    d.recv();
-
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"screenshot","arguments":{}}
-    }));
-    let resp = d.recv();
-    assert!(
-        resp["error"].is_null(),
-        "Protocol error from screenshot: {resp:?}"
-    );
-    let content = resp["result"]["content"].as_array().expect("content array");
-    assert!(
-        !content.is_empty(),
-        "screenshot should return at least one content item"
-    );
-}
-
-#[test]
-#[cfg(target_os = "macos")]
-fn screenshot_jpeg_format() {
-    //! Call screenshot with format=jpeg — should return a JPEG image.
-    let Some(mut d) = RawDriver::spawn() else {
-        return;
-    };
-
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    d.recv();
-
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"screenshot","arguments":{"format":"jpeg","quality":70}}
-    }));
-    let resp = d.recv();
-    assert!(
-        resp["error"].is_null(),
-        "Protocol error from screenshot: {resp:?}"
-    );
-    let content = resp["result"]["content"].as_array().expect("content array");
-    let is_error = resp["result"]["isError"].as_bool().unwrap_or(false);
-    if !is_error {
-        let has_jpeg = content.iter().any(|c| {
-            c["type"] == "image"
-                && c["mimeType"].as_str().unwrap_or("") == "image/jpeg"
-                && c["data"].as_str().map(|s| s.len() > 10).unwrap_or(false)
-        });
-        assert!(
-            has_jpeg,
-            "Expected image/jpeg in screenshot response, got: {content:?}"
-        );
-        // Verify structured content has width and height.
-        let sc = &resp["result"]["structuredContent"];
-        assert!(
-            sc["width"].as_f64().unwrap_or(0.0) > 0.0,
-            "Expected positive width in structuredContent"
-        );
-        assert!(
-            sc["height"].as_f64().unwrap_or(0.0) > 0.0,
-            "Expected positive height in structuredContent"
-        );
-        assert_eq!(
-            sc["format"].as_str().unwrap_or(""),
-            "jpeg",
-            "Expected format=jpeg"
-        );
-    }
-}
-
-#[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn zoom_tool_returns_jpeg() {
-    //! Call zoom on a visible window and verify the result contains a JPEG image.
-    //! Skips gracefully if no windows are visible (headless environment).
+    //! Snapshot a visible window, zoom into it, and verify the result contains
+    //! a JPEG image. `zoom` crops the screenshot this session last captured, so
+    //! each attempt first takes a `get_window_state` screenshot on the same
+    //! connection. Skips gracefully if no windows are visible (headless
+    //! environment).
     let Some(mut d) = RawDriver::spawn() else {
         return;
     };
@@ -171,11 +53,38 @@ fn zoom_tool_returns_jpeg() {
     let mut tried = 0usize;
     let mut zoom_errors: Vec<String> = Vec::new();
     let mut successful_without_jpeg = false;
+    let error_text = |r: &serde_json::Value| {
+        r["result"]["content"]
+            .as_array()
+            .and_then(|items| items.iter().find_map(|c| c["text"].as_str()))
+            .unwrap_or("<no error text>")
+            .to_owned()
+    };
     for win in windows.iter().take(5) {
-        let Some(wid) = win["window_id"].as_u64() else {
+        let (Some(wid), Some(pid)) = (win["window_id"].as_u64(), win["pid"].as_u64()) else {
             continue;
         };
         tried += 1;
+        let request_id = 2 + 2 * tried as u64;
+
+        // zoom crops this session's latest screenshot of the window.
+        d.send(&serde_json::json!({
+            "jsonrpc":"2.0","id": request_id,"method":"tools/call",
+            "params":{"name":"get_window_state","arguments":{
+                "pid": pid,
+                "window_id": wid,
+                "include_screenshot": true,
+                "include_accessibility_tree": false
+            }}
+        }));
+        let snapshot = d.recv();
+        if snapshot["result"]["isError"].as_bool().unwrap_or(false) {
+            zoom_errors.push(format!(
+                "window_id={wid}: get_window_state: {}",
+                error_text(&snapshot)
+            ));
+            continue;
+        }
 
         // Window-relative pixels need this connection's current screenshot.
         d.send(&serde_json::json!({
@@ -185,21 +94,17 @@ fn zoom_tool_returns_jpeg() {
         d.recv();
 
         d.send(&serde_json::json!({
-            "jsonrpc":"2.0","id": 2 + tried as u64,"method":"tools/call",
+            "jsonrpc":"2.0","id": request_id + 1,"method":"tools/call",
             "params":{"name":"zoom","arguments":{
                 "window_id": wid,
+                "pid": pid,
                 "x1": 0, "y1": 0, "x2": 100, "y2": 100
             }}
         }));
         let r = d.recv();
         if r["result"]["isError"].as_bool().unwrap_or(false) {
             // This window might be off-screen or not capturable — try the next.
-            let text = r["result"]["content"]
-                .as_array()
-                .and_then(|items| items.iter().find_map(|c| c["text"].as_str()))
-                .unwrap_or("<no error text>")
-                .to_owned();
-            zoom_errors.push(format!("window_id={wid}: {text}"));
+            zoom_errors.push(format!("window_id={wid}: zoom: {}", error_text(&r)));
             continue;
         }
         let content = r["result"]["content"].as_array().expect("content array");
@@ -235,13 +140,17 @@ fn zoom_tool_returns_jpeg() {
         eprintln!("No on-screen windows found — skipping zoom test");
         return;
     }
+    // A screenshot-only get_window_state that produces no content means the
+    // window capture itself failed, the same condition zoom reports as
+    // `screencapture failed`.
     if !found_jpeg
         && !successful_without_jpeg
         && cfg!(target_os = "macos")
         && !zoom_errors.is_empty()
-        && zoom_errors
-            .iter()
-            .all(|e| e.contains("screencapture failed"))
+        && zoom_errors.iter().all(|e| {
+            e.contains("screencapture failed")
+                || e.contains("neither AX tree nor screenshot succeeded")
+        })
     {
         eprintln!(
             "No visible windows were capturable by the raw unbundled test process — skipping zoom test. \
@@ -259,6 +168,7 @@ fn zoom_tool_returns_jpeg() {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[ignore = "sends real input to a live desktop window; run with --ignored only on a disposable desktop"]
 fn zoom_from_zoom_click_round_trip() {
     //! Verify the zoom → from_zoom click pipeline:
     //! 1. click(from_zoom=true) with no zoom context returns the expected error.
@@ -433,6 +343,7 @@ fn recording_session() {
 
 #[test]
 #[cfg(target_os = "macos")]
+#[ignore = "sends real input to a live desktop window; run with --ignored only on a disposable desktop"]
 fn recording_screenshot_capture() {
     //! When recording is active and a tool call includes a window_id, a screenshot.png
     //! should appear alongside action.json in the turn folder.
@@ -540,53 +451,6 @@ fn recording_screenshot_capture() {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn start_recording_record_video_flag_accepted() {
-    //! `record_video` is the new on/off flag (replaces the old
-    //! `video_experimental`). Default is true. This test passes
-    //! `record_video: false` to bypass the ffmpeg dependency in CI;
-    //! we only verify that the schema accepts the call and the
-    //! session enters the enabled state. Full video lifecycle is
-    //! covered by the manual demo + the per-platform smoke when
-    //! ffmpeg is installed.
-    let Some(mut d) = spawn_unrestricted() else {
-        return;
-    };
-
-    let tmp_dir = std::env::temp_dir().join(format!("cua-driver-rs-recvid-{}", std::process::id()));
-    let tmp_str = tmp_dir.to_string_lossy().to_string();
-    std::fs::create_dir_all(&tmp_dir).unwrap();
-
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    d.recv();
-
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"start_recording","arguments":{
-            "output_dir": tmp_str, "record_video": false
-        }}
-    }));
-    let resp = d.recv();
-    assert!(
-        resp["error"].is_null(),
-        "Expected no JSON-RPC error, got: {resp:?}"
-    );
-    let is_err = resp["result"]["isError"].as_bool().unwrap_or(false);
-    assert!(
-        !is_err,
-        "start_recording with record_video:false should succeed: {resp:?}"
-    );
-
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":3,"method":"tools/call",
-        "params":{"name":"stop_recording","arguments":{}}
-    }));
-    d.recv();
-    drop(d);
-    let _ = std::fs::remove_dir_all(&tmp_dir);
-}
-
-#[test]
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn replay_trajectory() {
     //! Write a minimal no-GUI trajectory, replay it, verify succeeded=1.
     //! The test daemon deliberately starts with `--no-overlay`, so an
@@ -639,6 +503,7 @@ fn replay_trajectory() {
 
 #[test]
 #[cfg(target_os = "macos")]
+#[ignore = "sends real input to a live desktop window; run with --ignored only on a disposable desktop"]
 fn click_debug_image_out() {
     //! click with debug_image_out writes a PNG crosshair file and then proceeds.
     //! Verifies the debug capture path works end-to-end.

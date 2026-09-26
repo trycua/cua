@@ -93,26 +93,27 @@ fn has_matching_pane_ancestor(nodes: &[UiaNode], window_index: usize, name: &str
     false
 }
 
+/// Bind a pane-rooted native prompt to its own title.
+///
+/// Chromium has exposed this modal with several UIA topologies: Edge 152 put
+/// one title label directly under the pane and another deeper in the dialog
+/// body, while Chrome and Edge 153 expose only the dialog-body title label
+/// below the prompt pane. The stable binding is that a trusted native `Text`
+/// inside the pane repeats the pane's own accessible name and that the pane
+/// does not wrap another native window (which would be the Window-rooted
+/// topology or an unrelated surface).
 fn has_pane_rooted_title_binding(nodes: &[UiaNode], pane_index: usize, name: &str) -> bool {
-    let pane = &nodes[pane_index];
     let end = subtree_end(nodes, pane_index);
     let descendants = &nodes[(pane_index + 1)..end];
-    let has_direct_title = descendants.iter().any(|node| {
+    let has_title = descendants.iter().any(|node| {
         is_trusted_prompt_node(nodes, node)
-            && node.depth == pane.depth + 1
-            && node.control_type == "Text"
-            && node_name(node) == Some(name)
-    });
-    let has_nested_title = descendants.iter().any(|node| {
-        is_trusted_prompt_node(nodes, node)
-            && node.depth > pane.depth + 1
             && node.control_type == "Text"
             && node_name(node) == Some(name)
     });
     let has_nested_window = descendants
         .iter()
         .any(|node| is_trusted_prompt_node(nodes, node) && node.control_type == "Window");
-    has_direct_title && has_nested_title && !has_nested_window
+    has_title && !has_nested_window
 }
 
 fn native_prompt_surfaces(nodes: &[UiaNode]) -> Vec<(usize, usize)> {
@@ -347,7 +348,7 @@ where
 }
 
 fn exact_allow_button(nodes: &[UiaNode]) -> Result<Option<usize>, BrowserRefusal> {
-    Ok(exact_consent_actions_with(nodes, native_button_properties)?.map(|actions| actions.0))
+    exact_allow_button_with(nodes, native_button_properties)
 }
 
 fn exact_cancel_button(nodes: &[UiaNode]) -> Result<Option<usize>, BrowserRefusal> {
@@ -536,6 +537,20 @@ mod tests {
         ]
     }
 
+    /// Chrome 153.0.8010.53 and Edge 153.0.4234.48 on hosted Windows (#4121):
+    /// the prompt pane holds only the nested dialog-body title label.
+    fn chromium_153_prompt(title: &str, labels: [&str; 3]) -> Vec<UiaNode> {
+        vec![
+            dialog_node("Pane", title, 2),
+            dialog_node("Text", title, 7),
+            dialog_node("Text", "opaque explanatory surface", 10),
+            dialog_node("Text", "opaque developer warning", 10),
+            button(labels[0], 11, (286, 307, 429, 345)),
+            button(labels[1], 12, (544, 307, 615, 345)),
+            button(labels[2], 13, (623, 307, 694, 345)),
+        ]
+    }
+
     fn properties(element_ptr: usize) -> Result<(String, bool), BrowserRefusal> {
         Ok((CHROMIUM_DIALOG_BUTTON_CLASS.to_owned(), element_ptr == 13))
     }
@@ -595,18 +610,56 @@ mod tests {
     }
 
     #[test]
-    fn pane_rooted_prompt_requires_both_title_bindings_and_no_nested_window() {
-        let mut missing_direct = pane_rooted_prompt("opaque title", ["A", "B", "C"]);
-        missing_direct[1].name = Some("different direct title".to_owned());
+    fn matcher_supports_chromium_153_pane_rooted_prompt() {
+        let nodes = chromium_153_prompt(
+            "Allow remote debugging?",
+            ["Turn off in settings", "Allow", "Cancel"],
+        );
         assert_eq!(
-            exact_allow_button_with(&missing_direct, properties).unwrap(),
+            exact_consent_actions_with(&nodes, properties).unwrap(),
+            Some((12, 13))
+        );
+        assert_eq!(
+            exact_allow_button_with(
+                &chromium_153_prompt(
+                    "Remote-Debugging zulassen?",
+                    ["In Einstellungen deaktivieren", "Zulassen", "Abbrechen"],
+                ),
+                properties,
+            )
+            .unwrap(),
+            Some(12)
+        );
+    }
+
+    #[test]
+    fn pane_rooted_prompt_requires_a_title_binding_and_no_nested_window() {
+        let mut one_title_left = pane_rooted_prompt("opaque title", ["A", "B", "C"]);
+        one_title_left[1].name = Some("different direct title".to_owned());
+        assert_eq!(
+            exact_allow_button_with(&one_title_left, properties).unwrap(),
+            Some(12)
+        );
+
+        let mut no_title = pane_rooted_prompt("opaque title", ["A", "B", "C"]);
+        no_title[1].name = Some("different direct title".to_owned());
+        no_title[2].name = Some("different nested title".to_owned());
+        assert_eq!(
+            exact_allow_button_with(&no_title, properties).unwrap(),
             None
         );
 
-        let mut missing_nested = pane_rooted_prompt("opaque title", ["A", "B", "C"]);
-        missing_nested[2].name = Some("different nested title".to_owned());
+        let mut untitled_153 = chromium_153_prompt("opaque title", ["A", "B", "C"]);
+        untitled_153[1].name = Some("different title".to_owned());
         assert_eq!(
-            exact_allow_button_with(&missing_nested, properties).unwrap(),
+            exact_allow_button_with(&untitled_153, properties).unwrap(),
+            None
+        );
+
+        let mut web_title = chromium_153_prompt("opaque title", ["A", "B", "C"]);
+        web_title[1].in_web_content = true;
+        assert_eq!(
+            exact_allow_button_with(&web_title, properties).unwrap(),
             None
         );
 

@@ -4869,7 +4869,9 @@ class _UniffiFfiConverterTypeParseVisualRegionsOptions(_UniffiConverterRustBuffe
 @dataclass
 class ParseVisualRegionsInput:
     """
-    Transport-free request. Runtime use requires the future capture registry.
+    Parse one immutable screenshot capture. Pass the `capture_id` returned by
+    `get_window_state` or `get_desktop_state`; the Driver capture registry
+    resolves it to the exact pixels and action-coordinate transform.
 """
     def __init__(self, *, capture_id:str, options:ParseVisualRegionsOptions):
         self.capture_id = capture_id
@@ -5035,7 +5037,7 @@ class _UniffiFfiConverterTypeVisualCaptureSource(_UniffiConverterRustBuffer):
 @dataclass
 class VisualScreenshotReference:
     """
-    Screenshot identity and geometry retained by the future capture registry.
+    Screenshot identity and geometry retained by the Driver capture registry.
 """
     def __init__(self, *, reference:str, width:int, height:int, mime_type:str, sha256:typing.Optional[str]):
         self.reference = reference

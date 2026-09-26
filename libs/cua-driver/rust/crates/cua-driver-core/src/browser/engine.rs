@@ -45,7 +45,7 @@ use super::platform::{
     BrowserVisualActionKind, ExistingProfileSetupRequest,
 };
 use super::prepare::ManagedBrowsers;
-use super::reconnect::ReconnectGates;
+use super::reconnect::{ReconnectGates, ReconnectKey};
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::semantic::{
     build_dom_index, build_layout_index, compose_accessibility_tree, parse_viewport,
@@ -835,7 +835,10 @@ impl BrowserEngine {
         // socket rather than opening another browser-level connection.
         let _leader = self
             .reconnect_gates
-            .lock(&grant.fingerprint, &grant.endpoint_ws_url)
+            .lock(ReconnectKey::new(
+                &grant.fingerprint,
+                &grant.endpoint_ws_url,
+            ))
             .await;
         let mut grant = self
             .existing_profile_grant(session, transport_session, pid)

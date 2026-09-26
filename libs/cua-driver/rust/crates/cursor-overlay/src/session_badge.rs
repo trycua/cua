@@ -585,9 +585,12 @@ mod tests {
     }
 
     #[test]
-    fn badge_paints_at_one_and_two_x_backing_scales() {
+    fn badge_gradient_tracks_session_color_and_zero_alpha_paints_nothing() {
         for scale in [1.0, 2.0] {
-            let mut pixmap = Pixmap::new((240.0 * scale) as u32, (160.0 * scale) as u32).unwrap();
+            let (width, height) = ((240.0 * scale) as u32, (160.0 * scale) as u32);
+            let mut blue = Pixmap::new(width, height).unwrap();
+            let mut purple = Pixmap::new(width, height).unwrap();
+            let mut hidden = Pixmap::new(width, height).unwrap();
             let layout = session_badge_layout(SessionBadgeInput {
                 label: Some("Research run"),
                 delivery: Some(DeliveryModifier::Foreground),
@@ -596,35 +599,41 @@ mod tests {
                 backing_scale: scale,
                 label_alpha: 1.0,
                 chip_alpha: 1.0,
-                clip: Some((pixmap.width() as f32, pixmap.height() as f32)),
+                clip: Some((width as f32, height as f32)),
             })
             .unwrap();
-            paint_session_badge(&mut pixmap, &layout, [94, 192, 232, 255], 1.0);
-            assert!(pixmap.data().chunks_exact(4).any(|pixel| pixel[3] > 0));
-        }
-    }
+            paint_session_badge(&mut blue, &layout, [94, 192, 232, 255], 1.0);
+            paint_session_badge(&mut purple, &layout, [178, 132, 255, 255], 1.0);
+            paint_session_badge(&mut hidden, &layout, [94, 192, 232, 255], 0.0);
+            assert!(
+                blue.data().chunks_exact(4).any(|pixel| pixel[3] > 0),
+                "badge paints at {scale}x"
+            );
+            assert_ne!(blue.data(), purple.data(), "{scale}x");
+            assert!(
+                hidden.data().chunks_exact(4).all(|pixel| pixel[3] == 0),
+                "{scale}x"
+            );
 
-    #[test]
-    fn badge_gradient_tracks_session_color_and_zero_alpha_paints_nothing() {
-        let mut blue = Pixmap::new(240, 160).unwrap();
-        let mut purple = Pixmap::new(240, 160).unwrap();
-        let mut hidden = Pixmap::new(240, 160).unwrap();
-        let layout = session_badge_layout(SessionBadgeInput {
-            label: Some("Research run"),
-            delivery: None,
-            target: None,
-            cursor: (120.0, 60.0),
-            backing_scale: 1.0,
-            label_alpha: 1.0,
-            chip_alpha: 0.0,
-            clip: Some((240.0, 160.0)),
-        })
-        .unwrap();
-        paint_session_badge(&mut blue, &layout, [94, 192, 232, 255], 1.0);
-        paint_session_badge(&mut purple, &layout, [178, 132, 255, 255], 1.0);
-        paint_session_badge(&mut hidden, &layout, [94, 192, 232, 255], 0.0);
-        assert_ne!(blue.data(), purple.data());
-        assert!(hidden.data().chunks_exact(4).all(|pixel| pixel[3] == 0));
+            // Without chips, only the pill paints, so the session colour must
+            // tint the pill itself rather than just the chips.
+            let pill_only = session_badge_layout(SessionBadgeInput {
+                label: Some("Research run"),
+                delivery: None,
+                target: None,
+                cursor: (120.0 * scale, 60.0 * scale),
+                backing_scale: scale,
+                label_alpha: 1.0,
+                chip_alpha: 0.0,
+                clip: Some((width as f32, height as f32)),
+            })
+            .unwrap();
+            let mut pill_blue = Pixmap::new(width, height).unwrap();
+            let mut pill_purple = Pixmap::new(width, height).unwrap();
+            paint_session_badge(&mut pill_blue, &pill_only, [94, 192, 232, 255], 1.0);
+            paint_session_badge(&mut pill_purple, &pill_only, [178, 132, 255, 255], 1.0);
+            assert_ne!(pill_blue.data(), pill_purple.data(), "pill {scale}x");
+        }
     }
 
     #[test]

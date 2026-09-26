@@ -12,8 +12,24 @@ from types import SimpleNamespace
 BASE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BASE / "python"))
 
-from choose_decision import MockDecisionModel, choose_request
-from decision_models import S1DecisionModel, TypeSafeDecisionModel
+from choose_decision import MockDecisionModel, choose_request, local_s1_model
+from decision_models import S1DecisionModel, TypeSafeDecisionModel, s1_model_identity
+
+REVISION = "16818868b0cc7813808aae4e87b417657046ab79"
+OTHER_REVISION = "88d8b8a90c2da4470d005cc23ec8665a6442ebe1"
+
+
+def write_adapter(root: Path, modality: str, revision: str | None = None) -> None:
+    """Lay out a PEFT adapter like `hf download --local-dir` does."""
+    (root / modality).mkdir(parents=True, exist_ok=True)
+    (root / modality / "adapter_config.json").write_text("{}", encoding="utf-8")
+    if revision:
+        metadata = root / ".cache/huggingface/download" / modality
+        metadata.mkdir(parents=True, exist_ok=True)
+        for name in ("adapter_config.json", "adapter_model.safetensors"):
+            (metadata / f"{name}.metadata").write_text(
+                f"{revision}\n0123abcd\n1790377747.1\n", encoding="utf-8"
+            )
 
 
 def request() -> dict:
@@ -245,6 +261,147 @@ class DecisionModelsTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(result.stdout, "")
                 self.assertIn("S1 setup failed", result.stderr)
+
+    def test_s1_identity_uses_hf_local_dir_revision_for_the_selected_modality(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = Path(directory) / "cua-s1-4b-0.2"
+            write_adapter(adapter, "text", REVISION)
+            write_adapter(adapter, "multimodal", REVISION)
+            self.assertEqual(s1_model_identity(adapter, "text"), f"cua-s1-4b-0.2@{REVISION}:text")
+            self.assertEqual(
+                s1_model_identity(adapter / "multimodal", "multimodal"),
+                f"cua-s1-4b-0.2@{REVISION}:multimodal",
+            )
+            self.assertEqual(
+                s1_model_identity(adapter, "text", repo_id="cua-ai/cua-s1-4b-0.2"),
+                f"cua-ai/cua-s1-4b-0.2@{REVISION}:text",
+            )
+
+    def test_s1_identity_omits_conflicting_or_missing_revisions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plain = Path(directory) / "my adapter"
+            write_adapter(plain, "text")
+            self.assertEqual(s1_model_identity(plain, "text"), "my_adapter:text")
+            mixed = Path(directory) / "mixed"
+            write_adapter(mixed, "text", REVISION)
+            metadata = mixed / ".cache/huggingface/download/text/adapter_model.safetensors.metadata"
+            metadata.write_text(f"{OTHER_REVISION}\n", encoding="utf-8")
+            self.assertEqual(s1_model_identity(mixed, "text"), "mixed:text")
+            self.assertEqual(s1_model_identity(mixed, "text", revision="v0.2"), "mixed@v0.2:text")
+
+    def test_s1_identity_reads_hugging_face_cache_snapshots(self) -> None:
+        snapshot = Path("/cache/hub/models--cua-ai--cua-s1-4b-0.1/snapshots") / OTHER_REVISION
+        self.assertEqual(
+            s1_model_identity(snapshot, "multimodal"),
+            f"cua-ai/cua-s1-4b-0.1@{OTHER_REVISION}:multimodal",
+        )
+        self.assertEqual(
+            s1_model_identity(snapshot / "text", "text"),
+            f"cua-ai/cua-s1-4b-0.1@{OTHER_REVISION}:text",
+        )
+
+    def test_s1_identity_is_bounded_and_rejects_unknown_modality(self) -> None:
+        identity = s1_model_identity(Path("/x") / ("a" * 300), "text", revision="r" * 300)
+        self.assertLessEqual(len(identity), 128)
+        with self.assertRaises(ValueError):
+            s1_model_identity(Path("/x/adapter"), "audio")
+
+    def test_s1_adapter_reports_explicit_identity_and_keeps_the_default(self) -> None:
+        scores = {"submit-form": 1.0, "reobserve": 0.0, "abstain": 0.0}
+        named = S1DecisionModel(FakeScorer(scores), name=f"cua-s1-4b-0.2@{REVISION}:text")
+        self.assertEqual(
+            choose_request(request(), named)["model"], f"cua-s1-4b-0.2@{REVISION}:text"
+        )
+        self.assertEqual(S1DecisionModel(FakeScorer(scores)).name, "cua-s1-4b-local")
+        with self.assertRaises(ValueError):
+            S1DecisionModel(FakeScorer(scores), name="")
+
+    def _local_s1(self, env: dict[str, str], **kwargs):
+        previous = {name: os.environ.get(name) for name in env}
+        os.environ.update(env)
+        try:
+            return local_s1_model(**kwargs)
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+    def test_local_s1_selects_modality_and_binds_the_screenshot(self) -> None:
+        try:
+            import cua_s1.four_b  # noqa: F401
+        except ImportError:
+            self.skipTest("cua-s1 is not installed")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = root / "Qwen3.5-4B"
+            base.mkdir()
+            adapter = root / "cua-s1-4b-0.2"
+            write_adapter(adapter, "text", REVISION)
+            write_adapter(adapter, "multimodal", REVISION)
+            screenshot = root / "capture.png"
+            screenshot.write_bytes(b"fixture")
+            env = {
+                "S1_BASE_MODEL_PATH": str(base),
+                "S1_ADAPTER_PATH": str(adapter),
+                "S1_MODALITY": "",
+                "S1_ADAPTER_ID": "",
+                "S1_ADAPTER_REVISION": "",
+            }
+
+            text = self._local_s1(env)
+            self.assertEqual((text.modality, text.scorer.modality), ("text", "text"))
+            self.assertEqual(text.name, f"cua-s1-4b-0.2@{REVISION}:text")
+            self.assertEqual(text.scorer.lora_adapter_path, adapter)
+
+            multimodal = self._local_s1(
+                {**env, "S1_MODALITY": "multimodal"},
+                screenshot=screenshot,
+                screenshot_capture_id="capture-1",
+            )
+            self.assertEqual(multimodal.scorer.modality, "multimodal")
+            self.assertEqual(multimodal.screenshot_path, screenshot)
+            self.assertEqual(multimodal.screenshot_capture_id, "capture-1")
+            self.assertEqual(multimodal.name, f"cua-s1-4b-0.2@{REVISION}:multimodal")
+
+            with self.assertRaisesRegex(ValueError, "requires --screenshot"):
+                self._local_s1(env, modality="multimodal")
+            with self.assertRaisesRegex(ValueError, "require multimodal"):
+                self._local_s1(env, screenshot=screenshot, screenshot_capture_id="capture-1")
+            with self.assertRaisesRegex(ValueError, "modality must be one of"):
+                self._local_s1({**env, "S1_MODALITY": "audio"})
+
+    def test_local_s1_rejects_non_peft_checkpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = root / "base"
+            base.mkdir()
+            nano = root / "cua-s1-nano-0.1" / "text"
+            nano.mkdir(parents=True)
+            (nano / "model.safetensors").write_bytes(b"")
+            env = {"S1_BASE_MODEL_PATH": str(base), "S1_ADAPTER_PATH": str(nano.parent)}
+            with self.assertRaisesRegex(ValueError, "not supported by this chooser"):
+                self._local_s1(env)
+
+    def test_cli_rejects_s1_options_for_other_models(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(BASE / "python/choose_decision.py"),
+                "--model",
+                "mock",
+                "--s1-modality",
+                "multimodal",
+            ],
+            input=json.dumps(request()),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("require --model s1", result.stderr)
 
     def test_typesafe_request_contains_no_screenshot_or_action_arguments(self) -> None:
         class FakeClient:

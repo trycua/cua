@@ -69,9 +69,14 @@ impl Tool for StartRecordingTool {
                 30 fps) for the lifetime of the session. The recording is torn \
                 down automatically when the MCP client disconnects.\n\n\
                 **macOS uses native ScreenCaptureKit** (daemon-owned SCStream + \
-                SCRecordingOutput) so video inherits the daemon's Screen \
-                Recording grant — no extra TCC prompt, no ffmpeg subprocess. \
-                Requires macOS 15.0+.\n\n\
+                SCRecordingOutput) under the daemon's Screen Recording grant, \
+                with no ffmpeg subprocess. Requires macOS 15.0+. On macOS 26 \
+                (Tahoe), the first direct capture can also show a one-time \
+                consent asking to let Cua Driver bypass the system private \
+                window picker and directly access your screen and audio; \
+                choose Allow, or run `cua-driver permissions grant` beforehand \
+                to answer it up front. The recorder captures screen video only \
+                and does not enable system-audio capture.\n\n\
                 **Windows + Linux use an ffmpeg subprocess** (`gdigrab` / \
                 `x11grab` + libx264). Requires ffmpeg on PATH (winget install \
                 Gyan.FFmpeg / apt install ffmpeg); when ffmpeg is missing or \
@@ -97,8 +102,10 @@ impl Tool for StartRecordingTool {
                             Default: false. Set to true to also capture the main \
                             display to recording.mp4 (otherwise only the per-turn \
                             screenshots + JSON are recorded). On macOS this uses native \
-                            ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on \
-                            Windows + Linux it requires ffmpeg on PATH."
+                            ScreenCaptureKit (macOS 15.0+); macOS 26 can show a one-time \
+                            direct screen-capture consent on first use (see \
+                            `cua-driver permissions grant`). On Windows + Linux it \
+                            requires ffmpeg on PATH."
                     }
                 },
                 "additionalProperties": false

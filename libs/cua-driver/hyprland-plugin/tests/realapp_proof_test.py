@@ -2,7 +2,7 @@ import unittest
 import xml.etree.ElementTree as ET
 
 from realapp_proof import cleanup_all, rect_position, released_synthetic_input, validate_plan
-from primary_trace_test import START, STOP, trace
+from proof_fixtures import START, STOP, primary_trace as trace
 
 
 class ProofOracles(unittest.TestCase):

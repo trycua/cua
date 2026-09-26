@@ -255,9 +255,12 @@ impl OnnxBackend {
                     reason,
                 },
             )?;
-        if text.is_empty() {
+        // The recognizer dictionary includes a space class, so a crop can
+        // decode to whitespace only. Driver rejects whitespace-only text, and
+        // one such region would invalidate the whole parse.
+        let Some(text) = recognized_text(text) else {
             return Ok(None);
-        }
+        };
         Ok(Some(InferenceRegion {
             kind: "text",
             bounds: detection.bounds,
@@ -265,6 +268,18 @@ impl OnnxBackend {
             confidence: (detection.score * recognition_confidence).clamp(0.0, 1.0),
             class_id: None,
         }))
+    }
+}
+
+/// Trims recognized text and drops a crop that decoded to whitespace only.
+fn recognized_text(text: String) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else if trimmed.len() == text.len() {
+        Some(text)
+    } else {
+        Some(trimmed.to_owned())
     }
 }
 
@@ -528,6 +543,42 @@ fn run_tensor(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recognized_text_trims_and_drops_whitespace_only_crops() {
+        assert_eq!(
+            recognized_text("Submit".to_owned()).as_deref(),
+            Some("Submit")
+        );
+        assert_eq!(
+            recognized_text(" Sign in ".to_owned()).as_deref(),
+            Some("Sign in")
+        );
+        assert_eq!(recognized_text("a b".to_owned()).as_deref(), Some("a b"));
+        for blank in ["", " ", "   ", "\t", " \u{3000} "] {
+            assert_eq!(recognized_text(blank.to_owned()), None, "{blank:?}");
+        }
+    }
+
+    #[test]
+    fn whitespace_only_ctc_decode_is_not_emitted() {
+        // A two-step decode whose only emitted class is the trailing space
+        // class that the Paddle dictionary appends.
+        let dictionary = parse_dictionary(
+            "PostProcess:\n  character_dict: [a]\n",
+            DictionaryFormat::PaddleInferenceYaml,
+        )
+        .unwrap();
+        let (text, _) = crate::postprocess::ctc_decode(
+            &[0.0, 0.1, 0.9, 0.9, 0.1, 0.0],
+            &[1, 2, 3],
+            &dictionary,
+            0,
+        )
+        .unwrap();
+        assert_eq!(text, " ");
+        assert_eq!(recognized_text(text), None);
+    }
 
     #[test]
     fn plain_dictionary_preserves_spaces() {

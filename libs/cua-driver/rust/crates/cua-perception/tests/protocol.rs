@@ -179,12 +179,76 @@ fn zero_length_frame_is_recoverable() {
     assert_eq!(read_json_frame(&mut stdout)["request_id"], "after-empty");
 }
 
+/// Compare JSON numbers by value. Release Please bumps the version in the
+/// response golden by re-serializing it with `JSON.stringify`, which writes
+/// `1.0` as `1`; serde_json would otherwise treat those as different values.
+fn numbers_as_f64(value: Value) -> Value {
+    match value {
+        Value::Number(number) => number
+            .as_f64()
+            .and_then(serde_json::Number::from_f64)
+            .map_or(Value::Number(number), Value::Number),
+        Value::Array(items) => Value::Array(items.into_iter().map(numbers_as_f64).collect()),
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .map(|(key, value)| (key, numbers_as_f64(value)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
 #[test]
 fn fixture_parse_matches_the_checked_in_golden() {
-    let actual = response(FIXTURE_REQUEST);
-    let expected: Value = serde_json::from_str(FIXTURE_RESPONSE).expect("parse response golden");
+    let actual = numbers_as_f64(response(FIXTURE_REQUEST));
+    let expected =
+        numbers_as_f64(serde_json::from_str(FIXTURE_RESPONSE).expect("parse response golden"));
     assert_eq!(actual, expected);
-    assert_eq!(response(FIXTURE_REQUEST), expected);
+    assert_eq!(numbers_as_f64(response(FIXTURE_REQUEST)), expected);
+}
+
+/// Rewrites every integral-valued float as an integer, which is how Release
+/// Please's JSON updater reserializes the golden when it bumps the version.
+fn integral_floats_as_integers(value: Value) -> Value {
+    match value {
+        Value::Number(number) => match number.as_f64() {
+            Some(float) if number.is_f64() && float.fract() == 0.0 && float.abs() < 1e15 => {
+                Value::Number(serde_json::Number::from(float as i64))
+            }
+            _ => Value::Number(number),
+        },
+        Value::Array(items) => {
+            Value::Array(items.into_iter().map(integral_floats_as_integers).collect())
+        }
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .map(|(key, value)| (key, integral_floats_as_integers(value)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+#[test]
+fn response_golden_survives_release_please_reserialization() {
+    // Release Please's JSON updater writes integral floats without their
+    // fraction, so a bumped golden says `1` where the worker emits `1.0`.
+    // The checked-in golden may be in either form: before a release pull
+    // request it keeps `1.0`, and the release pull request rewrites it to `1`.
+    let golden: Value = serde_json::from_str(FIXTURE_RESPONSE).expect("parse response golden");
+    let reserialized = integral_floats_as_integers(golden.clone());
+    let reserialized_text =
+        serde_json::to_string_pretty(&reserialized).expect("serialize reserialized golden");
+    assert!(
+        reserialized_text.contains("\"confidence\": 1\n")
+            || reserialized_text.contains("\"confidence\": 1,"),
+        "reserialized golden should contain an integral confidence"
+    );
+    let actual = numbers_as_f64(response(FIXTURE_REQUEST));
+    assert_eq!(actual, numbers_as_f64(golden));
+    assert_eq!(actual, numbers_as_f64(reserialized));
 }
 
 #[test]

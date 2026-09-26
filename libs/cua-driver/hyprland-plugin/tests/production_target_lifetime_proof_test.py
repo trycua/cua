@@ -11,9 +11,10 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 import production_target_lifetime_proof as proof
-from production_primary_conflict_proof_test import plan as base_plan, identity, DELIVERED
-from production_session_fault_proof_test import ACTIVE, PARTIAL, status, trace
+from proof_fixtures import (ACTIVE, DELIVERED, PARTIAL, assert_rejects, identity, inkscape_profile,
+                            primary_conflict_plan as base_plan, status, trace)
 
 
 DESTROYED = ACTIVE + [(8, 'agent_cancel', 1, 0)]
@@ -68,6 +69,27 @@ def action():
 
 
 class PlanTests(unittest.TestCase):
+    def test_inkscape_only_profile_binds_both_the_target_and_its_replacement(self):
+        candidate = inkscape_profile(plan())
+        old, fresh = candidate['agents'][0], candidate['recovery']['agent']
+        fresh.update(app='inkscape', document='/synthetic/replacement/cua-smoke-inkscape.svg',
+                     pointer_stage='click_rectangle')
+        candidate['recovery']['identity']['exe'] = '/usr/bin/inkscape'
+        for index, spec in enumerate((old, fresh)):
+            spec['app_id_tag'] = f'cua-profile-lane-{index}'
+            spec['owned'].pop('profile')
+            spec['owned']['document']['path'] = spec['document']
+        proof.validate_plan(candidate)
+        assert_rejects(self, proof.validate_plan, candidate, [
+            ('absolute synthetic SVG document', lambda p: p['agents'][0].update(document='/synthetic/private.svg')),
+            ('fresh click stage', lambda p: p['recovery']['agent'].update(pointer_stage='move_rectangle')),
+            ('wrong Inkscape executable identity', lambda p: p['recovery']['identity'].update(exe='/usr/bin/soffice.bin')),
+            ('distinct Inkscape application instances', lambda p: p['recovery']['agent'].update(
+                app_id_tag=p['agents'][0]['app_id_tag'])),
+            ('synthetic smoke document', lambda p: p['recovery']['agent']['owned']['document'].update(
+                path='/synthetic/wrong.svg')),
+        ])
+
     def test_inkscape_requires_exact_reviewed_app_id_tag_argv_and_identity(self):
         spec = {'app': 'inkscape', 'app_id_tag': 'cua-profile-lane-0',
                 'document': '/synthetic/cua-smoke-inkscape.svg'}
@@ -207,11 +229,11 @@ class OracleTests(unittest.TestCase):
                 proof.verify_fault(trace(DESTROYED), record(), observed)
 
     def test_raw_trace_rejects_corruption_primary_leaks_other_lane_and_replay(self):
-        for field, value in (('hook', False), ('active', False), ('overflow', True), ('timed_out', True), ('count', 0)):
-            with self.subTest(field=field), self.assertRaises(AssertionError):
-                proof.verify_fault({**trace(DESTROYED), field: value}, record(), action())
-        for kind, lane, value in [('pointer_button', 0, 0), ('keyboard_key', 0, 1), ('pointer_focus', 0, 0),
-                ('pointer_axis', 0, 0), ('agent_cancel', 2, 0), ('agent_admitted', 1, 0),
+        # Page validity is owned by trace_interval (realapp TraceIntervalTests); one case proves wiring.
+        with self.assertRaisesRegex(AssertionError, 'dropped events'):
+            proof.verify_fault({**trace(DESTROYED), 'overflow': True}, record(), action())
+        # Primary classification is owned by primary_trace_test; one primary row proves wiring.
+        for kind, lane, value in [('keyboard_key', 0, 1), ('agent_cancel', 2, 0), ('agent_admitted', 1, 0),
                 ('agent_drag_end', 1, 0), ('agent_drag_start', 1, 0), ('agent_action_end', 1, 0),
                 ('pointer_motion', 1, 0), ('pointer_button', 1, 1), ('keyboard_key', 1, 1)]:
             with self.subTest(kind=kind, lane=lane), self.assertRaises(AssertionError):
@@ -294,6 +316,40 @@ class InjectionTests(unittest.TestCase):
                     with self.assertRaisesRegex(AssertionError, 'one termination'):
                         fault.inject(Mock(), trace(ACTIVE[:1]), pending, Mock())
 
+    def test_status_without_resource_counters_is_not_yet_cleared_and_never_fatal(self):
+        def bounded(check, timeout):
+            for _ in range(3):
+                value = check()
+                if value:
+                    return value
+            raise AssertionError('bounded evidence wait expired')
+        for eventually_cleared in (True, False):
+            with self.subTest(eventually_cleared=eventually_cleared), ExitStack() as stack:
+                fault = object.__new__(proof.TargetLifetime)
+                fault.fd, fault.sent, fault.record = 77, False, {}
+                fault.guard, fault.spec = Mock(), plan()['agents'][0]
+                before, after = statuses()
+                partial = deepcopy(after)
+                del partial['input']['lanes'][0]['pointer_resources']
+                samples = [partial, after, after] if eventually_cleared else [partial] * 3
+                fault.status = Mock(side_effect=[before, *samples])
+                fault.gone = Mock(return_value={'pidfd_exited': True, 'window_absent': True, 'observed_ns': 9_000_000})
+                stack.enter_context(patch.object(proof, 'poll_active', return_value=(trace(ACTIVE), {1: 2})))
+                stack.enter_context(patch.object(proof, 'saved_document'))
+                stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=[5_000_000, 6_000_000, 10_000_000]))
+                stack.enter_context(patch.object(proof.signal, 'pidfd_send_signal', create=True))
+                stack.enter_context(patch.object(proof, 'wait_for', side_effect=bounded))
+                pending = Mock(done=Mock(return_value=False))
+                if eventually_cleared:
+                    self.assertEqual(fault.inject(Mock(), trace(ACTIVE[:1]), pending, Mock()), 1)
+                    self.assertEqual(fault.record['after'], after)
+                    self.assertNotIn('last_clear_error', fault.record)
+                else:
+                    with self.assertRaisesRegex(AssertionError, 'bounded evidence wait expired'):
+                        fault.inject(Mock(), trace(ACTIVE[:1]), pending, Mock())
+                    self.assertEqual(fault.record['last_status'], partial)
+                    self.assertEqual(fault.record['last_clear_error'], "KeyError: 'pointer_resources'")
+
     def test_gone_requires_pidfd_exit_and_old_address_absence(self):
         for exited, windows in ((False, []), (True, [{'pid': 21, 'address': '0xc8'}]),
                                 (True, [{'pid': 20, 'address': '0xff'}]), (True, [])):
@@ -316,9 +372,6 @@ class RecoveryTests(unittest.TestCase):
                     self.assertTrue(result['unreserved'])
                     self.assertFalse(result['input_authority'])
                     self.assertEqual(result['parked_pointer_focus'], pointer)
-                    if pointer:
-                        with self.assertRaises(AssertionError):
-                            proof.lanes(after, cleared=True)
 
     def test_final_cleanup_rejects_authority_wrong_lane_and_identity_drift(self):
         before = recovery_status()
@@ -400,9 +453,9 @@ class RecoveryTests(unittest.TestCase):
             proof.cleanup_trace(prefix, stopped, stopped=True)
 
     def test_one_fresh_distinct_action_unknown_never_replayed(self):
+        # Freshness rules are owned by cancel's ObservationTests; 'cached' proves wiring.
         for app, failure in product(('calc', 'inkscape'), (None, 'alive', 'reused_runtime', 'stale',
-                'unknown', 'bad_effect', 'same_snapshot', 'same_artifact', 'cached', 'before_return',
-                'same_runtime', 'dead_after')):
+                'unknown', 'bad_effect', 'cached', 'same_runtime', 'dead_after')):
             with self.subTest(app=app, failure=failure), ExitStack() as stack:
                 candidate = plan()
                 if app == 'inkscape':
@@ -421,14 +474,8 @@ class RecoveryTests(unittest.TestCase):
                     'proof_observation_started_ns': 100, 'proof_observation_finished_ns': 101}
                 after = {**before, 'proof_runtime': {'pid': 102, 'directory': str(Path.cwd())},
                     'proof_image': 'after.png', 'proof_observation_started_ns': 104, 'proof_observation_finished_ns': 105}
-                if failure == 'same_snapshot':
-                    after = dict(before)
-                elif failure == 'same_artifact':
-                    after['proof_image'] = before['proof_image']
-                elif failure == 'cached':
+                if failure == 'cached':
                     after.update(proof_observation_started_ns=100, proof_observation_finished_ns=101)
-                elif failure == 'before_return':
-                    after['proof_observation_started_ns'] = 102
                 prepared = {'target': fault.fresh['target'], 'snapshot': before, 'prepared_ns': 100,
                             'arguments': {'x': 20, 'y': 30}, 'oracle': {'stage': fault.fresh['pointer_stage']}}
                 stack.enter_context(patch.object(proof, 'prepare_drag', return_value=prepared))

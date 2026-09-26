@@ -381,7 +381,7 @@ impl Tool for TypeTextTool {
         )
         .await;
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
+        let changes = super::finish_window_observation(snapshot).await;
 
         // Unwrap the delivery envelope: a structured refusal means no
         // actuator ran and the caller gets the exact reason.
@@ -867,23 +867,18 @@ fn foreground_settle_ms(pid: i32, frontmost_pid: Option<i32>) -> u64 {
 /// Read-back verification for a keystroke rung: did the typed text actually land?
 ///
 /// `before`/`after` are `AXValue` read from the target field before and after
-/// the keystrokes. Returns whether we can *positively confirm* the text landed:
-/// - unreadable `after` (`None`) → unverifiable → `false` (Catalyst case; the
-///   agent must confirm via screenshot).
-/// - `after` contains the complete text → `true`.
-/// - empty input text → trivially `true`.
+/// the keystrokes. Only `Complete` positively confirms the text landed:
+/// - unreadable `after` (`None`) → `Unverifiable` (Catalyst case; the agent
+///   must confirm via screenshot).
+/// - `after` contains the complete text → `Complete`.
+/// - empty input text → trivially `Complete`.
 ///
-/// Apps that normalize input (smart quotes, autocomplete) may fail the
-/// substring/length test even though something landed — we report `false`
-/// (unverified) rather than erroring, so the agent can still confirm.
-#[cfg(test)]
-fn verify_typed(before: Option<&str>, after: Option<&str>, text: &str) -> bool {
-    matches!(typed_progress(before, after, text), TypedProgress::Complete)
-}
-
-/// Classify an observable insertion without mistaking a prefix for complete
-/// delivery. A positive length delta is an exact delivered-character count for
-/// insert-at-cursor typing; it is capped at the request size defensively.
+/// Otherwise classify an observable insertion without mistaking a prefix for
+/// complete delivery. A positive length delta is an exact delivered-character
+/// count for insert-at-cursor typing; it is capped at the request size
+/// defensively. Apps that normalize input (smart quotes, autocomplete) may fail
+/// the substring/length test even though something landed — we report it as
+/// unverified rather than erroring, so the agent can still confirm.
 fn typed_progress(before: Option<&str>, after: Option<&str>, text: &str) -> TypedProgress {
     if text.is_empty() {
         return TypedProgress::Complete;
@@ -1418,40 +1413,6 @@ fn type_text_blocking(
 mod tests {
     use super::*;
 
-    /// Sanity-check that the terminal short-circuit can be expressed as a
-    /// pure function of `is_terminal_target`: when true, the code goes
-    /// to key-event synthesis without consulting AX. This test stands
-    /// in for an integration test (which would need a running terminal)
-    /// — it exercises the branch by injecting `is_terminal_target=true`
-    /// with a non-existent pid and checking we get the expected error
-    /// shape from the CGEvent path (not from the AX path).
-    ///
-    /// The CGEvent post will fail for pid 0 / -1, so we only assert
-    /// that `type_text_blocking` returns `Err` *after* deciding to
-    /// take the key-events path — i.e. it doesn't hit the AX branches
-    /// where `set_string_attr(0)` would crash.
-    #[test]
-    fn terminal_flag_routes_past_ax_path() {
-        // Pid -1 is invalid; the AX path would unconditionally call
-        // focused_element_of_pid which is safe but it would never reach
-        // CGEvent. The fact that this returns an Err (without crashing)
-        // proves we routed through CGEvent-only and never touched AX.
-        let r = type_text_blocking(
-            -1,
-            "x",
-            None,
-            0,
-            /*is_terminal_target=*/ true,
-            super::super::DeliveryMode::Background,
-            None,
-            BackgroundKeyboardPolicy::Allowed,
-        );
-        // We don't care whether r is Ok or Err — what matters is that
-        // calling it with is_terminal_target=true is safe and never
-        // dereferences null AX pointers.
-        let _ = r;
-    }
-
     /// A semantic-only policy must refuse the terminal short-circuit before
     /// any CGEvent is posted: terminals have no semantic AX rung, so nothing
     /// safe remains and the carried refusal comes back unchanged.
@@ -1549,29 +1510,31 @@ mod tests {
     }
 
     #[test]
-    fn verify_typed_unreadable_after_is_unverified() {
-        // Catalyst: can't read AXValue back → cannot confirm → false.
-        assert!(!verify_typed(None, None, "hi"));
-        assert!(!verify_typed(Some(""), None, "hi"));
-    }
-
-    #[test]
-    fn verify_typed_contains_full_request_is_verified() {
-        assert!(verify_typed(Some(""), Some("hi"), "hi")); // contains
-        assert!(verify_typed(Some("ab"), Some("ab hi"), "hi")); // contains, appended
-    }
-
-    #[test]
-    fn observable_prefix_is_partial_not_verified() {
-        assert_eq!(
-            typed_progress(Some(""), Some("BEGINpayload"), "BEGINpayloadEND"),
-            TypedProgress::Partial(12)
-        );
-        assert!(!verify_typed(
-            Some(""),
-            Some("BEGINpayload"),
-            "BEGINpayloadEND"
-        ));
+    fn typed_progress_classifies_readback() {
+        use TypedProgress::*;
+        for (before, after, text, expected) in [
+            // Catalyst: can't read AXValue back, so delivery cannot be confirmed.
+            (None, None, "hi", Unverifiable),
+            (Some(""), None, "hi", Unverifiable),
+            (None, Some("h"), "hi", Unverifiable),
+            (Some(""), Some("hi"), "hi", Complete),
+            (Some("ab"), Some("ab hi"), "hi", Complete),
+            // An observable prefix is partial delivery, never completion.
+            (
+                Some(""),
+                Some("BEGINpayload"),
+                "BEGINpayloadEND",
+                Partial(12),
+            ),
+            (Some("ab"), Some("ab"), "hi", Unchanged),
+            (None, None, "", Complete),
+        ] {
+            assert_eq!(
+                typed_progress(before, after, text),
+                expected,
+                "before={before:?} after={after:?} text={text:?}"
+            );
+        }
     }
 
     #[test]
@@ -1604,17 +1567,6 @@ mod tests {
             || Some("BEGIN".to_owned()),
         );
         assert_eq!(delivery, (false, Some(5)));
-    }
-
-    #[test]
-    fn verify_typed_unchanged_is_unverified() {
-        // Readable but the field didn't change and doesn't contain the text.
-        assert!(!verify_typed(Some("ab"), Some("ab"), "hi"));
-    }
-
-    #[test]
-    fn verify_typed_empty_text_is_trivially_verified() {
-        assert!(verify_typed(None, None, ""));
     }
 
     #[test]

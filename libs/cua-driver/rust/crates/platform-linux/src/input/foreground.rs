@@ -17,6 +17,7 @@
 //! Xlib's process-wide error handler.
 
 use anyhow::{anyhow, Result};
+use cua_driver_core::window_observation::WindowObservationBounds;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use x11rb::connection::Connection as _;
@@ -216,13 +217,31 @@ const WINDOW_CHANGE_TITLE_GRACE: Duration = Duration::from_millis(60);
 /// a beat before the toolkit re-focuses its toplevel.
 const FOCUS_RETRY: Duration = Duration::from_millis(250);
 
+/// Post-action observation bounds: `WINDOW_CHANGE_DEADLINE` /
+/// `WINDOW_CHANGE_POLL` unless the embedding host set
+/// `CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS` / `CUA_DRIVER_WINDOW_CHANGE_POLL_MS`
+/// on the daemon environment (shared parsing with macOS in
+/// `cua_driver_core::window_observation`).
+fn window_change_bounds() -> WindowObservationBounds {
+    WindowObservationBounds::from_env(WINDOW_CHANGE_DEADLINE, WINDOW_CHANGE_POLL)
+}
+
 /// Poll `pid`'s window set until it differs from `before` or the deadline
 /// passes. Returns the last set read and the change description, if any.
+///
+/// A zero timeout reads the set once (the post-check still needs it to
+/// recognise focus inside a popup of the target process) and reports no
+/// change, so the action falls back to `unverifiable` rather than claiming
+/// `confirmed` window-change evidence it never looked for.
 fn wait_for_window_change(
     pid: Option<u32>,
     before: &[(u64, String)],
+    bounds: WindowObservationBounds,
 ) -> (Vec<(u64, String)>, Option<String>) {
-    let deadline = Instant::now() + WINDOW_CHANGE_DEADLINE;
+    if bounds.skips_observation() {
+        return (pid_window_set(pid), None);
+    }
+    let deadline = Instant::now() + bounds.timeout;
     loop {
         let after = pid_window_set(pid);
         if let Some(change) = describe_window_change(before, &after) {
@@ -236,7 +255,7 @@ fn wait_for_window_change(
         if Instant::now() >= deadline {
             return (after, None);
         }
-        std::thread::sleep(WINDOW_CHANGE_POLL);
+        std::thread::sleep(bounds.poll);
     }
 }
 
@@ -664,9 +683,10 @@ pub fn with_x11_foreground_opts<T>(
     // the window set / focus within the target's process, and one that
     // landed elsewhere moves focus out of it. The window set is polled
     // rather than read after a fixed settle: it returns on the first change.
+    let bounds = window_change_bounds();
     let (windows_after, window_change) = run_with_deadline(
-        WINDOW_CHANGE_DEADLINE + Duration::from_millis(1500),
-        move || wait_for_window_change(target_pid, &windows_before),
+        bounds.timeout + bounds.poll + WINDOW_CHANGE_TITLE_GRACE + Duration::from_millis(1500),
+        move || wait_for_window_change(target_pid, &windows_before, bounds),
     )
     .unwrap_or((Vec::new(), None));
     let focus_after = run_with_deadline(Duration::from_millis(1500), move || {
@@ -758,6 +778,44 @@ mod tests {
     }
 
     #[test]
+    fn window_change_bounds_default_to_the_linux_deadline() {
+        let unset = WindowObservationBounds::from_raw(
+            None,
+            None,
+            WINDOW_CHANGE_DEADLINE,
+            WINDOW_CHANGE_POLL,
+        );
+        assert_eq!(unset.timeout, WINDOW_CHANGE_DEADLINE);
+        assert_eq!(unset.poll, WINDOW_CHANGE_POLL);
+        let host = WindowObservationBounds::from_raw(
+            Some("120"),
+            Some("20"),
+            WINDOW_CHANGE_DEADLINE,
+            WINDOW_CHANGE_POLL,
+        );
+        assert_eq!(host.timeout, Duration::from_millis(120));
+        assert_eq!(host.poll, Duration::from_millis(20));
+    }
+
+    /// A zero host timeout never reports window-change evidence (which would
+    /// upgrade the action to `effect: confirmed`) even when the before-set
+    /// differs from the live one. Read-only: no input is sent.
+    #[test]
+    fn zero_window_change_timeout_reports_no_change() {
+        let bounds = WindowObservationBounds::from_raw(
+            Some("0"),
+            None,
+            WINDOW_CHANGE_DEADLINE,
+            WINDOW_CHANGE_POLL,
+        );
+        let before = vec![(u64::MAX, "window that never existed".to_string())];
+        let started = Instant::now();
+        let (_after, change) = wait_for_window_change(Some(u32::MAX), &before, bounds);
+        assert_eq!(change, None);
+        assert!(started.elapsed() < WINDOW_CHANGE_DEADLINE);
+    }
+
+    #[test]
     fn deadline_returns_value_when_work_finishes() {
         assert_eq!(run_with_deadline(Duration::from_secs(2), || 7), Some(7));
     }
@@ -821,14 +879,9 @@ mod tests {
 
     #[test]
     fn unavailable_display_is_structured() {
-        // Force a failing connect regardless of the host environment.
-        let prior = std::env::var_os("DISPLAY");
-        std::env::set_var("DISPLAY", ":9999999");
+        let display = crate::test_env::unreachable_x11_display();
         let result = with_x11_foreground_opts(0x1234, ForegroundOptions::pointer(), || Ok(()));
-        match prior {
-            Some(v) => std::env::set_var("DISPLAY", v),
-            None => std::env::remove_var("DISPLAY"),
-        }
+        drop(display);
         let error = result.err().expect("connect must fail");
         assert!(error_code(&error).is_some(), "{error}");
     }

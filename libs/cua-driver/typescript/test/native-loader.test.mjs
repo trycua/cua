@@ -114,7 +114,7 @@ test(
           fixture.on("error", reject)
           fixture.on("message", (message) => {
             if (message.request) requests.push(message.request)
-            if (requests.length === 9) resolve(requests)
+            if (requests.length === 10) resolve(requests)
           })
         }),
     )
@@ -240,6 +240,14 @@ test(
           options: ParseVisualRegionsOptions.new({}),
         }),
       )
+      // A pixel click bound to a capture must reach the daemon with its capture_id.
+      const capturedAction = await driver.click(
+        ClickInput.new({
+          position: new ClickPosition.CapturedCoordinates({ x: 56, y: 78, captureId: "capture-123" }),
+          target: new ActionTarget.Desktop({ displayId: "primary" }),
+          deliveryMode: InputDeliveryMode.Foreground,
+        }),
+      )
       await requestsPromise
       driver.uniffiDestroy()
 
@@ -269,6 +277,15 @@ test(
       assert.deepEqual(requests[8].args, {
         capture_id: "capture-123",
         options: {},
+      })
+      assert.equal(capturedAction.effect, ActionEffect.Unverifiable)
+      assert.equal(requests[9].name, "click")
+      assert.deepEqual(requests[9].args, {
+        x: 56,
+        y: 78,
+        capture_id: "capture-123",
+        target: { kind: "desktop", display_id: "primary" },
+        delivery_mode: "foreground",
       })
       assert.equal(requests[0].name, "verify_state")
       assert.deepEqual(requests[0].args, {

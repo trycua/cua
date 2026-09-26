@@ -512,34 +512,7 @@ fn fs_last_used(path: &std::path::Path) -> Option<String> {
     let meta = std::fs::metadata(path).ok()?;
     let modified = meta.modified().ok()?;
     let duration = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
-    Some(unix_secs_to_rfc3339(duration.as_secs() as i64))
-}
-
-/// Format a Unix epoch seconds value as `YYYY-MM-DDTHH:MM:SSZ` (UTC).
-/// Hand-rolled to avoid pulling in a date/time crate just for this.
-pub(crate) fn unix_secs_to_rfc3339(secs: i64) -> String {
-    // Days since 1970-01-01 + civil date breakdown per Howard Hinnant's algorithm.
-    let days = secs.div_euclid(86_400);
-    let seconds_of_day = secs.rem_euclid(86_400);
-    let hour = seconds_of_day / 3600;
-    let minute = (seconds_of_day % 3600) / 60;
-    let second = seconds_of_day % 60;
-
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64; // [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-    let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
-    let y = if m <= 2 { y + 1 } else { y };
-
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        y, m, d, hour, minute, second
-    )
+    cua_driver_core::timestamp::unix_secs_to_rfc3339(duration.as_secs() as i64)
 }
 
 fn read_app_plist(plist_path: &std::path::Path) -> Option<AppInfo> {
@@ -716,7 +689,7 @@ pub fn format_app_list(apps: &[AppInfo]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{finder_folder_handoff, unix_secs_to_rfc3339};
+    use super::finder_folder_handoff;
 
     #[test]
     fn finder_folder_handoff_is_narrowly_selected() {
@@ -728,58 +701,5 @@ mod tests {
             "com.apple.finder",
             &["https://example.com".to_owned()]
         ));
-    }
-
-    #[test]
-    fn rfc3339_epoch() {
-        assert_eq!(unix_secs_to_rfc3339(0), "1970-01-01T00:00:00Z");
-    }
-
-    #[test]
-    fn rfc3339_negative_pre_epoch() {
-        // 1969-12-31T23:59:59Z = epoch - 1 second.
-        assert_eq!(unix_secs_to_rfc3339(-1), "1969-12-31T23:59:59Z");
-        // 1969-01-01T00:00:00Z = epoch - 365 days.
-        assert_eq!(unix_secs_to_rfc3339(-365 * 86_400), "1969-01-01T00:00:00Z");
-    }
-
-    #[test]
-    fn rfc3339_leap_day_in_leap_year() {
-        // 2020-02-29T12:00:00Z. Days from 1970-01-01:
-        //   50 years * 365 + 13 leap days (1972..=2020 inclusive of 13) - 1
-        //   (Feb 29 is the 60th day of 2020, so 59 prior days in 2020).
-        // Use the known timestamp instead of recomputing.
-        // `date -d "2020-02-29T12:00:00Z" +%s` = 1582977600.
-        assert_eq!(unix_secs_to_rfc3339(1_582_977_600), "2020-02-29T12:00:00Z");
-    }
-
-    #[test]
-    fn rfc3339_feb_28_non_leap_year() {
-        // 2019-02-28T00:00:00Z → 1551312000.
-        assert_eq!(unix_secs_to_rfc3339(1_551_312_000), "2019-02-28T00:00:00Z");
-        // The very next second is Mar 1, not Feb 29.
-        assert_eq!(
-            unix_secs_to_rfc3339(1_551_312_000 + 86_400),
-            "2019-03-01T00:00:00Z"
-        );
-    }
-
-    #[test]
-    fn rfc3339_end_of_year_wrap() {
-        // 2023-12-31T23:59:59Z = 1704067199; +1 second wraps to 2024-01-01.
-        assert_eq!(unix_secs_to_rfc3339(1_704_067_199), "2023-12-31T23:59:59Z");
-        assert_eq!(unix_secs_to_rfc3339(1_704_067_200), "2024-01-01T00:00:00Z");
-    }
-
-    #[test]
-    fn rfc3339_recent_arbitrary_timestamp() {
-        // 2024-06-15T13:45:30Z → 1718459130.
-        assert_eq!(unix_secs_to_rfc3339(1_718_459_130), "2024-06-15T13:45:30Z");
-    }
-
-    #[test]
-    fn rfc3339_known_pre_2000_timestamp() {
-        // 1990-07-04T15:30:00Z → 647105400.
-        assert_eq!(unix_secs_to_rfc3339(647_105_400), "1990-07-04T15:30:00Z");
     }
 }

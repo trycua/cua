@@ -36,10 +36,9 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use cursor_overlay::{
-    CursorConfig, CursorKey, FocusRect, KeyedOverlayCommand, MotionConfig, OverlayCommand,
-    OverlayMsg, RenderStateCore, ZOrderEnforcer,
+    CursorConfig, CursorKey, FocusRect, KeyedOverlayCommand, MotionConfig, MsgOutcome,
+    OverlayCommand, OverlayMsg, RenderEntry, RenderStateCore, ScreenFrame, ZOrderEnforcer,
 };
-use indexmap::IndexMap;
 
 // ── Arrival-signal channels (one waiter slot per cursor key) ──────────────
 //
@@ -69,6 +68,15 @@ fn arrival_fire(key: &CursorKey) {
     }
 }
 
+/// Drop a removed session's waiter; the dropped sender releases its await.
+fn arrival_cancel(key: &CursorKey) {
+    if let Ok(mut guard) = ARRIVAL_TX.lock() {
+        if let Some(map) = guard.as_mut() {
+            map.remove(key);
+        }
+    }
+}
+
 // ── Global overlay state ──────────────────────────────────────────────────
 
 static CMD_TX: OnceLock<std::sync::mpsc::SyncSender<OverlayMsg>> = OnceLock::new();
@@ -81,12 +89,11 @@ pub(crate) fn is_overlay_window(window_id: u32) -> bool {
     window_id != 0 && OVERLAY_WINDOW_ID.load(Ordering::Acquire) == window_id
 }
 
-/// The keyed, insertion-ordered collection of owned cursors that the render
-/// loop composites every frame. Insertion order = stable z-order (later keys
-/// paint on top). `win_w` / `win_h` are screen-global, hoisted out of the
-/// per-cursor `RenderState` (written once in `run_appkit`).
-struct RenderMap {
-    cursors: IndexMap<CursorKey, RenderState>,
+/// Screen-global geometry kept beside the shared keyed render map
+/// ([`cursor_overlay::RenderMap`], which owns the per-session lifecycle:
+/// lazy creation, stable z-order, tombstones, revival, and the default guard).
+/// Written once in `run_appkit`.
+struct MacScreen {
     win_w: f64,
     win_h: f64,
     /// `NSScreen.backingScaleFactor` of the screen the overlay window sits on.
@@ -95,74 +102,18 @@ struct RenderMap {
     /// rendered cursor is crisp at native resolution instead of being
     /// bilinear-upsampled by Core Animation from a logical-pixel buffer.
     backing_scale: f64,
-    /// Frozen launch-time config used as the template for lazily-created cursors.
-    template: CursorConfig,
-    /// Render-side tombstone of ended session cursor keys. A `Cmd`
-    /// for a key in here is dropped WITHOUT get-or-create, so an in-flight
-    /// click/move from another task that lands AFTER the owning session's
-    /// `Remove` can never resurrect the just-removed cursor (the ghost-cursor
-    /// resurrection race). An explicit owner-checked `start_session` revival
-    /// clears this tombstone before the cursor is reused. "default" is never
-    /// tombstoned.
-    ended: std::collections::HashSet<CursorKey>,
 }
 
-/// Build the `RenderState` for a lazily-created session cursor from the
-/// process launch template.
-fn render_state_for_key(template: &CursorConfig, key: &str) -> RenderState {
-    let mut config = template.clone();
-    config.cursor_id = key.to_owned();
-    RenderState::new(config)
-}
+type RenderMap = cursor_overlay::RenderMap<RenderState, MacScreen>;
 
-/// Apply one inbound [`OverlayMsg`] to the render map (drain step). Factored
-/// out as a pure function so the per-session ownership + removal lifecycle is
-/// unit-testable without AppKit.
-///
-/// Returns the resolved cursor key for a `Cmd` (so the caller can track the
-/// last-active key for z-order pinning); `None` for a lifecycle message.
+/// Drain one message into the shared map, releasing a removed session's
+/// arrival waiter. Returns the commanded key for z-order pinning.
 fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
-    match msg {
-        OverlayMsg::Remove(key) => {
-            // The "default" cursor backs the anonymous / one-shot path and
-            // must survive every session_end + the daemon lifetime.
-            if key != "default" {
-                map.cursors.shift_remove(&key);
-                if let Ok(mut guard) = ARRIVAL_TX.lock() {
-                    if let Some(m) = guard.as_mut() {
-                        m.remove(&key);
-                    }
-                }
-                // Tombstone the key so a late in-flight Cmd from another task
-                // (an animate/click racing the owning session's death) cannot
-                // re-create the just-removed cursor. Never tombstone "default".
-                map.ended.insert(key);
-            }
-            None
-        }
-        OverlayMsg::Revive(key) => {
-            if key != "default" {
-                map.ended.remove(&key);
-            }
-            None
-        }
-        OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }) => {
-            // Drop a command for an already-ended session WITHOUT get-or-create
-            // — this is the resurrection guard. Without it, a ClickPulse/MoveTo
-            // landing after Remove would re-insert (and re-leak) the cursor.
-            if map.ended.contains(&key) {
-                return None;
-            }
-            let template = map.template.clone();
-            let k = key.clone();
-            let rs = map
-                .cursors
-                .entry(key)
-                .or_insert_with(|| render_state_for_key(&template, &k));
-            rs.apply_command(cmd);
-            Some(k)
-        }
+    let outcome = map.apply_msg(msg);
+    if let MsgOutcome::Removed { key, .. } = &outcome {
+        arrival_cancel(key);
     }
+    outcome.applied_key().cloned()
 }
 
 /// Initialise global overlay state (call once, before run_on_main_thread).
@@ -175,16 +126,14 @@ pub fn init(cfg: CursorConfig) {
             .expect("cursor overlay sender is initialized exactly once");
         *CMD_RX_CELL.lock().unwrap() = Some(rx);
         *ARRIVAL_TX.lock().unwrap() = Some(HashMap::new());
-        let mut cursors = IndexMap::new();
-        cursors.insert("default".to_owned(), RenderState::new(cfg.clone()));
-        *RENDER.lock().unwrap() = Some(RenderMap {
-            cursors,
-            win_w: 0.0,
-            win_h: 0.0,
-            backing_scale: 1.0, // overwritten in run_appkit() once the NSScreen is known
-            template: cfg,
-            ended: std::collections::HashSet::new(),
-        });
+        *RENDER.lock().unwrap() = Some(RenderMap::new(
+            cfg,
+            MacScreen {
+                win_w: 0.0,
+                win_h: 0.0,
+                backing_scale: 1.0, // overwritten in run_appkit() once the NSScreen is known
+            },
+        ));
     });
     cua_driver_core::cursor_events::install_cursor_event_sink(std::sync::Arc::new(
         |event: cua_driver_core::cursor_events::CursorEvent| {
@@ -292,9 +241,7 @@ pub fn current_motion(key: &str) -> MotionConfig {
     let Some(map) = guard.as_ref() else {
         return MotionConfig::default();
     };
-    map.cursors
-        .get(key)
-        .or_else(|| map.cursors.get("default"))
+    map.cursor_or_default(key)
         .map(|rs| rs.core.motion.clone())
         .unwrap_or_default()
 }
@@ -311,10 +258,7 @@ pub fn current_theme_state(
 )> {
     let guard = RENDER.lock().unwrap();
     let map = guard.as_ref()?;
-    let state = map
-        .cursors
-        .get(key)
-        .or_else(|| map.cursors.get("default"))?;
+    let state = map.cursor_or_default(key)?;
     let (id, version, profile, fallback) = state.core.active_theme_metadata();
     Some((id, version, profile, fallback, state.core.visual.clone()))
 }
@@ -336,52 +280,11 @@ fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool
     let Some(map) = guard.as_mut() else {
         return false;
     };
-    seed_start_in_map(map, key, target_x, target_y)
-}
-
-/// Pure seed step operating on a borrowed [`RenderMap`] — factored out of
-/// `seed_start_if_sentinel` so the get-or-create + clamp logic is unit-testable
-/// without the global `RENDER` static or AppKit.
-fn seed_start_in_map(map: &mut RenderMap, key: &CursorKey, target_x: f64, target_y: f64) -> bool {
-    // Offset the start up-left of the target so the Dubins path has room to
-    // curve in; 140pt is enough to read as motion at 900pt/s peak speed.
-    const SEED_OFFSET: f64 = 140.0;
-    let (win_w, win_h) = (map.win_w, map.win_h);
-    // Respect the resurrection guard: never seed (and thus re-create) a cursor
-    // whose session already ended.
-    if map.ended.contains(key) {
-        return false;
-    }
-    // Get-or-create the cursor so the very first AX action seeds + glides even
-    // when the lazy render-thread creation hasn't drained the PinAbove yet
-    // (the render loop's drain would otherwise win the race and the seed read
-    // an absent cursor). Mirrors apply_msg's entry().or_insert_with.
-    let template = map.template.clone();
-    let k = key.clone();
-    let rs = map
-        .cursors
-        .entry(key.clone())
-        .or_insert_with(|| render_state_for_key(&template, &k));
-    if !(rs.core.cfg.enabled && rs.core.pos.0 < -50.0) {
-        return false;
-    }
-    let mut sx = target_x - SEED_OFFSET;
-    let mut sy = target_y - SEED_OFFSET;
-    // Clamp into the screen frame when we know it (win_w/h are 0 until the
-    // AppKit window is up; in that headless case the unclamped seed is still
-    // on-screen-by-construction for any realistic target).
-    if win_w > 0.0 && win_h > 0.0 {
-        sx = sx.clamp(2.0, win_w - 2.0);
-        sy = sy.clamp(2.0, win_h - 2.0);
-        // If clamping collapsed the seed onto the target (target in a corner),
-        // nudge it the other way so there is still a visible glide distance.
-        if (sx - target_x).abs() < 8.0 && (sy - target_y).abs() < 8.0 {
-            sx = (target_x + SEED_OFFSET).min(win_w - 2.0);
-            sy = (target_y + SEED_OFFSET).min(win_h - 2.0);
-        }
-    }
-    rs.core.pos = (sx, sy);
-    true
+    // `win_w/h` are 0 until the AppKit window is up; the shared seed then only
+    // keeps the start point off negative coordinates.
+    let MacScreen { win_w, win_h, .. } = map.platform;
+    let frame = (win_w > 0.0 && win_h > 0.0).then(|| ScreenFrame::new(0.0, 0.0, win_w, win_h));
+    map.seed_start_if_sentinel(key, target_x, target_y, frame)
 }
 
 /// Animate the overlay cursor to `(x, y)` and suspend until the Dubins path
@@ -505,13 +408,21 @@ struct RenderState {
     focus_rect_t: f64,
 }
 
-impl RenderState {
-    fn new(cfg: CursorConfig) -> Self {
+impl RenderEntry for RenderState {
+    fn from_config(cfg: CursorConfig) -> Self {
         RenderState {
             core: RenderStateCore::new(cfg),
             focus_rect: None,
             focus_rect_t: 1.0,
         }
+    }
+
+    fn core(&self) -> &RenderStateCore {
+        &self.core
+    }
+
+    fn core_mut(&mut self) -> &mut RenderStateCore {
+        &mut self.core
     }
 
     /// Advance the animation by `dt`.  Uses the Swift reference constants
@@ -534,7 +445,7 @@ impl RenderState {
         fire_arrival
     }
 
-    fn apply_command(&mut self, cmd: OverlayCommand) {
+    fn apply_command(&mut self, cmd: OverlayCommand) -> bool {
         // macOS uses the sentinel-snap variants of MoveTo / ClickPulse:
         //   - MoveTo only snaps `self.pos` if the cursor is still at the
         //     off-screen sentinel `(-200, -200)` (otherwise the path starts
@@ -545,32 +456,35 @@ impl RenderState {
             OverlayCommand::ShowFocusRect(rect) => {
                 self.focus_rect = rect;
                 self.focus_rect_t = 0.0; // reset fade to fully visible
+                true
             }
-            other => {
-                let _ = self.core.apply_command_base(other, true, true);
+            OverlayCommand::PinAbove(wid) => {
+                // The overlay window joins every Space, so a target on another
+                // Space would otherwise animate over the user's current one at
+                // that window's coordinates. Unknown membership keeps painting.
+                self.core.pinned_target_off_workspace = u32::try_from(wid)
+                    .ok()
+                    .and_then(crate::windows::window_on_current_space_by_id)
+                    == Some(false);
+                self.core.apply_command_base(cmd, true, true)
             }
+            other => self.core.apply_command_base(other, true, true),
         }
     }
 
-    /// True while the render loop must wake at frame cadence because the next
-    /// tick can change pixels. A brand-new sentinel cursor is deliberately
-    /// quiescent, so `serve` with no agent activity can block on the command
-    /// channel instead of compositing an empty fullscreen pixmap at 60fps.
+    /// The shared predicate (glide, spring, pulse, badge, resting motion,
+    /// idle fade) plus two macOS terms: the focus-rect fade, and the opaque
+    /// idle-hide countdown. The macOS loop parks on a blocking `recv` with no
+    /// deadline, so a reduced-motion cursor must keep frame ticks through the
+    /// countdown for its idle fade to start on time.
     fn needs_frame_tick(&self) -> bool {
-        self.core.path.is_some()
-            || self.core.spring.is_some()
-            || self.core.click_t.is_some()
+        self.core.needs_frame_tick()
             || self.focus_rect.is_some()
-            || self.core.session_badge_needs_frame_tick()
             || (self.core.motion.idle_hide_ms > 0.0
                 && self.core.visible
                 && self.core.pos.0 >= -100.0
                 && self.core.idle_alpha >= 0.004)
     }
-}
-
-fn render_map_needs_frame_tick(map: &RenderMap) -> bool {
-    map.cursors.values().any(RenderState::needs_frame_tick)
 }
 
 // ── AppKit / CGImage plumbing ─────────────────────────────────────────────
@@ -676,9 +590,11 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     {
         let mut guard = RENDER.lock().unwrap();
         if let Some(m) = guard.as_mut() {
-            m.win_w = win_w;
-            m.win_h = win_h;
-            m.backing_scale = backing_scale;
+            m.platform = MacScreen {
+                win_w,
+                win_h,
+                backing_scale,
+            };
         }
     }
 
@@ -788,11 +704,7 @@ fn render_loop(
                     // this frame without waiting for the next 16ms tick.
                     let mut arrived: Vec<CursorKey> = Vec::new();
                     if frame_tick_needed || had_msg {
-                        for (k, rs) in map.cursors.iter_mut() {
-                            if rs.tick(dt) {
-                                arrived.push(k.clone());
-                            }
-                        }
+                        arrived = map.tick_all(dt);
                     }
                     let pointer = if hover_poll_tick
                         || map
@@ -820,7 +732,7 @@ fn render_loop(
                         .and_then(|k| map.cursors.get(k))
                         .is_some_and(cursor_is_externally_visible)
                         && pinned.is_none();
-                    let next_frame_tick_needed = render_map_needs_frame_tick(map);
+                    let next_frame_tick_needed = map.needs_frame_tick();
                     let next_hover_poll_needed = map
                         .cursors
                         .values()
@@ -829,8 +741,8 @@ fn render_loop(
                         pinned,
                         raise_unpinned,
                         arrived,
-                        map.win_w,
-                        map.win_h,
+                        map.platform.win_w,
+                        map.platform.win_h,
                         had_msg,
                         hover_changed,
                         next_frame_tick_needed,
@@ -881,7 +793,7 @@ fn render_loop(
                     // The cursor's logical coordinates are scaled into pixmap
                     // pixels inside `paint_cursor` (it multiplies px/py/sizes
                     // by `backing_scale`).
-                    let scale = map.backing_scale.max(1.0);
+                    let scale = map.platform.backing_scale.max(1.0);
                     let w = (win_w * scale).max(1.0) as u32;
                     let h = (win_h * scale).max(1.0) as u32;
                     let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
@@ -1243,11 +1155,10 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    #[test]
-    fn keyed_render_state_carries_the_session_color_identity() {
-        let state = render_state_for_key(&CursorConfig::default(), "session-blueprint");
-        assert_eq!(state.core.cfg.cursor_id, "session-blueprint");
-    }
+    // The keyed lifecycle, sentinel seed, and shared frame-tick predicate are
+    // covered once in `cursor_overlay::render_map`. These tests cover only the
+    // macOS adapter: window ordering, external visibility, and the macOS
+    // frame-tick terms layered on the shared predicate.
 
     fn window(window_id: u32, pid: i32, z_index: usize) -> crate::windows::WindowInfo {
         crate::windows::WindowInfo {
@@ -1271,19 +1182,20 @@ mod tests {
     }
 
     fn empty_map() -> RenderMap {
-        let mut cursors = IndexMap::new();
-        cursors.insert(
-            "default".to_owned(),
-            RenderState::new(CursorConfig::default()),
-        );
-        RenderMap {
-            cursors,
-            win_w: 100.0,
-            win_h: 100.0,
-            backing_scale: 1.0,
-            template: CursorConfig::default(),
-            ended: std::collections::HashSet::new(),
-        }
+        RenderMap::new(
+            CursorConfig::default(),
+            MacScreen {
+                win_w: 100.0,
+                win_h: 100.0,
+                backing_scale: 1.0,
+            },
+        )
+    }
+
+    fn placed<'a>(map: &'a mut RenderMap, key: &str) -> &'a mut RenderState {
+        let frame = Some(ScreenFrame::new(0.0, 0.0, 100.0, 100.0));
+        assert!(map.seed_start_if_sentinel(key, 60.0, 60.0, frame));
+        map.cursors.get_mut(key).unwrap()
     }
 
     #[test]
@@ -1311,217 +1223,12 @@ mod tests {
         ));
     }
 
-    fn move_msg(key: &str, x: f64, y: f64) -> OverlayMsg {
-        OverlayMsg::Cmd(KeyedOverlayCommand {
-            key: key.to_owned(),
-            cmd: OverlayCommand::MoveTo {
-                x,
-                y,
-                end_heading_radians: 0.0,
-            },
-        })
-    }
-
-    #[test]
-    fn two_sessions_produce_two_distinct_render_entries() {
-        let mut map = empty_map();
-        apply_msg(
-            &mut map,
-            OverlayMsg::Cmd(KeyedOverlayCommand {
-                key: "sessA".to_owned(),
-                cmd: OverlayCommand::SetEnabled(true),
-            }),
-        );
-        apply_msg(&mut map, move_msg("sessB", 42.0, 24.0));
-        // default + sessA + sessB = 3 distinct owned cursors (the core
-        // regression today is that they would clobber to one).
-        assert_eq!(map.cursors.len(), 3);
-        assert!(map.cursors.contains_key("sessA"));
-        assert!(map.cursors.contains_key("sessB"));
-        assert!(map.cursors.contains_key("default"));
-    }
-
-    #[test]
-    fn session_end_removes_only_that_session() {
-        let mut map = empty_map();
-        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
-        apply_msg(&mut map, move_msg("sessB", 20.0, 20.0));
-        assert_eq!(map.cursors.len(), 3);
-
-        // session_end(A): A gone, B + default retained.
-        apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
-        assert!(!map.cursors.contains_key("sessA"));
-        assert!(map.cursors.contains_key("sessB"));
-        assert!(map.cursors.contains_key("default"));
-        assert_eq!(map.cursors.len(), 2);
-
-        // Remove("default") is guarded — default survives.
-        apply_msg(&mut map, OverlayMsg::Remove("default".to_owned()));
-        assert!(map.cursors.contains_key("default"));
-
-        // Remove of an absent key (anonymous session that never created a
-        // cursor) is a harmless no-op.
-        let before = map.cursors.len();
-        apply_msg(&mut map, OverlayMsg::Remove("never-existed".to_owned()));
-        assert_eq!(map.cursors.len(), before);
-    }
-
-    #[test]
-    fn lazily_created_cursors_inherit_the_selected_theme() {
-        let mut map = empty_map();
-        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
-        apply_msg(&mut map, move_msg("sessB", 20.0, 20.0));
-        assert_eq!(
-            map.cursors["sessA"].core.cfg.theme_id,
-            map.cursors["default"].core.cfg.theme_id
-        );
-        assert_eq!(
-            map.cursors["sessB"].core.cfg.theme_id,
-            map.cursors["default"].core.cfg.theme_id
-        );
-    }
-
-    #[test]
-    fn insertion_order_is_stable_z_order() {
-        let mut map = empty_map();
-        apply_msg(&mut map, move_msg("first", 1.0, 1.0));
-        apply_msg(&mut map, move_msg("second", 2.0, 2.0));
-        // Re-touching "first" must NOT move it to the back (IndexMap keeps the
-        // original insertion slot), so z-order is stable frame to frame.
-        apply_msg(&mut map, move_msg("first", 3.0, 3.0));
-        let keys: Vec<&String> = map.cursors.keys().collect();
-        assert_eq!(keys, vec!["default", "first", "second"]);
-    }
-
-    #[test]
-    fn tombstone_blocks_resurrection_after_remove() {
-        // The resurrection race: a Cmd for a session lands AFTER its Remove
-        // (an in-flight click from another task as the session dies). The
-        // tombstone must drop it so the just-removed cursor is NOT re-created.
-        let mut map = empty_map();
-        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
-        assert_eq!(map.cursors.len(), 2); // default + sessA
-
-        // Session ends → cursor removed, key tombstoned.
-        apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
-        assert!(!map.cursors.contains_key("sessA"));
-        assert_eq!(map.cursors.len(), 1);
-
-        // A late in-flight Cmd for the ended session must be dropped WITHOUT
-        // re-inserting (no get-or-create resurrection).
-        let resolved = apply_msg(&mut map, move_msg("sessA", 99.0, 99.0));
-        assert!(
-            resolved.is_none(),
-            "ended-session Cmd must be dropped, not resolved"
-        );
-        assert!(
-            !map.cursors.contains_key("sessA"),
-            "tombstone must block resurrection"
-        );
-        assert_eq!(
-            map.cursors.len(),
-            1,
-            "render map length must stay at default only"
-        );
-    }
-
-    #[test]
-    fn explicit_revival_clears_tombstone_and_recreates_lazily() {
-        let mut map = empty_map();
-        apply_msg(&mut map, move_msg("sessA", 10.0, 10.0));
-        apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
-        assert!(apply_msg(&mut map, move_msg("sessA", 20.0, 20.0)).is_none());
-
-        apply_msg(&mut map, OverlayMsg::Revive("sessA".to_owned()));
-        assert!(!map.cursors.contains_key("sessA"));
-        assert!(!map.ended.contains("sessA"));
-
-        let resolved = apply_msg(&mut map, move_msg("sessA", 30.0, 30.0));
-        assert_eq!(resolved.as_deref(), Some("sessA"));
-        assert!(map.cursors.contains_key("sessA"));
-    }
-
-    #[test]
-    fn default_is_never_tombstoned() {
-        // Remove("default") is guarded, so default is never tombstoned and a
-        // subsequent Cmd on default still renders.
-        let mut map = empty_map();
-        apply_msg(&mut map, OverlayMsg::Remove("default".to_owned()));
-        assert!(map.cursors.contains_key("default"));
-        assert!(!map.ended.contains("default"));
-
-        let resolved = apply_msg(&mut map, move_msg("default", 5.0, 5.0));
-        assert_eq!(resolved.as_deref(), Some("default"));
-        assert!(map.cursors.contains_key("default"));
-    }
-
-    #[test]
-    fn seed_moves_sentinel_cursor_on_screen_for_first_action() {
-        // BUG 2 regression: a brand-new session cursor at the sentinel must be
-        // seeded on-screen (pos.0 > -50) so the immediately-following MoveTo
-        // glides instead of silently snapping via ClickPulse.
-        let mut map = empty_map(); // 100x100 frame
-                                   // No "sessA" cursor exists yet — the seed must get-or-create it.
-        let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
-        assert!(seeded, "sentinel cursor must be seeded");
-        let pos = map.cursors["sessA"].core.pos;
-        assert!(
-            pos.0 > -50.0 && pos.1 > -50.0,
-            "seed must be on-screen, got {pos:?}"
-        );
-        // And it must be a DIFFERENT point from the target so there is a glide.
-        assert!(
-            (pos.0 - 60.0).abs() > 4.0 || (pos.1 - 60.0).abs() > 4.0,
-            "seed must differ from target to produce a visible glide, got {pos:?}"
-        );
-    }
-
-    #[test]
-    fn seed_is_noop_when_cursor_already_on_screen() {
-        // A second action: the cursor already landed somewhere on-screen, so the
-        // seed must NOT move it (the MoveTo path should start from where it is).
-        let mut map = empty_map();
-        // Put sessA on-screen first.
-        seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
-        map.cursors.get_mut("sessA").unwrap().core.pos = (30.0, 30.0);
-        let seeded_again = seed_start_in_map(&mut map, &"sessA".to_owned(), 80.0, 80.0);
-        assert!(!seeded_again, "on-screen cursor must not be re-seeded");
-        assert_eq!(
-            map.cursors["sessA"].core.pos,
-            (30.0, 30.0),
-            "pos must be untouched"
-        );
-    }
-
-    #[test]
-    fn seed_does_not_resurrect_ended_session() {
-        // The seed shares the resurrection guard: it must not re-create a cursor
-        // whose session already ended.
-        let mut map = empty_map();
-        map.ended.insert("sessA".to_owned());
-        let seeded = seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
-        assert!(!seeded, "ended session must not be seeded");
-        assert!(
-            !map.cursors.contains_key("sessA"),
-            "ended session must not be resurrected"
-        );
-    }
-
-    #[test]
-    fn sentinel_default_cursor_does_not_require_frame_ticks() {
-        // Regression for idle CPU: a freshly-started serve daemon seeds only the
-        // off-screen default cursor. With no commands in flight, the render loop
-        // should be able to block on rx.recv() instead of repainting at 60fps.
-        let map = empty_map();
-        assert!(!render_map_needs_frame_tick(&map));
-    }
-
     #[test]
     fn only_enabled_on_screen_cursor_is_externally_visible() {
         let mut map = empty_map();
         assert!(!cursor_is_externally_visible(&map.cursors["default"]));
 
-        seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
+        placed(&mut map, "sessA");
         assert!(cursor_is_externally_visible(&map.cursors["sessA"]));
 
         map.cursors.get_mut("sessA").unwrap().core.cfg.enabled = false;
@@ -1529,25 +1236,60 @@ mod tests {
     }
 
     #[test]
-    fn active_or_fading_cursor_requires_frame_ticks() {
+    fn removal_through_the_adapter_releases_only_that_arrival_waiter() {
         let mut map = empty_map();
-        seed_start_in_map(&mut map, &"sessA".to_owned(), 60.0, 60.0);
-        apply_msg(&mut map, move_msg("sessA", 80.0, 80.0));
-        assert!(
-            render_map_needs_frame_tick(&map),
-            "planned path should tick"
+        assert_eq!(
+            apply_msg(
+                &mut map,
+                OverlayMsg::Cmd(KeyedOverlayCommand {
+                    key: "sessA".to_owned(),
+                    cmd: OverlayCommand::SetEnabled(true),
+                }),
+            )
+            .as_deref(),
+            Some("sessA")
         );
+        assert_eq!(
+            apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned())),
+            None
+        );
+        assert!(!map.cursors.contains_key("sessA"));
+    }
 
-        let rs = map.cursors.get_mut("sessA").unwrap();
-        rs.core.path = None;
-        rs.core.spring = None;
-        rs.core.click_t = None;
-        rs.focus_rect = None;
-        rs.core.idle_alpha = 0.0;
-        assert!(
-            !render_map_needs_frame_tick(&map),
-            "fully hidden idle cursor should quiesce"
-        );
+    #[test]
+    fn resting_cursor_floats_until_idle_hide_and_never_hide_parks() {
+        let mut map = empty_map();
+        let cursor = placed(&mut map, "sessA");
+        cursor.core.motion.idle_hide_ms = 20_000.0;
+        assert!(cursor.core.has_resting_motion());
+        assert!(map.needs_frame_tick());
+
+        let cursor = map.cursors.get_mut("sessA").unwrap();
+        cursor.core.motion.idle_hide_ms = 0.0;
+        assert!(!map.needs_frame_tick(), "a never-hiding cursor rests still");
+    }
+
+    #[test]
+    fn focus_rect_and_reduced_motion_countdown_keep_macos_frames() {
+        let mut map = empty_map();
+        let cursor = placed(&mut map, "sessA");
+        cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
+        cursor.core.motion.idle_hide_ms = 20_000.0;
+        // The macOS loop has no idle deadline, so the opaque countdown ticks.
+        assert!(!cursor.core.needs_frame_tick());
+        assert!(cursor.needs_frame_tick());
+
+        cursor.core.motion.idle_hide_ms = 0.0;
+        assert!(!cursor.needs_frame_tick());
+        cursor.apply_command(OverlayCommand::ShowFocusRect(Some([0.0, 0.0, 10.0, 10.0])));
+        assert!(cursor.needs_frame_tick());
+        for _ in 0..60 {
+            cursor.tick(1.0 / 60.0);
+        }
+        assert!(cursor.focus_rect.is_none());
+
+        cursor.core.idle_alpha = 0.0;
+        assert!(!map.needs_frame_tick(), "a fully hidden cursor must park");
     }
 
     #[test]

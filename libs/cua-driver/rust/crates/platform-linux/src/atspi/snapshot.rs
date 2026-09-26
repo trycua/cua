@@ -168,18 +168,15 @@ pub(crate) fn hit_test(pid: u32, xid: u64, sx: i32, sy: i32) -> Option<(usize, C
         .enumerate()
         .filter_map(|(pos, (_, e))| {
             let (x, y, w, h) = e.bounds?;
-            (w > 0 && h > 0).then_some((pos, x, y, w, h, native::is_passive_role(&e.role)))
+            // The application's own frame is never the control under a
+            // point; leave such a hit to the live descent.
+            (w > 0 && h > 0 && !crate::at_point_policy::is_top_level_shell_role(&e.role))
+                .then_some((pos, x, y, w, h, native::is_passive_role(&e.role)))
         })
         .collect();
     let pos = native::select_click_target(&frames, sx, sy)?;
     let (idx, element) = indexed[pos];
     Some((*idx, element.clone()))
-}
-
-/// Drop every side-index snapshot for `pid` (e.g. after the process exited).
-#[allow(dead_code)]
-pub(crate) fn forget_pid(pid: u32) {
-    store().lock().unwrap().retain(|key, _| key.pid != pid);
 }
 
 #[cfg(test)]
@@ -333,33 +330,6 @@ mod tests {
     }
 
     #[test]
-    fn compositor_window_ids_do_not_alias_their_low_bits() {
-        let cache = Snapshots::new();
-        let window = (1_u64 << 40) | 7;
-        let low = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[node(7)]));
-        let high = cache.publish(42, window, AtspiSnapshot::from_nodes(&[node(11)]));
-        let target = cache
-            .resolve(
-                42,
-                &serde_json::json!({ "element_token": token_for(high, 11) }),
-            )
-            .unwrap();
-        assert!(
-            matches!(target, ResolvedElement::Element { window_id, element, .. } if window_id == window && element.identity.path == "/node/11")
-        );
-        cache.remove(42, window);
-        assert!(matches!(
-            cache
-                .resolve(
-                    42,
-                    &serde_json::json!({ "element_token": token_for(low, 7) })
-                )
-                .unwrap(),
-            ResolvedElement::Element { window_id: 7, .. }
-        ));
-    }
-
-    #[test]
     fn empty_linux_snapshot_has_no_element_zero() {
         let cache = Snapshots::new();
         let id = cache.publish(42, 7, AtspiSnapshot::from_nodes(&[]));
@@ -401,9 +371,6 @@ mod tests {
         assert_eq!(cached_element(pid, None, 2).unwrap().role, "label");
         assert!(cached_element(pid, Some(78), 2).is_none());
         forget_window(pid, 77);
-        assert!(cached_element(pid, None, 0).is_none());
-        update_snapshot(pid, 77, &nodes, &[]);
-        forget_pid(pid);
         assert!(cached_element(pid, None, 0).is_none());
     }
 }

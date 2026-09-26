@@ -70,6 +70,8 @@ NOREPLY_RE = re.compile(
     re.IGNORECASE,
 )
 RELEASING_TYPES = {"feat", "fix", "perf", "revert"}
+STABLE_VERSION_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+NO_RELEASE_LABEL = "no-release"
 PERCEPTION_OWNED_PATHS = (
     ".github/releases/cua-perception",
     "libs/cua-driver/rust/crates/cua-perception",
@@ -200,9 +202,31 @@ def resolve_tag_sha(repo_root: Path, tag: str) -> str:
     return run_git(repo_root, "rev-list", "-n", "1", tag).strip()
 
 
+def _stable_version_key(tag: str, tag_prefix: str) -> tuple[int, int, int] | None:
+    if not tag.startswith(tag_prefix):
+        return None
+    match = STABLE_VERSION_RE.match(tag[len(tag_prefix) :])
+    if not match:
+        return None
+    major, minor, patch = (int(part) for part in match.groups())
+    return major, minor, patch
+
+
 def find_previous_tag(repo_root: Path, current_tag: str, tag_prefix: str) -> str | None:
+    """Return the newest tag whose version precedes the current release.
+
+    A higher version tag, such as an abandoned Release Please tag, is never a
+    valid base: selecting it would silently drop real changes from the range.
+    """
     tags = run_git(repo_root, "tag", "--list", f"{tag_prefix}*", "--sort=-v:refname").splitlines()
-    return next((tag for tag in tags if tag and tag != current_tag), None)
+    current_key = _stable_version_key(current_tag, tag_prefix)
+    for tag in tags:
+        if not tag or tag == current_tag:
+            continue
+        tag_key = _stable_version_key(tag, tag_prefix)
+        if current_key is None or (tag_key is not None and tag_key < current_key):
+            return tag
+    return None
 
 
 def commits_in_range(
@@ -247,6 +271,27 @@ def commits_in_range(
         subject, _, body = raw.partition("\x00")
         records.append(CommitRecord(commit_sha, subject.strip(), body.strip()))
     return records
+
+
+def is_release_metadata_only_commit(
+    repo_root: Path,
+    commit_sha: str,
+    paths: Sequence[str],
+    exclude_paths: Sequence[str],
+    metadata_paths: Sequence[str],
+) -> bool:
+    """Return whether a commit's in-scope diff touches only release metadata files."""
+    if not metadata_paths:
+        return False
+    pathspecs = [*paths, *(f":(exclude){path}" for path in exclude_paths)]
+    changed_files = [
+        file
+        for file in run_git(
+            repo_root, "show", "--format=", "--name-only", commit_sha, "--", *pathspecs
+        ).splitlines()
+        if file
+    ]
+    return bool(changed_files) and all(file in metadata_paths for file in changed_files)
 
 
 def parse_conventional_line(line: str) -> ConventionalEntry | None:
@@ -944,6 +989,7 @@ def build_manifest(
     release_ref: str | None = None,
     exclude_paths: Sequence[str] = (),
     exclude_companion_paths: Sequence[str] = (),
+    release_metadata_paths: Sequence[str] = (),
     asset_dir: Path | None = None,
     channel: str = "stable",
 ) -> dict[str, Any]:
@@ -989,6 +1035,17 @@ def build_manifest(
             continue
         pull_body = str(pull.get("body") or "")
         if not subject_is_included and not OVERRIDE_RE.search(pull_body):
+            continue
+        # A maintainer-labeled release-control pull request that only edits
+        # version or changelog metadata is part of preparing this release, not
+        # a product change the changelog must cite. Product diffs stay required.
+        if (
+            channel == "stable"
+            and NO_RELEASE_LABEL in {str(label.get("name")) for label in pull.get("labels") or []}
+            and is_release_metadata_only_commit(
+                repo_root, commit.sha, paths, exclude_paths, release_metadata_paths
+            )
+        ):
             continue
         pull_number = int(pull["number"])
         pull_commits[pull_number].add(commit.sha)
@@ -1264,6 +1321,7 @@ def collect_command(args: argparse.Namespace) -> None:
         release_ref=args.ref,
         exclude_paths=args.exclude_path,
         exclude_companion_paths=args.exclude_companion_path,
+        release_metadata_paths=args.release_metadata_path,
         asset_dir=args.asset_dir.resolve() if args.asset_dir else None,
         channel=args.channel,
     )
@@ -1378,6 +1436,12 @@ def build_parser() -> argparse.ArgumentParser:
     collect.add_argument("--path", action="append", required=True)
     collect.add_argument("--exclude-path", action="append", default=[])
     collect.add_argument("--exclude-companion-path", action="append", default=[])
+    collect.add_argument(
+        "--release-metadata-path",
+        action="append",
+        default=[],
+        help="version or changelog file a no-release release-control PR may edit",
+    )
     collect.add_argument("--changelog", type=Path, required=True)
     collect.add_argument(
         "--config", type=Path, default=Path(".github/release-attribution-config.json")

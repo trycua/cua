@@ -615,8 +615,25 @@ done
 # asset — see the recovery at the download step below.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-CUA_DRIVER_RS_BAKED_VERSION="0.28.2" # published-installer-version
+CUA_DRIVER_RS_BAKED_VERSION="0.29.1" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
+#
+# Withdrawn releases (for example, a macOS archive published unsigned) are
+# never selected: an explicit pin is refused, and API resolution skips them.
+# Space-separated exact versions. This must mirror
+# .github/release-state/cua-driver-rs-withdrawn-versions, which records the
+# reasons; validate_release_versions.py enforces the match.
+# ~~~ WITHDRAWN_VERSIONS: mirrors the release-state list — do not edit alone ~~~
+CUA_DRIVER_RS_WITHDRAWN_VERSIONS="0.28.3" # withdrawn-installer-versions
+# ~~~ END_WITHDRAWN_VERSIONS ~~~
+
+is_withdrawn_version() {
+    local candidate="$1" withdrawn
+    for withdrawn in ${CUA_DRIVER_RS_WITHDRAWN_VERSIONS:-}; do
+        [[ "$withdrawn" == "$candidate" ]] && return 0
+    done
+    return 1
+}
 
 # Run API requests with an optional token. Keep the header construction here
 # (rather than in loggable command text) so neither GH_TOKEN nor GITHUB_TOKEN
@@ -697,9 +714,18 @@ resolve_latest_version_from_api() {
         fi
     done
 
-    local version
+    # Withdrawn releases stay published for audit, but must never be chosen.
+    local version candidate eligible=""
+    while IFS= read -r candidate; do
+        [[ -n "$candidate" ]] || continue
+        if is_withdrawn_version "$candidate"; then
+            printf 'note: skipping withdrawn release %s%s\n' "$TAG_PREFIX" "$candidate" >&2
+            continue
+        fi
+        eligible="${eligible}${eligible:+$'\n'}${candidate}"
+    done <<< "$versions"
     version="$(
-        printf '%s\n' "$versions" \
+        printf '%s\n' "$eligible" \
             | sed '/^$/d' \
             | sort -t. -k1,1nr -k2,2nr -k3,3nr -k4,4nr -k5,5nr \
             | head -n 1
@@ -766,7 +792,13 @@ if [[ -n "${CUA_DRIVER_RS_VERSION:-}" ]]; then
         exit 1
     fi
     log "using version from CUA_DRIVER_RS_VERSION: $TAG"
-elif [[ "$SELECTED_CHANNEL" == "stable" && -n "${CUA_DRIVER_RS_BAKED_VERSION:-}" ]]; then
+    if is_withdrawn_version "${TAG#${TAG_PREFIX}}"; then
+        err "$TAG was withdrawn and must not be installed; pin a different release"
+        err "  or unset CUA_DRIVER_RS_VERSION to install the current release."
+        exit 1
+    fi
+elif [[ "$SELECTED_CHANNEL" == "stable" && -n "${CUA_DRIVER_RS_BAKED_VERSION:-}" ]] \
+    && ! is_withdrawn_version "${CUA_DRIVER_RS_BAKED_VERSION#v}"; then
     VERSION_SOURCE="baked"
     if ! [[ "$CUA_DRIVER_RS_BAKED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         err "baked Cua Driver version must be an exact stable x.y.z version"
@@ -775,6 +807,13 @@ elif [[ "$SELECTED_CHANNEL" == "stable" && -n "${CUA_DRIVER_RS_BAKED_VERSION:-}"
     TAG="${TAG_PREFIX}${CUA_DRIVER_RS_BAKED_VERSION#v}"
     log "using baked release: $TAG"
 else
+    # Release validation never lets a withdrawn version be baked; an old or
+    # hand-edited installer copy that still names one resolves through the API,
+    # which skips every withdrawn release.
+    if [[ "$SELECTED_CHANNEL" == "stable" && -n "${CUA_DRIVER_RS_BAKED_VERSION:-}" ]]; then
+        printf 'warning: baked release %s%s was withdrawn; resolving the newest eligible release instead\n' \
+            "$TAG_PREFIX" "${CUA_DRIVER_RS_BAKED_VERSION#v}" >&2
+    fi
     VERSION_SOURCE="api"
     log "resolving latest $SELECTED_CHANNEL release via GitHub API"
     if ! API_VERSION="$(resolve_latest_version_from_api)"; then
@@ -1071,6 +1110,10 @@ if [[ "$OS" == "Darwin" && -n "$SRC_APP" && -d "$SRC_APP" ]]; then
     fi
     if ! codesign --verify --deep --strict "$SRC_APP" 2>/dev/null; then
         err "downloaded CuaDriver.app failed signature verification; the installed app was not changed"
+        # Fail closed. Automatically installing an older release here would
+        # hide a broken or tampered release, so recovery stays an explicit pin.
+        err "  $TAG cannot be installed safely on macOS. Please report it at https://github.com/$REPO/issues;"
+        err "  to install an earlier signed release instead, set CUA_DRIVER_RS_VERSION=<x.y.z>."
         exit 1
     fi
     STAGED_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \

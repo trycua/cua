@@ -16,7 +16,7 @@ use cua_driver_contract::{
 
 use crate::capture_registry::{CaptureLookupError, PerceptionCapture};
 use crate::capture_runtime::{CaptureBinding, CaptureService, CaptureTarget};
-use crate::perception_client::{error, PerceptionCancellation, PerceptionClient};
+use crate::perception_client::{error, PerceptionCancellation, PerceptionClientHandle};
 use crate::protocol::ToolResult;
 use crate::tool::{Tool, ToolDef, ToolRegistry};
 use crate::tool_args::parse_typed_projection;
@@ -26,9 +26,10 @@ pub type CaptureBindingResolver =
 
 pub fn register_perception_tool(
     registry: &mut ToolRegistry,
-    client: PerceptionClient,
+    client: impl Into<PerceptionClientHandle>,
     resolve_binding: CaptureBindingResolver,
 ) {
+    let client = client.into();
     let shutdown_client = client.clone();
     registry.retain_session_end_hook(crate::session::register_scoped_session_end_hook(
         move |_| shutdown_client.shutdown_now(),
@@ -43,14 +44,16 @@ pub fn register_perception_tool(
 struct ParseVisualRegionsTool {
     def: ToolDef,
     captures: Arc<CaptureService>,
-    client: PerceptionClient,
+    /// Resolved per request so extension install, update, and removal take
+    /// effect on a running Driver.
+    client: PerceptionClientHandle,
     resolve_binding: CaptureBindingResolver,
 }
 
 impl ParseVisualRegionsTool {
     fn new(
         captures: Arc<CaptureService>,
-        client: PerceptionClient,
+        client: impl Into<PerceptionClientHandle>,
         resolve_binding: CaptureBindingResolver,
     ) -> Self {
         let contract = cua_driver_contract::tool_contract(ParseVisualRegionsInput::TOOL_NAME)
@@ -58,7 +61,7 @@ impl ParseVisualRegionsTool {
         Self {
             def: ToolDef::from_contract(&contract),
             captures,
-            client,
+            client: client.into(),
             resolve_binding,
         }
     }
@@ -132,10 +135,10 @@ impl Tool for ParseVisualRegionsTool {
             Ok(capture) => capture,
             Err(cause) => return tool_error(map_capture_error(cause)),
         };
+        let client = self.client.current().await;
         let started = Instant::now();
         let dimensions = capture.encoded_dimensions();
-        let result = self
-            .client
+        let result = client
             .parse(
                 &input.capture_id,
                 dimensions.width(),
@@ -559,6 +562,7 @@ mod tests {
         ScreenshotToActionTransform,
     };
     use crate::image_utils::encode_rgba_to_png;
+    use crate::perception_client::{PerceptionClient, PerceptionClientResolver};
     use sha2::Digest as _;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
@@ -752,6 +756,76 @@ mod tests {
         );
     }
 
+    /// A resolver whose installation state the test flips between absent and
+    /// an installed worker, counting how often full verification runs.
+    struct SwitchableResolver {
+        installed: std::sync::Mutex<Option<String>>,
+        resolutions: AtomicU64,
+    }
+
+    impl PerceptionClientResolver for SwitchableResolver {
+        fn fingerprint(&self) -> String {
+            format!("{:?}", self.installed.lock().unwrap())
+        }
+
+        fn resolve(&self) -> PerceptionClient {
+            self.resolutions.fetch_add(1, Ordering::SeqCst);
+            match self.installed.lock().unwrap().as_deref() {
+                Some(executable) => PerceptionClient::new(
+                    crate::perception_client::PerceptionWorkerConfig::new(executable),
+                )
+                .unwrap(),
+                None => PerceptionClient::unavailable(),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn live_client_observes_install_and_removal_without_reregistration() {
+        let service = Arc::new(CaptureService::default());
+        let (capture_id, binding) = capture(&service);
+        let resolver = Arc::new(SwitchableResolver {
+            installed: std::sync::Mutex::new(None),
+            resolutions: AtomicU64::new(0),
+        });
+        let tool = ParseVisualRegionsTool::new(
+            service,
+            PerceptionClientHandle::live(resolver.clone()),
+            Arc::new(move |_| Ok(binding.clone())),
+        );
+        let parse = || tool.invoke(json!({"capture_id": capture_id.clone()}));
+
+        let absent = parse().await;
+        assert_eq!(absent.structured_content.unwrap()["code"], "not_installed");
+        let absent_again = parse().await;
+        assert_eq!(
+            absent_again.structured_content.unwrap()["code"],
+            "not_installed"
+        );
+        assert_eq!(
+            resolver.resolutions.load(Ordering::SeqCst),
+            1,
+            "an unchanged installation must not be re-verified"
+        );
+
+        let missing_worker = std::env::temp_dir()
+            .join("cua-perception-live-reload-test")
+            .join("definitely-not-a-worker");
+        *resolver.installed.lock().unwrap() = Some(missing_worker.display().to_string());
+        let installed = parse().await;
+        let code = installed.structured_content.unwrap()["code"].clone();
+        assert_ne!(
+            code, "not_installed",
+            "the same registered tool must reach the newly installed worker"
+        );
+        assert_eq!(resolver.resolutions.load(Ordering::SeqCst), 2);
+
+        *resolver.installed.lock().unwrap() = None;
+        let removed = parse().await;
+        assert_eq!(removed.structured_content.unwrap()["code"], "not_installed");
+        assert_eq!(resolver.resolutions.load(Ordering::SeqCst), 3);
+    }
+
     #[tokio::test]
     async fn expired_capture_fails_at_the_tool_boundary_before_worker_launch() {
         let clock = Arc::new(ManualClock::default());
@@ -781,7 +855,8 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let python = crate::perception_client::fixture_python_config().unwrap();
-        let interpreter = python.interpreter;
+        // The sandbox only grants exec on the canonical interpreter.
+        let interpreter = std::fs::canonicalize(&python.interpreter).unwrap();
 
         let service = Arc::new(CaptureService::default());
         let (capture_id, binding) = capture(&service);

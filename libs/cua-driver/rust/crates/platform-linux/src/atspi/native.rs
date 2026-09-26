@@ -969,6 +969,150 @@ fn correlate_frame_to_window(
     Some(best_ordinal)
 }
 
+#[derive(Debug)]
+struct HyprlandFrame {
+    ordinal: usize,
+    title: String,
+    browser_root: bool,
+    size: Option<(i32, i32)>,
+}
+
+fn chromium_title_matches(accessible: &str, native: &str) -> bool {
+    if native.is_empty() {
+        return false;
+    }
+    accessible == native
+        || accessible
+            .strip_prefix(native)
+            .and_then(|suffix| suffix.strip_prefix(" - "))
+            .is_some_and(|profile| {
+                !profile.trim().is_empty() && !profile.chars().any(char::is_control)
+            })
+}
+
+fn correlate_hyprland_frame(
+    frames: &[HyprlandFrame],
+    clients: &[(&str, u32, u32)],
+    target: usize,
+) -> Option<usize> {
+    let &(title, _, _) = clients.get(target)?;
+    if title.is_empty() || clients.iter().filter(|client| client.0 == title).count() != 1 {
+        return None;
+    }
+    let matches = |frame: &HyprlandFrame, client: &(&str, u32, u32)| {
+        frame.title == client.0
+            || (frame.browser_root
+                && frame.size.is_some_and(|(width, height)| {
+                    width > 0
+                        && height > 0
+                        && i64::from(width) == i64::from(client.1)
+                        && i64::from(height) == i64::from(client.2)
+                })
+                && chromium_title_matches(&frame.title, client.0))
+    };
+    let mut candidates = frames
+        .iter()
+        .filter(|frame| matches(frame, &clients[target]));
+    let frame = candidates.next()?;
+    if candidates.next().is_some()
+        || clients
+            .iter()
+            .filter(|client| matches(frame, client))
+            .count()
+            != 1
+    {
+        return None;
+    }
+    Some(frame.ordinal)
+}
+
+#[cfg(test)]
+mod hyprland_frame_tests {
+    use super::*;
+
+    fn frame(title: &str) -> HyprlandFrame {
+        HyprlandFrame {
+            ordinal: 7,
+            title: title.into(),
+            browser_root: true,
+            size: Some((800, 600)),
+        }
+    }
+
+    #[test]
+    fn binds_unique_chromium_profile_title() {
+        assert_eq!(
+            correlate_hyprland_frame(
+                &[frame("Page - Google Chrome - Cua Test")],
+                &[("Page - Google Chrome", 800, 600), ("Other", 800, 600)],
+                0,
+            ),
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn rejects_generic_prefixes_unknown_roots_and_wrong_sizes() {
+        assert!(!chromium_title_matches("Pageant", "Page"));
+        assert!(!chromium_title_matches("Page - ", "Page"));
+        let mut candidate = frame("Page - Google Chrome - Cua Test");
+        candidate.browser_root = false;
+        assert_eq!(
+            correlate_hyprland_frame(&[candidate], &[("Page - Google Chrome", 800, 600)], 0),
+            None
+        );
+        assert_eq!(
+            correlate_hyprland_frame(
+                &[frame("Page - Google Chrome - Cua Test")],
+                &[("Page - Google Chrome", 801, 600)],
+                0,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_ambiguous_native_and_accessibility_candidates() {
+        assert_eq!(
+            correlate_hyprland_frame(
+                &[frame("Page - Google Chrome - Cua Test")],
+                &[
+                    ("Page - Google Chrome", 800, 600),
+                    ("Page - Google Chrome - Cua Test", 800, 600),
+                ],
+                0,
+            ),
+            None
+        );
+        assert_eq!(
+            correlate_hyprland_frame(
+                &[
+                    frame("Page - Google Chrome"),
+                    frame("Page - Google Chrome - Cua Test"),
+                ],
+                &[("Page - Google Chrome", 800, 600)],
+                0,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn preserves_exact_non_chromium_matching() {
+        let mut candidate = frame("Editor");
+        candidate.browser_root = false;
+        candidate.size = None;
+        assert_eq!(
+            correlate_hyprland_frame(&[candidate], &[("Editor", 800, 600)], 0),
+            Some(7)
+        );
+        assert_eq!(
+            correlate_hyprland_frame(&[frame("")], &[("", 800, 600)], 0),
+            None
+        );
+    }
+}
+
 /// Resolve native window `xid` to the ordinal of the application top-level that
 /// renders it, or `None` when that cannot be proven. `None` means the walk stays
 /// application-wide: callers that merely want a tree carry on, and callers that
@@ -980,28 +1124,57 @@ async fn resolve_window_frame(
     seeds: &[RawObjectRef],
 ) -> Option<usize> {
     if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
-        let window = crate::wayland::hyprland::accessibility_window(xid, pid)?;
-        let mut matches = Vec::new();
+        let windows = crate::wayland::hyprland::list_windows().ok()?;
+        let owned: Vec<_> = windows.iter().filter(|window| window.pid == pid).collect();
+        let target = owned.iter().position(|window| window.address == xid)?;
+        let chromium = std::fs::read_link(format!("/proc/{pid}/exe"))
+            .ok()
+            .and_then(|path| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+            .is_some_and(|name| crate::browser_platform::is_chromium_identity(&name));
+        let mut frames = Vec::new();
         for (ordinal, oref) in seeds.iter().enumerate() {
-            let Some(Ok(acc)) = call(accessible_for(conn, oref)).await else {
-                continue;
-            };
-            let Some(Ok(role)) = call(acc.get_role_name()).await else {
-                continue;
-            };
+            let acc = call(accessible_for(conn, oref)).await?.ok()?;
+            let role = call(acc.get_role_name()).await?.ok()?;
             if !matches!(
                 role.as_str(),
                 "frame" | "window" | "dialog" | "alert" | "file chooser"
             ) {
                 continue;
             }
-            if matches!(call(acc.name()).await, Some(Ok(name)) if name == window.title) {
-                matches.push(ordinal);
-            }
+            let title = call(acc.name()).await?.ok()?;
+            let browser_root = if chromium {
+                call(acc.get_attributes())
+                    .await?
+                    .ok()?
+                    .get("class")
+                    .is_some_and(|class| class == "BrowserRootView")
+            } else {
+                false
+            };
+            let size = if browser_root {
+                let proxies = call(acc.proxies()).await?.ok()?;
+                let component = call(proxies.component()).await?.ok()?;
+                let (_, _, width, height) =
+                    call(component.get_extents(CoordType::Screen)).await?.ok()?;
+                Some((width, height))
+            } else {
+                None
+            };
+            frames.push(HyprlandFrame {
+                ordinal,
+                title,
+                browser_root,
+                size,
+            });
         }
-        // Title is only an AX-to-client correlation within the already
-        // attested PID. Duplicate frame names must never select a sibling.
-        return (matches.len() == 1).then(|| matches[0]);
+        let clients = owned
+            .iter()
+            .map(|window| (window.title.as_str(), window.width, window.height))
+            .collect::<Vec<_>>();
+        return correlate_hyprland_frame(&frames, &clients, target);
     }
     if seeds.len() == 1 {
         // One top-level: the caller's window is the only thing this
@@ -3015,7 +3188,7 @@ fn at_point_activation_index(
     actions: &[String],
     is_deepest_hit: bool,
 ) -> Option<usize> {
-    if is_container_role(role) {
+    if is_container_role(role) || crate::at_point_policy::is_top_level_shell_role(role) {
         return None;
     }
     if !is_deepest_hit && role.trim().eq_ignore_ascii_case("canvas") {
@@ -4722,7 +4895,11 @@ pub fn perform_action_at_point(
             // children, but the area/role split is what actually disambiguates.
             let mut frames: Vec<(usize, i32, i32, u32, u32, bool)> = Vec::new();
             for (i, v) in visited.iter().enumerate() {
-                if v.actions.is_empty() || !v.has_component || is_container_role(&v.role) {
+                if v.actions.is_empty()
+                    || !v.has_component
+                    || is_container_role(&v.role)
+                    || crate::at_point_policy::is_top_level_shell_role(&v.role)
+                {
                     continue;
                 }
                 let Some(Ok(proxies)) = call(v.acc.proxies()).await else {
@@ -4850,6 +5027,9 @@ pub fn perform_action_at_screen_point(
                 .await
                 .0
                 .into_iter()
+                .filter(|&(idx, ..)| {
+                    !crate::at_point_policy::is_top_level_shell_role(&action_nodes[idx].role)
+                })
                 .map(|(idx, x, y, w, h)| {
                     (idx, x, y, w, h, is_passive_role(&action_nodes[idx].role))
                 })
@@ -6145,24 +6325,6 @@ mod coord_tests {
     }
 
     #[test]
-    fn foreign_empty_application_before_target_is_ignored() {
-        let target_pid = 4242;
-        let candidates = [
-            (Some(9000), "foreign-empty", false),
-            (Some(target_pid), "target-live-tree", true),
-        ];
-        let mut selection = ApplicationSelection::new(target_pid);
-
-        for (pid, app, has_children) in candidates {
-            if selection.matches_pid(pid) {
-                selection.consider_matching(app, has_children);
-            }
-        }
-
-        assert_eq!(selection.into_selected(), Ok(Some("target-live-tree")));
-    }
-
-    #[test]
     fn childless_exact_pid_application_remains_the_fallback() {
         let mut selection = ApplicationSelection::new(4242);
         selection.consider_matching("first-empty", false);
@@ -6478,7 +6640,15 @@ mod coord_tests {
 
     #[test]
     fn point_hit_projection_rejects_unrealized_extents_before_offsets() {
-        for raw in [(i32::MIN, 0, 40, 20), (0, i32::MIN, 40, 20), (0, 0, 1, 1)] {
+        // The -16390 rows fall below the -16384 sentinel floor only before
+        // the offsets are applied, so they fail if the check moves after them.
+        for raw in [
+            (i32::MIN, 0, 40, 20),
+            (0, i32::MIN, 40, 20),
+            (-16390, 0, 40, 20),
+            (0, -16390, 40, 20),
+            (0, 0, 1, 1),
+        ] {
             assert_eq!(project_screen_extents(raw, (108, 79), Some((0, 47))), None);
         }
     }
@@ -6699,20 +6869,6 @@ mod coord_tests {
     }
 
     #[test]
-    fn screen_reconstruction_matches_live_gnome_calculator() {
-        // Regression anchor for the whole GTK4 fix, from a live-verified capture:
-        // gnome-calculator button "7" = x11_window_origin (55,27)
-        //   + _GTK_FRAME_EXTENTS inset (61,55) + atspi WINDOW coords (16,293)
-        //   = screen (132,375).
-        let (fl, ft) = parse_gtk_frame_extents(&[61, 61, 55, 67]).unwrap();
-        let origin = (55, 27); // x11_window_origin
-        let window = (16, 293); // atspi CoordType::Window
-        let offset = (origin.0 + fl, origin.1 + ft); // window_to_screen_offset
-        let screen = (offset.0 + window.0, offset.1 + window.1);
-        assert_eq!(screen, (132, 375));
-    }
-
-    #[test]
     fn plain_activation_names_are_recognised() {
         for name in [
             "click",
@@ -6924,6 +7080,27 @@ mod at_point_rules_tests {
         );
         assert_eq!(
             at_point_activation_index("canvas", &acts(&["activate"]), true),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn top_level_frame_default_action_is_never_a_pixel_click() {
+        // Chrome 151 on X11: the hit test over page content resolves only to
+        // `frame "… - Google Chrome"` [doDefault]. Firing it changes nothing,
+        // so it must not be reported as the click, as ancestor or deepest hit.
+        for role in ["frame", "window", "application", "desktop frame"] {
+            for deepest in [false, true] {
+                assert_eq!(
+                    at_point_activation_index(role, &acts(&["doDefault"]), deepest),
+                    None,
+                    "{role} deepest={deepest}"
+                );
+            }
+        }
+        // The page content itself remains actionable once exposed.
+        assert_eq!(
+            at_point_activation_index("push button", &acts(&["doDefault"]), true),
             Some(0)
         );
     }

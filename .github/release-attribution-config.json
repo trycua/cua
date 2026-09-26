@@ -2,6 +2,7 @@
   "bots": [
     "dependabot[bot]",
     "github-actions[bot]",
+    "claude",
     "copilot",
     "release-please[bot]",
     "renovate[bot]",
@@ -19,6 +20,7 @@
     "hippoley <noreply@github.com>": "hippoley"
   },
   "identityOverrides": {
+    "antoine.bonnet@hcompany.ai": "abonneth",
     "ddupont@mit.edu": "ddupont808",
     "egnichtel@crosscode.com": "ngnichtel",
     "f@trycua.com": "f-trycua",

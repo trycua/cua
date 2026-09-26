@@ -10,3 +10,5 @@ https://openai.com/*
 https://github.com/user-attachments/assets/*
 # Self-referential install.sh URL: resolves once this PR merges to main
 https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh
+# TypeSafe console returns 403 to automated checkers but resolves fine in-browser
+https://console.typesafe.ai/*

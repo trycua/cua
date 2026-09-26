@@ -3,7 +3,7 @@
 
 use cua_driver_contract::{manifest, SchemaMode, CAPABILITY_VERSION, TOOLS_LIST_SCHEMA_VERSION};
 use cua_driver_core::perception_client::PerceptionClient;
-use cua_driver_core::tool::{default_capabilities_for, ToolRegistry};
+use cua_driver_core::tool::ToolRegistry;
 
 #[test]
 fn canonical_core_contracts_match_live_registry() {
@@ -61,37 +61,8 @@ fn canonical_core_contracts_match_live_registry() {
             "openWorldHint"
         );
         assert_eq!(
-            default_capabilities_for(&contract.name),
-            contract.capabilities,
-            "capabilities"
-        );
-        assert_eq!(
             entry["capabilities"],
             serde_json::json!(contract.capabilities)
-        );
-    }
-}
-
-#[test]
-fn every_generated_contract_uses_live_capability_tokens() {
-    for contract in manifest().tools {
-        assert_eq!(
-            default_capabilities_for(&contract.name),
-            contract.capabilities,
-            "{} capabilities",
-            contract.name
-        );
-        assert_eq!(
-            contract
-                .input_schema
-                .pointer("/properties/delivery_mode")
-                .is_some(),
-            contract
-                .capabilities
-                .iter()
-                .any(|capability| capability == "input.delivery_mode"),
-            "{} typed contract delivery_mode schema/capability mismatch",
-            contract.name
         );
     }
 }

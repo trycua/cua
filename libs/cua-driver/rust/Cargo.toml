@@ -6,6 +6,7 @@ members = [
     "crates/cua-driver-sdk",
     "crates/cua-driver-bindgen",
     "crates/cua-driver-testkit",
+    "crates/cua-driver-e2e",
     "crates/cua-driver-uia",
     "crates/cua-driver-core",
     "crates/platform-macos",
@@ -18,7 +19,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.28.2"
+version = "0.29.1"
 edition = "2021"
 authors = ["trycua"]
 license = "MIT"

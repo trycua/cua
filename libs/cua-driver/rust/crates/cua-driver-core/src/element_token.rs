@@ -121,14 +121,14 @@ mod tests {
 
     #[test]
     fn token_round_trips_through_format_then_parse() {
-        assert_eq!(format_token(0x1234, 42), "s00001234:42");
-        assert_eq!(parse_token(&format_token(0x1234, 42)), Some((0x1234, 42)));
+        assert_eq!(token_for(0x1234, 42), "s00001234:42");
+        assert_eq!(parse_token(&token_for(0x1234, 42)), Some((0x1234, 42)));
     }
     #[test]
     fn token_format_pads_to_eight_hex_chars() {
-        assert_eq!(format_token(1, 0), "s00000001:0");
-        assert_eq!(format_token(0, 999), "s00000000:999");
-        assert_eq!(format_token(0x0001_0001, 3), "s00010001:3");
+        assert_eq!(token_for(1, 0), "s00000001:0");
+        assert_eq!(token_for(0, 999), "s00000000:999");
+        assert_eq!(token_for(0x0001_0001, 3), "s00010001:3");
         assert_eq!(parse_token("s00010001:3"), Some((0x0001_0001, 3)));
     }
     #[test]

@@ -1,8 +1,8 @@
 //! Multi-client / multi-cursor / overlay session tests.
 //!
 //! Concurrent driver processes, per-cursor instance state, cross-process
-//! isolation, the live overlay render loop, and the `set_agent_cursor_motion`
-//! Bezier knobs. Split out of the old monolithic `mcp_protocol_test.rs`;
+//! isolation, and the live overlay render loop. Cursor motion knobs are owned
+//! by `protocol_schema_test::cursor_motion_knobs_are_applied`. Split out of the old monolithic `mcp_protocol_test.rs`;
 //! mac/windows pairs merge and branch only where assertions differ.
 //!
 //! Note: the originals asserted process liveness with `child.try_wait()`.
@@ -19,88 +19,6 @@ fn spawn_unrestricted_with_overlay() -> Option<RawDriver> {
         ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
         ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
     ])
-}
-
-#[test]
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-fn concurrent_clients() {
-    //! Verify two concurrent cua-driver-rs processes both respond correctly.
-    //! This tests the "multiple cua-driver processes" scenario relevant to
-    //! the multi-cursor use case.
-    let mut drivers: Vec<RawDriver> = Vec::new();
-    for _ in 0..2 {
-        let Some(d) = RawDriver::spawn() else {
-            return;
-        };
-        drivers.push(d);
-    }
-
-    for (i, d) in drivers.iter_mut().enumerate() {
-        d.send(&serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": i + 1,
-            "method": "initialize",
-            "params": {}
-        }));
-
-        let resp = d.recv();
-        assert_eq!(resp["id"], (i + 1) as i64);
-        assert!(
-            resp["result"]["protocolVersion"].is_string(),
-            "Process {i} failed to initialize"
-        );
-    }
-}
-
-#[test]
-#[cfg(target_os = "macos")]
-fn concurrent_clients_with_cursor_moves() {
-    //! Two concurrent cua-driver processes, each driving their own cursor, should not crash.
-    //! This covers the multi-cursor use case where two Codex agents run simultaneously.
-    let mut drivers: Vec<RawDriver> = Vec::new();
-    for _ in 0..2 {
-        let Some(d) = spawn_unrestricted_with_overlay() else {
-            return;
-        };
-        drivers.push(d);
-    }
-
-    // Initialize all processes.
-    for (i, d) in drivers.iter_mut().enumerate() {
-        d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-        let resp = d.recv();
-        assert_eq!(resp["id"], 1, "Process {i} initialize failed");
-    }
-
-    // Each process moves its cursor to different positions.
-    let positions = [(100.0_f64, 200.0_f64), (500.0, 600.0)];
-    for ((i, d), (px, py)) in drivers.iter_mut().enumerate().zip(positions.iter()) {
-        d.send(&serde_json::json!({
-            "jsonrpc":"2.0","id":2,"method":"tools/call",
-            "params":{"name":"move_cursor","arguments":{"x":px,"y":py}}
-        }));
-        let resp = d.recv();
-        assert!(
-            !resp["result"]["isError"].as_bool().unwrap_or(false),
-            "Process {i} move_cursor failed: {resp:?}"
-        );
-    }
-
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    // Each process must still be alive: probe with one more request (a crashed
-    // process would EOF and panic in recv()).
-    for (i, d) in drivers.iter_mut().enumerate() {
-        d.send(&serde_json::json!({
-            "jsonrpc":"2.0","id":99,"method":"tools/call",
-            "params":{"name":"get_agent_cursor_state","arguments":{}}
-        }));
-        let resp = d.recv();
-        assert_eq!(
-            resp["id"], 99,
-            "cua-driver process {i} crashed during concurrent cursor test"
-        );
-    }
 }
 
 #[test]
@@ -200,13 +118,29 @@ fn concurrent_multi_driver_isolation() {
         let mv_a = child_a.recv();
         let mv_b = child_b.recv();
         assert!(
-            mv_a["error"].is_null(),
+            !mv_a["result"]["isError"].as_bool().unwrap_or(false),
             "Driver A move_cursor failed: {mv_a:?}"
         );
         assert!(
-            mv_b["error"].is_null(),
+            !mv_b["result"]["isError"].as_bool().unwrap_or(false),
             "Driver B move_cursor failed: {mv_b:?}"
         );
+
+        // Both processes must survive the concurrent overlay moves: probe each
+        // once more after the render loop ticks (a crashed process would EOF
+        // and panic in recv()).
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        for (label, driver) in [("A", &mut child_a), ("B", &mut child_b)] {
+            driver.send(&serde_json::json!({
+                "jsonrpc":"2.0","id":6,"method":"tools/call",
+                "params":{"name":"get_config","arguments":{}}
+            }));
+            let alive = driver.recv();
+            assert_eq!(
+                alive["id"], 6,
+                "Driver {label} crashed during concurrent cursor moves: {alive:?}"
+            );
+        }
     }
 }
 
@@ -329,46 +263,5 @@ fn overlay_move_cursor_stays_alive() {
     assert_eq!(
         resp["id"], 99,
         "cua-driver crashed during overlay move_cursor test"
-    );
-}
-
-#[test]
-#[cfg(target_os = "macos")]
-fn set_agent_cursor_motion_bezier_knobs() {
-    //! set_agent_cursor_motion with Bezier/timing knobs — verifies schema accepts them
-    //! and returns a non-error response with the updated values in the response text.
-    let Some(mut d) = spawn_unrestricted_with_overlay() else {
-        return;
-    };
-
-    d.send(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
-    d.recv();
-
-    // Set Bezier motion knobs including integer-encoded numbers (common from MCP clients).
-    d.send(&serde_json::json!({
-        "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"set_agent_cursor_motion","arguments":{
-            "cursor_id": "agent1",
-            "arc_size": 0.4,
-            "spring": 0.85,
-            "glide_duration_ms": 500,
-            "dwell_after_click_ms": 200,
-            "idle_hide_ms": 5000
-        }}
-    }));
-    let resp = d.recv();
-    assert!(
-        resp["error"].is_null(),
-        "Protocol error from set_agent_cursor_motion: {resp:?}"
-    );
-    assert!(
-        !resp["result"]["isError"].as_bool().unwrap_or(false),
-        "set_agent_cursor_motion returned isError: {resp:?}"
-    );
-    // Response text should mention the new glide duration.
-    let text = resp["result"]["content"][0]["text"].as_str().unwrap_or("");
-    assert!(
-        text.contains("500") || text.contains("motion"),
-        "Expected motion summary in response, got: {text}"
     );
 }

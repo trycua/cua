@@ -294,7 +294,7 @@ def test_templates_and_schemas_are_valid_and_pin_known_models() -> None:
     ):
         assert expected in serialized
     assert models[0]["license"] == "AGPL-3.0-only"
-    assert models[0]["verificationStatus"] == "license-review-required"
+    assert models[0]["verificationStatus"] == "release-verified"
     platforms = json.loads((CONTROL / "platform-inputs.json").read_text())
     platform_validator = Draft202012Validator(
         json.loads((CONTROL / "platform-inputs.schema.json").read_text())
@@ -351,7 +351,7 @@ def test_packages_deterministically_with_catalog_sbom_and_redacted_provenance(
     ).encode()
     provenance = json.loads((first / "provenance.redacted.json").read_text())
     assert catalog["publisher_id"] == "cua"
-    assert catalog["key_id"] == "cua-extension-ed25519-2026-01"
+    assert catalog["key_id"] == "cua-extension-ed25519-2026-09"
     assert catalog["archive_sha256"] == release.file_digest(archive)
     assert catalog["next_key"] is None
     assert list(catalog) == [
@@ -425,6 +425,183 @@ def test_packages_deterministically_with_catalog_sbom_and_redacted_provenance(
     (first / "runtime-contract.json").write_text("tampered\n")
     with pytest.raises(release.CandidateError, match="checksum verification failed"):
         release.verify_checksums(first / "checksums.txt")
+
+
+def third_party_fixture(tmp_path: Path) -> tuple[Path, Path]:
+    """Fixture with upstream provenance shaped like a real staging candidate."""
+    payload, manifest_path = fixture(tmp_path)
+    manifest = json.loads(manifest_path.read_text())
+    model_ledger = json.loads((payload / "model-ledger.json").read_text())
+    source_ledger = json.loads((payload / "source-ledger.json").read_text())
+    upstream = {
+        "libonnxruntime.so": ("https://github.com/microsoft/onnxruntime", "MIT"),
+        "fixture-model.onnx": ("https://huggingface.co/microsoft/OmniParser-v2.0", "AGPL-3.0-only"),
+        "ocr-det.onnx": ("https://huggingface.co/PaddlePaddle/det", "Apache-2.0"),
+        "ocr-rec.onnx": ("https://huggingface.co/PaddlePaddle/rec", "Apache-2.0"),
+        "ocr-dictionary.txt": ("https://huggingface.co/PaddlePaddle/rec", "Apache-2.0"),
+    }
+    revisions = {"fixture-model.onnx": "icon-rev", "ocr-det.onnx": "det-rev", "ocr-rec.onnx": "rec-rev"}
+    for item in manifest["artifacts"]:
+        if item["name"] in upstream:
+            item["license"]["source"], item["license"]["spdx"] = upstream[item["name"]]
+    for entry in model_ledger["models"]:
+        entry["revision"] = revisions[entry["artifact"]]
+        entry["license"] = upstream[entry["artifact"]][1]
+    exporter = b"exporter source\n"
+    exporter_path = payload / "payload/source/exporter/onnx-1.17.0.tar.gz"
+    exporter_path.parent.mkdir(parents=True, exist_ok=True)
+    exporter_path.write_bytes(exporter)
+    manifest["artifacts"].append({
+        "kind": "source",
+        "name": "onnx-1.17.0.tar.gz",
+        "path": "payload/source/exporter/onnx-1.17.0.tar.gz",
+        "sha256": digest(exporter),
+        "size": len(exporter),
+        "license": {
+            "spdx": "BSD-3-Clause",
+            "source": "https://github.com/onnx/onnx",
+            "notice": "payload/NOTICE",
+        },
+    })
+    source_ledger["sources"].append({
+        "artifact": "onnx-1.17.0.tar.gz",
+        "artifactSha256": digest(exporter),
+        "artifactSize": len(exporter),
+        "repository": "https://github.com/onnx/onnx",
+        "revision": "57b9c6a4f6eebb09ae1b34cfb632078518f72832",
+        "license": "BSD-3-Clause",
+        "durableLocation": "candidate archive source/exporter/",
+        "sourceOfferStatus": "bundled",
+        "contentKind": "exporter-source",
+        "format": "file",
+    })
+    icon_source = b"icon weights\n"
+    (payload / "payload/source/upstream").mkdir(parents=True)
+    (payload / "payload/source/upstream/icon.pt").write_bytes(icon_source)
+    manifest["artifacts"].append({
+        "kind": "source",
+        "name": "icon.pt",
+        "path": "payload/source/upstream/icon.pt",
+        "sha256": digest(icon_source),
+        "size": len(icon_source),
+        "license": {
+            "spdx": "AGPL-3.0-only",
+            "source": "https://huggingface.co/microsoft/OmniParser-v2.0",
+            "notice": "payload/NOTICE",
+        },
+    })
+    source_ledger["sources"].append({
+        "artifact": "icon.pt",
+        "artifactSha256": digest(icon_source),
+        "artifactSize": len(icon_source),
+        "repository": "https://huggingface.co/microsoft/OmniParser-v2.0",
+        "revision": "icon-rev",
+        "license": "AGPL-3.0-only",
+        "durableLocation": "candidate archive source/upstream/",
+        "sourceOfferStatus": "bundled",
+        "contentKind": "model-source-input",
+        "format": "file",
+    })
+    binding = {
+        "artifact": "icon.pt",
+        "path": "payload/source/upstream/icon.pt",
+        "sha256": digest(icon_source),
+        "size": len(icon_source),
+    }
+    for entry in model_ledger["models"]:
+        if entry["artifact"] == "fixture-model.onnx":
+            entry["sourceArtifact"] = binding
+    (payload / "model-ledger.json").write_text(json.dumps(model_ledger))
+    (payload / "source-ledger.json").write_text(json.dumps(source_ledger))
+    manifest_path.write_text(json.dumps(manifest))
+    return payload, manifest_path
+
+
+def package_third_party_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
+    payload, manifest_path = third_party_fixture(tmp_path)
+    evidence = tmp_path / "executed.json"
+    release.run_candidate_gates(manifest_path, payload, evidence)
+    archive = release.package_candidate(
+        manifest_path, payload, tmp_path / "out", executed_evidence_path=evidence
+    )
+    return payload, manifest_path, archive
+
+
+def test_sbom_files_match_archive_paths_and_digests(tmp_path: Path) -> None:
+    _, _, archive = package_third_party_fixture(tmp_path)
+    with tarfile.open(archive) as candidate:
+        archived = {
+            member.name: digest(candidate.extractfile(member).read())
+            for member in candidate.getmembers()
+            if member.isfile()
+        }
+        sbom = json.loads(candidate.extractfile("metadata/sbom.spdx.json").read())
+    assert sbom == json.loads((tmp_path / "out/sbom.spdx.json").read_text())
+    file_names = set()
+    for entry in sbom["files"]:
+        assert entry["fileName"].startswith("./") and "//" not in entry["fileName"]
+        relative = entry["fileName"][2:]
+        assert relative in archived, relative
+        assert entry["checksums"] == [{"algorithm": "SHA256", "checksumValue": archived[relative]}]
+        file_names.add(relative)
+    assert {
+        "model-manifest.json",
+        "modelLedger.json",
+        "sourceLedger.json",
+        "source/cua-perception-source.tar.gz",
+        "source/exporter/onnx-1.17.0.tar.gz",
+        "source/upstream/icon.pt",
+    } <= file_names
+    # Only generated metadata and extension.json (which binds the SBOM) are excluded.
+    assert {
+        name for name in archived if name not in file_names
+    } == {name for name in archived if name.startswith("metadata/")} | {"extension.json"}
+    ledgers = {entry["fileName"]: entry for entry in sbom["files"] if "Ledger" in entry["fileName"]}
+    assert all(entry["licenseConcluded"] == "MIT" for entry in ledgers.values())
+    package = sbom["packages"][0]
+    expected_license = "AGPL-3.0-only AND Apache-2.0 AND BSD-3-Clause AND CC0-1.0 AND MIT"
+    assert package["licenseDeclared"] == package["licenseConcluded"] == expected_license
+    related = {item["relatedSpdxElement"] for item in sbom["relationships"]}
+    assert related == {entry["SPDXID"] for entry in sbom["files"]}
+    assert len(related) == len(sbom["files"])
+
+
+def test_components_report_upstream_identity_for_third_party_items(tmp_path: Path) -> None:
+    _, manifest_path, archive = package_third_party_fixture(tmp_path)
+    manifest = json.loads(manifest_path.read_text())
+    with tarfile.open(archive) as candidate:
+        extension = json.loads(candidate.extractfile("extension.json").read())
+    components = {
+        item["name"]: (item["version"], item["source_revision"]) for item in extension["components"]
+    }
+    cua = (manifest["version"], manifest["sourceSha"])
+    assert components["libonnxruntime.so"] == ("1", "v1")
+    assert components["fixture-model.onnx"] == ("icon-rev", "icon-rev")
+    assert components["ocr-det.onnx"] == ("det-rev", "det-rev")
+    assert components["ocr-dictionary.txt"] == ("rec-rev", "rec-rev")
+    onnx_revision = "57b9c6a4f6eebb09ae1b34cfb632078518f72832"
+    assert components["onnx-1.17.0.tar.gz"] == (onnx_revision, onnx_revision)
+    assert components["icon.pt"] == ("icon-rev", "icon-rev")
+    assert components["cua-perception-worker"] == cua
+    assert components["model-manifest.json"] == cua
+    assert components["cua-perception-source.tar.gz"] == cua
+    assert components["health.json"] == cua
+    assert all(version and revision for version, revision in components.values())
+
+
+def test_dictionary_identity_requires_one_model_revision(tmp_path: Path) -> None:
+    payload, manifest_path = third_party_fixture(tmp_path)
+    manifest = json.loads(manifest_path.read_text())
+    for item in manifest["artifacts"]:
+        if item["name"] == "ocr-det.onnx":
+            item["license"]["source"] = "https://huggingface.co/PaddlePaddle/rec"
+    manifest_path.write_text(json.dumps(manifest))
+    evidence = tmp_path / "executed.json"
+    release.run_candidate_gates(manifest_path, payload, evidence)
+    with pytest.raises(release.CandidateError, match="exactly one model revision"):
+        release.package_candidate(
+            manifest_path, payload, tmp_path / "out", executed_evidence_path=evidence
+        )
 
 
 @pytest.mark.parametrize(
@@ -537,6 +714,23 @@ def test_license_review_model_requires_exact_bundled_source_input(tmp_path: Path
     model_ledger["models"][0]["sourceArtifact"]["sha256"] = "0" * 64
     model_ledger_path.write_text(json.dumps(model_ledger))
     with pytest.raises(release.CandidateError, match="source input binding differs"):
+        release.load_and_validate_manifest(manifest_path, payload)
+
+
+def test_release_verified_agpl_model_still_requires_bundled_source_input(tmp_path: Path) -> None:
+    payload, manifest_path = fixture(tmp_path)
+    model_ledger_path = payload / "model-ledger.json"
+    model_ledger = json.loads(model_ledger_path.read_text())
+    manifest = json.loads(manifest_path.read_text())
+    for item in manifest["artifacts"]:
+        if item["kind"] == "model" and item["name"] == model_ledger["models"][0]["artifact"]:
+            item["license"]["spdx"] = "AGPL-3.0-only"
+    manifest_path.write_text(json.dumps(manifest))
+    model_ledger["models"][0]["license"] = "AGPL-3.0-only"
+    model_ledger["models"][0]["verificationStatus"] = "release-verified"
+    model_ledger["models"][0].pop("sourceArtifact", None)
+    model_ledger_path.write_text(json.dumps(model_ledger))
+    with pytest.raises(release.CandidateError, match="lacks a bundled source input"):
         release.load_and_validate_manifest(manifest_path, payload)
 
 
@@ -769,10 +963,10 @@ def test_trust_root_and_rfc8032_vector_match_extension_manager_contract() -> Non
     Draft202012Validator(json.loads((CONTROL / "trust-root.schema.json").read_text())).validate(
         trust
     )
-    assert trust["activeKeyId"] == "cua-extension-ed25519-2026-01"
-    assert trust["keys"][0]["publicKeyBase64"] == "dB7E/36fTXLiHPfr8ya4i4TFbssU/jpO9zrS8gl4bsQ="
+    assert trust["activeKeyId"] == "cua-extension-ed25519-2026-09"
+    assert trust["keys"][0]["publicKeyBase64"] == "6S31PpMbieaGirpl5r3sNRlsV1ufOPyw6It0oxmNkoo="
     assert trust["rotation"]["privateKeysStoredInRepository"] is False
-    assert trust["keys"][0]["validFromUnix"] == 1735689600
+    assert trust["keys"][0]["validFromUnix"] == 1790208000
     assert trust["keys"][0]["validUntilUnix"] == 2082758400
     assert (
         vector["publicKeyHex"] == "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"

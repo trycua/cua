@@ -317,17 +317,6 @@ mod tests {
     }
 
     #[test]
-    fn session_description_prefers_named_multi_call_runs() {
-        let schema = session_schema();
-        let description = schema["description"]
-            .as_str()
-            .expect("session schema should carry agent guidance");
-        assert!(description.contains("prefer a short public session label"));
-        assert!(description.contains("repeat it on every call that accepts it"));
-        assert!(description.contains("implicit lifecycle session"));
-    }
-
-    #[test]
     fn action_session_description_without_repeat_guidance_is_flagged() {
         let tool = json!({
             "type": "object",

@@ -135,17 +135,12 @@ impl ObservationProvider for ToolObservationProvider {
 
         let state = self
             .get_window_state
-            .invoke(json!({
-                "pid": pid,
-                "window_id": window_id,
-                "include_screenshot": include_screenshot,
-                // Internal direct-tool flag: verification must not refresh the
-                // shared action index/token cache.
-                // Registry ingress removes underscore-prefixed arguments before
-                // public dispatch. Direct platform-tool invocation is the
-                // trusted in-process channel for this non-mutating mode.
-                "_observation_only": true,
-            }))
+            .invoke(window_state_observation_args(
+                pid,
+                window_id,
+                include_elements,
+                include_screenshot,
+            ))
             .await;
         if state.is_error == Some(true) {
             return Err(tool_error_text(&state, "get_window_state failed"));
@@ -179,6 +174,26 @@ impl ObservationProvider for ToolObservationProvider {
             visual_evidence,
         })
     }
+}
+
+fn window_state_observation_args(
+    pid: i64,
+    window_id: u64,
+    include_elements: bool,
+    include_screenshot: bool,
+) -> Value {
+    json!({
+        "pid": pid,
+        "window_id": window_id,
+        "include_accessibility_tree": include_elements,
+        "include_screenshot": include_screenshot,
+        // Internal direct-tool flag: verification must not refresh the
+        // shared action index/token cache.
+        // Registry ingress removes underscore-prefixed arguments before
+        // public dispatch. Direct platform-tool invocation is the
+        // trusted in-process channel for this non-mutating mode.
+        "_observation_only": true,
+    })
 }
 
 fn tool_error_text(result: &ToolResult, fallback: &str) -> String {
@@ -799,6 +814,18 @@ mod tests {
                 selected: None,
             }),
         }
+    }
+
+    #[test]
+    fn observation_args_request_only_needed_modalities() {
+        let screenshot_only = window_state_observation_args(42, 7, false, true);
+        assert_eq!(screenshot_only["include_accessibility_tree"], json!(false));
+        assert_eq!(screenshot_only["include_screenshot"], json!(true));
+        assert_eq!(screenshot_only["_observation_only"], json!(true));
+
+        let elements_only = window_state_observation_args(42, 7, true, false);
+        assert_eq!(elements_only["include_accessibility_tree"], json!(true));
+        assert_eq!(elements_only["include_screenshot"], json!(false));
     }
 
     #[test]

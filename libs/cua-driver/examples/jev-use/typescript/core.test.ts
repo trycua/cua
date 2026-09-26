@@ -7,11 +7,14 @@ import {
   buildCandidates,
   chooseMock,
   classify,
+  hasExecutableCandidate,
   parseVisualRegions,
   validateChoice,
   type Candidate,
 } from './core.js';
 import {
+  backgroundRefusalCode,
+  candidatesForStep,
   Driver,
   DriverToolError,
   observeVisual,
@@ -126,6 +129,48 @@ test('submit path depends on the DOM button ref', () => {
   assert.deepEqual(
     buildCandidates(page, 'expected', undefined, true).map((candidate) => candidate.id),
     ['reobserve', 'abstain']
+  );
+});
+
+test('visual input does not change a semantic executable candidate set', () => {
+  // Salvaged from #4165: when the page structure already offers an executable
+  // action, a visual observation cannot change the candidates.
+  const visual = parseVisualRegions(
+    fixture('parse-visual-regions-submit-v1.json'),
+    'capture-submit',
+    7,
+    9
+  );
+  for (const value of [null, 'expected']) {
+    const withoutVisual = buildCandidates(snapshot(value), 'expected', undefined, true);
+    const withVisual = buildCandidates(snapshot(value), 'expected', visual, true);
+    assert.deepEqual(withVisual, withoutVisual);
+    assert.ok(hasExecutableCandidate(withoutVisual));
+  }
+});
+
+test('foreground escalation is a distinct visual candidate', () => {
+  const visual = parseVisualRegions(
+    fixture('parse-visual-regions-submit-v1.json'),
+    'capture-submit',
+    7,
+    9
+  );
+  const page = snapshot('expected');
+  page.refs = page.refs.slice(0, 1);
+  const candidates = buildCandidates(page, 'expected', visual, true, 'foreground');
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.id),
+    ['submit-form-foreground', 'reobserve', 'abstain']
+  );
+  assert.equal(candidates[0].tool, 'click');
+  assert.equal(candidates[0].arguments.delivery_mode, 'foreground');
+  assert.equal(candidates[0].arguments.capture_id, 'capture-submit');
+  assert.match(candidates[0].description, /foreground/);
+  assert.equal(chooseMock(candidates).choice, 'submit-form-foreground');
+  assert.equal(
+    buildCandidates(snapshot('expected'), 'expected', visual, true, 'foreground')[0].tool,
+    'browser_click'
   );
 });
 
@@ -468,6 +513,127 @@ test('driver errors carry the structured error code', async () => {
   await assert.rejects(
     () => new Driver(client as never, 'jev-test').call('parse_visual_regions', {}),
     (error: unknown) => error instanceof DriverToolError && error.code === 'not_installed'
+  );
+});
+
+function pageWith(submitRef: boolean) {
+  const refs: { role: string; name: string; ref: string; value?: string }[] = [
+    { role: 'textbox', name: 'verification value', ref: 'p1:0', value: 'expected' },
+  ];
+  if (submitRef) refs.push({ role: 'button', name: 'Submit', ref: 'p1:1' });
+  return { target_id: 'target', tab_id: 'tab', refs };
+}
+
+function recordingDriver(responses: unknown[] = []) {
+  const calls: string[] = [];
+  const client = {
+    callTool: async (request: { name: string }) => {
+      calls.push(request.name);
+      return { isError: false, structuredContent: responses.shift() ?? { status: 'ok' } };
+    },
+  };
+  return { driver: new Driver(client as never, 'jev-test'), calls };
+}
+
+test('visual parse runs only when it can contribute a candidate', async () => {
+  const tools = new Set(['get_window_state', 'parse_visual_regions', 'click']);
+  const payload = () => fixture('parse-visual-regions-submit-v1.json');
+
+  let rec = recordingDriver();
+  let step = await candidatesForStep(rec.driver, pageWith(true), 'expected', 7, 9, tools, true);
+  assert.equal(step.candidates[0].tool, 'browser_click');
+  assert.equal(step.visual, undefined);
+  assert.deepEqual(step.status, { status: 'skipped', reason: 'page_structure_candidate' });
+  step = await candidatesForStep(rec.driver, pageWith(false), 'expected', 7, 9, tools, true, 'off');
+  assert.deepEqual(step.status, { status: 'skipped', reason: 'disabled' });
+  assert.deepEqual(rec.calls, []);
+
+  rec = recordingDriver([{ capture_id: 'capture-submit' }, payload()]);
+  step = await candidatesForStep(rec.driver, pageWith(false), 'expected', 7, 9, tools, true);
+  assert.deepEqual(rec.calls, ['get_window_state', 'parse_visual_regions']);
+  assert.equal(step.status.status, 'ok');
+  assert.equal(step.candidates[0].tool, 'click');
+  assert.equal(step.candidates[0].arguments.delivery_mode, 'background');
+
+  rec = recordingDriver([{ capture_id: 'capture-submit' }, payload()]);
+  step = await candidatesForStep(rec.driver, pageWith(true), 'expected', 7, 9, tools, true, 'always');
+  assert.equal(step.status.status, 'ok');
+  assert.equal(step.visual?.captureId, 'capture-submit');
+  assert.equal(step.candidates[0].tool, 'browser_click');
+
+  rec = recordingDriver([{ capture_id: 'capture-submit' }, payload()]);
+  step = await candidatesForStep(
+    rec.driver,
+    pageWith(false),
+    'expected',
+    7,
+    9,
+    tools,
+    true,
+    'auto',
+    'foreground'
+  );
+  assert.equal(step.candidates[0].id, 'submit-form-foreground');
+  assert.equal(step.candidates[0].arguments.delivery_mode, 'foreground');
+});
+
+test('structured background refusal escalates but other errors do not', async () => {
+  const args = { pid: 7, window_id: 9, x: 1, y: 1, capture_id: 'c' };
+  const background = {
+    id: 'submit-form',
+    description: 'visual',
+    tool: 'click',
+    arguments: { ...args, delivery_mode: 'background' },
+    captureId: 'c',
+  };
+  const foreground = {
+    ...background,
+    id: 'submit-form-foreground',
+    arguments: { ...args, delivery_mode: 'foreground' },
+  };
+  const dom = { id: 'submit-form', description: 'dom', tool: 'browser_click', arguments: { ref: 'p1:1' } };
+  assert.equal(
+    backgroundRefusalCode(background, new DriverToolError('refused', 'background_unavailable')),
+    'background_unavailable'
+  );
+  assert.equal(
+    backgroundRefusalCode(background, new DriverToolError('refused', 'background_occluded')),
+    'background_occluded'
+  );
+  assert.equal(
+    backgroundRefusalCode(background, new DriverToolError('refused', 'some_new_code', 'foreground')),
+    'some_new_code'
+  );
+  assert.equal(
+    backgroundRefusalCode(background, new DriverToolError('stale', 'capture_generation_mismatch')),
+    undefined
+  );
+  assert.equal(backgroundRefusalCode(background, new Error('background_unavailable')), undefined);
+  assert.equal(
+    backgroundRefusalCode(foreground, new DriverToolError('refused', 'background_unavailable')),
+    undefined
+  );
+  assert.equal(
+    backgroundRefusalCode(dom, new DriverToolError('refused', 'background_unavailable')),
+    undefined
+  );
+
+  const client = {
+    callTool: async () => ({
+      isError: true,
+      structuredContent: {
+        code: 'background_unavailable',
+        escalation: { recommended: 'foreground', reason: 'chromium' },
+      },
+      content: [],
+    }),
+  };
+  await assert.rejects(
+    () => new Driver(client as never, 'jev-test').call('click', background.arguments),
+    (error: unknown) =>
+      error instanceof DriverToolError &&
+      error.recommendedDelivery === 'foreground' &&
+      backgroundRefusalCode(background, error) === 'background_unavailable'
   );
 });
 

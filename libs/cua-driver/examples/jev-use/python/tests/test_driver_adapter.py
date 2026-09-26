@@ -10,10 +10,12 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import build_candidates, validate_choice
+from core import Candidate, build_candidates, validate_choice
 from run import (
     Driver,
     DriverToolError,
+    background_refusal_code,
+    candidates_for_step,
     observe_visual,
     optional_visual_observation,
     select_tab_id,
@@ -185,6 +187,111 @@ class DriverAdapterTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(DriverToolError) as raised:
             await Driver(FailingSession(), "jev-test").call("parse_visual_regions", {})
         self.assertEqual(raised.exception.code, "not_installed")
+
+    def page(self, *, submit_ref: bool):
+        refs = [{"role": "textbox", "name": "verification value", "ref": "p1:0", "value": "expected"}]
+        if submit_ref:
+            refs.append({"role": "button", "name": "Submit", "ref": "p1:1"})
+        return {"target_id": "target", "tab_id": "tab", "refs": refs}
+
+    async def test_visual_parse_runs_only_when_it_can_contribute_a_candidate(self) -> None:
+        tools = {"get_window_state", "parse_visual_regions", "click"}
+        payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
+
+        session = FakeSession()
+        candidates, visual, status = await candidates_for_step(
+            Driver(session, "jev-test"), self.page(submit_ref=True), "expected", 7, 9, tools, True
+        )
+        self.assertEqual(candidates[0].tool, "browser_click")
+        self.assertIsNone(visual)
+        self.assertEqual(status, {"status": "skipped", "reason": "page_structure_candidate"})
+        self.assertEqual(session.calls, [])
+
+        _, _, status = await candidates_for_step(
+            Driver(session, "jev-test"), self.page(submit_ref=False), "expected", 7, 9, tools, True,
+            visual_mode="off",
+        )
+        self.assertEqual(status, {"status": "skipped", "reason": "disabled"})
+        self.assertEqual(session.calls, [])
+
+        session = FakeSession(responses=[{"capture_id": "capture-submit"}, payload])
+        candidates, visual, status = await candidates_for_step(
+            Driver(session, "jev-test"), self.page(submit_ref=False), "expected", 7, 9, tools, True
+        )
+        self.assertEqual([name for name, _ in session.calls], ["get_window_state", "parse_visual_regions"])
+        self.assertEqual(status["status"], "ok")
+        self.assertEqual(candidates[0].tool, "click")
+        self.assertEqual(candidates[0].arguments["delivery_mode"], "background")
+
+        session = FakeSession(responses=[{"capture_id": "capture-submit"}, payload])
+        candidates, visual, status = await candidates_for_step(
+            Driver(session, "jev-test"), self.page(submit_ref=True), "expected", 7, 9, tools, True,
+            visual_mode="always",
+        )
+        self.assertEqual(status["status"], "ok")
+        self.assertEqual(visual.capture_id, "capture-submit")
+        self.assertEqual(candidates[0].tool, "browser_click")
+
+        session = FakeSession(responses=[{"capture_id": "capture-submit"}, payload])
+        candidates, _, _ = await candidates_for_step(
+            Driver(session, "jev-test"), self.page(submit_ref=False), "expected", 7, 9, tools, True,
+            visual_delivery="foreground",
+        )
+        self.assertEqual(candidates[0].id, "submit-form-foreground")
+        self.assertEqual(candidates[0].arguments["delivery_mode"], "foreground")
+
+    async def test_structured_background_refusal_escalates_but_other_errors_do_not(self) -> None:
+        background = Candidate(
+            "submit-form", "visual", "click",
+            {"pid": 7, "window_id": 9, "x": 1, "y": 1, "capture_id": "c", "delivery_mode": "background"},
+            capture_id="c",
+        )
+        foreground = Candidate(
+            "submit-form-foreground", "visual", "click",
+            {"pid": 7, "window_id": 9, "x": 1, "y": 1, "capture_id": "c", "delivery_mode": "foreground"},
+            capture_id="c",
+        )
+        dom = Candidate("submit-form", "dom", "browser_click", {"ref": "p1:1"})
+        self.assertEqual(
+            background_refusal_code(background, DriverToolError("refused", "background_unavailable")),
+            "background_unavailable",
+        )
+        self.assertEqual(
+            background_refusal_code(background, DriverToolError("refused", "background_occluded")),
+            "background_occluded",
+        )
+        self.assertEqual(
+            background_refusal_code(
+                background, DriverToolError("refused", "some_new_code", "foreground")
+            ),
+            "some_new_code",
+        )
+        self.assertIsNone(
+            background_refusal_code(background, DriverToolError("stale", "capture_generation_mismatch"))
+        )
+        self.assertIsNone(background_refusal_code(background, RuntimeError("background_unavailable")))
+        self.assertIsNone(
+            background_refusal_code(foreground, DriverToolError("refused", "background_unavailable"))
+        )
+        self.assertIsNone(
+            background_refusal_code(dom, DriverToolError("refused", "background_unavailable"))
+        )
+
+        class RefusingSession(FakeSession):
+            async def call_tool(self, name, arguments):
+                return SimpleNamespace(
+                    isError=True,
+                    structuredContent={
+                        "code": "background_unavailable",
+                        "escalation": {"recommended": "foreground", "reason": "chromium"},
+                    },
+                    content=[],
+                )
+
+        with self.assertRaises(DriverToolError) as raised:
+            await Driver(RefusingSession(), "jev-test").call("click", dict(background.arguments))
+        self.assertEqual(raised.exception.recommended_delivery, "foreground")
+        self.assertEqual(background_refusal_code(background, raised.exception), "background_unavailable")
 
     def test_capture_bound_click_requires_advertised_capture_id_schema(self) -> None:
         self.assertFalse(

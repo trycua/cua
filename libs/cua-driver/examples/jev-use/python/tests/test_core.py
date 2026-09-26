@@ -8,7 +8,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import Candidate, build_candidates, choose_mock, classify, parse_visual_regions, validate_choice
+from core import (
+    Candidate,
+    build_candidates,
+    choose_mock,
+    classify,
+    has_executable_candidate,
+    parse_visual_regions,
+    validate_choice,
+)
 
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
@@ -113,6 +121,56 @@ class CoreTest(unittest.TestCase):
         self.assertEqual(
             [candidate.id for candidate in build_candidates(page, "expected", None, capture_bound_click=True)],
             ["reobserve", "abstain"],
+        )
+
+    def test_visual_input_does_not_change_semantic_candidate_set(self) -> None:
+        # Salvaged from #4165: when the page structure already offers an
+        # executable action, a visual observation cannot change the candidates,
+        # so the runner may skip the parse without changing behavior.
+        payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
+        visual = parse_visual_regions(
+            payload,
+            expected_capture_id="capture-submit",
+            expected_pid=7,
+            expected_window_id=9,
+        )
+        for value in [None, "expected"]:
+            without_visual = build_candidates(
+                self.snapshot(value), "expected", None, capture_bound_click=True
+            )
+            with_visual = build_candidates(
+                self.snapshot(value), "expected", visual, capture_bound_click=True
+            )
+            self.assertEqual(with_visual, without_visual)
+            self.assertTrue(has_executable_candidate(without_visual))
+
+    def test_foreground_escalation_is_a_distinct_visual_candidate(self) -> None:
+        payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
+        visual = parse_visual_regions(
+            payload,
+            expected_capture_id="capture-submit",
+            expected_pid=7,
+            expected_window_id=9,
+        )
+        page = self.snapshot("expected")
+        page["refs"] = page["refs"][:1]
+        candidates = build_candidates(
+            page, "expected", visual, capture_bound_click=True, visual_delivery="foreground"
+        )
+        ids = [candidate.id for candidate in candidates]
+        self.assertEqual(ids, ["submit-form-foreground", "reobserve", "abstain"])
+        self.assertEqual(candidates[0].tool, "click")
+        self.assertEqual(candidates[0].arguments["delivery_mode"], "foreground")
+        self.assertEqual(candidates[0].arguments["capture_id"], "capture-submit")
+        self.assertIn("foreground", candidates[0].description)
+        self.assertEqual(choose_mock(candidates)[0], "submit-form-foreground")
+        # Page-structure refs still win after escalation.
+        self.assertEqual(
+            build_candidates(
+                self.snapshot("expected"), "expected", visual,
+                capture_bound_click=True, visual_delivery="foreground",
+            )[0].tool,
+            "browser_click",
         )
 
     def test_visual_ambiguity_offers_only_reserved_candidates(self) -> None:

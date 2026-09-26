@@ -18,6 +18,7 @@ BASE = Path(__file__).resolve().parent
 
 
 VISUAL_STATUSES = ('ok', 'not_installed', 'error', 'unavailable')
+SUBMIT_IDS = ('submit-form', 'submit-form-foreground')
 
 
 @contextmanager
@@ -39,7 +40,10 @@ def acted_path(events: list[dict]) -> dict:
     for the capture-bound visual path, or ``None`` when nothing submitted.
     """
     steps = [event for event in events if event.get('event') == 'step']
-    submits = [event for event in steps if event.get('candidate') == 'submit-form']
+    submits = [
+        event for event in steps
+        if event.get('candidate') in SUBMIT_IDS and not event.get('action_error')
+    ]
     statuses = [
         event['visual']['status'] if isinstance(event.get('visual'), dict) else None
         for event in events
@@ -47,7 +51,13 @@ def acted_path(events: list[dict]) -> dict:
     ]
     tool = submits[-1].get('tool') if submits else None
     path = {'browser_click': 'page_structure', 'click': 'visual'}.get(tool) if tool else None
-    return {'submit_tool': tool, 'acted_path': path, 'visual_statuses': statuses}
+    return {
+        'submit_tool': tool,
+        'acted_path': path,
+        'submit_delivery_mode': submits[-1].get('delivery_mode') if submits else None,
+        'visual_statuses': statuses,
+        'escalations': [event['escalation'] for event in steps if isinstance(event.get('escalation'), dict)],
+    }
 
 
 def verify(
@@ -71,9 +81,10 @@ def verify(
     events = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
     path = acted_path(events)
     if expect_visual_status is not None:
-        if not path['visual_statuses'] or any(
-            status != expect_visual_status for status in path['visual_statuses']
-        ):
+        # Steps that skipped the parse because the page structure already offered
+        # an action are not visual attempts; at least one attempt must exist.
+        attempted = [status for status in path['visual_statuses'] if status != 'skipped']
+        if not attempted or any(status != expect_visual_status for status in attempted):
             raise RuntimeError(
                 f'Runner did not log visual status {expect_visual_status!r} on every step: '
                 f'{path["visual_statuses"]}'
@@ -133,7 +144,8 @@ def main() -> None:
     parser.add_argument('--require-visual-path', action='store_true',
                         help='fail unless every runner submitted through the capture-bound visual click')
     parser.add_argument('--expect-visual-status', choices=VISUAL_STATUSES,
-                        help='fail unless every step logs this visual status; with --visual-fixture and a non-ok status, '
+                        help='fail unless every step that attempted a visual observation logs this status; '
+                             'with --visual-fixture and a non-ok status, '
                              'require a logged fallback that never submits')
     args = parser.parse_args()
     if args.require_visual_path and args.expect_visual_status not in (None, 'ok'):

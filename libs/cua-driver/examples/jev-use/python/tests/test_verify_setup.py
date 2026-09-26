@@ -118,7 +118,8 @@ class VerifySetupTests(unittest.TestCase):
         self.assertEqual(
             acted_path([type_step, self.submit_step('browser_click', 'not_installed')]),
             {'submit_tool': 'browser_click', 'acted_path': 'page_structure',
-             'visual_statuses': ['not_installed', 'not_installed']},
+             'submit_delivery_mode': None,
+             'visual_statuses': ['not_installed', 'not_installed'], 'escalations': []},
         )
         self.assertEqual(
             acted_path([type_step, self.submit_step('click', 'ok')])['acted_path'], 'visual'
@@ -182,6 +183,37 @@ class VerifySetupTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'unexpected submission'):
             self.replay(events, submit=True, code='1', visual_fixture=True,
                         expect_visual_status='not_installed')
+
+
+    def test_skipped_steps_are_not_visual_attempts(self):
+        skipped = {'status': 'skipped', 'reason': 'page_structure_candidate'}
+        type_step = {'event': 'step', 'step': 1, 'candidate': 'type-verification-value',
+                     'tool': 'browser_type', 'visual': skipped}
+        events = [type_step, self.submit_step('click', 'ok'),
+                  {'event': 'outcome', 'outcome': 'verified', 'token': 'proof'}]
+        result = self.replay(events, expect_visual_status='ok', require_visual=True, visual_fixture=True)
+        self.assertEqual(result['visual_statuses'], ['skipped', 'ok'])
+        only_skipped = [
+            {**type_step, 'step': 1},
+            {'event': 'step', 'step': 2, 'candidate': 'submit-form', 'tool': 'browser_click', 'visual': skipped},
+            {'event': 'outcome', 'outcome': 'verified', 'token': 'proof'},
+        ]
+        with self.assertRaisesRegex(RuntimeError, "visual status 'not_installed'"):
+            self.replay(only_skipped, expect_visual_status='not_installed')
+
+    def test_reports_foreground_escalation_after_background_refusal(self):
+        refused = {**self.submit_step('click', 'ok'), 'delivery_mode': 'background',
+                   'action_error': 'background_unavailable',
+                   'escalation': {'from': 'background', 'to': 'foreground', 'reason': 'background_unavailable'}}
+        foreground = {**self.submit_step('click', 'ok'), 'step': 3,
+                      'candidate': 'submit-form-foreground', 'delivery_mode': 'foreground'}
+        events = [refused, foreground, {'event': 'outcome', 'outcome': 'verified', 'token': 'proof'}]
+        result = self.replay(events, require_visual=True, visual_fixture=True)
+        self.assertEqual(result['acted_path'], 'visual')
+        self.assertEqual(result['submit_delivery_mode'], 'foreground')
+        self.assertEqual(result['escalations'],
+                         [{'from': 'background', 'to': 'foreground', 'reason': 'background_unavailable'}])
+        self.assertEqual(acted_path([refused])['submit_tool'], None)
 
 
 if __name__ == '__main__':

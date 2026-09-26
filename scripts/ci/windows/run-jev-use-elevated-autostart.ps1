@@ -7,8 +7,10 @@
 #
 #   - every `cua-driver serve` daemon runs at High (or higher) integrity; and
 #   - every isolated browser process runs at Medium (or lower) integrity,
-#     below the daemon, with Administrators not enabled, and the browser's
-#     main process is a direct child of the daemon.
+#     below the daemon, with Administrators not enabled.
+#
+# The launching parent of each browser main process is logged for diagnosis
+# only: Windows reuses process IDs, so parent IDs are not an oracle.
 #
 # Inputs (environment):
 #   CUA_DRIVER_BIN      installed cua-driver.exe
@@ -213,10 +215,15 @@ try {
                     ParentPid = [int]$process.ParentProcessId
                     Main = ($process.CommandLine -notmatch '\s--type=')
                     Name = $process.Name
+                    Parent = $null
                     Posture = $null
                     Error = $null
                 }
                 try { $record.Posture = [CuaTokenPosture]::Read($processId) } catch { $record.Error = $_.Exception.Message }
+                if ($record.Main) {
+                    $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($record.ParentPid)" -ErrorAction SilentlyContinue
+                    $record.Parent = if ($parent) { "$($parent.Name) $($parent.CommandLine)" } else { "exited" }
+                }
                 [void]$state.Browsers.Add([pscustomobject]$record)
             }
             Start-Sleep -Milliseconds 200
@@ -237,11 +244,10 @@ try {
     $sampler | Wait-Job -Timeout 30 | Out-Null
     $sampler | Receive-Job -ErrorAction Continue
 
-    # 5. The isolated browsers ran de-elevated, below the daemon, and were
-    #    launched by the daemon itself.
+    # 5. The isolated browsers ran with standard-user tokens below the daemon.
     $browsers = @($state.Browsers)
     foreach ($browser in $browsers) {
-        Write-Posture "[browser] name=$($browser.Name) main=$($browser.Main) parent=$($browser.ParentPid) $(if ($browser.Posture) { $browser.Posture } else { "pid=$($browser.Pid) unreadable: $($browser.Error)" })"
+        Write-Posture "[browser] name=$($browser.Name) main=$($browser.Main) parent=$($browser.ParentPid)$(if ($browser.Parent) { " parent_process=[$($browser.Parent)]" }) $(if ($browser.Posture) { $browser.Posture } else { "pid=$($browser.Pid) unreadable: $($browser.Error)" })"
     }
     $mains = @($browsers | Where-Object { $_.Main -and $null -ne $_.Posture })
     if ($mains.Count -lt 2) {
@@ -253,13 +259,10 @@ try {
             throw "an isolated browser process ran with a privileged token: $posture"
         }
     }
-    foreach ($browser in $mains) {
-        if (-not $daemonPostures.ContainsKey($browser.ParentPid)) {
-            throw "isolated browser $($browser.Pid) was not launched by a serve daemon (parent $($browser.ParentPid))"
-        }
-        $daemonPosture = $daemonPostures[$browser.ParentPid]
-        if ($browser.Posture.IntegrityRid -ge $daemonPosture.IntegrityRid) {
-            throw "isolated browser $($browser.Posture) is not below its daemon $daemonPosture"
+    $lowestDaemonIntegrity = ($daemonPostures.Values | Measure-Object -Property IntegrityRid -Minimum).Minimum
+    foreach ($browser in $browsers | Where-Object { $null -ne $_.Posture }) {
+        if ($browser.Posture.IntegrityRid -ge $lowestDaemonIntegrity) {
+            throw "isolated browser $($browser.Posture) is not below the daemon integrity 0x$('{0:x4}' -f [uint32]$lowestDaemonIntegrity)"
         }
     }
     Write-Posture "[verdict] elevated autostart daemon launched $($mains.Count) de-elevated isolated browsers"

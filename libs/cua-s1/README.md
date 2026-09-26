@@ -335,6 +335,16 @@ the recorded results and limits.
   `abstain`. A larger request returns `kind: "error"` with
   `reason: "option_limit"`.
 
+A checkpoint distributed as a pickle archive must be converted once before it
+can be loaded. `cua-s1-convert` reads the archive with `weights_only=True`, so
+no pickled code object is executed, and writes the checked pair:
+
+```bash
+uv run --project libs/cua-s1/python cua-s1-convert model.pt ./checkpoint
+```
+
+Convert only archives you trust, then load the resulting directory.
+
 ## Safety boundary
 
 Planning and execution are separate. The optional runtime defaults to a dry

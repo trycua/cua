@@ -95,6 +95,7 @@ conflicts = [
 
 [project.scripts]
 cua-s1-mcp = "cua_s1.server:main"
+cua-s1-convert = "cua_s1.convert:main"
 
 [project.urls]
 Homepage = "https://github.com/trycua/cua"

@@ -35,6 +35,8 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 image = { workspace = true }
 base64 = { workspace = true }
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
 tokio = { workspace = true, features = ["full"] }
 jsonschema = { version = "0.46", default-features = false }
 tempfile = "3"

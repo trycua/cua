@@ -112,7 +112,10 @@ else
     standalone_browser_dialogs
   )
   if [[ "${HOST_OS}" == Linux ]]; then
-    tests+=(standalone_browser_dialog_background_refusal)
+    tests+=(
+      standalone_browser_dialog_background_refusal
+      standalone_browser_capture_bound_pixel_click_background_refusal
+    )
   fi
   tests+=(
     standalone_browser_download

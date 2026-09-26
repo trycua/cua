@@ -383,6 +383,29 @@ if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
       }' > "${ARTIFACT_DIR}/x11-unpublished-pid-limitation.json"
     echo "[LIMITATION] x11-unpublished-pid: ${limitation}"
   fi
+  if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+    run_test perception-capture-loop \
+      cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+        --test perception_capture_loop_test -- \
+        --ignored --nocapture --test-threads=1
+  else
+    # The perception loop is certified in the canonical X11 lane. Wayland
+    # window capture and pointer routes differ per compositor and are not yet
+    # part of this row, so record the coverage gap instead of a vacuous pass.
+    limitation="The perception capture-loop row is certified on X11; Wayland compositor lanes do not run it yet."
+    jq -n \
+      --arg reason "${limitation}" \
+      '{
+        schema: "cua-e2e-limitation-v1",
+        platform: "linux",
+        display_server: "wayland",
+        harness: "electron",
+        test: "perception-capture-loop",
+        status: "not_covered",
+        reason: $reason
+      }' > "${ARTIFACT_DIR}/perception-capture-loop-limitation.json"
+    echo "[LIMITATION] perception-capture-loop: ${limitation}"
+  fi
 fi
 
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then

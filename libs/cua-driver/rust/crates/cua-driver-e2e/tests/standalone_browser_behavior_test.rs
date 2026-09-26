@@ -4336,6 +4336,138 @@ fn run_dialog_background_refusal(spec: &BrowserSpec) {
     );
 }
 
+/// Page content under every window pixel: a transparent full-viewport button
+/// that forwards its click to the fixture's journaled increment counter.
+#[cfg(target_os = "linux")]
+fn standalone_full_viewport_click_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<button id="pixel-cover" aria-label="pixel-cover"
+        style="position:fixed;inset:0;width:100vw;height:100vh;z-index:2147483647;opacity:0.01;border:0"
+        onclick="document.getElementById('btn-increment').click()">pixel-cover</button>
+</body>"#,
+    )
+}
+
+/// A capture-bound background pixel click on Chromium page content must not
+/// report success without an effect. Chromium's X11 renderer drops focus-free
+/// synthetic input and its AT-SPI hit test at the point resolves only to the
+/// top-level frame, so the canonical Xvfb lanes must return the structured
+/// `background_unavailable` refusal before admission. The refused capture then
+/// stays usable for the explicit foreground escalation, which must land.
+#[cfg(target_os = "linux")]
+fn run_capture_bound_pixel_click_background_refusal(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-capture-bound-pixel-click",
+        std::env::consts::OS,
+        spec.name
+    );
+    let case = CaseSpec::delivered(
+        format!(
+            "{}-{}-standalone-capture-bound-pixel-click-px-background",
+            std::env::consts::OS,
+            spec.name
+        ),
+        spec.name.clone(),
+        "standalone-chromium",
+        "capture_bound_pixel_click",
+        Targeting::Px,
+        Delivery::Background,
+        Scope::Window,
+        DriverRoute::Composite,
+        vec![
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ],
+    )
+    .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
+    execute_case(case, |evidence| {
+        let mut fixture =
+            launch_browser_with_html(spec, &scenario, standalone_full_viewport_click_html());
+        *evidence = recording_evidence(fixture.driver.recording_dir());
+        wait_for_text(&fixture.server, "lbl-counter", "counter=0");
+        let session = format!("standalone-pixel-click-{}", fixture.pid);
+        let mut click_args = None;
+        let observation = run_with_background_oracles(&mut fixture, |fixture| {
+            let state = fixture.driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": fixture.pid as i64,
+                    "window_id": fixture.window_id,
+                    "session": session,
+                }),
+            );
+            assert!(!state.is_error(), "window capture: {}", state.raw);
+            let capture_id = state.structured()["capture_id"]
+                .as_str()
+                .unwrap_or_else(|| panic!("window capture has no capture_id: {}", state.raw))
+                .to_owned();
+            let width = state.structured()["screenshot_width"]
+                .as_f64()
+                .expect("capture width");
+            let height = state.structured()["screenshot_height"]
+                .as_f64()
+                .expect("capture height");
+            // Below the browser toolbar, inside the full-viewport button.
+            let args = serde_json::json!({
+                "session": session,
+                "pid": fixture.pid as i64,
+                "window_id": fixture.window_id,
+                "x": (width / 2.0).round(),
+                "y": (height * 0.65).round(),
+                "capture_id": capture_id,
+                "delivery_mode": "background",
+            });
+            let refused = fixture.driver.call("click", args.clone());
+            assert!(
+                refused.is_error(),
+                "background pixel click on Chromium page content reported success \
+                 without a refusal: {}",
+                refused.raw
+            );
+            assert_eq!(
+                refused.structured()["code"],
+                "background_unavailable",
+                "{}",
+                refused.raw
+            );
+            assert_eq!(
+                refused.structured()["escalation"]["recommended"],
+                "foreground",
+                "{}",
+                refused.raw
+            );
+            thread::sleep(Duration::from_millis(500));
+            wait_for_text(&fixture.server, "lbl-counter", "counter=0");
+            click_args = Some(args);
+            Observation::refused(
+                RefusalCode::BackgroundUnavailable,
+                vec![OracleKind::FixtureState],
+                refused.text(),
+                Evidence::default(),
+            )
+        });
+        let mut foreground = click_args.expect("background click arguments");
+        foreground["delivery_mode"] = serde_json::Value::String("foreground".to_owned());
+        let landed = fixture.driver.call("click", foreground.clone());
+        assert!(
+            !landed.is_error(),
+            "foreground retry did not reuse the refused capture: {}",
+            landed.raw
+        );
+        wait_for_text(&fixture.server, "lbl-counter", "counter=1");
+        let reused = fixture.driver.call("click", foreground);
+        assert!(
+            reused.is_error(),
+            "a consumed capture was accepted again: {}",
+            reused.raw
+        );
+        observation
+    });
+}
+
 fn run_upload(spec: &BrowserSpec) {
     let scenario = format!("{}-{}-standalone-upload", std::env::consts::OS, spec.name);
     execute_case(case(&spec.name, "browser_file_upload"), |evidence| {
@@ -4864,6 +4996,11 @@ standalone_browser_test!(
 standalone_browser_test!(
     standalone_browser_dialog_background_refusal,
     run_dialog_background_refusal
+);
+#[cfg(target_os = "linux")]
+standalone_browser_test!(
+    standalone_browser_capture_bound_pixel_click_background_refusal,
+    run_capture_bound_pixel_click_background_refusal
 );
 standalone_browser_test!(standalone_browser_upload, run_upload);
 standalone_browser_test!(standalone_browser_pointer_actions, run_pointer_actions);

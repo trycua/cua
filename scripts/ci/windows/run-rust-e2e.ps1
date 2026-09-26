@@ -436,6 +436,10 @@ if ($suite -in @("capture", "all")) {
         "test", "-p", "cua-driver-e2e", "--test", "desktop_scope_windows_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
+    Invoke-CargoTest "perception capture loop" @(
+        "test", "-p", "cua-driver-e2e", "--test", "perception_capture_loop_test", "--",
+        "--ignored", "--nocapture", "--test-threads=1"
+    )
 }
 
 if ($suite -in @("shared", "all")) {

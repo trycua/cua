@@ -3,12 +3,12 @@
 
 //! Model-neutral DTOs for parsing an immutable screenshot into visual regions.
 //!
-//! This module is a transport-free public contract. It registers the callable
-//! tool schema without implementing dispatch. A Driver-owned capture registry
-//! must retain an immutable PNG together with its exact
-//! target and screenshot-to-action transform for every `capture_id`. Current
-//! `WindowStateOutput::snapshot_id` values do not retain screenshot pixels, and
-//! `DesktopStateOutput` has no capture ID, so neither satisfies this contract.
+//! This module is a transport-free public contract: it defines the callable
+//! tool schema, and `cua-driver-core` implements dispatch. The Driver-owned
+//! capture registry retains an immutable PNG together with its exact target and
+//! screenshot-to-action transform for every `capture_id`. `get_window_state`
+//! and `get_desktop_state` return such a `capture_id` with their screenshot; a
+//! `snapshot_id` alone does not retain screenshot pixels.
 //!
 //! V1 deliberately refers to registry captures instead of accepting inline
 //! bytes or file paths. Existing MCP images carry base64 data in the envelope,
@@ -80,7 +80,7 @@ pub enum VisualCaptureSource {
     },
 }
 
-/// Screenshot identity and geometry retained by the future capture registry.
+/// Screenshot identity and geometry retained by the Driver capture registry.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
 pub struct VisualScreenshotReference {
     /// Opaque identity for these exact encoded pixels, such as a content digest.
@@ -186,7 +186,9 @@ pub struct ParseVisualRegionsOptions {
     pub max_regions: Option<u32>,
 }
 
-/// Transport-free request. Runtime use requires the future capture registry.
+/// Parse one immutable screenshot capture. Pass the `capture_id` returned by
+/// `get_window_state` or `get_desktop_state`; the Driver capture registry
+/// resolves it to the exact pixels and action-coordinate transform.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ParseVisualRegionsInput {

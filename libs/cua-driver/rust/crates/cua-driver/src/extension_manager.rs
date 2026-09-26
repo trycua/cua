@@ -1751,89 +1751,112 @@ fn print_preview(preview: &InstallReview, json: bool) -> Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(&preview)?);
     } else {
-        println!("Extension: {} {}", preview.id, preview.version);
-        println!("Name: {}", preview.name);
-        println!("Trust: {}", trust_label(&preview.trust));
-        println!("Evidence class: {}", preview.evidence_class);
-        #[cfg(feature = "review-trust-root")]
-        if preview.trust == TrustClass::ReviewOnlyPublisherVerified {
-            println!("{REVIEW_TRUST_NOTICE}");
-        }
-        if let (Some(publisher), Some(key), Some(catalog), Some(expires)) = (
-            &preview.publisher_name,
-            &preview.publisher_key_id,
-            preview.catalog_version,
-            preview.catalog_expires_unix,
-        ) {
-            println!(
-                "Publisher signature: verified {} with key {} (catalog {}, expires {})",
-                publisher, key, catalog, expires
-            );
-        }
-        println!("Signing key status: {}", preview.signing_key_status);
-        if let Some(publisher_id) = &preview.publisher_id {
-            println!("Publisher ID: {publisher_id}");
-        }
-        if let Some(algorithm) = &preview.signing_key_algorithm {
-            println!("Signing key algorithm: {algorithm}");
-        }
-        println!("Artifact source: {}", preview.artifact_source);
-        println!("Destination: {}", preview.destination);
-        println!("Download size: {} bytes", preview.download_size);
-        println!("Installed size: {} bytes", preview.installed_size);
-        println!("License: {}", preview.license);
-        println!("Source: {}", preview.source);
-        println!(
-            "Corresponding source: {} @ {}",
-            preview.corresponding_source_uri, preview.corresponding_source_revision
-        );
-        if let Some(file) = &preview.corresponding_source.file {
-            println!(
-                "Corresponding source file: {} | SHA-256 {}",
+        // Render first and print once so a closed stdout takes the same
+        // broken-pipe path as every other CLI `print!`.
+        let mut text = Vec::new();
+        write_preview_text(&mut text, preview)?;
+        print!("{}", String::from_utf8_lossy(&text));
+    }
+    Ok(())
+}
+
+/// Human-readable install review. The "no extension state was changed"
+/// footer is only true for a preview that does not authorize mutation
+/// (`inspect`); `install` and `update` go on to change state and print their
+/// own result line instead.
+fn write_preview_text(out: &mut impl Write, preview: &InstallReview) -> std::io::Result<()> {
+    writeln!(out, "Extension: {} {}", preview.id, preview.version)?;
+    writeln!(out, "Name: {}", preview.name)?;
+    writeln!(out, "Trust: {}", trust_label(&preview.trust))?;
+    writeln!(out, "Evidence class: {}", preview.evidence_class)?;
+    #[cfg(feature = "review-trust-root")]
+    if preview.trust == TrustClass::ReviewOnlyPublisherVerified {
+        writeln!(out, "{REVIEW_TRUST_NOTICE}")?;
+    }
+    if let (Some(publisher), Some(key), Some(catalog), Some(expires)) = (
+        &preview.publisher_name,
+        &preview.publisher_key_id,
+        preview.catalog_version,
+        preview.catalog_expires_unix,
+    ) {
+        writeln!(
+            out,
+            "Publisher signature: verified {} with key {} (catalog {}, expires {})",
+            publisher, key, catalog, expires
+        )?;
+    }
+    writeln!(out, "Signing key status: {}", preview.signing_key_status)?;
+    if let Some(publisher_id) = &preview.publisher_id {
+        writeln!(out, "Publisher ID: {publisher_id}")?;
+    }
+    if let Some(algorithm) = &preview.signing_key_algorithm {
+        writeln!(out, "Signing key algorithm: {algorithm}")?;
+    }
+    writeln!(out, "Artifact source: {}", preview.artifact_source)?;
+    writeln!(out, "Destination: {}", preview.destination)?;
+    writeln!(out, "Download size: {} bytes", preview.download_size)?;
+    writeln!(out, "Installed size: {} bytes", preview.installed_size)?;
+    writeln!(out, "License: {}", preview.license)?;
+    writeln!(out, "Source: {}", preview.source)?;
+    writeln!(
+        out,
+        "Corresponding source: {} @ {}",
+        preview.corresponding_source_uri, preview.corresponding_source_revision
+    )?;
+    if let Some(file) = &preview.corresponding_source.file {
+        writeln!(
+            out,
+            "Corresponding source file: {} | SHA-256 {}",
+            file.path, file.sha256
+        )?;
+    }
+    writeln!(out, "Provenance: {}", preview.provenance)?;
+    for component in &preview.components {
+        writeln!(
+            out,
+            "Component: {} {} | {} | {} @ {} | notice: {}",
+            component.name,
+            component.version,
+            component.license,
+            component.source_uri,
+            component.source_revision,
+            component.notice
+        )?;
+        if let Some(file) = &component.notice_file {
+            writeln!(
+                out,
+                "Component notice file: {} | SHA-256 {}",
                 file.path, file.sha256
-            );
+            )?;
         }
-        println!("Provenance: {}", preview.provenance);
-        for component in &preview.components {
-            println!(
-                "Component: {} {} | {} | {} @ {} | notice: {}",
-                component.name,
-                component.version,
-                component.license,
-                component.source_uri,
-                component.source_revision,
-                component.notice
-            );
-            if let Some(file) = &component.notice_file {
-                println!(
-                    "Component notice file: {} | SHA-256 {}",
-                    file.path, file.sha256
-                );
-            }
+    }
+    for model in &preview.models {
+        writeln!(
+            out,
+            "Model: {} @ {} | original {} | conversion {}",
+            model.path, model.revision, model.original_sha256, model.conversion_sha256
+        )?;
+        if let Some(file) = &model.license_file {
+            writeln!(
+                out,
+                "Model license file: {} | SHA-256 {}",
+                file.path, file.sha256
+            )?;
         }
-        for model in &preview.models {
-            println!(
-                "Model: {} @ {} | original {} | conversion {}",
-                model.path, model.revision, model.original_sha256, model.conversion_sha256
-            );
-            if let Some(file) = &model.license_file {
-                println!(
-                    "Model license file: {} | SHA-256 {}",
-                    file.path, file.sha256
-                );
-            }
-        }
-        println!("Target: {}", preview.target);
-        println!("Archive SHA-256: {}", preview.archive_sha256);
-        println!("Manifest SHA-256: {}", preview.manifest_sha256);
-        println!(
-            "Authorization: request={}, confirmation_required={}, confirmation_received={}, mutation_authorized={}",
-            preview.authorization.request,
-            preview.authorization.confirmation_required,
-            preview.authorization.confirmation_received,
-            preview.authorization.mutation_authorized,
-        );
-        println!("Preview complete; no extension state was changed.");
+    }
+    writeln!(out, "Target: {}", preview.target)?;
+    writeln!(out, "Archive SHA-256: {}", preview.archive_sha256)?;
+    writeln!(out, "Manifest SHA-256: {}", preview.manifest_sha256)?;
+    writeln!(
+        out,
+        "Authorization: request={}, confirmation_required={}, confirmation_received={}, mutation_authorized={}",
+        preview.authorization.request,
+        preview.authorization.confirmation_required,
+        preview.authorization.confirmation_received,
+        preview.authorization.mutation_authorized,
+    )?;
+    if !preview.authorization.mutation_authorized {
+        writeln!(out, "Preview complete; no extension state was changed.")?;
     }
     Ok(())
 }
@@ -4802,6 +4825,51 @@ mod tests {
         0xc4, 0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae,
         0x7f, 0x60,
     ];
+
+    #[test]
+    fn preview_footer_is_reserved_for_non_mutating_inspection() {
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let entry = registry_entry(PERCEPTION_ID).unwrap();
+        let archive = fixture_archive(
+            temp.path(),
+            "1.0.0",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+        );
+        let source = InstallSource {
+            archive,
+            trust: TrustClass::DeveloperUnsignedLocal,
+            catalog: None,
+            signed_catalog: None,
+            trust_update: None,
+        };
+        let inspected = inspect_without_mutation(entry, &source).unwrap();
+        let render = |request| {
+            let mut text = Vec::new();
+            write_preview_text(
+                &mut text,
+                &install_review(entry, &store, &inspected, &source, request),
+            )
+            .unwrap();
+            String::from_utf8(text).unwrap()
+        };
+        const FOOTER: &str = "Preview complete; no extension state was changed.";
+
+        let inspect = render(InstallReviewRequest::CliInspect);
+        assert!(inspect.contains("mutation_authorized=false"));
+        assert!(inspect.trim_end().ends_with(FOOTER));
+        for request in [
+            InstallReviewRequest::CliInstall,
+            InstallReviewRequest::CliUpdate,
+        ] {
+            let review = render(request);
+            assert!(review.contains("mutation_authorized=true"));
+            assert!(!review.contains(FOOTER), "{review}");
+        }
+        assert!(!store.extension_dir(PERCEPTION_ID).exists());
+    }
 
     fn acl_drift_error() -> anyhow::Error {
         anyhow!(WindowsAclDrift)

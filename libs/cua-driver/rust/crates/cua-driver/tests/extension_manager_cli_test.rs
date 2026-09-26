@@ -307,6 +307,23 @@ fn developer_lifecycle_is_explicit_previewed_and_removable() {
     assert_eq!(preview["mutation_performed"], false);
     assert!(!home.join("extensions/cua-perception").exists());
 
+    let inspect_text = run(
+        &home,
+        &[
+            "extension",
+            "inspect",
+            "cua-perception",
+            "--archive",
+            archive.to_str().unwrap(),
+            "--allow-unsigned-local",
+        ],
+    );
+    assert!(inspect_text.status.success());
+    assert!(String::from_utf8_lossy(&inspect_text.stdout)
+        .trim_end()
+        .ends_with("Preview complete; no extension state was changed."));
+    assert!(!home.join("extensions/cua-perception").exists());
+
     let install = run(
         &home,
         &[
@@ -331,6 +348,11 @@ fn developer_lifecycle_is_explicit_previewed_and_removable() {
     assert!(install_stdout.contains("Model: models/parser.bin @ model-v1"));
     assert!(install_stdout.contains("Model license file: LICENSES/model.txt"));
     assert!(install_stdout.contains("mutation_authorized=true"));
+    assert!(install_stdout.contains("Installed cua-perception 1.2.3 at "));
+    assert!(
+        !install_stdout.contains("no extension state was changed"),
+        "install must not claim that nothing changed:\n{install_stdout}"
+    );
 
     let status = run(
         &home,

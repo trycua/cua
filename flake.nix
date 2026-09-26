@@ -101,6 +101,8 @@
               chromium
               dbus
               ffmpeg
+              # The shared Wayland history gate requires an unlocked Secret Service.
+              gnome-keyring
               gobject-introspection
               grim
               jq

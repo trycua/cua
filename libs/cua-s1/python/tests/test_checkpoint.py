@@ -26,6 +26,14 @@ def test_checkpoint_path_resolution_is_explicit(tmp_path):
         tmp_path / "named.safetensors",
         tmp_path / "named.json",
     )
+    assert resolve_checkpoint_paths(tmp_path / "run" / "model.safetensors") == (
+        tmp_path / "run" / "model.safetensors",
+        tmp_path / "run" / "config.json",
+    )
+    assert resolve_checkpoint_paths(tmp_path / "run" / "config.json") == (
+        tmp_path / "run" / "model.safetensors",
+        tmp_path / "run" / "config.json",
+    )
 
 
 def test_safetensors_checkpoint_round_trip_uses_data_only_files(tmp_path):
@@ -42,15 +50,16 @@ def test_safetensors_checkpoint_round_trip_uses_data_only_files(tmp_path):
         {"encoder": "tiny", "width": 3},
         {"epoch": 2},
     )
-    loaded_state, config, metadata = load_checkpoint_files(tmp_path / "checkpoint")
+    assert weights_path == tmp_path / "checkpoint" / "model.safetensors"
+    assert config_path == tmp_path / "checkpoint" / "config.json"
 
-    assert weights_path.suffix == ".safetensors"
-    assert config_path.suffix == ".json"
-    assert config == {"encoder": "tiny", "width": 3}
-    assert metadata == {"epoch": 2}
-    assert set(loaded_state) == set(state)
-    for name, tensor in state.items():
-        assert torch.equal(loaded_state[name], tensor)
+    for locator in (tmp_path / "checkpoint", weights_path, config_path):
+        loaded_state, config, metadata = load_checkpoint_files(locator)
+        assert config == {"encoder": "tiny", "width": 3}
+        assert metadata == {"epoch": 2}
+        assert set(loaded_state) == set(state)
+        for name, tensor in state.items():
+            assert torch.equal(loaded_state[name], tensor)
 
 
 def test_checkpoint_rejects_malformed_or_wrong_format_json(tmp_path):
@@ -110,3 +119,37 @@ def test_checkpoint_rejects_config_tampering_even_when_shapes_match(tmp_path):
 
     with pytest.raises(ValueError, match="state signature mismatch"):
         load_checkpoint_files(checkpoint)
+
+
+def test_named_checkpoint_pair_round_trips_through_returned_paths(tmp_path):
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("safetensors")
+    state = {"weight": torch.tensor([1.0, 2.0])}
+
+    weights_path, config_path = save_checkpoint_files(
+        tmp_path / "named.safetensors",
+        state,
+        {"width": 2},
+        {"source": "named"},
+    )
+
+    assert weights_path == tmp_path / "named.safetensors"
+    assert config_path == tmp_path / "named.json"
+
+    for locator in (weights_path, config_path):
+        loaded_state, config, metadata = load_checkpoint_files(locator)
+        assert config == {"width": 2}
+        assert metadata == {"source": "named"}
+        assert torch.equal(loaded_state["weight"], state["weight"])
+
+
+def test_existing_ambiguous_same_stem_pairs_remain_compatible(tmp_path):
+    model_weights = tmp_path / "model.safetensors"
+    model_json = tmp_path / "model.json"
+    model_json.write_text("{}", encoding="utf-8")
+    assert resolve_checkpoint_paths(model_weights) == (model_weights, model_json)
+
+    config_weights = tmp_path / "config.safetensors"
+    config_json = tmp_path / "config.json"
+    config_weights.write_bytes(b"placeholder")
+    assert resolve_checkpoint_paths(config_json) == (config_weights, config_json)

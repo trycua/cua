@@ -43,8 +43,10 @@ def resolve_checkpoint_paths(directory_or_path: str | Path) -> tuple[Path, Path]
     suffix = path.suffix.lower()
     if suffix in {".pt", ".pth", ".bin", ".pkl", ".pickle"}:
         raise ValueError(
-            "legacy pickle-based checkpoints are not supported; convert the model "
-            "to a safetensors file plus JSON configuration in a trusted environment"
+            "legacy pickle-based checkpoints are not supported. The published "
+            "safetensors weights and matching JSON configuration sidecar are already "
+            "available on Hugging Face at https://huggingface.co/cua-ai/cua-s1-forms; "
+            "download those files instead of converting a pickle-based checkpoint"
         )
     if suffix == ".safetensors":
         return path, path.with_suffix(".json")

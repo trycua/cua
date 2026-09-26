@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import os
+import platform
 import subprocess
 import sys
 import urllib.request
@@ -46,6 +47,28 @@ def check_docker():
         return result.returncode == 0
     except Exception:
         return False
+
+
+def check_platform_requirements(no_kvm: bool = False) -> None:
+    """Fail fast on hosts that cannot run the Windows Arena VM.
+
+    The benchmark boots a Windows guest through QEMU with KVM acceleration, so
+    it needs an x86_64 host with /dev/kvm. Unsupported hosts would otherwise
+    wait on a container that never becomes ready; pass ``no_kvm=True`` only to
+    accept software emulation on an x86_64 host.
+    """
+    machine = platform.machine().lower()
+    if machine not in ("x86_64", "amd64"):
+        raise RuntimeError(
+            f"Windows Arena requires an x86_64 host with KVM; detected {platform.machine()}. "
+            "macOS and other non-x86_64 hosts cannot run the Windows VM locally."
+        )
+    if not no_kvm and not os.path.exists("/dev/kvm"):
+        raise RuntimeError(
+            "Windows Arena requires KVM for local execution, but /dev/kvm was not found. "
+            "Use a Linux host with virtualization enabled, or pass --no-kvm to accept "
+            "software emulation (significantly slower)."
+        )
 
 
 def check_image_exists(image_name: str) -> bool:
@@ -143,6 +166,8 @@ def cmd_vm_setup(args):
     4. Waits for Windows to fully initialize (~45-60 minutes)
     5. Gracefully shuts down to create a persistent base image
     """
+    check_platform_requirements(getattr(args, "no_kvm", False))
+
     if not check_docker():
         print("Error: Docker is not running. Please start Docker and try again.")
         return 1
@@ -346,6 +371,8 @@ def cmd_vm_setup(args):
 
 def cmd_vm_start(args):
     """Start the base image for testing/development."""
+    check_platform_requirements(getattr(args, "no_kvm", False))
+
     if not check_docker():
         print("Error: Docker is not running. Please start Docker and try again.")
         return 1
@@ -578,6 +605,8 @@ def cmd_task_list(args):
 
 def cmd_task_run(args):
     """Run the Windows Arena container with a specific task."""
+    check_platform_requirements(getattr(args, "no_kvm", False))
+
     if not check_docker():
         print("Error: Docker is not running. Please start Docker and try again.")
         return 1

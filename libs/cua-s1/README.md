@@ -398,6 +398,29 @@ actions, wrong targets, and actions taken when the expected behavior was to
 abstain. Synthetic train, validation, and test splits are separated by form
 signature.
 
+### Evaluating with Cua Bench
+
+[cua-bench](../cua-bench) is the repository's framework for benchmarking
+computer-use agents against verifiable cross-platform environments. Its
+form-filling environments (for example
+`libs/cua-bench/datasets/cua-bench-basic/fill-form`) exercise the exact class of
+task this checkpoint targets, and its reward extraction reports a per-task
+score plus a success flag (`reward >= DEFAULT_SUCCESS_THRESHOLD`, currently
+`0.5` in `libs/cua-bench/cua_bench/reward.py`).
+
+Run a cua-s1 planner against a cua-bench form task and record the resulting
+reward/success so results can be compared against the offline metrics above:
+
+```bash
+uv sync --project libs/cua-bench --extra browser
+uv run --project libs/cua-bench cb run task \
+  libs/cua-bench/datasets/cua-bench-basic/fill-form
+```
+
+Report the environment, checkpoint artifact, and reward together. Do not
+present a cua-bench score as evidence beyond the evaluated task and environment
+boundaries described in [`MODEL_CARD.md`](MODEL_CARD.md).
+
 ## Responsible use
 
 Run computer-use models in isolated environments with least-privilege

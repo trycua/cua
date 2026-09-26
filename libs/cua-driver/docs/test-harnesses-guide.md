@@ -318,6 +318,7 @@ the Lume gate runs after its repo-local matrix.
 | Installed app launch      | `installed_app_launch_macos_test.rs`   | Calculator and TextEdit                 |
 | Installed app AX delivery | `installed_app_textedit_macos_test.rs` | TextEdit                                |
 | Exact window activation   | `bring_to_front_macos_test.rs`         | Repo-local AppKit and SwiftUI apps      |
+| Pointer-reading toolkit   | `tk_pointer_click_macos_test.rs`       | Tk visual-only canvas (skips sans Tk)   |
 | Capture contract          | `capture_contract_test.rs`             | Installed driver and macOS capture APIs |
 | Desktop scope             | `desktop_scope_macos_test.rs`          | macOS window and desktop scope          |
 | Standalone browsers       | `standalone_browser_behavior_test.rs`  | Installed Google Chrome and Edge        |

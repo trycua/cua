@@ -4407,12 +4407,26 @@ fn spawn_isolated_hyprland(
         snapshot.client_kind,
     )
     .map_err(isolated_hyprland_refusal)?;
+    Ok(spawn_hyprland_with_lifecycle(lifecycle, work))
+}
+
+/// Run one plugin action on a blocking worker that owns an already admitted
+/// lifecycle, so session teardown waits for the native worker.
+fn spawn_hyprland_with_lifecycle(
+    lifecycle: cua_driver_core::session::SessionDispatchGuard,
+    work: impl FnOnce(crate::wayland::hyprland_input::ActionCancellation) -> anyhow::Result<Value>
+        + Send
+        + 'static,
+) -> (
+    crate::wayland::hyprland_input::CancelOnDrop,
+    tokio::task::JoinHandle<anyhow::Result<Value>>,
+) {
     let (guard, cancellation) = crate::wayland::hyprland_input::ActionCancellation::invocation();
     let dispatch = tokio::task::spawn_blocking(move || {
         let _lifecycle = lifecycle;
         work(cancellation)
     });
-    Ok((guard, dispatch))
+    (guard, dispatch)
 }
 
 async fn isolated_hyprland_action(
@@ -11549,6 +11563,624 @@ impl Tool for MouseButtonUpTool {
 pub struct ParallelMouseDragTool {
     state: Arc<ToolState>,
 }
+
+/// Window-local waypoints for one parallel drag item, from an explicit
+/// `path`, a sampled `fn` y(x), or a straight from→to segment. The bool is
+/// true for a `fn` item (its default duration is longer).
+fn parallel_drag_local_path(item: &Value) -> Result<(Vec<(f64, f64)>, bool), ToolResult> {
+    let is_fn = item.get("fn").and_then(|v| v.as_str()).is_some();
+    let local =
+        if let Some(pts) = item.get("path").and_then(|v| v.as_array()) {
+            let mut out = Vec::with_capacity(pts.len());
+            for p in pts {
+                let a = p.as_array();
+                let (Some(px), Some(py)) = (
+                    a.and_then(|a| a.first()).and_then(|v| v.as_f64()),
+                    a.and_then(|a| a.get(1)).and_then(|v| v.as_f64()),
+                ) else {
+                    return Err(ToolResult::error("each `path` entry must be [x, y]."));
+                };
+                out.push((px, py));
+            }
+            if out.len() < 2 {
+                return Err(ToolResult::error("`path` needs at least 2 points."));
+            }
+            out
+        } else if let Some(expr_str) = item.get("fn").and_then(|v| v.as_str()) {
+            let Some(x_from) = item.get("x_from").and_then(|v| v.as_f64()) else {
+                return Err(ToolResult::error("`fn` requires x_from."));
+            };
+            let Some(x_to) = item.get("x_to").and_then(|v| v.as_f64()) else {
+                return Err(ToolResult::error("`fn` requires x_to."));
+            };
+            let samples = item
+                .get("samples")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(80)
+                .clamp(2, 400);
+            match crate::input::sample_function(expr_str, x_from, x_to, samples) {
+                Ok(pts) => pts,
+                Err(e) => return Err(ToolResult::error(e.to_string())),
+            }
+        } else {
+            let coerce = |k: &str| item.get(k).and_then(|v| v.as_f64());
+            match (
+                coerce("from_x"),
+                coerce("from_y"),
+                coerce("to_x"),
+                coerce("to_y"),
+            ) {
+                (Some(fx), Some(fy), Some(tx), Some(ty)) => vec![(fx, fy), (tx, ty)],
+                _ => return Err(ToolResult::error(
+                    "each drag item requires either `fn`+x_from+x_to, or from_x/from_y/to_x/to_y.",
+                )),
+            }
+        };
+    Ok((local, is_fn))
+}
+
+/// Plugin DRAG duration bounds (hyprland-plugin/protocol/cua-input-v3.md).
+const HYPRLAND_DRAG_MIN_MS: u64 = 50;
+const HYPRLAND_DRAG_MAX_MS: u64 = 2000;
+
+fn parallel_hyprland_refusal(code: &str, detail: impl Into<String>) -> ToolResult {
+    let detail = detail.into();
+    ToolResult::error(format!("parallel_mouse_drag refused ({code}): {detail}")).with_structured(
+        json!({
+            "ok": false, "code": code, "detail": detail,
+            "route": "synthetic_events", "verified": false, "effect": "refused"
+        }),
+    )
+}
+
+/// `__cua_runtime_<scope>:` of a registry-namespaced session id.
+fn runtime_session_prefix(session_id: &str) -> Option<&str> {
+    let rest = session_id.strip_prefix("__cua_runtime_")?;
+    let colon = rest.find(':')?;
+    Some(&session_id[..("__cua_runtime_".len() + colon + 1)])
+}
+
+struct HyprlandParallelDrag {
+    label: String,
+    owner: String,
+    xid: u64,
+    pid: u32,
+    from: (f64, f64),
+    to: (f64, f64),
+    from_out: (f64, f64),
+    to_out: (f64, f64),
+    duration_ms: u64,
+    requested_duration_ms: u64,
+    steps: usize,
+}
+
+/// Validate every item before any lane is claimed or input is sent.
+/// Each item's `session` becomes its lane owner (the same runtime-private id
+/// a direct call with that `session` would use), so items run on distinct
+/// compositor lanes/seats. `windows` resolves an address to (pid, x, y).
+fn plan_hyprland_parallel_drags(
+    items: &[Value],
+    runtime_prefix: &str,
+    max_lanes: usize,
+    windows: impl Fn(u64) -> Option<(u32, i32, i32)>,
+) -> Result<Vec<HyprlandParallelDrag>, ToolResult> {
+    if items.len() < 2 {
+        return Err(ToolResult::error(
+            "parallel_mouse_drag requires at least two drag items.",
+        ));
+    }
+    if items.len() > max_lanes {
+        return Err(parallel_hyprland_refusal(
+            "too_many_drags",
+            format!(
+                "native Hyprland runs each drag on its own input lane; {} items exceed the {max_lanes} lanes",
+                items.len()
+            ),
+        ));
+    }
+    let mut plans: Vec<HyprlandParallelDrag> = Vec::with_capacity(items.len());
+    for item in items {
+        let Some(label) = item
+            .get("session")
+            .and_then(Value::as_str)
+            .filter(|label| !label.is_empty() && *label != "default")
+        else {
+            return Err(parallel_hyprland_refusal(
+                "session_required",
+                "each drag item requires a non-default session; it selects the item's input lane",
+            ));
+        };
+        let label = label
+            .strip_prefix(runtime_prefix)
+            .unwrap_or(label)
+            .to_owned();
+        let owner = format!("{runtime_prefix}{label}");
+        if plans.iter().any(|plan| plan.owner == owner) {
+            return Err(parallel_hyprland_refusal(
+                "duplicate_session",
+                format!("session \"{label}\" appears in more than one drag item; each item needs its own lane"),
+            ));
+        }
+        let Some(xid) = item
+            .get("window_id")
+            .and_then(Value::as_u64)
+            .filter(|id| *id > 0)
+        else {
+            return Err(ToolResult::error("each drag item requires window_id."));
+        };
+        let button = item.get("button").and_then(Value::as_str).unwrap_or("left");
+        if !button.is_empty() && button != "left" {
+            return Err(parallel_hyprland_refusal(
+                "unsupported_button",
+                "the Hyprland input plugin drags with the left button only",
+            ));
+        }
+        let (local, is_fn) = parallel_drag_local_path(item)?;
+        if is_fn || local.len() != 2 {
+            return Err(parallel_hyprland_refusal(
+                "path_unsupported",
+                "the Hyprland input plugin performs one straight press-move-release per drag and \
+                 cannot hold the button across segments; give from_x/from_y/to_x/to_y (or a \
+                 two-point path) instead of `fn` or a multi-point path",
+            ));
+        }
+        let (from, to) = (local[0], local[1]);
+        if ![from.0, from.1, to.0, to.1].iter().all(|v| v.is_finite()) {
+            return Err(ToolResult::error("drag coordinates must be finite."));
+        }
+        let requested_duration_ms = item
+            .get("duration_ms")
+            .and_then(Value::as_u64)
+            .unwrap_or(500);
+        let duration_ms = requested_duration_ms.clamp(HYPRLAND_DRAG_MIN_MS, HYPRLAND_DRAG_MAX_MS);
+        let steps = item
+            .get("steps")
+            .and_then(Value::as_u64)
+            .map(|s| (s as usize).clamp(1, 300))
+            .unwrap_or(20);
+        let Some((pid, x, y)) = windows(xid) else {
+            return Err(parallel_hyprland_refusal(
+                "window_not_found",
+                format!("window {xid} is not a mapped native Hyprland window"),
+            ));
+        };
+        // The plugin refuses a TARGET on a Wayland client another lane is
+        // targeting, so same-app items could only half-run. Refuse up front.
+        if let Some(other) = plans.iter().find(|plan| plan.pid == pid) {
+            return Err(parallel_hyprland_refusal(
+                "same_client_conflict",
+                format!(
+                    "sessions \"{}\" and \"{label}\" target the same process (pid {pid}); the Hyprland \
+                     plugin admits one lane per application client at a time",
+                    other.label
+                ),
+            ));
+        }
+        let origin = (f64::from(x), f64::from(y));
+        plans.push(HyprlandParallelDrag {
+            label,
+            owner,
+            xid,
+            pid,
+            from,
+            to,
+            from_out: (origin.0 + from.0.round(), origin.1 + from.1.round()),
+            to_out: (origin.0 + to.0.round(), origin.1 + to.1.round()),
+            duration_ms,
+            requested_duration_ms,
+            steps,
+        });
+    }
+    Ok(plans)
+}
+
+#[cfg(test)]
+mod hyprland_parallel_drag_tests {
+    use super::*;
+
+    const PREFIX: &str = "__cua_runtime_0123abcd:";
+
+    fn windows(xid: u64) -> Option<(u32, i32, i32)> {
+        match xid {
+            1 => Some((101, 10, 20)),
+            2 => Some((102, 0, 0)),
+            3 => Some((103, 0, 0)),
+            4 => Some((104, 0, 0)),
+            5 => Some((105, 0, 0)),
+            6 => Some((101, 500, 500)),
+            _ => None,
+        }
+    }
+
+    fn item(session: &str, window: u64) -> Value {
+        json!({"session": session, "window_id": window,
+               "from_x": 1.0, "from_y": 2.0, "to_x": 30.0, "to_y": 40.0})
+    }
+
+    fn code(result: Result<Vec<HyprlandParallelDrag>, ToolResult>) -> String {
+        let error = result.err().expect("expected a refusal");
+        error.structured_content.as_ref().map_or_else(
+            || "untyped".to_owned(),
+            |value| value["code"].as_str().unwrap_or("untyped").to_owned(),
+        )
+    }
+
+    #[test]
+    fn runtime_prefix_comes_from_the_namespaced_session() {
+        assert_eq!(
+            runtime_session_prefix("__cua_runtime_ab12:agent"),
+            Some("__cua_runtime_ab12:")
+        );
+        assert_eq!(
+            runtime_session_prefix("__cua_runtime_ab12:a:b"),
+            Some("__cua_runtime_ab12:")
+        );
+        assert_eq!(runtime_session_prefix("agent"), None);
+    }
+
+    #[test]
+    fn four_distinct_sessions_and_apps_each_get_a_lane_owner() {
+        let items: Vec<_> = (1..=4).map(|i| item(&format!("a{i}"), i)).collect();
+        let plans = plan_hyprland_parallel_drags(&items, PREFIX, 4, windows).unwrap();
+        assert_eq!(plans.len(), 4);
+        assert_eq!(plans[0].owner, format!("{PREFIX}a1"));
+        assert_eq!(plans[0].pid, 101);
+        assert_eq!(plans[0].from_out, (11.0, 22.0));
+        assert_eq!(plans[0].to_out, (40.0, 60.0));
+        assert_eq!(plans[0].duration_ms, 500);
+        // An already namespaced label is not prefixed twice.
+        let items = vec![item(&format!("{PREFIX}x"), 1), item("y", 2)];
+        let plans = plan_hyprland_parallel_drags(&items, PREFIX, 4, windows).unwrap();
+        assert_eq!(plans[0].owner, format!("{PREFIX}x"));
+        assert_eq!(plans[0].label, "x");
+    }
+
+    #[test]
+    fn refusals_are_typed_and_happen_before_dispatch() {
+        let five: Vec<_> = (1..=5).map(|i| item(&format!("a{i}"), i)).collect();
+        assert_eq!(
+            code(plan_hyprland_parallel_drags(&five, PREFIX, 4, windows)),
+            "too_many_drags"
+        );
+        let dup = vec![item("a", 1), item("a", 2)];
+        assert_eq!(
+            code(plan_hyprland_parallel_drags(&dup, PREFIX, 4, windows)),
+            "duplicate_session"
+        );
+        let default = vec![item("default", 1), item("b", 2)];
+        assert_eq!(
+            code(plan_hyprland_parallel_drags(&default, PREFIX, 4, windows)),
+            "session_required"
+        );
+        let same_app = vec![item("a", 1), item("b", 6)];
+        assert_eq!(
+            code(plan_hyprland_parallel_drags(&same_app, PREFIX, 4, windows)),
+            "same_client_conflict"
+        );
+        let missing = vec![item("a", 1), item("b", 99)];
+        assert_eq!(
+            code(plan_hyprland_parallel_drags(&missing, PREFIX, 4, windows)),
+            "window_not_found"
+        );
+        let mut right = item("b", 2);
+        right["button"] = json!("right");
+        assert_eq!(
+            code(plan_hyprland_parallel_drags(
+                &[item("a", 1), right],
+                PREFIX,
+                4,
+                windows
+            )),
+            "unsupported_button"
+        );
+        let function =
+            json!({"session": "b", "window_id": 2, "fn": "x", "x_from": 0.0, "x_to": 10.0});
+        assert_eq!(
+            code(plan_hyprland_parallel_drags(
+                &[item("a", 1), function],
+                PREFIX,
+                4,
+                windows
+            )),
+            "path_unsupported"
+        );
+        let polyline =
+            json!({"session": "b", "window_id": 2, "path": [[0.0, 0.0], [5.0, 5.0], [9.0, 1.0]]});
+        assert_eq!(
+            code(plan_hyprland_parallel_drags(
+                &[item("a", 1), polyline],
+                PREFIX,
+                4,
+                windows
+            )),
+            "path_unsupported"
+        );
+        assert!(plan_hyprland_parallel_drags(&[item("a", 1)], PREFIX, 4, windows).is_err());
+    }
+
+    #[test]
+    fn two_point_paths_are_straight_and_durations_clamp_to_the_plugin_range() {
+        let path = json!({"session": "b", "window_id": 2, "path": [[3.0, 4.0], [7.0, 8.0]], "duration_ms": 9000});
+        let mut quick = item("a", 1);
+        quick["duration_ms"] = json!(10);
+        let plans = plan_hyprland_parallel_drags(&[quick, path], PREFIX, 4, windows).unwrap();
+        assert_eq!(plans[0].duration_ms, HYPRLAND_DRAG_MIN_MS);
+        assert_eq!(plans[1].duration_ms, HYPRLAND_DRAG_MAX_MS);
+        assert_eq!(plans[1].requested_duration_ms, 9000);
+        assert_eq!((plans[1].from, plans[1].to), ((3.0, 4.0), (7.0, 8.0)));
+    }
+}
+
+/// Native Hyprland route: each item runs concurrently on its own input-plugin
+/// lane (`Cua-Agent*` seat), keyed by the item's session. Straight segments
+/// only; up to `MAX_LANES` items; one item per application process.
+async fn parallel_drag_hyprland(state: &Arc<ToolState>, args: &Value) -> ToolResult {
+    use cua_driver_core::action_record::{
+        ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
+    };
+    use cua_driver_core::session;
+    let Some(items) = args.get("drags").and_then(Value::as_array) else {
+        return ToolResult::error("drags[] is required.");
+    };
+    let Some(top_owner) = named_session_cursor_key(args) else {
+        return parallel_hyprland_refusal(
+            "authenticated_lifecycle_required",
+            "parallel_mouse_drag on Hyprland needs a session",
+        );
+    };
+    let runtime_prefix = runtime_session_prefix(&top_owner).unwrap_or("").to_owned();
+    let transport_owner = args
+        .get("_transport_session_id")
+        .and_then(Value::as_str)
+        .unwrap_or(&top_owner)
+        .to_owned();
+    let Some(snapshot) =
+        session::session_snapshot(&top_owner, &transport_owner, std::time::Duration::ZERO)
+    else {
+        return parallel_hyprland_refusal(
+            "authenticated_lifecycle_required",
+            "admitted lifecycle required",
+        );
+    };
+    let items = items.clone();
+    let prefix = runtime_prefix.clone();
+    let planned = tokio::task::spawn_blocking(move || {
+        let windows = crate::wayland::hyprland::list_windows().ok();
+        plan_hyprland_parallel_drags(
+            &items,
+            &prefix,
+            crate::wayland::hyprland_input::MAX_LANES,
+            |xid| {
+                windows
+                    .as_ref()?
+                    .iter()
+                    .find(|w| w.address == xid)
+                    .map(|w| (w.pid, w.x, w.y))
+            },
+        )
+        .and_then(|plans| {
+            // Same app gate each lane applies, checked for every item first
+            // so an unqualified app refuses the batch with nothing sent.
+            for plan in &plans {
+                if let Err(reason) = crate::wayland::hyprland_input::background_admission(plan.pid) {
+                    return Err(parallel_hyprland_refusal(
+                        reason,
+                        format!(
+                            "session \"{}\" window {} (pid {}) is not qualified for background plugin input",
+                            plan.label, plan.xid, plan.pid
+                        ),
+                    ));
+                }
+            }
+            Ok(plans)
+        })
+    })
+    .await;
+    let plans = match planned {
+        Ok(Ok(plans)) => plans,
+        Ok(Err(refusal)) => return refusal,
+        Err(e) => return ToolResult::error(format!("Task error: {e}")),
+    };
+    // Admit every item's lifecycle before any lane is claimed, so one
+    // unavailable session refuses the whole call with nothing dispatched.
+    // A new label becomes an ordinary session of this same transport; its
+    // lane is released by end_session or the plugin's 60 s idle timeout.
+    let mut lifecycles = Vec::with_capacity(plans.len());
+    for plan in &plans {
+        match session::begin_session_dispatch(
+            &plan.owner,
+            Some(plan.label.as_str()),
+            &transport_owner,
+            false,
+            snapshot.transport,
+            snapshot.client_kind,
+        ) {
+            Ok(guard) => lifecycles.push(guard),
+            Err(reason) => {
+                return parallel_hyprland_refusal(
+                    "session_unavailable",
+                    format!("session \"{}\": {reason}", plan.label),
+                )
+            }
+        }
+    }
+    let runs = plans
+        .into_iter()
+        .zip(lifecycles)
+        .map(|(plan, lifecycle)| async move {
+            let owner = plan.owner.clone();
+            let (pid, xid, from, to, duration_ms) =
+                (plan.pid, plan.xid, plan.from, plan.to, plan.duration_ms);
+            let (started, acknowledged) = tokio::sync::oneshot::channel();
+            let (_cancellation, mut dispatch) =
+                spawn_hyprland_with_lifecycle(lifecycle, move |cancellation| {
+                    crate::wayland::hyprland_input::execute_with_started(
+                        Some(owner),
+                        pid,
+                        xid,
+                        crate::wayland::hyprland_input::Action::Drag {
+                            from,
+                            to,
+                            duration_ms,
+                        },
+                        Some(started),
+                        cancellation,
+                    )
+                });
+            // As in `drag`: animate only after the compositor pressed the button.
+            let acknowledged = acknowledged.await.is_ok();
+            let result = if acknowledged {
+                overlay_snap_to_for(&plan.owner, plan.from_out.0, plan.from_out.1, None);
+                tokio::select! {
+                    result = &mut dispatch => result,
+                    () = track_overlay_drag_for(plan.owner.clone(), plan.from_out, plan.to_out,
+                        plan.duration_ms, plan.steps) => dispatch.await,
+                }
+            } else {
+                dispatch.await
+            };
+            (plan, acknowledged, result)
+        });
+    let outcomes = futures_util::future::join_all(runs).await;
+
+    let mut delivered = 0u32;
+    let mut unknown = false;
+    let mut first_failure: Option<(String, String)> = None;
+    let mut rows = Vec::with_capacity(outcomes.len());
+    let mut lines = Vec::with_capacity(outcomes.len());
+    for (plan, acknowledged, result) in outcomes {
+        let (ok, lane, code, detail) = match &result {
+            Ok(Ok(value)) if value["ok"] == true => (true, value["lane"].clone(), None, None),
+            Ok(Ok(value)) => (
+                false,
+                value["lane"].clone(),
+                Some(
+                    value["code"]
+                        .as_str()
+                        .unwrap_or("protocol_error")
+                        .to_owned(),
+                ),
+                Some(
+                    value["detail"]
+                        .as_str()
+                        .unwrap_or("input refused")
+                        .to_owned(),
+                ),
+            ),
+            Ok(Err(error)) if error.is::<crate::wayland::hyprland_input::LaneBusy>() => (
+                false,
+                Value::Null,
+                Some("lane_busy".to_owned()),
+                Some(error.to_string()),
+            ),
+            Ok(Err(error)) => (
+                false,
+                Value::Null,
+                Some(
+                    if acknowledged {
+                        "dispatch_unknown"
+                    } else {
+                        "transport_or_protocol_error"
+                    }
+                    .to_owned(),
+                ),
+                Some(error.to_string()),
+            ),
+            Err(error) => (
+                false,
+                Value::Null,
+                Some("dispatch_unknown".to_owned()),
+                Some(format!("Task error: {error}")),
+            ),
+        };
+        if ok {
+            delivered += 1;
+            state
+                .cursor_registry
+                .update_position(&plan.owner, plan.to_out.0, plan.to_out.1);
+        } else if acknowledged {
+            // The button was pressed; the rest of the gesture is unknown.
+            unknown = true;
+        }
+        if let (false, Some(code), Some(detail)) = (ok, &code, &detail) {
+            first_failure.get_or_insert_with(|| {
+                (
+                    code.clone(),
+                    format!("session \"{}\": {detail}", plan.label),
+                )
+            });
+        }
+        lines.push(format!(
+            "{} session \"{}\" window {} pid {} lane {} ({:.0},{:.0})->({:.0},{:.0}) {} ms{}",
+            if ok { "ok" } else { "FAILED" },
+            plan.label,
+            plan.xid,
+            plan.pid,
+            lane.as_u64()
+                .map_or("?".to_owned(), |lane| lane.to_string()),
+            plan.from.0,
+            plan.from.1,
+            plan.to.0,
+            plan.to.1,
+            plan.duration_ms,
+            code.as_deref()
+                .map_or(String::new(), |code| format!(": {code}")),
+        ));
+        rows.push(json!({
+            "session": plan.label, "window_id": plan.xid, "pid": plan.pid, "lane": lane,
+            "ok": ok, "code": code, "detail": detail, "acknowledged": acknowledged,
+            "duration_ms": plan.duration_ms, "requested_duration_ms": plan.requested_duration_ms,
+        }));
+    }
+    let total = rows.len();
+    let record = |effect| {
+        ActionExecutionRecord::builder(
+            effect,
+            ActionTransport::LinuxHyprlandIsolatedInput,
+            RequestedDelivery::Background,
+        )
+    };
+    if delivered as usize == total {
+        return ToolResult::text(format!(
+            "Ran {total} concurrent drags on independent Hyprland input lanes; application effect is unverifiable.\n{}",
+            lines.join("\n")
+        ))
+        .with_action_record(
+            record(ActionEffect::Unverifiable)
+                .actual_delivery(ActualDelivery::Background)
+                .build()
+                .expect("isolated input record is valid"),
+        );
+    }
+    let (code, detail) =
+        first_failure.unwrap_or_else(|| ("protocol_error".into(), "drag failed".into()));
+    let outcome = if delivered > 0 || unknown {
+        let mut outcome = record(ActionEffect::Partial).actual_delivery(if unknown {
+            ActualDelivery::Unknown
+        } else {
+            ActualDelivery::Background
+        });
+        outcome = outcome.delivered_count(delivered);
+        outcome
+    } else {
+        record(ActionEffect::Refused)
+    }
+    .detail(&detail)
+    .build()
+    .expect("parallel isolated input outcome is valid");
+    ToolResult::error(format!(
+        "background_unavailable ({code}): {delivered}/{total} drags completed.\n{}",
+        lines.join("\n")
+    ))
+    .with_structured(json!({
+        "ok": false, "code": "background_unavailable", "reason": code, "detail": detail,
+        "route": "synthetic_events", "verified": false,
+        "effect": if delivered > 0 || unknown { "partial" } else { "refused" },
+        "delivery": {"mode": "background", "delivered_count": delivered},
+        "drags": rows,
+    }))
+    .with_action_record(outcome)
+}
 static PMDRAG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 /// cua-compositor path for parallel_mouse_drag: build window-local drag paths
@@ -11636,7 +12268,10 @@ impl Tool for ParallelMouseDragTool {
                 Each item presses once, glides continuously through its whole path, and releases once — one smooth held \
                 drag, not a chain of clicks. A path is given either as a straight segment (from_x/from_y → to_x/to_y) or \
                 as a function `fn` = y(x) sampled over [x_from, x_to] in window-local pixels (e.g. fn:\"x\" is a diagonal, \
-                fn:\"300+120*sin(x/40)\" a sine wave). Functions support + - * / ^, sin/cos/tan, sqrt, abs, exp, ln, pi, e.".into(),
+                fn:\"300+120*sin(x/40)\" a sine wave). Functions support + - * / ^, sin/cos/tan, sqrt, abs, exp, ln, pi, e. \
+                On native Hyprland with the Cua input plugin, each item runs concurrently on its own plugin lane \
+                (virtual seat) selected by its `session`: at most 4 items, distinct sessions, one item per application \
+                process, straight from→to segments only (no `fn` or multi-point `path`), left button, 50–2000 ms.".into(),
             input_schema: json!({"type":"object","required":["drags"],"properties":{
                 "drags":{"type":"array","minItems":2,"items":{"type":"object","required":["session","window_id"],"properties":{
                     "session":{"type":"string","description":"Session/cursor id; also keys the virtual master pointer."},
@@ -11665,6 +12300,14 @@ impl Tool for ParallelMouseDragTool {
         if crate::wayland::is_inject_mode() {
             return parallel_drag_inject(&args).await;
         }
+        // Native Hyprland with the production input plugin: one plugin lane
+        // (independent virtual seat) per item, all running concurrently.
+        if crate::wayland::is_wayland()
+            && crate::wayland::hyprland::is_session()
+            && crate::wayland::hyprland_input::enabled()
+        {
+            return parallel_drag_hyprland(&self.state, &args).await;
+        }
         // Native Wayland without the inject socket: MPX/XI2 + uinput master
         // pointers don't exist on Wayland. Surface a typed error instead of
         // silently calling the X11 path that's guaranteed to fail.
@@ -11672,6 +12315,7 @@ impl Tool for ParallelMouseDragTool {
             return ToolResult::error(
                 "parallel_mouse_drag requires the cua-compositor inject socket on Wayland \
                  (set CUA_INJECT_SOCKET to the cua-compositor control socket), \
+                 the Cua Hyprland input plugin on native Hyprland, \
                  or run the target under X11.",
             );
         }
@@ -11700,47 +12344,9 @@ impl Tool for ParallelMouseDragTool {
             // Build the window-local waypoint path from one of: an explicit
             // `path` of [x,y] points, a function `fn` (y = f(x) sampled over
             // [x_from, x_to]), or a straight from→to segment.
-            let is_fn = item.get("fn").and_then(|v| v.as_str()).is_some();
-            let local: Vec<(f64, f64)> = if let Some(pts) =
-                item.get("path").and_then(|v| v.as_array())
-            {
-                let mut out = Vec::with_capacity(pts.len());
-                for p in pts {
-                    let a = p.as_array();
-                    let (Some(px), Some(py)) = (
-                        a.and_then(|a| a.first()).and_then(|v| v.as_f64()),
-                        a.and_then(|a| a.get(1)).and_then(|v| v.as_f64()),
-                    ) else {
-                        return ToolResult::error("each `path` entry must be [x, y].");
-                    };
-                    out.push((px, py));
-                }
-                if out.len() < 2 {
-                    return ToolResult::error("`path` needs at least 2 points.");
-                }
-                out
-            } else if let Some(expr_str) = item.get("fn").and_then(|v| v.as_str()) {
-                let Some(x_from) = item.get("x_from").and_then(|v| v.as_f64()) else {
-                    return ToolResult::error("`fn` requires x_from.");
-                };
-                let Some(x_to) = item.get("x_to").and_then(|v| v.as_f64()) else {
-                    return ToolResult::error("`fn` requires x_to.");
-                };
-                let samples = item
-                    .get("samples")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(80)
-                    .clamp(2, 400);
-                match crate::input::sample_function(expr_str, x_from, x_to, samples) {
-                    Ok(pts) => pts,
-                    Err(e) => return ToolResult::error(e.to_string()),
-                }
-            } else {
-                let coerce = |k: &str| item.get(k).and_then(|v| v.as_f64());
-                match (coerce("from_x"), coerce("from_y"), coerce("to_x"), coerce("to_y")) {
-                    (Some(fx), Some(fy), Some(tx), Some(ty)) => vec![(fx, fy), (tx, ty)],
-                    _ => return ToolResult::error("each drag item requires either `fn`+x_from+x_to, or from_x/from_y/to_x/to_y."),
-                }
+            let (local, is_fn) = match parallel_drag_local_path(item) {
+                Ok(path) => path,
+                Err(error) => return error,
             };
 
             let button = parse_mouse_button(

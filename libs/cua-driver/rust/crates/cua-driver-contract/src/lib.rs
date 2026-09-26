@@ -110,6 +110,17 @@ pub fn is_action_result_tool(name: &str) -> bool {
     ACTION_RESULT_TOOLS.contains(&name)
 }
 
+pub const LISTING_STATUS: &str = "listed";
+
+pub const LISTING_ACTION_TOOLS: &[&str] = &["invoke_menu"];
+
+pub fn is_action_listing_output(name: &str, value: &Value) -> bool {
+    LISTING_ACTION_TOOLS.contains(&name)
+        && value.get("status").and_then(Value::as_str) == Some(LISTING_STATUS)
+        && value.get("resolved_path").is_some_and(Value::is_array)
+        && value.get("items").is_some_and(Value::is_array)
+}
+
 #[derive(
     Debug,
     Clone,
@@ -319,6 +330,9 @@ pub fn advertises_output_schema(name: &str) -> bool {
 /// also generates its SDK schema. Returns `Ok(false)` for non-SDK tools.
 pub fn validate_success_output(name: &str, value: Value) -> Result<bool, String> {
     if is_action_result_tool(name) {
+        if is_action_listing_output(name, &value) {
+            return Ok(false);
+        }
         validate_typed_output::<ActionResult>(value)?;
         return Ok(true);
     }
@@ -391,6 +405,34 @@ mod tests {
                 "{name} must reject a legacy action payload"
             );
         }
+    }
+
+    #[test]
+    fn only_a_listing_tool_answering_with_a_listing_escapes_the_action_result_shape() {
+        let listing = serde_json::json!({
+            "status": "listed",
+            "resolved_path": ["Card", "Add Field"],
+            "items": [{"title": "Phone", "has_submenu": false}],
+        });
+
+        assert_eq!(
+            validate_success_output("invoke_menu", listing.clone()),
+            Ok(false)
+        );
+        for name in ACTION_RESULT_TOOLS
+            .iter()
+            .filter(|name| !LISTING_ACTION_TOOLS.contains(name))
+        {
+            assert!(
+                validate_success_output(name, listing.clone()).is_err(),
+                "{name} cannot answer an action with a listing"
+            );
+        }
+        assert!(validate_success_output(
+            "invoke_menu",
+            serde_json::json!({"status": "listed", "items": []})
+        )
+        .is_err());
     }
 
     #[test]

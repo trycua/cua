@@ -22,8 +22,9 @@ use std::{
 
 use crate::ax::bindings::{
     ax_get_window_id, copy_action_names, copy_ax_windows, copy_bool_attr, copy_children,
-    copy_element_attr, copy_string_attr, kAXErrorSuccess, perform_action, set_bool_attr_true,
-    AXUIElementCreateApplication, AXUIElementRef, AXUIElementSetMessagingTimeout,
+    copy_element_attr, copy_number_attr, copy_string_attr, kAXErrorSuccess, perform_action,
+    set_bool_attr_true, AXUIElementCreateApplication, AXUIElementRef,
+    AXUIElementSetMessagingTimeout,
 };
 
 pub struct InvokeMenuTool;
@@ -70,6 +71,95 @@ fn normalized_path(path: Vec<String>) -> Result<Vec<String>, String> {
         .collect()
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+struct MenuItem {
+    title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
+    has_submenu: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shortcut: Option<String>,
+}
+
+#[derive(Debug)]
+struct MenuRefusal {
+    message: String,
+    failed_segment: Option<usize>,
+    items: Vec<MenuItem>,
+}
+
+impl MenuRefusal {
+    fn plain(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            failed_segment: None,
+            items: Vec::new(),
+        }
+    }
+
+    fn at_segment(depth: usize, message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            failed_segment: Some(depth),
+            items: Vec::new(),
+        }
+    }
+
+    fn with_items(mut self, items: Vec<MenuItem>) -> Self {
+        self.items = items;
+        self
+    }
+}
+
+#[derive(Debug)]
+enum MenuOutcome {
+    Invoked,
+    Listed(Vec<MenuItem>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Hop {
+    List,
+    Press(&'static str),
+}
+
+const MENU_MODIFIER_SHIFT: i64 = 1;
+const MENU_MODIFIER_OPTION: i64 = 1 << 1;
+const MENU_MODIFIER_CONTROL: i64 = 1 << 2;
+const MENU_MODIFIER_NO_COMMAND: i64 = 1 << 3;
+
+fn menu_shortcut(cmd_char: Option<&str>, modifiers: Option<f64>) -> Option<String> {
+    let key = cmd_char?.trim();
+    if key.is_empty() {
+        return None;
+    }
+    let mask = modifiers.unwrap_or_default() as i64;
+    let mut rendered = String::new();
+    if mask & MENU_MODIFIER_CONTROL != 0 {
+        rendered.push('⌃');
+    }
+    if mask & MENU_MODIFIER_OPTION != 0 {
+        rendered.push('⌥');
+    }
+    if mask & MENU_MODIFIER_SHIFT != 0 {
+        rendered.push('⇧');
+    }
+    if mask & MENU_MODIFIER_NO_COMMAND == 0 {
+        rendered.push('⌘');
+    }
+    rendered.push_str(&key.to_uppercase());
+    Some(rendered)
+}
+
+fn listable_title(raw: Option<String>) -> Option<String> {
+    let title = raw?.trim().to_owned();
+    if title.is_empty() {
+        None
+    } else {
+        Some(title)
+    }
+}
+
 /// Return the semantic menu children of an AX node. AppKit inserts an
 /// untitled `AXMenu` container between a menu-bar/submenu item and its items;
 /// callers express paths in visible labels, so that container is transparent.
@@ -86,10 +176,43 @@ unsafe fn semantic_children(parent: AXUIElementRef) -> Vec<AXUIElementRef> {
     out
 }
 
+unsafe fn has_submenu(item: AXUIElementRef) -> bool {
+    let children = copy_children(item);
+    let present = !children.is_empty();
+    for child in children {
+        CFRelease(child as CFTypeRef);
+    }
+    present
+}
+
+unsafe fn describe_item(item: AXUIElementRef) -> Option<MenuItem> {
+    Some(MenuItem {
+        title: listable_title(copy_string_attr(item, "AXTitle"))?,
+        enabled: copy_bool_attr(item, "AXEnabled"),
+        has_submenu: has_submenu(item),
+        shortcut: menu_shortcut(
+            copy_string_attr(item, "AXMenuItemCmdChar").as_deref(),
+            copy_number_attr(item, "AXMenuItemCmdModifiers"),
+        ),
+    })
+}
+
+unsafe fn describe_items(parent: AXUIElementRef) -> Vec<MenuItem> {
+    let children = semantic_children(parent);
+    let mut items = Vec::with_capacity(children.len());
+    for child in children {
+        if let Some(item) = describe_item(child) {
+            items.push(item);
+        }
+        CFRelease(child as CFTypeRef);
+    }
+    items
+}
+
 unsafe fn resolve_exact_prefix(
     menu_bar: AXUIElementRef,
     prefix: &[String],
-) -> Result<AXUIElementRef, String> {
+) -> Result<AXUIElementRef, MenuRefusal> {
     let mut current = menu_bar;
     let mut owns_current = false;
 
@@ -99,35 +222,48 @@ unsafe fn resolve_exact_prefix(
             CFRelease(current as CFTypeRef);
         }
 
-        let mut matches = Vec::new();
-        for child in children {
-            let title = copy_string_attr(child, "AXTitle").unwrap_or_default();
-            if title.trim() == segment {
-                matches.push(child);
-            } else {
-                CFRelease(child as CFTypeRef);
-            }
-        }
+        let matched: Vec<usize> = children
+            .iter()
+            .enumerate()
+            .filter(|(_, child)| {
+                copy_string_attr(**child, "AXTitle")
+                    .unwrap_or_default()
+                    .trim()
+                    == segment
+            })
+            .map(|(index, _)| index)
+            .collect();
 
-        if matches.len() != 1 {
-            let match_count = matches.len();
-            for candidate in matches {
-                CFRelease(candidate as CFTypeRef);
-            }
-            return Err(if match_count == 0 {
+        if matched.len() != 1 {
+            let message = if matched.is_empty() {
                 format!("invoke_menu: path segment {depth} was not found")
             } else {
                 format!("invoke_menu: path segment {depth} is ambiguous")
-            });
+            };
+            let items = children
+                .iter()
+                .filter_map(|child| describe_item(*child))
+                .collect();
+            for child in children {
+                CFRelease(child as CFTypeRef);
+            }
+            return Err(MenuRefusal::at_segment(depth, message).with_items(items));
         }
-        current = matches.pop().expect("one exact match");
+
+        let keep = matched[0];
+        for (index, child) in children.iter().enumerate() {
+            if index != keep {
+                CFRelease(*child as CFTypeRef);
+            }
+        }
+        current = children[keep];
         owns_current = true;
     }
 
     if owns_current {
         Ok(current)
     } else {
-        Err("invoke_menu: path is empty".into())
+        Err(MenuRefusal::plain("invoke_menu: path is empty"))
     }
 }
 
@@ -141,53 +277,154 @@ fn choose_action(actions: &[String], final_segment: bool) -> Option<&'static str
     order.iter().copied().find(|action| supports(action))
 }
 
-unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
+fn plan_hop(actions: &[String], final_segment: bool, has_submenu: bool) -> Option<Hop> {
+    if final_segment && has_submenu {
+        return Some(Hop::List);
+    }
+    choose_action(actions, final_segment).map(Hop::Press)
+}
+
+unsafe fn menu_bar_of(app: AXUIElementRef) -> Option<AXUIElementRef> {
+    let menu_bar = copy_element_attr(app, "AXMenuBar")?;
+    set_messaging_timeout(menu_bar);
+    Some(menu_bar)
+}
+
+unsafe fn peek_submenu(app: AXUIElementRef, path: &[String]) -> Option<Vec<MenuItem>> {
+    let menu_bar = menu_bar_of(app)?;
+    let resolved = resolve_exact_prefix(menu_bar, path);
+    CFRelease(menu_bar as CFTypeRef);
+    let target = resolved.ok()?;
+    set_messaging_timeout(target);
+    let items = has_submenu(target)
+        .then(|| describe_items(target))
+        .filter(|items| !items.is_empty());
+    CFRelease(target as CFTypeRef);
+    items
+}
+
+unsafe fn cancel_menu(item: AXUIElementRef) {
+    if copy_action_names(item)
+        .iter()
+        .any(|name| name == "AXCancel")
+    {
+        let _ = perform_action(item, "AXCancel");
+        return;
+    }
+    for child in copy_children(item) {
+        if copy_string_attr(child, "AXRole").as_deref() == Some("AXMenu")
+            && copy_action_names(child)
+                .iter()
+                .any(|name| name == "AXCancel")
+        {
+            let _ = perform_action(child, "AXCancel");
+        }
+        CFRelease(child as CFTypeRef);
+    }
+}
+
+unsafe fn dismiss_opened_menus(app: AXUIElementRef, root: &[String]) {
+    let Some(menu_bar) = menu_bar_of(app) else {
+        return;
+    };
+    let resolved = resolve_exact_prefix(menu_bar, root);
+    CFRelease(menu_bar as CFTypeRef);
+    let Ok(item) = resolved else {
+        return;
+    };
+    set_messaging_timeout(item);
+    cancel_menu(item);
+    CFRelease(item as CFTypeRef);
+}
+
+unsafe fn press_each_segment(
+    app: AXUIElementRef,
+    path: &[String],
+) -> Result<MenuOutcome, MenuRefusal> {
+    for depth in 0..path.len() {
+        let final_segment = depth + 1 == path.len();
+        // Resolve from the live app root for every hop. Opening a menu can
+        // replace its AX objects and reorder unrelated snapshot indices.
+        let menu_bar = menu_bar_of(app)
+            .ok_or_else(|| MenuRefusal::plain("invoke_menu: target exposes no AXMenuBar"))?;
+        let target = resolve_exact_prefix(menu_bar, &path[..=depth]);
+        CFRelease(menu_bar as CFTypeRef);
+        let target = target?;
+        set_messaging_timeout(target);
+
+        if copy_bool_attr(target, "AXEnabled") == Some(false) {
+            CFRelease(target as CFTypeRef);
+            return Err(MenuRefusal::at_segment(
+                depth,
+                format!("invoke_menu: path segment {depth} is disabled"),
+            ));
+        }
+
+        let actions = copy_action_names(target);
+        let action = match plan_hop(
+            &actions,
+            final_segment,
+            final_segment && has_submenu(target),
+        ) {
+            Some(Hop::List) => {
+                let items = describe_items(target);
+                CFRelease(target as CFTypeRef);
+                if items.is_empty() {
+                    return Err(MenuRefusal::at_segment(
+                        depth,
+                        format!(
+                            "invoke_menu: path segment {depth} opens a submenu whose items accessibility does not expose"
+                        ),
+                    ));
+                }
+                return Ok(MenuOutcome::Listed(items));
+            }
+            Some(Hop::Press(action)) => action,
+            None => {
+                CFRelease(target as CFTypeRef);
+                return Err(MenuRefusal::at_segment(
+                    depth,
+                    format!("invoke_menu: path segment {depth} has no usable native menu action"),
+                ));
+            }
+        };
+
+        let error = perform_action(target, action);
+        CFRelease(target as CFTypeRef);
+        if error != kAXErrorSuccess {
+            return Err(MenuRefusal::at_segment(
+                depth,
+                format!(
+                    "invoke_menu: native action for path segment {depth} failed with AX error {error}"
+                ),
+            ));
+        }
+        if !final_segment {
+            std::thread::sleep(Duration::from_millis(80));
+        }
+    }
+    Ok(MenuOutcome::Invoked)
+}
+
+unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<MenuOutcome, MenuRefusal> {
     let app = AXUIElementCreateApplication(pid);
     if app.is_null() {
-        return Err("invoke_menu: target application is unavailable".into());
+        return Err(MenuRefusal::plain(
+            "invoke_menu: target application is unavailable",
+        ));
     }
     set_messaging_timeout(app);
 
-    let result = (|| {
-        for depth in 0..path.len() {
-            // Resolve from the live app root for every hop. Opening a menu can
-            // replace its AX objects and reorder unrelated snapshot indices.
-            let menu_bar = copy_element_attr(app, "AXMenuBar")
-                .ok_or_else(|| "invoke_menu: target exposes no AXMenuBar".to_owned())?;
-            set_messaging_timeout(menu_bar);
-            let target = resolve_exact_prefix(menu_bar, &path[..=depth]);
-            CFRelease(menu_bar as CFTypeRef);
-            let target = target?;
-            set_messaging_timeout(target);
-
-            if copy_bool_attr(target, "AXEnabled") == Some(false) {
-                CFRelease(target as CFTypeRef);
-                return Err(format!("invoke_menu: path segment {depth} is disabled"));
+    let result = match peek_submenu(app, path) {
+        Some(items) => Ok(MenuOutcome::Listed(items)),
+        None => {
+            let outcome = press_each_segment(app, path);
+            if !matches!(outcome, Ok(MenuOutcome::Invoked)) && path.len() > 1 {
+                dismiss_opened_menus(app, &path[..1]);
             }
-            let actions = copy_action_names(target);
-            let action = choose_action(&actions, depth + 1 == path.len()).ok_or_else(|| {
-                format!("invoke_menu: path segment {depth} has no usable native menu action")
-            });
-            let action = match action {
-                Ok(action) => action,
-                Err(error) => {
-                    CFRelease(target as CFTypeRef);
-                    return Err(error);
-                }
-            };
-            let error = perform_action(target, action);
-            CFRelease(target as CFTypeRef);
-            if error != kAXErrorSuccess {
-                return Err(format!(
-                    "invoke_menu: native action for path segment {depth} failed with AX error {error}"
-                ));
-            }
-            if depth + 1 != path.len() {
-                std::thread::sleep(Duration::from_millis(80));
-            }
+            outcome
         }
-        Ok(())
-    })();
+    };
 
     CFRelease(app as CFTypeRef);
     result
@@ -357,11 +594,53 @@ fn exact_window_is_ready(
     frontmost_pid == Some(target_pid) && focused_window_id == Some(target_window_id)
 }
 
-fn refusal(message: String) -> ToolResult {
-    ToolResult::error(message.clone()).with_structured(serde_json::json!({
+fn refusal(details: MenuRefusal) -> ToolResult {
+    let mut refused = serde_json::json!({
+        "code": "menu_path_unavailable",
+        "message": details.message.clone(),
+    });
+    if let Some(segment) = details.failed_segment {
+        refused["failed_segment"] = serde_json::json!(segment);
+    }
+    if !details.items.is_empty() {
+        refused["items"] = serde_json::json!(details.items);
+    }
+    ToolResult::error(details.message).with_structured(serde_json::json!({
         "status": "refused",
-        "refusal": { "code": "menu_path_unavailable", "message": message }
+        "refusal": refused,
     }))
+}
+
+fn listed(resolved_path: Vec<String>, items: Vec<MenuItem>) -> ToolResult {
+    ToolResult::text(format!(
+        "Resolved the live native menu path to a submenu and listed its {} items without dispatching anything; extend the path with one of those titles to invoke a command.",
+        items.len()
+    ))
+    .with_structured(serde_json::json!({
+        "status": cua_driver_contract::LISTING_STATUS,
+        "resolved_path": resolved_path,
+        "items": items,
+    }))
+}
+
+fn invoked() -> ToolResult {
+    ToolResult::text(
+        "Resolved the live native menu path and dispatched its final accessibility action; verify the command's semantic effect from fresh state.",
+    )
+    .with_action_record(
+        ActionExecutionRecord::builder(
+            ActionEffect::Unverifiable,
+            ActionTransport::MacosAxAction,
+            RequestedDelivery::Foreground,
+        )
+        .actual_delivery(ActualDelivery::Foreground)
+        .evidence(ActionEvidence {
+            kind: EvidenceKind::NativeApiResult,
+            detail: "Every menu hop resolved uniquely and AX accepted the final action".into(),
+        })
+        .build()
+        .expect("invoke_menu record is valid"),
+    )
 }
 
 #[async_trait]
@@ -378,22 +657,25 @@ impl Tool for InvokeMenuTool {
             };
         let path = match normalized_path(input.path) {
             Ok(path) => path,
-            Err(error) => return refusal(error),
+            Err(error) => return refusal(MenuRefusal::plain(error)),
         };
         let pid = match i32::try_from(input.pid) {
             Ok(pid) => pid,
-            Err(_) => return refusal("invoke_menu: pid is out of range".into()),
+            Err(_) => return refusal(MenuRefusal::plain("invoke_menu: pid is out of range")),
         };
         let window_id = match u32::try_from(input.window_id) {
             Ok(window_id) => window_id,
-            Err(_) => return refusal("invoke_menu: window_id is out of range".into()),
+            Err(_) => return refusal(MenuRefusal::plain("invoke_menu: window_id is out of range")),
         };
         if !crate::windows::all_windows()
             .iter()
             .any(|window| window.pid == pid && window.window_id == window_id)
         {
-            return refusal("invoke_menu: window_id does not belong to pid".into());
+            return refusal(MenuRefusal::plain(
+                "invoke_menu: window_id does not belong to pid",
+            ));
         }
+        let resolved_path = path.clone();
 
         let outcome = tokio::task::spawn_blocking(move || {
             let prior_frontmost = crate::apps::frontmost_pid();
@@ -401,8 +683,10 @@ impl Tool for InvokeMenuTool {
                 prior_frontmost.and_then(crate::ax::bindings::focused_window_id_of_pid);
             let needs_activation = prior_frontmost != Some(pid);
 
-            let result = focus_exact_window(pid, window_id)
-                .and_then(|()| unsafe { invoke_path(pid, &path) });
+            let result = match focus_exact_window(pid, window_id) {
+                Ok(()) => unsafe { invoke_path(pid, &path) },
+                Err(error) => Err(MenuRefusal::plain(error)),
+            };
 
             // Restore the exact prior key window when one was observable,
             // including across applications. Falling back to app activation
@@ -424,25 +708,12 @@ impl Tool for InvokeMenuTool {
         .await;
 
         match outcome {
-            Ok(Ok(())) => ToolResult::text(
-                "Resolved the live native menu path and dispatched its final accessibility action; verify the command's semantic effect from fresh state.",
-            )
-            .with_action_record(
-                ActionExecutionRecord::builder(
-                    ActionEffect::Unverifiable,
-                    ActionTransport::MacosAxAction,
-                    RequestedDelivery::Foreground,
-                )
-                .actual_delivery(ActualDelivery::Foreground)
-                .evidence(ActionEvidence {
-                    kind: EvidenceKind::NativeApiResult,
-                    detail: "Every menu hop resolved uniquely and AX accepted the final action".into(),
-                })
-                .build()
-                .expect("invoke_menu record is valid"),
-            ),
-            Ok(Err(error)) => refusal(error),
-            Err(error) => refusal(format!("invoke_menu: blocking task failed: {error}")),
+            Ok(Ok(MenuOutcome::Invoked)) => invoked(),
+            Ok(Ok(MenuOutcome::Listed(items))) => listed(resolved_path, items),
+            Ok(Err(refused)) => refusal(refused),
+            Err(error) => refusal(MenuRefusal::plain(format!(
+                "invoke_menu: blocking task failed: {error}"
+            ))),
         }
     }
 }
@@ -466,6 +737,156 @@ mod tests {
         assert_eq!(choose_action(&actions, false), Some("AXPress"));
         assert_eq!(choose_action(&actions, true), Some("AXPress"));
         assert_eq!(choose_action(&["AXShowMenu".into()], true), None);
+    }
+
+    #[test]
+    fn a_final_segment_that_opens_a_submenu_is_listed_instead_of_pressed() {
+        let pressable = vec!["AXPress".to_owned()];
+        assert_eq!(plan_hop(&pressable, true, true), Some(Hop::List));
+        assert_eq!(plan_hop(&[], true, true), Some(Hop::List));
+        assert_eq!(
+            plan_hop(&pressable, true, false),
+            Some(Hop::Press("AXPress"))
+        );
+        assert_eq!(
+            plan_hop(&pressable, false, true),
+            Some(Hop::Press("AXPress"))
+        );
+        assert_eq!(plan_hop(&["AXShowMenu".to_owned()], true, false), None);
+    }
+
+    #[test]
+    fn a_menu_shortcut_renders_the_modifiers_macos_reports() {
+        assert_eq!(menu_shortcut(Some("s"), Some(0.0)).as_deref(), Some("⌘S"));
+        assert_eq!(menu_shortcut(Some("s"), None).as_deref(), Some("⌘S"));
+        assert_eq!(menu_shortcut(Some("s"), Some(1.0)).as_deref(), Some("⇧⌘S"));
+        assert_eq!(menu_shortcut(Some("["), Some(2.0)).as_deref(), Some("⌥⌘["));
+        assert_eq!(
+            menu_shortcut(Some("d"), Some(7.0)).as_deref(),
+            Some("⌃⌥⇧⌘D")
+        );
+        assert_eq!(menu_shortcut(Some("f"), Some(8.0)).as_deref(), Some("F"));
+        assert_eq!(menu_shortcut(Some("f"), Some(12.0)).as_deref(), Some("⌃F"));
+        assert_eq!(menu_shortcut(Some("  "), Some(0.0)), None);
+        assert_eq!(menu_shortcut(None, Some(0.0)), None);
+    }
+
+    #[test]
+    fn an_untitled_row_is_not_a_listable_item() {
+        assert_eq!(
+            listable_title(Some("  Move Down ".into())).as_deref(),
+            Some("Move Down")
+        );
+        assert_eq!(listable_title(Some(String::new())), None);
+        assert_eq!(listable_title(Some("   ".into())), None);
+        assert_eq!(listable_title(None), None);
+    }
+
+    #[test]
+    fn a_listed_submenu_publishes_its_items_as_a_success() {
+        let result = listed(
+            vec!["View".into(), "Code Folding".into()],
+            vec![
+                MenuItem {
+                    title: "Fold".into(),
+                    enabled: Some(true),
+                    has_submenu: false,
+                    shortcut: Some("⌥⌘F".into()),
+                },
+                MenuItem {
+                    title: "More".into(),
+                    enabled: None,
+                    has_submenu: true,
+                    shortcut: None,
+                },
+            ],
+        );
+        assert_eq!(result.is_error, None);
+        let structured = result.structured_content.expect("structured content");
+        assert_eq!(structured["status"], "listed");
+        assert_eq!(
+            structured["resolved_path"],
+            serde_json::json!(["View", "Code Folding"])
+        );
+        assert_eq!(structured["items"][0]["title"], "Fold");
+        assert_eq!(structured["items"][0]["enabled"], true);
+        assert_eq!(structured["items"][0]["has_submenu"], false);
+        assert_eq!(structured["items"][0]["shortcut"], "⌥⌘F");
+        assert_eq!(structured["items"][1]["has_submenu"], true);
+        assert!(structured["items"][1].get("enabled").is_none());
+        assert!(structured["items"][1].get("shortcut").is_none());
+    }
+
+    #[test]
+    fn a_listed_submenu_is_a_non_action_outcome_the_runtime_accepts() {
+        let structured = listed(
+            vec!["Card".into(), "Add Field".into()],
+            vec![MenuItem {
+                title: "Phone".into(),
+                enabled: Some(true),
+                has_submenu: false,
+                shortcut: None,
+            }],
+        )
+        .structured_content
+        .expect("structured content");
+        assert!(cua_driver_contract::is_action_listing_output(
+            "invoke_menu",
+            &structured
+        ));
+        assert_eq!(
+            cua_driver_contract::validate_success_output("invoke_menu", structured),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn a_pressed_menu_item_still_carries_its_execution_record() {
+        let pressed = invoked();
+        assert_eq!(pressed.is_error, None);
+        assert!(pressed.structured_content.is_none());
+        let public = serde_json::to_value(
+            pressed
+                .action_record
+                .expect("execution record")
+                .public_result()
+                .expect("public projection"),
+        )
+        .expect("projection serializes");
+        assert_eq!(public["effect"], "unverifiable");
+        assert_eq!(public["route"], "accessibility");
+        assert_eq!(public["delivery"]["mode"], "foreground");
+    }
+
+    #[test]
+    fn an_unresolved_segment_names_the_level_it_failed_at() {
+        let result = refusal(
+            MenuRefusal::at_segment(1, "invoke_menu: path segment 1 was not found").with_items(
+                vec![MenuItem {
+                    title: "Bold".into(),
+                    enabled: Some(false),
+                    has_submenu: false,
+                    shortcut: None,
+                }],
+            ),
+        );
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured content");
+        assert_eq!(structured["status"], "refused");
+        assert_eq!(structured["refusal"]["code"], "menu_path_unavailable");
+        assert_eq!(structured["refusal"]["failed_segment"], 1);
+        assert_eq!(structured["refusal"]["items"][0]["title"], "Bold");
+        assert_eq!(structured["refusal"]["items"][0]["enabled"], false);
+
+        let plain = refusal(MenuRefusal::plain("invoke_menu: pid is out of range"))
+            .structured_content
+            .expect("structured content");
+        assert_eq!(
+            plain["refusal"]["message"],
+            "invoke_menu: pid is out of range"
+        );
+        assert!(plain["refusal"].get("failed_segment").is_none());
+        assert!(plain["refusal"].get("items").is_none());
     }
 
     #[test]

@@ -1947,7 +1947,9 @@ fn normalize_result(tool: &str, raw: Value) -> Result<ToolResult, DriverError> {
         .get("isError")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let action = if !is_error && cua_driver_core::action_record::is_action_tool(tool) {
+    let listing =
+        structured.is_some_and(|value| cua_driver_contract::is_action_listing_output(tool, value));
+    let action = if !is_error && !listing && cua_driver_core::action_record::is_action_tool(tool) {
         let structured = structured.ok_or_else(|| DriverError::Protocol {
             reason: format!("{tool} response omitted ActionResult"),
         })?;
@@ -2979,6 +2981,48 @@ mod tests {
             missing,
             DriverError::Protocol { reason }
                 if reason.contains("omitted ActionResult")
+        ));
+    }
+
+    #[test]
+    fn result_normalization_keeps_a_menu_listing_as_a_success_without_an_action_result() {
+        let listing = serde_json::json!({
+            "status": "listed",
+            "resolved_path": ["Card", "Add Field"],
+            "items": [{"title": "Phone", "has_submenu": false}],
+        });
+        let listed = normalize_result(
+            "invoke_menu",
+            serde_json::json!({
+                "content": [{"type": "text", "text": "listed 1 item"}],
+                "structuredContent": listing.clone(),
+                "isError": false
+            }),
+        )
+        .expect("a submenu listing is a successful non-action reply");
+        assert!(!listed.is_error);
+        assert!(listed.action().is_none());
+        assert_eq!(
+            listed
+                .structured_json
+                .as_deref()
+                .map(|json| serde_json::from_str::<Value>(json).expect("structured json")),
+            Some(listing.clone())
+        );
+
+        let pressed = normalize_result(
+            "click",
+            serde_json::json!({
+                "content": [{"type": "text", "text": "listed 1 item"}],
+                "structuredContent": listing,
+                "isError": false
+            }),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            pressed,
+            DriverError::Protocol { reason }
+                if reason.contains("invalid ActionResult")
         ));
     }
 

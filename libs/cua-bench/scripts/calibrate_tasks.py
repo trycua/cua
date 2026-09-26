@@ -14,7 +14,6 @@ import argparse
 import json
 import os
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -81,7 +80,8 @@ def _run_dataset(model_name: str, model_id: str, parallel: int,
                  max_steps: int, tasks_dir: Path,
                  task_ids: list[str], attempts: int) -> str:
     """Build a temp dir with `attempts` copies of each task, run as one dataset."""
-    import tempfile, shutil
+    import tempfile
+    import shutil
     tmp = Path(tempfile.mkdtemp(prefix="cb_calib_"))
     try:
         for task_id in task_ids:

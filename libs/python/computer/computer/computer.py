@@ -1120,7 +1120,7 @@ class Computer:
         return result_interface
 
     @property
-    def pty(self) -> "PtyInterface":
+    def pty(self) -> "PtyInterface":  # noqa: F821 (defined via local import in __init__/pty)
         """Return a :class:`~computer.pty.PtyInterface` for spawning interactive PTY sessions.
 
         The computer must be started (``async with Computer()`` or ``await run()``)

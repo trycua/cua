@@ -99,8 +99,11 @@ select = ["E", "F", "B", "I"]
 ignore = [
     "E501", "E402", "I001", "I002", "B007", "B023", "B024", "B027", "B028",
     "B904", "B905", "E711", "E712", "E722", "E731", "F401", "F403", "F405",
-    "F811", "F821", "F841"
+    "F811", "F841"
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"libs/cua-driver/hyprland-plugin/tests/production_primary_conflict_proof.py" = ["F821"]
 
 [tool.ruff.format]
 docstring-code-format = true

@@ -12,8 +12,10 @@ class StateProvider : ContentProvider() {
     override fun onCreate() = true
     override fun getType(uri: Uri) = "application/json"
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor {
+        // `/detail` reports DetailActivity; the bare authority keeps reporting MainActivity.
+        val name = if (uri.path == "/detail") "detail.json" else "state.json"
         val state = synchronized(StateProvider::class.java) {
-            val file = java.io.File(requireNotNull(context).filesDir, "state.json")
+            val file = java.io.File(requireNotNull(context).filesDir, name)
             if (file.exists()) file.readText() else JSONObject().put("status", "not_started").toString()
         }
         return MatrixCursor(arrayOf("json")).apply { addRow(arrayOf(state)) }

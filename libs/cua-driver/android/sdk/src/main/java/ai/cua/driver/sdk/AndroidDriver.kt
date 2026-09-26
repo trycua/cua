@@ -17,7 +17,8 @@ data class SessionOptions(val allowedApps: List<String>, val width: Int = 1080,
     val height: Int = 1920, val density: Int = 320, val label: String? = null)
 data class SessionInfo(val sessionId: String, val displayId: Int, val width: Int, val height: Int,
     val leaseRemainingMs: Long, val targetId: String?)
-data class AppTarget(val targetId: String, val taskId: Int, val displayId: Int, val packageName: String)
+data class AppTarget(val targetId: String, val taskId: Int, val displayId: Int, val packageName: String,
+    val activity: String? = null)
 data class DisplayFrame(val snapshotId: String?, val targetId: String, val displayId: Int,
     val width: Int, val height: Int, val rotation: Int, val frameAgeMs: Long, val png: ByteArray)
 data class StopInfo(val state: String, val cleanup: String)
@@ -92,11 +93,21 @@ class AndroidDriver internal constructor(private val transport: DriverTransport)
                 d.string("cleanup").also { require(it == "released") })
         }
 
-    suspend fun launchApp(sessionId: String, packageName: String, requestId: String = newId()): DriverResult<AppTarget> {
+    /**
+     * Launches [packageName]'s default launcher Activity, or the exported [activity] (a fully qualified
+     * class name inside that package). The first launch binds the package's owned task to its Activity;
+     * a later explicit selection of a different Activity in the same session is refused.
+     */
+    suspend fun launchApp(sessionId: String, packageName: String, activity: String? = null,
+                          requestId: String = newId()): DriverResult<AppTarget> {
         validatePackage(packageName)
-        return request("app.launch", sessionId, JSONObject().put("package", packageName), requestId) { d ->
+        activity?.let(::validateActivity)
+        val params = JSONObject().put("package", packageName)
+        if (activity != null) params.put("activity", activity)
+        return request("app.launch", sessionId, params, requestId) { d ->
             AppTarget(d.string("target_id"), d.int("task_id"), d.int("display_id"),
-                d.string("package").also { require(it == packageName) })
+                d.string("package").also { require(it == packageName) },
+                d.nullableString("activity").also { require(activity == null || it == activity) })
         }
     }
 
@@ -192,6 +203,9 @@ class AndroidDriver internal constructor(private val transport: DriverTransport)
         fun newId() = UUID.randomUUID().toString()
         fun validateId(value: String) { require(value.codePointCount(0, value.length) in 1..128) }
         fun validatePackage(value: String) { require(value.matches(Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+"))) }
+        fun validateActivity(value: String) {
+            require(value.length <= 256 && value.matches(Regex("[A-Za-z_][A-Za-z0-9_$]*(\\.[A-Za-z_][A-Za-z0-9_$]*)+")))
+        }
         // The runtime additionally checks coordinates against the actual session geometry and snapshot.
         fun validatePoint(x: Int, y: Int) { require(x in 0 until 1920 && y in 0 until 2400) }
         fun requireCorrelated(requestId: String, valid: Boolean) {

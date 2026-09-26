@@ -172,6 +172,9 @@ fn parse(args: &[String], id: &str) -> Result<Invocation, String> {
                     .ok_or("app launch requires a package")?
                     .into(),
             );
+            if let Some(activity) = take("--activity") {
+                params.insert("activity".into(), activity.into());
+            }
         }
         "snapshot" => {
             params.insert(
@@ -405,6 +408,26 @@ mod tests {
             json!({"width":800,"height":600,"density":240,"allowed_apps":["ai.example","ai.other"],"label":"test"})
         );
         assert_eq!(i.request["operation"], "session.create");
+    }
+    #[test]
+    fn launch_serializes_optional_activity() {
+        let plain = parse_args("--device serial --session s app launch ai.example").unwrap();
+        assert_eq!(plain.request["params"], json!({"package":"ai.example"}));
+        let selected = parse_args(
+            "--device serial --session s app launch --package ai.example --activity ai.example.Detail",
+        )
+        .unwrap();
+        assert_eq!(
+            selected.request["params"],
+            json!({"package":"ai.example","activity":"ai.example.Detail"})
+        );
+        for args in [
+            "--device serial --session s app launch --package ai.example --activity Detail",
+            "--device serial --session s app launch --package ai.example --activity a.B --activity a.C",
+            "--device serial --session s snapshot --target t --activity a.B",
+        ] {
+            assert!(parse_args(args).is_err(), "{args}");
+        }
     }
     #[test]
     fn desktop_dispatch_remains_unselected() {

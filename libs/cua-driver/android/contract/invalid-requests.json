@@ -58,5 +58,21 @@
   {
     "name": "unsupported-operation",
     "request": {"contract_version":"cua.android.v0","request_id":"invalid-15","operation":"unsupported.operation","session_id":"fixture-session","params":{}}
+  },
+  {
+    "name": "activity-without-package-qualifier",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-16","operation":"app.launch","session_id":"fixture-session","params":{"package":"ai.example","activity":"DetailActivity"}}
+  },
+  {
+    "name": "activity-empty-segment",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-17","operation":"app.launch","session_id":"fixture-session","params":{"package":"ai.example","activity":"ai..DetailActivity"}}
+  },
+  {
+    "name": "null-activity",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-18","operation":"app.launch","session_id":"fixture-session","params":{"package":"ai.example","activity":null}}
+  },
+  {
+    "name": "numeric-activity",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-19","operation":"app.launch","session_id":"fixture-session","params":{"package":"ai.example","activity":42}}
   }
 ]

@@ -2,4 +2,5 @@
     <item name="editor" type="id" />
     <item name="increment" type="id" />
     <item name="counter" type="id" />
+    <item name="detail_tap" type="id" />
 </resources>

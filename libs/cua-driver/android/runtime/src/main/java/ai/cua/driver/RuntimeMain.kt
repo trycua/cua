@@ -3,6 +3,7 @@ package ai.cua.driver
 import ai.cua.driver.sdk.DriverClient
 import android.app.ActivityManager
 import android.app.ActivityOptions
+import android.content.ComponentName
 import android.content.Context
 import android.content.AttributionSource
 import android.content.Intent
@@ -154,6 +155,8 @@ private class Runtime(private val context: Context) {
     private val pendingCleanup = mutableSetOf<Int>()
     private val pendingTaskCleanup = mutableSetOf<Int>()
     private val dedup = LinkedHashMap<String, Pair<String, JSONObject>>()
+    /** A fully qualified Activity class name; its package always comes from the separate package field. */
+    private val activityName = Regex("[A-Za-z_][A-Za-z0-9_$]*(\\.[A-Za-z_][A-Za-z0-9_$]*)+")
 
     fun serve(socket: LocalSocket) {
         socket.soTimeout = 10000
@@ -243,7 +246,7 @@ private class Runtime(private val context: Context) {
         val keys = when (operation) {
             "doctor", "capabilities", "session.inspect", "session.renew", "session.stop" -> emptySet()
             "session.create" -> setOf("width", "height", "density", "allowed_apps", "label")
-            "app.launch" -> setOf("package")
+            "app.launch" -> setOf("package", "activity")
             "snapshot", "preview" -> setOf("target_id")
             "tap" -> setOf("snapshot_id", "x", "y")
             "gesture.swipe" -> setOf("snapshot_id", "from_x", "from_y", "to_x", "to_y", "duration_ms")
@@ -261,6 +264,10 @@ private class Runtime(private val context: Context) {
         for (key in strings) {
             val value = p.opt(key) as? String ?: throw Refusal("invalid_$key", 2)
             if (key != "package" && value.codePointCount(0, value.length) !in 1..128) throw Refusal("invalid_$key", 2)
+        }
+        if (p.has("activity")) {
+            val activity = p.opt("activity") as? String ?: throw Refusal("invalid_activity", 2)
+            if (activity.length > 256 || !activity.matches(activityName)) throw Refusal("invalid_activity", 2)
         }
         if (p.has("label")) {
             val label = p.opt("label") as? String ?: throw Refusal("invalid_label", 2)
@@ -398,7 +405,7 @@ private class Runtime(private val context: Context) {
         val tasks = activity.getRunningTasks(100)
         if (tasks.size >= 100) throw Refusal("task_inventory_incomplete")
         return tasks.map { TaskPlacement(it.taskId, it.javaClass.getField("displayId").getInt(it),
-            it.baseActivity?.packageName, it.topActivity?.packageName) }
+            it.baseActivity?.packageName, it.topActivity?.packageName, it.baseActivity?.className) }
     }
 
     private fun task(s: Session): TaskPlacement {
@@ -415,15 +422,37 @@ private class Runtime(private val context: Context) {
         return task
     }
 
+    /** Resolve an explicit Activity inside the allowlisted package without launching it. */
+    private fun selectedActivity(pkg: String, activity: String): ComponentName {
+        val component = ComponentName(pkg, activity)
+        val pm = context.packageManager
+        val info = try {
+            pm.getActivityInfo(component, PackageManager.ComponentInfoFlags.of(PackageManager.MATCH_DISABLED_COMPONENTS.toLong()))
+        } catch (_: PackageManager.NameNotFoundException) { throw Refusal("activity_not_found") }
+        // An alias starts its target class, so the task could never read back as the requested component.
+        if (info.targetActivity != null) throw Refusal("activity_alias_unsupported")
+        if (!info.exported) throw Refusal("activity_not_exported")
+        val enabled = when (pm.getComponentEnabledSetting(component)) {
+            PackageManager.COMPONENT_ENABLED_STATE_ENABLED -> true
+            PackageManager.COMPONENT_ENABLED_STATE_DEFAULT -> info.enabled
+            else -> false
+        }
+        if (!enabled || !info.applicationInfo.enabled) throw Refusal("activity_disabled")
+        return component
+    }
+
     private fun launch(s: Session, p: JSONObject): JSONObject {
-        validate(p, setOf("package"))
+        validate(p, setOf("package", "activity"))
         val pkg = p.getString("package")
+        val activity = p.optString("activity").takeIf { p.has("activity") }
         if (pkg !in s.allowed) throw Refusal("app_not_allowed")
         if (s.launchUncertain) throw Refusal("previous_launch_uncertain_stop_required")
-        val intent = context.packageManager.getLaunchIntentForPackage(pkg) ?: throw Refusal("app_not_launchable")
-        val component = intent.component ?: throw Refusal("app_component_unavailable")
+        val component = if (activity != null) selectedActivity(pkg, activity) else {
+            val intent = context.packageManager.getLaunchIntentForPackage(pkg) ?: throw Refusal("app_not_launchable")
+            intent.component ?: throw Refusal("app_component_unavailable")
+        }
         val before = inventory()
-        val existing = s.tasks.prepare(pkg, before)
+        val existing = s.tasks.prepare(pkg, before, activity)
         s.snapshot = null; s.target = null; s.packageName = pkg; s.taskId = null
         s.bitmap?.recycle(); s.bitmap = null; s.frameTime = 0
         s.targetGeneration++
@@ -451,7 +480,8 @@ private class Runtime(private val context: Context) {
         for (attempt in 0..19) {
             val top = inventory().firstOrNull { it.display == s.display.display.displayId }
             if (top != null && top.basePackage == pkg && top.topPackage == pkg &&
-                (existing == null || top.id == existing)) { actual = top; break }
+                (existing == null || top.id == existing) &&
+                (activity == null || top.baseActivity == activity)) { actual = top; break }
             Thread.sleep(100)
         }
         val observed = actual ?: throw IllegalStateException("Launch placement unverified after dispatch")
@@ -467,6 +497,7 @@ private class Runtime(private val context: Context) {
         return JSONObject().put("target_id", s.target).put("task_id", s.taskId)
             .put("target_generation", s.targetGeneration).put("owned_task_count", s.tasks.size)
             .put("display_id", s.display.display.displayId).put("package", pkg)
+            .put("activity", s.tasks.activity(pkg) ?: JSONObject.NULL)
             .put("action", action(if (existing == null) "android_activity_manager_shell" else "android_activity_manager",
                 detail = "Owned task placement read back from task service"))
     }

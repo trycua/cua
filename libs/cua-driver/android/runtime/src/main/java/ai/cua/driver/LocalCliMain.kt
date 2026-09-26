@@ -117,7 +117,10 @@ object LocalCliMain {
                 require(!apps.isNullOrEmpty()) { "session create requires --allow-app PACKAGE" }
                 params.put("allowed_apps", JSONArray(apps))
             }
-            "app.launch" -> params.put("package", required("--package"))
+            "app.launch" -> {
+                params.put("package", required("--package"))
+                take("--activity")?.let { params.put("activity", it) }
+            }
             "snapshot" -> {
                 params.put("target_id", required("--target"))
                 image = take("--image")

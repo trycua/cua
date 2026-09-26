@@ -42,8 +42,8 @@ def main():
         return subprocess.run(adb + ["shell", shlex.join(map(str, command))], check=check,
                               capture_output=True, text=True, timeout=15)
 
-    def state(package):
-        output = shell("content", "query", "--uri", "content://" + package + ".state").stdout
+    def state(package, path=""):
+        output = shell("content", "query", "--uri", "content://" + package + ".state" + path).stdout
         return json.loads(output.split("json=", 1)[1])
 
     def poll(predicate, timeout=8):
@@ -209,6 +209,50 @@ def main():
     finally:
         local("--session", sid, "session", "stop")
     print("Phone-local geometry/swipe/PNG and duplicate-request checks passed", flush=True)
+
+    # An explicit exported Activity binds to the package's owned task; refusals change nothing.
+    fixture, detail = "ai.cua.fixture.notes", "ai.cua.fixture.notes.DetailActivity"
+    created = call("session", "create", "--allow-app", fixture)["data"]
+    sid, display = created["session_id"], created["display_id"]
+    try:
+        for activity, reason in ((fixture + ".PrivateActivity", "activity_not_exported"),
+                                 (fixture + ".DisabledActivity", "activity_disabled"),
+                                 (fixture + ".MissingActivity", "activity_not_found"),
+                                 ("ai.cua.android.demo.MainActivity", "activity_not_found")):
+            refused = call("--session", sid, "app", "launch", "--package", fixture, "--activity", activity, expected=3)
+            assert refused["error"]["reason"] == reason, refused
+        refused = call("--session", sid, "app", "launch", "--package", "ai.cua.android.demo",
+                       "--activity", "ai.cua.android.demo.MainActivity", expected=3)
+        assert refused["error"]["reason"] == "app_not_allowed", refused
+        assert call("--session", sid, "session", "inspect")["data"]["owned_task_count"] == 0
+        launched = call("--session", sid, "app", "launch", "--package", fixture, "--activity", detail)["data"]
+        assert launched["activity"] == detail and launched["display_id"] == display, launched
+        # The fixture independently reports which component, task and display it is running in.
+        screen = poll(lambda: (lambda s: s if s.get("display_id") == display and s.get("taps") == 0 else None)(
+            state(fixture, "/detail")))
+        assert screen["activity"] == detail and screen["task_id"] == launched["task_id"], screen
+        snap = call("--session", sid, "snapshot", "--target", launched["target_id"])["data"]["snapshot_id"]
+        point = screen["controls"]["tap"]
+        call("--session", sid, "tap", "--snapshot", snap, "--x", point["x"], "--y", point["y"])
+        poll(lambda: state(fixture, "/detail").get("taps") == 1)
+        again = call("--session", sid, "app", "launch", "--package", fixture, "--activity", detail)["data"]
+        assert again["task_id"] == launched["task_id"] and again["target_id"] != launched["target_id"], again
+        stale = call("--session", sid, "tap", "--snapshot", snap, "--x", point["x"], "--y", point["y"], expected=3)
+        assert stale["error"]["reason"] == "stale_snapshot", stale
+        # Package-only launch keeps switching to the owned task, whatever Activity started it.
+        plain = call("--session", sid, "app", "launch", "--package", fixture)["data"]
+        assert plain["task_id"] == launched["task_id"] and plain["activity"] == detail, plain
+        conflict = call("--session", sid, "app", "launch", "--package", fixture,
+                        "--activity", fixture + ".MainActivity", expected=3)
+        assert conflict["error"]["reason"] == "launch_target_conflict", conflict
+        # The refused selection left the current target and the selected screen untouched.
+        call("--session", sid, "snapshot", "--target", plain["target_id"],
+             "--image", args.evidence_dir / "selected-activity.png")
+        assert state(fixture, "/detail")["taps"] == 1
+    finally:
+        call("--session", sid, "session", "stop")
+    poll(lambda: task_removed(launched["task_id"]))
+    print("Explicit Activity selection, refusal and cleanup checks passed", flush=True)
 
     # The app creates and renews its own session; no host client owns its lease.
     shell("am", "force-stop", "ai.cua.android.demo")

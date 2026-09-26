@@ -6,6 +6,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Synthetic non-launcher screens for explicit Activity selection and its refusals. -->
+        <activity android:name=".DetailActivity" android:exported="true" android:resizeableActivity="true" />
+        <activity android:name=".PrivateActivity" android:exported="false" />
+        <activity android:name=".DisabledActivity" android:exported="true" android:enabled="false" />
         <!-- Synthetic fixture evidence only; never use this provider in a production app. -->
         <provider android:name=".StateProvider" android:authorities="ai.cua.fixture.notes.state" android:exported="true" />
     </application>

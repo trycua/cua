@@ -64,6 +64,23 @@ desktop subcommand arguments do not change the backend.
 ../rust/target/debug/cua-driver --device emulator-5554 --session SESSION_ID session stop
 ```
 
+`app launch` starts the package's default launcher Activity. To open another
+screen of the same app, name an exported Activity inside the allowlisted package:
+
+```bash
+../rust/target/debug/cua-driver --device emulator-5554 --session SESSION_ID \
+  app launch --package ai.cua.fixture.notes \
+  --activity ai.cua.fixture.notes.DetailActivity
+```
+
+The Activity must be a fully qualified class name that is declared by that
+package, exported, and enabled. Missing, non-exported, disabled, and
+activity-alias components are refused before anything starts
+(`activity_not_found`, `activity_not_exported`, `activity_disabled`,
+`activity_alias_unsupported`). The runtime reads back the new task's base
+Activity before returning a target. Intent extras, data URIs, and deep links are
+not accepted.
+
 Touch coordinates refer to the full-resolution snapshot. Obtain a fresh snapshot
 before another action; mutation invalidates the old handle. A tap's native API
 acceptance returns `effect: unverifiable` and `actual_delivery: unknown` until
@@ -137,6 +154,9 @@ unverifiable application effect.
   `app launch` creates a fresh task or switches to that session's existing task.
   Every switch returns a new target ID and invalidates old snapshots. Existing
   tasks outside the session are refused; an uncertain launch requires Stop.
+  The Activity that starts a package's owned task stays bound to it for the
+  session: a package-only launch switches to that task, and an explicit
+  different `--activity` is refused with `launch_target_conflict`.
   Stop verifies display removal and destruction of every owned task.
 - Caller-owned 60-second lease; renew with `session renew`. CLI exit does not
   destroy the session, but no persistent host broker renews it automatically.
@@ -189,7 +209,10 @@ synthetic fixture apps. It overlaps display-0 ADB text input with virtual-displa
 Driver taps, checks actual receipt/counters/focus and timestamp overlap, rejects
 stale snapshots, verifies task destruction on Stop and lease expiry, and
 exercises phone-local geometry, swipe, PNG export, duplicate mutation IDs, caller
-denial, and an SDK-owned preview interval with no host requests. Corrupted event
+denial, and an SDK-owned preview interval with no host requests. It launches the
+fixture's non-launcher detail screen by explicit Activity, checks the screen's
+own reported class, task, and display, taps it, and checks the refusal cases
+and task cleanup. Corrupted event
 copies check that its receipt oracle rejects wrong-display and missing-event
 evidence; these are oracle tests, not deliberate misrouting by the runtime.
 The synthetic user route is not hardware keyboard,

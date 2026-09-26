@@ -80,20 +80,27 @@ See `crates/cua-driver-e2e/tests/README.md` for the desktop E2E suites and
 ## Permission Policies
 
 Set `CUA_DRIVER_POLICY_FILE` on the daemon to enforce a deny-by-default policy
-on all tool calls from MCP and CLI clients. If the variable is unset, or points to a path that does
-not exist, the driver keeps its backward-compatible behavior with no policy
-enforcement. Supported paths are:
+on all tool calls from MCP and CLI clients. Supported paths are:
 
 - `.yaml` / `.yml`: a single YAML policy file.
 - `.rego`: a single Rego policy file.
 - A directory: all top-level `.rego` files are loaded in sorted order.
+
+If `CUA_DRIVER_POLICY_FILE` is **unset**, the driver keeps its
+backward-compatible behavior with no policy enforcement. If it is **set to a
+path that does not exist, or that fails to load**, startup is a hard error: the
+daemon refuses to expose an action endpoint rather than silently running
+unconstrained. To make an unset policy fatal too, set
+`CUA_DRIVER_REQUIRE_POLICY=1`; startup then refuses unless at least one policy
+layer is configured. The effective mode (`enforced`, `disabled`, or `error`) is
+reported in the daemon metadata handshake as `policy_mode`.
 
 YAML policies allow unconstrained tools through `allow.tools`, constrained
 calls through `allow.rules`, and explicit overrides through `deny.tools`:
 
 ```yaml
 allow:
-  tools: [screenshot, scroll, wait]
+  tools: [list_apps, list_windows, get_window_state, get_screen_size, scroll]
   rules:
     - tool: click
       constraints:
@@ -107,7 +114,7 @@ allow:
         app:
           allowed: [Calculator, TextEdit, Safari]
 deny:
-  tools: [shell_execute, file_delete]
+  tools: [kill_app, browser_download]
 ```
 
 Rego policies must expose a boolean rule at `data.cua.policy.allow`. The input

@@ -123,6 +123,52 @@ fn direct_mcp_rejects_admin_disabled_unrestricted_mode_before_requests() {
     );
 }
 
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn direct_mcp_refuses_startup_when_policy_is_required_but_unconfigured() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .arg("mcp")
+        .env("CUA_DRIVER_REQUIRE_POLICY", "1")
+        .env_remove("CUA_DRIVER_POLICY_FILE")
+        .env_remove("CUA_DRIVER_MANAGED_POLICY_FILE")
+        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("run direct MCP with a required-but-unset policy");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("CUA_DRIVER_REQUIRE_POLICY=1 but no permission policy"),
+        "unexpected stderr: {stderr}"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "policy rejection must precede protocol output"
+    );
+}
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn direct_mcp_refuses_startup_when_configured_policy_path_is_missing() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .arg("mcp")
+        .env("CUA_DRIVER_POLICY_FILE", "/nonexistent/cua-policy.yaml")
+        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .expect("run direct MCP with a missing policy path");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("configured permission policy path does not exist"),
+        "unexpected stderr: {stderr}"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "policy rejection must precede protocol output"
+    );
+}
+
 #[test]
 fn embedded_mcp_without_private_endpoint_fails_closed() {
     let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))

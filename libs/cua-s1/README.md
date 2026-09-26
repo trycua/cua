@@ -101,16 +101,19 @@ Hugging Face and download without a token.
 ### Pinned artifacts
 
 Pin every download to the commit SHA below. A branch name such as `main` can
-move; these revisions are the ones the commands and measurements in this
-section were verified against on 2026-09-25.
+move; these revisions are the ones the commands in this section were verified
+against. The `cua-s1-4b-0.1`, `cua-s1-nano-0.1`, and `cua-s1-forms` pins were
+updated on 2026-09-26 to revisions that add model cards and licenses (and, for
+`cua-s1-forms`, remove the pickle checkpoint); their weight files are
+byte-identical to the revisions measured on 2026-09-25.
 
 | Artifact          | Hugging Face repository                                                   | Revision (commit SHA)                      | Pairs with                              | Download size                             | Declared license                             |
 | ----------------- | ------------------------------------------------------------------------- | ------------------------------------------ | --------------------------------------- | ----------------------------------------- | -------------------------------------------- |
 | Base model        | [`Qwen/Qwen3.5-4B`](https://huggingface.co/Qwen/Qwen3.5-4B)               | `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a` | Base for both 4B adapters               | 9.34 GB (two safetensors shards, 9.32 GB) | Apache-2.0 (Qwen's model card and `LICENSE`) |
 | `cua-s1-4b-0.2`   | [`cua-ai/cua-s1-4b-0.2`](https://huggingface.co/cua-ai/cua-s1-4b-0.2)     | `16818868b0cc7813808aae4e87b417657046ab79` | `Qwen/Qwen3.5-4B` at the revision above | 187 MB                                    | Apache-2.0 (adapter only)                    |
-| `cua-s1-4b-0.1`   | [`cua-ai/cua-s1-4b-0.1`](https://huggingface.co/cua-ai/cua-s1-4b-0.1)     | `88d8b8a90c2da4470d005cc23ec8665a6442ebe1` | `Qwen/Qwen3.5-4B` at the revision above | 272 MB                                    | None declared on Hugging Face                |
-| `cua-s1-nano-0.1` | [`cua-ai/cua-s1-nano-0.1`](https://huggingface.co/cua-ai/cua-s1-nano-0.1) | `1f93fd0fdcbe33740334948f967dff9f6c8e9f34` | Standalone (no base model)              | 6.9 MB                                    | None declared on Hugging Face                |
-| `cua-s1-forms`    | [`cua-ai/cua-s1-forms`](https://huggingface.co/cua-ai/cua-s1-forms)       | `f54adbf447f4ca6ec259f529ee3f2e3e09f8cc71` | Standalone (no base model)              | 2.8 MB (safetensors pair only)            | MIT                                          |
+| `cua-s1-4b-0.1`   | [`cua-ai/cua-s1-4b-0.1`](https://huggingface.co/cua-ai/cua-s1-4b-0.1)     | `3ebffb9868f31a1d54140948cb2434d35f35b281` | `Qwen/Qwen3.5-4B` at the revision above | 272 MB                                    | Apache-2.0 (adapter only)                    |
+| `cua-s1-nano-0.1` | [`cua-ai/cua-s1-nano-0.1`](https://huggingface.co/cua-ai/cua-s1-nano-0.1) | `abbd98492307dc20373f79f7141725412df63c42` | Standalone (no base model)              | 6.9 MB                                    | Apache-2.0                                   |
+| `cua-s1-forms`    | [`cua-ai/cua-s1-forms`](https://huggingface.co/cua-ai/cua-s1-forms)       | `4a7a9f42a3d42e6dfbd111c0c843e37ac50f1332` | Standalone (no base model)              | 2.8 MB                                    | MIT                                          |
 
 Layouts and loaders:
 
@@ -127,16 +130,19 @@ Layouts and loaders:
   checkpoint also needs a frozen vision backbone from the `nano-vision` extra.
 - `cua-s1-forms` contains a `tinyx` checkpoint (`cua-s1-forms.safetensors`
   plus `cua-s1-forms.json`, 706,048 parameters). Load it with
-  `cua_s1.model.load_checkpoint`. The repository also ships a pickle
-  `cua-s1-forms.pt`, which `cua_s1` refuses to load by design (see #3977).
-  Exclude it from downloads (`--exclude "*.pt"`) and load only the
-  safetensors pair. Unpickling a checkpoint can run arbitrary code, so do not
-  open the `.pt` file with `torch.load` or `pickle`.
-- The Apache-2.0 license on `cua-s1-4b-0.2` covers only the adapter. The base
-  model is governed by its own license and is downloaded from Qwen's
-  repository, not redistributed by Cua. At the pinned revisions,
-  `cua-s1-4b-0.1` and `cua-s1-nano-0.1` declare no license and ship no model
-  card; no license grant for those weights is documented here.
+  `cua_s1.model.load_checkpoint`. At the pinned revision the repository
+  contains only that pair, a model card, and `.gitattributes`. Older
+  revisions, including `f54adbf447f4ca6ec259f529ee3f2e3e09f8cc71`, also ship
+  a pickle `cua-s1-forms.pt`, which `cua_s1` refuses to load by design (see
+  #3977). If you pin an older revision, pass `--exclude "*.pt"`. Unpickling a
+  checkpoint can run arbitrary code, so never open a `.pt` copy with
+  `torch.load` or `pickle`.
+- The Apache-2.0 licenses on `cua-s1-4b-0.2` and `cua-s1-4b-0.1` cover only
+  the adapters. The base model is governed by its own license and is
+  downloaded from Qwen's repository, not redistributed by Cua.
+  `cua-s1-nano-0.1` is trained from scratch and its weights are Apache-2.0;
+  the frozen vision backbone its multimodal checkpoint downloads at first use
+  is not redistributed and is governed by its own license.
 
 ### Hardware
 
@@ -226,14 +232,13 @@ Download the other checkpoints the same way as needed:
 
 ```bash
 "$HF" download cua-ai/cua-s1-4b-0.1 \
-  --revision 88d8b8a90c2da4470d005cc23ec8665a6442ebe1 \
+  --revision 3ebffb9868f31a1d54140948cb2434d35f35b281 \
   --local-dir "$S1_MODELS/cua-s1-4b-0.1"
 "$HF" download cua-ai/cua-s1-nano-0.1 \
-  --revision 1f93fd0fdcbe33740334948f967dff9f6c8e9f34 \
+  --revision abbd98492307dc20373f79f7141725412df63c42 \
   --local-dir "$S1_MODELS/cua-s1-nano-0.1"
 "$HF" download cua-ai/cua-s1-forms \
-  --revision f54adbf447f4ca6ec259f529ee3f2e3e09f8cc71 \
-  --exclude "*.pt" \
+  --revision 4a7a9f42a3d42e6dfbd111c0c843e37ac50f1332 \
   --local-dir "$S1_MODELS/cua-s1-forms"
 ```
 

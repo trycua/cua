@@ -89,20 +89,26 @@ if (Test-Path -LiteralPath $VisibleBinDir) {
     Write-Step "removed local bin junction $VisibleBinDir"
 }
 
-# Shared skill names are removed only when the reparse target belongs to the
-# local package home. Release and hand-managed links are preserved.
-$SkillLinks = @(
-    (Join-Path $env:USERPROFILE ".claude\skills\cua-driver"),
-    (Join-Path $env:USERPROFILE ".agents\skills\cua-driver"),
-    (Join-Path $env:USERPROFILE ".openclaw\skills\cua-driver"),
-    (Join-Path $env:APPDATA "opencode\skills\cua-driver"),
-    (Join-Path $env:USERPROFILE ".gemini\skills\cua-driver"),
-    (Join-Path $env:USERPROFILE ".hermes\skills\cua-driver")
+# The local skill pack links as `cua-driver-local`. Older local installs
+# linked it under the shared `cua-driver` name, so either name is removed only
+# when the reparse target belongs to the local package home. Release and
+# hand-managed links are preserved.
+$SkillParents = @(
+    (Join-Path $env:USERPROFILE ".claude\skills"),
+    (Join-Path $env:USERPROFILE ".agents\skills"),
+    (Join-Path $env:USERPROFILE ".prime\agent\skills"),
+    (Join-Path $env:USERPROFILE ".openclaw\skills"),
+    (Join-Path $env:APPDATA "opencode\skills"),
+    (Join-Path $env:USERPROFILE ".gemini\skills"),
+    (Join-Path $env:USERPROFILE ".hermes\skills")
 )
-foreach ($link in $SkillLinks) {
-    if (Test-LocalLinkTarget $link) {
-        Remove-Item -LiteralPath $link -Force -Recurse
-        Write-Step "removed local skill link $link"
+foreach ($parent in $SkillParents) {
+    foreach ($skillName in @("cua-driver-local", "cua-driver")) {
+        $link = Join-Path $parent $skillName
+        if (Test-LocalLinkTarget $link) {
+            Remove-Item -LiteralPath $link -Force -Recurse
+            Write-Step "removed local skill link $link"
+        }
     }
 }
 

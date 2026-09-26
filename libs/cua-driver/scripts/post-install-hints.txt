@@ -15,13 +15,13 @@ Next steps:
                                    # running so you grant once and it persists.
 
   3. Agent skill pack (optional):
-       {{BINARY}} skills install   # fetch + link the cua-driver skill pack
+       {{BINARY}} skills install   # fetch + link this driver's skill pack
                                    # into Claude Code / Codex / Prime Agent /
                                    # OpenClaw / OpenCode and other supported agents.
                                    # The binary installer never touches your agent dirs.
 
      Prime Agent needs no MCP registration. It loads the installed skill and
-     calls cua-driver from its persistent IPython environment. Print its setup:
+     calls {{BINARY}} from its persistent IPython environment. Print its setup:
        {{BINARY}} mcp-config --client prime-agent
      Then run /reload in Prime Agent (or start a new session).
 

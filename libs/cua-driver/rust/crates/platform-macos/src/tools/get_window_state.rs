@@ -37,11 +37,15 @@ fn def() -> &'static ToolDef {
             PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
             indexed row with `element_index`, `role`, `label`, `value` (the \
             element's text/AXValue when present — use it to verify what a field \
-            holds), `actions` (names of AX actions exposed by the element, \
-            omitted when empty), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
-            `tree_markdown` stays available \
-            and unchanged in shape for existing text-parsing callers — but new \
-            fields will only be added to the structured side.\n\n\
+            holds, preserving empty strings and whitespace), optional `placeholder` \
+            (a separate hint, never the value), `description` (AXDescription, \
+            omitted when it is already the label) and `help` (AXHelp — the \
+            tooltip, which is where apps put an element's semantics: which \
+            calendar an event belongs to, what a toggle does), `actions` (names \
+            of AX actions exposed by the element, omitted when empty), \
+            `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
+            `tree_markdown` stays available for text consumers, with raw string \
+            values quoted and escaped and placeholders identified separately.\n\n\
             Always returns BOTH the element tree AND a screenshot — ground on \
             both and cross-check (the tree lies on some surfaces: Electron \
             echo-confirms, Catalyst null values, virtualized off-viewport rows \
@@ -87,7 +91,15 @@ fn def() -> &'static ToolDef {
             context-window blow-up on Electron / Obsidian / large web apps that \
             produce 10k+ element trees. When applied, BOTH the markdown \
             and the structured elements are truncated identically. Omit both for \
-            current default behaviour (≤2 000 elements, depth ≤25).".into(),
+            current default behaviour (≤2 000 elements, depth ≤25).\n\n\
+            A scrolling table/outline/list keeps every row in its accessibility \
+            tree but only builds the ones on screen, so reading the rest costs \
+            tens of milliseconds each and starves the rest of the window. Rows \
+            the container reports as not visible and not selected are left \
+            unread: the tree states the count per container, and \
+            `collapsed_rows` reports the total. Off-screen rows are not \
+            clickable anyway — scroll, or use the window's own search field, to \
+            bring one into view before acting on it.".into(),
         input_schema: serde_json::json!({
             "type": "object",
             "required": ["pid", "window_id"],
@@ -584,11 +596,12 @@ impl Tool for GetWindowStateTool {
             _ => elements_json,
         };
         let filtered_element_count = elements_json.len();
-        // The structured array intentionally contains only actionable nodes,
-        // and AX child reads can fail independently of the element/depth caps.
-        // Until the walker exposes a proof over the projected search domain,
-        // absence must remain unknown rather than being claimed complete.
-        let elements_complete = false;
+        let elements_complete = elements_are_complete(
+            scope_matched,
+            tree_result
+                .as_ref()
+                .map(|r| r.truncated || r.collapsed_rows > 0),
+        );
 
         let mut structured = serde_json::json!({
             "window_id": window_id,
@@ -597,6 +610,7 @@ impl Tool for GetWindowStateTool {
             "total_element_count": element_count,
             "returned_element_count": filtered_element_count,
             "elements_complete": elements_complete,
+            "collapsed_rows": tree_result.as_ref().map_or(0, |r| r.collapsed_rows),
             "tree_markdown": tree_md,
             "elements": elements_json,
             "_note": "Prefer `elements` — `tree_markdown` will continue to work \
@@ -609,6 +623,10 @@ impl Tool for GetWindowStateTool {
         }
         if let Some(r) = tree_result.as_ref() {
             r.walk.apply(&mut structured);
+            if let (Some(gap), false) = (r.gap, r.walk.truncated()) {
+                structured["truncated"] = serde_json::json!(true);
+                structured["truncation_reason"] = serde_json::json!(gap);
+            }
         }
         // Surface 6: an opaque snapshot identifier consumers can log
         // alongside the per-element tokens for debug correlation. Same value
@@ -844,6 +862,33 @@ fn degradation_for(
     Degradation::None
 }
 
+fn derive_label(node: &crate::ax::tree::AXNode) -> Option<String> {
+    node.title
+        .clone()
+        .or_else(|| node.description.clone())
+        .or_else(|| {
+            node.value
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        })
+        .or_else(|| {
+            node.placeholder
+                .clone()
+                .filter(|hint| !hint.trim().is_empty())
+        })
+        .or_else(|| node.identifier.clone())
+}
+
+/// Whether `elements` may promise that a control absent from it is absent
+/// from the window: only a resolved window scope and a walk that gave nothing
+/// up can. A `query` projects an already-complete domain, so a filtered array
+/// stays complete for that query.
+fn elements_are_complete(scope_matched: bool, walk_truncated: Option<bool>) -> bool {
+    scope_matched && walk_truncated == Some(false)
+}
+
 /// Render the actionable nodes from the AX walk into the
 /// `structuredContent.elements` array shape described on the tool: one entry
 /// per node with an `element_index`, carrying role, label (built from
@@ -862,15 +907,7 @@ pub(crate) fn build_elements_array_with_token(
         .iter()
         .filter_map(|node| {
             let idx = node.element_index?;
-            // `label` is a best-effort human-readable string: title first,
-            // then description, then value, then identifier. Mirrors what
-            // a human reading the markdown row would call this element.
-            let label = node
-                .title
-                .clone()
-                .or_else(|| node.description.clone())
-                .or_else(|| node.value.clone())
-                .or_else(|| node.identifier.clone());
+            let label = derive_label(node);
             let frame = node
                 .frame
                 .map(|[x, y, w, h]| serde_json::json!({ "x": x, "y": y, "w": w, "h": h }));
@@ -888,6 +925,17 @@ pub(crate) fn build_elements_array_with_token(
                 entry["element_token"] =
                     serde_json::json!(cua_driver_core::element_token::token_for(sid, idx));
             }
+            if let Some(description) = node
+                .description
+                .as_deref()
+                .filter(|description| !description.trim().is_empty())
+                .filter(|description| label.as_deref() != Some(description))
+            {
+                entry["description"] = serde_json::Value::String(description.to_owned());
+            }
+            if let Some(help) = &node.help {
+                entry["help"] = serde_json::Value::String(help.clone());
+            }
             if let Some(label) = label {
                 entry["label"] = serde_json::Value::String(label);
             }
@@ -904,13 +952,11 @@ pub(crate) fn build_elements_array_with_token(
             // "1"/"0") — controls whose state was previously invisible here.
             // Falls back to `value` so the field never regresses for
             // string-valued elements.
-            if let Some(value) = node
-                .value_state
-                .clone()
-                .or_else(|| node.value.clone())
-                .filter(|v| !v.is_empty())
-            {
+            if let Some(value) = node.value_state.clone().or_else(|| node.value.clone()) {
                 entry["value"] = serde_json::Value::String(value);
+            }
+            if let Some(placeholder) = &node.placeholder {
+                entry["placeholder"] = serde_json::Value::String(placeholder.clone());
             }
             if let Some(desc) = node.value_description.clone() {
                 entry["value_description"] = serde_json::Value::String(desc);
@@ -1137,6 +1183,7 @@ mod tests {
             role: role.into(),
             title: title.map(|s| s.to_string()),
             value: None,
+            placeholder: None,
             description: None,
             identifier: None,
             help: None,
@@ -1253,6 +1300,27 @@ mod tests {
     }
 
     #[test]
+    fn structured_rows_carry_help_and_a_distinct_description() {
+        let mut event = node(Some(0), "AXButton", Some("Standup"), 1, None, None, vec![]);
+        event.help = Some("Calendar: Bench".into());
+        event.description = Some("all-day event".into());
+        let entry = &build_elements_array_with_token(&[event], None)[0];
+        assert_eq!(entry["label"], "Standup");
+        assert_eq!(entry["help"], "Calendar: Bench");
+        assert_eq!(entry["description"], "all-day event");
+    }
+
+    #[test]
+    fn a_description_that_is_already_the_label_is_not_repeated() {
+        let mut digit = node(Some(0), "AXButton", None, 1, None, None, vec![]);
+        digit.description = Some("2".into());
+        let entry = &build_elements_array_with_token(&[digit], None)[0];
+        assert_eq!(entry["label"], "2", "description still supplies the label");
+        assert!(entry.get("description").is_none());
+        assert!(entry.get("help").is_none());
+    }
+
+    #[test]
     fn elements_surface_control_state_fields() {
         // A slider whose AXValue is a CFNumber: `value` comes from the
         // coerced value_state, alongside value_description, min/max,
@@ -1356,13 +1424,34 @@ mod tests {
     }
 
     #[test]
-    fn elements_omit_empty_value() {
-        // An empty AXValue must not emit a `value` field (matches the other
-        // optional fields' omit-when-absent contract).
-        let mut nodes = vec![node(Some(0), "AXButton", Some("OK"), 0, None, None, vec![])];
-        nodes[0].value = Some(String::new());
+    fn elements_preserve_empty_whitespace_and_unicode_values_separately_from_placeholder() {
+        for raw in ["", "\n", " \tΩ café\n"] {
+            let mut nodes = vec![node(Some(0), "AXTextArea", None, 0, None, None, vec![])];
+            nodes[0].value = Some(raw.into());
+            nodes[0].value_state = Some(raw.into());
+            nodes[0].placeholder = Some("Ask for follow-up changes".into());
+            let entry = &build_elements_array_with_token(&nodes, None)[0];
+            assert_eq!(
+                entry["value"], raw,
+                "raw field content must survive serialization"
+            );
+            assert_eq!(entry["placeholder"], "Ask for follow-up changes");
+            if raw.trim().is_empty() {
+                assert_eq!(entry["label"], "Ask for follow-up changes");
+            } else {
+                assert_eq!(entry["label"], raw.trim());
+            }
+        }
+    }
+
+    #[test]
+    fn a_placeholder_never_fabricates_an_absent_value() {
+        let mut nodes = vec![node(Some(0), "AXTextField", None, 0, None, None, vec![])];
+        nodes[0].placeholder = Some("Search".into());
         let entry = &build_elements_array_with_token(&nodes, None)[0];
-        assert!(entry.get("value").is_none(), "empty value must be omitted");
+        assert_eq!(entry["placeholder"], "Search");
+        assert_eq!(entry["label"], "Search");
+        assert!(entry.get("value").is_none());
     }
 
     #[test]
@@ -1481,5 +1570,26 @@ mod tests {
             "observation-only entries must not emit unregistered element_token: {}",
             entries[0]
         );
+    }
+
+    #[test]
+    fn completeness_is_promised_only_for_a_resolved_window_and_a_whole_walk() {
+        assert!(elements_are_complete(true, Some(false)));
+        assert!(!elements_are_complete(true, Some(true)));
+        assert!(!elements_are_complete(true, None));
+        assert!(!elements_are_complete(false, Some(false)));
+    }
+
+    #[test]
+    fn a_walk_that_cannot_read_the_app_never_promises_a_complete_element_set() {
+        let walk = crate::ax::tree::walk_tree_bounded(i32::MAX, Some(123), None, 20, 5);
+        assert!(walk.truncated);
+        assert_eq!(walk.gap, Some("child_list_unreadable"));
+        let scope = walk.window_scope.as_ref().expect("window_id was requested");
+        assert!(!scope.is_matched());
+        assert!(!elements_are_complete(
+            scope.is_matched(),
+            Some(walk.truncated)
+        ));
     }
 }

@@ -7474,13 +7474,16 @@ class _UniffiFfiConverterOptionalTypeElementFrame(_UniffiConverterRustBuffer):
 
 @dataclass
 class WindowElement:
-    def __init__(self, *, element_index:int, role:str, depth:int, element_token:typing.Optional[str], label:typing.Optional[str], value:typing.Optional[str], value_description:typing.Optional[str], enabled:typing.Optional[bool], selected:typing.Optional[bool], in_web_content:typing.Optional[bool], actions:typing.Optional[typing.List[str]], parent_index:typing.Optional[int], frame:typing.Optional[ElementFrame], min:typing.Optional[float], max:typing.Optional[float]):
+    def __init__(self, *, element_index:int, role:str, depth:int, element_token:typing.Optional[str], label:typing.Optional[str], description:typing.Optional[str], help:typing.Optional[str], value:typing.Optional[str], placeholder:typing.Optional[str], value_description:typing.Optional[str], enabled:typing.Optional[bool], selected:typing.Optional[bool], in_web_content:typing.Optional[bool], actions:typing.Optional[typing.List[str]], parent_index:typing.Optional[int], frame:typing.Optional[ElementFrame], min:typing.Optional[float], max:typing.Optional[float]):
         self.element_index = element_index
         self.role = role
         self.depth = depth
         self.element_token = element_token
         self.label = label
+        self.description = description
+        self.help = help
         self.value = value
+        self.placeholder = placeholder
         self.value_description = value_description
         self.enabled = enabled
         self.selected = selected
@@ -7495,7 +7498,7 @@ class WindowElement:
 
 
     def __str__(self):
-        return "WindowElement(element_index={}, role={}, depth={}, element_token={}, label={}, value={}, value_description={}, enabled={}, selected={}, in_web_content={}, actions={}, parent_index={}, frame={}, min={}, max={})".format(self.element_index, self.role, self.depth, self.element_token, self.label, self.value, self.value_description, self.enabled, self.selected, self.in_web_content, self.actions, self.parent_index, self.frame, self.min, self.max)
+        return "WindowElement(element_index={}, role={}, depth={}, element_token={}, label={}, description={}, help={}, value={}, placeholder={}, value_description={}, enabled={}, selected={}, in_web_content={}, actions={}, parent_index={}, frame={}, min={}, max={})".format(self.element_index, self.role, self.depth, self.element_token, self.label, self.description, self.help, self.value, self.placeholder, self.value_description, self.enabled, self.selected, self.in_web_content, self.actions, self.parent_index, self.frame, self.min, self.max)
     def __eq__(self, other):
         if self.element_index != other.element_index:
             return False
@@ -7507,7 +7510,13 @@ class WindowElement:
             return False
         if self.label != other.label:
             return False
+        if self.description != other.description:
+            return False
+        if self.help != other.help:
+            return False
         if self.value != other.value:
+            return False
+        if self.placeholder != other.placeholder:
             return False
         if self.value_description != other.value_description:
             return False
@@ -7538,7 +7547,10 @@ class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
             depth=_UniffiFfiConverterUInt32.read(buf),
             element_token=_UniffiFfiConverterOptionalString.read(buf),
             label=_UniffiFfiConverterOptionalString.read(buf),
+            description=_UniffiFfiConverterOptionalString.read(buf),
+            help=_UniffiFfiConverterOptionalString.read(buf),
             value=_UniffiFfiConverterOptionalString.read(buf),
+            placeholder=_UniffiFfiConverterOptionalString.read(buf),
             value_description=_UniffiFfiConverterOptionalString.read(buf),
             enabled=_UniffiFfiConverterOptionalBoolean.read(buf),
             selected=_UniffiFfiConverterOptionalBoolean.read(buf),
@@ -7557,7 +7569,10 @@ class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt32.check_lower(value.depth)
         _UniffiFfiConverterOptionalString.check_lower(value.element_token)
         _UniffiFfiConverterOptionalString.check_lower(value.label)
+        _UniffiFfiConverterOptionalString.check_lower(value.description)
+        _UniffiFfiConverterOptionalString.check_lower(value.help)
         _UniffiFfiConverterOptionalString.check_lower(value.value)
+        _UniffiFfiConverterOptionalString.check_lower(value.placeholder)
         _UniffiFfiConverterOptionalString.check_lower(value.value_description)
         _UniffiFfiConverterOptionalBoolean.check_lower(value.enabled)
         _UniffiFfiConverterOptionalBoolean.check_lower(value.selected)
@@ -7575,7 +7590,10 @@ class _UniffiFfiConverterTypeWindowElement(_UniffiConverterRustBuffer):
         _UniffiFfiConverterUInt32.write(value.depth, buf)
         _UniffiFfiConverterOptionalString.write(value.element_token, buf)
         _UniffiFfiConverterOptionalString.write(value.label, buf)
+        _UniffiFfiConverterOptionalString.write(value.description, buf)
+        _UniffiFfiConverterOptionalString.write(value.help, buf)
         _UniffiFfiConverterOptionalString.write(value.value, buf)
+        _UniffiFfiConverterOptionalString.write(value.placeholder, buf)
         _UniffiFfiConverterOptionalString.write(value.value_description, buf)
         _UniffiFfiConverterOptionalBoolean.write(value.enabled, buf)
         _UniffiFfiConverterOptionalBoolean.write(value.selected, buf)
@@ -7684,7 +7702,7 @@ class _UniffiFfiConverterSequenceTypeSnapshotImage(_UniffiConverterRustBuffer):
 
 @dataclass
 class WindowStateOutput:
-    def __init__(self, *, pid:int, window_id:int, snapshot_id:typing.Optional[str], app_name:typing.Optional[str], window_title:typing.Optional[str], tree_markdown:typing.Optional[str], elements:typing.Optional[typing.List[WindowElement]], element_count:typing.Optional[int], total_element_count:typing.Optional[int], returned_element_count:typing.Optional[int], filtered_element_count:typing.Optional[int], elements_complete:typing.Optional[bool], degraded:typing.Optional[bool], degraded_reason:typing.Optional[str], truncated:typing.Optional[bool], truncation_reason:typing.Optional[str], screenshot_width:typing.Optional[int], screenshot_height:typing.Optional[int], screenshot_scale:typing.Optional[float], screenshot_mime_type:typing.Optional[str], screenshot_file_path:typing.Optional[str], screenshot_frame_valid:typing.Optional[bool], window_bounds:typing.Optional[WindowBounds], images:typing.List[SnapshotImage]):
+    def __init__(self, *, pid:int, window_id:int, snapshot_id:typing.Optional[str], app_name:typing.Optional[str], window_title:typing.Optional[str], tree_markdown:typing.Optional[str], elements:typing.Optional[typing.List[WindowElement]], element_count:typing.Optional[int], total_element_count:typing.Optional[int], returned_element_count:typing.Optional[int], filtered_element_count:typing.Optional[int], elements_complete:typing.Optional[bool], collapsed_rows:typing.Optional[int], degraded:typing.Optional[bool], degraded_reason:typing.Optional[str], truncated:typing.Optional[bool], truncation_reason:typing.Optional[str], screenshot_width:typing.Optional[int], screenshot_height:typing.Optional[int], screenshot_scale:typing.Optional[float], screenshot_mime_type:typing.Optional[str], screenshot_file_path:typing.Optional[str], screenshot_frame_valid:typing.Optional[bool], window_bounds:typing.Optional[WindowBounds], images:typing.List[SnapshotImage]):
         self.pid = pid
         self.window_id = window_id
         self.snapshot_id = snapshot_id
@@ -7697,6 +7715,7 @@ class WindowStateOutput:
         self.returned_element_count = returned_element_count
         self.filtered_element_count = filtered_element_count
         self.elements_complete = elements_complete
+        self.collapsed_rows = collapsed_rows
         self.degraded = degraded
         self.degraded_reason = degraded_reason
         self.truncated = truncated
@@ -7714,7 +7733,7 @@ class WindowStateOutput:
 
 
     def __str__(self):
-        return "WindowStateOutput(pid={}, window_id={}, snapshot_id={}, app_name={}, window_title={}, tree_markdown={}, elements={}, element_count={}, total_element_count={}, returned_element_count={}, filtered_element_count={}, elements_complete={}, degraded={}, degraded_reason={}, truncated={}, truncation_reason={}, screenshot_width={}, screenshot_height={}, screenshot_scale={}, screenshot_mime_type={}, screenshot_file_path={}, screenshot_frame_valid={}, window_bounds={}, images={})".format(self.pid, self.window_id, self.snapshot_id, self.app_name, self.window_title, self.tree_markdown, self.elements, self.element_count, self.total_element_count, self.returned_element_count, self.filtered_element_count, self.elements_complete, self.degraded, self.degraded_reason, self.truncated, self.truncation_reason, self.screenshot_width, self.screenshot_height, self.screenshot_scale, self.screenshot_mime_type, self.screenshot_file_path, self.screenshot_frame_valid, self.window_bounds, self.images)
+        return "WindowStateOutput(pid={}, window_id={}, snapshot_id={}, app_name={}, window_title={}, tree_markdown={}, elements={}, element_count={}, total_element_count={}, returned_element_count={}, filtered_element_count={}, elements_complete={}, collapsed_rows={}, degraded={}, degraded_reason={}, truncated={}, truncation_reason={}, screenshot_width={}, screenshot_height={}, screenshot_scale={}, screenshot_mime_type={}, screenshot_file_path={}, screenshot_frame_valid={}, window_bounds={}, images={})".format(self.pid, self.window_id, self.snapshot_id, self.app_name, self.window_title, self.tree_markdown, self.elements, self.element_count, self.total_element_count, self.returned_element_count, self.filtered_element_count, self.elements_complete, self.collapsed_rows, self.degraded, self.degraded_reason, self.truncated, self.truncation_reason, self.screenshot_width, self.screenshot_height, self.screenshot_scale, self.screenshot_mime_type, self.screenshot_file_path, self.screenshot_frame_valid, self.window_bounds, self.images)
     def __eq__(self, other):
         if self.pid != other.pid:
             return False
@@ -7739,6 +7758,8 @@ class WindowStateOutput:
         if self.filtered_element_count != other.filtered_element_count:
             return False
         if self.elements_complete != other.elements_complete:
+            return False
+        if self.collapsed_rows != other.collapsed_rows:
             return False
         if self.degraded != other.degraded:
             return False
@@ -7782,6 +7803,7 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
             returned_element_count=_UniffiFfiConverterOptionalUInt64.read(buf),
             filtered_element_count=_UniffiFfiConverterOptionalUInt64.read(buf),
             elements_complete=_UniffiFfiConverterOptionalBoolean.read(buf),
+            collapsed_rows=_UniffiFfiConverterOptionalUInt64.read(buf),
             degraded=_UniffiFfiConverterOptionalBoolean.read(buf),
             degraded_reason=_UniffiFfiConverterOptionalString.read(buf),
             truncated=_UniffiFfiConverterOptionalBoolean.read(buf),
@@ -7810,6 +7832,7 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt64.check_lower(value.returned_element_count)
         _UniffiFfiConverterOptionalUInt64.check_lower(value.filtered_element_count)
         _UniffiFfiConverterOptionalBoolean.check_lower(value.elements_complete)
+        _UniffiFfiConverterOptionalUInt64.check_lower(value.collapsed_rows)
         _UniffiFfiConverterOptionalBoolean.check_lower(value.degraded)
         _UniffiFfiConverterOptionalString.check_lower(value.degraded_reason)
         _UniffiFfiConverterOptionalBoolean.check_lower(value.truncated)
@@ -7837,6 +7860,7 @@ class _UniffiFfiConverterTypeWindowStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalUInt64.write(value.returned_element_count, buf)
         _UniffiFfiConverterOptionalUInt64.write(value.filtered_element_count, buf)
         _UniffiFfiConverterOptionalBoolean.write(value.elements_complete, buf)
+        _UniffiFfiConverterOptionalUInt64.write(value.collapsed_rows, buf)
         _UniffiFfiConverterOptionalBoolean.write(value.degraded, buf)
         _UniffiFfiConverterOptionalString.write(value.degraded_reason, buf)
         _UniffiFfiConverterOptionalBoolean.write(value.truncated, buf)

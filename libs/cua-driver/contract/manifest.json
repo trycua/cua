@@ -1682,6 +1682,14 @@
               "null"
             ]
           },
+          "collapsed_rows": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "degraded": {
             "type": [
               "boolean",
@@ -1766,6 +1774,12 @@
                     "null"
                   ]
                 },
+                "help": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "in_web_content": {
                   "type": [
                     "boolean",
@@ -1797,6 +1811,12 @@
                   "minimum": 0,
                   "type": [
                     "integer",
+                    "null"
+                  ]
+                },
+                "placeholder": {
+                  "type": [
+                    "string",
                     "null"
                   ]
                 },

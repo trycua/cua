@@ -850,6 +850,59 @@ fn await_window_focused(pid: libc::pid_t, window_id: u32) -> bool {
     }
 }
 
+const SHEET_ROLE: &str = "AXSheet";
+const SHEET_RELATION: &str = "sheet";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForegroundActivationRefused {
+    pub target_window_id: u32,
+    pub focused_window_id: Option<u32>,
+    pub relation: Option<&'static str>,
+}
+
+impl ForegroundActivationRefused {
+    fn observe(target_pid: libc::pid_t, target_window_id: u32) -> Self {
+        let focused = crate::ax::bindings::focused_window_of_pid(target_pid);
+        let focused_window_id = focused.as_ref().and_then(|window| window.window_id);
+        let relation = focused
+            .as_ref()
+            .filter(|window| {
+                window.role.as_deref() == Some(SHEET_ROLE)
+                    && window.window_id.is_some_and(|id| id != target_window_id)
+            })
+            .map(|_| SHEET_RELATION);
+        Self {
+            target_window_id,
+            focused_window_id,
+            relation,
+        }
+    }
+}
+
+impl std::fmt::Display for ForegroundActivationRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("exact target window did not become focused for foreground HID delivery")?;
+        let Some(focused) = self.focused_window_id else {
+            return Ok(());
+        };
+        match self.relation {
+            Some(_) => write!(
+                f,
+                ": window {focused}, a sheet attached to {}, holds keyboard focus \u{2014} \
+                 snapshot that window_id and press its own buttons",
+                self.target_window_id
+            ),
+            None => write!(
+                f,
+                ": window {focused} holds keyboard focus instead of {}",
+                self.target_window_id
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ForegroundActivationRefused {}
+
 /// Activate an exact target window for a global HID keyboard action.
 ///
 /// Unlike [`with_menu_shortcut_activation`], this helper must not run `action`
@@ -896,7 +949,7 @@ pub fn with_foreground_hid_activation(
         if prev_ok {
             unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
         }
-        anyhow::bail!("exact target window did not become focused for foreground HID delivery");
+        return Err(ForegroundActivationRefused::observe(target_pid, target_wid).into());
     }
 
     let result = action();

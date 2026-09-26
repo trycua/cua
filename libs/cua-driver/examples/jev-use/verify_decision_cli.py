@@ -14,7 +14,14 @@ def main() -> None:
     parser.add_argument("--model", choices=("mock", "jev", "s1"), required=True)
     parser.add_argument("--expected-id", default="submit-form")
     parser.add_argument("--fixture", choices=("positive", "negative"), default="positive")
+    parser.add_argument(
+        "--screenshot",
+        type=Path,
+        help="run the multimodal S1 adapter with this image, bound to the fixture capture",
+    )
     args = parser.parse_args()
+    if args.screenshot is not None and args.model != "s1":
+        parser.error("--screenshot requires --model s1")
 
     root = Path(__file__).resolve().parent
     fixture_name = (
@@ -23,8 +30,18 @@ def main() -> None:
         else "jev-choice-negative-v1.json"
     )
     request = json.loads((root / "fixtures" / fixture_name).read_text(encoding="utf-8"))
+    command = [sys.executable, str(root / "python/choose_decision.py"), "--model", args.model]
+    if args.screenshot is not None:
+        command += [
+            "--s1-modality",
+            "multimodal",
+            "--screenshot",
+            str(args.screenshot),
+            "--screenshot-capture-id",
+            request["capture_id"],
+        ]
     result = subprocess.run(
-        [sys.executable, str(root / "python/choose_decision.py"), "--model", args.model],
+        command,
         input=json.dumps(request),
         text=True,
         capture_output=True,

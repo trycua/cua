@@ -1,0 +1,7 @@
+{
+  "release": "../examples/release.cuabench.json",
+  "changed_input": "/report_inputs/0",
+  "changed_bytes_utf8": "{\"aggregation\":\"task-macro\",\"confidence_interval\":\"bootstrap\"}\n",
+  "expected_input_sha256": "8a6353de2eabc3a20f63d56b8e0bf767da612eb3c2bd13ccb3e61791958061ec",
+  "expected_release_digest": "32bd5845210502e6542f5463aae7abe82b8e71d1f7d9ab1abe2f351181712a21"
+}

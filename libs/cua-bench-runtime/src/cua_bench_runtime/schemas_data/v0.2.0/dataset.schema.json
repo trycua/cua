@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cua.ai/cuabench/v0.2.0/dataset.schema.json",
+  "title": "Cua-Bench Dataset Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "version", "tasks", "freeze"],
+  "properties": {
+    "schema_version": { "const": "0.2.0" },
+    "id": { "$ref": "#/$defs/id" },
+    "version": { "$ref": "#/$defs/semver" },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/taskSelection" }
+    },
+    "freeze": { "$ref": "#/$defs/freeze" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)+$"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "taskSelection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "manifest", "variants"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/semver" },
+        "manifest": { "$ref": "#/$defs/inputArtifact" },
+        "variants": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/id" }
+        }
+      }
+    },
+    "inputArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "freezeInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_manifests",
+        "fixture_artifacts",
+        "evaluator_artifacts",
+        "normalized_facade_contract",
+        "neutral_instructions"
+      ],
+      "properties": {
+        "task_manifests": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/inputArtifact" }
+        },
+        "fixture_artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/inputArtifact" }
+        },
+        "evaluator_artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/inputArtifact" }
+        },
+        "normalized_facade_contract": { "$ref": "#/$defs/inputArtifact" },
+        "neutral_instructions": { "$ref": "#/$defs/inputArtifact" }
+      }
+    },
+    "freeze": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "digest", "inputs"],
+      "properties": {
+        "algorithm": { "const": "sha256-canonical-json-v1" },
+        "digest": { "$ref": "#/$defs/sha256" },
+        "inputs": { "$ref": "#/$defs/freezeInputs" }
+      }
+    }
+  }
+}

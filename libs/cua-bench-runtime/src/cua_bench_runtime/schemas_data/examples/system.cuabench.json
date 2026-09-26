@@ -1,0 +1,63 @@
+{
+  "schema_version": "0.3.0",
+  "id": "system.synthetic.full",
+  "version": "1.0.0",
+  "label": "Synthetic full-capability harness system",
+  "configuration_class": "maintainer_default",
+  "harness": {
+    "id": "synthetic-harness",
+    "version": "1.0.0",
+    "build": {
+      "path": "freeze-inputs/harness-build.json",
+      "sha256": "017a335b02f72f243adecf84caff94a82ef264bdae00a84757799acd4767a3a2"
+    },
+    "configuration": {
+      "path": "freeze-inputs/harness-config.json",
+      "sha256": "2c20049161ac72723ce12cf65699bb2eaa1dd782b85a790fd60ce6c4389e2a33"
+    }
+  },
+  "model_routing": {
+    "routes": [
+      {
+        "id": "route.primary",
+        "role": "primary",
+        "provider": "synthetic-provider",
+        "model": "synthetic-model",
+        "snapshot": "2026-08-01",
+        "service_tier": "standard",
+        "configuration_sha256": "2c20049161ac72723ce12cf65699bb2eaa1dd782b85a790fd60ce6c4389e2a33"
+      },
+      {
+        "id": "route.subagent",
+        "role": "subagent",
+        "provider": "synthetic-provider",
+        "model": "synthetic-model",
+        "snapshot": "2026-08-01",
+        "service_tier": "standard",
+        "configuration_sha256": "2c20049161ac72723ce12cf65699bb2eaa1dd782b85a790fd60ce6c4389e2a33"
+      }
+    ],
+    "undeclared_fallback_action": "comparison_ineligible"
+  },
+  "driver": {
+    "candidate": {
+      "id": "cua.synthetic.driver",
+      "version": "1.0.0",
+      "manifest_sha256": "6bac21e334ef593c0897506ce84338db9d5869044151bc02b8734165abe40b44"
+    },
+    "profile": { "id": "native-bundle", "version": "1.0.0" },
+    "tool_contract_sha256": "078b9f5820ea38f63ed11a13916a5a3b4e57a9fae813df06cf29725953478cb9",
+    "skill_mode": "bundled"
+  },
+  "capability_inventory": {
+    "tools": {
+      "path": "freeze-inputs/tool-inventory.json",
+      "sha256": "69467fe5f49ed41155fd9e02cb93495bced5802b1b6c1ad3e406fd0b3f593f8f"
+    },
+    "skills": {
+      "path": "freeze-inputs/skill-inventory.json",
+      "sha256": "e65e7a59702533a862a970642f87e40ca2b89f7551d3c9498d93ce93f6c9e62e"
+    },
+    "native_harness_capabilities_enabled": true
+  }
+}

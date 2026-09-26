@@ -1,0 +1,296 @@
+{
+  "cases": [
+    {
+      "name": "driver-tool-digest",
+      "target": "driver",
+      "base": "../examples/driver.cuabench.json",
+      "replace": { "/interface/tool_schemas_digest": "0000000000000000000000000000000000000000000000000000000000000000" },
+      "error_contains": "driver tool schema digest mismatch"
+    },
+    {
+      "name": "duplicate-driver-tool-name",
+      "target": "driver",
+      "base": "../examples/driver.cuabench.json",
+      "replace": { "/interface/tools/1/name": "observe" },
+      "error_contains": "driver tool names must be unique"
+    },
+    {
+      "name": "trial-candidate-reference",
+      "target": "trial",
+      "base": "../examples/trial.native-bundle.cuabench.json",
+      "replace": { "/candidate/manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+      "error_contains": "candidate reference mismatch"
+    },
+    {
+      "name": "trial-native-tool-digest",
+      "target": "trial",
+      "base": "../examples/trial.native-bundle.cuabench.json",
+      "replace": { "/resolved_driver/tool_schemas_digest": "0000000000000000000000000000000000000000000000000000000000000000" },
+      "error_contains": "native tool digest mismatch"
+    },
+    {
+      "name": "trial-time-order",
+      "target": "trial",
+      "base": "../examples/trial.native-bundle.cuabench.json",
+      "replace": { "/execution/ended_at": "2026-08-15T15:59:59Z" },
+      "error_contains": "ends before it starts"
+    },
+    {
+      "name": "duplicate-release-profile",
+      "target": "release",
+      "base": "../examples/release.cuabench.json",
+      "copy": { "/inputs/profiles/0": "/inputs/profiles/1" },
+      "error_contains": "release profile ids must be unique"
+    },
+    {
+      "name": "incomplete-release-pairing",
+      "target": "release",
+      "base": "../examples/release.cuabench.json",
+      "copy": { "/inputs/trials/3": "/inputs/trials/4" },
+      "remove": ["/inputs/trials/4"],
+      "error_contains": "lacks required profiles"
+    },
+    {
+      "name": "release-apparatus-digest",
+      "target": "release",
+      "base": "../examples/release.cuabench.json",
+      "replace": { "/inputs/apparatus/digest": "0000000000000000000000000000000000000000000000000000000000000000" },
+      "error_contains": "release apparatus digest mismatch"
+    },
+    {
+      "name": "release-content-digest",
+      "target": "release",
+      "base": "../examples/release.cuabench.json",
+      "replace": { "/digest/value": "0000000000000000000000000000000000000000000000000000000000000000" },
+      "error_contains": "release digest mismatch"
+    },
+    {
+      "name": "invalid-embedded-tool-schema",
+      "target": "driver",
+      "base": "../examples/driver.cuabench.json",
+      "replace": {
+        "/interface/tools/0/input_schema": { "type": "not-a-json-schema-type" },
+        "/interface/tool_schemas_digest": "4183e92b70cfacea734db2fddc180108bf913e509e401262cdfd12433212578f"
+      },
+      "error_contains": "invalid JSON Schema"
+    },
+    {
+      "name": "trial-task-reference",
+      "target": "trial",
+      "base": "../examples/trial.native-bundle.cuabench.json",
+      "replace": { "/task/manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+      "error_contains": "task reference mismatch"
+    },
+    {
+      "name": "trial-dataset-reference",
+      "target": "trial",
+      "base": "../examples/trial.native-bundle.cuabench.json",
+      "replace": { "/dataset/manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+      "error_contains": "dataset reference mismatch"
+    },
+    {
+      "name": "trial-dataset-variant-selection",
+      "target": "trial",
+      "base": "../examples/trial.native-bundle.cuabench.json",
+      "replace": { "/variant": "fixture.absent" },
+      "error_contains": "variant absent from dataset"
+    },
+    {
+      "name": "trial-profile-version",
+      "target": "trial",
+      "base": "../examples/trial.native-bundle.cuabench.json",
+      "replace": { "/profile/version": "2.0.0" },
+      "error_contains": "profile version mismatch"
+    },
+    {
+      "name": "trial-harness-inventory",
+      "target": "trial",
+      "base": "../examples/trial.native-bundle.cuabench.json",
+      "replace": { "/harness/inventory": { "path": "freeze-inputs/harness-restricted.json", "sha256": "303461eba455dc5529f28880629ba58df13ba997ed6b55b49f283ca26d296797" } },
+      "error_contains": "harness inventory differs from profile"
+    },
+    {
+      "name": "trial-dataset-binding",
+      "target": "trial",
+      "base": "../examples/trial.native-bundle.cuabench.json",
+      "replace": { "/bindings/dataset_freeze_digest": "0000000000000000000000000000000000000000000000000000000000000000" },
+      "error_contains": "dataset binding mismatch"
+    },
+    {
+      "name": "trial-support-status",
+      "target": "trial",
+      "base": "../examples/trial.native-bundle.cuabench.json",
+      "replace": { "/support_status": "unsupported", "/missing_capabilities": ["act.keyboard"] },
+      "error_contains": "support status mismatch"
+    },
+    {
+      "name": "trial-native-tool-order",
+      "target": "trial",
+      "base": "../examples/trial.native-bundle.cuabench.json",
+      "replace": { "/resolved_driver/tool_names": ["type_text", "observe"] },
+      "error_contains": "native tool order mismatch"
+    },
+    {
+      "name": "trial-facade-tool-digest",
+      "target": "trial",
+      "base": "../examples/trial.normalized-facade.cuabench.json",
+      "replace": { "/resolved_driver/tool_schemas_digest": "0000000000000000000000000000000000000000000000000000000000000000" },
+      "error_contains": "facade digest mismatch"
+    },
+    {
+      "name": "trial-facade-tool-order",
+      "target": "trial",
+      "base": "../examples/trial.normalized-facade.cuabench.json",
+      "replace": { "/resolved_driver/tool_names": ["act", "observe"] },
+      "error_contains": "facade tool order mismatch"
+    },
+    {
+      "name": "trial-skill-byte-count",
+      "target": "trial",
+      "base": "../examples/trial.native-bundle.cuabench.json",
+      "replace": { "/resolved_driver/skill_delivery/bytes": 1 },
+      "error_contains": "byte count mismatch"
+    },
+    {
+      "name": "trial-skill-content-digest",
+      "target": "trial",
+      "base": "../examples/trial.native-bundle.cuabench.json",
+      "replace": { "/resolved_driver/skill_delivery/content_sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+      "error_contains": "content digest mismatch"
+    },
+    {
+      "name": "trial-skill-source",
+      "target": "trial",
+      "base": "../examples/trial.native-bundle.cuabench.json",
+      "replace": { "/resolved_driver/skill_delivery/source_artifact": { "path": "freeze-inputs/neutral-instructions.txt", "sha256": "ff67877777532043e46f3c08aa57531603d8f65bd26ab38e5be358c244251e66" } },
+      "error_contains": "delivered skill differs from driver manifest"
+    },
+    {
+      "name": "trial-neutral-guidance-source",
+      "target": "trial",
+      "base": "../examples/trial.normalized-facade.cuabench.json",
+      "replace": { "/resolved_driver/neutral_guidance_delivery/source_artifact": { "path": "freeze-inputs/driver-skill.md", "sha256": "fd91a0fae667490b07e23619dd3481458ca2da7192bd3bca5785c7fd6506714d" } },
+      "error_contains": "neutral guidance differs from dataset freeze"
+    },
+    {
+      "name": "trial-event-log-artifact",
+      "target": "trial",
+      "base": "../examples/trial.native-bundle.cuabench.json",
+      "replace": { "/execution/event_log/sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+      "error_contains": "trial event log digest mismatch"
+    },
+    {
+      "name": "trial-driver-skill-token-accounting",
+      "target": "trial",
+      "base": "../examples/trial.native-bundle.cuabench.json",
+      "replace": { "/observables/tokens/driver_skill": 999 },
+      "error_contains": "driver skill token accounting mismatch"
+    },
+    {
+      "name": "trial-neutral-guidance-token-accounting",
+      "target": "trial",
+      "base": "../examples/trial.bare-driver.cuabench.json",
+      "replace": { "/observables/tokens/neutral_guidance": 999 },
+      "error_contains": "neutral guidance token accounting mismatch"
+    },
+    {
+      "name": "release-runtime-revision",
+      "target": "release",
+      "base": "../examples/release.cuabench.json",
+      "replace": { "/inputs/runtime/source_revision": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" },
+      "error_contains": "runtime artifact revision mismatch"
+    },
+    {
+      "name": "release-dataset-reference",
+      "target": "release",
+      "base": "../examples/release.cuabench.json",
+      "replace": { "/inputs/dataset/freeze_digest": "0000000000000000000000000000000000000000000000000000000000000000" },
+      "error_contains": "release dataset reference mismatch"
+    },
+    {
+      "name": "release-missing-required-profile",
+      "target": "release",
+      "base": "../examples/release.cuabench.json",
+      "copy": { "/inputs/profiles/3": "/inputs/profiles/4" },
+      "remove": ["/inputs/profiles/4"],
+      "error_contains": "omits a required decision-bearing profile"
+    },
+    {
+      "name": "release-candidate-reference",
+      "target": "release",
+      "base": "../examples/release.cuabench.json",
+      "replace": { "/inputs/candidates/0/version": "2.0.0" },
+      "error_contains": "release candidate reference mismatch"
+    },
+    {
+      "name": "release-tool-surface-backend-reference",
+      "target": "release",
+      "base": "../examples/release.cuabench.json",
+      "replace": { "/inputs/tool_surface_study/backend/version": "2.0.0" },
+      "error_contains": "tool-surface backend reference mismatch"
+    },
+    {
+      "name": "release-tool-surface-capability-digest",
+      "target": "release",
+      "base": "../examples/release.cuabench.json",
+      "replace": { "/inputs/tool_surface_study/capability_digest": "0000000000000000000000000000000000000000000000000000000000000000" },
+      "error_contains": "tool-surface capability digest mismatch"
+    },
+    {
+      "name": "release-tool-surface-capabilities",
+      "target": "release",
+      "base": "../examples/release.cuabench.json",
+      "replace": {
+        "/inputs/tool_surface_study/capabilities": ["observe.window-metadata"],
+        "/inputs/tool_surface_study/capability_digest": "b0cbfd1252c09bd169ea4b39dd1a145d099bb6c45570ef1dfb5688321f5cce69"
+      },
+      "error_contains": "tool-surface capabilities differ from backend"
+    },
+    {
+      "name": "release-apparatus-evaluators",
+      "target": "release",
+      "base": "../examples/release.cuabench.json",
+      "replace": {
+        "/inputs/apparatus/evaluators": [{ "path": "freeze-inputs/report-config.json", "sha256": "dfefbf40225a9f81ad27feff68cba0ad2a5b48fda312949a89ba512ead88b9f9" }],
+        "/inputs/apparatus/digest": "a29e1def8c76e5298cae1604107433b4895a1a565eee29e1f7dd8a87dc26c3ef"
+      },
+      "error_contains": "apparatus evaluators differ from dataset freeze"
+    },
+    {
+      "name": "release-apparatus-facade",
+      "target": "release",
+      "base": "../examples/release.cuabench.json",
+      "replace": {
+        "/inputs/apparatus/normalized_facade_contract": { "path": "freeze-inputs/neutral-instructions.txt", "sha256": "ff67877777532043e46f3c08aa57531603d8f65bd26ab38e5be358c244251e66" },
+        "/inputs/apparatus/digest": "0124ed881f12aaea0d262ef2e91ce92b8d115e9ff86ce344ed4ee5643aa7ddf0"
+      },
+      "error_contains": "apparatus normalized_facade_contract differs from dataset freeze"
+    },
+    {
+      "name": "release-trial-id-uniqueness",
+      "target": "release",
+      "base": "../examples/release.cuabench.json",
+      "copy": { "/inputs/trials/1/id": "/inputs/trials/0/id" },
+      "error_contains": "release trial ids must be unique"
+    },
+    {
+      "name": "release-trial-harness-closure",
+      "target": "release",
+      "base": "../examples/release.cuabench.json",
+      "replace": {
+        "/inputs/apparatus/harness_builds": [{ "path": "freeze-inputs/report-config.json", "sha256": "dfefbf40225a9f81ad27feff68cba0ad2a5b48fda312949a89ba512ead88b9f9" }],
+        "/inputs/apparatus/digest": "530d3681d046f316b79d5a4959ce725b9f66b8cf1fa103092153620d8ca7656e"
+      },
+      "error_contains": "trial harness build is absent from apparatus"
+    },
+    {
+      "name": "release-tool-surface-arm-artifact",
+      "target": "release",
+      "base": "../examples/release.cuabench.json",
+      "copy": {
+        "/inputs/tool_surface_study/arms/0/contract": "/inputs/tool_surface_study/arms/1/contract"
+      },
+      "error_contains": "tool-surface contract does not identify arm consolidated"
+    }
+  ]
+}

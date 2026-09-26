@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cua.ai/cuabench/v0.1.0/profile.schema.json",
+  "title": "Cua-Bench Profile Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "version",
+    "description",
+    "harness",
+    "driver_presentation",
+    "guidance",
+    "decision_bearing"
+  ],
+  "properties": {
+    "schema_version": { "const": "0.1.0" },
+    "id": {
+      "enum": [
+        "native-bundle",
+        "bare-driver",
+        "harness-native-reference",
+        "normalized-facade",
+        "driver-only-diagnostic"
+      ]
+    },
+    "version": { "$ref": "#/$defs/semver" },
+    "description": { "type": "string", "minLength": 1 },
+    "harness": { "$ref": "#/$defs/harness" },
+    "driver_presentation": {
+      "enum": ["candidate-native", "normalized-facade", "absent"]
+    },
+    "guidance": { "$ref": "#/$defs/guidance" },
+    "decision_bearing": { "type": "boolean" }
+  },
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "harness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "inventory"],
+      "properties": {
+        "kind": { "enum": ["full", "restricted"] },
+        "inventory": { "$ref": "#/$defs/artifact" }
+      }
+    },
+    "guidance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["shipped", "removed", "neutral", "none"] },
+        "artifact": { "$ref": "#/$defs/artifact" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "neutral" } } },
+          "then": { "required": ["artifact"] },
+          "else": { "not": { "required": ["artifact"] } }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "id": { "const": "native-bundle" } } },
+      "then": {
+        "properties": {
+          "harness": { "properties": { "kind": { "const": "full" } } },
+          "driver_presentation": { "const": "candidate-native" },
+          "guidance": { "properties": { "mode": { "const": "shipped" } } },
+          "decision_bearing": { "const": true }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "id": { "const": "bare-driver" } } },
+      "then": {
+        "properties": {
+          "harness": { "properties": { "kind": { "const": "full" } } },
+          "driver_presentation": { "const": "candidate-native" },
+          "guidance": { "properties": { "mode": { "const": "removed" } } },
+          "decision_bearing": { "const": true }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "id": { "const": "harness-native-reference" } }
+      },
+      "then": {
+        "properties": {
+          "harness": { "properties": { "kind": { "const": "full" } } },
+          "driver_presentation": { "const": "absent" },
+          "guidance": { "properties": { "mode": { "const": "none" } } },
+          "decision_bearing": { "const": true }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "id": { "const": "normalized-facade" } } },
+      "then": {
+        "properties": {
+          "harness": { "properties": { "kind": { "const": "full" } } },
+          "driver_presentation": { "const": "normalized-facade" },
+          "guidance": { "properties": { "mode": { "const": "neutral" } } },
+          "decision_bearing": { "const": true }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "id": { "const": "driver-only-diagnostic" } }
+      },
+      "then": {
+        "properties": {
+          "harness": { "properties": { "kind": { "const": "restricted" } } },
+          "driver_presentation": { "const": "candidate-native" },
+          "guidance": { "properties": { "mode": { "const": "removed" } } },
+          "decision_bearing": { "const": false }
+        }
+      }
+    }
+  ]
+}

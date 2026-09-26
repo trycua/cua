@@ -1,16 +1,19 @@
-# Run the jev-use deterministic proof through the default Windows user path:
-# the daemon that the canonical install.ps1 autostart task starts. On an
-# administrator account that task runs at RunLevel=Highest, so the daemon is
-# elevated, and Cua Driver must launch its isolated browser with a derived
-# standard-user token (#4234). This script proves both halves of that
-# posture from outside the Driver before trusting the proof result:
+# Run the jev-use deterministic proof on the default Windows user install:
+# install.ps1 registers the cua-driver-serve autostart task at
+# RunLevel=Highest, so on an administrator account the resident daemon is
+# elevated. MCP clients such as the jev-use runners spawn `cua-driver mcp`,
+# which on Windows hosts its own in-process runtime at the client's token; on
+# this administrator runner that runtime is elevated too. Either elevated
+# Driver must launch its isolated browser with a derived standard-user token
+# (#4234). This script checks that posture from outside the Driver before
+# trusting the proof result:
 #
-#   - every `cua-driver serve` daemon runs at High (or higher) integrity; and
+#   - the autostart task is registered at RunLevel=Highest and every
+#     `cua-driver serve` daemon it starts runs at High (or higher) integrity;
+#   - the process that launched each isolated browser is an elevated
+#     cua-driver.exe (read while the browser is alive); and
 #   - every isolated browser process runs at Medium (or lower) integrity,
-#     below the daemon, with Administrators not enabled.
-#
-# The launching parent of each browser main process is logged for diagnosis
-# only: Windows reuses process IDs, so parent IDs are not an oracle.
+#     below its launching Driver, with Administrators not enabled.
 #
 # Inputs (environment):
 #   CUA_DRIVER_BIN      installed cua-driver.exe
@@ -216,6 +219,8 @@ try {
                     Main = ($process.CommandLine -notmatch '\s--type=')
                     Name = $process.Name
                     Parent = $null
+                    ParentName = $null
+                    ParentPosture = $null
                     Posture = $null
                     Error = $null
                 }
@@ -223,6 +228,10 @@ try {
                 if ($record.Main) {
                     $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$($record.ParentPid)" -ErrorAction SilentlyContinue
                     $record.Parent = if ($parent) { "$($parent.Name) $($parent.CommandLine)" } else { "exited" }
+                    if ($parent) {
+                        $record.ParentName = $parent.Name
+                        try { $record.ParentPosture = [CuaTokenPosture]::Read($record.ParentPid) } catch { }
+                    }
                 }
                 [void]$state.Browsers.Add([pscustomobject]$record)
             }
@@ -244,10 +253,11 @@ try {
     $sampler | Wait-Job -Timeout 30 | Out-Null
     $sampler | Receive-Job -ErrorAction Continue
 
-    # 5. The isolated browsers ran with standard-user tokens below the daemon.
+    # 5. Elevated Drivers launched the isolated browsers with standard-user
+    #    tokens.
     $browsers = @($state.Browsers)
     foreach ($browser in $browsers) {
-        Write-Posture "[browser] name=$($browser.Name) main=$($browser.Main) parent=$($browser.ParentPid)$(if ($browser.Parent) { " parent_process=[$($browser.Parent)]" }) $(if ($browser.Posture) { $browser.Posture } else { "pid=$($browser.Pid) unreadable: $($browser.Error)" })"
+        Write-Posture "[browser] name=$($browser.Name) main=$($browser.Main) parent=$($browser.ParentPid)$(if ($browser.Parent) { " parent_process=[$($browser.Parent)] parent_token=[$($browser.ParentPosture)]" }) $(if ($browser.Posture) { $browser.Posture } else { "pid=$($browser.Pid) unreadable: $($browser.Error)" })"
     }
     $mains = @($browsers | Where-Object { $_.Main -and $null -ne $_.Posture })
     if ($mains.Count -lt 2) {
@@ -259,13 +269,19 @@ try {
             throw "an isolated browser process ran with a privileged token: $posture"
         }
     }
-    $lowestDaemonIntegrity = ($daemonPostures.Values | Measure-Object -Property IntegrityRid -Minimum).Minimum
-    foreach ($browser in $browsers | Where-Object { $null -ne $_.Posture }) {
-        if ($browser.Posture.IntegrityRid -ge $lowestDaemonIntegrity) {
-            throw "isolated browser $($browser.Posture) is not below the daemon integrity 0x$('{0:x4}' -f [uint32]$lowestDaemonIntegrity)"
+    foreach ($browser in $mains) {
+        $launcher = $browser.ParentPosture
+        if ($browser.ParentName -ne "cua-driver.exe" -or $null -eq $launcher) {
+            throw "isolated browser $($browser.Pid) was not launched by a readable cua-driver.exe: [$($browser.Parent)]"
+        }
+        if ($launcher.IntegrityRid -lt $HighIntegrity) {
+            throw "the Driver that launched isolated browser $($browser.Pid) is not elevated, so this run does not prove the elevated path: $launcher"
+        }
+        if ($browser.Posture.IntegrityRid -ge $launcher.IntegrityRid) {
+            throw "isolated browser $($browser.Posture) is not below its launching Driver $launcher"
         }
     }
-    Write-Posture "[verdict] elevated autostart daemon launched $($mains.Count) de-elevated isolated browsers"
+    Write-Posture "[verdict] elevated Driver launched $($mains.Count) isolated browsers at Medium integrity or lower; autostart daemon elevated"
 } finally {
     $state.Stop = $true
     if ($null -ne $sampler) { $sampler | Remove-Job -Force -ErrorAction SilentlyContinue }

@@ -83,7 +83,9 @@ def test_windows_proves_the_default_elevated_autostart_path() -> None:
     assert "S-1-5-32-544" in script
     assert "the autostart daemon must be elevated" in script
     assert "ran with a privileged token" in script
-    assert "is not below the daemon integrity" in script
+    assert "was not launched by a readable cua-driver.exe" in script
+    assert "does not prove the elevated path" in script
+    assert "is not below its launching Driver" in script
 
 
 def test_released_driver_jobs_run_both_languages_and_audit_the_state_oracle() -> None:

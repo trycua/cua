@@ -444,9 +444,9 @@ jobs:
         run: |
           # Default install, as a user runs it: the installer also registers
           # the cua-driver-serve autostart task at RunLevel=Highest. This job
-          # token is an administrator's, so the daemon that task starts is
-          # elevated, and the Driver must launch its isolated browsers
-          # de-elevated (#4234).
+          # token is an administrator's, so both that daemon and the
+          # in-process runtime of `cua-driver mcp` are elevated, and the
+          # Driver must launch its isolated browsers de-elevated (#4234).
           & ([scriptblock]::Create((irm https://cua.ai/driver/install.ps1))) -NoPathUpdate
           $driver = Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver\bin\cua-driver.exe"
           if (-not (Test-Path -LiteralPath $driver -PathType Leaf)) { throw "installer did not create $driver" }
@@ -467,7 +467,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "uv sync failed" }
           npm.cmd ci --ignore-scripts
           if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
-      - name: Run both mock agents through MCP via the elevated autostart daemon
+      - name: Run both mock agents through MCP with the default elevated autostart
         working-directory: ${{ github.workspace }}
         run: |
           $root = Join-Path $env:RUNNER_TEMP "jev-use-ci"

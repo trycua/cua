@@ -90,6 +90,14 @@ jobs:
         # release. A missed tag heals on the next main push.
         run: bash .github/scripts/anchor_perception_release_tag.sh
 
+      # Release Please aborts every release PR while a merged release PR is
+      # still labeled `autorelease: pending`. Perception skips GitHub releases,
+      # so Release Please never relabels it; do that once its tag is anchored.
+      - name: Mark tagged Perception release pull requests
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: python3 .github/scripts/mark_perception_release_prs_tagged.py
+
       # release-please-action v4.4.1, embedding release-please 17.3.0.
       - name: Open or update automatic release pull requests
         id: release-auto

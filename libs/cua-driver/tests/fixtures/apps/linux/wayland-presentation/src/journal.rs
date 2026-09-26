@@ -100,7 +100,11 @@ mod tests {
         let path = directory.join("journal.jsonl");
         let mut journal = Journal::create(&path).expect("create journal");
         journal
-            .record("startup", 10, json!({"title": "CuaTestHarness Presentation"}))
+            .record(
+                "startup",
+                10,
+                json!({"title": "CuaTestHarness Presentation"}),
+            )
             .expect("startup record");
         journal
             .record("input", 20, json!({"event": "button", "button": 272}))
@@ -148,6 +152,7 @@ mod tests {
         let sample = finalize(
             &pending,
             Feedback::Presented {
+                feedback_received_ns: 9_100,
                 presented_ns: 9_000,
                 refresh_ns: 16_666_666,
                 sequence: 7,

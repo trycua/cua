@@ -1,8 +1,8 @@
 //! Wayland presentation-timestamp latency fixture for cua-driver.
 //!
-//! The fixture owns one `wl_surface` so that a single Cua Driver action maps to
-//! exactly one content update, and so `wp_presentation.feedback` can be
-//! requested for that update and no other. It records, in one clock:
+//! The fixture owns one `wl_surface` and requests feedback for each content
+//! commit by fixture update ID. The active action makes one update; the
+//! supersede control deliberately makes two. It records, in one clock:
 //!
 //! 1. when the input event was received,
 //! 2. when application-owned state changed,
@@ -51,9 +51,9 @@ pub struct Config {
     /// Exit once this many content updates have been accounted for. Zero runs
     /// until the compositor closes the toplevel.
     pub exit_after: u64,
-    /// Report whether this compositor supports the protocol and exit, without
-    /// mapping a window. Lets a runner record a typed environment limitation
-    /// instead of reading a missing measurement as a fast action.
+    /// Map one content update, wait for feedback, and exit. Lets a runner record
+    /// a typed environment limitation instead of reading a missing measurement
+    /// as a fast action.
     pub probe: bool,
 }
 
@@ -84,7 +84,7 @@ Usage: cua-harness-wayland-presentation --journal <path> [options]
   --width <px>         initial surface width (default: 800)
   --height <px>        initial surface height (default: 600)
   --exit-after <n>     exit after n accounted content updates (default: 0 = never)
-  --probe              report wp_presentation support and exit without a window
+  --probe              commit one update, report feedback support, and exit
 ";
 
 impl Config {

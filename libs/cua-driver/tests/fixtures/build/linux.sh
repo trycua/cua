@@ -6,8 +6,8 @@
 # shared cross-platform harnesses built from apps/cross-platform/.
 #
 # wayland-presentation is a raw Wayland client built from source: it owns its
-# own wl_surface so one Driver action maps to exactly one content update whose
-# wp_presentation feedback can be measured.
+# own wl_surface so each fixture content commit has its own measurable
+# wp_presentation feedback.
 #
 # Runtime deps (NOT installed here): python3-gi, gir1.2-gtk-3.0,
 # gir1.2-gtk-4.0, at-spi2-core,

@@ -37,7 +37,7 @@ it resizes `CuaTestHarness` windows by title right after they map.
 | ----------- | -------- |
 | `active`    | Mutates the counter and submits exactly one content update. |
 | `inert`     | Receives the input, changes nothing, commits nothing. |
-| `supersede` | Mutates twice back to back, so the first update can be superseded. |
+| `supersede` | Queues two commits before one flush; the first update is superseded. |
 
 `inert` is what makes "this action was supposed to change nothing" checkable:
 a delivered-but-inert input produces a typed `no_mutation` row and can never be
@@ -67,7 +67,10 @@ Every fixture timestamp is `CLOCK_MONOTONIC`, reported as `clock_id: 1`. The
 compositor's presentation clock is recorded as advertised by `wp_presentation`
 and compared explicitly. If it is not the fixture clock, the row is
 `clock_mismatch` and every presentation-relative delta is withheld rather than
-computed across clock domains.
+computed across clock domains. `surface_commit_ns` is sampled beside the
+`wl_surface.commit` request, before the socket flush. `feedback_received_ns`
+is sampled locally when the callback runs; it is separate from the compositor's
+`presented_ns`.
 
 ## Outcomes
 
@@ -82,13 +85,9 @@ computed across clock domains.
 
 Only `verified` counts as a presented mutation.
 
-`discarded` is ordinary compositor behaviour rather than a fault: when a later
-commit supersedes an earlier one within the same refresh, the earlier update is
-dropped and never shown. Such a row is retained as evidence but measures no
-presentation, so the runner repeats the action rather than counting it. Driving
-the fixture with five key events inside one frame reproduces this directly:
-state reaches `n=5` and every update is accounted for, while only the updates
-the compositor actually showed carry presentation deltas.
+`discarded` is ordinary compositor behaviour: a superseded update was never
+shown. Its row retains callback receipt and state change, but no presentation
+time. The runner requires one such row from the `supersede` control.
 
 ## Building
 
@@ -141,13 +140,9 @@ compositor cannot attribute a presentation — either `wp_presentation` is
 unavailable or it completed no feedback (a typed environment limitation, not a
 measurement), `1` any other failure.
 
-## Statistics
-
-The fixture keeps raw observations and derives only the deltas its own
-evidence supports. It introduces no percentile machinery: small fixture runs
-report every sample, median, max, and deadline-miss counts. Extreme
-percentiles belong to larger benchmark runs with enough observations to make
-their tails meaningful.
+The runner retains every raw row in `rows.jsonl` and outcome counts in
+`summary.json`. One presented action is enough for this first evidence slice;
+it reports no latency distribution statistics.
 
 ## Not in scope
 

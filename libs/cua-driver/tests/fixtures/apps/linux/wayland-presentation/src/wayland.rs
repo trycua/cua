@@ -1,8 +1,8 @@
 //! The Wayland client half of the fixture.
 //!
-//! The fixture owns its own `wl_surface`, so one input event maps to exactly
-//! one content update and `wp_presentation.feedback` is requested for that
-//! update and no other. A toolkit-hosted surface cannot make that claim: the
+//! The fixture owns its own `wl_surface` and requests
+//! `wp_presentation.feedback` for each content commit by update ID. A
+//! toolkit-hosted surface cannot make that claim: the
 //! toolkit owns the commits and may coalesce several state changes into one.
 //!
 //! Every timestamp taken here is `CLOCK_MONOTONIC`, which is the clock the
@@ -452,6 +452,7 @@ impl App {
         &mut self,
         index: usize,
         feedback_for: Option<u64>,
+        flush: bool,
         connection: &Connection,
         queue: &QueueHandle<Self>,
     ) -> Result<u64> {
@@ -475,11 +476,17 @@ impl App {
             // is bound to the next content update on this surface.
             presentation.feedback(&surface, queue, sequence);
         }
+        // Stamp the client commit request itself. A flush can block while the
+        // compositor processes the request, so sampling after it can make a
+        // valid presentation appear to precede its own commit.
+        let commit_ns = now_ns();
         surface.commit();
-        connection
-            .flush()
-            .map_err(|error| RunError::Protocol(format!("flush after commit failed: {error}")))?;
-        Ok(now_ns())
+        if flush {
+            connection.flush().map_err(|error| {
+                RunError::Protocol(format!("flush after commit failed: {error}"))
+            })?;
+        }
+        Ok(commit_ns)
     }
 
     /// Mutate state and submit exactly one content update whose presentation
@@ -490,6 +497,7 @@ impl App {
         region: Region,
         input_ns: u64,
         supersede_probe: bool,
+        flush: bool,
         connection: &Connection,
         queue: &QueueHandle<Self>,
     ) -> Result<()> {
@@ -507,7 +515,7 @@ impl App {
         let index = self.paint()?;
         let sequence = self.next_sequence();
         let surface_commit_ns =
-            self.attach_and_commit(index, Some(sequence), connection, queue)?;
+            self.attach_and_commit(index, Some(sequence), flush, connection, queue)?;
         self.pending.insert(
             sequence,
             Pending {
@@ -557,13 +565,13 @@ impl App {
                 self.record_inert(action, input_ns);
                 Ok(())
             }
-            Region::Active => self.submit(action, region, input_ns, false, connection, queue),
+            Region::Active => self.submit(action, region, input_ns, false, true, connection, queue),
             Region::Supersede => {
-                // Two content updates back to back. The compositor may present
-                // both; when it supersedes the first, the discarded path is
-                // exercised against a real compositor.
-                match self.submit(action, region, input_ns, true, connection, queue) {
-                    Ok(()) => self.submit(action, region, input_ns, false, connection, queue),
+                // Queue both commits before flushing. The compositor cannot
+                // present the first update between client-side flushes, so the
+                // first feedback must report a superseded content update.
+                match self.submit(action, region, input_ns, true, false, connection, queue) {
+                    Ok(()) => self.submit(action, region, input_ns, false, true, connection, queue),
                     Err(error) => Err(error),
                 }
             }
@@ -770,7 +778,7 @@ pub fn run(config: &Config) -> Result<()> {
         app.allocate(&shm, &handle)?;
     }
     let index = app.paint()?;
-    app.attach_and_commit(index, None, &connection, &handle)?;
+    app.attach_and_commit(index, None, true, &connection, &handle)?;
     app.journal.record(
         "mapped",
         now_ns(),
@@ -911,7 +919,7 @@ fn probe(
 ) -> Result<()> {
     let sequence = app.next_sequence();
     let index = app.paint()?;
-    app.attach_and_commit(index, Some(sequence), connection, handle)?;
+    app.attach_and_commit(index, Some(sequence), true, connection, handle)?;
 
     let deadline_ns = now_ns().saturating_add(app.deadline_ns);
     while !app.feedback_seen && now_ns() < deadline_ns {
@@ -966,6 +974,7 @@ impl Dispatch<WpPresentationFeedback, u64> for App {
                 seq_lo,
                 flags,
             } => {
+                let feedback_received_ns = now_ns();
                 let seconds = (u64::from(tv_sec_hi) << 32) | u64::from(tv_sec_lo);
                 let presented_ns = seconds
                     .saturating_mul(1_000_000_000)
@@ -975,6 +984,7 @@ impl Dispatch<WpPresentationFeedback, u64> for App {
                 state.complete(
                     *sequence,
                     Feedback::Presented {
+                        feedback_received_ns,
                         presented_ns,
                         refresh_ns: refresh,
                         sequence: (u64::from(seq_hi) << 32) | u64::from(seq_lo),
@@ -984,8 +994,14 @@ impl Dispatch<WpPresentationFeedback, u64> for App {
                 );
             }
             wp_presentation_feedback::Event::Discarded => {
+                let feedback_received_ns = now_ns();
                 state.feedback_seen = true;
-                state.complete(*sequence, Feedback::Discarded);
+                state.complete(
+                    *sequence,
+                    Feedback::Discarded {
+                        feedback_received_ns,
+                    },
+                );
             }
             // `sync_output` names an output; it is not a completion event.
             _ => {}

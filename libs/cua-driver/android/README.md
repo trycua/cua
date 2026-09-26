@@ -212,6 +212,40 @@ exercise Stop/Start races, repeat Start, cancel a queued restart, reject
 unconfirmed cleanup, and stop using a changed runtime. SDK tests cover typed
 responses, request correlation, refusals, uncertain results, and cancellation.
 
+### Qualify one candidate on an emulator, then a physical phone
+
+`qualify.py` runs the same built APKs and host Driver through `deploy.py` and
+`smoke.py` on an explicitly selected emulator first, then on an explicitly
+selected physical phone:
+
+```bash
+python3 scripts/qualify.py --emulator emulator-5554 --physical PHONE_SERIAL \
+  --driver ../rust/target/debug/cua-driver --evidence-dir /tmp/android-qualification
+```
+
+Both devices are admitted before anything is installed. A physical phone passed
+as `--emulator` (or an emulator passed as `--physical`), an offline or
+unauthorized device, the same serial for both roles, and an evidence directory
+that Git would track are refused with exit code 2. A device whose API level the
+runtime cannot install on is recorded as `unsupported` instead of being
+skipped. The physical phase runs only after the emulator phase passes;
+otherwise it is recorded as `blocked`. Before each phase the harness re-hashes
+the APKs and Driver and compares every installed package's bytes with them.
+
+`receipt.json` names devices by role only. It records source revision, artifact
+digests, installed identity, API level, display and fold state, each step's
+result, the Driver's own unsupported and unverified capabilities, cleanup
+residue, and on failure the redacted tail of the failing step's log. On the
+physical phone it lists checks that are deliberately not run, including
+`lifecycle-smoke.py`, which reads the notification shade. Add `--lifecycle` to
+run it on the emulator. Screenshots and full logs stay in the evidence
+directory; keep them out of Git and public reports.
+
+`smoke.py` grants the synthetic demo's notification permission and requires the
+demo editor to hold display-0 focus before synthetic typing. On a physical phone
+any other window over the editor fails with the focused package named, rather
+than as a text mismatch.
+
 ### Record a scripted SDK demonstration
 
 The optional instrumentation harness runs real SDK snapshots and taps from the
@@ -332,7 +366,7 @@ python3 scripts/multiapp-smoke.py --device emulator-5554 \
   --driver ../rust/target/debug/cua-driver \
   --app com.darkempire78.opencalculator --app org.tasks \
   --evidence-dir /tmp/android-multiapp-evidence
-python3 -m unittest discover -s scripts -p 'test_agent_relay.py'
+python3 -m unittest discover -s scripts -p 'test_*.py'
 ./gradlew :runtime:testDebugUnitTest :sdk:testDebugUnitTest :demo:testDebugUnitTest
 ```
 

@@ -465,7 +465,9 @@ mod mcp_runtime_selection_tests {
 
 #[cfg(target_os = "macos")]
 fn main() {
-    cua_driver_sdk::configure_perception_client_provider(extension_manager::perception_client);
+    cua_driver_sdk::configure_perception_client_resolver(
+        extension_manager::perception_client_resolver(),
+    );
     if let Some(code) = platform_macos::permissions::gate::run_permission_probe_if_requested() {
         std::process::exit(code);
     }
@@ -897,7 +899,9 @@ fn main() {
 
 #[cfg(not(target_os = "macos"))]
 fn main() -> anyhow::Result<()> {
-    cua_driver_sdk::configure_perception_client_provider(extension_manager::perception_client);
+    cua_driver_sdk::configure_perception_client_resolver(
+        extension_manager::perception_client_resolver(),
+    );
     if let Some(code) = history_runtime::run_offline_purge_if_requested() {
         std::process::exit(code);
     }

@@ -30,7 +30,9 @@ use cua_driver_core::perception_client::containment::{
 use cua_driver_core::perception_client::containment::{
     run_contained_hook, ContainmentLimits, HookOutcome,
 };
-use cua_driver_core::perception_client::{PerceptionClient, PerceptionWorkerConfig};
+use cua_driver_core::perception_client::{
+    PerceptionClient, PerceptionClientResolver, PerceptionWorkerConfig,
+};
 use cua_driver_core::protocol::ToolResult;
 use cua_driver_core::tool::{Tool, ToolDef, ToolRegistry};
 
@@ -1021,8 +1023,8 @@ fn extension_root() -> Result<PathBuf> {
 
 /// Resolve the optional perception worker through the same active-pointer and
 /// installed-payload verification used by extension lifecycle commands.
-pub(crate) fn perception_client() -> PerceptionClient {
-    match perception_worker_config() {
+fn perception_client_in(store: &ExtensionStore) -> PerceptionClient {
+    match perception_worker_config_in(store) {
         Ok(Some(config)) => PerceptionClient::new(config).unwrap_or_else(|error| {
             tracing::warn!("installed cua-perception configuration is unusable: {error:?}");
             PerceptionClient::unavailable()
@@ -1033,6 +1035,106 @@ pub(crate) fn perception_client() -> PerceptionClient {
             PerceptionClient::unavailable()
         }
     }
+}
+
+/// Resolver a running Driver consults before every `parse_visual_regions`
+/// request. It fingerprints the installation cheaply and re-runs the full
+/// startup verification only when install, update, or removal changed it.
+pub(crate) fn perception_client_resolver() -> std::sync::Arc<dyn PerceptionClientResolver> {
+    std::sync::Arc::new(InstalledPerceptionResolver { root: None })
+}
+
+struct InstalledPerceptionResolver {
+    /// Fixed extension root for tests; production follows the environment.
+    root: Option<PathBuf>,
+}
+
+impl InstalledPerceptionResolver {
+    fn store(&self) -> Result<ExtensionStore> {
+        match &self.root {
+            Some(root) => Ok(ExtensionStore::new(root.clone())),
+            None => Ok(ExtensionStore::new(extension_root()?)),
+        }
+    }
+}
+
+impl PerceptionClientResolver for InstalledPerceptionResolver {
+    fn fingerprint(&self) -> String {
+        match self.store() {
+            Ok(store) => perception_install_fingerprint(&store),
+            Err(error) => format!("unresolved-root:{error:#}"),
+        }
+    }
+
+    fn resolve(&self) -> PerceptionClient {
+        match self.store() {
+            Ok(store) => perception_client_in(&store),
+            Err(error) => {
+                tracing::warn!("installed cua-perception extension is unavailable: {error:#}");
+                PerceptionClient::unavailable()
+            }
+        }
+    }
+}
+
+/// Cheap change detector for the installed perception extension.
+///
+/// Every lifecycle operation that changes what the worker resolves to renames,
+/// creates, or removes the activation pointer, the extension directory, the
+/// installed version's manifest and ownership record, or the publisher trust
+/// record. Their metadata and the pointer's contents change with it, so this
+/// never hashes payloads; a changed fingerprint triggers full verification.
+fn perception_install_fingerprint(store: &ExtensionStore) -> String {
+    fn metadata_token(path: &Path) -> String {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) => {
+                #[cfg(unix)]
+                let identity = {
+                    use std::os::unix::fs::MetadataExt as _;
+                    format!("{}:{}", metadata.dev(), metadata.ino())
+                };
+                #[cfg(not(unix))]
+                let identity = String::new();
+                format!(
+                    "{:?}:{}:{:?}:{:?}:{identity}",
+                    metadata.file_type(),
+                    metadata.len(),
+                    metadata.modified().ok(),
+                    metadata.created().ok(),
+                )
+            }
+            Err(error) => format!("absent:{:?}", error.kind()),
+        }
+    }
+
+    let extension = store.extension_dir(PERCEPTION_ID);
+    let active = extension.join(ACTIVE_NAME);
+    let mut parts = vec![
+        metadata_token(&store.root),
+        metadata_token(&store.root.join(TRUST_NAME)),
+        metadata_token(&extension),
+        metadata_token(&active),
+        metadata_token(&extension.join(ACTIVE_BACKUP_NAME)),
+        metadata_token(&extension.join(ACTIVE_NEW_NAME)),
+    ];
+    let pointer = fs::symlink_metadata(&active)
+        .ok()
+        .filter(|metadata| metadata.is_file() && metadata.len() <= MAX_IN_MEMORY_BYTES)
+        .and_then(|_| fs::read(&active).ok());
+    if let Some(bytes) = pointer {
+        parts.push(hex_sha256(&bytes));
+        if let Some(version) = serde_json::from_slice::<ActivePointer>(&bytes)
+            .ok()
+            .filter(|pointer| validate_version_segment(&pointer.version).is_ok())
+            .map(|pointer| pointer.version)
+        {
+            let version = store.versions_dir(PERCEPTION_ID).join(version);
+            parts.push(metadata_token(&version));
+            parts.push(metadata_token(&version.join(MANIFEST_NAME)));
+            parts.push(metadata_token(&version.join(INSTALL_RECORD_NAME)));
+        }
+    }
+    parts.join("|")
 }
 
 pub(crate) fn perception_client_for_cli() -> Result<PerceptionClient> {
@@ -5249,6 +5351,88 @@ mod tests {
         }
         builder.finish().unwrap();
         path
+    }
+
+    #[tokio::test]
+    async fn live_perception_client_follows_install_update_and_remove() {
+        use cua_driver_contract::VisualParseErrorCode;
+        use cua_driver_core::perception_client::{PerceptionCancellation, PerceptionClientHandle};
+
+        async fn parse_code(handle: &PerceptionClientHandle) -> VisualParseErrorCode {
+            handle
+                .current()
+                .await
+                .parse(
+                    "capture-test",
+                    1,
+                    1,
+                    &[1, 2, 3, 4],
+                    &PerceptionCancellation::default(),
+                )
+                .await
+                .expect_err("the fixture payload is not a runnable worker")
+                .code
+        }
+        fn active_version(client: &PerceptionClient) -> Option<String> {
+            client
+                .worker_config()
+                .and_then(|config| config.args.last().cloned())
+        }
+
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("extensions");
+        let store = ExtensionStore::new(root.clone());
+        let entry = registry_entry(PERCEPTION_ID).unwrap();
+        let runtime_name = if cfg!(target_os = "windows") {
+            "onnxruntime.dll"
+        } else if cfg!(target_os = "macos") {
+            "libonnxruntime.dylib"
+        } else {
+            "libonnxruntime.so"
+        };
+        // One handle stands in for a runtime built before the extension existed.
+        let resolver = std::sync::Arc::new(InstalledPerceptionResolver {
+            root: Some(root.clone()),
+        });
+        let handle = PerceptionClientHandle::live(resolver.clone());
+
+        assert!(!handle.current().await.is_available());
+        assert_eq!(
+            parse_code(&handle).await,
+            VisualParseErrorCode::NotInstalled
+        );
+        let absent = resolver.fingerprint();
+        assert_eq!(resolver.fingerprint(), absent, "fingerprint must be stable");
+
+        let first = perception_fixture_archive(temp.path(), "1.0.0", runtime_name);
+        store.install_archive(entry, &first).unwrap();
+        let installed = handle.current().await;
+        assert_eq!(active_version(&installed).as_deref(), Some("1.0.0"));
+        assert_ne!(
+            parse_code(&handle).await,
+            VisualParseErrorCode::NotInstalled,
+            "a running runtime must reach the newly installed worker"
+        );
+        let installed_fingerprint = resolver.fingerprint();
+        assert_ne!(installed_fingerprint, absent);
+        assert_eq!(resolver.fingerprint(), installed_fingerprint);
+
+        let second_directory = temp.path().join("update");
+        fs::create_dir_all(&second_directory).unwrap();
+        let second = perception_fixture_archive(&second_directory, "1.1.0", runtime_name);
+        store.install_archive(entry, &second).unwrap();
+        assert_ne!(resolver.fingerprint(), installed_fingerprint);
+        let updated = handle.current().await;
+        assert_eq!(active_version(&updated).as_deref(), Some("1.1.0"));
+        // The pre-update client stays usable for a request that already holds it.
+        assert_eq!(active_version(&installed).as_deref(), Some("1.0.0"));
+
+        store.remove(entry).unwrap();
+        assert!(!handle.current().await.is_available());
+        assert_eq!(
+            parse_code(&handle).await,
+            VisualParseErrorCode::NotInstalled
+        );
     }
 
     #[test]

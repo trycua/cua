@@ -90,6 +90,14 @@ jobs:
         # release. A missed tag heals on the next main push.
         run: bash .github/scripts/anchor_perception_release_tag.sh
 
+      # Release Please aborts every release PR while a merged release PR is
+      # still labeled `autorelease: pending`. Perception skips GitHub releases,
+      # so Release Please never relabels it; do that once its tag is anchored.
+      - name: Mark tagged Perception release pull requests
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: python3 .github/scripts/mark_perception_release_prs_tagged.py
+
       # release-please-action v4.4.1, embedding release-please 17.3.0.
       - name: Open or update automatic release pull requests
         id: release-auto
@@ -253,12 +261,15 @@ jobs:
               git push --force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD" \
                 origin "HEAD:refs/heads/$BRANCH"
             fi
-          # Search by head branch: an unfiltered list returns only the newest
-          # 100 open pull requests and can silently skip an older release PR.
-          done < <(gh pr list --state open --base main \
-            --search "head:release-please--branches--" --limit 100 \
-            --json number,headRefName \
-            --jq '.[] | select(.headRefName | startswith("release-please--branches--")) | .number')
+          # Look up each component's release branch directly. An unfiltered
+          # list returns only the newest 100 open pull requests, and the search
+          # index can miss a release PR that Release Please opened moments ago.
+          done < <(jq -r '.packages[].component' release-please-config.json |
+            while read -r component; do
+              gh pr list --state open --base main \
+                --head "release-please--branches--main--components--$component" \
+                --json number --jq '.[].number'
+            done)
 
       - name: Verify repository release versions
         run: python3 .github/scripts/validate_release_versions.py --product all

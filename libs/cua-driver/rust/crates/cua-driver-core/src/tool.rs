@@ -875,7 +875,10 @@ impl ToolRegistry {
         self.register(Box::new(EndSessionTool));
     }
 
-    pub fn register_perception_tool(&mut self, client: crate::perception_client::PerceptionClient) {
+    pub fn register_perception_tool(
+        &mut self,
+        client: impl Into<crate::perception_client::PerceptionClientHandle>,
+    ) {
         let captures = self.capture_service();
         let resolve_binding = Arc::new(move |args: &Value| {
             captures.binding_from_args(args).map_err(|error| {
@@ -892,7 +895,7 @@ impl ToolRegistry {
 
     pub fn register_perception_tool_with_binding_resolver(
         &mut self,
-        client: crate::perception_client::PerceptionClient,
+        client: impl Into<crate::perception_client::PerceptionClientHandle>,
         resolve_binding: crate::perception_tools::CaptureBindingResolver,
     ) {
         crate::perception_tools::register_perception_tool(self, client, resolve_binding);

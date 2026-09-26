@@ -284,6 +284,7 @@ async def run(args: argparse.Namespace) -> str:
                     event = {
                         "event": "step",
                         "step": step,
+                        "backend": jev_config.backend,
                         "candidate": candidate.id,
                         "confidence": confidence,
                         "probabilities": probabilities,
@@ -302,6 +303,7 @@ async def run(args: argparse.Namespace) -> str:
                             "event": "outcome",
                             "outcome": "abstained",
                             "step": step,
+                            "backend": jev_config.backend,
                             "confidence": confidence,
                             "probabilities": probabilities,
                         },
@@ -320,6 +322,7 @@ async def run(args: argparse.Namespace) -> str:
                                 "event": "outcome",
                                 "outcome": "unknown",
                                 "step": step,
+                                "backend": jev_config.backend,
                                 "phase": "action",
                                 "error": type(error).__name__,
                             },
@@ -331,6 +334,7 @@ async def run(args: argparse.Namespace) -> str:
                 event = {
                     "event": "step",
                     "step": step,
+                    "backend": jev_config.backend,
                     "candidate": candidate.id,
                     "confidence": confidence,
                     "probabilities": probabilities,

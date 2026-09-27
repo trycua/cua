@@ -341,6 +341,9 @@ async function run(args: Arguments): Promise<Outcome> {
     const advertisedTools = (await client.listTools()).tools;
     const availableTools = new Set(advertisedTools.map((tool) => tool.name));
     const captureBoundClick = supportsCaptureBoundClick(advertisedTools);
+    // Whether a Submit missing from the page structure can still be found through
+    // a capture-bound visual region; reported in the form state.
+    const visualPath = captureBoundClick && args.visualObservation !== 'off';
     const driver = new Driver(client, `jev-typescript-${randomUUID().slice(0, 8)}`);
     const prepared = await driver.call('browser_prepare', {
       allow_launch: true,
@@ -400,8 +403,8 @@ async function run(args: Arguments): Promise<Outcome> {
       }
       const answer =
         args.provider === 'mock'
-          ? chooseMockAdapter(candidates, snapshot, visual, history, token)
-          : await chooseLive(candidates, snapshot, visual, history, token);
+          ? chooseMockAdapter(candidates, snapshot, visual, history, token, visualPath)
+          : await chooseLive(candidates, snapshot, visual, history, token, visualPath);
       if (!answer.choice) return 'abstained';
       const candidate = validateChoice(answer.choice, candidates, visual?.captureId);
       const decisionMs = Math.round((performance.now() - decisionStarted) * 100) / 100;

@@ -308,6 +308,9 @@ async def run(args: argparse.Namespace) -> str:
             advertised_tools = (await session.list_tools()).tools
             available_tools = {tool.name for tool in advertised_tools}
             capture_bound_click = supports_capture_bound_click(advertised_tools)
+            # Whether a Submit missing from the page structure can still be found
+            # through a capture-bound visual region; reported in the form state.
+            visual_path = capture_bound_click and args.visual_observation != "off"
             driver = Driver(session, label)
             prepared = await driver.call(
                 "browser_prepare",
@@ -361,11 +364,11 @@ async def run(args: argparse.Namespace) -> str:
 
                 if args.provider == "mock":
                     choice, confidence, probabilities = choose_mock_adapter(
-                        candidates, snapshot, visual, history, token
+                        candidates, snapshot, visual, history, token, visual_path
                     )
                 else:
                     choice, confidence, probabilities = await asyncio.to_thread(
-                        choose_live, candidates, snapshot, visual, history, token
+                        choose_live, candidates, snapshot, visual, history, token, visual_path
                     )
                 if choice is None:
                     return "abstained"

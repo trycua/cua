@@ -2558,10 +2558,11 @@ impl BrowserEngine {
                 OopifStatus::Unsupported
             };
             let next_offset = page.next_offset;
+            let title = document.document_title().unwrap_or(&tab.title).to_owned();
             let (outcome, new_refs) = self.semantic_outcome(
                 snapshot.id,
                 snapshot.url.clone(),
-                tab.title,
+                title,
                 page,
                 document.complete,
                 "continuation",

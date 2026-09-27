@@ -44,6 +44,9 @@ pub fn list_running_apps() -> Vec<AppInfo> {
     enumerate_running_apps().0
 }
 
+/// Live `(pid, active, bundle path)` entries per bundle identifier.
+type RunningAppStates = std::collections::HashMap<String, Vec<(i32, bool, Option<String>)>>;
+
 /// Single walk over `NSWorkspace.runningApplications` producing both views the
 /// app listing needs from ONE snapshot:
 ///
@@ -58,8 +61,6 @@ pub fn list_running_apps() -> Vec<AppInfo> {
 ///   apps) run as `Accessory`, never enter the standalone list, and would
 ///   otherwise surface as `running = false / pid = 0` while windows and the
 ///   accessibility tree see the live process (#3060).
-type RunningAppStates = std::collections::HashMap<String, Vec<(i32, bool, Option<String>)>>;
-
 fn enumerate_running_apps() -> (Vec<AppInfo>, RunningAppStates) {
     use objc2_app_kit::{NSApplicationActivationPolicy, NSWorkspace};
 

@@ -184,3 +184,17 @@ def test_driver_row_runs_through_the_canonical_linux_runner_only_in_its_lane() -
         "S1_ADAPTER_PATH",
     ):
         assert required in runner
+
+
+def test_driver_row_records_a_typed_limitation_without_avx512_bf16() -> None:
+    steps = load()["jobs"]["driver-e2e"]["steps"]
+    names = [step.get("name") or step.get("uses") for step in steps]
+    check = steps[names.index("Check the runner CPU against the capture-lifetime budget")]
+    assert check["id"] == "cpu"
+    assert "avx512_bf16" in check["run"]
+    assert "cua-e2e-limitation-v1" in check["run"]
+    assert "perception-s1-decision-loop-limitation.json" in check["run"]
+    gated = steps[names.index(check["name"]) + 1 : names.index("Publish row summary")]
+    assert gated and all(step["if"] == "steps.cpu.outputs.supported == 'true'" for step in gated)
+    for name in ("Publish row summary", "Upload row evidence"):
+        assert steps[names.index(name)]["if"] == "always()"

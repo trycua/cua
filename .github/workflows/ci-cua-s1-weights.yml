@@ -169,8 +169,11 @@ jobs:
           export S1_ADAPTER_PATH="$S1_MODELS/cua-s1-4b-0.2"
           for modality in text multimodal; do
             echo "::group::warm $modality"
+            # Multimodal decisions take minutes on runners without AVX512-BF16.
+            repeats=3
+            [[ "$modality" == multimodal ]] && repeats=1
             S1_MODALITY="$modality" /usr/bin/time -v -o "$S1_EVIDENCE/warm-$modality.time" \
-              .venv/bin/python ../ci/warm_chooser.py --smoke --repeats 3 \
+              .venv/bin/python ../ci/warm_chooser.py --smoke --repeats "$repeats" \
               > "$S1_EVIDENCE/warm-$modality.json"
             cat "$S1_EVIDENCE/warm-$modality.json"
             echo "::endgroup::"
@@ -261,7 +264,41 @@ jobs:
       - name: Check out Cua
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Check the runner CPU against the capture-lifetime budget
+        id: cpu
+        run: |
+          set -euo pipefail
+          # Hosted ubuntu-latest VMs vary: some expose AVX512-BF16, some hide
+          # AVX-512 entirely. Without native BF16 a warm Cua-S1-4B text
+          # decision took 50-67 s for the 3-candidate fixture (5.5-7.3 s
+          # with it), so the row cannot decide inside the 60 s capture
+          # lifetime. Record that as a typed limitation instead of a flaky
+          # failure or a vacuous pass; the smoke job still runs.
+          artifacts=artifacts/cua-driver/linux
+          mkdir -p "$artifacts"
+          flags="$(grep -m1 '^flags' /proc/cpuinfo)"
+          cpu_model="$(lscpu | sed -n 's/^Model name: *//p' | head -n1)"
+          echo "cpu_model=$cpu_model nproc=$(nproc) mem_total_mb=$(free -m | awk '/^Mem:/ {print $2}')" \
+            | tee "$artifacts/runner.txt"
+          if grep -qw avx512_bf16 <<<"$flags"; then
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            reason="This hosted runner ($cpu_model) does not expose AVX512-BF16; CPU bfloat16 Cua-S1-4B decisions take longer than the 60 s capture lifetime there."
+            jq -n --arg reason "$reason" '{
+              schema: "cua-e2e-limitation-v1",
+              platform: "linux",
+              display_server: "x11",
+              harness: "electron",
+              test: "perception-s1-decision-loop",
+              status: "not_covered",
+              reason: $reason
+            }' > "$artifacts/perception-s1-decision-loop-limitation.json"
+            echo "::warning title=S1 row not run::$reason Re-run the job to draw another runner."
+          fi
+
       - name: Free disk space for the weights, Rust build, and extension
+        if: steps.cpu.outputs.supported == 'true'
         run: |
           set -euo pipefail
           df -h /
@@ -278,16 +315,20 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+        if: steps.cpu.outputs.supported == 'true'
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        if: steps.cpu.outputs.supported == 'true'
         with:
           workspaces: "libs/cua-driver/rust -> target"
           key: e2e-s1-perception
           save-if: ${{ github.event_name == 'schedule' }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.cpu.outputs.supported == 'true'
         with:
           node-version: "22"
 
       - name: Install GUI and Rust build dependencies
+        if: steps.cpu.outputs.supported == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -298,6 +339,7 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev ffmpeg jq
 
       - name: Set up uv and Python
+        if: steps.cpu.outputs.supported == 'true'
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           python-version: "3.12"
@@ -305,16 +347,19 @@ jobs:
           cache-dependency-glob: libs/cua-s1/python/uv.lock
 
       - name: Install the pinned four-b inference environment
+        if: steps.cpu.outputs.supported == 'true'
         working-directory: libs/cua-s1/python
         run: uv sync --frozen --extra four-b
 
       - name: Download and verify the pinned weights
+        if: steps.cpu.outputs.supported == 'true'
         run: |
           set -euo pipefail
           "$CUA_E2E_S1_PYTHON" libs/cua-s1/ci/fetch_pinned_weights.py --dest "$S1_MODELS"
           df -h /
 
       - name: Download the published cua-perception release
+        if: steps.cpu.outputs.supported == 'true'
         run: |
           set -euo pipefail
           tag="cua-perception-v${CUA_E2E_PERCEPTION_VERSION}"
@@ -330,10 +375,17 @@ jobs:
           echo "CUA_E2E_PERCEPTION_CATALOG=$PERCEPTION_DIR/${stem}.catalog.json" >> "$GITHUB_ENV"
 
       - name: Run the S1 + OmniParser capture-loop row
+        if: steps.cpu.outputs.supported == 'true'
         env:
           CUA_E2E_INTERNAL_LANE: s1-perception
         run: |
           set -euo pipefail
+          # The row's anonymous memory (resident model ~8.4 GB, Driver,
+          # Electron, OmniParser worker, recorder) fits in 16 GB. With swap
+          # enabled, the kernel swaps the resident model out while it copies
+          # the weights, and the next decisions page it back in from disk.
+          sudo swapoff -a
+          free -m
           vmstat -S M 5 > "$RUNNER_TEMP/vmstat.log" &
           vmstat_pid=$!
           # Top CPU and memory consumers, to explain any latency outlier.
@@ -368,9 +420,13 @@ jobs:
                 "| Click | \(.click_ms) ms, route \(.click_route) |",
                 "| Fixture oracle | \(.fixture_counter) |"
               ' "$artifacts/s1-perception/timing.json"
+            elif [[ -f "$artifacts/perception-s1-decision-loop-limitation.json" ]]; then
+              echo "**Not run:** $(jq -r .reason "$artifacts/perception-s1-decision-loop-limitation.json")"
             else
               echo "No timing record was produced."
             fi
+            echo
+            echo "Runner: $(cat "$artifacts/runner.txt" 2>/dev/null || echo unknown)"
             if [[ -f "$RUNNER_TEMP/vmstat.log" ]]; then
               min_free="$(awk 'NR>2 {avail=$4+$5+$6; if (min=="" || avail<min) min=avail} END {print min}' "$RUNNER_TEMP/vmstat.log")"
               echo

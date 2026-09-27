@@ -170,18 +170,23 @@ times are medians of five warm calls:
 
 The weights-backed CI job (`.github/workflows/ci-cua-s1-weights.yml`) also
 measures a standard GitHub-hosted `ubuntu-latest` runner on every run: 4 vCPU
-(AMD EPYC 9V74 with AVX512-BF16, two Torch threads), 16 GB of memory, Python
-3.12, and the same lock. On 2026-09-26 it measured, for `cua-s1-4b-0.2` on
+(AMD EPYC 9V74, two Torch threads), 16 GB of memory, Python 3.12, and the same
+lock. The same runner label comes with and without AVX-512, and that decides
+the speed of `bfloat16` on CPU. On 2026-09-26 it measured `cua-s1-4b-0.2` on
 `cpu` with `bfloat16`:
 
-| Adapter and modality       | Load time | 3-candidate fixture, warm | Cold `verify_decision_cli.py` (load + decision) | Peak RSS |
-| -------------------------- | --------- | ------------------------- | ----------------------------------------------- | -------- |
-| `cua-s1-4b-0.2` text       | 4.7 s     | 5.5 to 7.3 s              | 13 to 25 s                                      | 9.4 GB   |
-| `cua-s1-4b-0.2` multimodal | 4.8 s     | 47 to 50 s (1280x800)     | 53 to 55 s                                      | 10.6 GB  |
+| Modality   | Runner CPU flags | Warm decision, 3-candidate fixture | Cold `verify_decision_cli.py` (load + decision) | Peak RSS |
+| ---------- | ---------------- | ---------------------------------- | ----------------------------------------------- | -------- |
+| text       | AVX512-BF16      | 5.5 to 7.3 s                       | 13 to 25 s                                      | 9.4 GB   |
+| multimodal | AVX512-BF16      | 47 to 50 s (1280x800)              | 53 to 55 s                                      | 10.6 GB  |
+| text       | AVX2, no AVX-512 | 51 to 68 s                         | 66 to 74 s                                      | 9.4 GB   |
+| multimodal | AVX2, no AVX-512 | 360 to 379 s (1280x800)            | 364 to 383 s                                    | 10.6 GB  |
 
-Use `bfloat16` on such CPUs. `float16` has no native CPU support there: the
-same cold verifier took 114 to 191 s for text and about 10 minutes for
-multimodal. `float32` weights (18.7 GB) do not fit in 16 GB. The job summary of each run records the current numbers.
+Use `bfloat16` on CPU. `float16` has no native CPU support on these runners:
+the cold verifier took 114 to 191 s for text and about 10 minutes for
+multimodal on an AVX512-BF16 runner. `float32` weights (18.7 GB) do not fit in
+16 GB. Peak RSS counts memory-mapped weight pages. The job summary of each run
+records the runner's flags and the current numbers.
 
 Multimodal rows used 1280x800 screenshots; a 2560x1600 screenshot took 22 to
 30 s per decision on `mps`, so downscale large captures before scoring. The

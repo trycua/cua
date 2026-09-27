@@ -133,6 +133,14 @@ row), because it needs the pinned Cua-S1-4B weights:
 | --- | --- |
 | `linux-electron-perception-s1-capture-click-px-foreground` | The published `cua-perception` release, installed from its signed catalog as `publisher-verified`, parses a retained Electron window capture with OmniParser; a resident Cua-S1-4B (text adapter, CPU) chooses one of the parsed text regions for the goal "Increment the counter once."; Driver clicks the region center once with the same `capture_id` within the 60-second capture lifetime; the fixture journal must reach `counter=1`; the consumed capture is refused with `capture_not_found`, an unused capture past its lifetime is refused with `capture_expired`, and the counter stays at 1 |
 
+The model runs on CPU in `bfloat16`, which fits the capture lifetime only on
+hosted runners that expose AVX512-BF16 (a warm decision on the row's
+18-candidate request took 20 s; parse to click took 23 s). The same
+`ubuntu-latest` label sometimes lands on a VM without AVX-512, where one text
+decision takes over 50 s. On such a runner the job skips the row, writes a
+`cua-e2e-limitation-v1` record (`perception-s1-decision-loop-limitation.json`),
+and warns; re-run the job to draw another runner.
+
 The row writes the parse, the `cua.jev_choice_request_v1` request, the S1
 decision, and a timing record under `artifacts/cua-driver/linux/s1-perception/`
 next to the trajectory video. macOS and Windows lanes do not run it: the

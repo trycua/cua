@@ -103,18 +103,20 @@ def decision_state(
     visual: VisualObservation | None,
     history: list[dict[str, Any]],
     token: str,
+    visual_path: bool = False,
 ) -> dict[str, Any]:
     """Build the compact, deterministic, token-redacted state sent to Jev.
 
     ``form`` states the field and Submit status the runner verified from the page
-    structure, so the model does not have to infer it from the outline. The token
+    structure and, when ``visual_path`` is enabled, from the validated visual
+    regions, so the model does not have to infer it from the outline. The token
     itself is replaced everywhere, including the outline and visual text.
     """
     return {
         "goal": GOAL,
         "observation": {
             "page": redact_token(snapshot.get("page"), token),
-            "form": form_state(snapshot, token),
+            "form": form_state(snapshot, token, visual, visual_path=visual_path),
             "outline": redact_token(snapshot.get("outline"), token),
             "visual": redact_token(visual_decision_state(visual), token),
         },
@@ -129,12 +131,13 @@ def choose_with_typesafe(
     visual: VisualObservation | None,
     history: list[dict[str, Any]],
     token: str,
+    visual_path: bool = False,
 ) -> tuple[str, float, dict[str, float]]:
     from typesafe_sdk import Choice
 
     criteria = _candidate_criteria(candidates)
     response = client.system_one(
-        state=decision_state(snapshot, visual, history, token),
+        state=decision_state(snapshot, visual, history, token, visual_path),
         questions={
             "driver_action": Choice(
                 instructions="Which complete executable action should Cua Driver run next?",
@@ -154,11 +157,14 @@ def choose_live(
     visual: VisualObservation | None,
     history: list[dict[str, Any]],
     token: str,
+    visual_path: bool = False,
 ) -> tuple[str, float, dict[str, float]]:
     from typesafe_sdk import TypeSafeClient
 
     with TypeSafeClient() as client:
-        return choose_with_typesafe(client, candidates, snapshot, visual, history, token)
+        return choose_with_typesafe(
+            client, candidates, snapshot, visual, history, token, visual_path
+        )
 
 
 def choose_mock_adapter(
@@ -167,5 +173,6 @@ def choose_mock_adapter(
     _visual: VisualObservation | None,
     _history: list[dict[str, Any]],
     _token: str,
+    _visual_path: bool = False,
 ) -> tuple[str | None, float, dict[str, float]]:
     return choose_mock(candidates)

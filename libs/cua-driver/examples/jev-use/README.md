@@ -1,6 +1,6 @@
 # jev-use with Cua Driver and TypeSafe Jev
 
-`jev-use` is a public-preview recipe that uses TypeSafe Jev to choose the next browser action
+`jev-use` is a recipe that uses TypeSafe Jev to choose the next browser action
 while Cua Driver observes the page, performs that action, and verifies the
 result. Equivalent Python and TypeScript programs run the same bounded loop.
 
@@ -18,9 +18,14 @@ candidate IDs and descriptions plus a compact observation. When visual regions
 are present, that observation includes their typed bounds and the exact
 `capture_id`; it never includes screenshot bytes or extension internals. The
 observation also carries a `form` summary that the runner derives from the page
-structure. The summary reports whether the verification field is `empty`, holds
-the required token (`contains_required_token`), or holds `contains_other_value`,
-and whether a Submit button ref is `available`. The token itself is replaced
+structure and any validated visual regions. The summary reports whether the
+verification field is `empty`, holds the required token
+(`contains_required_token`), or holds `contains_other_value`. It also reports
+the Submit control: `available` for a page-structure button ref. When there is
+no ref and the capture-bound visual path is enabled, it reports `visual_only`
+for a unique validated visual Submit region, `visual_check_pending` before that
+step's visual regions are parsed, or `not_found_visually`. Without a visual path,
+it reports `not_in_page_structure`. The token itself is replaced
 with `[verification token]` in the page, outline, and visual text. `history` lists
 one `{step, selected_id, outcome}` item per earlier decision. Timings and model
 probabilities stay in the JSONL log only. A live answer must be one of the supplied IDs before the runner resolves it to the

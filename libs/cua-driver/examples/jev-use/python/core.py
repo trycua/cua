@@ -231,11 +231,38 @@ def _form_refs(snapshot: Mapping[str, Any]) -> tuple[Any, Any]:
     return field, button
 
 
-def form_state(snapshot: Mapping[str, Any], token: str) -> dict[str, str]:
+def visual_submit_region(visual: VisualObservation | None) -> VisualRegion | None:
+    """Return the unique validated visual Submit region, or ``None``."""
+    if visual is None:
+        return None
+    matches = [
+        region
+        for region in visual.regions
+        if region.confidence >= 0.8
+        and _ascii_lower(region.text or region.label or "") == "submit"
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def form_state(
+    snapshot: Mapping[str, Any],
+    token: str,
+    visual: VisualObservation | None = None,
+    *,
+    visual_path: bool = False,
+) -> dict[str, str]:
     """Summarize the form for the decision model without revealing the token.
 
     The raw field value never leaves the runner; the model receives only whether
     the field is empty, holds the required token, or holds something else.
+
+    ``submit_button`` is ``available`` for a clickable page-structure ref. When
+    the page structure has none and the capture-bound visual path is enabled
+    (``visual_path``), it is ``visual_only`` if this observation holds a unique
+    validated visual Submit region, ``visual_check_pending`` if no visual regions
+    were parsed for this step yet (the runner parses them once no page-structure
+    action remains), and ``not_found_visually`` otherwise. Without a visual path
+    it is ``not_in_page_structure``.
     """
     field, button = _form_refs(snapshot)
     if field is None:
@@ -246,10 +273,17 @@ def form_state(snapshot: Mapping[str, Any], token: str) -> dict[str, str]:
         field_state = "contains_required_token"
     else:
         field_state = "contains_other_value"
-    return {
-        "verification_field": field_state,
-        "submit_button": "available" if button is not None else "not_in_page_structure",
-    }
+    if button is not None:
+        submit_state = "available"
+    elif not visual_path:
+        submit_state = "not_in_page_structure"
+    elif visual is None:
+        submit_state = "visual_check_pending"
+    elif visual_submit_region(visual) is not None:
+        submit_state = "visual_only"
+    else:
+        submit_state = "not_found_visually"
+    return {"verification_field": field_state, "submit_button": submit_state}
 
 
 def redact_token(value: Any, token: str) -> Any:
@@ -296,7 +330,10 @@ def _reserved_candidates() -> list[Candidate]:
         Candidate(
             "reobserve",
             "Take no action and obtain a fresh Driver observation, because the current "
-            "observation is stale, incomplete, or contradicts the reported form state.",
+            "observation is stale or contradicts the reported form state. A Submit control "
+            "that is visual-only, or whose visual check is still pending, is not a reason to "
+            "reobserve: the runner parses visual regions for Submit once no page-structure "
+            "action remains.",
             None,
             {},
         ),
@@ -357,14 +394,9 @@ def build_candidates(
         and visual
         and capture_bound_click
     ):
-        matches = [
-            region
-            for region in visual.regions
-            if region.confidence >= 0.8
-            and _ascii_lower(region.text or region.label or "") == "submit"
-        ]
-        if len(matches) == 1:
-            x, y = visual.screenshot_center(matches[0])
+        region = visual_submit_region(visual)
+        if region is not None:
+            x, y = visual.screenshot_center(region)
             foreground = visual_delivery == "foreground"
             candidates.append(
                 Candidate(

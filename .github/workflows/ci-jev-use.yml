@@ -11,8 +11,7 @@ on:
       - ".github/workflows/ci-jev-use.yml"
       - ".github/workflows/authorized-live-jev-use.yml"
       - ".github/workflows/authorized-live-jev-use-demo.yml"
-      - "scripts/ci/windows/invoke-standard-user-token.ps1"
-      - "scripts/ci/windows/run-jev-use-standard-user.ps1"
+      - "scripts/ci/windows/run-jev-use-elevated-autostart.ps1"
   push:
     branches: [main]
     paths:
@@ -24,8 +23,7 @@ on:
       - ".github/workflows/ci-jev-use.yml"
       - ".github/workflows/authorized-live-jev-use.yml"
       - ".github/workflows/authorized-live-jev-use-demo.yml"
-      - "scripts/ci/windows/invoke-standard-user-token.ps1"
-      - "scripts/ci/windows/run-jev-use-standard-user.ps1"
+      - "scripts/ci/windows/run-jev-use-elevated-autostart.ps1"
   workflow_dispatch:
 
 # Pull request code runs only on disposable GitHub-hosted runners. No job in
@@ -295,14 +293,18 @@ jobs:
           retention-days: 14
 
   # macOS and Windows prove the example against the released Driver, installed
-  # through the canonical installers exactly as the guide tells users to. The
-  # candidate-source build above stays Linux-only.
+  # through the canonical installers with their default version resolution,
+  # exactly as the guide tells users to. Each job fails if that resolution
+  # yields a Driver older than MIN_RELEASED_DRIVER_VERSION, so the proof never
+  # silently tests an older release. The candidate-source build above stays
+  # Linux-only.
   released-driver-macos:
     name: macOS released Driver mock E2E
     runs-on: macos-26
     timeout-minutes: 45
     env:
       CUA_DRIVER_BIN: /Applications/CuaDriver.app/Contents/MacOS/cua-driver
+      MIN_RELEASED_DRIVER_VERSION: "0.30.1"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -327,7 +329,16 @@ jobs:
           CUA_DRIVER_NO_MODIFY_PATH: "1"
         run: |
           /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
-          "$CUA_DRIVER_BIN" --version
+          version_output="$("$CUA_DRIVER_BIN" --version)"
+          echo "$version_output"
+          resolved="$(grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' <<< "$version_output" | head -n 1)"
+          test -n "$resolved"
+          lowest="$(printf '%s\n%s\n' "$MIN_RELEASED_DRIVER_VERSION" "$resolved" | sort -V | head -n 1)"
+          if [ "$lowest" != "$MIN_RELEASED_DRIVER_VERSION" ]; then
+            echo "::error::canonical installer resolved Cua Driver $resolved, older than $MIN_RELEASED_DRIVER_VERSION"
+            exit 1
+          fi
+          echo "Released Cua Driver under test: $resolved"
           codesign --verify --strict /Applications/CuaDriver.app
           test -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
       - name: Install locked example dependencies
@@ -402,6 +413,8 @@ jobs:
     name: Windows released Driver mock E2E
     runs-on: windows-latest
     timeout-minutes: 45
+    env:
+      MIN_RELEASED_DRIVER_VERSION: "0.30.1"
     defaults:
       run:
         shell: pwsh
@@ -427,15 +440,24 @@ jobs:
       - name: Verify the interactive desktop session
         working-directory: ${{ github.workspace }}
         run: .\scripts\ci\windows\verify-user-session.ps1
-      - name: Install the released Driver with the canonical installer
+      - name: Install the released Driver with the canonical installer defaults
         run: |
-          # -NoAutoStart: the logon task runs at the account's highest token,
-          # which on this administrator account is elevated. The proof starts
-          # the daemon itself from a standard-user token instead.
-          & ([scriptblock]::Create((irm https://cua.ai/driver/install.ps1))) -NoAutoStart -NoPathUpdate
+          # Default install, as a user runs it: the installer also registers
+          # the cua-driver-serve autostart task at RunLevel=Highest. This job
+          # token is an administrator's, so both that daemon and the
+          # in-process runtime of `cua-driver mcp` are elevated, and the
+          # Driver must launch its isolated browsers de-elevated (#4234).
+          & ([scriptblock]::Create((irm https://cua.ai/driver/install.ps1))) -NoPathUpdate
           $driver = Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver\bin\cua-driver.exe"
           if (-not (Test-Path -LiteralPath $driver -PathType Leaf)) { throw "installer did not create $driver" }
-          & $driver --version
+          $versionOutput = (& $driver --version | Out-String).Trim()
+          Write-Host $versionOutput
+          if ($versionOutput -notmatch '(\d+\.\d+\.\d+)') { throw "cannot parse the Driver version from: $versionOutput" }
+          $resolved = [version]$Matches[1]
+          if ($resolved -lt [version]$env:MIN_RELEASED_DRIVER_VERSION) {
+            throw "canonical installer resolved Cua Driver $resolved, older than $env:MIN_RELEASED_DRIVER_VERSION"
+          }
+          Write-Host "Released Cua Driver under test: $resolved"
           $chrome = Join-Path ${env:ProgramFiles} "Google\Chrome\Application\chrome.exe"
           if ((Get-AuthenticodeSignature -FilePath $chrome).Status -ne "Valid") { throw "Chrome is not vendor-signed: $chrome" }
           "CUA_DRIVER_BIN=$driver" >> $env:GITHUB_ENV
@@ -445,29 +467,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "uv sync failed" }
           npm.cmd ci --ignore-scripts
           if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
-      - name: Run both mock agents through MCP from a standard-user token
+      - name: Run both mock agents through MCP with the default elevated autostart
         working-directory: ${{ github.workspace }}
         run: |
-          # The proof and its evidence live in the user profile, which the
-          # standard-user token can write.
-          $root = Join-Path $env:USERPROFILE "jev-use-ci"
+          $root = Join-Path $env:RUNNER_TEMP "jev-use-ci"
           $env:JEV_USE_PROOF_DIR = Join-Path $root "proof"
           $env:JEV_USE_LOG_DIR = Join-Path $root "logs"
           New-Item -ItemType Directory -Force $env:JEV_USE_LOG_DIR | Out-Null
           "JEV_USE_PROOF_DIR=$env:JEV_USE_PROOF_DIR" >> $env:GITHUB_ENV
           "JEV_USE_LOG_DIR=$env:JEV_USE_LOG_DIR" >> $env:GITHUB_ENV
-          $inner = Join-Path $PWD "scripts\ci\windows\run-jev-use-standard-user.ps1"
-          $pwshExe = (Get-Process -Id $PID).Path
-          $transcript = Join-Path $env:JEV_USE_LOG_DIR "proof.log"
-          $command = "cmd.exe /d /s /c `"`"$pwshExe`" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$inner`" > `"$transcript`" 2>&1`""
-          $status = 1
-          try {
-            & .\scripts\ci\windows\invoke-standard-user-token.ps1 -CommandLine $command -WorkingDirectory $PWD -TimeoutSeconds 900
-            $status = $LASTEXITCODE
-          } finally {
-            if (Test-Path $transcript) { Get-Content $transcript }
-          }
-          if ($status -ne 0) { throw "standard-user proof failed with exit code $status" }
+          .\scripts\ci\windows\run-jev-use-elevated-autostart.ps1
       - name: Audit redacted E2E evidence
         run: |
           @'
@@ -504,6 +513,5 @@ jobs:
             ${{ env.JEV_USE_PROOF_DIR }}/summary.json
             ${{ env.JEV_USE_PROOF_DIR }}/*.jsonl
             ${{ env.JEV_USE_LOG_DIR }}/*.txt
-            ${{ env.JEV_USE_LOG_DIR }}/*.log
           if-no-files-found: error
           retention-days: 14

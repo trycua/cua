@@ -11,7 +11,8 @@ use async_trait::async_trait;
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
     BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+    ExistingProfileSetupRequest, IsolatedBrowserProcess, PrepareAction, PrepareOutcome,
+    PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -27,6 +28,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::browser_isolated_selection::{
     decide_isolated_browser, InstallationWriteAccess, IsolatedBrowserDecision,
     IsolatedCandidateFacts, NO_PROTECTED_BROWSER_MESSAGE,
+};
+use crate::browser_standard_user::{
+    browser_launch_context, require_profile_writable, spawn_with_token, with_impersonation,
+    BrowserLaunchContext,
 };
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, E_ACCESSDENIED, FILETIME, HWND, RECT};
@@ -220,7 +225,8 @@ fn authenticode_output(executable: &std::path::Path) -> std::io::Result<std::pro
         .output()
 }
 
-/// Result of probing one path for write-class rights held by the current token.
+/// Result of probing one path for write-class rights held by the calling
+/// thread's effective token.
 enum WriteProbe {
     Denied,
     Granted(&'static str),
@@ -238,9 +244,13 @@ fn current_token_write_denial_reason(path: &std::path::Path, directory: bool) ->
 fn current_token_write_probe(path: &std::path::Path, directory: bool) -> WriteProbe {
     use std::os::windows::ffi::OsStrExt;
 
-    // This launch boundary protects the current agent token from executing a
-    // browser tree that it can modify. Other principals that can replace an
-    // installed browser are outside this runtime authorization boundary.
+    // This launch boundary keeps the token that runs the browser (the
+    // Driver's own token, or the standard-user token an elevated Driver
+    // derives) from executing a browser tree that it can modify. The probe
+    // uses the calling thread's effective token, so a caller impersonating
+    // the standard-user token probes for that token. Principals more
+    // privileged than the launch token that can replace an installed browser
+    // are outside this runtime authorization boundary.
     let wide = path
         .as_os_str()
         .encode_wide()
@@ -309,6 +319,23 @@ fn windows_installation_write_access(
     )
 }
 
+/// Probe the installation for the token that will run the browser. For a
+/// standard-user launch every probe runs while impersonating that token; if
+/// impersonation fails the candidate is `Untrusted` (fail closed).
+fn launch_token_installation_write_access(
+    context: &BrowserLaunchContext,
+    executable: &std::path::Path,
+    trusted_root: &std::path::Path,
+) -> InstallationWriteAccess {
+    match context {
+        BrowserLaunchContext::Driver => windows_installation_write_access(executable, trusted_root),
+        BrowserLaunchContext::StandardUser(token) => with_impersonation(token, || {
+            windows_installation_write_access(executable, trusted_root)
+        })
+        .unwrap_or(InstallationWriteAccess::Untrusted),
+    }
+}
+
 #[cfg(test)]
 fn trusted_windows_installation(
     executable: &std::path::Path,
@@ -335,7 +362,7 @@ fn trusted_windows_installation_with_probe(
 
 /// Walk the executable and every ancestor up to `trusted_root`, requiring
 /// each probe to deny write access. The first non-denied probe decides the
-/// rejection kind: a granted right is `WritableByCurrentToken`, a failed probe
+/// rejection kind: a granted right is `WritableByLaunchToken`, a failed probe
 /// is `Untrusted` (fail closed).
 fn windows_installation_write_access_with_probe(
     executable: &std::path::Path,
@@ -344,7 +371,7 @@ fn windows_installation_write_access_with_probe(
 ) -> InstallationWriteAccess {
     let rejection = |result: WriteProbe| match result {
         WriteProbe::Denied => None,
-        WriteProbe::Granted(_) => Some(InstallationWriteAccess::WritableByCurrentToken),
+        WriteProbe::Granted(_) => Some(InstallationWriteAccess::WritableByLaunchToken),
         WriteProbe::Failed(_) => Some(InstallationWriteAccess::Untrusted),
     };
     if !executable.starts_with(trusted_root) {
@@ -1301,6 +1328,9 @@ where
 #[async_trait]
 impl BrowserPlatform for WindowsBrowserPlatform {
     fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
+        // An elevated Driver runs the browser with a derived standard-user
+        // token, so installation protection is proven for that token.
+        let context = browser_launch_context()?;
         let mut facts = Vec::new();
         let mut executables = Vec::new();
         for (candidate, trusted_root, expected_cn, expected_org) in isolated_browser_candidates()? {
@@ -1310,7 +1340,8 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 executables.push(None);
                 continue;
             };
-            let write_access = windows_installation_write_access(&candidate, &trusted_root);
+            let write_access =
+                launch_token_installation_write_access(&context, &candidate, &trusted_root);
             // The signature of a writable candidate is read only to explain
             // the refusal; such a candidate is never launched.
             let vendor_signed = write_access != InstallationWriteAccess::Untrusted
@@ -1332,7 +1363,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 break;
             }
         }
-        match decide_isolated_browser(&facts) {
+        match decide_isolated_browser(&facts, context.kind()) {
             IsolatedBrowserDecision::Launch(index) => executables[index].take().ok_or_else(|| {
                 refusal(
                     BrowserRefusalCode::BrowserRouteUnavailable,
@@ -1343,6 +1374,42 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 message,
             )),
+        }
+    }
+
+    fn spawn_isolated_browser(
+        &self,
+        mut command: std::process::Command,
+        profile: &std::path::Path,
+    ) -> Result<Box<dyn IsolatedBrowserProcess>, BrowserRefusal> {
+        match browser_launch_context()? {
+            BrowserLaunchContext::Driver => command
+                .spawn()
+                .map(|child| Box::new(child) as Box<dyn IsolatedBrowserProcess>)
+                .map_err(|error| {
+                    refusal(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        format!("could not launch an isolated browser process: {error}"),
+                    )
+                }),
+            BrowserLaunchContext::StandardUser(token) => {
+                require_profile_writable(&token, profile)?;
+                tracing::info!(
+                    "launching the isolated browser with a standard-user token derived from the \
+                     elevated Driver token"
+                );
+                spawn_with_token(token, &command)
+                    .map(|child| Box::new(child) as Box<dyn IsolatedBrowserProcess>)
+                    .map_err(|error| {
+                        refusal(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            format!(
+                                "could not launch the isolated browser with the standard-user \
+                                 token: {error}"
+                            ),
+                        )
+                    })
+            }
         }
     }
 
@@ -2117,7 +2184,7 @@ mod tests {
                     WriteProbe::Denied
                 }
             }),
-            InstallationWriteAccess::WritableByCurrentToken
+            InstallationWriteAccess::WritableByLaunchToken
         );
         assert_eq!(
             windows_installation_write_access_with_probe(&executable, root, |_, directory| {
@@ -2180,6 +2247,31 @@ mod tests {
                 "Windows CI image must provide signed Chrome or Edge; diagnostics: {diagnostics:?}"
             );
         };
+
+        // An elevated host (GitHub-hosted Windows runs tests elevated) must
+        // prove the vendor tree protected from the derived standard-user
+        // token and select it end to end, instead of refusing.
+        let context = browser_launch_context().expect("browser launch context");
+        if matches!(context, BrowserLaunchContext::StandardUser(_)) {
+            assert_eq!(
+                launch_token_installation_write_access(&context, &installed.0, &installed.1),
+                InstallationWriteAccess::Protected,
+                "the standard-user launch token must not be able to modify {}",
+                installed.0.display()
+            );
+            let selected = WindowsBrowserPlatform::default()
+                .isolated_browser_executable()
+                .expect(
+                    "an elevated Driver selects a protected browser for its standard-user token",
+                );
+            let selected_path = selected.strip_prefix(r"\\?\").unwrap_or(&selected);
+            assert!(
+                candidates.iter().any(|(candidate, _, _, _)| selected_path
+                    .eq_ignore_ascii_case(&candidate.to_string_lossy())),
+                "selected executable must be a trusted candidate: {selected}"
+            );
+            return;
+        }
 
         if !trusted_windows_installation(&installed.0, &installed.1) {
             let mut diagnostics = vec![(

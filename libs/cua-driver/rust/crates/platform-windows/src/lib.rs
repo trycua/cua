@@ -57,6 +57,14 @@ pub mod browser_platform;
 #[cfg(any(target_os = "windows", test))]
 mod browser_isolated_selection;
 
+// Pure launch-token decision and command-line quoting for isolated browsers;
+// cfg-independent so its unit tests run on any host.
+#[cfg(any(target_os = "windows", test))]
+mod browser_launch_token;
+
+#[cfg(target_os = "windows")]
+mod browser_standard_user;
+
 #[cfg(target_os = "windows")]
 mod browser_consent_ui;
 #[cfg(target_os = "windows")]

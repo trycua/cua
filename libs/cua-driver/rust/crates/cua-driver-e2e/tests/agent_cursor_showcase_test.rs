@@ -118,6 +118,18 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
         std::fs::write(&screenshot_path, cursor_png).expect("write cursor oracle screenshot");
         evidence.screenshot = Some(screenshot_path.display().to_string());
 
+        // The cursor and pill keep resting there, yet the capture the Driver
+        // hands the agent must not contain them (D-WL5).
+        assert_driver_capture_excludes_overlay(
+            &mut driver,
+            &baseline,
+            &cursor_frame,
+            center_x - 180.0,
+            center_y - 80.0,
+            width,
+            height,
+        );
+
         call_ok(
             &mut driver,
             "click",
@@ -349,7 +361,121 @@ fn changed_pixels_in_rect(
         .count()
 }
 
+/// Check the Driver's own desktop capture against the external cursor frame:
+/// every pixel the overlay changed on screen must show the desktop there.
+///
+/// Native Wayland compositors draw the cursor into the captured output; there
+/// the Driver must say so instead of claiming a clean capture.
+fn assert_driver_capture_excludes_overlay(
+    driver: &mut McpDriver,
+    baseline: &RgbaImage,
+    cursor_frame: &RgbaImage,
+    logical_x: f64,
+    logical_y: f64,
+    logical_width: f64,
+    logical_height: f64,
+) {
+    let (driver_png, _, _, report) = capture_desktop_png_with_report(driver);
+    let status = report["status"].as_str().unwrap_or("missing");
+    if wayland_session() {
+        assert_eq!(
+            status, "not_excluded",
+            "a Wayland desktop capture must report that it could not exclude the overlay: \
+             {report}"
+        );
+        return;
+    }
+    assert_eq!(
+        status, "excluded",
+        "desktop capture did not exclude the agent cursor overlay: {report}"
+    );
+    let driver_frame = image::load_from_memory(&driver_png)
+        .expect("decode driver-owned desktop screenshot")
+        .to_rgba8();
+    assert_eq!(
+        driver_frame.dimensions(),
+        cursor_frame.dimensions(),
+        "driver capture and cursor oracle are not in the same pixel frame"
+    );
+    let regions = cursor_oracle_regions(
+        baseline.width(),
+        baseline.height(),
+        logical_x,
+        logical_y,
+        logical_width,
+        logical_height,
+    );
+    let mut overlay_pixels = 0usize;
+    let mut desktop_pixels = 0usize;
+    for rect in [regions.pointer, regions.badge_left, regions.badge_right] {
+        let (overlay, desktop) =
+            overlay_pixels_resolved_to_desktop(baseline, cursor_frame, &driver_frame, rect);
+        overlay_pixels += overlay;
+        desktop_pixels += desktop;
+    }
+    assert!(
+        overlay_pixels >= 36,
+        "the cursor oracle no longer shows the overlay ({overlay_pixels} pixels)"
+    );
+    assert!(
+        desktop_pixels * 10 >= overlay_pixels * 9,
+        "driver desktop capture still shows the agent cursor overlay: only {desktop_pixels} \
+         of {overlay_pixels} overlay pixels show the desktop; report={report}"
+    );
+}
+
+/// Pixels in `rect` the overlay changed (baseline vs cursor frame), and how
+/// many of those the driver capture shows closer to the desktop than to the
+/// overlay. "Closer" keeps the check independent of small color differences
+/// between capture pipelines.
+fn overlay_pixels_resolved_to_desktop(
+    baseline: &RgbaImage,
+    cursor_frame: &RgbaImage,
+    driver_frame: &RgbaImage,
+    rect: PixelRect,
+) -> (usize, usize) {
+    let distance = |a: &image::Rgba<u8>, b: &image::Rgba<u8>| -> u16 {
+        a.0.iter()
+            .zip(b.0.iter())
+            .take(3)
+            .map(|(a, b)| u16::from(a.abs_diff(*b)))
+            .sum()
+    };
+    let x0 = rect.x0.clamp(0, i64::from(baseline.width())) as u32;
+    let x1 = rect.x1.clamp(0, i64::from(baseline.width())) as u32;
+    let y0 = rect.y0.clamp(0, i64::from(baseline.height())) as u32;
+    let y1 = rect.y1.clamp(0, i64::from(baseline.height())) as u32;
+    let mut overlay = 0;
+    let mut desktop = 0;
+    for pixel_y in y0..y1 {
+        for pixel_x in x0..x1 {
+            let before = baseline.get_pixel(pixel_x, pixel_y);
+            let on_screen = cursor_frame.get_pixel(pixel_x, pixel_y);
+            if distance(before, on_screen) < 80 {
+                continue;
+            }
+            overlay += 1;
+            let captured = driver_frame.get_pixel(pixel_x, pixel_y);
+            if distance(captured, before) < distance(captured, on_screen) {
+                desktop += 1;
+            }
+        }
+    }
+    (overlay, desktop)
+}
+
+fn wayland_session() -> bool {
+    cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
 fn capture_desktop_png(driver: &mut McpDriver) -> (Vec<u8>, f64, f64) {
+    let (png, width, height, _) = capture_desktop_png_with_report(driver);
+    (png, width, height)
+}
+
+fn capture_desktop_png_with_report(
+    driver: &mut McpDriver,
+) -> (Vec<u8>, f64, f64, serde_json::Value) {
     let response = driver.call("get_desktop_state", serde_json::json!({}));
     assert!(
         !response.is_error(),
@@ -378,7 +504,8 @@ fn capture_desktop_png(driver: &mut McpDriver) -> (Vec<u8>, f64, f64) {
         .as_f64()
         .or_else(|| response.structured()["screenshot_height"].as_f64())
         .expect("desktop capture returned no logical height");
-    (png, width, height)
+    let report = response.structured()["agent_overlay_capture"].clone();
+    (png, width, height, report)
 }
 
 fn capture_cursor_oracle_png(driver: &mut McpDriver, width: f64, height: f64) -> Vec<u8> {
@@ -426,10 +553,68 @@ fn capture_cursor_oracle_png(driver: &mut McpDriver, width: f64, height: f64) ->
         output.stdout
     }
 
-    #[cfg(not(target_os = "linux"))]
+    // The Driver's own desktop capture leaves the overlay out, so the oracle
+    // for what a user sees comes from another capture path: a BitBlt from this
+    // (different) process, which the overlay's temporary capture exclusion
+    // does not apply to.
+    #[cfg(target_os = "windows")]
+    {
+        let _ = (driver, width, height);
+        platform_windows::capture::screenshot_display_bytes()
+            .expect("external Windows display capture failed")
+    }
+
+    // Only the Driver holds Screen Recording permission on the macOS lanes.
+    // Its per-turn recording capture deliberately keeps the overlay, so the
+    // move's post-action screenshot is what a user saw.
+    #[cfg(target_os = "macos")]
     {
         let _ = (width, height);
-        capture_desktop_png(driver).0
+        recorded_turn_screenshot(driver, "move_cursor")
+    }
+}
+
+/// The newest recorded turn's post-action screenshot for `tool`.
+#[cfg(target_os = "macos")]
+fn recorded_turn_screenshot(driver: &McpDriver, tool: &str) -> Vec<u8> {
+    let recording_dir = driver
+        .recording_dir()
+        .expect("showcase recording directory")
+        .to_path_buf();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let mut turns: Vec<_> = std::fs::read_dir(&recording_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("turn-"))
+            })
+            .collect();
+        turns.sort();
+        for turn in turns.iter().rev() {
+            let Ok(action) = std::fs::read(turn.join("action.json")) else {
+                continue;
+            };
+            let Ok(action) = serde_json::from_slice::<serde_json::Value>(&action) else {
+                continue;
+            };
+            if action["tool"].as_str() != Some(tool) {
+                continue;
+            }
+            if let Ok(png) = std::fs::read(turn.join("after.png")) {
+                return png;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no recorded {tool} turn with an after.png under {}",
+            recording_dir.display()
+        );
+        settle(100);
     }
 }
 

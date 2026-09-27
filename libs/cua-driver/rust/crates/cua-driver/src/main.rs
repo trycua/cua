@@ -18,6 +18,7 @@
 //! platform tool registry.
 
 mod autostart;
+mod broken_pipe;
 mod bundle;
 mod check_update_tool;
 mod cli;
@@ -131,7 +132,7 @@ fn maybe_wrap_finite_command() {
     let Ok(status) = status else {
         return;
     };
-    let exit_code = status.code().unwrap_or(1);
+    let exit_code = broken_pipe::shell_exit_code(status);
     telemetry::spawn_cli_completion_worker(
         command_name,
         tool_name.as_deref(),
@@ -509,6 +510,7 @@ fn main() {
     if telemetry::run_update_event_worker_if_requested() {
         return;
     }
+    broken_pipe::install_for_finite_command_from_argv();
     maybe_wrap_finite_command();
 
     // ── CLI subcommand dispatch ──────────────────────────────────────────────
@@ -918,6 +920,7 @@ fn main() -> anyhow::Result<()> {
     if telemetry::run_update_event_worker_if_requested() {
         return Ok(());
     }
+    broken_pipe::install_for_finite_command_from_argv();
     maybe_wrap_finite_command();
 
     // ── CLI subcommand dispatch ──────────────────────────────────────────────

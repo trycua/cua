@@ -135,11 +135,14 @@ order: Google Chrome, then Microsoft Edge. On Linux it accepts exact
 root-owned, non-group/world-writable package payloads in this order: Google
 Chrome, Chromium, then Microsoft Edge. User application directories, `PATH`
 entries, redirected paths, and unsigned or mismatched products fail closed.
-On Windows, the installation must also be unmodifiable by the Driver's token.
-An elevated or built-in Administrator token can write `Program Files`, so the
-refusal then says the installed Chrome/Edge is writable by the current
-elevated or administrator token. Run Driver from a non-administrator session
-in that case; the browser is not missing or unsigned.
+On Windows, the installation must also be unmodifiable by the token that runs
+the browser. A non-elevated Driver runs the browser with its own token. An
+elevated Driver, including the built-in Administrator and administrators with
+UAC off, runs it with a derived standard-user token (administrator rights
+removed, Medium integrity) and proves the installation protected from that
+token. If that token cannot be derived and verified, or can still modify the
+installation, the refusal says so; the browser is not missing or unsigned, and
+Driver never falls back to an elevated browser.
 Supply a Chromium-family browser pid when the isolated launch must use that
 process's exact executable, including Chromium on macOS or Windows. The pid
 remains required for existing-profile attachment.

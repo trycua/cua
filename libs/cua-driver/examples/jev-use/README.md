@@ -16,8 +16,14 @@ The TypeSafe-specific code lives in `python/jev_adapter.py` and
 `typescript/jev_adapter.ts`, outside Driver. Both adapters send Jev the bounded
 candidate IDs and descriptions plus a compact observation. When visual regions
 are present, that observation includes their typed bounds and the exact
-`capture_id`; it never includes screenshot bytes or extension internals. A live
-answer must be one of the supplied IDs before the runner resolves it to the
+`capture_id`; it never includes screenshot bytes or extension internals. The
+observation also carries a `form` summary that the runner derives from the page
+structure. The summary reports whether the verification field is `empty`, holds
+the required token (`contains_required_token`), or holds `contains_other_value`,
+and whether a Submit button ref is `available`. The token itself is replaced
+with `[verification token]` in the page, outline, and visual text. `history` lists
+one `{step, selected_id, outcome}` item per earlier decision. Timings and model
+probabilities stay in the JSONL log only. A live answer must be one of the supplied IDs before the runner resolves it to the
 original immutable action.
 
 You can run the complete deterministic proof without credentials or network
@@ -86,10 +92,11 @@ export npm_config_cache="$PWD/.venv/npm-cache"
 npm ci
 ```
 
-On Windows, use a non-administrator desktop session and `npm.cmd ci` in
-PowerShell. An elevated session, including the built-in Administrator account
-that some cloud images create as the first user, makes Driver refuse the
-installed browser as writable by the current token. The managed verifier starts TypeScript through `node --import tsx`,
+On Windows, use your logged-in desktop session and `npm.cmd ci` in
+PowerShell. An elevated Driver, such as the installer's autostart on an
+administrator account or the built-in Administrator account that some cloud
+images create as the first user, launches the isolated browser with a derived
+standard-user token. The managed verifier starts TypeScript through `node --import tsx`,
 not an npm shell shim. On Linux, use a supported system browser and a desktop
 session accessible to the same user as Driver; native Wayland has separate
 compositor-specific requirements.

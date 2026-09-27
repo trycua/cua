@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
 
-from core import Candidate, VisualObservation, choose_mock
+from core import Candidate, VisualObservation, choose_mock, form_state, redact_token
 
 
 class TypeSafeClientLike(Protocol):
@@ -95,27 +95,46 @@ def visual_decision_state(visual: VisualObservation | None) -> dict[str, Any] | 
     }
 
 
+GOAL = "Enter the required verification token into the verification field, then submit the form."
+
+
+def decision_state(
+    snapshot: Mapping[str, Any],
+    visual: VisualObservation | None,
+    history: list[dict[str, Any]],
+    token: str,
+) -> dict[str, Any]:
+    """Build the compact, deterministic, token-redacted state sent to Jev.
+
+    ``form`` states the field and Submit status the runner verified from the page
+    structure, so the model does not have to infer it from the outline. The token
+    itself is replaced everywhere, including the outline and visual text.
+    """
+    return {
+        "goal": GOAL,
+        "observation": {
+            "page": redact_token(snapshot.get("page"), token),
+            "form": form_state(snapshot, token),
+            "outline": redact_token(snapshot.get("outline"), token),
+            "visual": redact_token(visual_decision_state(visual), token),
+        },
+        "history": [dict(item) for item in history],
+    }
+
+
 def choose_with_typesafe(
     client: TypeSafeClientLike,
     candidates: list[Candidate],
     snapshot: dict[str, Any],
     visual: VisualObservation | None,
     history: list[dict[str, Any]],
+    token: str,
 ) -> tuple[str, float, dict[str, float]]:
     from typesafe_sdk import Choice
 
     criteria = _candidate_criteria(candidates)
-    state = {
-        "goal": "Enter the verification token, then submit the form.",
-        "observation": {
-            "page": snapshot.get("page"),
-            "outline": snapshot.get("outline"),
-            "visual": visual_decision_state(visual),
-        },
-        "history": history,
-    }
     response = client.system_one(
-        state=state,
+        state=decision_state(snapshot, visual, history, token),
         questions={
             "driver_action": Choice(
                 instructions="Which complete executable action should Cua Driver run next?",
@@ -134,11 +153,12 @@ def choose_live(
     snapshot: dict[str, Any],
     visual: VisualObservation | None,
     history: list[dict[str, Any]],
+    token: str,
 ) -> tuple[str, float, dict[str, float]]:
     from typesafe_sdk import TypeSafeClient
 
     with TypeSafeClient() as client:
-        return choose_with_typesafe(client, candidates, snapshot, visual, history)
+        return choose_with_typesafe(client, candidates, snapshot, visual, history, token)
 
 
 def choose_mock_adapter(
@@ -146,5 +166,6 @@ def choose_mock_adapter(
     _snapshot: dict[str, Any],
     _visual: VisualObservation | None,
     _history: list[dict[str, Any]],
+    _token: str,
 ) -> tuple[str | None, float, dict[str, float]]:
     return choose_mock(candidates)

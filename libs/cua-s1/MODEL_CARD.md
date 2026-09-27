@@ -20,10 +20,11 @@ form-oriented user-interface tasks.
 
 **Status:** research profile. The public Hugging Face repository
 [`cua-ai/cua-s1-forms`](https://huggingface.co/cua-ai/cua-s1-forms)
-(revision `f54adbf447f4ca6ec259f529ee3f2e3e09f8cc71`, MIT) publishes a
-related `tinyx` form checkpoint with 706,048 parameters. Its safetensors and
-JSON pair loads with `cua_s1.model.load_checkpoint`; its pickle `.pt` copy is
-refused by design (#3977). The results on that repository's card are its
+(revision `4a7a9f42a3d42e6dfbd111c0c843e37ac50f1332`, MIT) publishes a
+related `tinyx` form checkpoint with 706,048 parameters as a safetensors and
+JSON pair that loads with `cua_s1.model.load_checkpoint`. Older revisions
+also ship a pickle `.pt` copy, which `cua_s1` refuses by design (#3977); it
+was removed at the pinned revision. The results on that repository's card are its
 own and are not reproduced in this component. No training dataset or
 checkpoint artifact manifest is distributed here.
 
@@ -72,8 +73,9 @@ Evaluation below).
 **Status:** research profile. Inference-only Python implementation
 (`cua_s1.four_b`). Adapter weights at
 [`cua-ai/cua-s1-4b-0.1`](https://huggingface.co/cua-ai/cua-s1-4b-0.1),
-pinned to revision `88d8b8a90c2da4470d005cc23ec8665a6442ebe1`. At that
-revision the repository declares no license and has no model card.
+pinned to revision `3ebffb9868f31a1d54140948cb2434d35f35b281`, which has a
+model card and declares Apache-2.0 for the adapters only; `Qwen/Qwen3.5-4B`
+keeps its own license.
 
 **Decoding contract:** a chat-template prompt asks the model to answer with
 a single letter identifying the chosen option; each option letter is a
@@ -108,8 +110,9 @@ decisions, not specific to form-filling.
 
 **Status:** research profile. Source code (`cua_s1.nano`). Weights at
 [`cua-ai/cua-s1-nano-0.1`](https://huggingface.co/cua-ai/cua-s1-nano-0.1),
-pinned to revision `1f93fd0fdcbe33740334948f967dff9f6c8e9f34`. At that
-revision the repository declares no license and has no model card.
+pinned to revision `abbd98492307dc20373f79f7141725412df63c42`, which has a
+model card and declares Apache-2.0. The weights are trained from scratch; the
+frozen vision backbone is not redistributed and keeps its own license.
 
 **Model design:** a from-scratch, single-pass option-attention classifier
 with approximately 855,000 trainable parameters. Scores every candidate
@@ -219,8 +222,9 @@ section.
 **Pinned inputs.** Every result below used `Qwen/Qwen3.5-4B` at
 `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a`, `cua-s1-4b-0.2` at
 `16818868b0cc7813808aae4e87b417657046ab79`, and `cua-s1-4b-0.1` at
-`88d8b8a90c2da4470d005cc23ec8665a6442ebe1`, loaded by `cua_s1.four_b` through
-the jev-use closed-candidate chooser with the `four-b` lock (torch 2.14.0,
+`88d8b8a90c2da4470d005cc23ec8665a6442ebe1` (adapter weights byte-identical to
+the currently pinned `3ebffb9868f31a1d54140948cb2434d35f35b281`), loaded by
+`cua_s1.four_b` through the jev-use closed-candidate chooser with the `four-b` lock (torch 2.14.0,
 Transformers 5.17.0, PEFT 0.21.0).
 
 **Local fixture runs (2026-09-25).** One Apple M1 Ultra host with 128 GB of
@@ -334,10 +338,10 @@ See [`SECURITY.md`](SECURITY.md) for threat-model and reporting guidance.
 
 This component does not grant rights to checkpoint weights, external
 training data, or unlisted third-party materials. At the pinned revisions,
-the Hugging Face repositories declare these licenses: `cua-s1-4b-0.2`
-Apache-2.0 (adapter only), `cua-s1-forms` MIT, and `Qwen/Qwen3.5-4B`
-Apache-2.0 under Qwen's own terms. `cua-s1-4b-0.1` and `cua-s1-nano-0.1`
-declare no license. A checkpoint release must
+the Hugging Face repositories declare these licenses: `cua-s1-4b-0.2` and
+`cua-s1-4b-0.1` Apache-2.0 (adapters only), `cua-s1-nano-0.1` Apache-2.0,
+`cua-s1-forms` MIT, and `Qwen/Qwen3.5-4B` Apache-2.0 under Qwen's own terms. A
+checkpoint release must
 document its exact artifact license, data provenance, and applicable
 third-party notices before distribution or use decisions are made. The source
 code is MIT-licensed, but an official checkpoint may use separate terms that

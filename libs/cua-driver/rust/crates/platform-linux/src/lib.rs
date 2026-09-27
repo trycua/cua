@@ -14,11 +14,15 @@ use cua_driver_core::tool::ToolRegistry;
 
 pub mod health_report;
 pub mod overlay;
+pub mod overlay_capture;
 pub mod pip;
 pub mod tools;
 
 #[cfg(target_os = "linux")]
 pub mod x11;
+
+#[cfg(any(target_os = "linux", test))]
+mod x11_client_pid;
 
 #[cfg(target_os = "linux")]
 pub mod input;

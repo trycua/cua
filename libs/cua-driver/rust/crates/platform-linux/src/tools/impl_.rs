@@ -12045,7 +12045,20 @@ impl Tool for GetDesktopStateTool {
             // Capture the full display at native size first. When the
             // compositor consumes logical input coordinates, normalize the
             // image below so screenshot pixels still land exactly.
-            let native_png = crate::capture::screenshot_display_bytes()?;
+            //
+            // The agent reads this image, so the Driver's own cursor and
+            // session pill are hidden around the grab (or the limitation is
+            // reported) instead of being baked over the controls it reads.
+            let (native_png, overlay_capture) =
+                cursor_overlay::capture_exclusion::capture_excluding_overlays(
+                    &crate::overlay_capture::OverlayExcluder,
+                    |hidden| {
+                        let png = crate::capture::screenshot_display_bytes()?;
+                        Ok::<_, anyhow::Error>(crate::overlay_capture::verify_hidden_capture(
+                            png, hidden,
+                        ))
+                    },
+                )?;
             let (native_w, native_h) = crate::capture::png_dimensions_pub(&native_png)?;
             // True screen size. On a pure-Wayland session (native backend
             // opted in, no X11 DISPLAY) the capture above came from the
@@ -12109,6 +12122,7 @@ impl Tool for GetDesktopStateTool {
                 written,
                 windows,
                 capture_id,
+                overlay_capture,
             ))
         })
         .await;
@@ -12124,6 +12138,7 @@ impl Tool for GetDesktopStateTool {
                 written,
                 windows,
                 capture_id,
+                overlay_capture,
             ))) => {
                 let frame_scale = if shot_w > 0 {
                     f64::from(screen_w) / f64::from(shot_w)
@@ -12143,6 +12158,7 @@ impl Tool for GetDesktopStateTool {
                     "screenshot_mime_type": "image/png",
                     "windows": windows.iter().map(window_record_json).collect::<Vec<_>>(),
                     "capture_id": capture_id,
+                    "agent_overlay_capture": overlay_capture,
                 });
                 if (frame_scale - 1.0).abs() > 0.001 {
                     // Capped: the uncapped capture is the action frame.
@@ -12153,7 +12169,7 @@ impl Tool for GetDesktopStateTool {
                     content.push(cua_driver_core::protocol::Content::image_png(b64));
                 }
                 let window_lines = desktop_window_lines(&windows, frame_scale);
-                let frame_note = if (frame_scale - 1.0).abs() > 0.001 {
+                let mut frame_note = if (frame_scale - 1.0).abs() > 0.001 {
                     format!(
                         "; x/y for scope:\"desktop\" actions are pixels of THIS screenshot \
                          (mapped ×{frame_scale:.2} back to the screen automatically)"
@@ -12161,6 +12177,10 @@ impl Tool for GetDesktopStateTool {
                 } else {
                     String::new()
                 };
+                cursor_overlay::capture_exclusion::append_summary_note(
+                    &mut frame_note,
+                    &overlay_capture,
+                );
                 if let Some(path) = written {
                     structured["screenshot_file_path"] = json!(path);
                     content.push(cua_driver_core::protocol::Content::text(format!(

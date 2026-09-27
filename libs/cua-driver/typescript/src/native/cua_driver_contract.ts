@@ -3378,7 +3378,9 @@ const FfiConverterTypeParseVisualRegionsOptions = (() => {
 })();
 
 /**
- * Transport-free request. Runtime use requires the future capture registry.
+ * Parse one immutable screenshot capture. Pass the `capture_id` returned by
+ * `get_window_state` or `get_desktop_state`; the Driver capture registry
+ * resolves it to the exact pixels and action-coordinate transform.
  */
 export type ParseVisualRegionsInput = {
     captureId: string,
@@ -3569,7 +3571,7 @@ const FfiConverterTypeVisualCaptureSource = (() => {
 })();
 
 /**
- * Screenshot identity and geometry retained by the future capture registry.
+ * Screenshot identity and geometry retained by the Driver capture registry.
  */
 export type VisualScreenshotReference = {
     /**

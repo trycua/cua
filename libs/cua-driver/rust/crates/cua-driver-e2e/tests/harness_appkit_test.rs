@@ -397,7 +397,7 @@ fn harness_appkit_foreground_single_click_has_one_ordered_native_pair() {
         "appkit",
         "single_click_native_pair",
         Targeting::Px,
-        DriverRoute::MacosCgEventPid,
+        DriverRoute::MacosCgEventHid,
     );
     execute_case(case, |evidence| {
         let mut driver =

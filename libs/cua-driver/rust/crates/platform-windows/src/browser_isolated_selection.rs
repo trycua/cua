@@ -1,27 +1,32 @@
 //! Pure decision logic for choosing the Windows isolated-launch browser.
 //!
 //! The Windows adapter gathers facts about each trusted Chrome and Edge
-//! installation (present, write access for the current token, vendor
-//! signature) and this module turns them into either a launch choice or a
-//! refusal message. It has no Win32 dependencies so its unit tests run on any
-//! host.
+//! installation (present, write access for the token that will run the
+//! browser, vendor signature) and this module turns them into either a launch
+//! choice or a refusal message. It has no Win32 dependencies so its unit
+//! tests run on any host.
 //!
-//! The security rule is unchanged by the diagnostic: a candidate launches only
-//! when it is installed, protected from the current token, and vendor-signed.
-//! The distinct message exists because an elevated or built-in Administrator
-//! token can write `Program Files`, so correctly signed browsers are refused
-//! for that token. Reporting that case as "no vendor-signed executable"
-//! wrongly implies the browser is missing or unsigned.
+//! The security rule: a candidate launches only when it is installed,
+//! vendor-signed, and protected from the token that runs the browser. For a
+//! non-elevated Driver that is the Driver's own token. An elevated Driver
+//! runs the browser with a derived standard-user token instead (see
+//! `browser_launch_token`), so protection is proven for that token. A signed
+//! candidate that the launch token can still write gets a distinct message,
+//! because "no vendor-signed executable" would wrongly imply the browser is
+//! missing or unsigned.
 
-/// Whether the current token can modify a candidate's installation tree.
+use crate::browser_launch_token::BrowserLaunchToken;
+
+/// Whether the browser launch token can modify a candidate's installation
+/// tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InstallationWriteAccess {
     /// The executable and every ancestor up to the trusted root deny write
-    /// access to the current token.
+    /// access to the launch token.
     Protected,
-    /// The current token was granted a write-class right on the executable or
-    /// an ancestor (typical for elevated and built-in Administrator tokens).
-    WritableByCurrentToken,
+    /// The launch token was granted a write-class right on the executable or
+    /// an ancestor.
+    WritableByLaunchToken,
     /// The path is outside the trusted root or a write probe failed closed.
     Untrusted,
 }
@@ -36,7 +41,7 @@ pub(crate) struct IsolatedCandidateFacts {
     pub write_access: InstallationWriteAccess,
     /// The executable carries the expected vendor Authenticode identity. The
     /// adapter evaluates this only for installed candidates whose write access
-    /// is `Protected` or `WritableByCurrentToken`; otherwise it is `false`.
+    /// is `Protected` or `WritableByLaunchToken`; otherwise it is `false`.
     pub vendor_signed: bool,
 }
 
@@ -72,6 +77,7 @@ pub(crate) const NO_PROTECTED_BROWSER_MESSAGE: &str =
 /// Choose the first launchable candidate, or explain why none qualifies.
 pub(crate) fn decide_isolated_browser(
     candidates: &[IsolatedCandidateFacts],
+    launch_token: BrowserLaunchToken,
 ) -> IsolatedBrowserDecision {
     if let Some(index) = candidates
         .iter()
@@ -83,7 +89,7 @@ pub(crate) fn decide_isolated_browser(
     for candidate in candidates {
         if candidate.installed
             && candidate.vendor_signed
-            && candidate.write_access == InstallationWriteAccess::WritableByCurrentToken
+            && candidate.write_access == InstallationWriteAccess::WritableByLaunchToken
             && !writable_products.contains(&candidate.product)
         {
             writable_products.push(candidate.product);
@@ -92,13 +98,20 @@ pub(crate) fn decide_isolated_browser(
     if writable_products.is_empty() {
         return IsolatedBrowserDecision::Refuse(NO_PROTECTED_BROWSER_MESSAGE.to_owned());
     }
-    IsolatedBrowserDecision::Refuse(format!(
-        "installed vendor-signed {} is writable by the current elevated or administrator token, \
-         so Cua Driver refuses to launch it for an isolated browser; run Cua Driver from a \
-         non-administrator, non-elevated session (the built-in Administrator account is always \
-         elevated)",
-        writable_products.join("/"),
-    ))
+    let products = writable_products.join("/");
+    IsolatedBrowserDecision::Refuse(match launch_token {
+        BrowserLaunchToken::Driver => format!(
+            "installed vendor-signed {products} is writable by the current non-elevated token, \
+             so Cua Driver refuses to launch it for an isolated browser; restore the browser \
+             installation's default permissions so that standard users cannot modify it"
+        ),
+        BrowserLaunchToken::StandardUser => format!(
+            "installed vendor-signed {products} is writable even by the standard-user token that \
+             the elevated Cua Driver uses for isolated browsers, so Cua Driver refuses to launch \
+             it; restore the browser installation's default permissions so that standard users \
+             cannot modify it"
+        ),
+    })
 }
 
 #[cfg(test)]
@@ -118,6 +131,10 @@ mod tests {
         }
     }
 
+    fn decide(candidates: &[IsolatedCandidateFacts]) -> IsolatedBrowserDecision {
+        decide_isolated_browser(candidates, BrowserLaunchToken::Driver)
+    }
+
     fn refusal_message(decision: IsolatedBrowserDecision) -> String {
         match decision {
             IsolatedBrowserDecision::Refuse(message) => message,
@@ -132,13 +149,10 @@ mod tests {
             IsolatedCandidateFacts::missing("Edge"),
         ];
         assert_eq!(
-            refusal_message(decide_isolated_browser(&facts)),
+            refusal_message(decide(&facts)),
             NO_PROTECTED_BROWSER_MESSAGE
         );
-        assert_eq!(
-            refusal_message(decide_isolated_browser(&[])),
-            NO_PROTECTED_BROWSER_MESSAGE
-        );
+        assert_eq!(refusal_message(decide(&[])), NO_PROTECTED_BROWSER_MESSAGE);
     }
 
     #[test]
@@ -147,12 +161,12 @@ mod tests {
             candidate("Chrome", InstallationWriteAccess::Protected, false),
             candidate(
                 "Edge",
-                InstallationWriteAccess::WritableByCurrentToken,
+                InstallationWriteAccess::WritableByLaunchToken,
                 false,
             ),
         ];
         assert_eq!(
-            refusal_message(decide_isolated_browser(&facts)),
+            refusal_message(decide(&facts)),
             NO_PROTECTED_BROWSER_MESSAGE
         );
     }
@@ -165,7 +179,7 @@ mod tests {
             false,
         )];
         assert_eq!(
-            refusal_message(decide_isolated_browser(&facts)),
+            refusal_message(decide(&facts)),
             NO_PROTECTED_BROWSER_MESSAGE
         );
     }
@@ -175,39 +189,49 @@ mod tests {
         let facts = [
             candidate(
                 "Chrome",
-                InstallationWriteAccess::WritableByCurrentToken,
+                InstallationWriteAccess::WritableByLaunchToken,
                 true,
             ),
             IsolatedCandidateFacts::missing("Chrome"),
-            candidate(
-                "Edge",
-                InstallationWriteAccess::WritableByCurrentToken,
-                true,
-            ),
-            candidate(
-                "Edge",
-                InstallationWriteAccess::WritableByCurrentToken,
-                true,
-            ),
+            candidate("Edge", InstallationWriteAccess::WritableByLaunchToken, true),
+            candidate("Edge", InstallationWriteAccess::WritableByLaunchToken, true),
         ];
-        let message = refusal_message(decide_isolated_browser(&facts));
+        let message = refusal_message(decide(&facts));
         assert_ne!(message, NO_PROTECTED_BROWSER_MESSAGE);
         assert!(message.starts_with("installed vendor-signed Chrome/Edge is writable"));
-        assert!(message.contains("elevated or administrator token"));
-        assert!(message.contains("non-administrator"));
+        assert!(message.contains("current non-elevated token"));
+        assert!(message.contains("default permissions"));
+
+        let message = refusal_message(decide_isolated_browser(
+            &facts,
+            BrowserLaunchToken::StandardUser,
+        ));
+        assert!(message.starts_with("installed vendor-signed Chrome/Edge is writable"));
+        assert!(message.contains("even by the standard-user token"));
+        assert!(message.contains("default permissions"));
+    }
+
+    #[test]
+    fn launch_token_does_not_change_which_candidate_is_launchable() {
+        let facts = [
+            IsolatedCandidateFacts::missing("Chrome"),
+            candidate("Edge", InstallationWriteAccess::Protected, true),
+        ];
+        for token in [BrowserLaunchToken::Driver, BrowserLaunchToken::StandardUser] {
+            assert_eq!(
+                decide_isolated_browser(&facts, token),
+                IsolatedBrowserDecision::Launch(1)
+            );
+        }
     }
 
     #[test]
     fn writable_message_names_only_signed_writable_products() {
         let facts = [
             candidate("Chrome", InstallationWriteAccess::Protected, false),
-            candidate(
-                "Edge",
-                InstallationWriteAccess::WritableByCurrentToken,
-                true,
-            ),
+            candidate("Edge", InstallationWriteAccess::WritableByLaunchToken, true),
         ];
-        let message = refusal_message(decide_isolated_browser(&facts));
+        let message = refusal_message(decide(&facts));
         assert!(message.starts_with("installed vendor-signed Edge is writable"));
     }
 
@@ -216,17 +240,14 @@ mod tests {
         let facts = [
             candidate(
                 "Chrome",
-                InstallationWriteAccess::WritableByCurrentToken,
+                InstallationWriteAccess::WritableByLaunchToken,
                 true,
             ),
             IsolatedCandidateFacts::missing("Chrome"),
             candidate("Edge", InstallationWriteAccess::Protected, true),
             candidate("Edge", InstallationWriteAccess::Protected, true),
         ];
-        assert_eq!(
-            decide_isolated_browser(&facts),
-            IsolatedBrowserDecision::Launch(2)
-        );
+        assert_eq!(decide(&facts), IsolatedBrowserDecision::Launch(2));
     }
 
     #[test]
@@ -235,7 +256,7 @@ mod tests {
         assert!(!candidate("Chrome", InstallationWriteAccess::Protected, false).launchable());
         assert!(!candidate(
             "Chrome",
-            InstallationWriteAccess::WritableByCurrentToken,
+            InstallationWriteAccess::WritableByLaunchToken,
             true
         )
         .launchable());

@@ -31,6 +31,22 @@ done
 
 case "$SUITE" in
   shared|native|capture|all) ;;
+  s1-perception)
+    # Model-backed perception decision row. It is not part of `all`: it needs
+    # the published cua-perception catalog and the pinned Cua-S1-4B weights,
+    # which only .github/workflows/ci-cua-s1-weights.yml provisions.
+    if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
+      echo "the s1-perception lane runs on X11 only" >&2
+      exit 2
+    fi
+    for required in CUA_E2E_PERCEPTION_CATALOG CUA_E2E_PERCEPTION_VERSION \
+        CUA_E2E_S1_PYTHON S1_BASE_MODEL_PATH S1_ADAPTER_PATH; do
+      if [[ -z "${!required:-}" ]]; then
+        echo "${required} is required for the s1-perception lane" >&2
+        exit 2
+      fi
+    done
+    ;;
   *) echo "unsupported internal lane: $SUITE" >&2; exit 2 ;;
 esac
 
@@ -127,6 +143,7 @@ if [[ "${BUILD_FIXTURES}" == 1 ]]; then
       fi
       ;;
     capture) FIXTURE_TARGETS="electron,gtk3" ;;
+    s1-perception) FIXTURE_TARGETS="electron" ;;
     *)
       FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri},gtk3"
       if [[ -z "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]]; then
@@ -364,6 +381,26 @@ if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
       --test desktop_scope_linux_test -- \
       --ignored --nocapture --test-threads=1
   if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
+    run_test x11-unpublished-pid \
+      cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+        --test x11_unpublished_pid_linux_test -- \
+        --ignored --nocapture --test-threads=1
+  else
+    limitation="The unpublished-_NET_WM_PID case maps a bare X11 client and runs in the canonical X11 lane."
+    jq -n \
+      --arg reason "${limitation}" \
+      '{
+        schema: "cua-e2e-limitation-v1",
+        platform: "linux",
+        display_server: "wayland",
+        harness: "x11-bare-client",
+        test: "x11-unpublished-pid",
+        status: "not_applicable",
+        reason: $reason
+      }' > "${ARTIFACT_DIR}/x11-unpublished-pid-limitation.json"
+    echo "[LIMITATION] x11-unpublished-pid: ${limitation}"
+  fi
+  if [[ -z "${WAYLAND_DISPLAY:-}" ]]; then
     run_test perception-capture-loop \
       cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
         --test perception_capture_loop_test -- \
@@ -386,6 +423,13 @@ if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
       }' > "${ARTIFACT_DIR}/perception-capture-loop-limitation.json"
     echo "[LIMITATION] perception-capture-loop: ${limitation}"
   fi
+fi
+
+if [[ "${SUITE}" == s1-perception ]]; then
+  run_test perception-s1-decision-loop \
+    cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test perception_s1_decision_loop_test -- \
+      --ignored --nocapture --test-threads=1
 fi
 
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then

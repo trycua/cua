@@ -101,16 +101,19 @@ Hugging Face and download without a token.
 ### Pinned artifacts
 
 Pin every download to the commit SHA below. A branch name such as `main` can
-move; these revisions are the ones the commands and measurements in this
-section were verified against on 2026-09-25.
+move; these revisions are the ones the commands in this section were verified
+against. The `cua-s1-4b-0.1`, `cua-s1-nano-0.1`, and `cua-s1-forms` pins were
+updated on 2026-09-26 to revisions that add model cards and licenses (and, for
+`cua-s1-forms`, remove the pickle checkpoint); their weight files are
+byte-identical to the revisions measured on 2026-09-25.
 
 | Artifact          | Hugging Face repository                                                   | Revision (commit SHA)                      | Pairs with                              | Download size                             | Declared license                             |
 | ----------------- | ------------------------------------------------------------------------- | ------------------------------------------ | --------------------------------------- | ----------------------------------------- | -------------------------------------------- |
 | Base model        | [`Qwen/Qwen3.5-4B`](https://huggingface.co/Qwen/Qwen3.5-4B)               | `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a` | Base for both 4B adapters               | 9.34 GB (two safetensors shards, 9.32 GB) | Apache-2.0 (Qwen's model card and `LICENSE`) |
 | `cua-s1-4b-0.2`   | [`cua-ai/cua-s1-4b-0.2`](https://huggingface.co/cua-ai/cua-s1-4b-0.2)     | `16818868b0cc7813808aae4e87b417657046ab79` | `Qwen/Qwen3.5-4B` at the revision above | 187 MB                                    | Apache-2.0 (adapter only)                    |
-| `cua-s1-4b-0.1`   | [`cua-ai/cua-s1-4b-0.1`](https://huggingface.co/cua-ai/cua-s1-4b-0.1)     | `88d8b8a90c2da4470d005cc23ec8665a6442ebe1` | `Qwen/Qwen3.5-4B` at the revision above | 272 MB                                    | None declared on Hugging Face                |
-| `cua-s1-nano-0.1` | [`cua-ai/cua-s1-nano-0.1`](https://huggingface.co/cua-ai/cua-s1-nano-0.1) | `1f93fd0fdcbe33740334948f967dff9f6c8e9f34` | Standalone (no base model)              | 6.9 MB                                    | None declared on Hugging Face                |
-| `cua-s1-forms`    | [`cua-ai/cua-s1-forms`](https://huggingface.co/cua-ai/cua-s1-forms)       | `f54adbf447f4ca6ec259f529ee3f2e3e09f8cc71` | Standalone (no base model)              | 2.8 MB (safetensors pair only)            | MIT                                          |
+| `cua-s1-4b-0.1`   | [`cua-ai/cua-s1-4b-0.1`](https://huggingface.co/cua-ai/cua-s1-4b-0.1)     | `3ebffb9868f31a1d54140948cb2434d35f35b281` | `Qwen/Qwen3.5-4B` at the revision above | 272 MB                                    | Apache-2.0 (adapter only)                    |
+| `cua-s1-nano-0.1` | [`cua-ai/cua-s1-nano-0.1`](https://huggingface.co/cua-ai/cua-s1-nano-0.1) | `abbd98492307dc20373f79f7141725412df63c42` | Standalone (no base model)              | 6.9 MB                                    | Apache-2.0                                   |
+| `cua-s1-forms`    | [`cua-ai/cua-s1-forms`](https://huggingface.co/cua-ai/cua-s1-forms)       | `4a7a9f42a3d42e6dfbd111c0c843e37ac50f1332` | Standalone (no base model)              | 2.8 MB                                    | MIT                                          |
 
 Layouts and loaders:
 
@@ -127,16 +130,19 @@ Layouts and loaders:
   checkpoint also needs a frozen vision backbone from the `nano-vision` extra.
 - `cua-s1-forms` contains a `tinyx` checkpoint (`cua-s1-forms.safetensors`
   plus `cua-s1-forms.json`, 706,048 parameters). Load it with
-  `cua_s1.model.load_checkpoint`. The repository also ships a pickle
-  `cua-s1-forms.pt`, which `cua_s1` refuses to load by design (see #3977).
-  Exclude it from downloads (`--exclude "*.pt"`) and load only the
-  safetensors pair. Unpickling a checkpoint can run arbitrary code, so do not
-  open the `.pt` file with `torch.load` or `pickle`.
-- The Apache-2.0 license on `cua-s1-4b-0.2` covers only the adapter. The base
-  model is governed by its own license and is downloaded from Qwen's
-  repository, not redistributed by Cua. At the pinned revisions,
-  `cua-s1-4b-0.1` and `cua-s1-nano-0.1` declare no license and ship no model
-  card; no license grant for those weights is documented here.
+  `cua_s1.model.load_checkpoint`. At the pinned revision the repository
+  contains only that pair, a model card, and `.gitattributes`. Older
+  revisions, including `f54adbf447f4ca6ec259f529ee3f2e3e09f8cc71`, also ship
+  a pickle `cua-s1-forms.pt`, which `cua_s1` refuses to load by design (see
+  #3977). If you pin an older revision, pass `--exclude "*.pt"`. Unpickling a
+  checkpoint can run arbitrary code, so never open a `.pt` copy with
+  `torch.load` or `pickle`.
+- The Apache-2.0 licenses on `cua-s1-4b-0.2` and `cua-s1-4b-0.1` cover only
+  the adapters. The base model is governed by its own license and is
+  downloaded from Qwen's repository, not redistributed by Cua.
+  `cua-s1-nano-0.1` is trained from scratch and its weights are Apache-2.0;
+  the frozen vision backbone its multimodal checkpoint downloads at first use
+  is not redistributed and is governed by its own license.
 
 ### Hardware
 
@@ -161,6 +167,26 @@ times are medians of five warm calls:
 | `cua-s1-4b-0.2` multimodal | `mps`, `bfloat16` | 3.7 s     | 6.70 s              | 6.66 s                         |
 | `cua-s1-4b-0.2` text       | `cpu`, `float32`  | 18.3 s    | 19.5 s              | 32.1 s                         |
 | `cua-s1-4b-0.2` multimodal | `cpu`, `float32`  | 7.8 s     | 34.2 s              | 50.2 s                         |
+
+The weights-backed CI job (`.github/workflows/ci-cua-s1-weights.yml`) also
+measures a standard GitHub-hosted `ubuntu-latest` runner on every run: 4 vCPU
+(AMD EPYC 9V74, two Torch threads), 16 GB of memory, Python 3.12, and the same
+lock. The same runner label comes with and without AVX-512, and that decides
+the speed of `bfloat16` on CPU. On 2026-09-26 it measured `cua-s1-4b-0.2` on
+`cpu` with `bfloat16`:
+
+| Modality   | Runner CPU flags | Warm decision, 3-candidate fixture | Cold `verify_decision_cli.py` (load + decision) | Peak RSS |
+| ---------- | ---------------- | ---------------------------------- | ----------------------------------------------- | -------- |
+| text       | AVX512-BF16      | 5.5 to 7.3 s                       | 13 to 25 s                                      | 9.4 GB   |
+| multimodal | AVX512-BF16      | 47 to 50 s (1280x800)              | 53 to 55 s                                      | 10.6 GB  |
+| text       | AVX2, no AVX-512 | 51 to 68 s                         | 66 to 74 s                                      | 9.4 GB   |
+| multimodal | AVX2, no AVX-512 | 360 to 379 s (1280x800)            | 364 to 383 s                                    | 10.6 GB  |
+
+Use `bfloat16` on CPU. `float16` has no native CPU support on these runners:
+the cold verifier took 114 to 191 s for text and about 10 minutes for
+multimodal on an AVX512-BF16 runner. `float32` weights (18.7 GB) do not fit in
+16 GB. Peak RSS counts memory-mapped weight pages. The job summary of each run
+records the runner's flags and the current numbers.
 
 Multimodal rows used 1280x800 screenshots; a 2560x1600 screenshot took 22 to
 30 s per decision on `mps`, so downscale large captures before scoring. The
@@ -226,14 +252,13 @@ Download the other checkpoints the same way as needed:
 
 ```bash
 "$HF" download cua-ai/cua-s1-4b-0.1 \
-  --revision 88d8b8a90c2da4470d005cc23ec8665a6442ebe1 \
+  --revision 3ebffb9868f31a1d54140948cb2434d35f35b281 \
   --local-dir "$S1_MODELS/cua-s1-4b-0.1"
 "$HF" download cua-ai/cua-s1-nano-0.1 \
-  --revision 1f93fd0fdcbe33740334948f967dff9f6c8e9f34 \
+  --revision abbd98492307dc20373f79f7141725412df63c42 \
   --local-dir "$S1_MODELS/cua-s1-nano-0.1"
 "$HF" download cua-ai/cua-s1-forms \
-  --revision f54adbf447f4ca6ec259f529ee3f2e3e09f8cc71 \
-  --exclude "*.pt" \
+  --revision 4a7a9f42a3d42e6dfbd111c0c843e37ac50f1332 \
   --local-dir "$S1_MODELS/cua-s1-forms"
 ```
 
@@ -286,7 +311,18 @@ object, names a different `capture_id`, omits or adds a candidate, or selects
 anything other than `submit-form`. To check the checked-in negative fixture,
 add `--fixture negative --expected-id abstain`. To run the multimodal
 adapter, add `--screenshot <png>` with an image of the fixture's form; the
-verifier binds it to the fixture's capture ID.
+verifier binds it to the fixture's capture ID. The fixtures directory has one
+for each request: `jev-choice-request-v1.png` and `jev-choice-negative-v1.png`.
+
+CI runs this smoke with real weights in `.github/workflows/ci-cua-s1-weights.yml`
+(nightly, on manual dispatch, and on pull requests that change Cua-S1 or the
+chooser). It downloads the two pinned artifacts on every run and verifies each
+file's size and SHA-256 against `libs/cua-s1/ci/weights.lock.json` before
+loading it, runs the verifier for both fixtures in text and multimodal modes,
+and records warm latency with `libs/cua-s1/ci/warm_chooser.py`, which keeps one
+model resident and answers decisions over stdio. The same workflow runs the
+Cua Driver desktop row that lets Cua-S1 choose among OmniParser regions of a
+live capture (see `libs/cua-driver/docs/test-matrix.md`).
 
 To see the full response, run the chooser directly:
 

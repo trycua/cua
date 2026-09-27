@@ -105,19 +105,21 @@ export const GOAL =
 /**
  * Build the compact, deterministic, token-redacted state sent to Jev. `form`
  * states the field and Submit status the runner verified from the page
- * structure; the token is replaced everywhere, including outline and visual text.
+ * structure and, when visualPath is enabled, from the validated visual regions;
+ * the token is replaced everywhere, including outline and visual text.
  */
 export function decisionState(
   snapshot: BrowserSnapshot,
   visual: VisualObservation | undefined,
   history: readonly HistoryEntry[],
-  token: string
+  token: string,
+  visualPath = false
 ) {
   return {
     goal: GOAL,
     observation: {
       page: JSON.stringify(redactToken(snapshot.page ?? null, token)),
-      form: JSON.stringify(formState(snapshot, token)),
+      form: JSON.stringify(formState(snapshot, token, visual, visualPath)),
       outline: redactToken(snapshot.outline ?? '', token) as string,
       visual: JSON.stringify(redactToken(visualDecisionState(visual), token)),
     },
@@ -131,11 +133,12 @@ export async function chooseWithTypeSafe(
   snapshot: BrowserSnapshot,
   visual: VisualObservation | undefined,
   history: readonly HistoryEntry[],
-  token: string
+  token: string,
+  visualPath = false
 ) {
   const criteria = candidateCriteria(candidates);
   const response = await client.systemOne({
-    state: decisionState(snapshot, visual, history, token),
+    state: decisionState(snapshot, visual, history, token, visualPath),
     questions: {
       driver_action: choice(
         'Which complete executable action should Cua Driver run next?',
@@ -156,9 +159,18 @@ export function chooseLive(
   snapshot: BrowserSnapshot,
   visual: VisualObservation | undefined,
   history: readonly HistoryEntry[],
-  token: string
+  token: string,
+  visualPath = false
 ) {
-  return chooseWithTypeSafe(new TypeSafeClient(), candidates, snapshot, visual, history, token);
+  return chooseWithTypeSafe(
+    new TypeSafeClient(),
+    candidates,
+    snapshot,
+    visual,
+    history,
+    token,
+    visualPath
+  );
 }
 
 export function chooseMockAdapter(
@@ -166,7 +178,8 @@ export function chooseMockAdapter(
   _snapshot: BrowserSnapshot,
   _visual: VisualObservation | undefined,
   _history: readonly HistoryEntry[],
-  _token: string
+  _token: string,
+  _visualPath = false
 ) {
   return chooseMock(candidates);
 }

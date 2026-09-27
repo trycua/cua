@@ -340,16 +340,15 @@ impl Snapshot {
             }
         }
     }
-    // ── Internal helpers — also used by unit tests via the `pub(super)`
-    // path so the diff logic can be exercised without driving the live
-    // window enumerator. ────────────────────────────────────────────
+
+    // ── Internal helpers — also used by unit tests so the diff logic can be
+    // exercised without driving the live window enumerator. ──────────────
 
     /// Pure-function diff: given the snapshot's window-id set + a
     /// list of currently-visible windows, return the (opened, closed)
     /// classification. Opened windows owned by this daemon are excluded so
     /// transient UI such as the cursor overlay is not reported as an action
     /// side effect.
-    ///
     pub(crate) fn diff(
         snapshot_ids: &HashSet<u32>,
         current: &[WindowInfo],
@@ -380,6 +379,28 @@ impl Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::windows::WindowBounds;
+
+    fn win(window_id: u32, pid: i32, app_name: &str, title: &str) -> WindowInfo {
+        WindowInfo {
+            window_id,
+            pid,
+            app_name: app_name.to_owned(),
+            title: title.to_owned(),
+            bounds: WindowBounds {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 100.0,
+            },
+            layer: 0,
+            z_index: 0,
+            is_on_screen: true,
+            current_space_id: None,
+            on_current_space: None,
+            space_ids: None,
+        }
+    }
 
     /// Regression for trycua/cua#1592 Bug 2. This exercises the same `diff`
     /// path used by `detect_with`, rather than separately testing a predicate

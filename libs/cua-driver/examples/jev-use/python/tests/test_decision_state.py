@@ -126,7 +126,7 @@ class SubmitStepObservationTest(unittest.TestCase):
         criteria = {candidate.id: candidate.description for candidate in candidates}
         self.assertEqual(list(criteria), ["submit-form", "reobserve", "abstain"])
         self.assertIn("already contains the required token", criteria["submit-form"])
-        self.assertIn("stale, incomplete", criteria["reobserve"])
+        self.assertIn("stale or contradicts", criteria["reobserve"])
         self.assertNotIn(TOKEN, json.dumps(criteria))
 
     def test_visual_text_is_redacted_too(self) -> None:

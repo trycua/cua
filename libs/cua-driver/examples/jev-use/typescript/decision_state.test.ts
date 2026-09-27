@@ -114,7 +114,7 @@ test('after typing the observation states the filled form', () => {
   );
   assert.deepEqual(Object.keys(criteria), ['submit-form', 'reobserve', 'abstain']);
   assert.ok(criteria['submit-form'].includes('already contains the required token'));
-  assert.ok(criteria.reobserve.includes('stale, incomplete'));
+  assert.ok(criteria.reobserve.includes('stale or contradicts'));
   assert.equal(JSON.stringify(criteria).includes(TOKEN), false);
 });
 

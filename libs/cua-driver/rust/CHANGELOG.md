@@ -6,6 +6,13 @@
 
 * **cua-driver:** deliver X11 key-down before the tap delay and finish background keyboard delivery before closing the input connection.
 
+## [0.30.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.30.1...cua-driver-rs-v0.30.2) (2026-09-27)
+
+
+### Bug Fixes
+
+* **cua-driver:** refresh the semantic page title after navigation ([#4261](https://github.com/trycua/cua/issues/4261)) ([9d24562](https://github.com/trycua/cua/commit/9d2456213f643817e414f5f97a9a76d1f5c73c56)), closes [#2959](https://github.com/trycua/cua/issues/2959) [#3577](https://github.com/trycua/cua/issues/3577)
+
 ## [0.30.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.30.0...cua-driver-rs-v0.30.1) (2026-09-26)
 
 

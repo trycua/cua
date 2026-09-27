@@ -221,16 +221,46 @@ function formRefs(snapshot: BrowserSnapshot) {
   return { field, button };
 }
 
+export type SubmitButtonState =
+  | 'available'
+  | 'visual_only'
+  | 'visual_check_pending'
+  | 'not_found_visually'
+  | 'not_in_page_structure';
+
 export type FormState = Readonly<{
   verification_field: 'not_found' | 'empty' | 'contains_required_token' | 'contains_other_value';
-  submit_button: 'available' | 'not_in_page_structure';
+  submit_button: SubmitButtonState;
 }>;
+
+/** Return the unique validated visual Submit region, or undefined. */
+export function visualSubmitRegion(visual?: VisualObservation) {
+  if (!visual) return undefined;
+  const matches = visual.regions.filter(
+    (region) =>
+      region.confidence >= 0.8 && asciiLower(region.text ?? region.label ?? '') === 'submit'
+  );
+  return matches.length === 1 ? matches[0] : undefined;
+}
 
 /**
  * Summarize the form for the decision model without revealing the token. The
  * raw field value never leaves the runner.
+ *
+ * submit_button is 'available' for a clickable page-structure ref. When the
+ * page structure has none and the capture-bound visual path is enabled
+ * (visualPath), it is 'visual_only' if this observation holds a unique
+ * validated visual Submit region, 'visual_check_pending' if no visual regions
+ * were parsed for this step yet (the runner parses them once no page-structure
+ * action remains), and 'not_found_visually' otherwise. Without a visual path it
+ * is 'not_in_page_structure'.
  */
-export function formState(snapshot: BrowserSnapshot, token: string): FormState {
+export function formState(
+  snapshot: BrowserSnapshot,
+  token: string,
+  visual?: VisualObservation,
+  visualPath = false
+): FormState {
   const { field, button } = formRefs(snapshot);
   const verificationField = !field
     ? 'not_found'
@@ -239,10 +269,16 @@ export function formState(snapshot: BrowserSnapshot, token: string): FormState {
       : field.value === token
         ? 'contains_required_token'
         : 'contains_other_value';
-  return {
-    verification_field: verificationField,
-    submit_button: button ? 'available' : 'not_in_page_structure',
-  };
+  const submitButton: SubmitButtonState = button
+    ? 'available'
+    : !visualPath
+      ? 'not_in_page_structure'
+      : !visual
+        ? 'visual_check_pending'
+        : visualSubmitRegion(visual)
+          ? 'visual_only'
+          : 'not_found_visually';
+  return { verification_field: verificationField, submit_button: submitButton };
 }
 
 /** Replace every occurrence of the token in strings nested in value. */
@@ -287,7 +323,10 @@ function reservedCandidates(): Candidate[] {
       id: 'reobserve',
       description:
         'Take no action and obtain a fresh Driver observation, because the current ' +
-        'observation is stale, incomplete, or contradicts the reported form state.',
+        'observation is stale or contradicts the reported form state. A Submit control ' +
+        'that is visual-only, or whose visual check is still pending, is not a reason to ' +
+        'reobserve: the runner parses visual regions for Submit once no page-structure ' +
+        'action remains.',
       tool: null,
       arguments: {},
     }),
@@ -345,13 +384,8 @@ export function buildCandidates(
     visual &&
     captureBoundClick
   ) {
-    const matches = visual.regions.filter(
-      (region) =>
-        region.confidence >= 0.8 &&
-        asciiLower(region.text ?? region.label ?? '') === 'submit'
-    );
-    if (matches.length === 1) {
-      const region = matches[0];
+    const region = visualSubmitRegion(visual);
+    if (region) {
       const x = region.x + region.width / 2;
       const y = region.y + region.height / 2;
       const foreground = visualDelivery === 'foreground';

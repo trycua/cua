@@ -1,6 +1,6 @@
 # jev-use with Cua Driver and TypeSafe Jev
 
-`jev-use` is a public-preview recipe that uses TypeSafe Jev to choose the next browser action
+`jev-use` is a recipe that uses TypeSafe Jev to choose the next browser action
 while Cua Driver observes the page, performs that action, and verifies the
 result. Equivalent Python and TypeScript programs run the same bounded loop.
 

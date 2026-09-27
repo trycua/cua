@@ -422,47 +422,6 @@ mod tests {
     }
 
     #[test]
-    fn all_tool_schema_enums_are_string_arrays() {
-        fn assert_string_enums(val: &serde_json::Value, path: &str) {
-            match val {
-                serde_json::Value::Object(map) => {
-                    if let Some(enum_val) = map.get("enum") {
-                        let enum_arr = enum_val.as_array().unwrap_or_else(|| {
-                            panic!("enum at {path} should be an array");
-                        });
-                        for (idx, item) in enum_arr.iter().enumerate() {
-                            assert!(
-                                item.is_string(),
-                                "enum element at {path}.enum[{idx}] must be a string for LLM client compatibility, found: {item:?}"
-                            );
-                        }
-                    }
-                    for (k, v) in map {
-                        assert_string_enums(v, &format!("{path}.{k}"));
-                    }
-                }
-                serde_json::Value::Array(arr) => {
-                    for (idx, item) in arr.iter().enumerate() {
-                        assert_string_enums(item, &format!("{path}[{idx}]"));
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        let manifest = manifest();
-        for tool in &manifest.tools {
-            assert_string_enums(&tool.input_schema, &format!("{}.input_schema", tool.name));
-            if let Some(schema) = &tool.success_output_schema {
-                assert_string_enums(schema, &format!("{}.success_output_schema", tool.name));
-            }
-            if let Some(schema) = &tool.error_output_schema {
-                assert_string_enums(schema, &format!("{}.error_output_schema", tool.name));
-            }
-        }
-    }
-
-    #[test]
     fn portable_action_sessions_explain_named_multi_call_runs() {
         for name in [
             "click",

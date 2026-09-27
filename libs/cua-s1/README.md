@@ -168,6 +168,26 @@ times are medians of five warm calls:
 | `cua-s1-4b-0.2` text       | `cpu`, `float32`  | 18.3 s    | 19.5 s              | 32.1 s                         |
 | `cua-s1-4b-0.2` multimodal | `cpu`, `float32`  | 7.8 s     | 34.2 s              | 50.2 s                         |
 
+The weights-backed CI job (`.github/workflows/ci-cua-s1-weights.yml`) also
+measures a standard GitHub-hosted `ubuntu-latest` runner on every run: 4 vCPU
+(AMD EPYC 9V74, two Torch threads), 16 GB of memory, Python 3.12, and the same
+lock. The same runner label comes with and without AVX-512, and that decides
+the speed of `bfloat16` on CPU. On 2026-09-26 it measured `cua-s1-4b-0.2` on
+`cpu` with `bfloat16`:
+
+| Modality   | Runner CPU flags | Warm decision, 3-candidate fixture | Cold `verify_decision_cli.py` (load + decision) | Peak RSS |
+| ---------- | ---------------- | ---------------------------------- | ----------------------------------------------- | -------- |
+| text       | AVX512-BF16      | 5.5 to 7.3 s                       | 13 to 25 s                                      | 9.4 GB   |
+| multimodal | AVX512-BF16      | 47 to 50 s (1280x800)              | 53 to 55 s                                      | 10.6 GB  |
+| text       | AVX2, no AVX-512 | 51 to 68 s                         | 66 to 74 s                                      | 9.4 GB   |
+| multimodal | AVX2, no AVX-512 | 360 to 379 s (1280x800)            | 364 to 383 s                                    | 10.6 GB  |
+
+Use `bfloat16` on CPU. `float16` has no native CPU support on these runners:
+the cold verifier took 114 to 191 s for text and about 10 minutes for
+multimodal on an AVX512-BF16 runner. `float32` weights (18.7 GB) do not fit in
+16 GB. Peak RSS counts memory-mapped weight pages. The job summary of each run
+records the runner's flags and the current numbers.
+
 Multimodal rows used 1280x800 screenshots; a 2560x1600 screenshot took 22 to
 30 s per decision on `mps`, so downscale large captures before scoring. The
 CPU rows ran while other workloads kept the host's load average near 16, so
@@ -291,7 +311,18 @@ object, names a different `capture_id`, omits or adds a candidate, or selects
 anything other than `submit-form`. To check the checked-in negative fixture,
 add `--fixture negative --expected-id abstain`. To run the multimodal
 adapter, add `--screenshot <png>` with an image of the fixture's form; the
-verifier binds it to the fixture's capture ID.
+verifier binds it to the fixture's capture ID. The fixtures directory has one
+for each request: `jev-choice-request-v1.png` and `jev-choice-negative-v1.png`.
+
+CI runs this smoke with real weights in `.github/workflows/ci-cua-s1-weights.yml`
+(nightly, on manual dispatch, and on pull requests that change Cua-S1 or the
+chooser). It downloads the two pinned artifacts on every run and verifies each
+file's size and SHA-256 against `libs/cua-s1/ci/weights.lock.json` before
+loading it, runs the verifier for both fixtures in text and multimodal modes,
+and records warm latency with `libs/cua-s1/ci/warm_chooser.py`, which keeps one
+model resident and answers decisions over stdio. The same workflow runs the
+Cua Driver desktop row that lets Cua-S1 choose among OmniParser regions of a
+live capture (see `libs/cua-driver/docs/test-matrix.md`).
 
 To see the full response, run the chooser directly:
 

@@ -58,6 +58,8 @@ on:
       - "scripts/ci/**"
       - "scripts/ci/macos/**"
       - "libs/cua-driver/tests/perception-demo/**"
+      - "libs/cua-s1/ci/**"
+      - "libs/cua-s1/README.md"
       # Release-wiring, channel, and installer tests read these inputs.
       - ".github/release-notes/**"
       - ".github/release-state/**"

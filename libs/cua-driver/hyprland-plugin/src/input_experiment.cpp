@@ -1,6 +1,7 @@
 // Independent-seat design adapted from Dillon DuPont's Hyprland prototype.
 // TARGET uses independent resources; FOREGROUND_TARGET explicitly uses the primary seat.
 #include "input_experiment.hpp"
+#include "agent_seat_filter.hpp"
 #include "drag_geometry.hpp"
 #include "input_grant.hpp"
 #include "input_client_deadline.hpp"
@@ -22,6 +23,8 @@
 #include <src/pointer/PointerManager.hpp>
 #include <src/protocols/core/Seat.hpp>
 #include <src/protocols/core/DataDevice.hpp>
+#include <src/protocols/SecurityContext.hpp>
+#include <src/managers/ProtocolManager.hpp>
 #include <src/layout/LayoutManager.hpp>
 #include <linux/input-event-codes.h>
 #include <wayland.hpp>
@@ -43,6 +46,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <fcntl.h>
 #include <format>
 #include <memory>
@@ -69,6 +73,32 @@ constexpr bool kProduction = true;
 #else
 constexpr bool kProduction = false;
 #endif
+
+std::vector<const void*> g_agentSeatOwners;
+
+bool agent_global_filter(const wl_client* client, const wl_global* global, void* data) {
+    const auto* owners = static_cast<const std::vector<const void*>*>(data);
+    const auto* owner = wl_global_get_user_data(global);
+    const bool agent_seat = owner && owners &&
+        std::ranges::find(*owners, owner) != owners->end();
+
+    // Preserve Hyprland's display-wide sandbox policy while narrowing agent seats.
+    const bool compositor_allows = !PROTO::securityContext->isClientSandboxed(client) ||
+        !g_pProtocolManager || !g_pProtocolManager->isGlobalPrivileged(global);
+    bool agent_process = false;
+    if (agent_seat) {
+        pid_t pid = 0;
+        wl_client_get_credentials(client, &pid, nullptr, nullptr);
+        if (pid > 0) {
+            std::ifstream comm(std::format("/proc/{}/comm", pid));
+            std::string process_name;
+            std::getline(comm, process_name);
+            agent_process = cua::hyprland::is_cua_driver_process(process_name);
+        }
+    }
+    return cua::hyprland::agent_global_is_visible(
+        compositor_allows, agent_seat, agent_process);
+}
 
 #ifdef CUA_HYPRLAND_TEST_INPUT
 std::uint64_t unix_ms() {
@@ -359,8 +389,14 @@ struct InputExperiment::Impl {
         sync_keymap();
         timer = wl_event_loop_add_timer(g_pCompositor->m_wlEventLoop, tick, this);
         if (!timer) throw std::runtime_error("input timer registration failed");
+        g_agentSeatOwners[lane] = this;
+        wl_display_set_global_filter(g_pCompositor->m_wlDisplay, agent_global_filter,
+                                     &g_agentSeatOwners);
         global = wl_global_create(g_pCompositor->m_wlDisplay, &wl_seat_interface, 9, this, bind_seat);
-        if (!global) throw std::runtime_error("synthetic seat unavailable");
+        if (!global) {
+            g_agentSeatOwners[lane] = nullptr;
+            throw std::runtime_error("synthetic seat unavailable");
+        }
         wl_event_source_timer_update(timer, 16);
     }
     void resume() {
@@ -426,6 +462,7 @@ struct InputExperiment::Impl {
     ~Impl() {
         revoke("plugin_shutdown");
         if (global) wl_global_destroy(global);
+        if (g_agentSeatOwners[lane] == this) g_agentSeatOwners[lane] = nullptr;
         if (listen_source) wl_event_source_remove(listen_source);
         if (timer) wl_event_source_remove(timer);
         clients.clear();
@@ -1407,6 +1444,7 @@ struct InputExperiment::DesktopListeners {
 InputExperiment::InputExperiment(const std::string& directory, void* plugin) {
     SeatLifetime lifetime(directory);
     for (unsigned i = 0; i < lanes_.size(); ++i) lanes_[i] = std::make_unique<Impl>(directory, i);
+    g_agentSeatOwners.assign(lanes_.size(), nullptr);
     for (auto& lane : lanes_) { lane->peers = {lanes_[0].get(), lanes_[1].get()}; lane->start(); }
 #if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT_TRACE)
     trace_ = std::make_unique<PrimaryTrace>(plugin, [this](wl_resource* resource) {

@@ -2536,15 +2536,17 @@ async fn other_window_lookup_errors_still_fail_the_whole_proof() {
 #[tokio::test]
 async fn method_unsupported_keeps_the_electron_none_path() {
     // Electron omits the Browser domain method entirely: the candidate keeps a
-    // None geometry and the proof continues on the existing path — it must not
-    // become a route failure because of the window-less skip.
+    // None geometry and binds through the single-page, single-native-window
+    // cardinality proof; the window-less skip must not drop it.
     let f = fixture_with(|st| {
         st.primary_window_error =
             Some((-32601, "'Browser.getWindowForTarget' wasn't found".into()));
     })
     .await;
     let s = bind_result(&f).await;
-    assert_ne!(s["refusal"]["code"], "browser_route_unavailable", "{s}");
-    let st = f.state.lock().unwrap();
-    assert!(st.calls.iter().any(|(_, m, _)| m == "Target.getTargets"));
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["binding_quality"], "exact", "{s}");
+    let tabs = s["tabs"].as_array().expect("tabs");
+    assert_eq!(tabs.len(), 1, "{s}");
+    assert_eq!(tabs[0]["url"], "https://fixture.test/");
 }

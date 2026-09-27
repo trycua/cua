@@ -210,11 +210,84 @@ export function parseVisualRegions(
   });
 }
 
+export const REDACTED_TOKEN = '[verification token]';
+
+function formRefs(snapshot: BrowserSnapshot) {
+  const refs = snapshot.refs ?? [];
+  const field = refs.find(
+    (item) => item.role === 'textbox' && item.name === 'verification value' && item.ref
+  );
+  const button = refs.find((item) => item.role === 'button' && item.name === 'Submit' && item.ref);
+  return { field, button };
+}
+
+export type FormState = Readonly<{
+  verification_field: 'not_found' | 'empty' | 'contains_required_token' | 'contains_other_value';
+  submit_button: 'available' | 'not_in_page_structure';
+}>;
+
+/**
+ * Summarize the form for the decision model without revealing the token. The
+ * raw field value never leaves the runner.
+ */
+export function formState(snapshot: BrowserSnapshot, token: string): FormState {
+  const { field, button } = formRefs(snapshot);
+  const verificationField = !field
+    ? 'not_found'
+    : !field.value
+      ? 'empty'
+      : field.value === token
+        ? 'contains_required_token'
+        : 'contains_other_value';
+  return {
+    verification_field: verificationField,
+    submit_button: button ? 'available' : 'not_in_page_structure',
+  };
+}
+
+/** Replace every occurrence of the token in strings nested in value. */
+export function redactToken(value: unknown, token: string): unknown {
+  if (!token) return value;
+  if (typeof value === 'string') return value.split(token).join(REDACTED_TOKEN);
+  if (Array.isArray(value)) return value.map((item) => redactToken(item, token));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, redactToken(item, token)])
+    );
+  }
+  return value;
+}
+
+export type HistoryEntry = Readonly<{ step: number; selected_id: string; outcome: string }>;
+
+const HISTORY_OUTCOMES: Readonly<Record<string, string>> = {
+  'type-verification-value': 'typed the required token into the verification field',
+  'submit-form': 'clicked Submit; the submission was not yet confirmed',
+  'submit-form-foreground':
+    'clicked Submit in the foreground; the submission was not yet confirmed',
+  reobserve: 'took no action and requested a fresh observation',
+};
+
+/**
+ * Build the compact decision-history item shown to the model. It records what
+ * each step did, not timings or model probabilities, so earlier choices do not
+ * become a signal to repeat themselves.
+ */
+export function historyEntry(step: number, candidateId: string, refusal?: string): HistoryEntry {
+  const outcome = refusal
+    ? `Driver refused background delivery (${refusal}); no click happened and a ` +
+      'foreground Submit candidate is offered next'
+    : (HISTORY_OUTCOMES[candidateId] ?? 'completed');
+  return { step, selected_id: candidateId, outcome };
+}
+
 function reservedCandidates(): Candidate[] {
   return [
     immutableCandidate({
       id: 'reobserve',
-      description: 'Discard this decision set and obtain a fresh Driver observation.',
+      description:
+        'Take no action and obtain a fresh Driver observation, because the current ' +
+        'observation is stale, incomplete, or contradicts the reported form state.',
       tool: null,
       arguments: {},
     }),
@@ -242,17 +315,15 @@ export function buildCandidates(
   visualDelivery: VisualDelivery = 'background'
 ): Candidate[] {
   const common = { target_id: snapshot.target_id, tab_id: snapshot.tab_id };
-  const refs = snapshot.refs ?? [];
-  const field = refs.find(
-    (item) => item.role === 'textbox' && item.name === 'verification value' && item.ref
-  );
-  const button = refs.find((item) => item.role === 'button' && item.name === 'Submit' && item.ref);
+  const { field, button } = formRefs(snapshot);
   const candidates: Candidate[] = [];
   if (field?.value !== token && field?.ref) {
     candidates.push(
       immutableCandidate({
         id: 'type-verification-value',
-        description: 'Replace the verification field with the required token.',
+        description:
+          'Type the required verification token into the verification field, ' +
+          'replacing its current contents.',
         tool: 'browser_type',
         arguments: { ...common, ref: field.ref, text: token, replace: true },
       })
@@ -261,7 +332,10 @@ export function buildCandidates(
     candidates.push(
       immutableCandidate({
         id: 'submit-form',
-        description: 'Submit the form now that the verification field contains the token.',
+        description:
+          "Click the form's Submit button. The observed form state reports that the " +
+          'verification field already contains the required token, so the form is ' +
+          'ready to submit.',
         tool: 'browser_click',
         arguments: { ...common, ref: button.ref, input_route: 'dom_event' },
       })
@@ -288,7 +362,9 @@ export function buildCandidates(
             ? 'Submit the form by clicking the unique validated visual Submit region with ' +
               'foreground delivery, which activates the browser window, because Driver ' +
               'refused background delivery for the previous visual click.'
-            : 'Submit the form using the unique validated visual Submit region.',
+            : 'Submit the form by clicking the unique validated visual Submit region. ' +
+              'The observed form state reports that the verification field already ' +
+              'contains the required token.',
           tool: 'click',
           arguments: {
             pid: visual.pid,

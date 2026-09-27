@@ -213,11 +213,90 @@ def parse_visual_regions(
     )
 
 
+FIELD_NAME = "verification value"
+SUBMIT_NAME = "Submit"
+REDACTED_TOKEN = "[verification token]"
+
+
+def _form_refs(snapshot: Mapping[str, Any]) -> tuple[Any, Any]:
+    refs = snapshot.get("refs") or []
+    field = next(
+        (ref for ref in refs if ref.get("role") == "textbox" and ref.get("name") == FIELD_NAME),
+        None,
+    )
+    button = next(
+        (ref for ref in refs if ref.get("role") == "button" and ref.get("name") == SUBMIT_NAME),
+        None,
+    )
+    return field, button
+
+
+def form_state(snapshot: Mapping[str, Any], token: str) -> dict[str, str]:
+    """Summarize the form for the decision model without revealing the token.
+
+    The raw field value never leaves the runner; the model receives only whether
+    the field is empty, holds the required token, or holds something else.
+    """
+    field, button = _form_refs(snapshot)
+    if field is None:
+        field_state = "not_found"
+    elif not field.get("value"):
+        field_state = "empty"
+    elif field.get("value") == token:
+        field_state = "contains_required_token"
+    else:
+        field_state = "contains_other_value"
+    return {
+        "verification_field": field_state,
+        "submit_button": "available" if button is not None else "not_in_page_structure",
+    }
+
+
+def redact_token(value: Any, token: str) -> Any:
+    """Replace every occurrence of the token in strings nested in ``value``."""
+    if not token:
+        return value
+    if isinstance(value, str):
+        return value.replace(token, REDACTED_TOKEN)
+    if isinstance(value, Mapping):
+        return {key: redact_token(item, token) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [redact_token(item, token) for item in value]
+    return value
+
+
+HISTORY_OUTCOMES = {
+    "type-verification-value": "typed the required token into the verification field",
+    "submit-form": "clicked Submit; the submission was not yet confirmed",
+    "submit-form-foreground": "clicked Submit in the foreground; the submission was not yet confirmed",
+    "reobserve": "took no action and requested a fresh observation",
+}
+
+
+def history_entry(
+    step: int, candidate_id: str, *, refusal: str | None = None
+) -> dict[str, Any]:
+    """Build the compact decision-history item shown to the model.
+
+    It records what each step did, not timings or model probabilities, so earlier
+    choices do not become a signal to repeat themselves.
+    """
+    if refusal is not None:
+        outcome = (
+            f"Driver refused background delivery ({refusal}); no click happened and a "
+            "foreground Submit candidate is offered next"
+        )
+    else:
+        outcome = HISTORY_OUTCOMES.get(candidate_id, "completed")
+    return {"step": step, "selected_id": candidate_id, "outcome": outcome}
+
+
 def _reserved_candidates() -> list[Candidate]:
     return [
         Candidate(
             "reobserve",
-            "Discard this decision set and obtain a fresh Driver observation.",
+            "Take no action and obtain a fresh Driver observation, because the current "
+            "observation is stale, incomplete, or contradicts the reported form state.",
             None,
             {},
         ),
@@ -249,25 +328,14 @@ def build_candidates(
         "target_id": snapshot["target_id"],
         "tab_id": snapshot["tab_id"],
     }
-    refs = snapshot.get("refs", [])
-    field = next(
-        (
-            ref
-            for ref in refs
-            if ref.get("role") == "textbox" and ref.get("name") == "verification value"
-        ),
-        None,
-    )
-    button = next(
-        (ref for ref in refs if ref.get("role") == "button" and ref.get("name") == "Submit"),
-        None,
-    )
+    field, button = _form_refs(snapshot)
     candidates: list[Candidate] = []
     if field and field.get("value") != token:
         candidates.append(
             Candidate(
                 "type-verification-value",
-                "Replace the verification field with the required token.",
+                "Type the required verification token into the verification field, "
+                "replacing its current contents.",
                 "browser_type",
                 {**common, "ref": field["ref"], "text": token, "replace": True},
             )
@@ -276,7 +344,9 @@ def build_candidates(
         candidates.append(
             Candidate(
                 "submit-form",
-                "Submit the form now that the verification field contains the token.",
+                "Click the form's Submit button. The observed form state reports that the "
+                "verification field already contains the required token, so the form is "
+                "ready to submit.",
                 "browser_click",
                 {**common, "ref": button["ref"], "input_route": "dom_event"},
             )
@@ -305,7 +375,9 @@ def build_candidates(
                         "window, because Driver refused background delivery for the "
                         "previous visual click."
                         if foreground
-                        else "Submit the form using the unique validated visual Submit region."
+                        else "Submit the form by clicking the unique validated visual Submit "
+                        "region. The observed form state reports that the verification field "
+                        "already contains the required token."
                     ),
                     "click",
                     {

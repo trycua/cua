@@ -9,12 +9,14 @@ import {
   buildCandidates,
   classify,
   hasExecutableCandidate,
+  historyEntry,
   parseVisualRegions,
   SUBMIT_IDS,
   validateChoice,
   VisualObservationError,
   type BrowserSnapshot,
   type Candidate,
+  type HistoryEntry,
   type VisualDelivery,
   type Outcome,
   type VisualObservation,
@@ -327,7 +329,9 @@ async function run(args: Arguments): Promise<Outcome> {
     env: driverEnvironment(),
   });
   const client = new Client({ name: 'cua-driver-jev-use-example', version: '0.1.0' });
-  const history: Record<string, unknown>[] = [];
+  // Compact what-happened record for the decision model. The full telemetry
+  // events (timings, probabilities) go only to the JSONL log.
+  const history: HistoryEntry[] = [];
   let visualDelivery: VisualDelivery = 'background';
   if (args.log) await writeFile(args.log, '', 'utf8');
   await resetFixture(args.fixtureUrl);
@@ -396,8 +400,8 @@ async function run(args: Arguments): Promise<Outcome> {
       }
       const answer =
         args.provider === 'mock'
-          ? chooseMockAdapter(candidates, snapshot, visual, history)
-          : await chooseLive(candidates, snapshot, visual, history);
+          ? chooseMockAdapter(candidates, snapshot, visual, history, token)
+          : await chooseLive(candidates, snapshot, visual, history, token);
       if (!answer.choice) return 'abstained';
       const candidate = validateChoice(answer.choice, candidates, visual?.captureId);
       const decisionMs = Math.round((performance.now() - decisionStarted) * 100) / 100;
@@ -415,7 +419,7 @@ async function run(args: Arguments): Promise<Outcome> {
           tool: null,
           visual: visualRecord,
         };
-        history.push(event);
+        history.push(historyEntry(step, candidate.id));
         await writeEvent(args.log, event);
         continue;
       }
@@ -459,7 +463,7 @@ async function run(args: Arguments): Promise<Outcome> {
               escalation: { from: 'background', to: 'foreground', reason: refusal },
               visual: visualRecord,
             };
-            history.push(event);
+            history.push(historyEntry(step, candidate.id, refusal));
             await writeEvent(args.log, event);
             continue;
           }
@@ -489,7 +493,7 @@ async function run(args: Arguments): Promise<Outcome> {
         delivery_mode: candidate.arguments.delivery_mode ?? null,
         visual: visualRecord,
       };
-      history.push(event);
+      history.push(historyEntry(step, candidate.id));
       await writeEvent(args.log, event);
       if (args.dryRun) return 'unknown';
       if (SUBMIT_IDS.has(candidate.id)) {

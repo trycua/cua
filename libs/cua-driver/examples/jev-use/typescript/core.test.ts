@@ -311,7 +311,7 @@ test('live adapter sends one Choice keyed by executable candidate id', async () 
     9
   );
   const candidates = buildCandidates(page, 'expected', visual, true);
-  const answer = await chooseWithTypeSafe(client, candidates, page, visual, []);
+  const answer = await chooseWithTypeSafe(client, candidates, page, visual, [], 'expected');
 
   assert.equal(answer.choice, 'submit-form');
   assert.deepEqual(
@@ -321,6 +321,9 @@ test('live adapter sends one Choice keyed by executable candidate id', async () 
   const sentVisual = JSON.parse(requestBody?.state.observation.visual);
   assert.equal(sentVisual.capture_id, 'capture-submit');
   assert.equal(sentVisual.regions[0].id, 'submit-text');
+  const sentForm = JSON.parse(requestBody?.state.observation.form);
+  assert.equal(sentForm.verification_field, 'contains_required_token');
+  assert.equal(JSON.stringify(requestBody?.state).includes('expected'), false);
 });
 
 test('live adapter rejects an id outside the supplied table', async () => {
@@ -339,7 +342,7 @@ test('live adapter rejects an id outside the supplied table', async () => {
   const page = snapshot();
   const candidates = buildCandidates(page, 'expected');
   await assert.rejects(
-    () => chooseWithTypeSafe(client as never, candidates, page, undefined, []),
+    () => chooseWithTypeSafe(client as never, candidates, page, undefined, [], 'expected'),
     /unknown candidate/
   );
 });

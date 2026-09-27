@@ -27,8 +27,8 @@ pub use render_map::{
     DEFAULT_CURSOR_KEY, SEED_OFFSET,
 };
 pub use render_state::{
-    paint_cursor, render_frame, FocusRect, RenderStateCore, SESSION_BADGE_FADE_SECS,
-    SESSION_BADGE_HOLD_SECS,
+    paint_cursor, paint_cursor_in_viewport, render_frame, FocusRect, RenderStateCore,
+    SESSION_BADGE_FADE_SECS, SESSION_BADGE_HOLD_SECS,
 };
 pub use session_badge::{
     paint_session_badge, sanitize_session_label, session_badge_extents, session_badge_layout,

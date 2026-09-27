@@ -898,6 +898,37 @@ pub fn paint_cursor(
     focus_rect: Option<FocusRect>,
     backing_scale: f32,
 ) {
+    let scale = backing_scale.max(1.0);
+    let viewport = tiny_skia::Rect::from_xywh(
+        origin_x as f32,
+        origin_y as f32,
+        pm.width() as f32 / scale,
+        pm.height() as f32 / scale,
+    )
+    .expect("cursor viewport has finite screen coordinates and nonzero dimensions");
+    paint_cursor_in_viewport(
+        pm,
+        core,
+        origin_x,
+        origin_y,
+        focus_rect,
+        backing_scale,
+        viewport,
+    );
+}
+
+/// Paint into a tile while laying out badges against the full viewport.
+/// `viewport` and `origin_x/y` are in logical screen coordinates. Only the
+/// destination pixmap clips pixels; tile edges must never reposition a badge.
+pub fn paint_cursor_in_viewport(
+    pm: &mut tiny_skia::Pixmap,
+    core: &RenderStateCore,
+    origin_x: f64,
+    origin_y: f64,
+    focus_rect: Option<FocusRect>,
+    backing_scale: f32,
+    viewport: tiny_skia::Rect,
+) {
     if !core.visible
         || core.pinned_target_off_workspace
         || core.pos.0 < -100.0
@@ -998,16 +1029,22 @@ pub fn paint_cursor(
     }
 
     let (delivery, target) = core.badge_modifiers.unwrap_or((None, None));
-    if let Some(layout) = crate::session_badge_layout(crate::SessionBadgeInput {
-        label: core.session_label.as_deref(),
-        delivery,
-        target,
-        cursor: (px as f32, py as f32),
-        backing_scale: backing_scale.max(1.0),
-        label_alpha: core.session_badge_alpha(),
-        chip_alpha: core.session_badge_chip_alpha(),
-        clip: Some((pm.width() as f32, pm.height() as f32)),
-    }) {
+    if let Some(layout) = crate::session_badge::session_badge_layout_at_origin(
+        crate::SessionBadgeInput {
+            label: core.session_label.as_deref(),
+            delivery,
+            target,
+            cursor: (px as f32, py as f32),
+            backing_scale: backing_scale.max(1.0),
+            label_alpha: core.session_badge_alpha(),
+            chip_alpha: core.session_badge_chip_alpha(),
+            clip: Some((viewport.width() * sf, viewport.height() * sf)),
+        },
+        (
+            ((f64::from(viewport.x()) - origin_x) * s) as f32,
+            ((f64::from(viewport.y()) - origin_y) * s) as f32,
+        ),
+    ) {
         crate::paint_session_badge(
             pm,
             &layout,

@@ -314,6 +314,15 @@ fn paint_diffuse_glow(
 }
 
 pub fn session_badge_layout(input: SessionBadgeInput<'_>) -> Option<SessionBadgeLayout> {
+    session_badge_layout_at_origin(input, (0.0, 0.0))
+}
+
+/// Place the clip viewport in the destination pixmap's coordinate system.
+/// A tile can have a negative viewport origin; it is not a screen boundary.
+pub(crate) fn session_badge_layout_at_origin(
+    input: SessionBadgeInput<'_>,
+    clip_origin: (f32, f32),
+) -> Option<SessionBadgeLayout> {
     let Some(font) = font() else {
         return None;
     };
@@ -362,14 +371,15 @@ pub fn session_badge_layout(input: SessionBadgeInput<'_>) -> Option<SessionBadge
     let unclamped_x = input.cursor.0 - badge_width * 0.5;
     let unclamped_y = input.cursor.1 + BADGE_CURSOR_GAP * scale;
     let (x, y) = if let Some((clip_width, clip_height)) = input.clip {
+        let (left, top) = clip_origin;
         (
             unclamped_x.clamp(
-                2.0 * scale,
-                (clip_width - badge_width - 2.0 * scale).max(2.0 * scale),
+                left + 2.0 * scale,
+                left + (clip_width - badge_width - 2.0 * scale).max(2.0 * scale),
             ),
             unclamped_y.clamp(
-                2.0 * scale,
-                (clip_height - badge_height - 2.0 * scale).max(2.0 * scale),
+                top + 2.0 * scale,
+                top + (clip_height - badge_height - 2.0 * scale).max(2.0 * scale),
             ),
         )
     } else {
@@ -549,12 +559,19 @@ pub fn paint_session_badge(
                 let alpha = ((coverage as f32) * label_opacity) as u8;
                 pixel.copy_from_slice(&[alpha, alpha, alpha, alpha]);
             }
+            // Keep half-pixel ties consistent across integer tile translations,
+            // including glyphs partially clipped at a negative tile coordinate.
+            // Translate the draw instead of passing negative rect coordinates:
+            // tiny-skia's identity fill_rect path rounds those toward zero.
             pixmap.draw_pixmap(
-                (label.origin.0 + glyph.x).round() as i32,
-                (label.origin.1 + glyph.y).round() as i32,
+                0,
+                0,
                 glyph_pixmap.as_ref(),
                 &PixmapPaint::default(),
-                Transform::identity(),
+                Transform::from_translate(
+                    (label.origin.0 + glyph.x + 0.5).floor(),
+                    (label.origin.1 + glyph.y + 0.5).floor(),
+                ),
                 None,
             );
         }

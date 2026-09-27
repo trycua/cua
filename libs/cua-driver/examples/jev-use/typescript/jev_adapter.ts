@@ -2,7 +2,10 @@ import { choice, TypeSafeClient } from '@typesafe-ai/sdk';
 
 import {
   chooseMock,
+  formState,
+  redactToken,
   type BrowserSnapshot,
+  type HistoryEntry,
   type Candidate,
   type VisualObservation,
 } from './core.js';
@@ -96,24 +99,43 @@ export function visualDecisionState(visual?: VisualObservation) {
   };
 }
 
+export const GOAL =
+  'Enter the required verification token into the verification field, then submit the form.';
+
+/**
+ * Build the compact, deterministic, token-redacted state sent to Jev. `form`
+ * states the field and Submit status the runner verified from the page
+ * structure; the token is replaced everywhere, including outline and visual text.
+ */
+export function decisionState(
+  snapshot: BrowserSnapshot,
+  visual: VisualObservation | undefined,
+  history: readonly HistoryEntry[],
+  token: string
+) {
+  return {
+    goal: GOAL,
+    observation: {
+      page: JSON.stringify(redactToken(snapshot.page ?? null, token)),
+      form: JSON.stringify(formState(snapshot, token)),
+      outline: redactToken(snapshot.outline ?? '', token) as string,
+      visual: JSON.stringify(redactToken(visualDecisionState(visual), token)),
+    },
+    history: JSON.stringify(history),
+  };
+}
+
 export async function chooseWithTypeSafe(
   client: TypeSafeClientLike,
   candidates: Candidate[],
   snapshot: BrowserSnapshot,
   visual: VisualObservation | undefined,
-  history: Record<string, unknown>[]
+  history: readonly HistoryEntry[],
+  token: string
 ) {
   const criteria = candidateCriteria(candidates);
   const response = await client.systemOne({
-    state: {
-      goal: 'Enter the verification token, then submit the form.',
-      observation: {
-        page: JSON.stringify(snapshot.page ?? null),
-        outline: snapshot.outline ?? '',
-        visual: JSON.stringify(visualDecisionState(visual)),
-      },
-      history: JSON.stringify(history),
-    },
+    state: decisionState(snapshot, visual, history, token),
     questions: {
       driver_action: choice(
         'Which complete executable action should Cua Driver run next?',
@@ -133,16 +155,18 @@ export function chooseLive(
   candidates: Candidate[],
   snapshot: BrowserSnapshot,
   visual: VisualObservation | undefined,
-  history: Record<string, unknown>[]
+  history: readonly HistoryEntry[],
+  token: string
 ) {
-  return chooseWithTypeSafe(new TypeSafeClient(), candidates, snapshot, visual, history);
+  return chooseWithTypeSafe(new TypeSafeClient(), candidates, snapshot, visual, history, token);
 }
 
 export function chooseMockAdapter(
   candidates: Candidate[],
   _snapshot: BrowserSnapshot,
   _visual: VisualObservation | undefined,
-  _history: Record<string, unknown>[]
+  _history: readonly HistoryEntry[],
+  _token: string
 ) {
   return chooseMock(candidates);
 }

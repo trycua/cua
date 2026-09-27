@@ -23,6 +23,7 @@ from core import (
     VisualObservationError,
     build_candidates,
     classify,
+    history_entry,
     has_executable_candidate,
     parse_visual_regions,
     validate_choice,
@@ -289,6 +290,8 @@ def write_event(log_path: Path | None, event: dict[str, Any]) -> None:
 async def run(args: argparse.Namespace) -> str:
     token = args.token or f"jev-{uuid.uuid4().hex[:10]}"
     label = f"jev-python-{uuid.uuid4().hex[:8]}"
+    # Compact what-happened record for the decision model. The full telemetry
+    # events (timings, probabilities) go only to the JSONL log.
     history: list[dict[str, Any]] = []
     visual_delivery: VisualDelivery = "background"
     log_path = Path(args.log) if args.log else None
@@ -358,11 +361,11 @@ async def run(args: argparse.Namespace) -> str:
 
                 if args.provider == "mock":
                     choice, confidence, probabilities = choose_mock_adapter(
-                        candidates, snapshot, visual, history
+                        candidates, snapshot, visual, history, token
                     )
                 else:
                     choice, confidence, probabilities = await asyncio.to_thread(
-                        choose_live, candidates, snapshot, visual, history
+                        choose_live, candidates, snapshot, visual, history, token
                     )
                 if choice is None:
                     return "abstained"
@@ -386,7 +389,7 @@ async def run(args: argparse.Namespace) -> str:
                         "tool": None,
                         "visual": visual_record,
                     }
-                    history.append(event)
+                    history.append(history_entry(step, candidate.id))
                     write_event(log_path, event)
                     continue
 
@@ -434,7 +437,7 @@ async def run(args: argparse.Namespace) -> str:
                                 },
                                 "visual": visual_record,
                             }
-                            history.append(event)
+                            history.append(history_entry(step, candidate.id, refusal=refusal))
                             write_event(log_path, event)
                             continue
                         write_event(
@@ -466,7 +469,7 @@ async def run(args: argparse.Namespace) -> str:
                     "delivery_mode": candidate.arguments.get("delivery_mode"),
                     "visual": visual_record,
                 }
-                history.append(event)
+                history.append(history_entry(step, candidate.id))
                 write_event(log_path, event)
                 if args.dry_run:
                     return "unknown"

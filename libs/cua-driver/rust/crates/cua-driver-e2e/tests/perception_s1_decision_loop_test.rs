@@ -61,10 +61,11 @@ const GOAL: &str = "Increment the counter once.";
 /// Driver's capture lifetime (`CaptureRegistryConfig::default().ttl`).
 const CAPTURE_TTL: Duration = Duration::from_secs(60);
 /// S1 scores one letter per option (at most 26 with reobserve/abstain). Each
-/// offered region lengthens the single prefill pass; on the 4-vCPU hosted
-/// runner a warm text decision costs about 5.5 s for 3 options, so 16 regions
-/// keep parse + decision + click well inside the capture lifetime.
-const MAX_REGION_CANDIDATES: usize = 16;
+/// offered region lengthens the single prefill pass. On a 4-vCPU hosted runner
+/// with AVX512-BF16, 16 regions took 20 to 38 s per decision while the row
+/// recorded video, so 12 keep parse + decision + click well inside the
+/// capture lifetime.
+const MAX_REGION_CANDIDATES: usize = 12;
 const S1_READY_TIMEOUT: Duration = Duration::from_secs(900);
 const S1_DECISION_TIMEOUT: Duration = Duration::from_secs(120);
 

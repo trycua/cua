@@ -6,12 +6,8 @@ import { pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
-  buildCandidates,
-  classify,
   hasExecutableCandidate,
-  historyEntry,
   parseVisualRegions,
-  SUBMIT_IDS,
   validateChoice,
   VisualObservationError,
   type BrowserSnapshot,
@@ -22,7 +18,8 @@ import {
   type VisualObservation,
 } from './core.js';
 import { driverEnvironment } from './driver_env.js';
-import { chooseLive, chooseMockAdapter } from './jev_adapter.js';
+import { chooseLiveForTask, chooseMockForTask } from './jev_adapter.js';
+import { FixtureFormTask, fixtureSources, type Task, type TaskSources } from './tasks.js';
 
 type VisualMode = 'auto' | 'always' | 'off';
 
@@ -248,29 +245,34 @@ export async function optionalVisualObservation(
 }
 
 /**
- * Build one step's candidates, parsing visual regions only when useful. In
- * auto mode the capture and parse run only when the page structure offers no
- * executable candidate, because only then can a visual region add one. always
- * restores the per-step parse; off never parses.
+ * Build one step's sources and candidates, parsing visual regions only when
+ * useful. In auto mode the capture and parse run only when the page structure
+ * offers no executable candidate, because only then can a visual region add
+ * one. always restores the per-step parse; off never parses.
  */
-export async function candidatesForStep(
+export async function taskCandidatesForStep(
   driver: Driver,
+  task: Task,
   snapshot: BrowserSnapshot,
-  token: string,
   pid: number,
   windowId: number,
   availableTools: ReadonlySet<string>,
   captureBoundClick: boolean,
   visualMode: VisualMode = 'auto',
   visualDelivery: VisualDelivery = 'background'
-): Promise<{ candidates: Candidate[]; visual?: VisualObservation; status: VisualStatus }> {
-  let candidates = buildCandidates(snapshot, token, undefined, captureBoundClick, visualDelivery);
+): Promise<{ candidates: Candidate[]; sources: TaskSources; status: VisualStatus }> {
+  // Whether a control missing from the page structure can still be found
+  // through a capture-bound visual region; reported in the task state.
+  const visualPath = captureBoundClick && visualMode !== 'off';
+  let sources = fixtureSources(snapshot, undefined, captureBoundClick, visualDelivery, visualPath);
+  let candidates = task.candidates(sources);
   if (visualMode === 'off') {
-    return { candidates, status: visualStatus('skipped', undefined, undefined, 'disabled') };
+    return { candidates, sources, status: visualStatus('skipped', undefined, undefined, 'disabled') };
   }
   if (visualMode === 'auto' && hasExecutableCandidate(candidates)) {
     return {
       candidates,
+      sources,
       status: visualStatus('skipped', undefined, undefined, 'page_structure_candidate'),
     };
   }
@@ -282,20 +284,36 @@ export async function candidatesForStep(
     captureBoundClick
   );
   if (visual) {
-    candidates = buildCandidates(snapshot, token, visual, captureBoundClick, visualDelivery);
+    sources = fixtureSources(snapshot, visual, captureBoundClick, visualDelivery, visualPath);
+    candidates = task.candidates(sources);
   }
-  return { candidates, visual, status };
+  return { candidates, sources, status };
 }
 
-async function fixtureState(fixtureUrl: string): Promise<{ submitted: string | null }> {
-  const response = await fetch(new URL('state', fixtureUrl));
-  if (!response.ok) throw new Error(`fixture state failed: HTTP ${response.status}`);
-  return (await response.json()) as { submitted: string | null };
-}
-
-async function resetFixture(fixtureUrl: string): Promise<void> {
-  const response = await fetch(new URL('reset', fixtureUrl), { method: 'POST' });
-  if (response.status !== 204) throw new Error(`fixture reset failed: HTTP ${response.status}`);
+/** Build one step's fixture-task candidates; see taskCandidatesForStep. */
+export async function candidatesForStep(
+  driver: Driver,
+  snapshot: BrowserSnapshot,
+  token: string,
+  pid: number,
+  windowId: number,
+  availableTools: ReadonlySet<string>,
+  captureBoundClick: boolean,
+  visualMode: VisualMode = 'auto',
+  visualDelivery: VisualDelivery = 'background'
+): Promise<{ candidates: Candidate[]; visual?: VisualObservation; status: VisualStatus }> {
+  const { candidates, sources, status } = await taskCandidatesForStep(
+    driver,
+    new FixtureFormTask(token),
+    snapshot,
+    pid,
+    windowId,
+    availableTools,
+    captureBoundClick,
+    visualMode,
+    visualDelivery
+  );
+  return { candidates, visual: sources.visual?.observation, status };
 }
 
 async function waitForWindow(driver: Driver, pid: number) {
@@ -323,6 +341,7 @@ async function writeEvent(path: string | undefined, event: Record<string, unknow
 
 async function run(args: Arguments): Promise<Outcome> {
   const token = args.token ?? `jev-${randomUUID().replaceAll('-', '').slice(0, 10)}`;
+  const task: Task = new FixtureFormTask(token, args.fixtureUrl, args.maxSteps);
   const transport = new StdioClientTransport({
     command: process.env.CUA_DRIVER_BIN ?? 'cua-driver',
     args: ['mcp'],
@@ -334,16 +353,13 @@ async function run(args: Arguments): Promise<Outcome> {
   const history: HistoryEntry[] = [];
   let visualDelivery: VisualDelivery = 'background';
   if (args.log) await writeFile(args.log, '', 'utf8');
-  await resetFixture(args.fixtureUrl);
+  await task.reset();
 
   try {
     await client.connect(transport);
     const advertisedTools = (await client.listTools()).tools;
     const availableTools = new Set(advertisedTools.map((tool) => tool.name));
     const captureBoundClick = supportsCaptureBoundClick(advertisedTools);
-    // Whether a Submit missing from the page structure can still be found through
-    // a capture-bound visual region; reported in the form state.
-    const visualPath = captureBoundClick && args.visualObservation !== 'off';
     const driver = new Driver(client, `jev-typescript-${randomUUID().slice(0, 8)}`);
     const prepared = await driver.call('browser_prepare', {
       allow_launch: true,
@@ -363,9 +379,8 @@ async function run(args: Arguments): Promise<Outcome> {
       url: args.fixtureUrl,
     });
 
-    for (let step = 1; step <= args.maxSteps; step += 1) {
-      const oracle = await fixtureState(args.fixtureUrl);
-      const current = classify(oracle.submitted, token, step - 1, args.maxSteps);
+    for (let step = 1; step <= task.maxSteps; step += 1) {
+      const current = task.classify(await task.readOracle(), step - 1);
       if (current === 'verified' || current === 'refuted') {
         await writeEvent(args.log, { event: 'outcome', outcome: current, token });
         return current;
@@ -379,12 +394,12 @@ async function run(args: Arguments): Promise<Outcome> {
       })) as BrowserSnapshot;
       const {
         candidates,
-        visual,
+        sources,
         status: visualRecord,
-      } = await candidatesForStep(
+      } = await taskCandidatesForStep(
         driver,
+        task,
         snapshot,
-        token,
         pid,
         Number(window.window_id),
         availableTools,
@@ -401,10 +416,11 @@ async function run(args: Arguments): Promise<Outcome> {
         });
         return 'abstained';
       }
+      const visual = sources.visual?.observation;
       const answer =
         args.provider === 'mock'
-          ? chooseMockAdapter(candidates, snapshot, visual, history, token, visualPath)
-          : await chooseLive(candidates, snapshot, visual, history, token, visualPath);
+          ? chooseMockForTask(task, sources, candidates, history)
+          : await chooseLiveForTask(task, sources, candidates, history);
       if (!answer.choice) return 'abstained';
       const candidate = validateChoice(answer.choice, candidates, visual?.captureId);
       const decisionMs = Math.round((performance.now() - decisionStarted) * 100) / 100;
@@ -422,7 +438,7 @@ async function run(args: Arguments): Promise<Outcome> {
           tool: null,
           visual: visualRecord,
         };
-        history.push(historyEntry(step, candidate.id));
+        history.push(task.historyEntry(step, candidate.id));
         await writeEvent(args.log, event);
         continue;
       }
@@ -466,7 +482,7 @@ async function run(args: Arguments): Promise<Outcome> {
               escalation: { from: 'background', to: 'foreground', reason: refusal },
               visual: visualRecord,
             };
-            history.push(historyEntry(step, candidate.id, refusal));
+            history.push(task.historyEntry(step, candidate.id, refusal));
             await writeEvent(args.log, event);
             continue;
           }
@@ -496,13 +512,12 @@ async function run(args: Arguments): Promise<Outcome> {
         delivery_mode: candidate.arguments.delivery_mode ?? null,
         visual: visualRecord,
       };
-      history.push(historyEntry(step, candidate.id));
+      history.push(task.historyEntry(step, candidate.id));
       await writeEvent(args.log, event);
       if (args.dryRun) return 'unknown';
-      if (SUBMIT_IDS.has(candidate.id)) {
+      if (task.completionCandidateIds.has(candidate.id)) {
         for (let attempt = 0; attempt < 20; attempt += 1) {
-          const oracle = await fixtureState(args.fixtureUrl);
-          const outcome = classify(oracle.submitted, token, step, args.maxSteps);
+          const outcome = task.classify(await task.readOracle(), step);
           if (outcome === 'verified' || outcome === 'refuted') {
             await writeEvent(args.log, { event: 'outcome', outcome, token });
             return outcome;
@@ -512,8 +527,7 @@ async function run(args: Arguments): Promise<Outcome> {
       }
     }
 
-    const oracle = await fixtureState(args.fixtureUrl);
-    const outcome = classify(oracle.submitted, token, args.maxSteps, args.maxSteps);
+    const outcome = task.classify(await task.readOracle(), task.maxSteps);
     await writeEvent(args.log, { event: 'outcome', outcome, token });
     return outcome;
   } finally {

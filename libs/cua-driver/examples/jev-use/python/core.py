@@ -1,35 +1,57 @@
+"""Runner primitives shared by every jev-use task.
+
+Visual-region parsing, candidate validation, and the mock chooser live here.
+Candidate sources are in ``sources.py`` and task specs in ``tasks.py``; the
+names re-exported below keep existing imports from ``core`` working.
+"""
+
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Any, Literal, Mapping
 
-Outcome = Literal["verified", "refuted", "unknown", "abstained", "budget_exhausted"]
+from sources import Candidate
+from tasks import (
+    FIELD_NAME,
+    HISTORY_OUTCOMES,
+    REDACTED_TOKEN,
+    SUBMIT_IDS,
+    SUBMIT_NAME,
+    Outcome,
+    build_candidates,
+    classify,
+    form_state,
+    history_entry,
+    redact_token,
+    visual_submit_region,
+)
+
+__all__ = [
+    "FIELD_NAME",
+    "HISTORY_OUTCOMES",
+    "REDACTED_TOKEN",
+    "SUBMIT_IDS",
+    "SUBMIT_NAME",
+    "Candidate",
+    "Outcome",
+    "VisualDelivery",
+    "VisualObservation",
+    "VisualObservationError",
+    "VisualRegion",
+    "build_candidates",
+    "choose_mock",
+    "classify",
+    "form_state",
+    "has_executable_candidate",
+    "history_entry",
+    "parse_visual_regions",
+    "redact_token",
+    "validate_choice",
+    "visual_submit_region",
+]
+
 VisualDelivery = Literal["background", "foreground"]
-
-SUBMIT_IDS = frozenset({"submit-form", "submit-form-foreground"})
-
-
-def _freeze(value: Any) -> Any:
-    if isinstance(value, dict):
-        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
-    if isinstance(value, list):
-        return tuple(_freeze(item) for item in value)
-    return value
-
-
-@dataclass(frozen=True)
-class Candidate:
-    id: str
-    description: str
-    tool: str | None
-    arguments: Mapping[str, Any]
-    capture_id: str | None = None
-    screenshot_reference: str | None = None
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "arguments", _freeze(dict(self.arguments)))
 
 
 @dataclass(frozen=True)
@@ -213,226 +235,8 @@ def parse_visual_regions(
     )
 
 
-FIELD_NAME = "verification value"
-SUBMIT_NAME = "Submit"
-REDACTED_TOKEN = "[verification token]"
-
-
-def _form_refs(snapshot: Mapping[str, Any]) -> tuple[Any, Any]:
-    refs = snapshot.get("refs") or []
-    field = next(
-        (ref for ref in refs if ref.get("role") == "textbox" and ref.get("name") == FIELD_NAME),
-        None,
-    )
-    button = next(
-        (ref for ref in refs if ref.get("role") == "button" and ref.get("name") == SUBMIT_NAME),
-        None,
-    )
-    return field, button
-
-
-def visual_submit_region(visual: VisualObservation | None) -> VisualRegion | None:
-    """Return the unique validated visual Submit region, or ``None``."""
-    if visual is None:
-        return None
-    matches = [
-        region
-        for region in visual.regions
-        if region.confidence >= 0.8
-        and _ascii_lower(region.text or region.label or "") == "submit"
-    ]
-    return matches[0] if len(matches) == 1 else None
-
-
-def form_state(
-    snapshot: Mapping[str, Any],
-    token: str,
-    visual: VisualObservation | None = None,
-    *,
-    visual_path: bool = False,
-) -> dict[str, str]:
-    """Summarize the form for the decision model without revealing the token.
-
-    The raw field value never leaves the runner; the model receives only whether
-    the field is empty, holds the required token, or holds something else.
-
-    ``submit_button`` is ``available`` for a clickable page-structure ref. When
-    the page structure has none and the capture-bound visual path is enabled
-    (``visual_path``), it is ``visual_only`` if this observation holds a unique
-    validated visual Submit region, ``visual_check_pending`` if no visual regions
-    were parsed for this step yet (the runner parses them once no page-structure
-    action remains), and ``not_found_visually`` otherwise. Without a visual path
-    it is ``not_in_page_structure``.
-    """
-    field, button = _form_refs(snapshot)
-    if field is None:
-        field_state = "not_found"
-    elif not field.get("value"):
-        field_state = "empty"
-    elif field.get("value") == token:
-        field_state = "contains_required_token"
-    else:
-        field_state = "contains_other_value"
-    if button is not None:
-        submit_state = "available"
-    elif not visual_path:
-        submit_state = "not_in_page_structure"
-    elif visual is None:
-        submit_state = "visual_check_pending"
-    elif visual_submit_region(visual) is not None:
-        submit_state = "visual_only"
-    else:
-        submit_state = "not_found_visually"
-    return {"verification_field": field_state, "submit_button": submit_state}
-
-
-def redact_token(value: Any, token: str) -> Any:
-    """Replace every occurrence of the token in strings nested in ``value``."""
-    if not token:
-        return value
-    if isinstance(value, str):
-        return value.replace(token, REDACTED_TOKEN)
-    if isinstance(value, Mapping):
-        return {key: redact_token(item, token) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [redact_token(item, token) for item in value]
-    return value
-
-
-HISTORY_OUTCOMES = {
-    "type-verification-value": "typed the required token into the verification field",
-    "submit-form": "clicked Submit; the submission was not yet confirmed",
-    "submit-form-foreground": "clicked Submit in the foreground; the submission was not yet confirmed",
-    "reobserve": "took no action and requested a fresh observation",
-}
-
-
-def history_entry(
-    step: int, candidate_id: str, *, refusal: str | None = None
-) -> dict[str, Any]:
-    """Build the compact decision-history item shown to the model.
-
-    It records what each step did, not timings or model probabilities, so earlier
-    choices do not become a signal to repeat themselves.
-    """
-    if refusal is not None:
-        outcome = (
-            f"Driver refused background delivery ({refusal}); no click happened and a "
-            "foreground Submit candidate is offered next"
-        )
-    else:
-        outcome = HISTORY_OUTCOMES.get(candidate_id, "completed")
-    return {"step": step, "selected_id": candidate_id, "outcome": outcome}
-
-
-def _reserved_candidates() -> list[Candidate]:
-    return [
-        Candidate(
-            "reobserve",
-            "Take no action and obtain a fresh Driver observation, because the current "
-            "observation is stale or contradicts the reported form state. A Submit control "
-            "that is visual-only, or whose visual check is still pending, is not a reason to "
-            "reobserve: the runner parses visual regions for Submit once no page-structure "
-            "action remains.",
-            None,
-            {},
-        ),
-        Candidate(
-            "abstain",
-            "Stop without acting if none of the proposed actions is safe for the observed state.",
-            None,
-            {},
-        ),
-    ]
-
-
-def build_candidates(
-    snapshot: dict[str, Any],
-    token: str,
-    visual: VisualObservation | None = None,
-    *,
-    capture_bound_click: bool = False,
-    visual_delivery: VisualDelivery = "background",
-) -> list[Candidate]:
-    """Build the closed candidate set for one decision.
-
-    Page-structure refs always win. The capture-bound visual Submit is offered
-    only when no Submit ref exists. ``visual_delivery="foreground"`` replaces the
-    background visual click with a distinct ``submit-form-foreground`` candidate
-    after Driver refused background delivery; the chooser must pick it explicitly.
-    """
-    common = {
-        "target_id": snapshot["target_id"],
-        "tab_id": snapshot["tab_id"],
-    }
-    field, button = _form_refs(snapshot)
-    candidates: list[Candidate] = []
-    if field and field.get("value") != token:
-        candidates.append(
-            Candidate(
-                "type-verification-value",
-                "Type the required verification token into the verification field, "
-                "replacing its current contents.",
-                "browser_type",
-                {**common, "ref": field["ref"], "text": token, "replace": True},
-            )
-        )
-    elif field and field.get("value") == token and button:
-        candidates.append(
-            Candidate(
-                "submit-form",
-                "Click the form's Submit button. The observed form state reports that the "
-                "verification field already contains the required token, so the form is "
-                "ready to submit.",
-                "browser_click",
-                {**common, "ref": button["ref"], "input_route": "dom_event"},
-            )
-        )
-    elif (
-        field
-        and field.get("value") == token
-        and visual
-        and capture_bound_click
-    ):
-        region = visual_submit_region(visual)
-        if region is not None:
-            x, y = visual.screenshot_center(region)
-            foreground = visual_delivery == "foreground"
-            candidates.append(
-                Candidate(
-                    "submit-form-foreground" if foreground else "submit-form",
-                    (
-                        "Submit the form by clicking the unique validated visual Submit "
-                        "region with foreground delivery, which activates the browser "
-                        "window, because Driver refused background delivery for the "
-                        "previous visual click."
-                        if foreground
-                        else "Submit the form by clicking the unique validated visual Submit "
-                        "region. The observed form state reports that the verification field "
-                        "already contains the required token."
-                    ),
-                    "click",
-                    {
-                        "pid": visual.pid,
-                        "window_id": visual.window_id,
-                        "x": x,
-                        "y": y,
-                        "capture_id": visual.capture_id,
-                        "delivery_mode": visual_delivery,
-                    },
-                    capture_id=visual.capture_id,
-                    screenshot_reference=visual.screenshot_reference,
-                )
-            )
-    return candidates + _reserved_candidates()
-
-
 def has_executable_candidate(candidates: list[Candidate]) -> bool:
     return any(candidate.tool is not None for candidate in candidates)
-
-
-def _ascii_lower(value: str) -> str:
-    return "".join(chr(ord(char) + 32) if "A" <= char <= "Z" else char for char in value)
 
 
 def choose_mock(candidates: list[Candidate]) -> tuple[str | None, float, dict[str, float]]:
@@ -469,13 +273,3 @@ def validate_choice(
     if candidate.capture_id is not None and candidate.capture_id != current_capture_id:
         raise ValueError("provider selected a stale or capture-mismatched candidate")
     return candidate
-
-
-def classify(submitted: str | None, token: str, *, steps: int, max_steps: int) -> Outcome:
-    if submitted == token:
-        return "verified"
-    if submitted is not None:
-        return "refuted"
-    if steps >= max_steps:
-        return "budget_exhausted"
-    return "unknown"

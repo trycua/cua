@@ -317,6 +317,12 @@ pub struct WindowStateOutput {
     pub screenshot_frame_valid: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_bounds: Option<WindowBounds>,
+    /// macOS only. Absent unless the window is backed by a local file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_path: Option<String>,
+    /// macOS only. Absent when the app does not report a dirty flag: unknown, never "clean".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_edited: Option<bool>,
     /// Image content belongs to the MCP envelope, never structuredContent.
     #[serde(skip)]
     #[schemars(skip)]

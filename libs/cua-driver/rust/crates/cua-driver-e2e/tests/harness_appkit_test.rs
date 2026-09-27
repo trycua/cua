@@ -73,13 +73,18 @@ impl Harness {
     }
 
     fn launch_with_oracles(command_oracle: Option<&Path>, pointer_oracle: Option<&Path>) -> Self {
-        Self::launch_with_options(command_oracle, pointer_oracle, false)
+        Self::launch_with_options(command_oracle, pointer_oracle, false, None)
+    }
+
+    fn launch_with_document(document_path: &Path) -> Self {
+        Self::launch_with_options(None, None, false, Some(document_path))
     }
 
     fn launch_with_options(
         command_oracle: Option<&Path>,
         pointer_oracle: Option<&Path>,
         keep_ordered_front: bool,
+        document_path: Option<&Path>,
     ) -> Self {
         let exe = harness_exe();
         assert!(
@@ -99,6 +104,9 @@ impl Harness {
         }
         if keep_ordered_front {
             command.env("CUA_APPKIT_KEEP_ORDERED_FRONT", "1");
+        }
+        if let Some(path) = document_path {
+            command.env("CUA_APPKIT_DOCUMENT_PATH", path);
         }
         let app = command
             .spawn()
@@ -193,6 +201,24 @@ fn run_case(
         if delivery != cua_driver_testkit::e2e::Delivery::Background {
             driver.start_behavior_recording();
         }
+        test(harness.pid, wid, &mut driver)
+    });
+}
+
+fn run_document_case(
+    case: cua_driver_testkit::e2e::CaseSpec,
+    document_path: &Path,
+    test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
+) {
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let harness = Harness::launch_with_document(document_path);
+        let (wid, _) = driver
+            .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+            .expect("AppKit main window not found");
         test(harness.pid, wid, &mut driver)
     });
 }
@@ -343,7 +369,7 @@ fn harness_appkit_exact_activation_refuses_competing_window() {
     .expecting_refusal(vec![RefusalCode::BringToFrontExactWindowUnverified]);
     case.oracles.push(OracleKind::Cursor);
     run_case(case, |pid, wid, driver| {
-        let competitor = Harness::launch_with_options(None, None, true);
+        let competitor = Harness::launch_with_options(None, None, true, None);
         let (competing_wid, _) = driver
             .find_window(competitor.pid as i64, "CuaTestHarness AppKit")
             .expect("find competing ordinary window");
@@ -553,6 +579,99 @@ fn harness_appkit_smoke() {
             Observation::delivered(vec![OracleKind::AxState], Evidence::default())
         },
     );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_document_state_follows_the_window() {
+    let directory = tempfile::tempdir().expect("document fixture directory");
+    let document = directory.path().join("My Notes.txt");
+    std::fs::write(&document, "harness document\n").expect("write document fixture");
+
+    run_document_case(
+        native_readonly_case(
+            "appkit",
+            "document_state",
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::FixtureState],
+        ),
+        &document,
+        |pid, wid, driver| {
+            let expected_path = document.to_string_lossy().into_owned();
+            let clean = snapshot_elements(driver, pid, wid);
+            assert_eq!(
+                clean.structured()["document_path"].as_str(),
+                Some(expected_path.as_str()),
+                "document_path must be the decoded filesystem path: {}",
+                clean.structured()["document_path"]
+            );
+            assert_eq!(clean.structured()["document_edited"].as_bool(), Some(false));
+
+            let dirty = set_document_edited(driver, pid, wid, true);
+            assert_eq!(
+                dirty.structured()["document_edited"].as_bool(),
+                Some(true),
+                "dirty bit did not follow the app: {}",
+                dirty.structured()
+            );
+
+            let saved = set_document_edited(driver, pid, wid, false);
+            assert_eq!(
+                saved.structured()["document_edited"].as_bool(),
+                Some(false),
+                "dirty bit did not clear: {}",
+                saved.structured()
+            );
+
+            let without_tree = driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "include_accessibility_tree": false
+                }),
+            );
+            assert!(
+                without_tree.structured().get("document_path").is_none()
+                    && without_tree.structured().get("document_edited").is_none(),
+                "document state must come from the accessibility walk only: {}",
+                without_tree.structured()
+            );
+            Observation::delivered_with_fixture_state(vec![OracleKind::FixtureState])
+        },
+    );
+}
+
+fn set_document_edited(driver: &mut McpDriver, pid: u32, wid: u64, edited: bool) -> ToolResponse {
+    let snapshot = snapshot_elements(driver, pid, wid);
+    let index = element_index_by_id(snapshot.tree_text(), "chk-agree")
+        .expect("chk-agree element_index not found");
+    let response = driver.call(
+        "click",
+        serde_json::json!({
+            "pid": pid as i64,
+            "window_id": wid,
+            "element_index": index,
+            "snapshot_id": snapshot.snapshot_id()
+        }),
+    );
+    assert!(
+        !response.is_error(),
+        "fixture document toggle failed: {}",
+        response.text()
+    );
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let snapshot = snapshot_elements(driver, pid, wid);
+        if snapshot.structured()["document_edited"].as_bool() == Some(edited)
+            || std::time::Instant::now() >= deadline
+        {
+            return snapshot;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 #[test]

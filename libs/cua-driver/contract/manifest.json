@@ -1694,6 +1694,18 @@
               "null"
             ]
           },
+          "document_edited": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "document_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "element_count": {
             "format": "uint64",
             "minimum": 0,

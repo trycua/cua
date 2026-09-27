@@ -81,6 +81,25 @@ for the exact accepted surfaces. After installation, run `cua-driver doctor`
 to check distro-specific requirements such as the AT-SPI bus and display
 server.
 
+### Install the GNOME WinRects helper
+
+The helper is included with Cua Driver. For an installed release, run its
+installer from the current package:
+
+```bash
+~/.cua-driver/packages/current/wayland-helper/install.sh
+```
+
+From a source checkout, run `./libs/cua-driver/wayland-helper/install.sh` from
+the repository root instead. The script installs and enables the extension for
+your user; it does not need `sudo`. Log out of GNOME and back in once so Shell
+loads the helper, then verify it is active:
+
+```bash
+gnome-extensions info winrects@cua
+# State: ACTIVE
+```
+
 If these names are unfamiliar, start with
 [Linux desktops and computer use](/concepts/linux-desktops-and-computer-use).
 The experimental Hyprland plugin is separate from this installer; installing

@@ -18,7 +18,7 @@ class FleetSdkPackagingTests(unittest.TestCase):
             project = tomllib.load(pyproject_file)
 
         dependencies = project["project"]["dependencies"]
-        self.assertIn("cua-fleet==0.1.14", dependencies)
+        self.assertIn("cua-fleet==0.1.16", dependencies)
         self.assertFalse(any(dependency.startswith("cua-train") for dependency in dependencies))
         self.assertNotIn("cua-fleet", project["tool"]["uv"]["sources"])
         self.assertNotIn("cua-train", project["tool"]["uv"]["sources"])
@@ -49,7 +49,7 @@ class FleetSdkPackagingTests(unittest.TestCase):
         self.assertNotIn("cua-train", sandbox_dependencies)
         self.assertIn("cua-fleet", sandbox_requires_dist)
         self.assertNotIn("cua-train", sandbox_requires_dist)
-        self.assertEqual(packages["cua-fleet"]["version"], "0.1.14")
+        self.assertEqual(packages["cua-fleet"]["version"], "0.1.16")
         self.assertEqual(
             packages["cua-fleet"]["source"], {"registry": "https://wheels.cua.ai/simple"}
         )

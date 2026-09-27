@@ -11,6 +11,10 @@ The Cua Driver agent skill teaches an agent how to choose tools, address windows
   The skill contains agent instructions. It does not install the `cua-driver` executable. [Install Cua Driver](/how-to-guides/driver/install) on the same machine first.
 </Callout>
 
+<Callout type="info" title="Embedded skill over MCP">
+  Cua Driver 0.28.0 and later also serves this release-matched skill from its stdio MCP endpoint. A client that supports MCP resources can read it without a filesystem install, but the client still decides whether reading a resource activates a skill. The direct install on this page remains the compatible path for native filesystem skill discovery.
+</Callout>
+
 ## Install from ClawHub
 
 Run the command from your OpenClaw workspace:
@@ -68,6 +72,25 @@ Cua Driver can install its bundled skill into supported agent directories withou
 cua-driver skills install
 cua-driver skills status
 ```
+
+With Cua Driver 0.28.0, fresh Codex and Claude Code installs may not create
+their skill directories until the first skill is installed. If `skills status`
+reports the relevant agent directory as absent, create only that client's
+parent directory and run the installer again:
+
+```bash
+# Codex
+mkdir -p ~/.agents/skills
+
+# Claude Code
+mkdir -p ~/.claude/skills
+
+cua-driver skills install
+```
+
+In Windows PowerShell, use `New-Item -ItemType Directory -Force
+"$HOME\.agents\skills"` for Codex or `New-Item -ItemType Directory -Force
+"$HOME\.claude\skills"` for Claude Code, then rerun `cua-driver skills install`.
 
 Direct installation keeps only the current host's OS guide by default. Pass `--all-platforms` when the same skill directory must cover macOS, Windows, and Linux:
 

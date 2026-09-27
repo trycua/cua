@@ -195,9 +195,22 @@ impl CyclopsClient {
             })
         }
     }
+
+    /// The bearer this client would send on its next authenticated request,
+    /// for callers that open their own connection to the gateway (for example
+    /// a native WebSocket). `force_refresh` bypasses any cached token; a
+    /// static access token is returned as-is. The value is a raw token — the
+    /// caller attaches it as `authorization: Bearer <token>`.
+    pub async fn access_token(self: Arc<Self>, force_refresh: bool) -> Result<String, SdkError> {
+        self.transport.bearer_token(force_refresh).await
+    }
 }
 
 impl CyclopsClient {
+    pub(crate) async fn send_image_upload(&self, request: HttpRequest) -> Result<(), SdkError> {
+        self.transport.execute_upload(request).await
+    }
+
     pub(crate) fn base_url(&self) -> &Url {
         &self.base_url
     }
@@ -247,6 +260,10 @@ impl CyclopsClient {
         _namespace: &str,
     ) -> NamespaceLifecycleGuard {
         NamespaceLifecycleGuard {}
+    }
+
+    pub(crate) async fn bearer_token(&self, force_refresh: bool) -> Result<String, SdkError> {
+        self.transport.bearer_token(force_refresh).await
     }
 
     pub(crate) async fn execute_authenticated_service(

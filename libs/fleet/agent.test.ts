@@ -9,8 +9,19 @@ import {
   type AgentEvent,
   type TurnClient,
 } from "./src/browser-agent.ts"
-import { createBrowserMcpCommands, createBrowserMcpToolCaller, type McpClient } from "./src/browser-mcp-commands.ts"
-import { createBrowserSdkCommands, type BrowserSdk } from "./src/browser-sdk-commands.ts"
+import { isHelpRequest, renderCommandHelp } from "./src/browser-command-help.ts"
+import {
+  BROWSER_MCP_COMMAND_NAMES,
+  createBrowserMcpCommands,
+  createBrowserMcpToolCaller,
+  type McpClient,
+} from "./src/browser-mcp-commands.ts"
+import {
+  BROWSER_SDK_COMMAND_NAMES,
+  createBrowserSdkCommands,
+  type BrowserSdk,
+} from "./src/browser-sdk-commands.ts"
+import { SensitiveOutputBuffer } from "./src/sensitive-output.ts"
 import { gzipSync, gunzipSync } from "./src/node-zlib-browser.ts"
 
 
@@ -35,11 +46,86 @@ function sdkShell(overrides: Partial<BrowserSdk> = {}): Bash {
   return new Bash({ customCommands: createBrowserSdkCommands(sdk) })
 }
 
+test("renders command help with stable skill sections", () => {
+  const help = renderCommandHelp("example", {
+    summary: "Inspect an example resource.",
+    usage: "example '[name]'",
+    arguments: ["name: Resource name."],
+    output: "A JSON object.",
+    presentation: ["Use a concise Markdown table."],
+    safety: "Read-only.",
+    examples: ["example '[\"demo\"]'"],
+  })
+
+  assert.equal(
+    help,
+    [
+      "Inspect an example resource.",
+      "",
+      "Usage:",
+      "  example '[name]'",
+      "",
+      "Arguments:",
+      "  name: Resource name.",
+      "",
+      "Output:",
+      "  A JSON object.",
+      "",
+      "Present to the user:",
+      "  Use a concise Markdown table.",
+      "",
+      "Safety:",
+      "  Read-only.",
+      "",
+      "Examples:",
+      "  example '[\"demo\"]'",
+      "",
+    ].join("\n"),
+  )
+  assert.equal(isHelpRequest(["-h"]), true)
+  assert.equal(isHelpRequest(["--help"]), true)
+  assert.equal(isHelpRequest(["-h", "extra"]), false)
+  assert.equal(isHelpRequest([]), false)
+})
+
+test("every SDK command exposes help without calling the SDK", async () => {
+  let calls = 0
+  const sdk = Object.fromEntries(
+    BROWSER_SDK_COMMAND_NAMES.map(name => [name, async () => {
+      calls += 1
+      return undefined
+    }]),
+  ) as unknown as BrowserSdk
+  const shell = new Bash({ customCommands: createBrowserSdkCommands(sdk) })
+
+  for (const name of BROWSER_SDK_COMMAND_NAMES) {
+    for (const flag of ["-h", "--help"]) {
+      const result = await shell.exec(`${name} ${flag}`)
+      assert.equal(result.exitCode, 0, `${name} ${flag}`)
+      assert.match(result.stdout, new RegExp(`Usage:\\n  ${name}`))
+      assert.match(result.stdout, /Present to the user:/)
+      assert.equal(result.stderr, "")
+    }
+  }
+
+  assert.equal(calls, 0)
+})
+
+test("listPools help defines the linked table presentation", async () => {
+  const result = await sdkShell().exec("listPools -h")
+
+  assert.equal(result.exitCode, 0)
+  assert.match(result.stdout, /Pool \| Replicas \| Available \| Status/)
+  assert.match(result.stdout, /Omit Namespace/)
+  assert.match(result.stdout, /Markdown link/)
+  assert.match(result.stdout, /\/pools\/<URL-encoded namespace>\/<URL-encoded pool name>/)
+})
+
 test("exposes SDK methods as composable bash commands", async () => {
   const shell = sdkShell({
     listPools: async () => [
-      { name: "beta", namespace: "team", phase: "Ready" },
-      { name: "alpha", namespace: "team", phase: "Pending" },
+      { name: "beta", namespace: "team", status: { label: "Healthy" } },
+      { name: "alpha", namespace: "team", status: { label: "Unknown" } },
     ],
   })
 
@@ -111,6 +197,68 @@ test("returns argument and SDK failures as shell errors", async () => {
   assert.equal(rejected.stderr, "pool unavailable\n")
 })
 
+test("keeps created user key credentials out of model context", async () => {
+  const credentials = {
+    clientId: "cua_client_123",
+    clientSecret: "super-secret-value",
+    tokenUrl: "https://auth.cua.ai/token",
+    name: "automation",
+    scope: ["sandboxes:read"],
+  }
+  const sensitiveOutputs = new SensitiveOutputBuffer()
+  const requests: Parameters<TurnClient>[1][] = []
+  const responses: AssistantMessage[] = [
+    {
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          id: "call-create-key",
+          type: "function",
+          function: { name: "bash", arguments: JSON.stringify({ command: `createUserKey '["automation"]'` }) },
+        },
+      ],
+    },
+    { role: "assistant", content: "The key was created and shown above.", tool_calls: [] },
+  ]
+  const client: TurnClient = async (_id, messages) => {
+    requests.push(messages)
+    return responses.shift()!
+  }
+  const agent = new BrowserBashAgent(
+    client,
+    createBrowserSdkCommands(
+      { ...inertSdk, createUserKey: async () => credentials },
+      sensitiveOutputs,
+    ),
+    sensitiveOutputs,
+  )
+  const events: AgentEvent[] = []
+
+  await agent.run(
+    "conversation-secret",
+    [{ role: "user", content: "Create an API key" }],
+    event => events.push(event),
+  )
+
+  const toolResult = events.find(
+    (event): event is Extract<AgentEvent, { type: "tool_result" }> => event.type === "tool_result",
+  )
+  assert.deepEqual(toolResult?.sensitiveOutputs, [{ kind: "user_api_key", value: credentials }])
+  assert.equal(requests.length, 2)
+  const modelRequest = JSON.stringify(requests[1])
+  for (const privateValue of [
+    credentials.clientId,
+    credentials.clientSecret,
+    credentials.tokenUrl,
+    credentials.name,
+    ...credentials.scope,
+  ]) {
+    assert.equal(modelRequest.includes(privateValue), false)
+  }
+  assert.match(requests[1][0].content, /shown directly to the user/)
+})
+
 test("exposes exact MCP tool names as composable bash commands", async () => {
   const calls: Array<{ name: string; arguments: Record<string, unknown> }> = []
   const shell = new Bash({
@@ -126,6 +274,28 @@ test("exposes exact MCP tool names as composable bash commands", async () => {
   assert.equal(result.exitCode, 0)
   assert.equal(result.stdout, "docs result\n")
   assert.equal(result.stderr, "")
+})
+
+test("every MCP command exposes help without connecting or calling tools", async () => {
+  let calls = 0
+  const shell = new Bash({
+    customCommands: createBrowserMcpCommands(async () => {
+      calls += 1
+      return {}
+    }),
+  })
+
+  for (const name of BROWSER_MCP_COMMAND_NAMES) {
+    for (const flag of ["-h", "--help"]) {
+      const result = await shell.exec(`${name} ${flag}`)
+      assert.equal(result.exitCode, 0, `${name} ${flag}`)
+      assert.match(result.stdout, /Present to the user:/)
+      assert.match(result.stdout, /cite/i)
+      assert.equal(result.stderr, "")
+    }
+  }
+
+  assert.equal(calls, 0)
 })
 
 test("reads MCP tool arguments from stdin", async () => {

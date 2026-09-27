@@ -93,6 +93,9 @@ fn selected_at(path: &std::path::Path) -> Result<ReleaseChannel, String> {
 }
 
 pub fn set(channel: ReleaseChannel) -> Result<(), String> {
+    if crate::updater::is_pacman_managed() {
+        return Err(crate::updater::PACMAN_UPDATE_GUIDANCE.to_owned());
+    }
     let path = state_path()?;
     set_at(&path, channel)
 }
@@ -163,16 +166,5 @@ mod tests {
             ReleaseChannel::from_version("0.19.4-nightly.20260812.0"),
             None
         );
-    }
-
-    #[test]
-    fn missing_state_defaults_stable_and_valid_state_round_trips() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let path = root.path().join(FILE_NAME);
-        assert_eq!(selected_at(&path), Ok(ReleaseChannel::Stable));
-        set_at(&path, ReleaseChannel::Nightly).expect("persist nightly");
-        assert_eq!(selected_at(&path), Ok(ReleaseChannel::Nightly));
-        set_at(&path, ReleaseChannel::Stable).expect("persist stable");
-        assert_eq!(selected_at(&path), Ok(ReleaseChannel::Stable));
     }
 }

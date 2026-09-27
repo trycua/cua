@@ -123,14 +123,14 @@ Place the stable scenario in
 opt-in and skips unless the OAuth environment is configured, keeping ordinary
 local and pull request test runs credential-free.
 
-Each lane and event class uses a reusable DNS-safe namespace. The workflow sets
-`cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}`, yielding `schedule`, `push`, or `manual` namespaces.
+Scheduled and push lanes use reusable DNS-safe namespaces; manual ephemeral runs use a run-unique namespace. The workflow sets
+`cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}`, yielding `schedule`, `push`, or `manual` namespaces.
 Event-and-lane concurrency serializes each deterministic claim.
 
 Provision with the exact certified image:
 
 ```text
-public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d
+public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:80fff8a40f217a460cef7a60161adb3899eabd02c3451f18926b84d1f81b8da2
 ```
 
 Use the public SDK with:
@@ -306,12 +306,12 @@ Scripts CI installs `pyyaml` and runs this contract when the workflow changes.
 
 ## Live Evidence Remediation
 
-The monitor uses reusable, dedicated namespaces instead of per-run namespaces.
+The monitor uses reusable namespaces for scheduled and push runs, while manual ephemeral runs use per-run namespaces to avoid stale ownership collisions.
 Each lane has one DNS-safe namespace for each event class:
 
 - `cua-live-<lane>-schedule` for scheduled runs
 - `cua-live-<lane>-push` for pushes
-- `cua-live-<lane>-manual` for `workflow_dispatch`
+- `cua-live-<lane>-<run-id>` for `workflow_dispatch`
 
 The persistent pool suite adds `cua-live-pool-warm-<lane>-<event-class>` and
 `cua-live-pool-cold-<lane>-<event-class>` namespaces whose pools and templates

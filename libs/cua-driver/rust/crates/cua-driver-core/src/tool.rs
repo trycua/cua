@@ -179,26 +179,18 @@ impl ToolDef {
             "capabilities": caps,
             "risk": risk,
         });
-        let output_schema = if crate::action_record::is_action_tool(&self.name) {
-            Some(
-                <cua_driver_contract::ActionResult as cua_driver_contract::ToolOutput>::output_schema(
-                ),
-            )
-        } else {
-            cua_driver_contract::tool_success_output_schema(&self.name)
-        };
-        if let Some(output_schema) = output_schema {
-            // Advertise the refusal envelope alongside the success shape. MCP
-            // holds every `structuredContent` we emit — refusals included — to
-            // the advertised schema, and a success-only schema made strict
-            // clients discard our refusal message in favour of a schema error.
+        // Advertise the refusal envelope alongside the success shape. MCP
+        // holds every `structuredContent` we emit — refusals included — to
+        // the advertised schema, and a success-only schema made strict
+        // clients discard our refusal message in favour of a schema error.
+        // The `tools/call` boundary answers from the same lookup, so what a
+        // client is promised and what it is held to cannot drift.
+        if let Some(output_schema) = cua_driver_contract::advertised_tool_output_schema(&self.name)
+        {
             entry
                 .as_object_mut()
                 .expect("tool list entry is an object")
-                .insert(
-                    "outputSchema".into(),
-                    cua_driver_contract::advertised_output_schema(output_schema),
-                );
+                .insert("outputSchema".into(), output_schema);
         }
         entry
     }
@@ -356,6 +348,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
             "screen.capture",
             "screen.capture.window",
         ],
+        "parse_visual_regions" => &["screen.perception.visual_regions"],
 
         // ── apps / windows ───────────────────────────────────────────
         "launch_app" => &["app.launch"],
@@ -392,6 +385,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "get_recording_state" => &["recording.state"],
         "replay_trajectory" => &["recording.replay"],
         "install_ffmpeg" => &["recording.install_dependency"],
+        "install_extension" => &["extension.install"],
 
         // ── cross-platform page ──────────────────────────────────────
         "page" => &["page.action"],
@@ -437,9 +431,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 /// richer live schema.
 pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec<String> {
     let mut capabilities = default_capabilities_for(tool_name);
-    let accepts_delivery_mode = input_schema
-        .pointer("/properties/delivery_mode")
-        .is_some_and(Value::is_object);
+    let accepts_delivery_mode = schema_accepts_delivery_mode(input_schema);
     if accepts_delivery_mode
         && !capabilities
             .iter()
@@ -448,6 +440,53 @@ pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec
         capabilities.push("input.delivery_mode".into());
     }
     capabilities
+}
+
+fn schema_accepts_delivery_mode(input_schema: &Value) -> bool {
+    input_schema
+        .pointer("/properties/delivery_mode")
+        .is_some_and(Value::is_object)
+}
+
+/// Canonicalize the hidden pre-0.7 Windows `dispatch` compatibility alias.
+///
+/// This runs at the native dispatch boundary before policy, protected-resource
+/// authorization, recording, and platform execution. Every downstream
+/// consumer therefore sees the same modern field and one of the two supported
+/// values. The live schema remains modern-only, and schema gating prevents an
+/// unrelated tool's `dispatch` argument from being reinterpreted.
+///
+/// Presence of `delivery_mode` always wins, including when its value is null or
+/// malformed. As with the platform parsers, only an explicit case-insensitive
+/// `foreground` opts into foreground delivery; every other supplied value,
+/// including the removed legacy `auto`, fails closed to `background`.
+fn normalize_delivery_mode_args(tool: &ToolDef, args: &mut Value) {
+    if !schema_accepts_delivery_mode(&tool.input_schema) {
+        return;
+    }
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+
+    let supplied = if arguments.contains_key("delivery_mode") {
+        arguments.get("delivery_mode")
+    } else {
+        arguments.get("dispatch")
+    };
+    let Some(supplied) = supplied else {
+        return;
+    };
+    let mode = if supplied
+        .as_str()
+        .is_some_and(|value| value.eq_ignore_ascii_case("foreground"))
+    {
+        "foreground"
+    } else {
+        "background"
+    };
+
+    arguments.remove("dispatch");
+    arguments.insert("delivery_mode".to_owned(), Value::String(mode.to_owned()));
 }
 
 /// Runtime-owned provenance for protected-resource admission.
@@ -461,6 +500,15 @@ pub enum ProtectedResourceOwnership {
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn def(&self) -> &ToolDef;
+
+    /// Implementation-attested routing that cannot touch the primary input
+    /// lane. The adapter must serialize its own lifecycle and fail closed if
+    /// that independent route is unavailable; it must never fall back to
+    /// global input. Caller fields alone cannot establish this guarantee.
+    /// Existing platform routes conservatively retain global coordination.
+    fn has_independent_input_lane(&self, _args: &Value) -> bool {
+        false
+    }
 
     /// Trusted implementation-side provenance for prompt-light disposable
     /// resources. The default is deliberately conservative: caller arguments
@@ -588,6 +636,7 @@ pub struct ToolRegistry {
     cursor_outcome_readers: Vec<crate::session::CursorOutcomeReaderRegistration>,
     _recording_state_readers: Vec<crate::session::RecordingStateReaderRegistration>,
     runtime_cleanups: Vec<RuntimeCleanup>,
+    capture_service: Arc<crate::capture_runtime::CaptureService>,
     /// Runtime-owned protected-consent broker shared by every resource
     /// adapter. Keeping it at the canonical dispatch boundary prevents
     /// browser, desktop, and file adapters from growing independent provider
@@ -607,6 +656,7 @@ impl ToolRegistry {
     pub fn new_with_protected_consent_provider(
         provider: Option<Arc<dyn crate::consent::ProtectedConsentProvider>>,
     ) -> Self {
+        let capture_service = Arc::new(crate::capture_runtime::CaptureService::default());
         let approval_broker = Arc::new(crate::consent::ApprovalBroker::new(provider));
         let protected_resource_grants = Arc::new(crate::consent::ProtectedResourceGrants::new(
             approval_broker.clone(),
@@ -615,10 +665,14 @@ impl ToolRegistry {
             Arc::new(crate::consent::ProtectedResourceOwnershipStore::default());
         let weak_grants = Arc::downgrade(&protected_resource_grants);
         let weak_ownership = Arc::downgrade(&protected_resource_ownership);
+        let weak_captures = Arc::downgrade(&capture_service);
         let session_end_hook =
             crate::session::register_scoped_session_end_hook(move |session_id| {
                 if let Some(ownership) = weak_ownership.upgrade() {
                     ownership.remove_session(session_id);
+                }
+                if let Some(captures) = weak_captures.upgrade() {
+                    captures.retire_session_id(session_id);
                 }
                 let Some(grants) = weak_grants.upgrade() else {
                     return;
@@ -655,6 +709,7 @@ impl ToolRegistry {
             cursor_outcome_readers: Vec::new(),
             _recording_state_readers: vec![recording_state_reader],
             runtime_cleanups: Vec::new(),
+            capture_service,
             approval_broker,
             protected_resource_grants,
             protected_resource_ownership,
@@ -668,6 +723,11 @@ impl ToolRegistry {
     /// trusted runtime.
     pub fn approval_broker(&self) -> Arc<crate::consent::ApprovalBroker> {
         self.approval_broker.clone()
+    }
+
+    /// Return the immutable-capture service owned by this runtime registry.
+    pub fn capture_service(&self) -> Arc<crate::capture_runtime::CaptureService> {
+        self.capture_service.clone()
     }
 
     pub fn protected_resource_grants(&self) -> Arc<crate::consent::ProtectedResourceGrants> {
@@ -815,6 +875,32 @@ impl ToolRegistry {
         self.register(Box::new(EndSessionTool));
     }
 
+    pub fn register_perception_tool(
+        &mut self,
+        client: impl Into<crate::perception_client::PerceptionClientHandle>,
+    ) {
+        let captures = self.capture_service();
+        let resolve_binding = Arc::new(move |args: &Value| {
+            captures.binding_from_args(args).map_err(|error| {
+                crate::perception_client::error(
+                    cua_driver_contract::VisualParseErrorCode::CaptureGenerationMismatch,
+                    "capture session binding is unavailable",
+                    false,
+                    Some(error.to_string()),
+                )
+            })
+        });
+        self.register_perception_tool_with_binding_resolver(client, resolve_binding);
+    }
+
+    pub fn register_perception_tool_with_binding_resolver(
+        &mut self,
+        client: impl Into<crate::perception_client::PerceptionClientHandle>,
+        resolve_binding: crate::perception_tools::CaptureBindingResolver,
+    ) {
+        crate::perception_tools::register_perception_tool(self, client, resolve_binding);
+    }
+
     /// Wire up the replay tool's weak self-reference.
     /// Call this once, immediately after `Arc::new(registry)`.
     pub fn init_self_weak(self: &Arc<Self>) {
@@ -902,7 +988,7 @@ impl ToolRegistry {
                 .await;
         }
         let context = match crate::session_authorization::configured_registry()
-            .and_then(crate::session_authorization::SessionAuthorizationRegistry::legacy_context)
+            .and_then(|registry| registry.legacy_context())
         {
             Ok(context) => context,
             Err(error) => {
@@ -920,7 +1006,7 @@ impl ToolRegistry {
     pub async fn invoke_from_trusted_adapter(&self, name: &str, mut args: Value) -> ToolResult {
         let evidence = TrustedInvocationEvidence::extract_from_adapter_args(&mut args);
         let context = match crate::session_authorization::configured_registry()
-            .and_then(crate::session_authorization::SessionAuthorizationRegistry::legacy_context)
+            .and_then(|registry| registry.legacy_context())
         {
             Ok(context) => context,
             Err(error) => {
@@ -1022,8 +1108,14 @@ impl ToolRegistry {
             return ToolResult::error(format!("Unknown tool: {name}"));
         };
 
+        // Normalize deprecated public argument spellings before any policy,
+        // consent, recording, or implementation layer interprets the call.
+        normalize_delivery_mode_args(tool.def(), &mut args);
         if let Err(result) = crate::action_target::normalize_action_target(resolved_name, &mut args)
         {
+            return result;
+        }
+        if let Err(result) = crate::action_target::enforce_delivery_target(resolved_name, &args) {
             return result;
         }
 
@@ -1448,7 +1540,11 @@ impl ToolRegistry {
                 "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
             );
         let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
-        let _desktop_action = if is_physical_desktop_action(resolved_name) {
+        let _desktop_action = if requires_desktop_coordination(
+            resolved_name,
+            &args,
+            tool.has_independent_input_lane(&args),
+        ) {
             let coordinator = desktop_action_coordinator();
             // Avoid yielding the dispatch task when the process-wide input
             // lane is uncontended. On Windows, that yield creates a window in
@@ -1468,13 +1564,46 @@ impl ToolRegistry {
                     self.recording
                         .begin_private_turn(resolved_name, &recording_args, start_ms)
                 } else {
-                    self.recording
-                        .begin_turn(resolved_name, &recording_args, start_ms)
+                    // A capture-bound click whose capture is already unknown,
+                    // expired, or superseded is refused by every platform
+                    // adapter before dispatch. Do not walk the application for
+                    // evidence of an action that cannot happen.
+                    let predicted_refusal =
+                        matches!(resolved_name, "click" | "double_click" | "right_click")
+                            .then(|| self.capture_service.predict_action_refusal(&args))
+                            .flatten();
+                    self.recording.begin_turn_with_refusal_hint(
+                        resolved_name,
+                        &recording_args,
+                        start_ms,
+                        predicted_refusal,
+                    )
                 }
             })
             .flatten();
 
-        let mut result = tool.invoke(args.clone()).await;
+        // Desktop pixels read off a capped get_desktop_state image are mapped
+        // back to the uncapped capture before any platform interprets them.
+        crate::desktop_capture_scale::map_desktop_args(&mut args);
+        let mut result = crate::recording::scope_dispatch_click_capture(
+            pending_turn.as_ref(),
+            tool.invoke(args.clone()),
+        )
+        .await;
+        match resolved_name {
+            "get_desktop_state" if result.is_error != Some(true) => {
+                crate::desktop_capture_scale::record_desktop_state(
+                    &args,
+                    result.structured_content.as_ref(),
+                );
+            }
+            "end_session" => {
+                if let Some(session) = args.get("_session_id").and_then(Value::as_str) {
+                    crate::desktop_capture_scale::forget_session(session);
+                }
+            }
+            _ => {}
+        }
         drop(lifecycle_dispatch);
         // The platform worker has exited, so another text operation for this
         // pid may now start even while result projection and evidence capture
@@ -1536,10 +1665,11 @@ impl ToolRegistry {
         if result.is_error != Some(true) && crate::action_record::is_action_tool(resolved_name) {
             if let Err(error) = publish_action_result(&mut result) {
                 result = ToolResult::error(format!(
-                    "internal action outcome mismatch for {resolved_name}: {error}"
+                    "internal action outcome mismatch for {resolved_name}: {error}; the tool may have executed. Verify state before retrying."
                 ))
                 .with_structured(serde_json::json!({
                     "code": "action_outcome_mismatch",
+                    "execution_state": "unknown",
                     "tool": resolved_name,
                     "detail": error,
                 }));
@@ -1551,10 +1681,11 @@ impl ToolRegistry {
                     cua_driver_contract::validate_success_output(resolved_name, structured)
                 {
                     result = ToolResult::error(format!(
-                        "internal typed output mismatch for {resolved_name}: {error}"
+                        "internal typed output mismatch for {resolved_name}: {error}; the tool may have executed. Verify state before retrying."
                     ))
                     .with_structured(serde_json::json!({
                         "code": "typed_output_mismatch",
+                        "execution_state": "unknown",
                         "tool": resolved_name,
                         "detail": error,
                     }));
@@ -2078,6 +2209,15 @@ impl ToolRegistry {
                 }),
                 "Allow Cua to install ffmpeg using the detected system package manager".to_owned(),
             ),
+            "install_extension" if args.get("confirm").and_then(Value::as_bool) == Some(true) => (
+                serde_json::json!({
+                    "kind": "extension_install",
+                    "extension": "perception",
+                    "direction": "local_catalog_to_driver",
+                }),
+                "Allow Cua to install the reviewed perception extension into the Driver home"
+                    .to_owned(),
+            ),
             _ => {
                 return Err(protected_scope_refusal(
                     "the file-transfer operation has no reviewed exact scope",
@@ -2428,7 +2568,12 @@ fn canonical_existing_file(raw: &str) -> Result<String, ToolResult> {
 /// The deepest existing ancestor is canonicalized first, so symlinked parents
 /// are captured in the approved identity. Only normal path components may be
 /// appended after that ancestor; lexical parent traversal never enters a
-/// protected-resource digest.
+/// protected-resource digest. The caller replaces the raw argument with this
+/// canonical path, so the tool writes exactly the approved location.
+///
+/// A deepest existing ancestor that is itself a symbolic link to a directory
+/// (macOS `/tmp` -> `/private/tmp`) is resolved like any other symlinked
+/// parent. A link to a non-directory is refused.
 fn canonical_proposed_path(raw: &str) -> Result<String, ToolResult> {
     let path = expanded_path(raw)?;
     if path.exists() {
@@ -2452,6 +2597,11 @@ fn canonical_proposed_path(raw: &str) -> Result<String, ToolResult> {
                 ))
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotADirectory => {
+                return Err(protected_scope_refusal(
+                    "an ancestor of the output path is not a directory",
+                ))
+            }
             Err(_) => {
                 return Err(protected_scope_refusal(
                     "the output path could not be inspected safely",
@@ -2466,11 +2616,13 @@ fn canonical_proposed_path(raw: &str) -> Result<String, ToolResult> {
             .parent()
             .ok_or_else(|| protected_scope_refusal("the output path has no existing ancestor"))?;
     }
-    let metadata = std::fs::symlink_metadata(existing)
+    // Follow a symlinked ancestor: `exists()` above already resolved it, and
+    // `canonicalize` below records its target in the approved identity.
+    let metadata = std::fs::metadata(existing)
         .map_err(|_| protected_scope_refusal("the output ancestor is unavailable"))?;
     if !metadata.is_dir() {
         return Err(protected_scope_refusal(
-            "the output path's existing ancestor is not a directory",
+            "the output path's deepest existing ancestor is not a directory",
         ));
     }
     let mut canonical = std::fs::canonicalize(existing)
@@ -2511,6 +2663,21 @@ fn is_physical_desktop_action(tool: &str) -> bool {
             | "bring_to_front"
             | "set_window_frame"
     )
+}
+
+fn requires_desktop_coordination(tool: &str, args: &Value, independent_lane: bool) -> bool {
+    if !is_physical_desktop_action(tool) {
+        return false;
+    }
+    // Only an implementation-attested, exact-window background route can
+    // leave the shared lane. Explicit desktop and foreground calls never do.
+    let exact_background_window = args["pid"].as_u64().is_some_and(|pid| pid > 0)
+        && args["window_id"].as_u64().is_some_and(|id| id > 0)
+        && args["scope"] != "desktop"
+        && args.pointer("/target/kind").and_then(Value::as_str) != Some("desktop")
+        && args["delivery_mode"] != "foreground"
+        && args["dispatch"] != "foreground";
+    !(independent_lane && exact_background_window)
 }
 
 /// Bucket that owns the processes a call is allowed to terminate.
@@ -2640,9 +2807,18 @@ fn publish_action_result(result: &mut ToolResult) -> Result<(), String> {
         .action_record
         .as_ref()
         .ok_or_else(|| "successful action omitted its internal execution record".to_owned())?;
-    let public = action
+    let mut public = action
         .public_result()
         .map_err(|error| format!("invalid internal execution record: {error:?}"))?;
+    // Some MCP clients (Claude Code among them) hand the model only
+    // `structuredContent` when it is present and drop the text blocks. The
+    // producer's text is the only place the resolved points, the element hit,
+    // popups, focus outcome and follow-up calls are spelled out, so the
+    // closed contract carries it as `summary`.
+    public.summary = result.content.iter().find_map(|content| match content {
+        Content::Text { text, .. } if !text.trim().is_empty() => Some(text.clone()),
+        _ => None,
+    });
     public
         .validate_invariants()
         .map_err(|error| format!("invalid public projection: {error}"))?;
@@ -2714,7 +2890,7 @@ mod runtime_isolation_tests {
     use crate::{
         authorization::PermissionMode,
         consent::{ConsentAction, ConsentRequest, ProtectedConsentProvider, ProviderDecision},
-        protocol::ToolResult,
+        protocol::{Content, ToolResult},
         session_authorization::{SessionAuthorizationRegistry, SessionModeCeiling},
     };
     use std::io::Write;
@@ -2857,10 +3033,13 @@ mod runtime_isolation_tests {
             &self.def
         }
 
-        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
+        async fn invoke(&self, args: serde_json::Value) -> crate::protocol::ToolResult {
             self.hits.fetch_add(1, Ordering::SeqCst);
-            crate::protocol::ToolResult::text("private state")
-                .with_structured(serde_json::json!({"snapshot_id": 1}))
+            crate::protocol::ToolResult::text("private state").with_structured(serde_json::json!({
+                "pid": args["pid"].as_u64().unwrap_or(42),
+                "window_id": args["window_id"].as_u64().unwrap_or(7),
+                "snapshot_id": "synthetic-snapshot", "elements": []
+            }))
         }
     }
 
@@ -2956,6 +3135,18 @@ mod runtime_isolation_tests {
         Arc::new(registry)
     }
 
+    // Use the same canonical spelling as manifest loading, including Windows'
+    // drive and extended-length prefix. This is an identity fixture only.
+    fn fixture_executable() -> String {
+        std::env::current_exe()
+            .unwrap()
+            .canonicalize()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned()
+    }
+
     fn attested_registry(
         name: &str,
         provider: Option<Arc<dyn ProtectedConsentProvider>>,
@@ -2969,7 +3160,7 @@ mod runtime_isolation_tests {
                 "fingerprint": {
                     "pid": 424242,
                     "start_time": 7,
-                    "executable": "/synthetic/fixture"
+                    "executable": fixture_executable()
                 }
             }),
             "get_window_state" => serde_json::json!({
@@ -2979,7 +3170,7 @@ mod runtime_isolation_tests {
                 "fingerprint": {
                     "pid": 424242,
                     "start_time": 7,
-                    "executable": "/synthetic/fixture"
+                    "executable": fixture_executable()
                 }
             }),
             _ => serde_json::json!({
@@ -3196,7 +3387,7 @@ mod runtime_isolation_tests {
     async fn bounded_observation_uses_only_the_manifest_without_a_protected_host() {
         let hits = Arc::new(AtomicUsize::new(0));
         let registry = attested_registry("get_window_state", None, hits.clone(), false);
-        let context = bounded_context(
+        let context = bounded_context(&format!(
             r#"
 version: 2
 mode: bounded
@@ -3206,12 +3397,13 @@ allow:
   tools: [get_window_state]
 resources:
   apps:
-    - executable: /synthetic/fixture
+    - executable: {executable}
       launch: false
       windows: all
       terminate: deny
 "#,
-        );
+            executable = serde_json::to_string(&fixture_executable()).unwrap()
+        ));
         let result = registry
             .invoke_with_context(
                 "get_window_state",
@@ -3231,15 +3423,18 @@ resources:
             let registry = attested_registry("get_window_state", None, allowed_hits.clone(), false);
             let allowed = manifest_context(
                 mode,
-                r#"
+                &format!(
+                    r#"
 version: 3
 allow:
   tools: [get_window_state]
 resources:
   apps:
-    - executable: /synthetic/fixture
+    - executable: {executable}
       windows: all
 "#,
+                    executable = serde_json::to_string(&fixture_executable()).unwrap()
+                ),
             );
             let result = registry
                 .invoke_with_context(
@@ -3255,15 +3450,22 @@ resources:
             let registry = attested_registry("get_window_state", None, denied_hits.clone(), false);
             let denied = manifest_context(
                 mode,
-                r#"
+                &format!(
+                    r#"
 version: 3
 allow:
   tools: [get_window_state]
 resources:
   apps:
-    - executable: /another/application
+    - executable: {executable}
       windows: all
 "#,
+                    executable = serde_json::to_string(
+                        &std::path::Path::new(&fixture_executable())
+                            .with_file_name("another-application.exe")
+                    )
+                    .unwrap()
+                ),
             );
             let result = registry
                 .invoke_with_context(
@@ -3569,6 +3771,176 @@ resources:
     }
 
     #[tokio::test]
+    async fn background_input_rechecks_manifest_before_every_adapter_dispatch() {
+        // The adapter may retain a native connection after a successful call.
+        // Reusing its public session label must not reuse resource authority.
+        for mode in [
+            PermissionMode::Standard,
+            PermissionMode::Bounded,
+            PermissionMode::Unrestricted,
+        ] {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let registry = input_registry(None, hits.clone());
+            let context = manifest_context(
+                mode,
+                r#"
+version: 3
+expires_after: 1h
+idle_timeout: 30m
+allow:
+  tools: [click]
+resources:
+  desktop:
+    windows:
+      - pid: 42
+        window_id: 7
+"#,
+            );
+            for (window, expected_calls) in [(7, 1), (8, 1), (7, 2), (9, 2)] {
+                let result = registry.invoke_with_context("click", serde_json::json!({
+                    "pid": 42, "window_id": window, "x": 10, "y": 20,
+                    "delivery_mode": "background", "session": "persistent-native-connection",
+                    "_session_id": "forged-authority", "_lane": 0,
+                }), context.clone()).await;
+                assert_eq!(
+                    result.is_error == Some(true),
+                    window != 7,
+                    "{mode:?}: window {window}"
+                );
+                assert_eq!(
+                    hits.load(Ordering::SeqCst),
+                    expected_calls,
+                    "denied input must never enter the adapter"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn background_input_without_manifest_uses_existing_promptless_modes() {
+        for context in [standard_context(), unrestricted_context()] {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let registry = input_registry(None, hits.clone());
+            for window in [7, 8] {
+                let result = registry
+                    .invoke_with_context(
+                        "click",
+                        serde_json::json!({
+                            "pid": 42, "window_id": window, "x": 10, "y": 20,
+                            "delivery_mode": "background", "session": "ordinary-desktop-input",
+                        }),
+                        context.clone(),
+                    )
+                    .await;
+                assert_ne!(result.is_error, Some(true));
+            }
+            assert_eq!(hits.load(Ordering::SeqCst), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn canonical_dispatch_normalizes_legacy_delivery_mode_before_execution() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let last_args = Arc::new(Mutex::new(None));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ArgumentProbe {
+            hits: hits.clone(),
+            last_args: last_args.clone(),
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "delivery_mode": crate::tool_schema::delivery_mode_schema()
+                    }
+                }),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+
+        let result = registry
+            .invoke_with_context(
+                "click",
+                serde_json::json!({"dispatch": "foreground"}),
+                standard_context(),
+            )
+            .await;
+
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        let received = last_args.lock().unwrap().clone().expect("arguments");
+        assert_eq!(received["delivery_mode"], "foreground");
+        assert!(received.get("dispatch").is_none());
+    }
+
+    #[tokio::test]
+    async fn desktop_background_click_refuses_before_platform_invocation() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let last_args = Arc::new(Mutex::new(None));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ArgumentProbe {
+            hits: hits.clone(),
+            last_args,
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "delivery_mode": crate::tool_schema::delivery_mode_schema()
+                    }
+                }),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+
+        for args in [
+            serde_json::json!({
+                "target": {"kind": "desktop", "display_id": "primary"},
+                "delivery_mode": "background",
+                "x": 10,
+                "y": 20
+            }),
+            serde_json::json!({
+                "scope": "desktop",
+                "dispatch": "background",
+                "x": 10,
+                "y": 20
+            }),
+        ] {
+            let result = registry
+                .invoke_with_context("click", args, standard_context())
+                .await;
+            assert_eq!(result.is_error, Some(true));
+            assert_eq!(
+                result.structured_content,
+                Some(serde_json::json!({
+                    "code": "background_unavailable",
+                    "effect": "refused",
+                    "suggestion": "Retry this action with delivery_mode:\"foreground\".",
+                    "escalation": {
+                        "recommended": "foreground",
+                        "reason": cua_driver_contract::ClickInput::DESKTOP_BACKGROUND_MESSAGE,
+                    },
+                }))
+            );
+            assert_eq!(
+                hits.load(Ordering::SeqCst),
+                0,
+                "refusal must occur before the platform tool is invoked"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn standard_file_transfer_is_promptless_and_still_canonicalizes_paths() {
         let files = tempfile::tempdir().unwrap();
         let first = files.path().join("first.txt");
@@ -3839,7 +4211,7 @@ resources:
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
-                    executable: Some("/synthetic/fixture".to_owned()),
+                    executable: Some(fixture_executable()),
                 },
             );
 
@@ -3867,7 +4239,7 @@ resources:
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
-                    executable: Some("/synthetic/fixture".to_owned()),
+                    executable: Some(fixture_executable()),
                 },
             );
 
@@ -3897,7 +4269,7 @@ resources:
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
-                    executable: Some("/synthetic/fixture".to_owned()),
+                    executable: Some(fixture_executable()),
                 },
             );
 
@@ -4000,7 +4372,7 @@ resources:
                 crate::browser::ProcessFingerprint {
                     pid: 424242,
                     start_time: Some(7),
-                    executable: Some("/synthetic/fixture".to_owned()),
+                    executable: Some(fixture_executable()),
                 },
             );
 
@@ -4198,6 +4570,55 @@ resources:
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn proposed_output_scope_resolves_a_symlinked_deepest_ancestor() {
+        // Mirrors macOS `/tmp/x.png`, where `/tmp` links to `/private/tmp`.
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("private-tmp");
+        std::fs::create_dir(&target).unwrap();
+        let link = root.path().join("tmp");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let proposed = link.join("x.png");
+
+        let canonical = canonical_proposed_path(proposed.to_str().unwrap()).unwrap();
+
+        assert_eq!(
+            canonical,
+            std::fs::canonicalize(&target)
+                .unwrap()
+                .join("x.png")
+                .to_string_lossy()
+        );
+        assert!(!proposed.exists());
+        // The same file already existing was always resolved; both agree.
+        std::fs::write(target.join("x.png"), b"").unwrap();
+        assert_eq!(
+            canonical_proposed_path(proposed.to_str().unwrap()).unwrap(),
+            canonical
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proposed_output_scope_refuses_a_symlinked_ancestor_that_is_not_a_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("file");
+        std::fs::write(&file, b"").unwrap();
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        let proposed = link.join("x.png");
+
+        let refusal = canonical_proposed_path(proposed.to_str().unwrap()).unwrap_err();
+
+        let text = serde_json::to_string(&refusal).unwrap();
+        assert!(
+            text.contains("an ancestor of the output path is not a directory"),
+            "{text}"
+        );
+        assert!(!file.with_file_name("x.png").exists());
+    }
+
     #[test]
     fn proposed_output_scope_canonicalizes_the_existing_ancestor_without_creating_output() {
         let root = tempfile::tempdir().unwrap();
@@ -4285,10 +4706,17 @@ resources:
         let object = structured.as_object().expect("ActionResult is an object");
         assert_eq!(
             object.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["delivery", "effect", "route"]
+            ["delivery", "effect", "route", "summary"]
         );
         assert_eq!(structured["effect"], "unverifiable");
         assert_eq!(structured["delivery"]["mode"], "unknown");
+        // The producer's text travels inside the closed contract for clients
+        // that surface only structuredContent.
+        let text = result.content.iter().find_map(|content| match content {
+            Content::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        });
+        assert_eq!(structured["summary"].as_str(), text);
         assert!(matches!(
             structured["route"].as_str(),
             Some("accessibility" | "synthetic_events" | "global_input" | "dom" | "trusted_input")
@@ -4340,48 +4768,51 @@ resources:
     #[tokio::test]
     async fn element_tokens_are_bound_to_the_dispatch_runtime_generation() {
         let pid = 8_675_309;
-        let token = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-a".to_owned(), async {
-                let snapshot = crate::element_token::global().register_snapshot(pid, 44, 1);
-                crate::element_token::token_for(snapshot, 0)
+        let (first_cache, token) = DISPATCH_RUNTIME_SCOPE
+            .scope("token-dispatch-runtime-a".to_owned(), async {
+                let cache = crate::snapshot_test_support::cache();
+                let snapshot =
+                    cache.publish(pid, 44, crate::snapshot_test_support::Payload(vec![0]));
+                (cache, crate::element_token::token_for(snapshot, 0))
             })
             .await;
-
-        let cross_runtime = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-b".to_owned(), async {
-                crate::element_token::global().resolve(pid, &token)
+        let second_cache = DISPATCH_RUNTIME_SCOPE
+            .scope("token-dispatch-runtime-b".to_owned(), async {
+                crate::snapshot_test_support::cache()
             })
             .await;
-        assert_eq!(
-            cross_runtime.unwrap_err(),
-            "element_token belongs to another runtime generation"
-        );
         let structured = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-b".to_owned(), async {
-                crate::element_token::resolve_element_args(
-                    pid,
-                    None,
-                    Some(&token),
-                    None,
-                    None,
-                    "click",
-                )
-                .unwrap_err()
+            .scope("token-dispatch-runtime-b".to_owned(), async {
+                second_cache
+                    .resolve_element_args(pid, None, Some(&token), None, None, "click")
+                    .unwrap_err()
             })
             .await
             .structured_content
             .unwrap();
+        assert_eq!(
+            structured["refusal"]["message"],
+            "element_token belongs to another runtime generation"
+        );
         assert_eq!(
             structured.pointer("/refusal/code"),
             Some(&serde_json::Value::String("generation_mismatch".into()))
         );
 
         let owner = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-a".to_owned(), async {
-                crate::element_token::global().resolve(pid, &token)
+            .scope("token-dispatch-runtime-a".to_owned(), async {
+                first_cache.resolve_element_args(pid, None, Some(&token), None, None, "click")
             })
             .await;
-        assert_eq!(owner.unwrap(), (44, 0));
+        assert!(matches!(
+            owner.unwrap(),
+            crate::element_token::ResolvedElement::Element {
+                window_id: Some(44),
+                element_index: 0,
+                element: 0,
+                ..
+            }
+        ));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -4404,6 +4835,33 @@ resources:
             task.await.unwrap();
         }
         assert_eq!(max_active.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn independent_input_requires_adapter_attestation_and_an_exact_background_window() {
+        use super::requires_desktop_coordination;
+        let exact = serde_json::json!({"pid": 10, "window_id": 20, "delivery_mode": "background"});
+        assert!(requires_desktop_coordination("drag", &exact, false));
+        assert!(!requires_desktop_coordination("drag", &exact, true));
+        for fields in [
+            serde_json::json!({"scope": "desktop"}),
+            serde_json::json!({"target": {"kind": "desktop"}}),
+            serde_json::json!({"delivery_mode": "foreground"}),
+            serde_json::json!({"dispatch": "foreground"}),
+            serde_json::json!({"pid": 0}),
+            serde_json::json!({"window_id": null}),
+        ] {
+            let mut args = exact.clone();
+            args.as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            assert!(requires_desktop_coordination("drag", &args, true), "{args}");
+        }
+        assert!(requires_desktop_coordination(
+            "drag",
+            &serde_json::json!({"independent_input_lane": true}),
+            false
+        ));
     }
 
     #[test]
@@ -4859,6 +5317,7 @@ mod capability_tests {
         "get_recording_state",
         "replay_trajectory",
         "install_ffmpeg",
+        "install_extension",
         // misc
         "page",
         "check_for_update",
@@ -4875,6 +5334,7 @@ mod capability_tests {
         "browser_pointer",
         "history_status",
         "history_query",
+        "parse_visual_regions",
     ];
 
     /// All capability tokens in the canonical vocabulary. Any token
@@ -4901,8 +5361,10 @@ mod capability_tests {
         "screen.capture",
         "screen.capture.window",
         "screen.capture.region",
+        "screen.capture.registry.read",
         "screen.dimensions",
         "screen.cursor.position",
+        "screen.perception.visual_regions",
         // accessibility
         "accessibility.tree",
         "accessibility.tree.structured",
@@ -4946,6 +5408,8 @@ mod capability_tests {
         "recording.state",
         "recording.replay",
         "recording.install_dependency",
+        "extension.install",
+        "visual.regions.parse",
         // page
         "page.action",
         // browser-tool v1
@@ -5007,43 +5471,74 @@ mod capability_tests {
     }
 
     #[test]
-    fn capability_version_is_string_one() {
-        // Bumping this constant in a non-breaking PR is an error —
-        // the version is the contract version, not the build version.
-        // Pinned to "1" until we ship a BREAKING vocabulary change.
-        assert_eq!(CAPABILITY_VERSION, "1");
-    }
+    fn delivery_mode_normalization_is_schema_gated_modern_first_and_fail_closed() {
+        let with_delivery_mode = super::ToolDef {
+            name: "click".into(),
+            description: "test input".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "delivery_mode": crate::tool_schema::delivery_mode_schema()
+                }
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        };
+        let without_delivery_mode = super::ToolDef {
+            name: "other".into(),
+            description: "unrelated tool".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        };
 
-    #[test]
-    fn delivery_mode_capability_is_derived_from_the_runtime_schema() {
-        let with_delivery_mode = serde_json::json!({
-            "type": "object",
-            "properties": {
-                "delivery_mode": crate::tool_schema::delivery_mode_schema()
-            }
-        });
-        let without_delivery_mode = serde_json::json!({"type": "object", "properties": {}});
+        for (mut args, expected) in [
+            (serde_json::json!({"dispatch": "foreground"}), "foreground"),
+            (serde_json::json!({"dispatch": "Foreground"}), "foreground"),
+            (serde_json::json!({"dispatch": "background"}), "background"),
+            (serde_json::json!({"dispatch": "auto"}), "background"),
+            (serde_json::json!({"dispatch": "unknown"}), "background"),
+            (serde_json::json!({"dispatch": null}), "background"),
+            (
+                serde_json::json!({"delivery_mode": "Foreground"}),
+                "foreground",
+            ),
+            (
+                serde_json::json!({"delivery_mode": "unknown"}),
+                "background",
+            ),
+            (serde_json::json!({"delivery_mode": null}), "background"),
+            (
+                serde_json::json!({
+                    "delivery_mode": "background",
+                    "dispatch": "foreground"
+                }),
+                "background",
+            ),
+            (
+                serde_json::json!({
+                    "delivery_mode": null,
+                    "dispatch": "foreground"
+                }),
+                "background",
+            ),
+        ] {
+            super::normalize_delivery_mode_args(&with_delivery_mode, &mut args);
+            assert_eq!(args["delivery_mode"], expected, "arguments: {args}");
+            assert!(args.get("dispatch").is_none(), "arguments: {args}");
+        }
 
-        assert!(
-            advertised_capabilities_for("press_key", &with_delivery_mode)
-                .iter()
-                .any(|capability| capability == "input.delivery_mode")
-        );
-        assert!(
-            !advertised_capabilities_for("press_key", &without_delivery_mode)
-                .iter()
-                .any(|capability| capability == "input.delivery_mode")
-        );
-    }
+        let mut absent = serde_json::json!({"x": 1});
+        super::normalize_delivery_mode_args(&with_delivery_mode, &mut absent);
+        assert_eq!(absent, serde_json::json!({"x": 1}));
 
-    #[test]
-    fn unknown_tools_get_empty_capabilities() {
-        // Tools without a mapping (typically internal/stub tools like
-        // `unsupported_platform`) return `[]`. Consumers fall back to
-        // name-matching for those, which is fine — they were never
-        // load-bearing for capability routing.
-        assert!(default_capabilities_for("unsupported_platform").is_empty());
-        assert!(default_capabilities_for("totally_made_up_tool").is_empty());
+        let mut unrelated = serde_json::json!({"dispatch": "foreground"});
+        super::normalize_delivery_mode_args(&without_delivery_mode, &mut unrelated);
+        assert_eq!(unrelated, serde_json::json!({"dispatch": "foreground"}));
     }
 
     fn dummy_def(name: &str) -> ToolDef {
@@ -5152,14 +5647,16 @@ mod capability_tests {
     #[test]
     fn to_list_entry_includes_empty_capabilities_array_for_unknown_tool() {
         // Even when no capabilities are claimed, the field is still
-        // present — consumers can rely on the key existing.
-        let def = dummy_def("totally_made_up_tool");
-        let entry = def.to_list_entry();
-        let caps = entry
-            .get("capabilities")
-            .and_then(|v| v.as_array())
-            .expect("capabilities must be present even if empty");
-        assert!(caps.is_empty());
+        // present — consumers can rely on the key existing. Internal stub
+        // tools such as `unsupported_platform` claim nothing either.
+        for name in ["totally_made_up_tool", "unsupported_platform"] {
+            let entry = dummy_def(name).to_list_entry();
+            let caps = entry
+                .get("capabilities")
+                .and_then(|v| v.as_array())
+                .expect("capabilities must be present even if empty");
+            assert!(caps.is_empty(), "{name}");
+        }
     }
 
     #[test]

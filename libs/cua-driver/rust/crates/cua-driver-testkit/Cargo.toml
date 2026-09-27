@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+image = { workspace = true }
 tempfile = "3"
 
 [target.'cfg(unix)'.dependencies]

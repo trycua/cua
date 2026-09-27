@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
     BrowserPlatform, ExistingProfileSetupOutcome, ExistingProfileSetupRequest, PrepareAction,
@@ -18,6 +17,10 @@ use cua_driver_core::browser::types::{
     EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
+use cua_driver_core::browser::{
+    existing_profile_setup_descriptor, is_firefox, loopback_websocket_port,
+    parse_devtools_active_port,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[derive(Debug, Default)]
@@ -27,7 +30,44 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
     BrowserRefusal::new(code, message)
 }
 
-fn is_chromium(name: &str) -> bool {
+fn hyprland_identity_matches(pid: u32, window_id: u64, owner_pid: u32, address: u64) -> bool {
+    pid != 0 && window_id != 0 && owner_pid == pid && address == window_id
+}
+
+fn hyprland_is_only_owned_window(
+    pid: u32,
+    window_id: u64,
+    identities: impl IntoIterator<Item = (u32, u64)>,
+) -> bool {
+    let mut owned = identities.into_iter().filter(|(owner, _)| *owner == pid);
+    let Some((owner, address)) = owned.next() else {
+        return false;
+    };
+    hyprland_identity_matches(pid, window_id, owner, address) && owned.next().is_none()
+}
+
+fn run_existing_profile_cleanup<T: Send + 'static>(
+    cleanup: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, BrowserRefusal> {
+    std::thread::Builder::new()
+        .name("cua-browser-cleanup".into())
+        .spawn(cleanup)
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not start exact browser cleanup: {error}"),
+            )
+        })?
+        .join()
+        .map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "exact browser cleanup worker panicked",
+            )
+        })
+}
+
+pub(crate) fn is_chromium_identity(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     let products = [
         "chrome", "chromium", "electron", "brave", "edge", "msedge", "vivaldi", "opera", "arc",
@@ -37,14 +77,8 @@ fn is_chromium(name: &str) -> bool {
         .any(|token| products.contains(&token))
 }
 
-fn is_firefox(name: &str) -> bool {
-    name.to_ascii_lowercase().split_whitespace().any(|word| {
-        word.rsplit(['/', '\\'])
-            .next()
-            .unwrap_or(word)
-            .trim_end_matches(".exe")
-            == "firefox"
-    })
+fn is_chromium(name: &str) -> bool {
+    is_chromium_identity(name)
 }
 
 fn browser_product(identity: &str) -> BrowserProduct {
@@ -136,18 +170,6 @@ fn process_role_for_pid(pid: i64, product: BrowserProduct) -> BrowserProcessRole
     } else {
         BrowserProcessRole::Unknown
     }
-}
-
-fn loopback_websocket_port(url: &str) -> Option<u16> {
-    ["ws://127.0.0.1:", "ws://localhost:", "ws://[::1]:"]
-        .iter()
-        .find_map(|prefix| {
-            url.strip_prefix(prefix)?
-                .split('/')
-                .next()?
-                .parse::<u16>()
-                .ok()
-        })
 }
 
 fn parse_proc_net_loopback_listeners(text: &str) -> Vec<(u16, u64)> {
@@ -256,21 +278,6 @@ fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     listeners.sort_unstable();
     listeners.dedup();
     Ok(listeners)
-}
-
-fn parse_devtools_active_port(text: &str) -> Option<(u16, &str)> {
-    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
-    let port = lines.next()?.parse::<u16>().ok()?;
-    let path = lines.next()?;
-    if lines.next().is_some() {
-        return None;
-    }
-    let instance = path.strip_prefix("/devtools/browser/")?;
-    (!instance.is_empty()
-        && instance
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))
-    .then_some((port, path))
 }
 
 fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
@@ -382,25 +389,12 @@ fn process_identity(pid: i64) -> Result<(u64, Option<String>), BrowserRefusal> {
             format!("browser process {pid} is no longer available"),
         )
     })?;
-    let tail = stat
-        .rsplit_once(')')
-        .map(|(_, tail)| tail.trim())
-        .ok_or_else(|| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not parse process identity for pid {pid}"),
-            )
-        })?;
-    let started = tail
-        .split_whitespace()
-        .nth(19)
-        .and_then(|value| value.parse::<u64>().ok())
-        .ok_or_else(|| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not parse process start time for pid {pid}"),
-            )
-        })?;
+    let started = crate::proc_fs::process_start_time_from_stat(&stat).ok_or_else(|| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not parse process start time for pid {pid}"),
+        )
+    })?;
     let executable = std::fs::read_link(format!("/proc/{pid}/exe"))
         .ok()
         .map(|path| path.to_string_lossy().into_owned());
@@ -532,6 +526,46 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             )
         })?;
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            if crate::wayland::hyprland::is_session() {
+                let window = tokio::task::spawn_blocking(move || {
+                    crate::wayland::hyprland::window_for_address(window_id)
+                })
+                .await
+                .ok()
+                .flatten()
+                .ok_or_else(|| {
+                    refusal(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        "Hyprland could not attest the exact mapped browser window",
+                    )
+                })?;
+                if !hyprland_identity_matches(pid_u32, window_id, window.pid, window.address) {
+                    return Err(refusal(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        "Hyprland browser window does not match the requested pid and full address",
+                    ));
+                }
+                return Ok(NativeWindowInfo {
+                    pid,
+                    window_id,
+                    title: window.title,
+                    bounds: Rect::new(
+                        f64::from(window.x),
+                        f64::from(window.y),
+                        f64::from(window.width),
+                        f64::from(window.height),
+                    ),
+                    geometry_exact: true,
+                    ownership: NativeOwnershipProof {
+                        method: NativeOwnershipMethod::WindowServerOwner,
+                        owner_pid: pid,
+                        detail: Some(
+                            "authenticated Hyprland IPC pid, full address, and mapped window rect"
+                                .to_owned(),
+                        ),
+                    },
+                });
+            }
             if let Some(window) = crate::wayland::sway_ipc::window_for_id(window_id) {
                 if window.pid != pid_u32 {
                     return Err(refusal(
@@ -665,6 +699,27 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             )
         })?;
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            if crate::wayland::hyprland::is_session() {
+                let windows = tokio::task::spawn_blocking(crate::wayland::hyprland::list_windows)
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .ok_or_else(|| {
+                        refusal(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            "Hyprland could not attest browser window cardinality",
+                        )
+                    })?;
+                // Count every mapped client owned by the PID, including hidden
+                // and off-workspace clients; visibility cannot prove uniqueness.
+                return Ok(Some(hyprland_is_only_owned_window(
+                    pid_u32,
+                    window_id,
+                    windows
+                        .into_iter()
+                        .map(|window| (window.pid, window.address)),
+                )));
+            }
             let Some(windows) = crate::wayland::sway_ipc::list_windows() else {
                 if let Some(owned) =
                     crate::wayland::shell_helper::trusted_window_ids_for_pid(pid_u32)
@@ -1079,6 +1134,34 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         })?
     }
 
+    fn cleanup_existing_profile_setup(
+        &self,
+        request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!(
+                    "existing-profile cleanup is not implemented for {:?}",
+                    request.browser
+                ),
+            )
+        })?;
+        let pid = u32::try_from(request.pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser pid is outside the Linux process-id range",
+            )
+        })?;
+        let window_id = request.window_id;
+        run_existing_profile_cleanup(move || {
+            let dismissed_before = crate::browser_consent_ui::dismiss(pid, window_id)?;
+            let closed_setup_page = crate::browser_setup_ui::disable(pid, window_id, descriptor)?;
+            let dismissed_after = crate::browser_consent_ui::dismiss(pid, window_id)?;
+            Ok(dismissed_before || closed_setup_page || dismissed_after)
+        })?
+    }
+
     async fn abort_existing_profile_setup(
         &self,
         request: ExistingProfileSetupRequest,
@@ -1154,6 +1237,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn hyprland_browser_identity_requires_exact_pid_and_full_native_address() {
+        let address = 0x1234_0000_0042;
+        assert!(hyprland_identity_matches(42, address, 42, address));
+        assert!(!hyprland_identity_matches(43, address, 42, address));
+        assert!(!hyprland_identity_matches(42, 0x42, 42, address));
+        assert!(!hyprland_identity_matches(42, address + 1, 42, address));
+        assert!(!hyprland_identity_matches(0, address, 0, address));
+        assert!(!hyprland_identity_matches(42, 0, 42, 0));
+    }
+
+    #[test]
+    fn hyprland_browser_cardinality_requires_one_exact_owned_surface() {
+        let address = 0x1234_0000_0042;
+        assert!(hyprland_is_only_owned_window(42, address, [(42, address)]));
+        assert!(hyprland_is_only_owned_window(
+            42,
+            address,
+            [(7, address + 1), (42, address)],
+        ));
+        for identities in [
+            vec![],
+            vec![(7, address)],
+            vec![(42, 0x42)],
+            vec![(42, address + 1)],
+            vec![(42, address), (42, address + 1)],
+            vec![(42, address), (42, address)],
+        ] {
+            assert!(!hyprland_is_only_owned_window(42, address, identities));
+        }
+        assert!(!hyprland_is_only_owned_window(0, address, [(0, address)]));
+        assert!(!hyprland_is_only_owned_window(42, 0, [(42, 0)]));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn existing_profile_cleanup_can_drive_atspi_runtime_from_async_session_teardown() {
+        let cleaned = run_existing_profile_cleanup(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("AT-SPI-style cleanup runtime")
+                .block_on(async { true })
+        })
+        .expect("cleanup worker");
+
+        assert!(cleaned);
+    }
+
+    #[test]
     fn isolated_browser_candidates_use_only_root_managed_payloads() {
         let candidates = isolated_browser_candidates();
         assert!(candidates.iter().all(|candidate| candidate.is_absolute()));
@@ -1220,47 +1351,6 @@ mod tests {
         assert_eq!(
             browser_product("/opt/google/chrome/chrome"),
             BrowserProduct::GoogleChrome
-        );
-    }
-
-    #[test]
-    fn firefox_classifier_uses_product_tokens() {
-        assert!(is_firefox("firefox --new-instance"));
-        assert!(is_firefox("Mozilla Firefox"));
-        assert!(!is_firefox("firefox-helper"));
-        assert!(!is_firefox("waterfox"));
-    }
-
-    #[test]
-    fn websocket_url_must_keep_the_attested_listener_port() {
-        assert_eq!(
-            loopback_websocket_port("ws://localhost:9222/devtools/browser/id"),
-            Some(9222)
-        );
-        assert_ne!(
-            loopback_websocket_port("ws://[::1]:9333/devtools/browser/foreign"),
-            Some(9222)
-        );
-        assert_eq!(loopback_websocket_port("ws://0.0.0.0:9222/devtools"), None);
-    }
-
-    #[test]
-    fn active_port_parser_requires_one_exact_browser_path() {
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser/abc-123\n"),
-            Some((9222, "/devtools/browser/abc-123"))
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser\n"),
-            None
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/page/abc\n"),
-            None
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser/../page\n"),
-            None
         );
     }
 }

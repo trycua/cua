@@ -1121,6 +1121,57 @@ pub fn session_end_hook_count() -> usize {
     hooks().lock().unwrap().len()
 }
 
+/// Release process-global session storage after the standalone daemon has
+/// stopped all connection tasks and destroyed its only SDK runtime.
+#[doc(hidden)]
+pub fn release_process_state_for_shutdown() {
+    if let Some(readers) = CURSOR_OUTCOME_READERS.get() {
+        let mut readers = readers.lock().unwrap();
+        readers.clear();
+        readers.shrink_to_fit();
+    }
+    if let Some(readers) = RECORDING_STATE_READERS.get() {
+        let mut readers = readers.lock().unwrap();
+        readers.clear();
+        readers.shrink_to_fit();
+    }
+    if let Some(registered) = SESSION_END_HOOKS.get() {
+        let mut registered = registered.lock().unwrap();
+        registered.clear();
+        registered.shrink_to_fit();
+    }
+    if let Some(registered) = SESSION_REVIVE_HOOKS.get() {
+        let mut registered = registered.lock().unwrap();
+        registered.clear();
+        registered.shrink_to_fit();
+    }
+    if let Some(progress) = SESSION_CLEANUP_PROGRESS.get() {
+        let mut progress = progress.lock().unwrap();
+        progress.clear();
+        progress.shrink_to_fit();
+    }
+    if let Some(activity) = SESSION_ACTIVITY.get() {
+        let mut activity = activity.lock().unwrap();
+        activity.clear();
+        activity.shrink_to_fit();
+    }
+    if let Some(records) = LIFECYCLE_RECORDS.get() {
+        let mut records = records.lock().unwrap();
+        records.clear();
+        records.shrink_to_fit();
+    }
+    if let Some(ended) = ENDED_SESSIONS.get() {
+        let mut ended = ended.lock().unwrap();
+        ended.clear();
+        ended.shrink_to_fit();
+    }
+    if let Some(scopes) = SUSPENDED_RUNTIME_SCOPES.get() {
+        let mut scopes = scopes.lock().unwrap();
+        scopes.clear();
+        scopes.shrink_to_fit();
+    }
+}
+
 /// Fan a session-end out to every registered cleanup hook. Called by the daemon
 /// on control-connection EOF (the reaper) and by the legacy `session_end` method
 /// arm. Idempotent: the FIRST fire for a given `session_id` runs every hook; any
@@ -1326,6 +1377,24 @@ pub fn forget_ended_sessions_with_prefix(prefix: &str) -> usize {
 /// overlay keeps its own render-side tombstone keyed on the same id.
 pub fn is_session_ended(session_id: &str) -> bool {
     ended_sessions().lock().unwrap().contains_key(session_id)
+}
+
+/// Whether termination has been requested for a runtime-private lifecycle.
+///
+/// Long-running adapters may use this to relinquish held input before their
+/// dispatch guard drops. Cleanup hooks still run only after admitted work has
+/// unwound. This read-only cancellation signal neither grants authority nor
+/// revives a session; callers must use the registry's private id, not a label.
+pub fn is_session_ending(session_id: &str) -> bool {
+    // Match admission/termination lock order and observe pending termination
+    // and completed termination in one read-side critical section.
+    let ended = ended_sessions().lock().unwrap();
+    ended.contains_key(session_id)
+        || lifecycle_records()
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .is_some_and(|record| record.pending_end.is_some())
 }
 
 /// Revive a previously-ended session id by clearing its tombstone, so a fresh
@@ -1946,7 +2015,12 @@ mod tests {
         )
         .expect("idempotent start must preserve the live dispatch record");
 
+        assert!(!is_session_ending(sid));
+        assert!(!end_session_for_owner(sid, "unrelated-owner"));
+        assert!(!is_session_ending(sid));
         assert!(end_session_for_owner(sid, owner));
+        assert!(is_session_ending(sid));
+        assert_eq!(cleanup_calls.load(Ordering::SeqCst), 0);
         let snapshot = session_snapshot(sid, owner, DEFAULT_SESSION_IDLE_TTL).unwrap();
         assert!(snapshot.ending);
         assert!(!is_session_ended(sid));
@@ -1956,6 +2030,7 @@ mod tests {
 
         drop(guard);
         assert!(is_session_ended(sid));
+        assert!(is_session_ending(sid));
         assert_eq!(cleanup_calls.load(Ordering::SeqCst), 1);
         assert!(end_session_for_owner(sid, owner));
         assert_eq!(cleanup_calls.load(Ordering::SeqCst), 1);

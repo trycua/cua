@@ -12,6 +12,9 @@
 // 125%/150%/200% scaling and clicks land where screenshots say they do.
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=CUA_DRIVER_REVIEW_EXTENSION_PUBLIC_KEY_BASE64");
+    validate_review_trust_root_build();
+
     #[cfg(target_os = "windows")]
     {
         embed_resource::compile("cua-driver.rc", embed_resource::NONE);
@@ -24,19 +27,33 @@ fn main() {
     emit_swift_runtime_link_args();
 }
 
-fn emit_sdk_framework_search_path() {
-    let sdk_root = std::env::var("SDKROOT").unwrap_or_else(|_| {
-        std::process::Command::new("xcrun")
-            .args(["--sdk", "macosx", "--show-sdk-path"])
-            .output()
-            .ok()
-            .and_then(|out| String::from_utf8(out.stdout).ok())
-            .map(|out| out.trim().to_owned())
-            .unwrap_or_default()
-    });
+fn validate_review_trust_root_build() {
+    if std::env::var_os("CARGO_FEATURE_REVIEW_TRUST_ROOT").is_none() {
+        return;
+    }
+    if std::env::var("PROFILE").as_deref() == Ok("release") {
+        panic!("review-trust-root is review-only and cannot be enabled in release artifacts");
+    }
+    let key = std::env::var("CUA_DRIVER_REVIEW_EXTENSION_PUBLIC_KEY_BASE64").expect(
+        "review-trust-root requires CUA_DRIVER_REVIEW_EXTENSION_PUBLIC_KEY_BASE64 at build time",
+    );
+    let key = key.trim().as_bytes();
+    if key.len() != 44
+        || key[43] != b'='
+        || !key[..43]
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+    {
+        panic!("review-trust-root override must be standard base64 for exactly one 32-byte Ed25519 public key");
+    }
+}
 
-    if !sdk_root.is_empty() {
-        println!("cargo:rustc-link-search=framework={sdk_root}/System/Library/Frameworks");
+fn emit_sdk_framework_search_path() {
+    if let Some(sdk_root) = active_macos_sdk_root() {
+        println!(
+            "cargo:rustc-link-search=framework={}",
+            sdk_root.join("System/Library/Frameworks").display()
+        );
     }
 }
 
@@ -48,6 +65,16 @@ fn emit_swift_runtime_link_args() {
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
 
     let mut dirs = BTreeSet::new();
+
+    // `swiftc` links against the SDK's Swift TBDs on current Xcode releases.
+    // The toolchain runtime directories below contain compatibility libraries,
+    // but are not guaranteed to contain the full Swift runtime surface.
+    if let Some(sdk_root) = active_macos_sdk_root() {
+        let sdk_swift_dir = sdk_root.join("usr/lib/swift");
+        if sdk_swift_dir.is_dir() {
+            println!("cargo:rustc-link-search=native={}", sdk_swift_dir.display());
+        }
+    }
 
     if let Ok(out) = std::process::Command::new("xcode-select")
         .arg("-p")
@@ -90,4 +117,20 @@ fn emit_swift_runtime_link_args() {
             println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
         }
     }
+}
+
+fn active_macos_sdk_root() -> Option<std::path::PathBuf> {
+    std::env::var_os("SDKROOT")
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_dir())
+        .or_else(|| {
+            let out = std::process::Command::new("xcrun")
+                .args(["--sdk", "macosx", "--show-sdk-path"])
+                .output()
+                .ok()?;
+            out.status
+                .success()
+                .then(|| std::path::PathBuf::from(String::from_utf8_lossy(&out.stdout).trim()))
+                .filter(|path| path.is_dir())
+        })
 }

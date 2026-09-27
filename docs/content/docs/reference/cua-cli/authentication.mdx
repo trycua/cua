@@ -1,6 +1,6 @@
 ---
-title: Authentication
-description: 'How the cua CLI logs in, where it stores tokens, how to authenticate on a headless host, and which environment variables take effect.'
+title: CLI authentication
+description: 'Authenticate the cua CLI, choose credential storage, and configure workload identity.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -8,6 +8,10 @@ import { Callout } from 'fumadocs-ui/components/callout';
 `cua` authenticates with OAuth device authorization. Endpoints are discovered
 from the issuer `https://auth.cua.ai/realms/cyclops-cs`; authenticated cloud
 requests then go to `https://run.cua.ai`.
+
+For the Sandbox SDK, Terraform, or `cua sb launch --pool`, use the separate
+[Fleet credential setup](#fleet-pools-need-their-own-credentials). A successful
+CLI login does not export credentials for those clients.
 
 ## Logging in
 
@@ -72,11 +76,10 @@ is not limited to `login`: `cua auth status` and every authenticated command
 raise the same error, because reading the vault fails the same way writing does.
 
 <Callout type="warn">
-  **What is at stake is a refresh token, not just an access token.** The stored
-  credential re-mints access tokens on demand, so it stays useful long after any
-  access token it produced has expired, and automatic refresh keeps rewriting it
-  so it never goes stale on its own. Whoever reads it holds your Cua session
-  until it is revoked. Choose the storage backend accordingly, and prefer an
+  **What is at stake is a refresh token, not just an access token.** The stored credential re-mints
+  access tokens on demand, so it stays useful long after any access token it produced has expired,
+  and automatic refresh keeps rewriting it so it never goes stale on its own. Whoever reads it holds
+  your Cua session until it is revoked. Choose the storage backend accordingly, and prefer an
   encrypted one wherever the host outlives the job.
 </Callout>
 
@@ -142,11 +145,10 @@ on its own once installed. Set it anyway: it pins the choice, so installing
 another backend later cannot silently move where your tokens are kept.
 
 <Callout type="warn">
-  **`PlaintextKeyring` does not encrypt anything.** Values are base64-encoded,
-  which is an encoding and not a protection — anyone who can read the file can
-  recover the token with one command. File permissions are the only real barrier,
-  and they do not survive a backup, a snapshot, a stray `tar`, or another user
-  with root. Prefer Option 1 whenever the host persists.
+  **`PlaintextKeyring` does not encrypt anything.** Values are base64-encoded, which is an encoding
+  and not a protection — anyone who can read the file can recover the token with one command. File
+  permissions are the only real barrier, and they do not survive a backup, a snapshot, a stray
+  `tar`, or another user with root. Prefer Option 1 whenever the host persists.
 </Callout>
 
 ### Option 3: a real keyring
@@ -166,32 +168,32 @@ See [GitHub Actions](#github-actions) below.
 
 The CLI itself reads only these:
 
-| Variable | Effect |
-|----------|--------|
-| `FLEETS_TOKEN` | Fleet workload token. When set, it takes precedence over the interactive session for Fleet operations. |
-| `CUA_MCP_PERMISSIONS` | Default permission list for `cua serve-mcp`, overridden by `--permissions`. |
-| `CUA_SANDBOX` | Default sandbox for MCP computer tools, overridden by `--sandbox`. |
-| `ANTHROPIC_API_KEY` | Used by `cua do snapshot` and by `cua skills record --provider anthropic`. |
-| `OPENAI_API_KEY` | Used by `cua skills record --provider openai`. |
-| `PYTHON_KEYRING_BACKEND` | Read by the `keyring` library to select where credentials are stored. |
-| `XDG_DATA_HOME`, `XDG_STATE_HOME` | Move `~/.local/share/cua` and `~/.local/state/cua`. |
+| Variable                          | Effect                                                                                                 |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `FLEETS_TOKEN`                    | Fleet workload token. When set, it takes precedence over the interactive session for Fleet operations. |
+| `CUA_MCP_PERMISSIONS`             | Default permission list for `cua serve-mcp`, overridden by `--permissions`.                            |
+| `CUA_SANDBOX`                     | Default sandbox for MCP computer tools, overridden by `--sandbox`.                                     |
+| `ANTHROPIC_API_KEY`               | Used by `cua do snapshot` and by `cua skills record --provider anthropic`.                             |
+| `OPENAI_API_KEY`                  | Used by `cua skills record --provider openai`.                                                         |
+| `PYTHON_KEYRING_BACKEND`          | Read by the `keyring` library to select where credentials are stored.                                  |
+| `XDG_DATA_HOME`, `XDG_STATE_HOME` | Move `~/.local/share/cua` and `~/.local/state/cua`.                                                    |
 
 The Sandbox SDK reads a further set. These apply when you import `cua_sandbox`
 in your own code:
 
-| Variable | Effect |
-|----------|--------|
-| `CUA_API_KEY` | API key for cloud sandboxes. |
-| `CUA_BASE_URL` | Base URL for the older VM API. Its default, `https://api.cua.ai`, is a retired host — set this explicitly if you use that API. |
-| `CUA_FLEET_BASE_URL` | Base URL for the Fleet API. Defaults to `https://run.cua.ai`. |
-| `CUA_TOKEN_URL` | OAuth token endpoint for client-credentials auth. |
-| `CUA_CLIENT_ID`, `CUA_CLIENT_SECRET` | OAuth client credentials for Fleet. |
-| `FLEETS_TOKEN` | Static Fleet workload token, checked before client credentials. |
+| Variable                             | Effect                                                                                                                         |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `CUA_API_KEY`                        | API key for cloud sandboxes.                                                                                                   |
+| `CUA_BASE_URL`                       | Base URL for the older VM API. Its default, `https://api.cua.ai`, is a retired host — set this explicitly if you use that API. |
+| `CUA_FLEET_BASE_URL`                 | Base URL for the Fleet API. Defaults to `https://run.cua.ai`.                                                                  |
+| `CUA_TOKEN_URL`                      | OAuth token endpoint for client-credentials auth.                                                                              |
+| `CUA_CLIENT_ID`, `CUA_CLIENT_SECRET` | OAuth client credentials for Fleet.                                                                                            |
+| `FLEETS_TOKEN`                       | Static Fleet workload token, checked before client credentials.                                                                |
 
 <Callout type="info">
-  `CUA_BASE_URL` has no effect on `cua` commands. The CLI overwrites it at
-  startup so that cloud requests always go to `https://run.cua.ai`, whatever the
-  environment says. Set it only for direct SDK use.
+  `CUA_BASE_URL` has no effect on `cua` commands. The CLI overwrites it at startup so that cloud
+  requests always go to `https://run.cua.ai`, whatever the environment says. Set it only for direct
+  SDK use.
 </Callout>
 
 Fleet requests — the `--pool` path and everything `cua wif-token` feeds — go to
@@ -200,13 +202,11 @@ cloud API. `CUA_BASE_URL` addresses the older VM API instead, and its default
 host is retired.
 
 <Callout type="warn">
-  **`CUA_API_KEY` is not a way to skip logging in, and setting it makes things
-  worse rather than better.** The SDK picks its transport with
-  `_uses_fleet(api_key)`, which is true only when **no** API key is supplied. So
-  providing one routes the call away from Fleet and onto the older VM API —
-  whose host is retired — and it will fail there no matter how valid the key is.
-  `FLEETS_TOKEN` is the environment variable that actually reaches a working
-  API.
+  **`CUA_API_KEY` is not a way to skip logging in, and setting it makes things worse rather than
+  better.** The SDK picks its transport with `_uses_fleet(api_key)`, which is true only when **no**
+  API key is supplied. So providing one routes the call away from Fleet and onto the older VM API —
+  whose host is retired — and it will fail there no matter how valid the key is. `FLEETS_TOKEN` is
+  the environment variable that actually reaches a working API.
 </Callout>
 
 `CUA_API_KEY` is not an authentication path for the CLI either: `cua` passes its
@@ -215,27 +215,29 @@ takes precedence over the environment.
 
 ## Fleet pools need their own credentials
 
-`cua auth login` covers the CLI's own cloud calls, but it does not cover Fleet.
-`cua sb launch --pool` invokes the SDK without passing the interactive session
-through, and the SDK resolves Fleet credentials only from `FLEETS_TOKEN`, or
-from `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET`. With a perfectly valid session and
-none of those exported, the command fails:
+CLI login does not configure the Sandbox SDK or `cua sb launch --pool`.
+Follow [Set up Fleet credentials](/how-to-guides/sandbox/set-up-fleet-credentials)
+for the complete procedure.
 
-```console
-$ cua sb launch --pool my-pool --name my-sandbox
-Error: Fleet cloud sandboxes require CUA_CLIENT_ID and CUA_CLIENT_SECRET, or cua.configure(client_id=..., client_secret=...).
-```
+### Create a Fleet user API key
 
-`cua auth status` still reports a live session at that point, so the message is
-easy to misread as an authentication failure. It is not — it is a different
-credential for a different API. Export a client id and secret for interactive
-use, or use `cua wif-token github` in CI:
+See [Create a Fleet user API key](/how-to-guides/sandbox/set-up-fleet-credentials#create-a-fleet-user-api-key).
 
-```bash
-export CUA_CLIENT_ID=...
-export CUA_CLIENT_SECRET=...
-cua sb launch --pool my-pool --name my-sandbox
-```
+### Configure the Sandbox SDK
+
+See [Configure the Sandbox SDK](/how-to-guides/sandbox/set-up-fleet-credentials#configure-the-sandbox-sdk).
+
+### Check access before provisioning
+
+See [Check access before provisioning](/how-to-guides/sandbox/set-up-fleet-credentials#check-access-before-provisioning).
+
+### Credential lifetime and revocation
+
+See [Credential lifetime and revocation](/how-to-guides/sandbox/set-up-fleet-credentials#credential-lifetime-and-revocation).
+
+### Existing access tokens and GitHub Actions
+
+See [Existing access tokens and GitHub Actions](/how-to-guides/sandbox/set-up-fleet-credentials#existing-access-tokens-and-github-actions).
 
 ## GitHub Actions
 
@@ -270,7 +272,6 @@ releases the claim while preserving the reconciled one-replica pool, template,
 and namespace for the next claim.
 
 <Callout type="info">
-  Under `FLEETS_TOKEN`, `cua sb ls` exits with
-  `Listing Fleet sandboxes is not supported; use 'cua sb info NAME'.` Address
-  Fleet sandboxes by name.
+  Under `FLEETS_TOKEN`, `cua sb ls` exits with `Listing Fleet sandboxes is not supported; use 'cua
+  sb info NAME'.` Address Fleet sandboxes by name.
 </Callout>

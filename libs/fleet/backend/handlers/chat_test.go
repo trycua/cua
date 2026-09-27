@@ -13,7 +13,6 @@ import (
 
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/chat"
-	"cyclops-cs-backend/config"
 )
 
 type fakeModel struct {
@@ -48,7 +47,14 @@ func (f *fakeModel) Complete(_ context.Context, messages []chat.Message, onDelta
 func newChatHandlers(responses ...chat.Message) (Handlers, *chat.MemoryConversationStore, *fakeModel) {
 	store := chat.NewMemoryConversationStore()
 	model := &fakeModel{responses: responses}
-	return Handlers{ChatAccess: config.ChatAccessAll, Conversations: store, Model: model, chatLocks: newConversationLockRegistry()}, store, model
+	return Handlers{
+		Conversations: store,
+		Model:         model,
+		chatAccessEvaluator: func(context.Context, *auth.User) (bool, error) {
+			return true, nil
+		},
+		chatLocks: newConversationLockRegistry(),
+	}, store, model
 }
 
 func createChatConversation(t *testing.T, h Handlers, user *auth.User) *chat.Conversation {
@@ -99,7 +105,8 @@ func TestChatConversationsCreateListGetOwnership(t *testing.T) {
 
 func TestChatRequiresEnabledFeatureAndUser(t *testing.T) {
 	w := httptest.NewRecorder()
-	Handlers{}.ListConversations(w, newReq(http.MethodGet, "/api/chat/conversations", "", alice))
+	disabled := Handlers{chatAccessEvaluator: func(context.Context, *auth.User) (bool, error) { return false, nil }}
+	disabled.ListConversations(w, newReq(http.MethodGet, "/api/chat/conversations", "", alice))
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("disabled status = %d, want 404", w.Code)
 	}
@@ -363,7 +370,7 @@ func TestChatTurnSerializesConcurrentTurnsPerConversation(t *testing.T) {
 		secondStarted: make(chan struct{}),
 		releaseFirst:  make(chan struct{}),
 	}
-	h := Handlers{ChatAccess: config.ChatAccessAll, Conversations: store, Model: model}
+	h := Handlers{Conversations: store, Model: model, chatAccessEvaluator: func(context.Context, *auth.User) (bool, error) { return true, nil }}
 	conversation := createChatConversation(t, h, alice)
 
 	statuses := make(chan int, 2)
@@ -400,6 +407,61 @@ func TestChatTurnSerializesConcurrentTurnsPerConversation(t *testing.T) {
 	}
 	if histories[1][0].Content != "first" || histories[1][1].Role != chat.RoleAssistant || histories[1][1].Content != "assistant-1" || histories[1][2].Content != "second" {
 		t.Fatalf("second model history = %#v", histories[1])
+	}
+}
+
+func TestChatConversationArchiveWaitsForActiveTurn(t *testing.T) {
+	store := chat.NewMemoryConversationStore()
+	model := &blockingSequentialModel{
+		firstStarted: make(chan struct{}),
+		releaseFirst: make(chan struct{}),
+	}
+	h := Handlers{
+		Conversations: store,
+		Model:         model,
+		chatAccessEvaluator: func(context.Context, *auth.User) (bool, error) {
+			return true, nil
+		},
+		chatLocks: newConversationLockRegistry(),
+	}
+	conversation := createChatConversation(t, h, alice)
+
+	turnStatus := make(chan int, 1)
+	go func() {
+		w := httptest.NewRecorder()
+		h.CreateTurn(w, newReq(http.MethodPost, "/api/chat/conversations/"+conversation.ID+"/turns", `{"messages":[{"role":"user","content":"hold the lock"}]}`, alice))
+		turnStatus <- w.Code
+	}()
+	<-model.firstStarted
+
+	archiveStatus := make(chan int, 1)
+	go func() {
+		w := httptest.NewRecorder()
+		h.UpdateConversation(w, newReq(http.MethodPatch, "/api/chat/conversations/"+conversation.ID, `{"archived":true}`, alice))
+		archiveStatus <- w.Code
+	}()
+
+	select {
+	case status := <-archiveStatus:
+		close(model.releaseFirst)
+		<-turnStatus
+		t.Fatalf("PATCH completed with status %d while the turn held the conversation lock", status)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(model.releaseFirst)
+	if status := <-turnStatus; status != http.StatusOK {
+		t.Fatalf("turn status = %d, want 200", status)
+	}
+	if status := <-archiveStatus; status != http.StatusOK {
+		t.Fatalf("PATCH status = %d, want 200", status)
+	}
+	updated, err := store.Get(context.Background(), alice.ID, conversation.ID)
+	if err != nil {
+		t.Fatalf("get archived conversation: %v", err)
+	}
+	if updated.ArchivedAt == nil {
+		t.Fatal("archived_at = nil after PATCH")
 	}
 }
 
@@ -505,7 +567,7 @@ func TestConversationLockRegistryEvictsReleasedLocks(t *testing.T) {
 
 func TestCreateConversationReportsStoreLimit(t *testing.T) {
 	store := chat.NewMemoryConversationStore()
-	h := Handlers{ChatAccess: config.ChatAccessAll, Conversations: store, Model: &fakeModel{}}
+	h := Handlers{Conversations: store, Model: &fakeModel{}, chatAccessEvaluator: func(context.Context, *auth.User) (bool, error) { return true, nil }}
 	for index := 0; index < 100; index++ {
 		w := httptest.NewRecorder()
 		h.CreateConversation(w, newReq(http.MethodPost, "/api/chat/conversations", "", alice))
@@ -525,24 +587,20 @@ func TestChatEndpointsEnforceEffectiveAccess(t *testing.T) {
 	user := &auth.User{ID: "restricted-user", AZP: "cyclops-cs-spa"}
 	tests := []struct {
 		name       string
-		access     config.ChatAccessMode
-		restricted bool
+		allowed    bool
 		wantStatus int
 	}{
-		{name: "disabled", access: config.ChatAccessDisabled, restricted: true, wantStatus: http.StatusNotFound},
-		{name: "all", access: config.ChatAccessAll, restricted: false, wantStatus: http.StatusCreated},
-		{name: "restricted allowed", access: config.ChatAccessRestricted, restricted: true, wantStatus: http.StatusCreated},
-		{name: "restricted denied", access: config.ChatAccessRestricted, restricted: false, wantStatus: http.StatusNotFound},
+		{name: "allowed", allowed: true, wantStatus: http.StatusCreated},
+		{name: "denied", allowed: false, wantStatus: http.StatusNotFound},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			h := Handlers{
-				ChatAccess:    test.access,
 				Conversations: store,
 				Model:         &fakeModel{},
 				chatAccessEvaluator: func(context.Context, *auth.User) (bool, error) {
-					return test.restricted, nil
+					return test.allowed, nil
 				},
 			}
 			w := httptest.NewRecorder()
@@ -551,5 +609,138 @@ func TestChatEndpointsEnforceEffectiveAccess(t *testing.T) {
 				t.Fatalf("status = %d, want %d; body = %s", w.Code, test.wantStatus, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestChatConversationsListFiltersArchived(t *testing.T) {
+	h, store, _ := newChatHandlers()
+	active := createChatConversation(t, h, alice)
+	archived := createChatConversation(t, h, alice)
+	if _, err := store.SetArchived(context.Background(), alice.ID, archived.ID, true); err != nil {
+		t.Fatalf("archive conversation: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name       string
+		target     string
+		statusCode int
+		wantID     string
+	}{
+		{name: "active by default", target: "/api/chat/conversations", statusCode: http.StatusOK, wantID: active.ID},
+		{name: "active explicitly", target: "/api/chat/conversations?archived=false", statusCode: http.StatusOK, wantID: active.ID},
+		{name: "archived", target: "/api/chat/conversations?archived=true", statusCode: http.StatusOK, wantID: archived.ID},
+		{name: "invalid archive value", target: "/api/chat/conversations?archived=1", statusCode: http.StatusBadRequest},
+		{name: "present empty archive value", target: "/api/chat/conversations?archived=", statusCode: http.StatusBadRequest},
+		{name: "duplicate true archive values", target: "/api/chat/conversations?archived=true&archived=true", statusCode: http.StatusBadRequest},
+		{name: "duplicate true and invalid archive values", target: "/api/chat/conversations?archived=true&archived=invalid", statusCode: http.StatusBadRequest},
+		{name: "duplicate true and false archive values", target: "/api/chat/conversations?archived=true&archived=false", statusCode: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			h.ListConversations(w, newReq(http.MethodGet, tc.target, "", alice))
+			if w.Code != tc.statusCode {
+				t.Fatalf("status = %d, want %d; body = %s", w.Code, tc.statusCode, w.Body.String())
+			}
+			if tc.wantID == "" {
+				return
+			}
+			var summaries []chat.ConversationSummary
+			if err := json.Unmarshal(w.Body.Bytes(), &summaries); err != nil {
+				t.Fatalf("decode summaries: %v", err)
+			}
+			if len(summaries) != 1 || summaries[0].ID != tc.wantID {
+				t.Fatalf("summaries = %#v, want %q", summaries, tc.wantID)
+			}
+		})
+	}
+}
+
+func TestChatConversationsArchiveAndRestore(t *testing.T) {
+	h, _, _ := newChatHandlers()
+	conversation := createChatConversation(t, h, alice)
+
+	for _, tc := range []struct {
+		name     string
+		body     string
+		archived bool
+	}{
+		{name: "archive", body: `{"archived":true}`, archived: true},
+		{name: "restore", body: `{"archived":false}`, archived: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			h.UpdateConversation(w, newReq(http.MethodPatch, "/api/chat/conversations/"+conversation.ID, tc.body, alice))
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+			}
+			var updated chat.Conversation
+			if err := json.Unmarshal(w.Body.Bytes(), &updated); err != nil {
+				t.Fatalf("decode conversation: %v", err)
+			}
+			if (updated.ArchivedAt != nil) != tc.archived {
+				t.Fatalf("archived_at = %v, want archived = %t", updated.ArchivedAt, tc.archived)
+			}
+		})
+	}
+}
+
+func TestChatConversationsArchiveRejectsInvalidRequests(t *testing.T) {
+	h, _, _ := newChatHandlers()
+	conversation := createChatConversation(t, h, alice)
+
+	for _, tc := range []struct {
+		name       string
+		body       string
+		statusCode int
+	}{
+		{name: "missing archived", body: `{}`, statusCode: http.StatusBadRequest},
+		{name: "malformed JSON", body: `{"archived":`, statusCode: http.StatusBadRequest},
+		{name: "unknown field", body: `{"archived":true,"unexpected":true}`, statusCode: http.StatusBadRequest},
+		{name: "trailing JSON", body: `{"archived":true} {}`, statusCode: http.StatusBadRequest},
+		{name: "oversized", body: `{"archived":true,"padding":"` + strings.Repeat("x", 4096) + `"}`, statusCode: http.StatusRequestEntityTooLarge},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			h.UpdateConversation(w, newReq(http.MethodPatch, "/api/chat/conversations/"+conversation.ID, tc.body, alice))
+			if w.Code != tc.statusCode {
+				t.Fatalf("status = %d, want %d; body = %s", w.Code, tc.statusCode, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestChatConversationsArchiveHidesMissingAndOtherOwners(t *testing.T) {
+	h, _, _ := newChatHandlers()
+	conversation := createChatConversation(t, h, alice)
+
+	for _, tc := range []struct {
+		name string
+		id   string
+		user *auth.User
+	}{
+		{name: "missing", id: "missing", user: alice},
+		{name: "other owner", id: conversation.ID, user: &auth.User{ID: "user-bob"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			h.UpdateConversation(w, newReq(http.MethodPatch, "/api/chat/conversations/"+tc.id, `{"archived":true}`, tc.user))
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404; body = %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestChatTurnRejectsArchivedConversation(t *testing.T) {
+	h, store, _ := newChatHandlers(chat.Message{Role: chat.RoleAssistant, Content: "unused"})
+	conversation := createChatConversation(t, h, alice)
+	if _, err := store.SetArchived(context.Background(), alice.ID, conversation.ID, true); err != nil {
+		t.Fatalf("archive conversation: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	h.CreateTurn(w, newReq(http.MethodPost, "/api/chat/conversations/"+conversation.ID+"/turns", `{"messages":[{"role":"user","content":"hello"}]}`, alice))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", w.Code, w.Body.String())
 	}
 }

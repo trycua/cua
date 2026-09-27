@@ -77,9 +77,14 @@ from cua_sandbox.interfaces import (
     Tunnel,
     Window,
 )
+from cua_sandbox.interfaces.driver import Driver
 from cua_sandbox.transport.base import Transport
 from cua_sandbox.transport.cloud import CloudTransport
-from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
+from cua_sandbox.transport.fleet_cloud import (
+    FleetCloudTransport,
+    OSWorldFleetCloudTransport,
+    default_server_port,
+)
 from cua_sandbox.transport.http import HTTPTransport
 from cua_sandbox.transport.websocket import WebSocketTransport
 
@@ -375,6 +380,7 @@ class Sandbox:
         self.mobile = Mobile(transport)
         self.tunnel = Tunnel(transport)
         self.services = Services(transport)
+        self.driver = Driver(transport)
         _os = _runtime_info.environment if _runtime_info and _runtime_info.environment else "linux"
         self.apps = Apps(transport, os_type=_os)
 
@@ -386,6 +392,7 @@ class Sandbox:
 
     async def disconnect(self) -> None:
         """Drop the transport connection. The sandbox keeps running."""
+        await self.driver.close()
         await self._transport.disconnect()
 
     @property
@@ -461,6 +468,7 @@ class Sandbox:
             return
         if self._claim_handle is None:
             raise NotImplementedError("close is only supported for Fleet claims")
+        await self.driver.close()
         claim_name = self.claim_name
         try:
             await self._claim_handle.release()
@@ -526,7 +534,7 @@ class Sandbox:
         # Run each cleanup step independently so a failure in one
         # (e.g. disconnect timeout) doesn't prevent the VM from being deleted.
         try:
-            await self._transport.disconnect()
+            await self.disconnect()
         except Exception:
             logger.warning("Failed to disconnect transport for sandbox %r", self.name)
         if isinstance(self._transport, (CloudTransport, FleetCloudTransport)):
@@ -848,6 +856,7 @@ class Sandbox:
                 or server_port > 65535
             ):
                 raise ValueError("server_port must be an integer between 1 and 65535")
+            server_port = default_server_port(image, server_port)
             services = {
                 "server": server_port,
                 **{f"port-{port}": port for port in image._ports if port != server_port},
@@ -1474,7 +1483,12 @@ class Sandbox:
         if image and not runtime and not local:
             # image without runtime and not local → cloud creation
             if not any([ws_url, http_url]) and cls._uses_fleet(api_key):
-                transport = FleetCloudTransport(
+                transport_cls = (
+                    OSWorldFleetCloudTransport
+                    if image._agent_type == "osworld"
+                    else FleetCloudTransport  # module attribute, so tests can patch it
+                )
+                transport = transport_cls(
                     image=image,
                     name=name or _random_name(),
                     cpu=cpu,
@@ -1483,7 +1497,7 @@ class Sandbox:
                     region=region,
                     time_to_start=time_to_start,
                     request_timeout=request_timeout,
-                    server_port=server_port,
+                    server_port=default_server_port(image, server_port),
                 )
                 sb = cls(
                     transport, name=name, _ephemeral=ephemeral, _telemetry_enabled=telemetry_enabled
@@ -1530,7 +1544,16 @@ class Sandbox:
             runtime = _auto_runtime(image)
         if image and runtime:
             sb_name = name or _random_name()
-            rt_info = await runtime.start(image, sb_name, ephemeral=bool(ephemeral))
+            # Forward the sizing knobs the caller gave Sandbox.create/ephemeral so a
+            # local VM honours cpu= and memory_mb= the same way a Fleet pool does.
+            start_opts: dict = {}
+            if cpu is not None:
+                start_opts["cpu_count"] = cpu
+            if memory_mb is not None:
+                start_opts["memory_mb"] = memory_mb
+            if disk_gb is not None:
+                start_opts["disk_size_gb"] = disk_gb
+            rt_info = await runtime.start(image, sb_name, ephemeral=bool(ephemeral), **start_opts)
             if rt_info.environment == "android" and not rt_info.qmp_port:
                 if rt_info.grpc_port:
                     from cua_sandbox.transport.grpc_emulator import (

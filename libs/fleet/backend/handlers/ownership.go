@@ -4,8 +4,8 @@
 // It used to be a whole authorization decision made here, because the policy
 // had no way to ask Kubernetes anything. It is now one input to a decision the
 // policy makes — authz_ownership.rego — reaching it through the FactProvider
-// below. What stayed is the probe and its cache; what left is every judgement
-// about which principals deserve one.
+// below. What stayed is the probe; what left is every judgement about which
+// principals deserve one.
 //
 // The probe is the impersonated RoleBinding list already proven by
 // waitForNamespaceAdoption (namespaces.go): listing RoleBindings in a
@@ -21,47 +21,21 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"sync"
-	"time"
 
 	"golang.org/x/sync/singleflight"
 
 	"cyclops-cs-backend/auth"
 )
 
-const (
-	// ownershipPositiveTTL bounds how long an "owns it" verdict is reused.
-	// Ownership effectively never changes, but a short TTL keeps a deleted
-	// + re-created namespace from serving a stale verdict for long, while
-	// still collapsing the noVNC asset storm to ~2 probes/min/user/ns.
-	ownershipPositiveTTL = 30 * time.Second
-	// ownershipNegativeTTL damps brute-force namespace enumeration without
-	// locking a user out of a just-adopted namespace for long.
-	ownershipNegativeTTL = 5 * time.Second
-)
-
-type ownershipVerdict struct {
-	allowed bool
-	exp     time.Time
-}
-
-// Package-level like the k8sImpersonate client state — Handlers is a value
-// type, so per-struct state wouldn't survive across requests anyway.
-var (
-	ownershipMu    sync.Mutex
-	ownershipCache = map[string]ownershipVerdict{}
-	// ownershipSF collapses concurrent probes for the same (sub, ns) —
-	// noVNC fires dozens of parallel asset requests on first load.
-	// Mirrors flagsSF in auth/middlewares.go.
-	ownershipSF singleflight.Group
-)
-
-// resetOwnershipCache clears the verdict cache; tests only.
-func resetOwnershipCache() {
-	ownershipMu.Lock()
-	ownershipCache = map[string]ownershipVerdict{}
-	ownershipMu.Unlock()
-}
+// ownershipSF collapses concurrent probes for the same (sub, ns) — noVNC
+// fires dozens of parallel asset requests on first load, and each is its own
+// request, so the policy library's per-request fact cache cannot merge them.
+// Singleflight holds nothing between requests: once the shared probe returns,
+// the next request asks the apiserver again. Mirrors flagsSF in
+// auth/middlewares.go; package-level like the k8sImpersonate client state —
+// Handlers is a value type, so per-struct state wouldn't survive across
+// requests anyway.
+var ownershipSF singleflight.Group
 
 // NamespaceRBACFacts adapts the probe below to the policy layer. It is the
 // third of the three decisions requireNamespaceAccess used to make in Go: the
@@ -69,11 +43,10 @@ func resetOwnershipCache() {
 // them now. This one is not a rule at all — it is a fact about Kubernetes — so
 // it arrives as input.facts.namespace_rbac instead.
 //
-// It wraps userHasNamespaceRBAC rather than reimplementing it, and that is
-// load-bearing. The policy library caches fact loads per request; the probe's
-// own cache is a TTL across requests, which is what collapses the noVNC asset
-// storm to a couple of probes a minute. Reimplementing the probe here would
-// have quietly turned that into one apiserver round trip per request.
+// The verdict is cached per request, by the policy library's fact cache, and
+// no longer than that: every request that reaches the fact leaf asks the
+// apiserver, so a revoked or re-created namespace is seen on the very next
+// request rather than after a TTL.
 //
 // main.go registers it under auth.NamespaceRBACFactProvider, which is the name
 // NamespaceOwnershipPolicy's tree refers to.
@@ -102,8 +75,10 @@ func (facts namespaceRBACFacts) LoadFacts(ctx context.Context, r *http.Request) 
 	allowed, err := facts.handlers.userHasNamespaceRBAC(ctx, user.ID, namespace)
 	if err != nil {
 		slog.Warn("namespace access check unavailable",
-			"sub", user.ID, "azp", user.AZP, "namespace", namespace, "err", err)
-		return nil, &auth.FactUnavailableError{Namespace: auth.NamespaceRBACFactNamespace, Err: err}
+			"class", "dependency_unavailable", "retryable", true,
+			"sub", user.ID, "azp", user.AZP, "namespace", namespace)
+		return nil, auth.NewFactUnavailableError(auth.NamespaceRBACFactNamespace, err)
+
 	}
 	if !allowed {
 		// The verdict is the policy's to reach, but this is the only place the
@@ -115,31 +90,16 @@ func (facts namespaceRBACFacts) LoadFacts(ctx context.Context, r *http.Request) 
 	return auth.FactSet{"allowed": allowed}, nil
 }
 
-// userHasNamespaceRBAC reports whether sub holds RBAC in ns, via a TTL-
-// cached, singleflighted impersonated RoleBinding LIST probe. A non-nil
-// error means the apiserver was unreachable or replied with an unexpected
-// status — callers fail closed; nothing is cached so a flapping apiserver
-// can't pin verdicts.
+// userHasNamespaceRBAC reports whether sub holds RBAC in ns, via a
+// singleflighted impersonated RoleBinding LIST probe. Nothing is retained
+// across requests: concurrent probes for the same (sub, ns) share one round
+// trip, and sequential requests each make their own. A non-nil error means
+// the apiserver was unreachable or replied with an unexpected status —
+// callers fail closed.
 func (h Handlers) userHasNamespaceRBAC(ctx context.Context, sub, ns string) (bool, error) {
 	key := sub + "\x00" + ns
 
-	ownershipMu.Lock()
-	if v, ok := ownershipCache[key]; ok && time.Now().Before(v.exp) {
-		ownershipMu.Unlock()
-		return v.allowed, nil
-	}
-	ownershipMu.Unlock()
-
 	v, err, _ := ownershipSF.Do(key, func() (interface{}, error) {
-		// Re-check under the lock: a concurrent probe may have just
-		// populated the cache while we waited to enter singleflight.
-		ownershipMu.Lock()
-		if v, ok := ownershipCache[key]; ok && time.Now().Before(v.exp) {
-			ownershipMu.Unlock()
-			return v.allowed, nil
-		}
-		ownershipMu.Unlock()
-
 		resp, err := h.k8sImpersonate(ctx, "GET",
 			"/apis/rbac.authorization.k8s.io/v1/namespaces/"+url.PathEscape(ns)+"/rolebindings?limit=1",
 			nil, sub)
@@ -148,25 +108,15 @@ func (h Handlers) userHasNamespaceRBAC(ctx context.Context, sub, ns string) (boo
 		}
 		defer resp.Body.Close()
 
-		var allowed bool
 		switch {
 		case resp.StatusCode >= 200 && resp.StatusCode < 300:
-			allowed = true
+			return true, nil
 		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-			allowed = false
+			return false, nil
 		default:
-			// 5xx etc. — indeterminate, fail closed, don't cache.
+			// 5xx etc. — indeterminate, fail closed.
 			return false, &unexpectedProbeStatus{status: resp.StatusCode}
 		}
-
-		ttl := ownershipPositiveTTL
-		if !allowed {
-			ttl = ownershipNegativeTTL
-		}
-		ownershipMu.Lock()
-		ownershipCache[key] = ownershipVerdict{allowed: allowed, exp: time.Now().Add(ttl)}
-		ownershipMu.Unlock()
-		return allowed, nil
 	})
 	if err != nil {
 		return false, err

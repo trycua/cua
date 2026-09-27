@@ -16,8 +16,12 @@ on:
         type: boolean
 
 permissions:
+  # actions: read lets the reusable builder declare its stable-tag E2E gate
+  # jobs; nightly runs skip those jobs and never publish a stable release.
+  actions: read
   contents: write
-  issues: read
+  id-token: write
+  issues: write
   pull-requests: read
 
 concurrency:

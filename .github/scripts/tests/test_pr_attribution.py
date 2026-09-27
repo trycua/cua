@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from release_attribution import ReleaseError, source_pull_numbers, validate_pr_attribution
+from release_attribution import (
+    CommitRecord,
+    ReleaseError,
+    source_pull_numbers,
+    unresolved_coauthor_identities,
+    validate_pr_attribution,
+)
 
 
 def config(**overrides):
@@ -70,7 +76,7 @@ def validate(
     pull_value=None,
     commits=None,
     base=None,
-    head=None,
+    changes=None,
     authors=None,
     source_emails=None,
 ):
@@ -80,7 +86,7 @@ def validate(
         pull=pull_value or pull(),
         commits=commits or [],
         base_config=base,
-        head_config=head or base,
+        identity_changes=changes or {},
         github=SourceGitHub(authors or {}, source_emails or {}),
     )
 
@@ -99,6 +105,22 @@ def test_resolvable_github_and_noreply_identities_pass():
             ),
         ]
     )
+
+
+def test_unresolved_coauthor_identity_helper_reports_squash_risk():
+    identities = unresolved_coauthor_identities(
+        [
+            CommitRecord(
+                "deadbeef",
+                "fix: preserve attribution",
+                "Co-authored-by: Local Machine <machine@example.invalid>",
+            )
+        ],
+        config(),
+    )
+    assert identities == [
+        {"sha": "deadbeef", "name": "Local Machine", "email": "machine@example.invalid"}
+    ]
 
 
 def test_distinct_resolvable_commit_author_requires_preserved_source():
@@ -179,7 +201,7 @@ def test_merge_coauthor_still_requires_source_evidence():
                         "Merge main\n\n"
                         "Co-authored-by: Contributor <contributor@institution.example>"
                     ),
-                )
+                ),
             ]
         )
 
@@ -196,18 +218,24 @@ def test_explicit_cherry_pick_source_reference_is_parsed_but_supersedes_is_not()
     assert source_pull_numbers("Supersedes #2280", "trycua/cua") == []
 
 
-def test_direct_contributor_with_unlinked_email_does_not_fail():
+def test_direct_contributor_with_unlinked_email_is_rejected_before_squash_merge():
+    with pytest.raises(ReleaseError) as error:
+        validate(
+            pull_value=pull(login="direct-contributor"),
+            commits=[commit(email="private@institution.example")],
+        )
+    message = str(error.value)
+    assert "would become a squash coauthor" in message
+    assert "private@institution.example" in message
+    assert "linked GitHub/noreply email" in message
+
+
+def test_direct_contributor_with_verified_override_is_merge_ready():
+    base = config(identityOverrides={"private@institution.example": "direct-contributor"})
     validate(
         pull_value=pull(login="direct-contributor"),
         commits=[commit(email="private@institution.example")],
-    )
-
-    validate(
-        pull_value=pull(
-            login="direct-contributor",
-            body="Based on #99 for the API shape",
-        ),
-        commits=[commit(email="private@institution.example")],
+        base=base,
     )
 
 
@@ -263,11 +291,10 @@ def test_verified_source_pr_produces_exact_override_and_accepts_it():
         error.value
     )
 
-    head = config(identityOverrides={"source@university.example": "source-login"})
     validate(
         pull_value=landing,
         commits=commits,
-        head=head,
+        changes={"source@university.example": "source-login"},
         authors={2280: "source-login"},
         source_emails={2280: ["source@university.example"]},
     )
@@ -309,15 +336,15 @@ def test_source_pr_author_without_exact_email_is_not_mapping_evidence():
 
 
 def test_mapping_only_override_requires_and_accepts_exact_source_evidence():
-    head = config(identityOverrides={"historic@institution.example": "historic-author"})
+    changes = {"historic@institution.example": "historic-author"}
     with pytest.raises(ReleaseError, match="has no explicit same-repository source PR"):
-        validate(head=head)
+        validate(changes=changes)
 
     validate(
         pull_value=pull(
             body=("The identity is verified by [PR #20](https://github.com/trycua/cua/pull/20)")
         ),
-        head=head,
+        changes=changes,
         authors={20: "historic-author"},
         source_emails={20: ["historic@institution.example"]},
     )
@@ -326,12 +353,22 @@ def test_mapping_only_override_requires_and_accepts_exact_source_evidence():
 def test_existing_identity_override_cannot_be_removed_or_changed():
     base = config(identityOverrides={"known@institution.example": "known-author"})
     with pytest.raises(ReleaseError, match="removes or changes trusted identityOverrides"):
-        validate(base=base, head=config())
+        validate(base=base, changes={"known@institution.example": None})
     with pytest.raises(ReleaseError, match="removes or changes trusted identityOverrides"):
         validate(
             base=base,
-            head=config(identityOverrides={"known@institution.example": "other-author"}),
+            changes={"known@institution.example": "other-author"},
         )
+
+
+def test_protected_mapping_errors_are_complete_and_sorted():
+    base = config(identityOverrides={"z@example.com": "zoe", "a@example.com": "alice"})
+    with pytest.raises(ReleaseError) as error:
+        validate(base=base, changes={"z@example.com": None, "a@example.com": "other"})
+    assert str(error.value) == (
+        "the pull request removes or changes trusted identityOverrides: "
+        "a@example.com='other' (expected 'alice'), z@example.com=None (expected 'zoe')"
+    )
 
 
 def test_internal_bot_and_ignored_coauthors_are_excluded():

@@ -26,6 +26,11 @@ Windows: .\scripts\ci\windows\run-rust-e2e.ps1 -RequireGui
 macOS:  libs/cua-driver/tests/runners/macos-lume/run-all.sh
 ```
 
+[`scripts/ci/README.md`](../../../scripts/ci/README.md#canonical-and-supporting-runners)
+lists every runner as canonical, scoped, or supporting. The Windows convenience
+wrapper in `tests/runners/windows/` and the legacy `tests/runners/windows-sandbox/`
+runner are supporting runners, not canonical entrypoints.
+
 The OS workflow may fan the complete matrix out into independent jobs for
 reporting and failure isolation. That is an execution detail; contributors
 should think of it as one canonical suite.
@@ -41,14 +46,107 @@ Windows and Linux use the repository's GitHub-hosted workflows when their
 strict environment preflights pass. Windows Azure RDP runs are optional
 environment-parity replays or a fallback when the hosted preflight cannot prove
 a required capability. macOS uses the logged-in Lume maintainer wrapper.
-For browser-facing changes or browser-use release certification, also run the
-standalone Chrome/Edge matrix: the macOS wrapper accepts
-`--standalone-browser`, while the Windows and Linux workflow is
+The macOS wrapper always runs the standalone Chrome/Edge matrix after the
+repo-local matrix. For browser-facing changes or browser-use release
+certification on Windows and Linux, also run
 `.github/workflows/e2e-rust-standalone-browsers.yml`.
 
 Historical `*-plan.md`, `*-journal.md`, and release evidence documents record
 what was run at that time. They are not current execution instructions and do
 not override this guide or `scripts/ci/README.md`.
+
+### Hyprland validation decision (2026-09-07)
+
+[PR #3572](https://github.com/trycua/cua/pull/3572) is the dated, exact-source
+result record for the input v3 candidate. It distinguishes ordinary CI, the
+complete hosted X11, Sway, and Windows harnesses, native Hyprland acceptance,
+and bounded app evidence. A native behavioral pass with a failed wrapper or
+source-provenance check is not an accepted run. Use that record for results;
+the coverage requirements below do not assert a passing result or add macOS
+certification.
+
+The maintainer selects the same canonical Linux Rust harness for native
+Hyprland: run `scripts/ci/linux/run-rust-e2e.sh` with its complete `all` suite
+in the prepared native Hyprland desktop at the exact candidate SHA. Preserve
+the runner's required cells, assertions, and evidence checks. Record compositor
+and backend provenance; an X11 run does not establish native Hyprland coverage.
+Environment failures and failed cells remain failures, not permission to skip
+tests or change expected results. In the same desktop, also run
+`cargo test -p cua-driver-e2e --test hyprland_foreground_test -- --ignored --test-threads=1`
+and the same command for `hyprland_native_observation_test`. No automated lane
+runs these foreground-safety and exact-identity rows, so
+`tests/manual-e2e-allowlist.txt` records them as a manual native-Hyprland gate.
+
+Before launching the native Hyprland harness, apply this map-time rule in the
+disposable desktop's Lua configuration and reload it:
+
+```lua
+hl.window_rule({
+    name = "cua-canonical-sentinel-animation",
+    match = {title = "^CuaTestHarness Sentinel \\[cdp=[0-9]+\\]$"},
+    no_anim = true,
+})
+```
+
+The preflight independently verifies `no_anim` for the exact sentinel, then
+waits for mapped fullscreen readiness before its first Driver activation.
+`hyprctl clients` reports geometry goals, not animated surface bounds; repeated
+equal goals alone cannot establish animation completion. This rule changes
+only the test sentinel's animation, not its placement or the product's geometry
+guard. Restore the original configuration after the run. It is a deterministic
+fixture requirement, not an Omarchy user configuration requirement.
+
+This is fixture regression coverage. For background `TARGET` input, the production compatibility gate in
+`platform-linux/src/wayland/hyprland_compatibility.rs` admits only the qualified
+native Calc `26.2.5-3` and Inkscape `1.4.4-6` packages. Ordinary GTK, Electron,
+and Tauri fixtures do not qualify for v3 background raw input. Their declared refusals
+can prove refusal behavior, but cannot prove plugin delivery or isolation.
+Do not widen background production admission or add a test bypass to make them qualify.
+
+The [accepted foreground extension](https://github.com/trycua/cua/issues/3550#issuecomment-5564996417)
+adds a separate production `FOREGROUND_TARGET` route for ordinary native
+top-level surfaces, advertised by `HELLO` with `foreground_target:true`.
+It does not apply the Calc/Inkscape background package gate. The existing
+complete suite covers defined native GTK3, Electron, and Tauri foreground
+cases. Acceptance requires those cases to pass. Preserve the runner and tests.
+Foreground activation and primary-cursor movement are intentional, with no
+restoration promise. Verify exact-target delivery and refusals for held
+keys/buttons, grabs, constraints, and drag-and-drop before primary takeover.
+Foreground drag cancellation on primary-input/focus transitions requires
+review and native evidence. No background refusal may escalate to this route.
+
+Retain a short real-app production smoke and instrumented isolation proof on
+both qualified apps as supporting compatibility evidence. Verify actual app
+effects, plugin transport attribution, primary-seat isolation, and cleanup;
+the uninstrumented smoke alone cannot establish those trace-based claims.
+The retained proof at source `f180e8828b8f31cc153e3c44eaa89a9c13c5bc68`
+includes 20 instrumented actions, nine pointer effects, and six observation
+intervals, plus an uninstrumented six-action smoke. Saved outputs confirm Calc
+cell A1 contains `a` and the Inkscape object's x-coordinate changes from 40 to
+42 while y remains 60. The plugin tree and uninstrumented module hash are
+unchanged at `1133a06e4f205cf80188a7ac9e41102f37611fea`. This is bounded
+supporting evidence, not a complete app matrix or release-byte proof. Raw
+background qualification remains native Calc from `libreoffice-fresh 26.2.5-3`,
+Inkscape `1.4.4-6`, the plain compiled `evdev`/`pc105`/`us` keymap, and two
+seats. Chromium, Electron, and XWayland raw background input remain unqualified;
+semantic AT-SPI actions are separate.
+See [production proof preparation](../hyprland-plugin/docs/production-proof.md)
+for the bounded plans and their limits.
+
+The explicit [Inkscape-only qualification profile](../hyprland-plugin/docs/production-inkscape-profile.md)
+supports a bounded packaging candidate using exact Inkscape `1.4.4-6`, with
+independent native clients, two app lanes, separate SVG oracles, and third-owner
+capacity refusal. It preserves the default Calc/Inkscape profile and the native
+all-suite gate. Product, harness, kit, and mapped module identities remain
+separate; adding the profile records no new native passing result and does not
+let diagnostic trace evidence certify trace-disabled package bytes.
+
+Three complete repetitions of the long Python Calc/Inkscape plan, including
+the 34 policy cases across both apps, are no longer a merge requirement.
+Extended Python stress runs remain diagnostics for specific unresolved
+failures. This decision changes test strategy, records no new passing result,
+and does not waive the affected CI, native evidence, or release gates in
+[RFC 3550](../../../rfcs/3550-hyprland-isolated-input.md).
 
 ## Repository Map
 
@@ -57,7 +155,8 @@ cua/
 |-- libs/cua-driver/
 |   |-- rust/
 |   |   |-- crates/
-|   |   |   |-- cua-driver/          Rust driver and integration tests
+|   |   |   |-- cua-driver/          Rust driver and hermetic integration tests
+|   |   |   |-- cua-driver-e2e/      Desktop E2E suites the OS runners select
 |   |   |   |-- cua-driver-core/     Shared driver logic and unit tests
 |   |   |   |-- cua-driver-testkit/  Shared Rust E2E helpers and evidence capture
 |   |   |   |-- platform-linux/      Linux backend
@@ -125,7 +224,7 @@ These run without a repo-local GUI application and normally run without
 | `rust/crates/*/src/**`                 | Core driver, platform-independent logic, schemas, and helpers |
 | `protocol_*_test.rs`                   | MCP handshake, tool calls, sessions, media, and errors        |
 | `schema_*_test.rs`                     | Shared schema and backend consistency                         |
-| `transport_config_persistence_test.rs` | CLI/MCP configuration persistence                             |
+| `transport_config_persistence_test.rs` | CLI configuration persistence across processes                |
 | `protocol_element_token_test.rs`       | Element-token protocol behavior                               |
 
 These tests should be fast, deterministic, and safe to run on ordinary CI
@@ -134,15 +233,20 @@ reached an application.
 
 ### Harness E2E Tests
 
-These are Rust integration tests under:
+These are Rust integration tests in their own crate:
 
 ```text
-libs/cua-driver/rust/crates/cua-driver/tests/
+libs/cua-driver/rust/crates/cua-driver-e2e/tests/
 ```
 
-Most are marked `#[ignore]` because they require a desktop, built fixtures, and
-platform permissions. They are selected by the OS runner rather than the
-ordinary unit command.
+Hermetic protocol, CLI, and schema tests stay in
+`libs/cua-driver/rust/crates/cua-driver/tests/`. A test that needs a desktop,
+built fixtures, installed apps, or platform permissions belongs in
+`cua-driver-e2e`. Most E2E tests are marked `#[ignore]`; the OS runner selects
+them with `cargo test -p cua-driver-e2e --test <suite> -- --ignored`. The
+crate does not depend on the driver, so build `cua-driver` first or set
+`CUA_TEST_DRIVER_BIN`. Its few non-ignored tests are hermetic oracle and
+parser checks that ordinary CI runs with the driver's tests.
 
 The canonical E2E suite has two behavior owners:
 
@@ -192,7 +296,18 @@ background delivery is tested.
 
 ### macOS
 
-Runner: `libs/cua-driver/tests/runners/macos-lume/run-all.sh`
+Canonical runner: `libs/cua-driver/tests/runners/macos-lume/run-all.sh`
+
+Canonical Actions wrapper: manually dispatch
+`.github/workflows/e2e-rust-macos.yml` in `lume` mode at the exact source SHA. It runs the
+logged-in Lume wrapper, including its standalone browser matrix, and emits the certification
+artifact consumed by protected evidence workflows.
+
+Supplemental hosted runner: manually dispatch
+`.github/workflows/e2e-rust-macos.yml` with an exact 40-character source SHA.
+Its probe must pass before independent shared, native, capture, and browser
+jobs run. The browser job runs the standalone installed Chrome/Edge matrix that
+the Lume gate runs after its repo-local matrix.
 
 | Runner area               | Rust test                              | Real harness or app                     |
 | ------------------------- | -------------------------------------- | --------------------------------------- |
@@ -202,8 +317,11 @@ Runner: `libs/cua-driver/tests/runners/macos-lume/run-all.sh`
 | Native controls           | `harness_swiftui_test.rs`              | Repo-local SwiftUI app                  |
 | Installed app launch      | `installed_app_launch_macos_test.rs`   | Calculator and TextEdit                 |
 | Installed app AX delivery | `installed_app_textedit_macos_test.rs` | TextEdit                                |
+| Exact window activation   | `bring_to_front_macos_test.rs`         | Repo-local AppKit and SwiftUI apps      |
+| Pointer-reading toolkit   | `tk_pointer_click_macos_test.rs`       | Tk visual-only canvas (skips sans Tk)   |
 | Capture contract          | `capture_contract_test.rs`             | Installed driver and macOS capture APIs |
 | Desktop scope             | `desktop_scope_macos_test.rs`          | macOS window and desktop scope          |
+| Standalone browsers       | `standalone_browser_behavior_test.rs`  | Installed Google Chrome and Edge        |
 
 The WKWebView host runs the same typed shared-web catalog as Electron and
 Tauri. Calculator and TextEdit add typed supporting rows for built-in app
@@ -212,6 +330,27 @@ canonical logged-in macOS lane, but they do not replace repo-local fixtures.
 The maintainer wrapper provisions the exact source build and verifies the
 private Lume seed's TCC/signing contract before delegating the behavior matrix
 to `scripts/ci/macos/run-rust-e2e.sh`.
+
+The hosted wrapper uses the same behavior matrix on fresh `macos-26` runners.
+It requires the GitHub-hosted Aqua session and SIP-off VirtualMac environment,
+creates a temporary code-signing Keychain, installs a certificate-signed local
+app, seeds only Accessibility and Screen Capture for that app's exact csreq, and
+verifies that permission status is attributed to the driver daemon before any
+test begins. The browser lane additionally requires the image's vendor-signed
+Google Chrome and Microsoft Edge and fails closed when either is missing. The
+temporary certificate trust is removed during job cleanup.
+Hosted results remain supplemental until the image and signing
+identity provide the same release-parity guarantees as the maintained Lume
+seed.
+
+Workers cloned from a granted private seed verify and reuse its app-owned TCC
+identity. A disposable SIP-disabled Lume worker without inherited grants must
+use `tests/runners/macos-lume/seed-tcc.sh` after installing the exact candidate
+as a certificate-signed `CuaDriverLocal.app`. The guarded helper is the only
+supported automated path: it verifies `VirtualMac*`, disabled SIP, the expected
+bundle identity, and the signed requirement before seeding only Accessibility
+and Screen Recording. Never hand-edit `TCC.db`. Restart the app afterward and
+prove live capture and input; database rows alone do not certify the desktop.
 
 ### Linux
 
@@ -419,7 +558,7 @@ to give each behavior one clear owner and make cross-cutting evidence reusable.
 rust/crates/cua-driver-testkit/src/
 `-- observer.rs                     Cross-OS desktop-side-effect interface
 
-rust/crates/cua-driver/tests/
+rust/crates/cua-driver-e2e/tests/
 |-- cross_platform_behavior_test.rs Shared Electron/Tauri action matrix
 |-- harness_wpf_test.rs             Windows WPF action rows
 |-- harness_winui3_test.rs          Windows WinUI3 action rows
@@ -428,7 +567,9 @@ rust/crates/cua-driver/tests/
 |-- harness_swiftui_test.rs         macOS SwiftUI action rows
 |-- harness_gtk3_test.rs            Linux GTK3 action rows
 |-- capture_contract_test.rs        Tree and screenshot read contract
-|-- desktop_scope_<os>_test.rs      Window/desktop scope invariants
+`-- desktop_scope_<os>_test.rs      Window/desktop scope invariants
+
+rust/crates/cua-driver/tests/
 `-- protocol_*_test.rs              Protocol and schema tests
 ```
 
@@ -449,13 +590,55 @@ user-facing command; lane selectors are internal diagnostics.
 When adding a new scenario:
 
 1. Add or update the repo-local fixture and its external state marker.
-2. Add the Rust scenario under `rust/crates/cua-driver/tests/`.
+2. Add the Rust scenario under `rust/crates/cua-driver-e2e/tests/`.
 3. Declare AX/PX addressing, foreground/background delivery, scope, and oracle.
 4. Add the scenario to `docs/test-matrix.md` and this guide when it changes the
    cross-OS structure.
 5. Update only the OS runner selection when the test is platform-specific.
+   Every `#[ignore]` test must be selected by a runner or workflow, or listed
+   with a reason in `tests/manual-e2e-allowlist.txt`;
+   `.github/scripts/tests/test_cua_driver_e2e_inventory.py` enforces this.
 6. Run the smallest Rust test locally, then run the OS command before
    calling the matrix complete.
 
 The goal is one understandable Rust E2E model across platforms, with
 platform-specific harnesses where the OS genuinely differs.
+
+## Test Layout Conventions
+
+Rust tests in the driver workspace use one layout:
+
+| Test kind | Where it lives |
+| --- | --- |
+| Small unit suite | Inline `#[cfg(test)] mod tests { ... }` at the end of the module |
+| Large unit suite | `src/<module>/tests.rs`, declared as `#[cfg(test)] mod tests;` in `src/<module>.rs` |
+| Several suites for one large module | `src/<module>/<name>_tests.rs`, one `#[cfg(test)] mod <name>_tests;` each, for example `platform-{linux,windows}/src/tools/impl_/` |
+| Crate-root suites | `src/tests/`, for example `cua-driver-sdk/src/tests/` |
+| Integration test in `cua-driver` or its E2E suites | `tests/<subject>_test.rs`; shared helpers go in `tests/support/` |
+
+Moving a suite into its own file keeps its module path, so test names and
+CI filters stay the same. Prefer Rust's default module file lookup over
+`#[path]`. Other crates' `tests/` directories keep their existing names.
+
+Scripts and their tests live next to their owner:
+
+- Desktop runners and focused native gates live in `scripts/ci/<os>/`, for
+  example `scripts/ci/linux/run-mpx-recovery-e2e.py`.
+- Example code keeps its tests in a `tests/` directory beside it, for example
+  `libs/cua-driver/examples/agent-sdks/tests/`.
+- `libs/cua-driver/rust/test-apps/` is the staging directory for built
+  harness apps, not a test directory. The fixture build scripts `cd` into it,
+  so its tracked README and `.gitignore` must stay.
+
+Perception tests have four owners, and each tests different code:
+
+| Directory | Owns | Run by |
+| --- | --- | --- |
+| `libs/cua-driver/rust/crates/cua-perception/{src,tests}` | Rust perception engine and extension protocol | `ci-cua-perception-release.yml`, `ci-cua-driver-quick.yml` |
+| `libs/cua-driver/rust/crates/cua-perception/scripts/tests/` | Model artifact tooling and quality measurement scripts | `ci-cua-perception-release.yml` |
+| `libs/cua-driver/tests/perception-demo/` | Visual demo evidence sanitizing, caching, and envelopes | `ci-test-scripts.yml` |
+| `.github/scripts/tests/test_cua_perception_*.py`, `test_perception_release.py` | Perception release, review-trigger, and review-pipeline workflows and `.github/scripts` helpers | `ci-test-scripts.yml`, `ci-cua-perception-release.yml` |
+| `libs/cua-driver/rust/crates/cua-driver-e2e/tests/perception_capture_loop_test.rs` | Driver's desktop capture, parse, capture-bound click, and reobserve loop with a deterministic developer-only worker | Capture lane of the canonical macOS, Windows, and Linux X11 desktop E2E |
+| `libs/cua-driver/rust/crates/cua-driver-e2e/tests/perception_s1_decision_loop_test.rs` | The same loop with the published extension (OmniParser) and a resident Cua-S1-4B choosing the region, plus consumed and expired capture refusals | `s1-perception` lane of the Linux X11 runner, selected only by `ci-cua-s1-weights.yml` |
+
+Add a perception test to the directory that owns the code it exercises.

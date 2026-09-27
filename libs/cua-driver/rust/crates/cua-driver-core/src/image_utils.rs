@@ -51,6 +51,38 @@ pub fn png_bytes_to_jpeg(png_bytes: &[u8], quality: u8) -> Result<Vec<u8>> {
 
 // ── Downscale ─────────────────────────────────────────────────────────────
 
+/// The screenshot long-edge limits that apply to one capture.
+///
+/// Fields are named because every source is a `u32` or `Option<u32>`, and
+/// positional arguments invite swapping the per-call override with the legacy
+/// cap.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImageDimensionLimits {
+    /// The session or global `max_image_dimension` ceiling. `0` means no limit.
+    pub configured: u32,
+    /// The legacy per-call `max_dimension` cap.
+    pub legacy_max_dimension: Option<u32>,
+    /// The canonical per-call `max_image_dimension` override.
+    pub max_image_dimension: Option<u32>,
+}
+
+impl ImageDimensionLimits {
+    /// Resolve the `max_dim` to pass to [`resize_png_if_needed`].
+    ///
+    /// The canonical per-call override wins outright, including `0` for native
+    /// resolution. Without it, the legacy cap folds with the configured
+    /// ceiling: an unlimited (`0`) ceiling defers to the cap, otherwise the
+    /// tighter of the two wins. Returns `0` only when nothing imposes a limit.
+    pub fn resolve(self) -> u32 {
+        self.max_image_dimension
+            .unwrap_or(match self.legacy_max_dimension {
+                Some(cap) if self.configured == 0 => cap,
+                Some(cap) => self.configured.min(cap),
+                None => self.configured,
+            })
+    }
+}
+
 /// Downscale `png_bytes` so neither dimension exceeds `max_dim`.
 ///
 /// `max_dim == 0` is treated as "no cap"; the original bytes are
@@ -101,6 +133,7 @@ pub fn resize_png_if_needed(png_bytes: &[u8], max_dim: u32) -> Result<Vec<u8>> {
 /// env-var name on Windows).
 pub fn write_crosshair_png(png_bytes: &[u8], cx: f64, cy: f64, path: &str) -> Result<()> {
     let mut img = decode_png_to_rgba8(png_bytes)?;
+    validate_crosshair_point(&img, cx, cy)?;
     draw_crosshair(&mut img, cx, cy);
 
     let path = if let Some(rest) = path.strip_prefix('~') {
@@ -127,12 +160,30 @@ pub fn write_crosshair_png(png_bytes: &[u8], cx: f64, cy: f64, path: &str) -> Re
 /// `click.png` without a temp file.
 pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>> {
     let mut img = decode_png_to_rgba8(png_bytes)?;
+    validate_crosshair_point(&img, cx, cy)?;
     draw_crosshair(&mut img, cx, cy);
 
     let mut out = Vec::new();
     DynamicImage::ImageRgba8(img)
         .write_to(&mut std::io::Cursor::new(&mut out), ImageFormat::Png)?;
     Ok(out)
+}
+
+fn validate_crosshair_point(
+    img: &ImageBuffer<image::Rgba<u8>, Vec<u8>>,
+    cx: f64,
+    cy: f64,
+) -> Result<()> {
+    if !cx.is_finite()
+        || !cy.is_finite()
+        || cx < 0.0
+        || cy < 0.0
+        || cx >= f64::from(img.width())
+        || cy >= f64::from(img.height())
+    {
+        bail!("click point is outside the retained image");
+    }
+    Ok(())
 }
 
 /// Internal: decode PNG to a mutable RGBA8 image buffer.
@@ -276,6 +327,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn image_dimension_override_wins_and_legacy_cap_folds_with_ceiling() {
+        // (configured, legacy max_dimension, max_image_dimension) -> max_dim
+        for (configured, legacy, canonical, expected) in [
+            // The canonical override wins outright, including 0 = native.
+            (1568, None, Some(800), 800),
+            (800, None, Some(1568), 1568),
+            (1568, None, Some(0), 0),
+            (1568, Some(400), Some(1200), 1200),
+            (1024, Some(512), Some(2048), 2048),
+            (1024, Some(512), Some(0), 0),
+            // Without it, the tighter non-zero cap wins.
+            (1024, Some(2048), None, 1024),
+            (4096, Some(512), None, 512),
+            (800, Some(1568), None, 800),
+            (1568, Some(800), None, 800),
+            // An unlimited (0) ceiling defers to the legacy cap.
+            (0, Some(768), None, 768),
+            // No per-call limit passes the ceiling through.
+            (1600, None, None, 1600),
+            (0, None, None, 0),
+        ] {
+            let limits = ImageDimensionLimits {
+                configured,
+                legacy_max_dimension: legacy,
+                max_image_dimension: canonical,
+            };
+            assert_eq!(limits.resolve(), expected, "{limits:?}");
+        }
+    }
+
+    #[test]
     fn png_dimensions_round_trip() {
         // Build a tiny 3x2 RGBA image then read its dimensions back.
         let rgba = vec![0xFFu8; 3 * 2 * 4];
@@ -335,6 +417,23 @@ mod tests {
         let marked = crosshair_png_bytes(&png, 20.0, 20.0).unwrap();
         let (w, h) = png_dimensions(&marked).unwrap();
         assert_eq!((w, h), (40, 40));
+    }
+
+    #[test]
+    fn crosshair_rejects_invalid_centers_instead_of_clamping_to_an_edge() {
+        let png = encode_rgba_to_png(&vec![0u8; 40 * 40 * 4], 40, 40).unwrap();
+        for point in [
+            (-1.0, 20.0),
+            (20.0, -1.0),
+            (40.0, 20.0),
+            (20.0, 40.0),
+            (f64::NAN, 20.0),
+            (20.0, f64::INFINITY),
+        ] {
+            assert!(crosshair_png_bytes(&png, point.0, point.1).is_err());
+        }
+        assert!(crosshair_png_bytes(&png, 0.0, 0.0).is_ok());
+        assert!(crosshair_png_bytes(&png, 39.0, 39.0).is_ok());
     }
 
     #[test]

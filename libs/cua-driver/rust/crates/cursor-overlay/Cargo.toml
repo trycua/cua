@@ -13,6 +13,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+indexmap = "2"
 postcard.workspace = true
 sha2.workspace = true
 zstd.workspace = true

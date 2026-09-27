@@ -46,3 +46,16 @@ Static pools keep `replicas` and omit `autoscaling`. In autoscaling mode, do
 not configure `replicas`; it reports the current pool target after apply and
 refresh. Review the plan before changing modes because switching to static sets
 the pool to the configured `replicas` value.
+
+## Image pull secrets in v0.3.0
+
+Provider v0.3.0 removes the historical implicit `ecr-credentials` default.
+Omitting `image_pull_secret` now omits `imagePullSecret` from the Fleet template.
+Pools that use a private image must configure their secret explicitly:
+
+```terraform
+resource "fleets_pool" "private" {
+  # ...
+  image_pull_secret = "ecr-credentials"
+}
+```

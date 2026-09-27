@@ -215,10 +215,13 @@ async def test_wait_claims_absent_propagates_non_404_sdk_errors() -> None:
 
 
 @pytest.mark.asyncio
-async def test_collect_resource_inventory_returns_empty_for_public_sdk_404() -> None:
+@pytest.mark.parametrize("status", [403, 404])
+async def test_collect_resource_inventory_returns_empty_for_missing_namespace(
+    status: int,
+) -> None:
     class FakeClient:
         async def list_templates(self, name: str):
-            raise SdkError.Status("list templates", 404, b"not found")
+            raise SdkError.Status("list templates", status, b"missing")
 
     assert await collect_resource_inventory(FakeClient(), "demo") == {
         "templates": [],

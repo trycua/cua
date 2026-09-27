@@ -52,7 +52,7 @@ Run from `libs/cua-driver/rust`. Focused examples:
 
 ```bash
 cargo test -p cua-driver-core --locked
-cargo test -p cua-driver --test protocol_mcp_test --locked
+cargo test -p cua-driver --test protocol_schema_test --locked
 ```
 
 Linux source and package checks run through Nix. Windows and Linux compile gates
@@ -112,15 +112,16 @@ Run from `docs`:
 
 ```bash
 pnpm install --frozen-lockfile
-pnpm docs:check
 pnpm docs:check-hygiene
 pnpm docs:check-links
 pnpm build
 ```
 
 The production build validates MDX compilation and static route generation.
-The generator check prevents generated CLI and API references from drifting
-from source.
+Curated MDX changes do not need a product build. Generated reference changes
+also run `pnpm docs:check:cua-driver` or `pnpm docs:check:lume` for their owning
+component; `pnpm docs:check` is the explicit full audit. See
+[`docs/README.md`](docs/README.md) for details.
 
 ## Before Opening a Pull Request
 

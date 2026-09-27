@@ -15,13 +15,15 @@ import Table from "@cloudscape-design/components/table"
 import Tabs from "@cloudscape-design/components/tabs"
 import { useFlash } from "../components/FlashContext"
 import { PoolStatusPill } from "../components/PoolStatus"
-import { createClaim as createSdkClaim, deleteClaim, listClaims } from "../sdk/claims"
-import type { Claim, PoolData } from "../sdk/models"
-import { deletePool, getPool, updatePoolServices } from "../sdk/pools"
-import { derivePoolStatus, tombstonePool } from "../sdk/status"
+import { createClaim as createSdkClaim, deleteClaim, listClaims } from "../fleet/claims"
+import { listPoolInstances } from "../fleet/instances"
+import type { Claim, PoolData, PoolInstance } from "../fleet/models"
+import { deletePool, getPool, updatePoolServices } from "../fleet/pools"
+import { tombstonePool } from "../fleet/status"
 import { CuaButton } from "../components/CuaButton"
 import { PageEmpty, PageError } from "../components/PageState"
 import { PageShell } from "../components/PageShell"
+import { formatTtl } from "../fleet/ttl"
 
 export function PoolDetail() {
   const { namespace = "", name = "" } = useParams()
@@ -94,13 +96,11 @@ export function PoolDetail() {
     )
   }
 
-  const status = derivePoolStatus(pool)
-
   return (
     <PageShell
       eyebrow="Fleet / Pool"
       title={pool.name}
-      description={<PoolStatusPill status={status} />}
+      description={<PoolStatusPill status={pool.status} />}
       secondaryActions={
         <SpaceBetween direction="horizontal" size="xs">
           <CuaButton
@@ -123,25 +123,12 @@ export function PoolDetail() {
       }
     >
       <SpaceBetween size="l">
-      <Container header={<Header variant="h2">Overview</Header>}>
-        <ColumnLayout columns={2} variant="text-grid">
-          <div>
-            <Box variant="awsui-key-label">Status</Box>
-            <PoolStatusPill status={status} />
-          </div>
-          <div>
-            <Box variant="awsui-key-label">Namespace</Box>
-            <div>{pool.namespace}</div>
-          </div>
-        </ColumnLayout>
-      </Container>
-
       <Tabs
         tabs={[
           {
-            label: "Claims",
-            id: "claims",
-            content: <ClaimsTable pool={pool} />,
+            label: "Instances",
+            id: "instances",
+            content: <InstancesTable pool={pool} />,
           },
           {
             label: "Configuration",
@@ -407,7 +394,23 @@ function ServicesEditor({
   )
 }
 
-// ── Claims table ──────────────────────────────────────────────────────────
+// ── Instances table ───────────────────────────────────────────────────────
+
+function instanceStatusType(
+  phase: string,
+): "success" | "pending" | "error" | "info" {
+  switch (phase) {
+    case "Ready":
+      return "success"
+    case "Pending":
+    case "Resetting":
+      return "pending"
+    case "Terminating":
+      return "error"
+    default:
+      return "info"
+  }
+}
 
 function claimStatusType(phase: string): "success" | "pending" | "error" | "info" {
   switch (phase) {
@@ -435,9 +438,14 @@ function age(iso: string): string {
   return `${Math.floor(hrs / 24)}d`
 }
 
-function ClaimsTable({ pool }: { pool: PoolData }) {
+interface InstanceRow extends PoolInstance {
+  claim?: Claim
+}
+
+function InstancesTable({ pool }: { pool: PoolData }) {
   const navigate = useNavigate()
   const flash = useFlash()
+  const [instances, setInstances] = useState<PoolInstance[]>([])
   const [claims, setClaims] = useState<Claim[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
@@ -448,26 +456,30 @@ function ClaimsTable({ pool }: { pool: PoolData }) {
 
   // Pool name = namespace name (1:1 mapping).
   const claimNamespace = pool.namespace
-  const loadClaims = useCallback(async () => {
+  const loadInstances = useCallback(async () => {
     try {
-      const list = await listClaims(claimNamespace)
-      setClaims(list)
+      const [instanceList, claimList] = await Promise.all([
+        listPoolInstances(claimNamespace, pool.name),
+        listClaims(claimNamespace),
+      ])
+      setInstances(instanceList)
+      setClaims(claimList)
     } catch {
       // Silently ignore polling errors — the table will show stale data
       // until the next successful poll.
     } finally {
       setLoading(false)
     }
-  }, [claimNamespace])
+  }, [claimNamespace, pool.name])
 
   // Initial load + 5-second auto-refresh.
   useEffect(() => {
-    loadClaims()
-    timerRef.current = setInterval(loadClaims, 5000)
+    loadInstances()
+    timerRef.current = setInterval(loadInstances, 5000)
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
     }
-  }, [loadClaims])
+  }, [loadInstances])
 
   const createClaim = async () => {
     setCreating(true)
@@ -475,7 +487,7 @@ function ClaimsTable({ pool }: { pool: PoolData }) {
       const claim = await createSdkClaim(claimNamespace, pool.name)
       flash.push({ type: "success", header: `Created claim ${claim.name}` })
       setShowCreate(false)
-      await loadClaims()
+      await loadInstances()
     } catch (e) {
       flash.push({
         type: "error",
@@ -493,7 +505,7 @@ function ClaimsTable({ pool }: { pool: PoolData }) {
       await deleteClaim(claimNamespace, claimName)
       flash.push({ type: "success", header: `Released claim ${claimName}` })
       setConfirmRelease(null)
-      await loadClaims()
+      await loadInstances()
     } catch (e) {
       flash.push({
         type: "error",
@@ -505,22 +517,35 @@ function ClaimsTable({ pool }: { pool: PoolData }) {
     }
   }
 
+  const claimsByName = new Map(claims.map(claim => [claim.name, claim]))
+  const claimsBySandbox = new Map(
+    claims
+      .filter(claim => claim.sandboxName)
+      .map(claim => [claim.sandboxName as string, claim]),
+  )
+  const rows: InstanceRow[] = instances.map(instance => ({
+    ...instance,
+    claim:
+      (instance.claimName && claimsByName.get(instance.claimName)) ||
+      claimsBySandbox.get(instance.name),
+  }))
+
   return (
     <>
       <Table
         loading={loading}
-        items={claims}
+        items={rows}
         header={
           <Header
             variant="h2"
-            counter={`(${claims.length})`}
+            counter={`(${rows.length})`}
             actions={
               <SpaceBetween direction="horizontal" size="xs">
                 <CuaButton
                   tone="icon"
-                  ariaLabel="Refresh claims"
+                  ariaLabel="Refresh instances"
                   iconName="refresh"
-                  onClick={loadClaims}
+                  onClick={loadInstances}
                 />
                 <CuaButton tone="primary" onClick={() => setShowCreate(true)}>
                   Create claim
@@ -528,62 +553,108 @@ function ClaimsTable({ pool }: { pool: PoolData }) {
               </SpaceBetween>
             }
           >
-            Claims
+            Instances
           </Header>
         }
         columnDefinitions={[
           {
             id: "name",
             header: "Name",
-            cell: (c: Claim) => (
+            cell: (instance: InstanceRow) => (
               <Link
-                href={`#/pools/${pool.namespace}/${pool.name}/claims/${c.name}`}
-                onFollow={e => {
-                  e.preventDefault()
-                  navigate(`/pools/${pool.namespace}/${pool.name}/claims/${c.name}`)
+                href={`#/pools/${pool.namespace}/${pool.name}/instances/${instance.name}`}
+                onFollow={event => {
+                  event.preventDefault()
+                  navigate(
+                    `/pools/${pool.namespace}/${pool.name}/instances/${instance.name}`,
+                  )
                 }}
               >
-                {c.name}
+                {instance.name}
               </Link>
             ),
             sortingField: "name",
           },
           {
-            id: "status",
-            header: "Status",
-            cell: (c: Claim) => (
-              <StatusIndicator type={claimStatusType(c.phase)}>
-                {c.phase}
+            id: "instanceStatus",
+            header: "Instance status",
+            cell: (instance: InstanceRow) => (
+              <StatusIndicator type={instanceStatusType(instance.phase)}>
+                {instance.phase}
               </StatusIndicator>
             ),
             sortingField: "phase",
           },
           {
-            id: "sandbox",
-            header: "VM Name",
-            cell: (c: Claim) => c.sandboxName ?? "-",
+            id: "claim",
+            header: "Claim",
+            cell: (instance: InstanceRow) => {
+              const claimName = instance.claim?.name ?? instance.claimName
+              if (!claimName) return "-"
+              return (
+                <Link
+                  href={`#/pools/${pool.namespace}/${pool.name}/claims/${claimName}`}
+                  onFollow={event => {
+                    event.preventDefault()
+                    navigate(
+                      `/pools/${pool.namespace}/${pool.name}/claims/${claimName}`,
+                    )
+                  }}
+                >
+                  {claimName}
+                </Link>
+              )
+            },
+          },
+          {
+            id: "claimStatus",
+            header: "Claim status",
+            cell: (instance: InstanceRow) => {
+              const claimName = instance.claim?.name ?? instance.claimName
+              const phase =
+                instance.claim?.phase ?? (claimName ? "Claimed" : "Unclaimed")
+              return (
+                <StatusIndicator
+                  type={claimName ? claimStatusType(phase) : "stopped"}
+                >
+                  {phase}
+                </StatusIndicator>
+              )
+            },
+          },
+          {
+            id: "ttl",
+            header: "TTL",
+            cell: (instance: InstanceRow) =>
+              instance.claim
+                ? formatTtl(instance.claim.ttlSecondsAfterCreated)
+                : "-",
           },
           {
             id: "age",
             header: "Age",
-            cell: (c: Claim) => age(c.createdAt),
+            cell: (instance: InstanceRow) => age(instance.createdAt),
           },
           {
             id: "actions",
             header: "Actions",
-            cell: (c: Claim) => (
-              <Button
-                variant="inline-link"
-                onClick={() => setConfirmRelease(c.name)}
-              >
-                Release
-              </Button>
-            ),
+            cell: (instance: InstanceRow) => {
+              const claimName = instance.claim?.name ?? instance.claimName
+              if (!claimName) return "-"
+              return (
+                <Button
+                  variant="inline-link"
+                  onClick={() => setConfirmRelease(claimName)}
+                >
+                  Release
+                </Button>
+              )
+            },
           },
         ]}
         empty={
           <Box textAlign="center" color="text-status-inactive" padding="l">
-            No claims. Create one to get a VM from this pool.
+            No instances are currently registered for this pool.
           </Box>
         }
       />

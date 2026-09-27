@@ -1,14 +1,10 @@
-//! MCP JSON-RPC 2.0 server over stdio — platform-independent core.
+//! Platform-independent Driver core and dual-era MCP dispatch.
 //!
-//! Implements the Model Context Protocol (MCP) 2024-11-05 over stdio,
-//! matching the interface of `libs/cua-driver` (Swift/macOS) and
-//! `CuaDriver.Win` (.NET/Windows).
-//!
-//! # Protocol
-//! - Line-delimited JSON-RPC 2.0 on stdin/stdout
-//! - Methods: `initialize`, `notifications/initialized`, `tools/list`, `tools/call`
-//! - Each request has `jsonrpc: "2.0"`, `id` (any), `method`, optional `params`
-//! - Notifications (no `id`) are silently ignored
+//! Stdio supports legacy initialization and modern per-request negotiation.
+//! Protocol metadata does not grant Driver permissions or session ownership.
+
+pub mod mcp_skills;
+pub mod mcp_wire;
 
 pub const RESPONSIBILITY_DISCLAIMED_ENV: &str = "CUA_DRIVER_RS_RESPONSIBILITY_DISCLAIMED";
 
@@ -51,14 +47,21 @@ pub mod authorization;
 pub mod background_input;
 pub mod browser;
 pub mod capture_mode;
+pub(crate) mod capture_registry;
+pub mod capture_runtime;
 pub mod capture_scope;
 pub mod cdp;
 pub mod clipboard;
 pub mod consent;
 pub mod cursor_events;
+pub mod cursor_hook;
 pub mod cursor_sampler;
+pub mod cursor_shape;
 pub mod daemon;
+pub mod delivery;
+pub mod desktop_capture_scale;
 pub mod element_cache;
+pub mod element_frame;
 pub mod element_query;
 pub mod element_token;
 pub mod expectation;
@@ -66,7 +69,11 @@ pub mod ffmpeg_install;
 pub mod health_report;
 pub mod history;
 pub mod image_utils;
+pub mod launch_guard;
+pub mod mcp_result;
 pub mod page;
+pub mod perception_client;
+pub mod perception_tools;
 pub mod pip_hook;
 pub mod policy;
 pub mod protocol;
@@ -80,15 +87,21 @@ pub mod session;
 pub mod session_authorization;
 pub mod session_manifest;
 pub mod session_tools;
+pub mod single_flight;
+#[cfg(test)]
+pub(crate) mod snapshot_test_support;
 pub mod socket_io;
 pub mod text_sanitize;
+pub mod timestamp;
 pub mod tool;
 pub mod tool_args;
 pub mod tool_schema;
 pub mod video;
 pub mod video_ffmpeg;
+pub mod walk_budget;
 pub mod window_inspection;
+pub mod window_observation;
 pub mod window_target;
 
-pub use cua_driver_contract::{CaptureScope, EscalationReason};
+pub use cua_driver_contract::{CaptureScope, EscalationReason, TOOL_INVOCATION_FAILED_CODE};
 pub use recording::RecordingSession;

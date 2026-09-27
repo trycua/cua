@@ -343,5 +343,4 @@ jobs:
             --tag "${{ github.ref_name }}" \
             --sha "${{ github.sha }}" \
             --body release-metadata/release-body.md \
-            --asset-dir release-upload \
-            --make-latest
+            --asset-dir release-upload

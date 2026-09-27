@@ -1,0 +1,48 @@
+---
+title: Pools, claims, and guest services
+description: How Cua Fleets organizes hosted capacity, reserves computers, and routes clients to guest services.
+---
+
+Cua Fleets adds hosted capacity and routing to the Sandbox model. A **pool**
+defines reusable capacity. A **claim** reserves one computer from that pool.
+Named **guest services** give an authenticated client a route to software that
+is already running inside the claimed computer.
+
+## Pools own reusable capacity
+
+A pool combines a guest image, resource settings, replica capacity, and named
+service declarations. The platform can keep replicas ready for later claims,
+so releasing one claim does not delete the pool or guarantee that hosted
+capacity is gone.
+
+Delete capacity you no longer need, or configure an expiry policy. A pool can
+continue to incur usage charges after a workload releases its claim.
+
+## Claims reserve one computer
+
+A claim binds one workload to one available computer from a pool. Leaving a
+`pool.claim()` context releases that claim. Disconnecting a client only closes
+the connection; it does not by itself release the claim or delete the pool.
+
+Keep the pool and claim names when a process is interrupted. They identify the
+existing resources to inspect and clean up before creating replacements.
+
+## Services are part of the connection contract
+
+A service declaration gives Fleet a named route to a port in the guest. It
+does not install the application, start a listener, or prove that the service
+is ready. The selected image and its startup behavior must provide the service
+that the client expects.
+
+The default Sandbox APIs use `computer-server` for shell, files, terminals,
+and screenshots. Cua Driver is a separate typed desktop-control surface. A
+guest must advertise the compatible Driver service before a client can connect
+to it; choosing an image alone does not establish that support.
+
+## Readiness belongs to the service
+
+A running VM and a usable service are different states. Wait for the named
+service required by the task, then verify a representative request before
+handing the computer to a workload. For the creation and connection sequence,
+follow [Create Fleet capacity](/how-to-guides/sandbox/create-fleet-capacity)
+and [Claim a Sandbox](/how-to-guides/sandbox/claim-a-sandbox).

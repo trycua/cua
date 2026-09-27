@@ -8,20 +8,25 @@
 
 pub mod badge_glyphs;
 pub mod bezier;
+pub mod capture_exclusion;
 pub mod capture_utils;
 pub mod motion;
 pub mod path_planner;
+pub mod render_map;
 pub mod render_state;
 pub mod session_badge;
 pub mod theme;
 pub mod theme_artifact;
-pub mod util;
 pub mod z_order;
 
 pub use badge_glyphs::{BadgeChip, BadgeGlyph};
 pub use bezier::CubicBezier;
 pub use motion::{MotionConfig, Spring};
 pub use path_planner::{PathPlanner, PathState, PlannedPath};
+pub use render_map::{
+    keyed_config, seed_position, CursorMap, MsgOutcome, RenderEntry, RenderMap, ScreenFrame,
+    DEFAULT_CURSOR_KEY, SEED_OFFSET,
+};
 pub use render_state::{
     paint_cursor, render_frame, FocusRect, RenderStateCore, SESSION_BADGE_FADE_SECS,
     SESSION_BADGE_HOLD_SECS,
@@ -326,6 +331,10 @@ pub enum OverlayMsg {
     /// This deliberately does not recreate a cursor; the next command does so
     /// lazily after the successful `start_session` boundary.
     Revive(CursorKey),
+    /// No state change: wakes a parked render loop so it services an
+    /// out-of-band request (such as hiding for a Driver desktop capture)
+    /// without waiting for its next maintenance tick.
+    Wake,
 }
 
 /// Commands sent from MCP tool handlers to the overlay's render thread.
@@ -390,9 +399,52 @@ pub fn track_pointer_command(x: f64, y: f64) -> OverlayCommand {
     }
 }
 
+/// Balance one cursor's visual press even if its action future is dropped.
+///
+/// The adapter binds `send` to its own cursor. This only resets artwork; it
+/// does not release native input, cancel a worker, or prove gesture cleanup.
+#[must_use = "keep the guard alive for the visual press interval"]
+pub struct PressedVisualGuard<F: Fn(OverlayCommand)> {
+    send: F,
+}
+
+impl<F: Fn(OverlayCommand)> PressedVisualGuard<F> {
+    pub fn new(send: F) -> Self {
+        send(OverlayCommand::SetPressed(true));
+        Self { send }
+    }
+}
+
+impl<F: Fn(OverlayCommand)> Drop for PressedVisualGuard<F> {
+    fn drop(&mut self) {
+        (self.send)(OverlayCommand::SetPressed(false));
+    }
+}
+
 #[cfg(test)]
 mod pointer_tracking_tests {
     use super::*;
+
+    #[test]
+    fn visual_press_guard_releases_only_its_bound_cursor() {
+        use std::cell::Cell;
+        let first = Cell::new(false);
+        let sibling = Cell::new(false);
+        let send = |state: &Cell<bool>, command| {
+            let OverlayCommand::SetPressed(pressed) = command else {
+                panic!("visual press guard must only change pressed artwork");
+            };
+            state.set(pressed);
+        };
+        let first_guard = PressedVisualGuard::new(|command| send(&first, command));
+        let sibling_guard = PressedVisualGuard::new(|command| send(&sibling, command));
+        assert!(first.get() && sibling.get());
+        drop(first_guard);
+        assert!(!first.get());
+        assert!(sibling.get());
+        drop(sibling_guard);
+        assert!(!sibling.get());
+    }
 
     #[test]
     fn tracked_artwork_keeps_its_tip_on_the_native_pointer() {
@@ -404,7 +456,27 @@ mod pointer_tracking_tests {
         else {
             panic!("pointer tracking must produce an anchored snap");
         };
-        assert!((x - (120.0 + heading.cos() * 16.0)).abs() < f64::EPSILON);
-        assert!((y - (80.0 + heading.sin() * 16.0)).abs() < f64::EPSILON);
+        // The artwork centre sits 16 points down-right of the tip at 45 degrees.
+        assert_eq!(heading, std::f64::consts::FRAC_PI_4);
+        assert!((x - 131.313_708_498_984_76).abs() < 1e-9, "x = {x}");
+        assert!((y - 91.313_708_498_984_76).abs() < 1e-9, "y = {y}");
+    }
+
+    #[test]
+    fn session_cleanup_removes_named_cursor_but_preserves_anonymous_default() {
+        let registry = CursorRegistry::new();
+        registry.update_position("session-a", 12.0, 34.0);
+        registry.update_position("default", 56.0, 78.0);
+
+        registry.remove("session-a");
+        registry.remove("default");
+
+        assert!(registry.get("session-a").is_none());
+        assert_eq!(
+            registry
+                .get("default")
+                .and_then(|cursor| cursor.x.zip(cursor.y)),
+            Some((56.0, 78.0))
+        );
     }
 }

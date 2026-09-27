@@ -1,22 +1,74 @@
 name: Monitor branded installer endpoints
 
+# Two canaries for what users actually run:
+#
+#   check    the branded endpoints are served with the expected content.
+#   canary   the canonical Cua Driver installers install a working, signed
+#            driver with DEFAULT version resolution (no pin) on macOS, Linux,
+#            and Windows, exactly as the documented one-liners do:
+#              /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
+#              & ([scriptblock]::Create((irm https://cua.ai/driver/install.ps1))) -NoAutoStart -NoPathUpdate
+#
+# A failure opens (or comments on) one deduplicated `bug` issue per canary so
+# a broken default install is noticed within hours, not when a user reports
+# it (#4109: the installers baked a release whose macOS app was unsigned).
+#
+# The canary installs into temporary HOME, package-home, and bin directories.
+# On macOS the installer also writes /Applications/CuaDriver.app, which is
+# acceptable only because hosted runners are ephemeral. Windows runs with
+# -NoAutoStart -NoPathUpdate so no scheduled task or PATH entry is created.
+
 on:
   schedule:
-    # Run daily; the first scheduled run will be the next day after merge.
-    - cron: '15 14 * * *'
+    - cron: "15 */6 * * *"
+  release:
+    types: [published]
+  # The installer bake commit uses [skip ci]; follow the CD run instead so a
+  # newly baked version is exercised as soon as it lands.
+  workflow_run:
+    workflows: ["CD: Cua Driver (cross-platform)"]
+    types: [completed]
+  push:
+    branches: [main]
+    paths:
+      - ".github/release-state/cua-driver-rs-*"
+      - ".github/workflows/monitor-branded-installers.yml"
+      - "libs/cua-driver/scripts/_install-common.psm1"
+      - "libs/cua-driver/scripts/_install-common.sh"
+      - "libs/cua-driver/scripts/_install-rust.sh"
+      - "libs/cua-driver/scripts/install.ps1"
+      - "libs/cua-driver/scripts/install.sh"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Diagnostics only: pin this x.y.z instead of default resolution"
+        required: false
+        default: ""
+      dry_run:
+        description: "Print the issue that would be filed instead of filing it"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
   issues: write
 
 concurrency:
-  group: monitor-branded-installers
+  # Scheduled and event runs supersede each other; manual diagnostics never
+  # cancel one another.
+  group: monitor-branded-installers-${{ github.event_name }}-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
   check:
+    if: >-
+      github.event_name != 'release' ||
+      startsWith(github.event.release.tag_name, 'cua-driver-rs-v') ||
+      startsWith(github.event.release.tag_name, 'lume-v')
     runs-on: ubuntu-latest
+    outputs:
+      failures: ${{ steps.endpoints.outputs.failures }}
     steps:
       - name: Check public installer endpoints
         id: endpoints
@@ -70,31 +122,190 @@ jobs:
 
           echo 'failures=' >> "$GITHUB_OUTPUT"
 
-      - name: Open or update monitoring issue
-        if: failure() && steps.endpoints.outputs.failures != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          FAILURES: ${{ steps.endpoints.outputs.failures }}
+  canary:
+    name: "canonical installer / ${{ matrix.os }} (${{ github.event_name == 'push' && 'pushed scripts' || 'cua.ai' }})"
+    if: >-
+      github.event_name != 'release' ||
+      startsWith(github.event.release.tag_name, 'cua-driver-rs-v')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-26, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      # Pushes exercise the pushed installer and release state directly, so a
+      # change is tested before the branded endpoints finish propagating it.
+      # Every other trigger runs the public branded endpoints users run.
+      INSTALLER_SOURCE: ${{ github.event_name == 'push' && 'checkout' || 'cua.ai' }}
+      CANARY_PIN: ${{ inputs.version }}
+      CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"
+      CUA_TELEMETRY_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/release-state
+            libs/cua-driver/scripts
+
+      - name: Install Linux runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libx11-6 libxi6 libxtst6 libxext6 libwayland-client0 libxkbcommon0
+
+      - name: Run the canonical macOS/Linux installer with default resolution
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
-          title='Branded installer endpoint check is failing'
-          body=$(cat <<EOF
-          The daily branded installer monitor found one or more failures.
+          CANARY="$RUNNER_TEMP/cua-driver-canary"
+          rm -rf "$CANARY"
+          mkdir -p "$CANARY/home"
+          # Isolate every per-user location the installer writes. No version
+          # pin and no GitHub token: resolution is exactly what users get.
+          export HOME="$CANARY/home"
+          export CUA_DRIVER_RS_HOME="$CANARY/home/.cua-driver"
+          export CUA_DRIVER_RS_INSTALL_DIR="$CANARY/bin"
+          export CUA_DRIVER_RS_NO_MODIFY_PATH=1
+          unset CUA_DRIVER_RS_VERSION CUA_DRIVER_VERSION GH_TOKEN GITHUB_TOKEN
+          if [[ -n "${CANARY_PIN:-}" ]]; then
+            echo "::notice::Diagnostics run pinned to ${CANARY_PIN}; this is not default resolution."
+            export CUA_DRIVER_RS_VERSION="$CANARY_PIN"
+          fi
+          if [[ "$INSTALLER_SOURCE" == "checkout" ]]; then
+            /bin/bash libs/cua-driver/scripts/install.sh 2>&1 | tee "$CANARY/install.log"
+          else
+            /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)" 2>&1 | tee "$CANARY/install.log"
+          fi
 
-          ```
-          ${FAILURES}
-          ```
+          INSTALLED="$CUA_DRIVER_RS_INSTALL_DIR/cua-driver"
+          test -x "$INSTALLED"
+          VERSION_OUTPUT=$("$INSTALLED" --version)
+          echo "Installed: $VERSION_OUTPUT"
+          PUBLISHED=$(tr -d '[:space:]' < .github/release-state/cua-driver-rs-published-version)
+          PUBLISHED="${CANARY_PIN:-$PUBLISHED}"
+          if ! grep -Fq "$PUBLISHED" <<< "$VERSION_OUTPUT"; then
+            echo "::warning::Installed '$VERSION_OUTPUT', but main publishes $PUBLISHED (the branded endpoint may still be propagating)."
+          fi
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            APP=/Applications/CuaDriver.app
+            test -x "$APP/Contents/MacOS/cua-driver"
+            /usr/libexec/PlistBuddy -c Print:CFBundleIdentifier "$APP/Contents/Info.plist" |
+              grep -Fx com.trycua.driver
+            codesign --verify --deep --strict --verbose=2 "$APP"
+            # Gatekeeper is what blocks a user's first launch; require the
+            # notarized Developer ID assessment, not just a valid signature.
+            ASSESSMENT=$(spctl -a -vvv -t exec "$APP" 2>&1)
+            echo "$ASSESSMENT"
+            grep -Fqx "source=Notarized Developer ID" <<< "$ASSESSMENT"
+            grep -Eq '^origin=Developer ID Application: .+ \(YCK386LBJ7\)$' <<< "$ASSESSMENT"
+          fi
 
-          Workflow run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+      - name: Run the canonical Windows installer with default resolution
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $canary = Join-Path $env:RUNNER_TEMP "cua-driver-canary"
+          Remove-Item -LiteralPath $canary -Recurse -Force -ErrorAction SilentlyContinue
+          $env:CUA_DRIVER_RS_HOME = Join-Path $canary "home"
+          $env:CUA_DRIVER_RS_INSTALL_DIR = Join-Path $canary "bin"
+          foreach ($name in 'CUA_DRIVER_RS_VERSION', 'GH_TOKEN', 'GITHUB_TOKEN') {
+            Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+          }
+          if ($env:CANARY_PIN) {
+            Write-Host "::notice::Diagnostics run pinned to $($env:CANARY_PIN); this is not default resolution."
+            $env:CUA_DRIVER_RS_VERSION = $env:CANARY_PIN
+          }
+          if ($env:INSTALLER_SOURCE -eq 'checkout') {
+            & ./libs/cua-driver/scripts/install.ps1 -NoAutoStart -NoPathUpdate
+          }
+          else {
+            & ([scriptblock]::Create((Invoke-RestMethod https://cua.ai/driver/install.ps1))) -NoAutoStart -NoPathUpdate
+          }
+          $binary = Join-Path $env:CUA_DRIVER_RS_INSTALL_DIR "cua-driver.exe"
+          if (-not (Test-Path -LiteralPath $binary)) {
+            throw "installer did not create $binary"
+          }
+          $versionOutput = & $binary --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "installed binary exited with $LASTEXITCODE"
+          }
+          Write-Host "Installed: $versionOutput"
+          $published = (Get-Content -Raw .github/release-state/cua-driver-rs-published-version).Trim()
+          if ($env:CANARY_PIN) { $published = $env:CANARY_PIN }
+          if ($versionOutput -notmatch [regex]::Escape($published)) {
+            Write-Host "::warning::Installed '$versionOutput', but main publishes $published (the branded endpoint may still be propagating)."
+          }
+          $signature = Get-AuthenticodeSignature -LiteralPath $binary
+          $signature | Format-List Status, StatusMessage, SignerCertificate
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'CN="?Cua AI, Inc\.') {
+            throw "installed cua-driver.exe is not validly signed by Cua AI, Inc.: $($signature.StatusMessage)"
+          }
+
+  report:
+    name: Report installer canary failures
+    needs: [check, canary]
+    if: always() && (needs.check.result == 'failure' || needs.canary.result == 'failure')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open or update monitoring issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENDPOINT_RESULT: ${{ needs.check.result }}
+          ENDPOINT_FAILURES: ${{ needs.check.outputs.failures }}
+          CANARY_RESULT: ${{ needs.canary.result }}
+          TRIGGER: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          # One open issue per title; later failures comment on it.
+          report() {
+            local title="$1" body="$2" issue_number
+            if [[ "$DRY_RUN" == "true" ]]; then
+              printf 'Dry run: would open or update the issue titled "%s" (label bug) with:\n%s\n' "$title" "$body"
+              return
+            fi
+            issue_number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+              --search "\"$title\" in:title" --json number,title \
+              --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+            if [[ -n "$issue_number" ]]; then
+              gh issue comment "$issue_number" --repo "$GITHUB_REPOSITORY" --body "$body"
+            else
+              gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label bug --body "$body"
+            fi
+          }
+
+          if [[ "$ENDPOINT_RESULT" == "failure" ]]; then
+            report "Branded installer endpoint check is failing" "$(cat <<EOF
+          The branded installer monitor found one or more failures.
+
+          \`\`\`
+          ${ENDPOINT_FAILURES:-see the workflow run}
+          \`\`\`
+
+          Workflow run: ${RUN_URL}
+          Trigger: ${TRIGGER}
           Checked at: ${GITHUB_SHA}
           EOF
-          )
+          )"
+          fi
 
-          issue_number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
-            --search "$title in:title" --json number --jq '.[0].number // empty')
-          if [[ -n "$issue_number" ]]; then
-            gh issue comment "$issue_number" --repo "$GITHUB_REPOSITORY" --body "$body"
-          else
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          if [[ "$CANARY_RESULT" == "failure" ]]; then
+            report "Cua Driver canonical installer canary is failing" "$(cat <<EOF
+          The canonical Cua Driver installer failed with default version resolution on at least one platform. Fresh installs are likely broken for users on that platform.
+
+          Workflow run: ${RUN_URL}
+          Trigger: ${TRIGGER}
+          Checked at: ${GITHUB_SHA}
+
+          To roll the installers back to the last good release, follow the release safety runbook in scripts/ci/README.md.
+          EOF
+          )"
           fi

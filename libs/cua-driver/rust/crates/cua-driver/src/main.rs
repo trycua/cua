@@ -18,12 +18,17 @@
 //! platform tool registry.
 
 mod autostart;
+mod broken_pipe;
 mod bundle;
 mod check_update_tool;
 mod cli;
 mod doctor;
+mod driver_service_http;
+mod extension_manager;
 mod history_runtime;
+mod mcp_envelope;
 mod mcp_http;
+mod perception_cli;
 mod private_worker;
 mod proxy;
 mod release_channel;
@@ -31,6 +36,7 @@ mod responsibility;
 mod sdk_adapter;
 mod serve;
 mod skills;
+mod stop;
 mod telemetry;
 mod updater;
 mod version_check;
@@ -126,7 +132,7 @@ fn maybe_wrap_finite_command() {
     let Ok(status) = status else {
         return;
     };
-    let exit_code = status.code().unwrap_or(1);
+    let exit_code = broken_pipe::shell_exit_code(status);
     telemetry::spawn_cli_completion_worker(
         command_name,
         tool_name.as_deref(),
@@ -223,7 +229,7 @@ fn run_cursor_theme_command(args: &[String]) -> ! {
 /// enough to be useful).
 ///
 /// No-op when `--experimental-pip` is not on argv. On Windows / Linux
-/// the factory returns "not yet implemented" — we log and continue
+/// startup returns "not yet implemented" — we log and continue
 /// without a window so the rest of the daemon keeps working.
 fn maybe_init_pip() {
     let cfg = match pip_preview::default_config_path() {
@@ -234,16 +240,14 @@ fn maybe_init_pip() {
         return;
     }
 
-    // Register the platform factory. The set is idempotent so multiple
-    // entry points calling this in the same process is safe.
     #[cfg(target_os = "macos")]
-    pip_preview::set_pip_backend_factory(Box::new(platform_macos::pip::MacosPipBackendFactory));
+    let backend = platform_macos::pip::start(&cfg);
     #[cfg(target_os = "windows")]
-    pip_preview::set_pip_backend_factory(Box::new(platform_windows::pip::WindowsPipBackendFactory));
+    let backend = platform_windows::pip::start(&cfg);
     #[cfg(target_os = "linux")]
-    pip_preview::set_pip_backend_factory(Box::new(platform_linux::pip::LinuxPipBackendFactory));
+    let backend = platform_linux::pip::start(&cfg);
 
-    match pip_preview::start_pip(&cfg) {
+    match backend {
         Ok(backend) => {
             // Bridge: when the tool dispatcher in cua-driver-core wants
             // to push a frame, forward to the live backend handle.
@@ -279,6 +283,11 @@ fn maybe_init_pip() {
 
 // ── Public SDK runtime host ──────────────────────────────────────────────
 
+fn register_host_tools(registry: &mut cua_driver_core::tool::ToolRegistry) {
+    history_runtime::register_host_tools(registry);
+    extension_manager::register_host_tools(registry);
+}
+
 /// Construct the canonical SDK-owned runtime for the CLI or daemon host.
 /// The private socket and MCP layers consume this object downstream.
 fn build_driver(
@@ -292,7 +301,7 @@ fn build_driver(
         host_bundle_id: std::env::var(cua_driver_core::HOST_BUNDLE_ID_ENV).ok(),
         claude_code_compatibility: compatibility_mode,
         prepare_desktop_environment: true,
-        register_host_tools: Some(history_runtime::register_host_tools),
+        register_host_tools: Some(register_host_tools),
         authorization_host: None,
         activity_observer: None,
     })
@@ -326,7 +335,7 @@ fn inspect_tools_without_runtime() -> serde_json::Value {
         host_bundle_id: None,
         claude_code_compatibility: false,
         prepare_desktop_environment: false,
-        register_host_tools: Some(history_runtime::register_host_tools),
+        register_host_tools: Some(register_host_tools),
         authorization_host: None,
         activity_observer: None,
     })
@@ -457,6 +466,12 @@ mod mcp_runtime_selection_tests {
 
 #[cfg(target_os = "macos")]
 fn main() {
+    cua_driver_sdk::configure_perception_client_resolver(
+        extension_manager::perception_client_resolver(),
+    );
+    if let Some(code) = platform_macos::permissions::gate::run_permission_probe_if_requested() {
+        std::process::exit(code);
+    }
     // The packaged uninstaller needs a truly offline, pre-telemetry purge
     // path while this exact signed executable still exists on disk.
     if let Some(code) = history_runtime::run_offline_purge_if_requested() {
@@ -495,6 +510,7 @@ fn main() {
     if telemetry::run_update_event_worker_if_requested() {
         return;
     }
+    broken_pipe::install_for_finite_command_from_argv();
     maybe_wrap_finite_command();
 
     // ── CLI subcommand dispatch ──────────────────────────────────────────────
@@ -534,6 +550,7 @@ fn main() {
         }
         cli::Command::Serve {
             socket,
+            pid_file,
             permission_mode,
             dangerously_bypass_approvals,
             capability_manifest,
@@ -582,12 +599,14 @@ fn main() {
                     );
                 }
             }
-            if !platform_macos::permissions::gate::is_gate_reexec() {
-                telemetry::capture_start(
-                    telemetry::event::SERVE_START_LEGACY,
-                    telemetry::Transport::Daemon,
-                );
-            }
+            // Fail closed until a fresh helper-process probe completes. This
+            // also covers a probe launch failure without letting the serving
+            // process perform and cache its own negative TCC preflight.
+            serve::set_permission_gate_pending(!gate_opts.opt_out);
+            telemetry::capture_start(
+                telemetry::event::SERVE_START_LEGACY,
+                telemetry::Transport::Daemon,
+            );
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr
             // early in the serve lifecycle.
@@ -622,13 +641,13 @@ fn main() {
                 }
             };
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = serve::default_pid_file_path();
+            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
 
             // Bind the Unix socket FIRST, on a background thread, BEFORE
             // running the (blocking) permissions gate (#1761).
             //
             // The gate's `wait_for_grants` blocks while `com.trycua.driver`
-            // is ungranted — it prompts and re-exec-loops until the user
+            // is ungranted. Fresh helper processes poll TCC until the user
             // grants or the deadline elapses. If serve ran after the gate,
             // the daemon's socket wouldn't appear for minutes on first
             // launch, so `permissions grant` / MCP clients launched via
@@ -639,12 +658,10 @@ fn main() {
             //
             // A Unix socket + tokio accept loop has no main-thread
             // requirement, so serve runs on a background thread. The gate
-            // stays on the MAIN thread: its prompt APIs
-            // (`request_accessibility` / `request_screen_recording`) and
-            // the NSPanel must run on main. On grant, the gate's
-            // `reexec_self()` execvp's the whole daemon — the socket
-            // re-binds fast on restart (run_serve unlinks the stale socket
-            // file first) and stabilizes once the grant sticks.
+            // stays on the MAIN thread for its NSPanel; short-lived helper
+            // processes own prompt and status APIs. The serving process never performs
+            // a negative TCC preflight, so its socket and accepted connections
+            // remain stable while helper processes refresh permission state.
             let serve_handle = std::thread::Builder::new()
                 .name("cua-serve".into())
                 .spawn(move || {
@@ -660,10 +677,6 @@ fn main() {
             // already active.  Honors --no-permissions-gate and
             // CUA_DRIVER_RS_PERMISSIONS_GATE=0 for CI / headless.
             //
-            // Failures (e.g. deadline elapsed without grants) are logged
-            // and the daemon continues to serve — individual tool calls
-            // will then fail with the underlying TCC error, mirroring
-            // Swift's "user closed the panel" fallback.
             let gate_result = platform_macos::permissions::run_if_needed_with_observer(
                 gate_opts,
                 |progress, context| match progress {
@@ -682,6 +695,9 @@ fn main() {
                     }
                 },
             );
+            if gate_result.is_ok() {
+                serve::set_permission_gate_pending(false);
+            }
             let gate_context = platform_macos::permissions::gate::telemetry_context();
             if gate_context.engaged {
                 telemetry::capture_permissions_gate_completed(
@@ -699,9 +715,8 @@ fn main() {
             if let Err(e) = gate_result {
                 eprintln!("[cua-driver] permissions gate: {e}");
                 eprintln!(
-                    "[cua-driver] continuing — tool calls touching AX or \
-                           Screen Recording fail until you grant the missing TCC \
-                           permissions."
+                    "[cua-driver] desktop tool calls remain gated; grant Accessibility and \
+                     Screen Recording permissions, then restart the daemon."
                 );
             }
 
@@ -727,9 +742,15 @@ fn main() {
                 let _ = serve_handle.join();
             }
         }
-        cli::Command::Stop { socket } => {
+        cli::Command::Stop {
+            socket,
+            expected_pid,
+        } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            serve::run_stop_cmd(&sp);
+            match expected_pid {
+                Some(pid) => stop::run_pid_bound_stop_cmd(&sp, pid),
+                None => serve::run_stop_cmd(&sp),
+            }
         }
         cli::Command::Revoke {
             socket,
@@ -803,6 +824,12 @@ fn main() {
         cli::Command::Skills { subcommand, flags } => {
             skills::run(&subcommand, &flags);
         }
+        cli::Command::Extension { args } => {
+            extension_manager::run(&args);
+        }
+        cli::Command::Perception { args } => {
+            perception_cli::run(&args);
+        }
         cli::Command::CursorTheme { args } => {
             run_cursor_theme_command(&args);
         }
@@ -874,6 +901,9 @@ fn main() {
 
 #[cfg(not(target_os = "macos"))]
 fn main() -> anyhow::Result<()> {
+    cua_driver_sdk::configure_perception_client_resolver(
+        extension_manager::perception_client_resolver(),
+    );
     if let Some(code) = history_runtime::run_offline_purge_if_requested() {
         std::process::exit(code);
     }
@@ -890,6 +920,7 @@ fn main() -> anyhow::Result<()> {
     if telemetry::run_update_event_worker_if_requested() {
         return Ok(());
     }
+    broken_pipe::install_for_finite_command_from_argv();
     maybe_wrap_finite_command();
 
     // ── CLI subcommand dispatch ──────────────────────────────────────────────
@@ -936,6 +967,7 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Serve {
             socket,
+            pid_file,
             permission_mode,
             dangerously_bypass_approvals,
             capability_manifest,
@@ -987,7 +1019,7 @@ fn main() -> anyhow::Result<()> {
             )?;
             maybe_init_pip();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            let pid_path = serve::default_pid_file_path();
+            let pid_path = pid_file.unwrap_or_else(serve::default_pid_file_path);
             // run_serve_cmd builds its own runtime; must run on a fresh thread.
             std::thread::spawn(move || {
                 serve::run_serve_cmd(driver, &sp, Some(&pid_path));
@@ -996,9 +1028,15 @@ fn main() -> anyhow::Result<()> {
             .ok();
             return Ok(());
         }
-        cli::Command::Stop { socket } => {
+        cli::Command::Stop {
+            socket,
+            expected_pid,
+        } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            serve::run_stop_cmd(&sp);
+            match expected_pid {
+                Some(pid) => stop::run_pid_bound_stop_cmd(&sp, pid),
+                None => serve::run_stop_cmd(&sp),
+            }
             return Ok(());
         }
         cli::Command::Revoke {
@@ -1084,6 +1122,14 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Skills { subcommand, flags } => {
             skills::run(&subcommand, &flags);
+            return Ok(());
+        }
+        cli::Command::Extension { args } => {
+            extension_manager::run(&args);
+            return Ok(());
+        }
+        cli::Command::Perception { args } => {
+            perception_cli::run(&args);
             return Ok(());
         }
         cli::Command::CursorTheme { args } => {

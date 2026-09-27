@@ -8,10 +8,13 @@ from typing import TypeVar
 
 from cua_driver import (
     ActionTarget,
+    ActionResult,
     ClickButton,
     ClickInput,
+    ClickPosition,
     CuaDriver,
     GetDesktopStateInput,
+    InputDeliveryMode,
     PressKeyInput,
     ToolResult,
     TypeTextInput,
@@ -46,10 +49,9 @@ class NativeDesktopTools:
         return await self._mutate_then_observe(
             lambda: self.driver.click(
                 ClickInput(
-                    x=x,
-                    y=y,
+                    position=ClickPosition.COORDINATES(x=x, y=y),
                     target=ActionTarget.DESKTOP(display_id="primary"),
-                    scope=None,
+                    delivery_mode=InputDeliveryMode.FOREGROUND,
                     session=None,
                     button=ClickButton.LEFT,
                     count=1,
@@ -84,12 +86,12 @@ class NativeDesktopTools:
 
     async def _mutate_then_observe(
         self,
-        operation: Callable[[], Awaitable[ToolResult]],
+        operation: Callable[[], Awaitable[ToolResult | ActionResult]],
     ) -> dict[str, object]:
         unknown_detail: str | None = None
         try:
             result = await self._bounded(operation())
-            if result.is_error:
+            if isinstance(result, ToolResult) and result.is_error:
                 unknown_detail = (
                     f"Action reported an error and its outcome may be unknown "
                     f"({result.text}). A fresh observation follows. Do not retry "

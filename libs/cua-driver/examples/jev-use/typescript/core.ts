@@ -1,0 +1,442 @@
+export type Outcome = 'verified' | 'refuted' | 'unknown' | 'abstained' | 'budget_exhausted';
+export type VisualDelivery = 'background' | 'foreground';
+
+export const SUBMIT_IDS: ReadonlySet<string> = new Set(['submit-form', 'submit-form-foreground']);
+
+export type Candidate = Readonly<{
+  id: string;
+  description: string;
+  tool: string | null;
+  arguments: Readonly<Record<string, unknown>>;
+  captureId?: string;
+  screenshotReference?: string;
+}>;
+
+type PageRef = {
+  role?: string;
+  name?: string | null;
+  ref?: string;
+  value?: string | null;
+};
+
+export type BrowserSnapshot = {
+  target_id: string;
+  tab_id: string;
+  capture_id?: string;
+  refs?: PageRef[];
+  page?: unknown;
+  outline?: string;
+};
+
+export type VisualRegion = Readonly<{
+  id: string;
+  kind: 'text' | 'icon';
+  text?: string;
+  label?: string;
+  confidence: number;
+  interactive: boolean;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}>;
+
+export type VisualObservation = Readonly<{
+  captureId: string;
+  screenshotReference: string;
+  screenshotWidth: number;
+  screenshotHeight: number;
+  pid: number;
+  windowId: number;
+  actionOriginX: number;
+  actionOriginY: number;
+  actionUnitsPerPixelX: number;
+  actionUnitsPerPixelY: number;
+  regions: readonly VisualRegion[];
+}>;
+
+export class VisualObservationError extends Error {
+  constructor(
+    message: string,
+    readonly code: string = 'invalid_visual_result'
+  ) {
+    super(message);
+    this.name = 'VisualObservationError';
+  }
+}
+
+function record(value: unknown, message: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(message);
+  return value as Record<string, unknown>;
+}
+
+function nonempty(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error('visual result contains an empty string');
+  }
+  return value;
+}
+
+function positiveInt(value: unknown): number {
+  if (!Number.isInteger(value) || Number(value) <= 0) {
+    throw new Error('visual result contains an invalid positive integer');
+  }
+  return Number(value);
+}
+
+function pixelInt(value: unknown): number {
+  if (!Number.isInteger(value) || Number(value) < 0) {
+    throw new Error('visual result contains an invalid pixel coordinate');
+  }
+  return Number(value);
+}
+
+function immutableCandidate(candidate: Candidate): Candidate {
+  return Object.freeze({ ...candidate, arguments: Object.freeze({ ...candidate.arguments }) });
+}
+
+export function parseVisualRegions(
+  payload: unknown,
+  expectedCaptureId: string,
+  expectedPid: number,
+  expectedWindowId: number
+): VisualObservation {
+  const root = record(payload, 'visual result is not an object');
+  if (root.schema !== 'cua.visual_regions_v1') throw new Error('unsupported visual region schema');
+  const capture = record(root.capture, 'visual result has no capture provenance');
+  if (capture.capture_id !== expectedCaptureId) {
+    throw new VisualObservationError(
+      'visual result is stale or capture-mismatched',
+      'capture_mismatch'
+    );
+  }
+  const source = record(capture.source, 'visual result has no capture source');
+  if (
+    source.kind !== 'window' ||
+    source.pid !== expectedPid ||
+    source.window_id !== expectedWindowId
+  ) {
+    throw new VisualObservationError(
+      'visual result has a mismatched window target',
+      'capture_mismatch'
+    );
+  }
+  const screenshot = record(capture.screenshot, 'visual result has no screenshot provenance');
+  if (screenshot.mime_type !== 'image/png') {
+    throw new Error('visual result has invalid screenshot provenance');
+  }
+  const screenshotReference = nonempty(screenshot.reference);
+  const screenshotWidth = positiveInt(screenshot.width);
+  const screenshotHeight = positiveInt(screenshot.height);
+
+  const space = record(capture.action_coordinate_space, 'visual result has no coordinate mapping');
+  let actionOriginX = 0;
+  let actionOriginY = 0;
+  let actionUnitsPerPixelX = 1;
+  let actionUnitsPerPixelY = 1;
+  if (space.kind === 'scaled_top_left') {
+    const values = [
+      space.action_origin_x,
+      space.action_origin_y,
+      space.action_units_per_pixel_x,
+      space.action_units_per_pixel_y,
+    ];
+    if (values.some((value) => typeof value !== 'number' || !Number.isFinite(value))) {
+      throw new Error('visual result has malformed coordinate mapping');
+    }
+    [actionOriginX, actionOriginY, actionUnitsPerPixelX, actionUnitsPerPixelY] = values as number[];
+    if (actionUnitsPerPixelX <= 0 || actionUnitsPerPixelY <= 0) {
+      throw new Error('visual result has non-positive coordinate scale');
+    }
+  } else if (space.kind !== 'screenshot_pixels') {
+    throw new Error('visual result has unsupported coordinate mapping');
+  }
+
+  if (!Array.isArray(root.regions)) throw new Error('visual result has no region list');
+  const ids = new Set<string>();
+  const regions = root.regions.map((item) => {
+    const raw = record(item, 'visual result contains a malformed region');
+    const id = nonempty(raw.id);
+    if (ids.has(id)) throw new Error('visual result contains duplicate region IDs');
+    ids.add(id);
+    if (raw.kind !== 'text' && raw.kind !== 'icon') {
+      throw new Error('visual result contains an unsupported region kind');
+    }
+    const bounds = record(raw.bounds, 'visual result contains malformed bounds');
+    const x = pixelInt(bounds.x);
+    const y = pixelInt(bounds.y);
+    const width = positiveInt(bounds.width);
+    const height = positiveInt(bounds.height);
+    if (x + width > screenshotWidth || y + height > screenshotHeight) {
+      throw new Error('visual region is outside its source screenshot');
+    }
+    if (typeof raw.confidence !== 'number' || !Number.isFinite(raw.confidence) || raw.confidence < 0 || raw.confidence > 1) {
+      throw new Error('visual result contains invalid confidence');
+    }
+    const text = raw.text === undefined || raw.text === null ? undefined : nonempty(raw.text);
+    const label = raw.label === undefined || raw.label === null ? undefined : nonempty(raw.label);
+    if ((raw.kind === 'text' && text === undefined) || (raw.kind === 'icon' && label === undefined)) {
+      throw new Error('visual region is missing content required by its kind');
+    }
+    if (typeof raw.interactive !== 'boolean') {
+      throw new Error('visual region has malformed interactivity');
+    }
+    return Object.freeze({
+      id,
+      kind: raw.kind,
+      text,
+      label,
+      confidence: raw.confidence,
+      interactive: raw.interactive,
+      x,
+      y,
+      width,
+      height,
+    });
+  });
+
+  return Object.freeze({
+    captureId: expectedCaptureId,
+    screenshotReference,
+    screenshotWidth,
+    screenshotHeight,
+    pid: expectedPid,
+    windowId: expectedWindowId,
+    actionOriginX,
+    actionOriginY,
+    actionUnitsPerPixelX,
+    actionUnitsPerPixelY,
+    regions: Object.freeze(regions),
+  });
+}
+
+export const REDACTED_TOKEN = '[verification token]';
+
+function formRefs(snapshot: BrowserSnapshot) {
+  const refs = snapshot.refs ?? [];
+  const field = refs.find(
+    (item) => item.role === 'textbox' && item.name === 'verification value' && item.ref
+  );
+  const button = refs.find((item) => item.role === 'button' && item.name === 'Submit' && item.ref);
+  return { field, button };
+}
+
+export type FormState = Readonly<{
+  verification_field: 'not_found' | 'empty' | 'contains_required_token' | 'contains_other_value';
+  submit_button: 'available' | 'not_in_page_structure';
+}>;
+
+/**
+ * Summarize the form for the decision model without revealing the token. The
+ * raw field value never leaves the runner.
+ */
+export function formState(snapshot: BrowserSnapshot, token: string): FormState {
+  const { field, button } = formRefs(snapshot);
+  const verificationField = !field
+    ? 'not_found'
+    : !field.value
+      ? 'empty'
+      : field.value === token
+        ? 'contains_required_token'
+        : 'contains_other_value';
+  return {
+    verification_field: verificationField,
+    submit_button: button ? 'available' : 'not_in_page_structure',
+  };
+}
+
+/** Replace every occurrence of the token in strings nested in value. */
+export function redactToken(value: unknown, token: string): unknown {
+  if (!token) return value;
+  if (typeof value === 'string') return value.split(token).join(REDACTED_TOKEN);
+  if (Array.isArray(value)) return value.map((item) => redactToken(item, token));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, redactToken(item, token)])
+    );
+  }
+  return value;
+}
+
+export type HistoryEntry = Readonly<{ step: number; selected_id: string; outcome: string }>;
+
+const HISTORY_OUTCOMES: Readonly<Record<string, string>> = {
+  'type-verification-value': 'typed the required token into the verification field',
+  'submit-form': 'clicked Submit; the submission was not yet confirmed',
+  'submit-form-foreground':
+    'clicked Submit in the foreground; the submission was not yet confirmed',
+  reobserve: 'took no action and requested a fresh observation',
+};
+
+/**
+ * Build the compact decision-history item shown to the model. It records what
+ * each step did, not timings or model probabilities, so earlier choices do not
+ * become a signal to repeat themselves.
+ */
+export function historyEntry(step: number, candidateId: string, refusal?: string): HistoryEntry {
+  const outcome = refusal
+    ? `Driver refused background delivery (${refusal}); no click happened and a ` +
+      'foreground Submit candidate is offered next'
+    : (HISTORY_OUTCOMES[candidateId] ?? 'completed');
+  return { step, selected_id: candidateId, outcome };
+}
+
+function reservedCandidates(): Candidate[] {
+  return [
+    immutableCandidate({
+      id: 'reobserve',
+      description:
+        'Take no action and obtain a fresh Driver observation, because the current ' +
+        'observation is stale, incomplete, or contradicts the reported form state.',
+      tool: null,
+      arguments: {},
+    }),
+    immutableCandidate({
+      id: 'abstain',
+      description: 'Stop without acting if none of the proposed actions is safe for the observed state.',
+      tool: null,
+      arguments: {},
+    }),
+  ];
+}
+
+/**
+ * Build the closed candidate set for one decision. Page-structure refs always
+ * win. The capture-bound visual Submit is offered only when no Submit ref
+ * exists. visualDelivery 'foreground' replaces the background visual click with
+ * a distinct submit-form-foreground candidate after Driver refused background
+ * delivery; the chooser must pick it explicitly.
+ */
+export function buildCandidates(
+  snapshot: BrowserSnapshot,
+  token: string,
+  visual?: VisualObservation,
+  captureBoundClick = false,
+  visualDelivery: VisualDelivery = 'background'
+): Candidate[] {
+  const common = { target_id: snapshot.target_id, tab_id: snapshot.tab_id };
+  const { field, button } = formRefs(snapshot);
+  const candidates: Candidate[] = [];
+  if (field?.value !== token && field?.ref) {
+    candidates.push(
+      immutableCandidate({
+        id: 'type-verification-value',
+        description:
+          'Type the required verification token into the verification field, ' +
+          'replacing its current contents.',
+        tool: 'browser_type',
+        arguments: { ...common, ref: field.ref, text: token, replace: true },
+      })
+    );
+  } else if (field?.value === token && button?.ref) {
+    candidates.push(
+      immutableCandidate({
+        id: 'submit-form',
+        description:
+          "Click the form's Submit button. The observed form state reports that the " +
+          'verification field already contains the required token, so the form is ' +
+          'ready to submit.',
+        tool: 'browser_click',
+        arguments: { ...common, ref: button.ref, input_route: 'dom_event' },
+      })
+    );
+  } else if (
+    field?.value === token &&
+    visual &&
+    captureBoundClick
+  ) {
+    const matches = visual.regions.filter(
+      (region) =>
+        region.confidence >= 0.8 &&
+        asciiLower(region.text ?? region.label ?? '') === 'submit'
+    );
+    if (matches.length === 1) {
+      const region = matches[0];
+      const x = region.x + region.width / 2;
+      const y = region.y + region.height / 2;
+      const foreground = visualDelivery === 'foreground';
+      candidates.push(
+        immutableCandidate({
+          id: foreground ? 'submit-form-foreground' : 'submit-form',
+          description: foreground
+            ? 'Submit the form by clicking the unique validated visual Submit region with ' +
+              'foreground delivery, which activates the browser window, because Driver ' +
+              'refused background delivery for the previous visual click.'
+            : 'Submit the form by clicking the unique validated visual Submit region. ' +
+              'The observed form state reports that the verification field already ' +
+              'contains the required token.',
+          tool: 'click',
+          arguments: {
+            pid: visual.pid,
+            window_id: visual.windowId,
+            x,
+            y,
+            capture_id: visual.captureId,
+            delivery_mode: visualDelivery,
+          },
+          captureId: visual.captureId,
+          screenshotReference: visual.screenshotReference,
+        })
+      );
+    }
+  }
+  return [...candidates, ...reservedCandidates()];
+}
+
+export function hasExecutableCandidate(candidates: readonly Candidate[]): boolean {
+  return candidates.some((candidate) => candidate.tool !== null);
+}
+
+function asciiLower(value: string): string {
+  return value.replace(/[A-Z]/g, (character) =>
+    String.fromCharCode(character.charCodeAt(0) + 32)
+  );
+}
+
+export function chooseMock(candidates: Candidate[]) {
+  const ids = new Set(candidates.map((candidate) => candidate.id));
+  const selected = ids.has('type-verification-value')
+    ? 'type-verification-value'
+    : ids.has('submit-form')
+      ? 'submit-form'
+      : ids.has('submit-form-foreground')
+        ? 'submit-form-foreground'
+        : ids.has('reobserve')
+          ? 'reobserve'
+          : null;
+  return {
+    choice: selected,
+    confidence: selected ? 1 : 0,
+    probabilities: Object.fromEntries(
+      candidates.map((candidate) => [candidate.id, Number(candidate.id === selected)])
+    ),
+  };
+}
+
+export function validateChoice(
+  choice: string,
+  candidates: Candidate[],
+  currentCaptureId?: string
+): Candidate {
+  if (typeof choice !== 'string' || !choice) throw new Error('provider selected a malformed candidate ID');
+  const ids = candidates.map((candidate) => candidate.id);
+  if (new Set(ids).size !== ids.length) throw new Error('candidate set contains duplicate IDs');
+  const candidate = candidates.find((item) => item.id === choice);
+  if (!candidate) throw new Error(`provider selected unknown candidate: ${choice}`);
+  if (candidate.captureId !== undefined && candidate.captureId !== currentCaptureId) {
+    throw new Error('provider selected a stale or capture-mismatched candidate');
+  }
+  return candidate;
+}
+
+export function classify(
+  submitted: string | null,
+  token: string,
+  steps: number,
+  maxSteps: number
+): Outcome {
+  if (submitted === token) return 'verified';
+  if (submitted !== null) return 'refuted';
+  if (steps >= maxSteps) return 'budget_exhausted';
+  return 'unknown';
+}

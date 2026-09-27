@@ -94,6 +94,13 @@ extern "C" {
     /// Private SPI: maps an AX window element to its CGWindowID.
     /// Stable since macOS 10.9; used by yabai, Hammerspoon, Accessibility Inspector.
     pub fn _AXUIElementGetWindow(element: AXUIElementRef, window_id: *mut u32) -> AXError;
+
+    /// Private SPI: materializes an AX element from its 20-byte remote token
+    /// (pid, 0, `'coco'`, element id). Reaches windows on other Spaces, which
+    /// `AXWindows` omits. Used by alt-tab-macos for the same purpose.
+    pub fn _AXUIElementCreateWithRemoteToken(
+        token: core_foundation::data::CFDataRef,
+    ) -> AXUIElementRef;
 }
 
 /// Hit-test one process's accessibility tree at a screen point. The returned
@@ -228,6 +235,35 @@ pub unsafe fn copy_bool_attr(element: AXUIElementRef, attr_name: &str) -> Option
     }
     CFRelease(value);
     None
+}
+
+unsafe fn coerce_binary_value(value: CFTypeRef) -> Option<bool> {
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::number::CFNumber;
+    let type_id = core_foundation::base::CFGetTypeID(value);
+    if type_id == CFBoolean::type_id() {
+        return Some(CFBoolean::wrap_under_get_rule(value as _).into());
+    }
+    if type_id == CFNumber::type_id() {
+        return match CFNumber::wrap_under_get_rule(value as _).to_f64()? {
+            0.0 => Some(false),
+            1.0 => Some(true),
+            _ => None,
+        };
+    }
+    None
+}
+
+pub unsafe fn copy_binary_attr(element: AXUIElementRef, attr_name: &str) -> Option<bool> {
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    let result = coerce_binary_value(value);
+    CFRelease(value);
+    result
 }
 
 /// A copied AX attribute represented for both existing string-only consumers
@@ -719,10 +755,181 @@ pub unsafe fn copy_ax_windows(element: AXUIElementRef) -> Vec<AXUIElementRef> {
         .collect()
 }
 
+/// Highest AX element id probed when looking for an off-Space window.
+/// Window elements are allocated early in an app's lifetime (Calculator's
+/// main window is id 42); alt-tab-macos probes the same order of magnitude.
+const MAX_REMOTE_TOKEN_ELEMENT_ID: u64 = 2_000;
+
+/// Wall-clock ceiling for one remote-token probe, so an unresponsive app
+/// cannot stall a snapshot or an action decision.
+const REMOTE_TOKEN_PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// Per-candidate AX messaging timeout during the probe, in seconds.
+const REMOTE_TOKEN_CANDIDATE_TIMEOUT_SECONDS: f32 = 0.05;
+
+/// The 20-byte remote token AX uses to identify one element of `pid`.
+fn remote_token_bytes(pid: i32, element_id: u64) -> [u8; 20] {
+    const COCOA_TOKEN_MAGIC: i32 = 0x636f_636f; // 'coco'
+    let mut token = [0u8; 20];
+    token[0..4].copy_from_slice(&pid.to_ne_bytes());
+    token[8..12].copy_from_slice(&COCOA_TOKEN_MAGIC.to_ne_bytes());
+    token[12..20].copy_from_slice(&element_id.to_ne_bytes());
+    token
+}
+
+/// Find the `AXWindow` element for `window_id` when `AXWindows` omits it —
+/// macOS drops windows on other Spaces from that list. Probes the app's AX
+/// element ids through `_AXUIElementCreateWithRemoteToken` and returns only an
+/// element whose role is `AXWindow` AND whose `_AXUIElementGetWindow` equals
+/// `window_id`, so the result is exactly as strong as an `AXWindows` match.
+/// Returns a retained element the caller must release.
+///
+/// # Safety
+///
+/// The caller must release any returned element exactly once with `CFRelease`.
+pub unsafe fn copy_ax_window_by_remote_token(pid: i32, window_id: u32) -> Option<AXUIElementRef> {
+    let started = std::time::Instant::now();
+    for element_id in 0..MAX_REMOTE_TOKEN_ELEMENT_ID {
+        if started.elapsed() > REMOTE_TOKEN_PROBE_DEADLINE {
+            return None;
+        }
+        let token =
+            core_foundation::data::CFData::from_buffer(&remote_token_bytes(pid, element_id));
+        let element = _AXUIElementCreateWithRemoteToken(token.as_concrete_TypeRef());
+        if element.is_null() {
+            continue;
+        }
+        AXUIElementSetMessagingTimeout(element, REMOTE_TOKEN_CANDIDATE_TIMEOUT_SECONDS);
+        if copy_string_attr(element, "AXRole").as_deref() == Some("AXWindow")
+            && ax_get_window_id(element) == Some(window_id)
+        {
+            // The snapshot walk reads the whole subtree through this element;
+            // restore the system default so slow apps are not cut off at the
+            // probe's per-candidate timeout (issue #4082).
+            AXUIElementSetMessagingTimeout(element, 0.0);
+            return Some(element);
+        }
+        CFRelease(element as CFTypeRef);
+    }
+    None
+}
+
+/// Whether to run the remote-token probe for a window `AXWindows` omitted.
+/// Only windows WindowServer reports on another Space qualify; a current-Space
+/// or unknown window that AX cannot map fails fast instead of paying the
+/// probe's deadline on every call (issue #4083). `on_current_space` is only
+/// queried for unlisted windows, so listed windows skip the WindowServer read.
+fn should_probe_off_space_window(
+    listed_in_ax_windows: bool,
+    on_current_space: impl FnOnce() -> Option<bool>,
+) -> bool {
+    !listed_in_ax_windows && on_current_space() == Some(false)
+}
+
+/// `AXWindows` of `pid`'s application element, plus the requested window when
+/// `AXWindows` does not list it because it is on another Space. Returns
+/// retained elements the caller must release.
+///
+/// # Safety
+///
+/// `app` must be the valid application element of `pid`, and the caller must
+/// release every returned element.
+pub unsafe fn copy_ax_windows_including(
+    app: AXUIElementRef,
+    pid: i32,
+    window_id: u32,
+) -> Vec<AXUIElementRef> {
+    let mut windows = copy_ax_windows(app);
+    let listed = windows
+        .iter()
+        .any(|&window| ax_get_window_id(window) == Some(window_id));
+    if should_probe_off_space_window(listed, || {
+        crate::windows::window_on_current_space_by_id(window_id)
+    }) {
+        windows.extend(copy_ax_window_by_remote_token(pid, window_id));
+    }
+    windows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use core_foundation::{boolean::CFBoolean, number::CFNumber};
+
+    #[test]
+    fn remote_token_layout_is_pid_zero_coco_element_id() {
+        let token = remote_token_bytes(0x0102_0304, 42);
+        assert_eq!(&token[0..4], &0x0102_0304i32.to_ne_bytes());
+        assert_eq!(&token[4..8], &[0, 0, 0, 0]);
+        assert_eq!(&token[8..12], &0x636f_636fi32.to_ne_bytes());
+        assert_eq!(&token[12..20], &42u64.to_ne_bytes());
+    }
+
+    #[test]
+    fn off_space_probe_runs_only_for_unlisted_off_space_windows() {
+        assert!(should_probe_off_space_window(false, || Some(false)));
+        assert!(!should_probe_off_space_window(false, || Some(true)));
+        assert!(!should_probe_off_space_window(false, || None));
+        assert!(!should_probe_off_space_window(true, || {
+            panic!("listed windows must not query Space membership")
+        }));
+    }
+
+    #[test]
+    fn binary_value_accepts_booleans_and_exact_zero_or_one() {
+        let true_value = CFBoolean::true_value();
+        let false_value = CFBoolean::false_value();
+        let zero = CFNumber::from(0.0);
+        let one = CFNumber::from(1.0);
+        let fractional = CFNumber::from(0.5);
+        let other = CFNumber::from(2.0);
+        let string = CFStr::new("1");
+
+        assert_eq!(
+            unsafe { coerce_binary_value(true_value.as_CFTypeRef()) },
+            Some(true)
+        );
+        assert_eq!(
+            unsafe { coerce_binary_value(false_value.as_CFTypeRef()) },
+            Some(false)
+        );
+        assert_eq!(
+            unsafe { coerce_binary_value(zero.as_CFTypeRef()) },
+            Some(false)
+        );
+        assert_eq!(
+            unsafe { coerce_binary_value(one.as_CFTypeRef()) },
+            Some(true)
+        );
+        assert_eq!(
+            unsafe { coerce_binary_value(fractional.as_CFTypeRef()) },
+            None
+        );
+        assert_eq!(unsafe { coerce_binary_value(other.as_CFTypeRef()) }, None);
+        assert_eq!(unsafe { coerce_binary_value(string.as_CFTypeRef()) }, None);
+    }
+
+    #[test]
+    fn binary_value_rejects_near_binary_and_non_finite_numbers() {
+        for value in [
+            1e-20,
+            -1e-20,
+            f64::from_bits(1),
+            -f64::from_bits(1),
+            f64::from_bits(1.0_f64.to_bits() - 1),
+            f64::from_bits(1.0_f64.to_bits() + 1),
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
+            let number = CFNumber::from(value);
+            assert_eq!(
+                unsafe { coerce_binary_value(number.as_CFTypeRef()) },
+                None,
+                "unexpected binary state for {value:?}"
+            );
+        }
+    }
 
     #[test]
     fn stringish_value_coerces_cfstring_cfnumber_and_cfboolean() {

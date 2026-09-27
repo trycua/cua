@@ -166,12 +166,11 @@ is_event_k8s_path(path) {
 
 # ── Fleet CRDs, native group ────────────────────────────────────────────────
 #
-# apis/osgym.cua.ai/v1alpha1/namespaces/{ns}/{claims,warmpools,templates}
+# apis/osgym.cua.ai/v1alpha1/namespaces/{ns}/{claims,warmpools,templates,sandboxes}
 #
 # The resources this system exists to manage, and 99% of all observed traffic.
-# Attested by all four sources: the SDK builds exactly these paths, the GitHub
-# allowlist already names the same three, and production shows the full CRUD
-# matrix succeeding.
+# Claims, warm pools, and templates use the existing CRUD matrix. Sandboxes are
+# exposed separately as read-only instance state for the pool detail page.
 native_fleet_resources := {
 	"osgymsandboxclaims",
 	"osgymsandboxwarmpools",
@@ -180,9 +179,75 @@ native_fleet_resources := {
 
 k8s_request_allowed {
 	parts := split(input.params.path, "/")
+	image_request(parts)
+}
+
+image_request(parts) {
+	apis_namespaced_group(parts, "images.cua.ai", "v1alpha1")
+	authz.valid_dns_label(parts[4])
+	parts[5] == "images"
+	image_crud_shape(parts)
+}
+
+image_crud_shape(parts) {
+	apis_collection(parts)
+	input.method == "GET"
+}
+
+image_crud_shape(parts) {
+	image_item(parts)
+	input.method == "GET"
+}
+
+image_crud_shape(parts) {
+	apis_collection(parts)
+	input.method == "POST"
+}
+
+image_crud_shape(parts) {
+	image_item(parts)
+	{"PATCH", "DELETE"}[input.method]
+}
+
+image_item(parts) {
+	apis_item(parts)
+	count(parts[6]) <= 253
+	regex.match(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`, parts[6])
+}
+
+k8s_request_allowed {
+	parts := split(input.params.path, "/")
 	apis_namespaced_group(parts, "osgym.cua.ai", "v1alpha1")
 	native_fleet_resources[parts[5]]
 	fleet_crud_shape(parts)
+}
+
+# Sandboxes are the instances behind a warm pool. The pool detail page lists
+# them to show both available and claim-owned capacity, but never mutates them.
+k8s_request_allowed {
+	parts := split(input.params.path, "/")
+	apis_namespaced_group(parts, "osgym.cua.ai", "v1alpha1")
+	parts[5] == "osgymsandboxes"
+	apis_read_shape(parts)
+	input.method == "GET"
+}
+
+# The one write clients get on a Sandbox: PATCH on an item, so a claim holder
+# can expose an extra service port on a RUNNING sandbox by appending to
+# spec.vmTemplate.services (the pool-operator creates the matching per-sandbox
+# Service; the VMI forwards all guest ports, so no restart is needed). This is
+# a reviewed product decision (Fleet dynamic service exposure), not observed
+# traffic. The body is NOT free-form: sandbox_services_admission.rego runs as
+# a conjunct on this surface (see K8sRoutePolicy) and rejects any PATCH that
+# touches more than spec.vmTemplate.services, so image, sizing and runtime
+# stay operator-owned. Capsule scopes the caller to their own namespaces, the
+# same as every other namespaced path here.
+k8s_request_allowed {
+	parts := split(input.params.path, "/")
+	apis_namespaced_group(parts, "osgym.cua.ai", "v1alpha1")
+	parts[5] == "osgymsandboxes"
+	apis_item(parts)
+	input.method == "PATCH"
 }
 
 # ── Fleet CRDs, legacy group ────────────────────────────────────────────────
@@ -228,6 +293,95 @@ k8s_request_allowed {
 	core_namespaced_resource(parts, "services")
 	core_read_shape(parts)
 	input.method == "GET"
+}
+
+# ── Direct Service writes: denied with guidance ─────────────────────────────
+#
+# Nothing below admits a write to core Services, so a client that POSTs one —
+# the obvious way to try to expose a new port on a sandbox — is denied either
+# way. What this query adds is the reason: K8sRoutePolicy evaluates it wrapped
+# in Because(...) BEFORE the allow leaf, so exactly these requests 403 with a
+# message naming the supported alternative (spec.vmTemplate.services) instead
+# of the generic "k8s request is not allowed". It changes no verdict: every
+# request it denies, the allowlist denies too.
+default not_direct_service_write = false
+
+not_direct_service_write {
+	not is_direct_service_write
+}
+
+is_direct_service_write {
+	parts := split(input.params.path, "/")
+	core_namespaced_resource(parts, "services")
+	is_write_method
+}
+
+is_write_method {
+	input.method == "POST"
+}
+
+is_write_method {
+	input.method == "PUT"
+}
+
+is_write_method {
+	input.method == "PATCH"
+}
+
+is_write_method {
+	input.method == "DELETE"
+}
+
+# ── Tenant Secrets ──────────────────────────────────────────────────────────
+#
+# api/v1/namespaces/{ns}/secrets (POST) and .../secrets/<tenant secret> (DELETE)
+#
+# The Secret kinds a tenant may write, one name prefix each:
+#   * cua-claim-*: the SDK's per-claim secret. It names it in
+#     OSGymSandboxClaim spec.secretRef, and the pool-operator delivers its
+#     keys into the bound sandbox (the cua-env-driver token at
+#     /run/cua/env-token; osgym/pool-operator/claim_secrets.py).
+#   * cua-registry-*: a tenant's own registry pull credentials, a
+#     kubernetes.io/dockerconfigjson Secret the SDK names in
+#     vmTemplate.imagePullSecret (pool_admission.rego admits that pairing for
+#     any image). "Update" is delete + create.
+# A reviewed product decision, not observed traffic. Write-only by design: no
+# GET, LIST, WATCH, PUT or PATCH on any Secret, so a tenant cannot read back
+# even its own Secrets, and cannot touch any Secret outside these prefixes
+# (the ECR pull secret, the OIDC credentials, the operator's
+# osgym-claim-secrets-* delivery Secrets). A POST names its object in the
+# body, so the per-kind name, type and payload checks for creation live in
+# tenant_secret_admission.rego, a conjunct on this surface. Capsule scopes the
+# caller to their own namespaces, as everywhere else here.
+#
+# Adding a kind: add its pattern here and in tenant_secret_admission.rego
+# (tenant_secret_admission_test.rego checks the two sets agree).
+tenant_secret_name_pattern[pattern] {
+	pattern := `^cua-claim-[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+}
+
+tenant_secret_name_pattern[pattern] {
+	pattern := `^cua-registry-[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+}
+
+k8s_request_allowed {
+	parts := split(input.params.path, "/")
+	core_namespaced_resource(parts, "secrets")
+	count(parts) == 5
+	input.method == "POST"
+}
+
+k8s_request_allowed {
+	parts := split(input.params.path, "/")
+	core_namespaced_resource(parts, "secrets")
+	count(parts) == 6
+	is_tenant_secret_name(parts[5])
+	input.method == "DELETE"
+}
+
+is_tenant_secret_name(name) {
+	count(name) <= 253
+	regex.match(tenant_secret_name_pattern[_], name)
 }
 
 # ── Pod metrics ─────────────────────────────────────────────────────────────
@@ -523,6 +677,12 @@ is_infra_literal(path) {
 	parts[1] == "capsule.clastix.io"
 	parts[2] != ""
 	parts[3] == "tenants"
+}
+
+github_k8s_request_allowed {
+	parts := split(input.params.path, "/")
+	image_request(parts)
+	github_namespace_allowed(parts[4])
 }
 
 github_k8s_request_allowed {

@@ -24,6 +24,9 @@ pip install cua-computer-server[mcp]
 
 # With the generated native Cua Driver SDK backend
 pip install cua-computer-server[driver]
+
+# With the VNC backend
+pip install cua-computer-server[vnc]
 ```
 
 ## Usage
@@ -58,6 +61,46 @@ This provides:
 
 MCP clients can connect via streamable HTTP at `http://localhost:8000/mcp`.
 
+### VNC backend
+
+`--backend vnc` drives a remote target over RFB instead of the local OS, so it
+covers screen, pointer, scroll, and keyboard only. Host-scoped surfaces (shell,
+files, PTY, browser, windows) are refused rather than silently executed against
+the server's own machine.
+
+```bash
+python -m computer_server --backend vnc \
+  --vnc-host 127.0.0.1 --vnc-port 5900 --vnc-password secret
+```
+
+The equivalent environment variables are `CUA_VNC_HOST`, `CUA_VNC_PORT`,
+`CUA_VNC_PASSWORD`, and `CUA_VNC_FORCE_CAPS`.
+
+#### Shift and non-compliant servers
+
+RFB sends a keysym and leaves it to the server to work out which physical key
+and modifiers produce it, so a compliant server presses Shift itself when it
+receives `underscore`. QEMU only does that for uppercase letters: shifted
+punctuation arrives unshifted, and `Hello_World (a>b)` is typed as
+`Hello-World 9a.b0`.
+
+Pass `--vnc-force-caps` (or set `CUA_VNC_FORCE_CAPS=1`) to send `shift-<key>`
+from the client instead. It stays off by default: vncdotool documents it as a
+workaround for non-compliant servers, and it changes what every uppercase and
+shifted-punctuation keystroke puts on the wire.
+
+When the server is started for you by the Python SDK, pass it through
+`Computer(...)` instead — it is forwarded to the VM alongside the other VNC
+settings:
+
+```python
+computer = Computer(
+    backend="vnc",
+    vnc_host="127.0.0.1",
+    vnc_force_caps=True,
+)
+```
+
 ### Cua Driver backend
 
 `--backend cua-driver` keeps computer-server's HTTP/WebSocket, MCP, shell,
@@ -66,6 +109,10 @@ portable desktop capture, pointer, scroll, and keyboard actions through the
 generated `cua-driver` Python SDK. The default `embedded` mode loads the Rust
 runtime into computer-server and does not require a daemon. `daemon` mode is a
 compatibility option for deployments that already own a long-lived driver.
+The driver backend never falls back to OS-native input injection. Separate
+`mouse_down`, `mouse_up`, `key_down`, and `key_up` calls return an explicit
+unsupported-operation error; use `drag`, `click`, `press_key`, or `hotkey`
+instead.
 
 Each computer-server process opens a distinct driver session. Its capture scope
 defaults to `desktop`, which enables the `get_desktop_state` command and

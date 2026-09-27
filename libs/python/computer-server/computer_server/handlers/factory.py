@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 
 from computer_server.diorama.base import BaseDioramaHandler
 
-from ..backend_policy import VNCUnavailableHandler, configured_backend
+from ..backend_policy import VNCUnavailableHandler, configured_backend, vnc_force_caps
 from ..utils.helpers import get_current_os
 from .base import (
     BaseAccessibilityHandler,
@@ -18,23 +18,6 @@ from .base import (
 logger = logging.getLogger(__name__)
 
 OS_TYPE = get_current_os()
-
-if OS_TYPE == "android":
-    from .android import (
-        AndroidAccessibilityHandler,
-        AndroidAutomationHandler,
-        AndroidDesktopHandler,
-        AndroidFileHandler,
-        AndroidWindowHandler,
-    )
-elif OS_TYPE == "darwin":
-    from computer_server.diorama.macos import MacOSDioramaHandler
-
-    from .macos import MacOSAccessibilityHandler, MacOSAutomationHandler
-elif OS_TYPE == "linux":
-    from .linux import LinuxAccessibilityHandler, LinuxAutomationHandler
-elif OS_TYPE == "windows":
-    from .windows import WindowsAccessibilityHandler, WindowsAutomationHandler
 
 from .generic import GenericDesktopHandler, GenericFileHandler, GenericWindowHandler
 
@@ -77,11 +60,17 @@ class HandlerFactory:
 
             vnc_port = int(os.environ.get("CUA_VNC_PORT", "5900"))
             vnc_password = os.environ.get("CUA_VNC_PASSWORD", "")
+            force_caps = vnc_force_caps()
             unavailable = VNCUnavailableHandler()
-            logger.info(f"Using VNC backend → {vnc_host}:{vnc_port}")
+            logger.info(f"Using VNC backend → {vnc_host}:{vnc_port} (force_caps={force_caps})")
             return (
                 VNCAccessibilityHandler(),
-                VNCAutomationHandler(host=vnc_host, port=vnc_port, password=vnc_password),
+                VNCAutomationHandler(
+                    host=vnc_host,
+                    port=vnc_port,
+                    password=vnc_password,
+                    force_caps=force_caps,
+                ),
                 BaseDioramaHandler(),
                 unavailable,
                 unavailable,
@@ -89,8 +78,34 @@ class HandlerFactory:
             )
         if backend not in {"native", "cua-driver"}:
             raise RuntimeError("CUA_BACKEND must be native, vnc, or cua-driver")
+        if backend == "cua-driver" and OS_TYPE == "android":
+            raise RuntimeError("CUA_BACKEND=cua-driver is not supported on Android")
+        if backend == "cua-driver":
+            from .cua_driver import (
+                CuaDriverAccessibilityHandler,
+                CuaDriverAutomationHandler,
+            )
+
+            automation = CuaDriverAutomationHandler()
+            logger.info("Using Cua Driver automation backend (%s mode)", automation.mode)
+            return (
+                CuaDriverAccessibilityHandler(),
+                automation,
+                BaseDioramaHandler(),
+                GenericFileHandler(),
+                GenericDesktopHandler(),
+                GenericWindowHandler(),
+            )
 
         if OS_TYPE == "android":
+            from .android import (
+                AndroidAccessibilityHandler,
+                AndroidAutomationHandler,
+                AndroidDesktopHandler,
+                AndroidFileHandler,
+                AndroidWindowHandler,
+            )
+
             handlers: HandlerTuple = (
                 AndroidAccessibilityHandler(),
                 AndroidAutomationHandler(),
@@ -100,6 +115,10 @@ class HandlerFactory:
                 AndroidWindowHandler(),
             )
         elif OS_TYPE == "darwin":
+            from computer_server.diorama.macos import MacOSDioramaHandler
+
+            from .macos import MacOSAccessibilityHandler, MacOSAutomationHandler
+
             handlers = (
                 MacOSAccessibilityHandler(),
                 MacOSAutomationHandler(),
@@ -109,6 +128,8 @@ class HandlerFactory:
                 GenericWindowHandler(),
             )
         elif OS_TYPE == "linux":
+            from .linux import LinuxAccessibilityHandler, LinuxAutomationHandler
+
             handlers = (
                 LinuxAccessibilityHandler(),
                 LinuxAutomationHandler(),
@@ -118,6 +139,8 @@ class HandlerFactory:
                 GenericWindowHandler(),
             )
         elif OS_TYPE == "windows":
+            from .windows import WindowsAccessibilityHandler, WindowsAutomationHandler
+
             handlers = (
                 WindowsAccessibilityHandler(),
                 WindowsAutomationHandler(),
@@ -128,21 +151,6 @@ class HandlerFactory:
             )
         else:
             raise NotImplementedError(f"OS '{OS_TYPE}' is not supported")
-
-        if backend == "cua-driver":
-            if OS_TYPE == "android":
-                raise RuntimeError("CUA_BACKEND=cua-driver is not supported on Android")
-            from .cua_driver import CuaDriverAutomationHandler
-
-            handlers = (
-                handlers[0],
-                CuaDriverAutomationHandler(handlers[1]),
-                handlers[2],
-                handlers[3],
-                handlers[4],
-                handlers[5],
-            )
-            logger.info("Using Cua Driver automation backend (%s mode)", handlers[1].mode)
 
         return handlers
 

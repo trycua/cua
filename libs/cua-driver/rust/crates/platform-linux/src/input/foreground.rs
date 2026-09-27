@@ -124,6 +124,13 @@ pub struct ForegroundReport {
     /// a menu opened, a dialog mapped or closed. `None` when nothing changed
     /// or the observation was unavailable.
     pub window_change: Option<String>,
+    /// A window in `window_change` is positively attributed to the target
+    /// process: its pid was known and the window resolved to it. The window
+    /// set also lists override-redirect popups that name no pid (a VCL menu,
+    /// but equally another client's popup) and, when the target pid is
+    /// unknown, every on-screen window; a change among those alone is not
+    /// the target's own.
+    pub window_change_owned: bool,
 }
 
 impl ForegroundReport {
@@ -145,12 +152,40 @@ impl ForegroundReport {
     pub fn focus_kept(&self) -> bool {
         matches!(self.focus_after, FocusAfter::Target | FocusAfter::SamePid)
     }
+
+    /// The window change confirms the action wherever the focus ended up
+    /// when the changed window is the target process's own (a dialog closed
+    /// by its own OK button takes the focus with it); a change among
+    /// unattributed windows only counts while the focus stayed in the
+    /// target process.
+    pub fn window_change_confirms(&self) -> bool {
+        self.window_change.is_some() && (self.window_change_owned || self.focus_kept())
+    }
+}
+
+/// One on-screen toplevel of a window set read for a before/after diff.
+#[derive(Clone, Debug)]
+struct WindowEntry {
+    window: u64,
+    description: String,
+    /// Positively attributed to the target pid (see
+    /// [`ForegroundReport::window_change_owned`]).
+    owned: bool,
+}
+
+/// What changed between two window sets.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WindowChange {
+    summary: String,
+    owned: bool,
 }
 
 /// The on-screen toplevels of `pid` (managed windows plus override-redirect
-/// popups), as `(window, description)` pairs, for a before/after diff.
-fn pid_window_set(pid: Option<u32>) -> Vec<(u64, String)> {
-    let mut set: Vec<(u64, String)> = crate::x11::list_windows(pid)
+/// popups) for a before/after diff. Managed windows are listed by resolved
+/// owner, so they are `owned` whenever `pid` is known; a popup is `owned`
+/// only when it carries `pid` itself.
+fn pid_window_set(pid: Option<u32>) -> Vec<WindowEntry> {
+    let mut set: Vec<WindowEntry> = crate::x11::list_windows(pid)
         .into_iter()
         .filter(|w| w.is_on_screen)
         .map(|w| {
@@ -159,44 +194,53 @@ fn pid_window_set(pid: Option<u32>) -> Vec<(u64, String)> {
             } else {
                 format!(" \"{}\"", w.title)
             };
-            (w.xid, format!("window {}{title}", w.xid))
+            WindowEntry {
+                window: w.xid,
+                description: format!("window {}{title}", w.xid),
+                owned: pid.is_some(),
+            }
         })
         .collect();
     set.extend(
         super::mapped_popup_windows()
             .into_iter()
             .filter(|p| pid.is_none() || p.pid.is_none() || p.pid == pid)
-            .map(|p| (p.window, p.describe())),
+            .map(|p| WindowEntry {
+                window: p.window,
+                description: p.describe(),
+                owned: pid.is_some() && p.pid == pid,
+            }),
     );
     set
 }
 
 /// Describe what changed between two window sets, or `None` when nothing did.
-pub(crate) fn describe_window_change(
-    before: &[(u64, String)],
-    after: &[(u64, String)],
-) -> Option<String> {
-    let appeared: Vec<&str> = after
-        .iter()
-        .filter(|(id, _)| !before.iter().any(|(b, _)| b == id))
-        .map(|(_, d)| d.as_str())
-        .collect();
-    let vanished: Vec<&str> = before
-        .iter()
-        .filter(|(id, _)| !after.iter().any(|(a, _)| a == id))
-        .map(|(_, d)| d.as_str())
-        .collect();
+fn describe_window_change(before: &[WindowEntry], after: &[WindowEntry]) -> Option<WindowChange> {
+    let absent_from =
+        |set: &[WindowEntry], entry: &WindowEntry| !set.iter().any(|e| e.window == entry.window);
+    let appeared: Vec<&WindowEntry> = after.iter().filter(|e| absent_from(before, e)).collect();
+    let vanished: Vec<&WindowEntry> = before.iter().filter(|e| absent_from(after, e)).collect();
     if appeared.is_empty() && vanished.is_empty() {
         return None;
     }
+    let join = |entries: &[&WindowEntry]| {
+        entries
+            .iter()
+            .map(|e| e.description.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     let mut parts = Vec::new();
     if !appeared.is_empty() {
-        parts.push(format!("appeared: {}", appeared.join(", ")));
+        parts.push(format!("appeared: {}", join(&appeared)));
     }
     if !vanished.is_empty() {
-        parts.push(format!("closed: {}", vanished.join(", ")));
+        parts.push(format!("closed: {}", join(&vanished)));
     }
-    Some(parts.join("; "))
+    Some(WindowChange {
+        summary: parts.join("; "),
+        owned: appeared.iter().chain(&vanished).any(|e| e.owned),
+    })
 }
 
 /// How often the target process's window set is re-read after the body.
@@ -239,9 +283,9 @@ fn window_change_bounds() -> WindowObservationBounds {
 /// `confirmed` window-change evidence it never looked for.
 fn wait_for_window_change(
     pid: Option<u32>,
-    before: &[(u64, String)],
+    before: &[WindowEntry],
     bounds: WindowObservationBounds,
-) -> (Vec<(u64, String)>, Option<String>) {
+) -> (Vec<WindowEntry>, Option<WindowChange>) {
     if bounds.skips_observation() {
         return (pid_window_set(pid), None);
     }
@@ -656,11 +700,7 @@ fn await_focus_destination(
 /// click, the popup that the click opened). A focus that is unset or parked
 /// on the window manager's own window for the whole `FOCUS_RETRY` is
 /// `Unknown`: it names no client the input could have reached.
-fn post_check(
-    target: Window,
-    target_pid: Option<u32>,
-    pid_windows: &[(u64, String)],
-) -> FocusAfter {
+fn post_check(target: Window, target_pid: Option<u32>, pid_windows: &[WindowEntry]) -> FocusAfter {
     let Ok(x) = X11::open() else {
         return FocusAfter::Unknown;
     };
@@ -676,7 +716,7 @@ fn post_check(
     }
     if pid_windows
         .iter()
-        .any(|(window, _)| x.is_within(focused, *window as Window))
+        .any(|entry| x.is_within(focused, entry.window as Window))
     {
         return FocusAfter::SamePid;
     }
@@ -754,7 +794,8 @@ pub fn with_x11_foreground_opts<T>(
             retried_activation: outcome.retried,
             confirm_ms: outcome.elapsed.as_millis() as u64,
             focus_after,
-            window_change,
+            window_change_owned: window_change.as_ref().is_some_and(|c| c.owned),
+            window_change: window_change.map(|c| c.summary),
         },
     ))
 }
@@ -862,7 +903,7 @@ mod tests {
             WINDOW_CHANGE_DEADLINE,
             WINDOW_CHANGE_POLL,
         );
-        let before = vec![(u64::MAX, "window that never existed".to_string())];
+        let before = vec![entry(u64::MAX, "window that never existed", true)];
         let started = Instant::now();
         let (_after, change) = wait_for_window_change(Some(u32::MAX), &before, bounds);
         assert_eq!(change, None);
@@ -957,6 +998,7 @@ mod tests {
             confirm_ms: 3,
             focus_after: FocusAfter::SamePid,
             window_change: Some("appeared: popup window 7 (200x300 at 1,2)".into()),
+            window_change_owned: false,
         };
         let json = report.to_json();
         assert_eq!(json["activated"], false);
@@ -969,21 +1011,45 @@ mod tests {
         assert!(report.focus_kept());
     }
 
+    fn entry(window: u64, description: &str, owned: bool) -> WindowEntry {
+        WindowEntry {
+            window,
+            description: description.to_string(),
+            owned,
+        }
+    }
+
     #[test]
     fn window_change_diff_names_appeared_and_closed() {
         let before = vec![
-            (1u64, "window 1 \"GIMP\"".to_string()),
-            (2, "window 2".to_string()),
+            entry(1, "window 1 \"GIMP\"", true),
+            entry(2, "window 2", true),
         ];
         let after = vec![
-            (1u64, "window 1 \"GIMP\"".to_string()),
-            (9, "popup window 9".to_string()),
+            entry(1, "window 1 \"GIMP\"", true),
+            entry(9, "popup window 9", false),
         ];
         assert_eq!(
-            describe_window_change(&before, &after).as_deref(),
-            Some("appeared: popup window 9; closed: window 2")
+            describe_window_change(&before, &after),
+            Some(WindowChange {
+                summary: "appeared: popup window 9; closed: window 2".into(),
+                owned: true,
+            })
         );
         assert_eq!(describe_window_change(&before, &before), None);
+    }
+
+    /// A popup that names no pid (a VCL menu, or another client's) is listed
+    /// in the target's set, but its change alone is not the target's own.
+    #[test]
+    fn unattributed_popup_change_is_not_owned() {
+        let before = vec![entry(1, "window 1 \"Calc\"", true)];
+        let after = vec![
+            entry(1, "window 1 \"Calc\"", true),
+            entry(9, "popup window 9", false),
+        ];
+        let change = describe_window_change(&before, &after).expect("a popup appeared");
+        assert!(!change.owned);
     }
 
     #[test]

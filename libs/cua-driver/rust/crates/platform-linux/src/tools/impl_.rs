@@ -2506,17 +2506,23 @@ fn foreground_structured(
 
 /// Fold a foreground transaction's post-check into a result: the report
 /// itself, `focus_after` at the top level, and an `evidence` item so the
-/// observation survives the public-record reduction. A window that appeared
-/// or closed in the target process is `window_change` evidence and an
+/// observation survives the public-record reduction. A window of the target
+/// process that appeared or closed is `window_change` evidence and an
 /// `effect: confirmed` wherever the focus sits afterwards (the OK button of a
 /// dialog destroys the very window that held the focus, and closing the last
-/// window of a process leaves the focus to the window manager); without a
-/// window change, focus that left the process is a suspected no-op and
-/// anything else stays unverifiable with a `native_api_result` item.
+/// window of a process leaves the focus to the window manager); a change
+/// among unattributed popups only counts while the focus stayed in the
+/// process (`ForegroundReport::window_change_confirms`). Otherwise, focus that
+/// left the process is a suspected no-op and anything else stays
+/// unverifiable with a `native_api_result` item.
 fn apply_foreground_report(v: &mut Value, report: &crate::input::ForegroundReport) {
     v["foreground"] = report.to_json();
     v["focus_after"] = json!(report.focus_after.as_str());
-    let evidence = match &report.window_change {
+    let confirming_change = report
+        .window_change
+        .as_ref()
+        .filter(|_| report.window_change_confirms());
+    let evidence = match confirming_change {
         Some(change) => {
             v["effect"] = json!("confirmed");
             v["verified"] = json!(true);
@@ -2536,9 +2542,12 @@ fn apply_foreground_report(v: &mut Value, report: &crate::input::ForegroundRepor
         None => json!({
             "kind": "native_api_result",
             "detail": format!(
-                "real input delivered to the activated window (focus_after={}); no window \
-                 change observed",
-                report.focus_after.as_str()
+                "real input delivered to the activated window (focus_after={}); {}",
+                report.focus_after.as_str(),
+                match &report.window_change {
+                    Some(change) => format!("{change}, not attributed to the target process"),
+                    None => "no window change observed".to_owned(),
+                }
             ),
         }),
     };
@@ -5795,7 +5804,7 @@ impl ClickTool {
                     .unwrap_or((sx.round() as i32, sy.round() as i32));
                 match result {
                     Ok(Ok(((), report))) => {
-                        let confirmed = report.window_change.is_some();
+                        let confirmed = report.window_change_confirms();
                         let result = ToolResult::text(format!(
                             "Clicked element [{idx}] (pid {pid}) with a real pointer click \
                              (delivery_mode=foreground, focus_after={}){}{}",

@@ -195,6 +195,10 @@ def main() -> None:
     parser.add_argument("--app", type=Path, help="harness app or executable (default: the fixture build output)")
     parser.add_argument("--typescript", action="store_true", help="also verify the TypeScript runner")
     parser.add_argument("--live", action="store_true", help="also verify live Jev; needs a TypeSafe key")
+    parser.add_argument(
+        "--s1", action="store_true",
+        help="also verify Cua-S1 through the loopback decision service named by CUA_S1_DECISION_URL",
+    )
     parser.add_argument("--task", action="append", choices=sorted(EXPECTED), help="limit to task kinds")
     parser.add_argument("--capture-dir", type=Path, help="also record sanitized window-state fixtures")
     parser.add_argument("--output-dir", type=Path, required=True, help="new evidence directory")
@@ -203,6 +207,14 @@ def main() -> None:
         if not sys.stdin.isatty():
             raise SystemExit("Human prerequisite: provision TYPESAFE_API_KEY before a live run")
         os.environ["TYPESAFE_API_KEY"] = getpass.getpass("TypeSafe API key: ").strip()
+    if args.s1:
+        sys.path.insert(0, str(BASE / "python"))
+        from s1_service import S1ServiceError, s1_service_url
+
+        try:
+            s1_service_url()
+        except S1ServiceError as error:
+            raise SystemExit(f"Prerequisite: {error}; start the S1 decision service first") from None
     output = args.output_dir.resolve()
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     app = args.app or HARNESSES[args.harness].app
@@ -213,13 +225,15 @@ def main() -> None:
         "complete": False,
         "harness": args.harness,
         "live_requested": args.live,
+        "s1_requested": args.s1,
         "typescript_requested": args.typescript,
         "checks": [],
     }
     try:
         with tempfile.TemporaryDirectory(prefix="jev-native-") as work:
             for language in ["python", "typescript"] if args.typescript else ["python"]:
-                for provider in ["mock", "live"] if args.live else ["mock"]:
+                providers = ["mock"] + (["live"] if args.live else []) + (["s1"] if args.s1 else [])
+                for provider in providers:
                     for kind in args.task or sorted(EXPECTED):
                         result = verify(
                             language, provider, args.harness, kind, app, output, Path(work), capture_dir

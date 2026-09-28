@@ -1254,8 +1254,47 @@ pub struct VptrSession {
     state: State,
     pub seat: WlSeat,
     pub vptr: ZwlrVirtualPointerV1,
+    /// `motion_absolute` extent, in the same frame as caller coordinates.
+    /// See [`virtual_pointer_extent`].
     pub output_w: u32,
     pub output_h: u32,
+}
+
+/// Logical desktop frame published by a compositor adapter whose geometry is
+/// in logical pixels, or `None` when callers keep the protocol-native frame
+/// (for example the full-output screencopy buffer on Sway). Desktop capture
+/// and the virtual pointer both read this, so a desktop screenshot pixel and a
+/// pointer coordinate always share one frame.
+pub(crate) fn compositor_logical_frame() -> Option<anyhow::Result<(u32, u32)>> {
+    hyprland::is_session()
+        .then(|| hyprland::screen_size().map(|(width, height, _scale)| (width, height)))
+}
+
+/// Extent to pass with `zwlr_virtual_pointer_v1::motion_absolute`. The
+/// compositor maps `x / x_extent` onto its logical layout, so the extent must
+/// be in the caller's coordinate frame. Hyprland window geometry, window
+/// captures, and desktop captures are logical; a scaled output's `wl_output`
+/// mode is physical and would land every motion at `1 / scale` of its target.
+/// Layouts the Hyprland adapter cannot qualify (rotated, off-origin, or
+/// multiple outputs) keep the first output's mode until that adapter
+/// publishes a frame for them.
+fn virtual_pointer_extent(output_mode: (u32, u32)) -> (u32, u32) {
+    let logical = compositor_logical_frame().and_then(|frame| {
+        frame
+            .map_err(|error| {
+                tracing::debug!("virtual pointer keeps the wl_output mode extent: {error:#}")
+            })
+            .ok()
+    });
+    select_virtual_pointer_extent(output_mode, logical)
+}
+
+fn select_virtual_pointer_extent(
+    output_mode: (u32, u32),
+    compositor_logical: Option<(u32, u32)>,
+) -> (u32, u32) {
+    let (width, height) = compositor_logical.unwrap_or(output_mode);
+    (width.max(1), height.max(1))
 }
 
 /// Bind manager + seat + virtual-pointer + first output, optionally activate a
@@ -1324,7 +1363,7 @@ pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<Vptr
     }
 
     let vptr = mgr.create_virtual_pointer(Some(&seat), &qh, ());
-    let (output_w, output_h) = (state.output_w.max(1), state.output_h.max(1));
+    let (output_w, output_h) = virtual_pointer_extent((state.output_w, state.output_h));
     Ok(VptrSession {
         conn,
         queue,

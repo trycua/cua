@@ -310,9 +310,13 @@ fn valid_dimensions(width: u32, height: u32) -> bool {
     width > 0 && height > 0 && u64::from(width) * u64::from(height) <= MAX_LOGICAL_PIXELS
 }
 
-/// Content-free logical geometry for a qualified single-output desktop.
-/// The common policy adapter uses this for display-scoped observation. Never
-/// substitute a screenshot, XWayland root, or guessed primary monitor here.
+/// Content-free logical geometry for a qualified single-output desktop: the
+/// output mode divided by its scale, rounded as Hyprland rounds its logical
+/// monitor size, plus that scale. Desktop capture, desktop action admission,
+/// and the virtual-pointer extent all use this frame, matching the logical
+/// window geometry and window captures. The common policy adapter uses it for
+/// display-scoped observation. Never substitute a screenshot, XWayland root,
+/// or guessed primary monitor here.
 pub fn screen_size() -> Result<(u32, u32, f64)> {
     screen_size_from_monitors(query("j/monitors")?)
 }
@@ -774,23 +778,79 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn display_identity_accepts_qualified_native_geometry() {
-        assert_eq!(
-            screen_size_from_monitors(vec![display_monitor()]).unwrap(),
-            (1920, 1080, 1.0)
-        );
+    fn scaled_monitor(width: u32, height: u32, scale: f64) -> DisplayMonitor {
+        let mut monitor = display_monitor();
+        (monitor.width, monitor.height, monitor.scale) = (width, height, scale);
+        monitor
     }
 
-    #[test]
-    fn display_identity_accepts_fractional_scale_logical_geometry() {
-        let mut monitor = display_monitor();
-        (monitor.width, monitor.height, monitor.scale) = (2160, 1350, 1.6666666);
+    // (output mode, scale, logical frame). 1.6666666 is the #4219 laptop.
+    const SCALED_OUTPUTS: [((u32, u32), f64, (u32, u32)); 5] = [
+        ((1920, 1080), 1.0, (1920, 1080)),
+        ((2560, 1600), 1.25, (2048, 1280)),
+        ((2880, 1800), 1.5, (1920, 1200)),
+        ((2160, 1350), 1.6666666, (1296, 810)),
+        ((3840, 2160), 2.0, (1920, 1080)),
+    ];
 
-        assert_eq!(
-            screen_size_from_monitors(vec![monitor]).unwrap(),
-            (1296, 810, 1.6666666)
-        );
+    #[test]
+    fn display_identity_publishes_the_logical_frame_and_scale() {
+        for ((width, height), scale, logical) in SCALED_OUTPUTS {
+            assert_eq!(
+                screen_size_from_monitors(vec![scaled_monitor(width, height, scale)]).unwrap(),
+                (logical.0, logical.1, scale),
+                "{width}x{height} @ {scale}"
+            );
+        }
+    }
+
+    /// Hyprland maps `motion_absolute(x, y, x_extent, y_extent)` onto its
+    /// logical layout as `x / x_extent`. A desktop screenshot pixel must put
+    /// the pointer on the physical pixel the agent saw in the native capture.
+    #[test]
+    fn scaled_desktop_frame_and_virtual_pointer_extent_agree() {
+        for ((mode_w, mode_h), scale, _) in SCALED_OUTPUTS {
+            let (frame_w, frame_h, _) =
+                screen_size_from_monitors(vec![scaled_monitor(mode_w, mode_h, scale)]).unwrap();
+            let extent = super::super::select_virtual_pointer_extent(
+                (mode_w, mode_h),
+                Some((frame_w, frame_h)),
+            );
+            assert_eq!(extent, (frame_w, frame_h), "{mode_w}x{mode_h} @ {scale}");
+
+            let landed = |(x, y): (u32, u32), (extent_w, extent_h): (u32, u32)| {
+                (
+                    f64::from(x) / f64::from(extent_w) * f64::from(frame_w) * scale,
+                    f64::from(y) / f64::from(extent_h) * f64::from(frame_h) * scale,
+                )
+            };
+            for point in [
+                (0, 0),
+                (frame_w / 3, frame_h / 5),
+                (frame_w / 2, frame_h / 2),
+                (frame_w - 1, frame_h - 1),
+            ] {
+                // Desktop capture resizes the native buffer to the frame.
+                let seen = (
+                    f64::from(point.0) * f64::from(mode_w) / f64::from(frame_w),
+                    f64::from(point.1) * f64::from(mode_h) / f64::from(frame_h),
+                );
+                let (x, y) = landed(point, extent);
+                assert!(
+                    (x - seen.0).abs() < 0.5 && (y - seen.1).abs() < 0.5,
+                    "{mode_w}x{mode_h} @ {scale}: {point:?} landed at ({x}, {y}), saw {seen:?}"
+                );
+            }
+
+            // The physical wl_output mode is the wrong extent on scaled
+            // outputs: the pointer lands at 1 / scale of the target.
+            if scale != 1.0 {
+                let center = (frame_w / 2, frame_h / 2);
+                let seen_x = f64::from(center.0) * f64::from(mode_w) / f64::from(frame_w);
+                let (x, _) = landed(center, (mode_w, mode_h));
+                assert!((x - seen_x / scale).abs() < 1.0 && (x - seen_x).abs() > 1.0);
+            }
+        }
     }
 
     #[test]

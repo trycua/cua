@@ -131,13 +131,30 @@ pub(crate) fn output_schema_with_additional_properties<T: JsonSchema>(
     schema
 }
 
+/// Compact generated schemas by removing the JSON Schema annotations `title`
+/// and `description`.
+///
+/// `properties` and `patternProperties` hold property names as keys, not
+/// annotations, so the stripper must recurse into each property schema without
+/// touching the map's keys — a tool may legitimately publish a property named
+/// `title` (list_windows does), and deleting it silently under-describes the
+/// contract.
 fn strip_schema_titles(value: &mut Value) {
     match value {
         Value::Object(object) => {
             object.remove("title");
             object.remove("description");
-            for child in object.values_mut() {
-                strip_schema_titles(child);
+            for (key, child) in object.iter_mut() {
+                if key == "properties" || key == "patternProperties" {
+                    match child {
+                        Value::Object(properties) => {
+                            properties.values_mut().for_each(strip_schema_titles)
+                        }
+                        other => strip_schema_titles(other),
+                    }
+                } else {
+                    strip_schema_titles(child);
+                }
             }
         }
         Value::Array(values) => values.iter_mut().for_each(strip_schema_titles),
@@ -802,6 +819,48 @@ mod tests {
             summary: None,
             error: None,
         }
+    }
+
+    #[test]
+    fn schema_compaction_keeps_properties_named_title_or_description() {
+        let mut schema = serde_json::json!({
+            "title": "TopLevel",
+            "description": "Top-level annotation",
+            "properties": {
+                "title": { "type": "string", "description": "The window title." },
+                "description": { "type": "string" },
+                "nested": {
+                    "title": "Nested",
+                    "properties": { "title": { "type": "string", "title": "Inner" } }
+                }
+            }
+        });
+
+        strip_schema_titles(&mut schema);
+
+        assert!(schema.get("title").is_none(), "annotation must be stripped");
+        assert!(
+            schema.get("description").is_none(),
+            "annotation must be stripped"
+        );
+        let properties = schema["properties"].as_object().expect("properties map");
+        assert!(
+            properties.contains_key("title"),
+            "property name must survive compaction"
+        );
+        assert!(
+            properties.contains_key("description"),
+            "property name must survive compaction"
+        );
+        assert!(
+            properties["nested"]["properties"]
+                .as_object()
+                .expect("nested properties")
+                .contains_key("title"),
+            "nested property name must survive compaction"
+        );
+        assert!(properties["title"].get("description").is_none());
+        assert!(properties["nested"].get("title").is_none());
     }
 
     #[test]

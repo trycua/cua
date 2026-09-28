@@ -43,6 +43,18 @@ element-bound `click`, `set_value`, or `type_text` call, runs it with
 background delivery, and observes again. If an element token has gone stale,
 the next step observes afresh instead of guessing.
 
+Some apps draw their own controls and expose little or nothing to
+accessibility. When the tree offers nothing to act through, the agent falls
+back to [visual regions](/how-to-guides/driver/parse-visual-regions) parsed by
+the cua-perception extension from the same capture. This happens when Driver
+reports an empty tree, when a complete tree lacks a control the task declares,
+or when the tree holds only the window itself and its title bar or menu bar.
+A partial tree that has any app control never falls back. A visual target
+needs an exact, unique text match with an OCR confidence of at least 0.8,
+unless the task sets a lower bar. Visual clicks are bound to the capture and
+try background delivery first. If Driver refuses that, the next step offers a
+separate foreground click when the task allows it.
+
 Native requests use the `cua.jev_choice_request_v2` contract, which adds a
 `source` to each candidate (`page`, `ax`, or `visual`). Browser tasks keep
 sending `cua.jev_choice_request_v1`.
@@ -110,6 +122,16 @@ then can't see its own write and runs out of steps. Update Driver to fix this.
 
   </Tab>
 </Tabs>
+
+To prove the fallback, run the `canvas` harness. It is a custom-painted
+window with no accessibility tree, so its `canvas-save` task succeeds only by
+clicking the **Save** label through visual regions. It needs the
+[cua-perception extension](/concepts/how-the-perception-extension-works)
+installed and a Python with Tk. It needs no build step and works on all three platforms:
+
+```bash
+uv run --frozen python verify_native.py --harness canvas --output-dir runs/native-canvas
+```
 
 The command launches the harness, runs each task in Python and TypeScript, and
 closes the harness when done. Results are in `runs/native-mock/summary.json`.

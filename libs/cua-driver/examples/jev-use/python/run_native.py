@@ -170,12 +170,17 @@ async def maybe_visual(
     if not capture_bound_click or "parse_visual_regions" not in available_tools:
         return sources, {"status": "unavailable", "reason": reason}
     observation = sources.ax.observation  # type: ignore[union-attr]
+    started = time.perf_counter()
     try:
         result = await driver.call(
             "parse_visual_regions",
             {
                 "capture_id": observation.capture_id,
-                "options": {"kinds": ["text", "icon"], "min_confidence": 0.8, "max_regions": 100},
+                "options": {
+                    "kinds": ["text", "icon"],
+                    "min_confidence": task.visual_min_confidence,
+                    "max_regions": 100,
+                },
             },
         )
         visual = parse_visual_regions(
@@ -191,11 +196,14 @@ async def maybe_visual(
     return (
         TaskSources(
             ax=sources.ax,
-            visual=VisualRegionSource(visual, "background", capture_bound_click),
+            visual=VisualRegionSource(
+                visual, "background", capture_bound_click, min_confidence=task.visual_min_confidence
+            ),
             visual_path=True,
             foreground_ids=sources.foreground_ids,
         ),
-        {"status": "ok", "reason": reason, "region_count": len(visual.regions)},
+        {"status": "ok", "reason": reason, "region_count": len(visual.regions),
+         "parse_ms": round((time.perf_counter() - started) * 1000, 2)},
     )
 
 

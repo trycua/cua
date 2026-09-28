@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import uuid
 import json
 import os
 from pathlib import Path
@@ -42,14 +43,14 @@ def sanitize(payload: dict[str, Any], source: str) -> dict[str, Any]:
     return result
 
 
-async def capture(pid: int, title: str, source: str) -> dict[str, Any]:
+async def capture(pid: int, title: str, source: str, max_depth: int | None = None) -> dict[str, Any]:
     params = StdioServerParameters(
         command=os.getenv("CUA_DRIVER_BIN", "cua-driver"), args=["mcp"], env=driver_environment()
     )
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            driver = Driver(session, "jev-native-capture")
+            driver = Driver(session, f"jev-native-capture-{uuid.uuid4().hex[:8]}")
             window = await find_window(driver, pid, title)
             payload = await driver.call(
                 "get_window_state",
@@ -58,6 +59,7 @@ async def capture(pid: int, title: str, source: str) -> dict[str, Any]:
                     "window_id": int(window["window_id"]),
                     "include_accessibility_tree": True,
                     "include_screenshot": True,
+                    **({"max_depth": max_depth} if max_depth is not None else {}),
                 },
             )
             return sanitize(payload, source)
@@ -69,8 +71,9 @@ def main() -> None:
     parser.add_argument("--title", required=True, help="exact task window title")
     parser.add_argument("--source", required=True, help="fixture provenance, e.g. harness and Driver version")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--max-depth", type=int, help="the task scope's walk depth, if it sets one")
     args = parser.parse_args()
-    state = asyncio.run(capture(args.pid, args.title, args.source))
+    state = asyncio.run(capture(args.pid, args.title, args.source, args.max_depth))
     args.output.write_text(json.dumps(state, indent=1, sort_keys=True) + "\n", encoding="utf-8")
 
 

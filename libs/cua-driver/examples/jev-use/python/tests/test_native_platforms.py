@@ -50,9 +50,14 @@ class HarnessRegistryTest(unittest.TestCase):
     def test_every_harness_has_the_same_three_tasks(self) -> None:
         self.assertEqual(
             NATIVE_TASK_IDS,
-            tuple(f"{h}-{k}" for h in ("appkit", "wpf", "gtk3") for k in ("counter", "save-note", "choose-size")),
+            (
+                *(f"{h}-{k}" for h in ("appkit", "wpf", "gtk3") for k in ("counter", "save-note", "choose-size")),
+                "canvas-save",
+            ),
         )
         for task_id in NATIVE_TASK_IDS:
+            if task_id == "canvas-save":
+                continue  # the visual-only canvas is not a form harness (see test_native_canvas.py)
             harness, kind = split_task_id(task_id)
             task = native_task(task_id, Path("/tmp/none.json"), pid=7)
             self.assertEqual(task.scope.window_title, harness.window_title)

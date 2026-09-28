@@ -14,11 +14,9 @@
  *   acts through browser_type / browser_click on its refs.
  * - VisualRegionSource reads a validated parse_visual_regions result and acts
  *   through a capture-bound click on a region's center.
- *
- * Extension point (RFC #4268, Phase 1): a NativeAccessibilitySource will read
- * get_window_state elements, find controls by normalized role and label, and
- * act through the snapshot's element_token. It is deliberately not implemented
- * here; it must implement CandidateSource with kind 'ax'.
+ * - NativeAccessibilitySource (RFC #4268) reads the eligible native elements of
+ *   one get_window_state observation (see native.ts), finds controls by role
+ *   class and label, and acts through that snapshot's element_token.
  */
 import type {
   BrowserSnapshot,
@@ -27,9 +25,16 @@ import type {
   VisualObservation,
   VisualRegion,
 } from './core.js';
+import {
+  eligibleControls,
+  type NativeControl,
+  type NativeControls,
+  type NativeObservation,
+} from './native.js';
+import type { Platform } from './native_roles.js';
 
-/** 'ax' is reserved for the future NativeAccessibilitySource. */
 export type SourceKind = 'page' | 'visual' | 'ax';
+export type TextMethod = 'set_value' | 'type_text';
 
 export type Candidate = Readonly<{
   id: string;
@@ -38,6 +43,12 @@ export type Candidate = Readonly<{
   arguments: Readonly<Record<string, unknown>>;
   captureId?: string;
   screenshotReference?: string;
+  /** RFC #4268: the building source (absent for reserved candidates). */
+  source?: SourceKind;
+  /** The native snapshot an 'ax' candidate's element_token is bound to. */
+  snapshotId?: string;
+  /** Risk categories (see native.ts); absent means none. */
+  risk?: ReadonlySet<string>;
 }>;
 
 export function immutableCandidate(candidate: Candidate): Candidate {
@@ -113,6 +124,7 @@ export class BrowserSemanticSource implements CandidateSource {
         ref: (control.handle as PageRef).ref,
         input_route: 'dom_event',
       },
+      source: 'page',
     });
   }
 
@@ -127,6 +139,7 @@ export class BrowserSemanticSource implements CandidateSource {
         text,
         replace: true,
       },
+      source: 'page',
     });
   }
 }
@@ -186,10 +199,90 @@ export class VisualRegionSource implements CandidateSource {
       },
       captureId: visual.captureId,
       screenshotReference: visual.screenshotReference,
+      source: 'visual',
     });
   }
 
   typeText(): undefined {
     return undefined;
+  }
+}
+
+/**
+ * Controls from one get_window_state observation, acted on by element token.
+ * click binds the control's element_token with delivery_mode; typeText sets
+ * task-supplied text through set_value (default) or element-bound type_text.
+ */
+export class NativeAccessibilitySource implements CandidateSource {
+  readonly kind = 'ax' as const;
+
+  constructor(
+    readonly observation: NativeObservation,
+    readonly platform: Platform,
+    readonly native: NativeControls,
+    readonly textMethod: TextMethod = 'set_value'
+  ) {}
+
+  static fromObservation(
+    observation: NativeObservation,
+    platform: Platform,
+    options: { redact?: (value: string) => string; textMethod?: TextMethod } = {}
+  ): NativeAccessibilitySource {
+    return new NativeAccessibilitySource(
+      observation,
+      platform,
+      eligibleControls(observation, platform, options.redact),
+      options.textMethod ?? 'set_value'
+    );
+  }
+
+  get controls(): readonly NativeControl[] {
+    return this.native.controls;
+  }
+
+  control(native: NativeControl): Control<NativeControl> {
+    return { source: 'ax', role: native.roleClass, name: native.label, value: native.value, handle: native };
+  }
+
+  find(role: string, name: string): Control<NativeControl> | undefined {
+    const matches = this.controls.filter((item) => item.roleClass === role && item.label === name);
+    return matches.length === 1 ? this.control(matches[0]) : undefined;
+  }
+
+  private target() {
+    return { pid: this.observation.pid, window_id: this.observation.windowId };
+  }
+
+  click(
+    control: Control,
+    candidateId: string,
+    description: string,
+    delivery: VisualDelivery = 'background'
+  ): Candidate {
+    const native = control.handle as NativeControl;
+    return immutableCandidate({
+      id: candidateId,
+      description,
+      tool: 'click',
+      arguments: { ...this.target(), element_token: native.elementToken, delivery_mode: delivery },
+      source: 'ax',
+      snapshotId: this.observation.snapshotId,
+      risk: native.risk,
+    });
+  }
+
+  typeText(control: Control, text: string, candidateId: string, description: string): Candidate {
+    const native = control.handle as NativeControl;
+    const [tool, extra] =
+      this.textMethod === 'type_text' ? ['type_text', { text }] : ['set_value', { value: text }];
+    return immutableCandidate({
+      id: candidateId,
+      description,
+      tool,
+      arguments: { ...this.target(), element_token: native.elementToken, ...extra },
+      source: 'ax',
+      snapshotId: this.observation.snapshotId,
+      risk: native.risk,
+    });
   }
 }

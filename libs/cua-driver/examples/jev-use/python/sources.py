@@ -13,12 +13,9 @@ Implemented sources:
   snapshot and acts through ``browser_type`` / ``browser_click`` on its refs.
 - ``VisualRegionSource`` reads a validated ``parse_visual_regions`` result and
   acts through a capture-bound ``click`` on a region's center.
-
-Extension point (RFC #4268, Phase 1): a ``NativeAccessibilitySource`` will read
-``get_window_state`` elements, find controls by normalized role and label, and
-act through the snapshot's ``element_token``. It is deliberately not
-implemented here; it must satisfy ``CandidateSource`` and report
-``kind = "ax"``.
+- ``NativeAccessibilitySource`` (RFC #4268) reads the eligible native elements
+  of one ``get_window_state`` observation (see ``native.py``), finds controls
+  by role class and label, and acts through that snapshot's ``element_token``.
 """
 
 from __future__ import annotations
@@ -27,11 +24,14 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Mapping, Protocol
 
+from native import NativeControl, NativeControls, NativeObservation, eligible_controls
+from native_roles import Platform
+
 if TYPE_CHECKING:
     from core import VisualDelivery, VisualObservation, VisualRegion
 
-# "ax" is reserved for the future NativeAccessibilitySource.
 SourceKind = Literal["page", "visual", "ax"]
+TextMethod = Literal["set_value", "type_text"]
 
 
 def _freeze(value: Any) -> Any:
@@ -54,9 +54,15 @@ class Candidate:
     arguments: Mapping[str, Any]
     capture_id: str | None = None
     screenshot_reference: str | None = None
+    # RFC #4268: the source that built the candidate (None for reserved
+    # candidates), the native snapshot it is bound to, and its risk categories.
+    source: SourceKind | None = None
+    snapshot_id: str | None = None
+    risk: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "arguments", _freeze(dict(self.arguments)))
+        object.__setattr__(self, "risk", frozenset(self.risk))
 
 
 @dataclass(frozen=True)
@@ -126,6 +132,7 @@ class BrowserSemanticSource:
             description,
             "browser_click",
             {**self.require_target(), "ref": control.handle["ref"], "input_route": "dom_event"},
+            source="page",
         )
 
     def type_text(
@@ -136,6 +143,7 @@ class BrowserSemanticSource:
             description,
             "browser_type",
             {**self.require_target(), "ref": control.handle["ref"], "text": text, "replace": True},
+            source="page",
         )
 
 
@@ -189,9 +197,98 @@ class VisualRegionSource:
             },
             capture_id=visual.capture_id,
             screenshot_reference=visual.screenshot_reference,
+            source="visual",
         )
 
     def type_text(
         self, control: Control, text: str, *, candidate_id: str, description: str
     ) -> None:
         return None
+
+
+@dataclass(frozen=True)
+class NativeAccessibilitySource:
+    """Controls from one ``get_window_state`` observation, acted on by token.
+
+    ``controls`` holds the eligible elements in ``element_index`` order with
+    stable IDs (see ``native.py``). ``click`` binds the control's
+    ``element_token`` with ``delivery_mode`` (background unless Driver refused
+    background delivery for that control and the task allows foreground).
+    ``type_text`` sets text through ``set_value`` (default) or an element-bound
+    ``type_text``, with the text supplied by the task, never by the model.
+    """
+
+    observation: NativeObservation
+    platform: Platform
+    native: NativeControls
+    text_method: TextMethod = "set_value"
+    kind: ClassVar[SourceKind] = "ax"
+
+    @classmethod
+    def from_observation(
+        cls,
+        observation: NativeObservation,
+        platform: Platform,
+        *,
+        redact: Any = None,
+        text_method: TextMethod = "set_value",
+    ) -> "NativeAccessibilitySource":
+        native = (
+            eligible_controls(observation, platform)
+            if redact is None
+            else eligible_controls(observation, platform, redact=redact)
+        )
+        return cls(observation, platform, native, text_method)
+
+    @property
+    def controls(self) -> tuple[NativeControl, ...]:
+        return self.native.controls
+
+    def control(self, native: NativeControl) -> Control:
+        return Control("ax", native.role_class, native.label, native.value, native)
+
+    def find(self, role: str, name: str) -> Control | None:
+        matches = [
+            item for item in self.controls if item.role_class == role and item.label == name
+        ]
+        return self.control(matches[0]) if len(matches) == 1 else None
+
+    def _target(self) -> dict[str, Any]:
+        return {"pid": self.observation.pid, "window_id": self.observation.window_id}
+
+    def click(
+        self,
+        control: Control,
+        *,
+        candidate_id: str,
+        description: str,
+        delivery: VisualDelivery = "background",
+    ) -> Candidate:
+        native: NativeControl = control.handle
+        return Candidate(
+            candidate_id,
+            description,
+            "click",
+            {**self._target(), "element_token": native.element_token, "delivery_mode": delivery},
+            source="ax",
+            snapshot_id=self.observation.snapshot_id,
+            risk=native.risk,
+        )
+
+    def type_text(
+        self, control: Control, text: str, *, candidate_id: str, description: str
+    ) -> Candidate:
+        native: NativeControl = control.handle
+        if self.text_method == "type_text":
+            tool, arguments = "type_text", {"text": text}
+        else:
+            tool, arguments = "set_value", {"value": text}
+        return Candidate(
+            candidate_id,
+            description,
+            tool,
+            {**self._target(), "element_token": native.element_token, **arguments},
+            source="ax",
+            snapshot_id=self.observation.snapshot_id,
+            risk=native.risk,
+        )

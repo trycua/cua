@@ -109,7 +109,7 @@ def task_decision_state(
     outline. Every secret task parameter is replaced everywhere, including the
     outline and visual text.
     """
-    snapshot = sources.page.snapshot
+    snapshot = sources.require_page().snapshot
     visual = sources.visual.observation if sources.visual is not None else None
     return {
         "goal": task.goal,
@@ -197,12 +197,33 @@ def choose_live_for_task(
 
 
 def choose_mock_for_task(
-    _task: Task,
+    task: Task,
     _sources: TaskSources,
     candidates: list[Candidate],
     _history: list[dict[str, Any]],
 ) -> tuple[str | None, float, dict[str, float]]:
-    return choose_mock(candidates)
+    """Deterministic mock provider.
+
+    A task may declare ``mock_preferences``: the first preferred ID present in
+    the candidate set wins (a refused control's ``<id>:foreground`` variant
+    counts as its ID), otherwise ``reobserve``. Tasks without preferences keep
+    the fixed browser-fixture choice order.
+    """
+    preferences = getattr(task, "mock_preferences", ())
+    if not preferences:
+        return choose_mock(candidates)
+    ids = [candidate.id for candidate in candidates]
+    selected = next(
+        (
+            candidate_id
+            for preferred in preferences
+            for candidate_id in (preferred, f"{preferred}:foreground")
+            if candidate_id in ids
+        ),
+        "reobserve" if "reobserve" in ids else None,
+    )
+    probabilities = {candidate_id: float(candidate_id == selected) for candidate_id in ids}
+    return selected, 1.0 if selected else 0.0, probabilities
 
 
 def choose_live(

@@ -110,3 +110,26 @@ def test_macos_seeds_tcc_only_for_the_released_app_identity() -> None:
     assert "seed-tcc-guest.sh" in macos
     assert "--app /Applications/CuaDriver.app --expected-client com.trycua.driver\n" in macos
     assert "install-local.sh" not in macos
+
+
+def test_native_appkit_job_uses_released_driver_and_source_harness() -> None:
+    """RFC #4268 Phase 1: native tasks on the AppKit harness with the mock provider."""
+    jobs = load()["jobs"]
+    assert jobs["native-appkit-macos"]["runs-on"].startswith("macos-")
+    native = job_text("native-appkit-macos")
+    assert "https://cua.ai/driver/install.sh" in native
+    assert "cargo build" not in native
+    assert 'MIN_RELEASED_DRIVER_VERSION: "0.30.1"' in native
+    assert "tests/fixtures/build/macos.sh --only appkit" in native
+    assert "--app /Applications/CuaDriver.app --expected-client com.trycua.driver" in native
+    assert "verify_native.py --typescript" in native
+    assert "--live" not in native
+    # The audit reads the harness-owned oracle result and the v2 contract.
+    assert 'check["verified"] is True' in native
+    assert "cua.jev_choice_request_v2" in native
+
+
+def test_native_harness_changes_trigger_the_workflow() -> None:
+    triggers = load()[True]
+    for event in ("pull_request", "push"):
+        assert "libs/cua-driver/tests/fixtures/apps/macos/appkit/**" in triggers[event]["paths"]

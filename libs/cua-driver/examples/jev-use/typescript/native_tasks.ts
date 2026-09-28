@@ -1,0 +1,497 @@
+/**
+ * Native task specs for jev-use (RFC #4268, Phase 1). Mirrors
+ * python/native_tasks.py: a NativeTask declares goal, parameters (the only
+ * source of text), window scope, allowed action kinds, opt-in risks,
+ * foreground permission, step budget, and an app-owned oracle. The built-in
+ * tasks drive the AppKit harness launched with CUA_APPKIT_TASK_STATE, whose
+ * JSON state file is the oracle.
+ */
+import { readFile } from 'node:fs/promises';
+
+import { MAX_ELEMENTS, REQUEST_SCHEMA_V2 } from './choose_action.js';
+import { PARAMETER_NAME_PATTERN, elementState, fieldState, slug, type NativeControl } from './native.js';
+import { ACTION_KINDS, type ActionKind } from './native_roles.js';
+import { immutableCandidate, type Candidate, type NativeAccessibilitySource, type TextMethod } from './sources.js';
+import { redactToken, type HistoryEntry, type Outcome, type Task, type TaskParameter, type TaskSources } from './tasks.js';
+
+export const MAX_EXECUTABLE_CANDIDATES = 24;
+const MAX_HISTORY = 16;
+const SOURCE_ORDER = ['page', 'ax', 'visual'] as const;
+export type Check = 'verified' | 'refuted' | 'pending';
+
+export const NATIVE_RESERVED: readonly Candidate[] = [
+  immutableCandidate({
+    id: 'reobserve',
+    description:
+      'Take no action and obtain a fresh observation of the window, because the current ' +
+      "observation looks stale, incomplete, or contradicts the goal's progress.",
+    tool: null,
+    arguments: {},
+  }),
+  immutableCandidate({
+    id: 'abstain',
+    description:
+      'Stop without acting if none of the proposed actions is safe or moves toward the goal.',
+    tool: null,
+    arguments: {},
+  }),
+];
+
+const VERBS: Readonly<Record<string, string>> = {
+  press: 'pressed',
+  toggle: 'toggled',
+  select: 'selected',
+  open_menu: 'opened',
+  visual_click: 'clicked the visual region',
+};
+
+export type WindowScope = Readonly<{
+  windowTitle: string;
+  bundleId?: string;
+  processName?: string;
+  query?: string;
+  maxElements?: number;
+  maxDepth?: number;
+}>;
+
+export function windowStateArguments(scope: WindowScope): Record<string, unknown> {
+  return {
+    ...(scope.query !== undefined ? { query: scope.query } : {}),
+    ...(scope.maxElements !== undefined ? { max_elements: scope.maxElements } : {}),
+    ...(scope.maxDepth !== undefined ? { max_depth: scope.maxDepth } : {}),
+  };
+}
+
+export class OracleError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OracleError';
+  }
+}
+
+/** An app_check oracle over an app-owned JSON state file bound to one pid. */
+export class AppStateOracle {
+  constructor(
+    readonly path: string,
+    readonly schema: string,
+    readonly expectedPid?: number
+  ) {}
+
+  async read(): Promise<Record<string, unknown>> {
+    let state: unknown;
+    try {
+      state = JSON.parse(await readFile(this.path, 'utf8'));
+    } catch (error) {
+      throw new OracleError(`app state is unreadable: ${(error as Error).name}`);
+    }
+    if (!state || typeof state !== 'object' || (state as Record<string, unknown>).schema !== this.schema) {
+      throw new OracleError('app state has an unexpected schema');
+    }
+    if (this.expectedPid !== undefined && (state as Record<string, unknown>).pid !== this.expectedPid) {
+      throw new OracleError('app state belongs to a different process');
+    }
+    return state as Record<string, unknown>;
+  }
+}
+
+export type ComposeStats = Readonly<{
+  sources: Readonly<Record<string, number>>;
+  duplicates: number;
+  risk_excluded: Readonly<Record<string, number>>;
+  dropped: number;
+}>;
+
+/**
+ * Merge source outputs in the order page, ax, visual: first source wins on a
+ * duplicate ID, unallowed risk categories are removed, at most `cap`
+ * executable candidates remain (the drop count is reported), and the reserved
+ * candidates are appended.
+ */
+export function compose(
+  groups: Partial<Record<(typeof SOURCE_ORDER)[number], readonly Candidate[]>>,
+  allowedRisks: ReadonlySet<string>,
+  reserved: readonly Candidate[] = NATIVE_RESERVED,
+  cap = MAX_EXECUTABLE_CANDIDATES
+): { candidates: Candidate[]; stats: ComposeStats } {
+  const seen = new Set(reserved.map((candidate) => candidate.id));
+  const merged: Candidate[] = [];
+  let duplicates = 0;
+  const riskExcluded: Record<string, number> = {};
+  for (const source of SOURCE_ORDER) {
+    for (const candidate of groups[source] ?? []) {
+      if (seen.has(candidate.id)) {
+        duplicates += 1;
+        continue;
+      }
+      seen.add(candidate.id);
+      const blocked = [...(candidate.risk ?? [])].filter((risk) => !allowedRisks.has(risk)).sort();
+      if (blocked.length) {
+        for (const category of blocked) riskExcluded[category] = (riskExcluded[category] ?? 0) + 1;
+        continue;
+      }
+      merged.push(candidate);
+    }
+  }
+  const kept = merged.slice(0, cap);
+  const counts: Record<string, number> = { page: 0, ax: 0, visual: 0 };
+  for (const candidate of kept) {
+    if (candidate.source && candidate.source in counts) counts[candidate.source] += 1;
+  }
+  return {
+    candidates: [...kept, ...reserved],
+    stats: { sources: counts, duplicates, risk_excluded: riskExcluded, dropped: merged.length - kept.length },
+  };
+}
+
+export type CompactElement = { role_class: string; label: string; state: string };
+
+export type NativeStep = Readonly<{
+  candidates: Candidate[];
+  stats: ComposeStats;
+  elements: CompactElement[];
+  outcomes: Readonly<Record<string, string>>;
+}>;
+
+function quoted(label: string, limit = 60): string {
+  return JSON.stringify(label.length <= limit ? label : `${label.slice(0, limit - 1)}…`);
+}
+
+export type NativeTaskSpec = Readonly<{
+  id: string;
+  goal: string;
+  scope: WindowScope;
+  allowedActions: ReadonlySet<ActionKind>;
+  oracle: AppStateOracle;
+  check: (state: Readonly<Record<string, unknown>>) => Check;
+  parameters?: readonly TaskParameter[];
+  allowedRisks?: ReadonlySet<string>;
+  allowForeground?: boolean;
+  maxSteps?: number;
+  textMethod?: TextMethod;
+  visualTargets?: readonly string[];
+  mockPreferences?: readonly string[];
+}>;
+
+export class NativeTask implements Task {
+  readonly id: string;
+  readonly goal: string;
+  readonly scope: WindowScope;
+  readonly allowedActions: ReadonlySet<ActionKind>;
+  readonly oracle: AppStateOracle;
+  readonly check: NativeTaskSpec['check'];
+  readonly parameters: readonly TaskParameter[];
+  readonly allowedRisks: ReadonlySet<string>;
+  readonly allowForeground: boolean;
+  readonly maxSteps: number;
+  readonly textMethod: TextMethod;
+  readonly visualTargets: readonly string[];
+  readonly mockPreferences: readonly string[];
+  /** The oracle is polled after every action, so no candidate is special. */
+  readonly completionCandidateIds: ReadonlySet<string> = new Set();
+
+  constructor(spec: NativeTaskSpec) {
+    this.id = spec.id;
+    this.goal = spec.goal;
+    this.scope = spec.scope;
+    this.allowedActions = spec.allowedActions;
+    this.oracle = spec.oracle;
+    this.check = spec.check;
+    this.parameters = spec.parameters ?? [];
+    this.allowedRisks = spec.allowedRisks ?? new Set();
+    this.allowForeground = spec.allowForeground ?? false;
+    this.maxSteps = spec.maxSteps ?? 6;
+    this.textMethod = spec.textMethod ?? 'set_value';
+    this.visualTargets = spec.visualTargets ?? [];
+    this.mockPreferences = spec.mockPreferences ?? [];
+    const unknown = [...this.allowedActions].filter((action) => !ACTION_KINDS.has(action));
+    if (unknown.length) throw new Error(`unknown action kinds: ${unknown.sort().join(', ')}`);
+    for (const parameter of this.parameters) {
+      if (!PARAMETER_NAME_PATTERN.test(parameter.name)) {
+        throw new Error('parameter names must match [a-z][a-z0-9_]{0,7}');
+      }
+    }
+    if (!Number.isInteger(this.maxSteps) || this.maxSteps < 1) throw new Error('maxSteps must be positive');
+  }
+
+  get allowedActionKinds(): ReadonlySet<string> {
+    const tools = new Set<string>();
+    if ([...this.allowedActions].some((action) => action !== 'set_text')) tools.add('click');
+    if (this.allowedActions.has('set_text')) tools.add(this.textMethod);
+    return tools;
+  }
+
+  redact(value: unknown): unknown {
+    let result = value;
+    for (const parameter of this.parameters) {
+      if (parameter.secret) result = redactToken(result, parameter.value, parameter.redaction);
+    }
+    return result;
+  }
+
+  redactText = (value: string): string => this.redact(value) as string;
+
+  private nativeCandidates(ax: NativeAccessibilitySource, foregroundIds: ReadonlySet<string>) {
+    const candidates: Candidate[] = [];
+    const outcomes: Record<string, string> = {};
+    for (const native of ax.controls) {
+      if (!this.allowedActions.has(native.action)) continue;
+      const control = ax.control(native);
+      const label = quoted(native.label);
+      if (native.action === 'set_text') {
+        for (const parameter of this.parameters) {
+          if (native.value === parameter.value) continue;
+          const id = `${native.id}:set:${parameter.name}`;
+          candidates.push(
+            ax.typeText(
+              control,
+              parameter.value,
+              id,
+              `Set the text field ${label} to the task parameter ${JSON.stringify(parameter.name)}, ` +
+                `replacing its contents. The field currently reports ${fieldState(native.value, parameter.value)}.`
+            )
+          );
+          outcomes[id] = `set ${label} to parameter ${parameter.name}`;
+        }
+        continue;
+      }
+      if (native.action === 'select' && native.selected) continue;
+      let description = NativeTask.describe(native, label);
+      let id = native.id;
+      let delivery: 'background' | 'foreground' = 'background';
+      if (foregroundIds.has(native.id)) {
+        if (!this.allowForeground) continue;
+        id = `${native.id}:foreground`;
+        delivery = 'foreground';
+        description +=
+          ' Use foreground delivery, which activates the window, because Driver refused ' +
+          'background delivery for this control.';
+      }
+      candidates.push(ax.click(control, id, description, delivery));
+      outcomes[id] = `${VERBS[native.action]} ${label}`;
+    }
+    return { candidates, outcomes };
+  }
+
+  static describe(native: NativeControl, label: string): string {
+    if (native.action === 'toggle') {
+      const now = native.selected ? 'checked' : 'unchecked';
+      const after = native.selected ? 'unchecked' : 'checked';
+      const noun = native.roleClass === 'toggle' ? 'switch' : 'checkbox';
+      return `Toggle the ${noun} ${label}. It is currently ${now}; afterward it will be ${after}.`;
+    }
+    if (native.action === 'select') return `Select the radio option ${label}. It is currently not selected.`;
+    if (native.action === 'open_menu') {
+      return `Open the pop-up menu ${label}. Its options become candidates on the next observation.`;
+    }
+    const noun = native.roleClass === 'menu_item' ? 'menu item' : native.roleClass === 'link' ? 'link' : 'button';
+    return `Press the ${noun} labeled ${label}.`;
+  }
+
+  private visualCandidates(sources: TaskSources) {
+    const candidates: Candidate[] = [];
+    const outcomes: Record<string, string> = {};
+    const visual = sources.visual;
+    if (!visual || !this.allowedActions.has('visual_click')) return { candidates, outcomes };
+    for (const target of this.visualTargets) {
+      const control = visual.find('button', target);
+      if (!control) continue;
+      const id = `visual:${slug(target)}`;
+      const candidate = visual.click(
+        control,
+        id,
+        `Click the unique validated visual region reading ${quoted(target)}; no accessibility element covers it.`
+      );
+      if (candidate) {
+        candidates.push(candidate);
+        outcomes[id] = `clicked the visual region ${quoted(target)}`;
+      }
+    }
+    return { candidates, outcomes };
+  }
+
+  plan(sources: TaskSources): NativeStep {
+    const outcomes: Record<string, string> = {};
+    let axCandidates: Candidate[] = [];
+    let elements: CompactElement[] = [];
+    if (sources.ax) {
+      const native = this.nativeCandidates(sources.ax, sources.foregroundIds ?? new Set());
+      axCandidates = native.candidates;
+      Object.assign(outcomes, native.outcomes);
+      elements = sources.ax.controls.slice(0, MAX_ELEMENTS).map((control) => ({
+        role_class: control.roleClass,
+        label: control.label,
+        state: elementState(control),
+      }));
+    }
+    const visual = this.visualCandidates(sources);
+    Object.assign(outcomes, visual.outcomes);
+    const { candidates, stats } = compose({ ax: axCandidates, visual: visual.candidates }, this.allowedRisks);
+    for (const candidate of candidates) {
+      if (candidate.tool !== null && !this.allowedActionKinds.has(candidate.tool)) {
+        throw new Error(`task ${this.id} does not allow action kind ${candidate.tool}`);
+      }
+    }
+    return { candidates, stats, elements, outcomes };
+  }
+
+  candidates(sources: TaskSources): Candidate[] {
+    return this.plan(sources).candidates;
+  }
+
+  stateSummary(sources: TaskSources): Readonly<Record<string, string>> {
+    return Object.fromEntries((sources.ax?.controls ?? []).map((control) => [control.id, elementState(control)]));
+  }
+
+  historyEntry(
+    step: number,
+    candidateId: string,
+    refusal?: string,
+    options: { outcome?: string; stale?: boolean } = {}
+  ): HistoryEntry {
+    const text = options.stale
+      ? 'the observation was stale; nothing happened and the window is observed again'
+      : refusal !== undefined
+        ? `Driver refused background delivery (${refusal}); nothing happened`
+        : candidateId === 'reobserve'
+          ? 'took no action and requested a fresh observation'
+          : (options.outcome ?? 'completed');
+    return { step, selected_id: candidateId, outcome: (this.redact(text) as string).slice(0, 128) };
+  }
+
+  async reset(): Promise<void> {
+    // The harness starts fresh for every run.
+  }
+
+  readOracle(): Promise<Record<string, unknown>> {
+    return this.oracle.read();
+  }
+
+  classify(oracle: Readonly<Record<string, unknown>>, steps: number): Outcome {
+    const result = this.check(oracle);
+    if (result === 'verified' || result === 'refuted') return result;
+    return steps >= this.maxSteps ? 'budget_exhausted' : 'unknown';
+  }
+}
+
+/** Why this step may parse visual regions, or undefined (see python/native_tasks.py). */
+export function visualFallbackReason(
+  sources: TaskSources,
+  task: NativeTask,
+  nativeCount: number
+): string | undefined {
+  const ax = sources.ax;
+  if (!ax || !task.allowedActions.has('visual_click') || !task.visualTargets.length) return undefined;
+  const observation = ax.observation;
+  if (!observation.captureId) return undefined;
+  if (observation.degradedReason?.startsWith('ax_tree_empty')) return 'tree_empty';
+  if (!observation.complete || observation.truncated) return undefined;
+  if (nativeCount === 0) return 'no_native_candidates';
+  const labels = new Set(ax.controls.map((control) => control.label.toLowerCase()));
+  if (task.visualTargets.some((target) => !labels.has(target.toLowerCase()))) return 'target_without_element';
+  return undefined;
+}
+
+/** Build the cua.jev_choice_request_v2 the provider receives; no tokens, values, or pixels. */
+export function nativeChoiceRequest(
+  task: NativeTask,
+  sources: TaskSources,
+  step: NativeStep,
+  history: readonly HistoryEntry[]
+): Record<string, unknown> {
+  const observation = sources.ax?.observation;
+  if (!observation?.captureId) throw new Error('a native request needs an observation with a capture_id');
+  const regions = (sources.visual?.observation.regions ?? []).map((region) =>
+    task.redact({
+      id: region.id,
+      kind: region.kind,
+      bounds: { x: region.x, y: region.y, width: region.width, height: region.height },
+      text: region.text ?? null,
+      label: region.label ?? null,
+      confidence: region.confidence,
+      interactive: region.interactive,
+    })
+  );
+  return {
+    schema: REQUEST_SCHEMA_V2,
+    goal: task.redact(task.goal),
+    capture_id: observation.captureId,
+    snapshot_id: observation.snapshotId ?? null,
+    regions,
+    elements: step.elements.map((item) => task.redact(item)),
+    history: history.slice(-MAX_HISTORY).map((item) => ({ selected_id: item.selected_id, outcome: item.outcome })),
+    candidates: step.candidates.map((candidate) => ({
+      id: candidate.id,
+      description: task.redact(candidate.description),
+      ...(candidate.source ? { source: candidate.source } : {}),
+    })),
+  };
+}
+
+// AppKit harness tasks.
+
+export const APPKIT_WINDOW_TITLE = 'CuaTestHarness AppKit';
+export const APPKIT_BUNDLE_ID = 'com.trycua.harness.appkit';
+export const APPKIT_STATE_SCHEMA = 'cua.appkit_task_state_v1';
+export const COUNTER_TARGET = 3;
+export const DEFAULT_NOTE_TEXT = 'jev-use native note';
+export const APPKIT_TASK_IDS = ['appkit-counter', 'appkit-save-note', 'appkit-choose-size'] as const;
+export type AppKitTaskId = (typeof APPKIT_TASK_IDS)[number];
+
+export function appkitTask(
+  taskId: string,
+  statePath: string,
+  options: { pid?: number; noteText?: string; allowForeground?: boolean } = {}
+): NativeTask {
+  const oracle = new AppStateOracle(statePath, APPKIT_STATE_SCHEMA, options.pid);
+  const scope: WindowScope = { windowTitle: APPKIT_WINDOW_TITLE, bundleId: APPKIT_BUNDLE_ID };
+  const allowForeground = options.allowForeground ?? false;
+  if (taskId === 'appkit-counter') {
+    return new NativeTask({
+      id: taskId,
+      goal:
+        `The counter starts at 0. Set it to exactly ${COUNTER_TARGET} by pressing ` +
+        'Increment once per step, then stop.',
+      scope,
+      allowedActions: new Set<ActionKind>(['press']),
+      oracle,
+      check: (state) => {
+        const counter = state.counter;
+        if (counter === COUNTER_TARGET) return 'verified';
+        return typeof counter === 'number' && counter > COUNTER_TARGET ? 'refuted' : 'pending';
+      },
+      allowForeground,
+      maxSteps: COUNTER_TARGET + 3,
+      mockPreferences: ['ax:button:increment'],
+    });
+  }
+  if (taskId === 'appkit-save-note') {
+    const note = options.noteText ?? DEFAULT_NOTE_TEXT;
+    return new NativeTask({
+      id: taskId,
+      goal: 'Enter the note text into the Note field, then save the note.',
+      scope,
+      allowedActions: new Set<ActionKind>(['press', 'set_text']),
+      oracle,
+      check: (state) =>
+        state.note_saved === note ? 'verified' : state.note_saved != null ? 'refuted' : 'pending',
+      parameters: [{ name: 'note', value: note, secret: true, redaction: '[note text]' }],
+      allowForeground,
+      maxSteps: 5,
+      mockPreferences: ['ax:text_input:note:set:note', 'ax:button:save-note'],
+    });
+  }
+  if (taskId === 'appkit-choose-size') {
+    return new NativeTask({
+      id: taskId,
+      goal: 'Choose the Large size option and check the I agree checkbox.',
+      scope,
+      allowedActions: new Set<ActionKind>(['select', 'toggle']),
+      oracle,
+      check: (state) => (state.size === 'large' && state.agreed === true ? 'verified' : 'pending'),
+      allowForeground,
+      maxSteps: 5,
+      mockPreferences: ['ax:radio:large', 'ax:checkbox:i-agree'],
+    });
+  }
+  throw new Error(`unknown AppKit task: ${taskId}`);
+}

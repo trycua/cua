@@ -23,6 +23,7 @@ import {
   immutableCandidate,
   VisualRegionSource,
   type Candidate,
+  type NativeAccessibilitySource,
 } from './sources.js';
 
 export type Outcome = 'verified' | 'refuted' | 'unknown' | 'abstained' | 'budget_exhausted';
@@ -60,10 +61,20 @@ export type TaskParameter = Readonly<{
  * pending a visual check.
  */
 export type TaskSources = Readonly<{
-  page: BrowserSemanticSource;
+  /** Present for browser tasks. */
+  page?: BrowserSemanticSource;
   visual?: VisualRegionSource;
   visualPath: boolean;
+  /** Present for native tasks (RFC #4268). */
+  ax?: NativeAccessibilitySource;
+  /** Native candidate IDs whose background delivery Driver refused earlier. */
+  foregroundIds?: ReadonlySet<string>;
 }>;
+
+export function requirePage(sources: TaskSources): BrowserSemanticSource {
+  if (!sources.page) throw new Error('this task needs a browser page source');
+  return sources.page;
+}
 
 export type HistoryEntry = Readonly<{ step: number; selected_id: string; outcome: string }>;
 
@@ -218,7 +229,8 @@ export class FixtureFormTask implements Task {
    * the chooser must pick it explicitly.
    */
   candidates(sources: TaskSources): Candidate[] {
-    const { page, visual } = sources;
+    const { visual } = sources;
+    const page = requirePage(sources);
     const token = this.token;
     const field = page.find('textbox', FIELD_NAME);
     const button = page.find('button', SUBMIT_NAME);
@@ -282,8 +294,9 @@ export class FixtureFormTask implements Task {
    * it is 'not_in_page_structure'.
    */
   stateSummary(sources: TaskSources): FormState {
-    const field = sources.page.find('textbox', FIELD_NAME);
-    const button = sources.page.find('button', SUBMIT_NAME);
+    const page = requirePage(sources);
+    const field = page.find('textbox', FIELD_NAME);
+    const button = page.find('button', SUBMIT_NAME);
     const verificationField = !field
       ? 'not_found'
       : !field.value

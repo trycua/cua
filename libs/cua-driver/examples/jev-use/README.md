@@ -67,13 +67,44 @@ regions and acts through a capture-bound `click`. A task spec
 (`python/tasks.py`, `typescript/tasks.ts`) holds the goal, the parameters with
 the secret token marked for redaction, the step budget, the allowed Driver
 action kinds, the `form` state summary, the candidate IDs and descriptions, and
-the success oracle. The fixture above is the one built-in task,
-`FixtureFormTask`, and its oracle is the fixture's `/state` endpoint. A native
-accessibility source for desktop applications is planned in
-[RFC #4268](https://github.com/trycua/cua/issues/4268) and is not implemented.
-The model request and response are unchanged: the golden files
-`fixtures/jev-provider-request-golden-*-v1.json` pin the exact provider
-requests and candidate tables for the page-structure and visual fixtures.
+the success oracle. The browser fixture above is `FixtureFormTask`, and its
+oracle is the fixture's `/state` endpoint. Browser requests are unchanged: the
+golden files `fixtures/jev-provider-request-golden-*-v1.json` pin the exact
+provider requests and candidate tables for the page-structure and visual
+fixtures, and browser tasks keep sending `cua.jev_choice_request_v1`.
+
+### Native desktop tasks
+
+`NativeAccessibilitySource` ([RFC #4268](../../../../rfcs/4268-jev-use-native-candidates.md))
+builds candidates from the native elements of one `get_window_state` call that
+returns the tree and the screenshot together, so element tokens and the
+`capture_id` describe the same moment. `native_roles.py` / `native_roles.ts`
+map raw macOS AX, Windows UIA, and Linux AT-SPI roles to a closed set of role
+classes (`button`, `toggle`, `checkbox`, `radio`, `popup`, `menu_item`, `link`,
+`text_input`), keyed by the same normalization as Driver's `verify_state`.
+Only enabled, on-screen, labeled, native (not `in_web_content`) elements
+become candidates; a label equal to the element's value counts as unlabeled.
+Candidate IDs come from the role class, label, and actionable-ancestor path,
+never `element_index`. At most 24 action candidates are offered, plus
+`reobserve` and `abstain`. Labels that suggest deleting, sending, purchasing,
+or closing are excluded unless the task allows that risk. Text comes only from
+task parameters. Actions are element-bound `click`, `set_value`, or
+`type_text` with background delivery first; a stale token leads to a fresh
+observation. Native steps send `cua.jev_choice_request_v2`, which adds a
+per-candidate `source` and compact value-free `elements`.
+
+Three tasks drive the repository's AppKit harness, whose opt-in
+`CUA_APPKIT_TASK_STATE` file is the independent oracle: `appkit-counter` (set
+the counter to 3), `appkit-save-note` (set the Note field and save), and
+`appkit-choose-size` (select Large and check I agree). On macOS with Cua
+Driver 0.30.1 or later:
+
+```bash
+bash ../../tests/fixtures/build/macos.sh --only appkit
+uv run --frozen python verify_native.py --typescript --output-dir /tmp/jev-native-proof
+```
+
+Windows (UIA) and Linux (AT-SPI) tasks are the next RFC phase.
 
 The MCP connection stays open across the entire loop. This preserves the
 explicit named Cua Driver session and avoids rebuilding tool state for every

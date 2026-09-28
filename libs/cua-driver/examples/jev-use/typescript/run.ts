@@ -112,7 +112,13 @@ export class Driver {
     });
     if (result.isError) {
       const structured = result.structuredContent as Record<string, unknown> | undefined;
-      const code = typeof structured?.code === 'string' && structured.code ? structured.code : undefined;
+      const refusalCode = (structured?.refusal as Record<string, unknown> | undefined)?.code;
+      const code =
+        typeof structured?.code === 'string' && structured.code
+          ? structured.code
+          : typeof refusalCode === 'string' && refusalCode
+            ? refusalCode
+            : undefined;
       const escalation = structured?.escalation as Record<string, unknown> | undefined;
       const recommended =
         typeof escalation?.recommended === 'string' && escalation.recommended
@@ -127,7 +133,12 @@ export class Driver {
     const data = result.structuredContent as Record<string, any> | undefined;
     if (!data) throw new Error(`${name} returned no structured result`);
     if (data.status === 'refused' || data.refusal) {
-      throw new Error(`${name} refused: ${JSON.stringify(data.refusal ?? data)}`);
+      const code = data.refusal?.code;
+      // DriverToolError is an Error, so existing handlers still match.
+      throw new DriverToolError(
+        `${name} refused: ${JSON.stringify(data.refusal ?? data)}`,
+        typeof code === 'string' && code ? code : undefined
+      );
     }
     return data;
   }

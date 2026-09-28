@@ -85,6 +85,9 @@ class Driver:
             structured = getattr(result, "structuredContent", None)
             structured = structured if isinstance(structured, dict) else {}
             code = structured.get("code")
+            refusal = structured.get("refusal")
+            if not code and isinstance(refusal, dict):
+                code = refusal.get("code")
             escalation = structured.get("escalation")
             recommended = escalation.get("recommended") if isinstance(escalation, dict) else None
             raise DriverToolError(
@@ -96,7 +99,13 @@ class Driver:
         if not isinstance(data, dict):
             raise RuntimeError(f"{name} returned no structured result")
         if data.get("status") == "refused" or data.get("refusal"):
-            raise RuntimeError(f"{name} refused: {data.get('refusal', data)}")
+            refusal = data.get("refusal")
+            code = refusal.get("code") if isinstance(refusal, dict) else None
+            # DriverToolError is a RuntimeError, so existing handlers still match.
+            raise DriverToolError(
+                f"{name} refused: {data.get('refusal', data)}",
+                code if isinstance(code, str) and code else None,
+            )
         return data
 
 

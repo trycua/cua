@@ -1558,10 +1558,16 @@ impl ToolRegistry {
 
         // Reserve and capture the turn before dispatch so recorded evidence
         // shows the application immediately before the action changed it.
+        // Exclude session lifecycle calls, including one-shot CLI teardown.
         let should_record = !tool.def().read_only
             && !matches!(
                 resolved_name,
-                "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
+                "start_recording"
+                    | "stop_recording"
+                    | "get_recording_state"
+                    | "replay_trajectory"
+                    | "start_session"
+                    | "end_session"
             );
         let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
         let _desktop_action = if requires_desktop_coordination(
@@ -1584,9 +1590,18 @@ impl ToolRegistry {
         };
         let pending_turn = should_record
             .then(|| {
+                // Use the same trusted identities the recording owner was minted from.
+                let caller = crate::recording::RecordingCaller {
+                    session: runtime_session.as_deref(),
+                    transport: args.get("_transport_session_id").and_then(Value::as_str),
+                };
                 if private_consent_turn {
-                    self.recording
-                        .begin_private_turn(resolved_name, &recording_args, start_ms)
+                    self.recording.begin_private_turn(
+                        resolved_name,
+                        &recording_args,
+                        start_ms,
+                        caller,
+                    )
                 } else {
                     // A capture-bound click whose capture is already unknown,
                     // expired, or superseded is refused by every platform
@@ -1600,6 +1615,7 @@ impl ToolRegistry {
                         resolved_name,
                         &recording_args,
                         start_ms,
+                        caller,
                         predicted_refusal,
                     )
                 }
@@ -3288,6 +3304,89 @@ mod runtime_isolation_tests {
         let registry = Arc::new(registry);
         registry.init_self_weak();
         registry
+    }
+
+    fn recording_scope_registry(hits: Arc<AtomicUsize>) -> Arc<super::ToolRegistry> {
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ReplayProbe {
+            hits,
+            def: super::ToolDef {
+                name: "probe".into(),
+                description: "runtime-local recording-scope probe".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": { "session": { "type": "string" } },
+                }),
+                read_only: false,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        }));
+        registry.register_recording_tools();
+        registry.register_session_tools();
+        let registry = Arc::new(registry);
+        registry.init_self_weak();
+        registry
+    }
+
+    #[tokio::test]
+    async fn recording_keeps_only_the_owning_session_and_never_lifecycle_calls() {
+        let registry = recording_scope_registry(Arc::new(AtomicUsize::new(0)));
+        let context = unrestricted_context();
+        let output = tempfile::tempdir().expect("temp dir");
+
+        let started = registry
+            .invoke_with_context(
+                "start_recording",
+                serde_json::json!({
+                    "output_dir": output.path(),
+                    "record_video": false,
+                    "session": "owner",
+                }),
+                context.clone(),
+            )
+            .await;
+        assert_ne!(started.is_error, Some(true), "{started:?}");
+
+        for (tool, session) in [
+            ("probe", "other"),
+            ("end_session", "other"),
+            ("end_session", "owner-lifecycle"),
+        ] {
+            let result = registry
+                .invoke_with_context(
+                    tool,
+                    serde_json::json!({ "session": session }),
+                    context.clone(),
+                )
+                .await;
+            assert_ne!(result.is_error, Some(true), "{tool} {session}: {result:?}");
+        }
+
+        let owned = registry
+            .invoke_with_context(
+                "probe",
+                serde_json::json!({ "session": "owner" }),
+                context.clone(),
+            )
+            .await;
+        assert_ne!(owned.is_error, Some(true), "{owned:?}");
+        registry
+            .invoke_with_context("stop_recording", serde_json::json!({}), context)
+            .await;
+
+        let action: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(output.path().join("turn-00001").join("action.json"))
+                .expect("the owning session's action is turn-00001"),
+        )
+        .expect("parse action.json");
+        assert_eq!(action["tool"], "probe");
+        assert_eq!(action["arguments"]["session"], "owner");
+        assert!(
+            !output.path().join("turn-00002").exists(),
+            "foreign and lifecycle calls must not leave turn folders"
+        );
     }
 
     #[tokio::test]

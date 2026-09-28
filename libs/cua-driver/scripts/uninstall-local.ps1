@@ -135,6 +135,12 @@ if (-not (Test-IsElevated) -and (Test-NeedsElevation)) {
         Write-Step "rerun this script from an elevated PowerShell"
         exit 1
     }
+    # `exit $null` exits 0, which would report an unknown outcome as success
+    # (the #3179 trap), so a missing exit code is a failure.
+    if ($null -eq $elevated -or $null -eq $elevated.ExitCode) {
+        Write-Step "the elevated uninstaller returned no exit code; check its window for errors"
+        exit 1
+    }
     exit $elevated.ExitCode
 }
 

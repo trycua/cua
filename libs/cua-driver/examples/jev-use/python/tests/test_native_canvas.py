@@ -148,7 +148,7 @@ class CanvasTaskTest(unittest.TestCase):
     def test_scope_and_confidence(self) -> None:
         task = native_task(CANVAS_TASK_ID, Path("/tmp/none.json"))
         self.assertEqual(task.scope.window_state_arguments(), {"max_depth": 1})
-        self.assertEqual(task.visual_min_confidence, 0.7)
+        self.assertEqual(task.visual_min_confidence, 0.8)
         form = native_task("appkit-counter", Path("/tmp/none.json"))
         self.assertEqual(form.scope.window_state_arguments(), {})
         self.assertEqual(form.visual_min_confidence, 0.8)
@@ -160,41 +160,41 @@ class CanvasTaskTest(unittest.TestCase):
 
     def test_registry(self) -> None:
         self.assertIn(CANVAS_TASK_ID, NATIVE_TASK_IDS)
-        self.assertEqual(split_task_id(CANVAS_TASK_ID), (CANVAS, "save"))
+        self.assertEqual(split_task_id(CANVAS_TASK_ID), (CANVAS, "cancel"))
         task = native_task(CANVAS_TASK_ID, Path("/tmp/none.json"), pid=7)
         self.assertEqual(task.scope.window_title, "Cua Visual-Only Canvas Fixture")
         self.assertEqual(task.oracle.schema, "cua.visual_canvas_task_state_v1")
         self.assertEqual(task.allowed_action_kinds, frozenset({"click"}))
 
-    def test_only_the_save_region_is_executable(self) -> None:
+    def test_only_the_cancel_region_is_executable(self) -> None:
         task = native_task(CANVAS_TASK_ID, Path("/tmp/none.json"))
         for platform in CANVAS_FIXTURES:
             with self.subTest(platform=platform):
                 sources = canvas_sources(platform)
                 step = task.plan(sources)
-                self.assertEqual([c.id for c in step.candidates], ["visual:save", "reobserve", "abstain"])
+                self.assertEqual([c.id for c in step.candidates], ["visual:cancel", "reobserve", "abstain"])
                 save = step.candidates[0]
                 self.assertEqual(save.source, "visual")
                 self.assertEqual(save.tool, "click")
                 self.assertEqual(save.arguments["delivery_mode"], "background")
                 self.assertEqual(save.arguments["capture_id"], sources.ax.observation.capture_id)
-                self.assertEqual((save.arguments["x"], save.arguments["y"]), (170.0, 265.0))
+                self.assertEqual((save.arguments["x"], save.arguments["y"]), (610.0, 265.0))
                 request = native_choice_request(task, sources, step, [])
                 validate_request(request)
                 self.assertEqual([c["source"] for c in request["candidates"][:1]], ["visual"])
                 self.assertEqual(request["elements"], [])
                 choice, _, _ = choose_mock_for_task(task, sources, step.candidates, [])
-                self.assertEqual(choice, "visual:save")
+                self.assertEqual(choice, "visual:cancel")
 
     def test_background_refusal_offers_an_explicit_foreground_variant(self) -> None:
-        refused = frozenset({"visual:save"})
+        refused = frozenset({"visual:cancel"})
         allowed = native_task(CANVAS_TASK_ID, Path("/tmp/none.json"), allow_foreground=True)
         step = allowed.plan(canvas_sources("linux", foreground_ids=refused))
-        self.assertEqual([c.id for c in step.candidates], ["visual:save:foreground", "reobserve", "abstain"])
+        self.assertEqual([c.id for c in step.candidates], ["visual:cancel:foreground", "reobserve", "abstain"])
         self.assertEqual(step.candidates[0].arguments["delivery_mode"], "foreground")
         self.assertEqual(
             choose_mock_for_task(allowed, canvas_sources("linux", foreground_ids=refused), step.candidates, [])[0],
-            "visual:save:foreground",
+            "visual:cancel:foreground",
         )
         denied = native_task(CANVAS_TASK_ID, Path("/tmp/none.json"))
         self.assertEqual(
@@ -205,8 +205,9 @@ class CanvasTaskTest(unittest.TestCase):
     def test_oracle(self) -> None:
         task = native_task(CANVAS_TASK_ID, Path("/tmp/none.json"))
         self.assertEqual(task.check({"selected": None, "action_count": 0}), "pending")
-        self.assertEqual(task.check({"selected": "save", "action_count": 1}), "verified")
-        self.assertEqual(task.check({"selected": "save", "action_count": 2}), "refuted")
+        self.assertEqual(task.check({"selected": "cancel", "action_count": 1}), "verified")
+        self.assertEqual(task.check({"selected": "cancel", "action_count": 2}), "refuted")
+        self.assertEqual(task.check({"selected": "save", "action_count": 1}), "refuted")
         self.assertEqual(task.check({"selected": "send", "action_count": 1}), "refuted")
 
 

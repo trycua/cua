@@ -73,21 +73,21 @@ HARNESSES = {
     ),
 }
 FORM_KINDS = ("choose-size", "counter", "save-note")
-HARNESS_KINDS = {name: (("save",) if name == "canvas" else FORM_KINDS) for name in HARNESSES}
+HARNESS_KINDS = {name: (("cancel",) if name == "canvas" else FORM_KINDS) for name in HARNESSES}
 
 # The independent end-state check for each task kind, read from the app's own file.
 EXPECTED = {
     "counter": lambda state: state.get("counter") == 3,
     "save-note": lambda state: state.get("note_saved") == NOTE_TEXT,
     "choose-size": lambda state: state.get("size") == "large" and state.get("agreed") is True,
-    "save": lambda state: state.get("selected") == "save" and state.get("action_count") == 1,
+    "cancel": lambda state: state.get("selected") == "cancel" and state.get("action_count") == 1,
 }
 # The executable candidates the deterministic mock provider must have acted on.
 MOCK_ACTIONS = {
     "counter": ["ax:button:increment"] * 3,
     "save-note": ["ax:text_input:note:set:note", "ax:button:save-note"],
     "choose-size": ["ax:radio:large", "ax:checkbox:i-agree"],
-    "save": ["visual:save"],
+    "cancel": ["visual:cancel"],
 }
 
 

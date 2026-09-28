@@ -96,13 +96,13 @@ test('canvas trees fall back to visual regions; partial, truncated, and form cas
 
 test('the canvas task is registered and bound to its state file', () => {
   assert.ok(NATIVE_TASK_IDS.includes(CANVAS_TASK_ID));
-  assert.deepEqual(splitTaskId(CANVAS_TASK_ID), [CANVAS, 'save']);
+  assert.deepEqual(splitTaskId(CANVAS_TASK_ID), [CANVAS, 'cancel']);
   const task = nativeTask(CANVAS_TASK_ID, '/tmp/none.json', { pid: 7 });
   assert.equal(task.scope.windowTitle, 'Cua Visual-Only Canvas Fixture');
   assert.equal(task.oracle.schema, 'cua.visual_canvas_task_state_v1');
   assert.equal(task.oracle.expectedPid, 7);
   assert.deepEqual(task.scope.maxDepth, 1);
-  assert.equal(task.visualMinConfidence, 0.7);
+  assert.equal(task.visualMinConfidence, 0.8);
   assert.equal(nativeTask('appkit-counter', '/tmp/none.json').visualMinConfidence, 0.8);
   const sources = canvasSources('macos');
   const low = { ...sources.visual!.observation, regions: sources.visual!.observation.regions.map((r) => ({ ...r, confidence: 0.75 })) };
@@ -110,30 +110,30 @@ test('the canvas task is registered and bound to its state file', () => {
   assert.ok(new VisualRegionSource(low, 'background', true, 0.7).find('button', 'Save'));
 });
 
-test('only the Save region is executable, through a capture-bound click', () => {
+test('only the Cancel region is executable, through a capture-bound click', () => {
   const task = nativeTask(CANVAS_TASK_ID, '/tmp/none.json');
   for (const platform of ['linux', 'windows', 'macos'] as const) {
     const sources = canvasSources(platform);
     const step = task.plan(sources);
-    assert.deepEqual(step.candidates.map((c) => c.id), ['visual:save', 'reobserve', 'abstain'], platform);
+    assert.deepEqual(step.candidates.map((c) => c.id), ['visual:cancel', 'reobserve', 'abstain'], platform);
     const save = step.candidates[0];
     assert.equal(save.source, 'visual');
     assert.equal(save.tool, 'click');
     assert.equal(save.arguments.delivery_mode, 'background');
     assert.equal(save.arguments.capture_id, sources.ax!.observation.captureId);
-    assert.deepEqual([save.arguments.x, save.arguments.y], [170, 265]);
+    assert.deepEqual([save.arguments.x, save.arguments.y], [610, 265]);
     const request = nativeChoiceRequest(task, sources, step, []);
     validateRequest(request);
     assert.deepEqual((request.elements as unknown[]) ?? [], []);
-    assert.equal(chooseMockForTask(task, sources, step.candidates, []).choice, 'visual:save');
+    assert.equal(chooseMockForTask(task, sources, step.candidates, []).choice, 'visual:cancel');
   }
 });
 
 test('a background refusal offers an explicit foreground variant only when allowed', () => {
-  const refused = new Set(['visual:save']);
+  const refused = new Set(['visual:cancel']);
   const allowed = nativeTask(CANVAS_TASK_ID, '/tmp/none.json', { allowForeground: true });
   const step = allowed.plan(canvasSources('linux', { foregroundIds: refused }));
-  assert.deepEqual(step.candidates.map((c) => c.id), ['visual:save:foreground', 'reobserve', 'abstain']);
+  assert.deepEqual(step.candidates.map((c) => c.id), ['visual:cancel:foreground', 'reobserve', 'abstain']);
   assert.equal(step.candidates[0].arguments.delivery_mode, 'foreground');
   const denied = nativeTask(CANVAS_TASK_ID, '/tmp/none.json');
   assert.deepEqual(
@@ -145,7 +145,8 @@ test('a background refusal offers an explicit foreground variant only when allow
 test('the canvas oracle', () => {
   const task = nativeTask(CANVAS_TASK_ID, '/tmp/none.json');
   assert.equal(task.check({ selected: null, action_count: 0 }), 'pending');
-  assert.equal(task.check({ selected: 'save', action_count: 1 }), 'verified');
-  assert.equal(task.check({ selected: 'save', action_count: 2 }), 'refuted');
+  assert.equal(task.check({ selected: 'cancel', action_count: 1 }), 'verified');
+  assert.equal(task.check({ selected: 'cancel', action_count: 2 }), 'refuted');
+  assert.equal(task.check({ selected: 'save', action_count: 1 }), 'refuted');
   assert.equal(task.check({ selected: 'send', action_count: 1 }), 'refuted');
 });

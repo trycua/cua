@@ -409,8 +409,15 @@ mod tests {
         );
         assert_eq!(
             contract.input_schema["properties"]["expect"]["items"]["properties"]["element"]
-                ["properties"]["exists"]["enum"],
-            serde_json::json!([true])
+                ["properties"]["exists"]["type"],
+            serde_json::json!("boolean")
+        );
+        assert!(
+            contract.input_schema["properties"]["expect"]["items"]["properties"]["element"]
+                ["properties"]["exists"]
+                .get("enum")
+                .is_none(),
+            "verify_state element.exists should not specify enum (must remain plain boolean for Gemini function-calling compatibility)"
         );
     }
 

@@ -2197,6 +2197,10 @@ fn partition_modifiers(keys: &[String]) -> anyhow::Result<(Vec<String>, String)>
 /// values pass through (single characters and valid keysym names work as-is).
 fn key_to_keysym(key: &str) -> String {
     match key.to_lowercase().as_str() {
+        "ctrl" | "control" => "Control_L",
+        "alt" => "Alt_L",
+        "shift" => "Shift_L",
+        "super" | "meta" | "cmd" | "command" | "win" | "windows" => "Super_L",
         "enter" | "return" => "Return",
         "tab" => "Tab",
         "esc" | "escape" => "Escape",
@@ -2456,6 +2460,11 @@ fn libei_hotkey(mods: &[String], key: &str) -> anyhow::Result<()> {
 /// known mapping so the caller can fail loudly.
 fn key_to_evdev(key: &str) -> Option<u32> {
     let code = match key.to_lowercase().as_str() {
+        "ctrl" | "control" => 29, // KEY_LEFTCTRL
+        "alt" => 56,              // KEY_LEFTALT
+        "shift" => 42,            // KEY_LEFTSHIFT
+        "super" | "meta" | "cmd" | "command" | "win" | "windows" => 125, // KEY_LEFTMETA
+
         "enter" | "return" => 28,        // KEY_ENTER
         "tab" => 15,                     // KEY_TAB
         "esc" | "escape" => 1,           // KEY_ESC
@@ -3839,6 +3848,37 @@ mod tests {
         );
         assert!(validate_injectable_hotkey(&["7".to_owned()]).is_err());
         assert!(validate_injectable_hotkey(&["hyper".to_owned(), "k".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn standalone_modifiers_map_to_native_keyboard_keys() {
+        for (aliases, keysym, evdev) in [
+            (&["ctrl", "control"][..], "Control_L", 29),
+            (&["alt"][..], "Alt_L", 56),
+            (&["shift"][..], "Shift_L", 42),
+            (
+                &["super", "meta", "cmd", "command", "win", "windows"][..],
+                "Super_L",
+                125,
+            ),
+        ] {
+            for alias in aliases {
+                for key in [alias.to_string(), alias.to_uppercase()] {
+                    assert_eq!(key_to_keysym(&key), keysym, "wtype key {key}");
+                    assert_eq!(key_to_evdev(&key), Some(evdev), "libei key {key}");
+                }
+            }
+        }
+        assert_eq!(key_to_keysym("Super_R"), "Super_R");
+    }
+
+    #[test]
+    #[ignore = "requires a focused native Wayland surface and wtype"]
+    fn standalone_modifiers_reach_wayland_keyboard() {
+        for key in ["meta", "ctrl", "alt", "shift"] {
+            press_key_focused(key).unwrap_or_else(|error| panic!("{key}: {error}"));
+            press_key_focused("escape").expect("input remains usable after a modifier tap");
+        }
     }
 
     #[test]

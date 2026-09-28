@@ -750,6 +750,7 @@ fn is_extended(vk: VIRTUAL_KEY) -> bool {
             | VK_RIGHT
             | VK_RCONTROL
             | VK_RMENU
+            | VK_LWIN
             | VK_RWIN
             | VK_NUMLOCK
             | VK_SNAPSHOT
@@ -816,4 +817,22 @@ fn key_name_to_vk(key: &str) -> Result<VIRTUAL_KEY> {
         }
     };
     Ok(vk)
+}
+
+#[cfg(test)]
+mod extended_key_tests {
+    use super::*;
+
+    #[test]
+    fn windows_key_presses_and_releases_carry_the_extended_key_flag() {
+        // The left Windows key's scan code is 0xE05B; without the extended
+        // flag, Windows treats it as an unrelated key and shortcuts such as
+        // Win+S do nothing.
+        let (downs, ups) = modifier_hold_inputs(&["win"]);
+        assert_eq!((downs.len(), ups.len()), (1, 1));
+        for input in downs.iter().chain(&ups) {
+            let flags = unsafe { input.Anonymous.ki.dwFlags };
+            assert_ne!(flags.0 & KEYEVENTF_EXTENDEDKEY.0, 0, "{flags:?}");
+        }
+    }
 }

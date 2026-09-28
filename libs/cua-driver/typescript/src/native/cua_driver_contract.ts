@@ -5626,7 +5626,10 @@ export type WindowElement = {
     depth: number,
     elementToken?: string,
     label?: string,
+    description?: string,
+    help?: string,
     value?: string,
+    placeholder?: string,
     valueDescription?: string,
     enabled?: boolean,
     selected?: boolean,
@@ -5664,7 +5667,10 @@ const FfiConverterTypeWindowElement = (() => {
                 depth: FfiConverterUInt32.read(from),
                 elementToken: FfiConverterOptionalString.read(from),
                 label: FfiConverterOptionalString.read(from),
+                description: FfiConverterOptionalString.read(from),
+                help: FfiConverterOptionalString.read(from),
                 value: FfiConverterOptionalString.read(from),
+                placeholder: FfiConverterOptionalString.read(from),
                 valueDescription: FfiConverterOptionalString.read(from),
                 enabled: FfiConverterOptionalBoolean.read(from),
                 selected: FfiConverterOptionalBoolean.read(from),
@@ -5682,7 +5688,10 @@ const FfiConverterTypeWindowElement = (() => {
             FfiConverterUInt32.write(value.depth, into);
             FfiConverterOptionalString.write(value.elementToken, into);
             FfiConverterOptionalString.write(value.label, into);
+            FfiConverterOptionalString.write(value.description, into);
+            FfiConverterOptionalString.write(value.help, into);
             FfiConverterOptionalString.write(value.value, into);
+            FfiConverterOptionalString.write(value.placeholder, into);
             FfiConverterOptionalString.write(value.valueDescription, into);
             FfiConverterOptionalBoolean.write(value.enabled, into);
             FfiConverterOptionalBoolean.write(value.selected, into);
@@ -5699,7 +5708,10 @@ const FfiConverterTypeWindowElement = (() => {
              FfiConverterUInt32.allocationSize(value.depth) +
              FfiConverterOptionalString.allocationSize(value.elementToken) +
              FfiConverterOptionalString.allocationSize(value.label) +
+             FfiConverterOptionalString.allocationSize(value.description) +
+             FfiConverterOptionalString.allocationSize(value.help) +
              FfiConverterOptionalString.allocationSize(value.value) +
+             FfiConverterOptionalString.allocationSize(value.placeholder) +
              FfiConverterOptionalString.allocationSize(value.valueDescription) +
              FfiConverterOptionalBoolean.allocationSize(value.enabled) +
              FfiConverterOptionalBoolean.allocationSize(value.selected) +
@@ -5727,7 +5739,17 @@ export type WindowStateOutput = {
     totalElementCount?: bigint,
     returnedElementCount?: bigint,
     filteredElementCount?: bigint,
+    /**
+     * Whether `elements` is the whole addressable-element set of the
+     * requested window. `Some(true)` is a promise about absence: a control
+     * missing from the array is missing from the window, so a predicate that
+     * matches nothing is unsatisfied rather than unknown. `Some(false)` (or
+     * absent) means the observation gave something up — an element or depth
+     * cap, a child list that could not be read, an unresolved window — and
+     * absence proves nothing.
+     */
     elementsComplete?: boolean,
+    collapsedRows?: bigint,
     degraded?: boolean,
     degradedReason?: string,
     truncated?: boolean,
@@ -5778,6 +5800,7 @@ const FfiConverterTypeWindowStateOutput = (() => {
                 returnedElementCount: FfiConverterOptionalUInt64.read(from),
                 filteredElementCount: FfiConverterOptionalUInt64.read(from),
                 elementsComplete: FfiConverterOptionalBoolean.read(from),
+                collapsedRows: FfiConverterOptionalUInt64.read(from),
                 degraded: FfiConverterOptionalBoolean.read(from),
                 degradedReason: FfiConverterOptionalString.read(from),
                 truncated: FfiConverterOptionalBoolean.read(from),
@@ -5805,6 +5828,7 @@ const FfiConverterTypeWindowStateOutput = (() => {
             FfiConverterOptionalUInt64.write(value.returnedElementCount, into);
             FfiConverterOptionalUInt64.write(value.filteredElementCount, into);
             FfiConverterOptionalBoolean.write(value.elementsComplete, into);
+            FfiConverterOptionalUInt64.write(value.collapsedRows, into);
             FfiConverterOptionalBoolean.write(value.degraded, into);
             FfiConverterOptionalString.write(value.degradedReason, into);
             FfiConverterOptionalBoolean.write(value.truncated, into);
@@ -5831,6 +5855,7 @@ const FfiConverterTypeWindowStateOutput = (() => {
              FfiConverterOptionalUInt64.allocationSize(value.returnedElementCount) +
              FfiConverterOptionalUInt64.allocationSize(value.filteredElementCount) +
              FfiConverterOptionalBoolean.allocationSize(value.elementsComplete) +
+             FfiConverterOptionalUInt64.allocationSize(value.collapsedRows) +
              FfiConverterOptionalBoolean.allocationSize(value.degraded) +
              FfiConverterOptionalString.allocationSize(value.degradedReason) +
              FfiConverterOptionalBoolean.allocationSize(value.truncated) +

@@ -1813,6 +1813,7 @@ mod tests {
             role: role.to_owned(),
             title: title.map(str::to_owned),
             value: value.map(str::to_owned),
+            placeholder: None,
             description: None,
             identifier: None,
             help: None,
@@ -1844,6 +1845,8 @@ mod tests {
             nodes,
             truncated: false,
             walk: cua_driver_core::walk_budget::WalkBudget::nodes_only(0).outcome(),
+            gap: None,
+            collapsed_rows: 0,
             window_scope: Some(crate::ax::WindowScope::Matched),
         }
     }
@@ -2042,6 +2045,8 @@ mod tests {
                 1000,
                 std::time::Duration::from_millis(1000),
             ),
+            gap: None,
+            collapsed_rows: 0,
             window_scope: Some(crate::ax::WindowScope::Matched),
         };
         assert!(

@@ -3962,7 +3962,10 @@ mod tests {
         assert!(arrived.is_empty());
         assert!(had_msg);
         let cursor = &map.cursors["default"].core;
-        assert_eq!(cursor.pos, (40.0, 50.0));
+        assert_eq!(
+            cursor.pos,
+            cursor_overlay::anchor_for_pointer(40.0, 50.0, cursor.heading)
+        );
         assert_eq!(cursor.click_t, Some(0.0));
     }
 

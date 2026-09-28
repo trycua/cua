@@ -11,6 +11,12 @@ import math
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
+from action_policy import (
+    AffineCoefficients,
+    CoordinateMappingError,
+    action_coordinate_mapping,
+    map_screenshot_point,
+)
 from sources import Candidate
 from tasks import (
     FIELD_NAME,
@@ -76,10 +82,10 @@ class VisualObservation:
     screenshot_height: int
     pid: int
     window_id: int
-    action_origin_x: float
-    action_origin_y: float
-    action_units_per_pixel_x: float
-    action_units_per_pixel_y: float
+    # Driver's screenshot-to-action affine ``(m11, m12, m21, m22, tx, ty)``.
+    # It is validated but never applied here: a capture-bound click sends the
+    # original screenshot point and ``capture_id`` and Driver maps it once.
+    screenshot_to_action: AffineCoefficients
     regions: tuple[VisualRegion, ...]
 
     def screenshot_center(self, region: VisualRegion) -> tuple[float, float]:
@@ -141,27 +147,17 @@ def parse_visual_regions(
     screenshot_width = _positive_int(screenshot.get("width"))
     screenshot_height = _positive_int(screenshot.get("height"))
 
-    coordinate_space = capture.get("action_coordinate_space")
-    if not isinstance(coordinate_space, dict):
-        raise VisualObservationError("visual result has no action coordinate space")
-    if coordinate_space.get("kind") == "screenshot_pixels":
-        origin_x, origin_y, scale_x, scale_y = 0.0, 0.0, 1.0, 1.0
-    elif coordinate_space.get("kind") == "scaled_top_left":
-        values = (
-            coordinate_space.get("action_origin_x"),
-            coordinate_space.get("action_origin_y"),
-            coordinate_space.get("action_units_per_pixel_x"),
-            coordinate_space.get("action_units_per_pixel_y"),
-        )
-        if any(not isinstance(value, (int, float)) or isinstance(value, bool) for value in values):
-            raise VisualObservationError("visual result has malformed coordinate mapping")
-        origin_x, origin_y, scale_x, scale_y = (float(value) for value in values)
-        if not all(math.isfinite(value) for value in (origin_x, origin_y, scale_x, scale_y)):
-            raise VisualObservationError("visual result has non-finite coordinate mapping")
-        if scale_x <= 0 or scale_y <= 0:
-            raise VisualObservationError("visual result has non-positive coordinate scale")
-    else:
-        raise VisualObservationError("visual result has unsupported coordinate mapping")
+    try:
+        screenshot_to_action = action_coordinate_mapping(capture.get("action_coordinate_space"))
+        for corner_x, corner_y in (
+            (0, 0),
+            (screenshot_width, 0),
+            (0, screenshot_height),
+            (screenshot_width, screenshot_height),
+        ):
+            map_screenshot_point(screenshot_to_action, corner_x, corner_y)
+    except CoordinateMappingError as error:
+        raise VisualObservationError(f"visual result has {error}") from error
 
     raw_regions = payload.get("regions")
     if not isinstance(raw_regions, list):
@@ -227,10 +223,7 @@ def parse_visual_regions(
         screenshot_height=screenshot_height,
         pid=expected_pid,
         window_id=expected_window_id,
-        action_origin_x=origin_x,
-        action_origin_y=origin_y,
-        action_units_per_pixel_x=scale_x,
-        action_units_per_pixel_y=scale_y,
+        screenshot_to_action=screenshot_to_action,
         regions=tuple(regions),
     )
 

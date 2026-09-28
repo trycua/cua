@@ -63,12 +63,59 @@ export type VisualObservation = Readonly<{
   screenshotHeight: number;
   pid: number;
   windowId: number;
-  actionOriginX: number;
-  actionOriginY: number;
-  actionUnitsPerPixelX: number;
-  actionUnitsPerPixelY: number;
+  /**
+   * Driver's screenshot-to-action affine `[m11, m12, m21, m22, tx, ty]`. It is
+   * validated but never applied here: a capture-bound click sends the original
+   * screenshot point and `capture_id`, and Driver maps it once.
+   */
+  screenshotToAction: AffineCoefficients;
   regions: readonly VisualRegion[];
 }>;
+
+export type AffineCoefficients = readonly [number, number, number, number, number, number];
+
+export const IDENTITY_MAPPING: AffineCoefficients = Object.freeze([1, 0, 0, 1, 0, 0] as const);
+
+/**
+ * Return Driver's screenshot-to-action affine from `parse_visual_regions`.
+ *
+ * Driver reports `screenshot_pixels` for an identity transform and `affine`
+ * otherwise (for example, a Retina window capture). The mapping must be finite
+ * and invertible, matching Driver's own contract validation. Mirrors
+ * `action_coordinate_mapping` in python/action_policy.py.
+ */
+export function actionCoordinateMapping(space: unknown): AffineCoefficients {
+  if (!space || typeof space !== 'object' || Array.isArray(space)) {
+    throw new Error('unsupported action coordinate space');
+  }
+  const value = space as Record<string, unknown>;
+  if (value.kind === 'screenshot_pixels') return IDENTITY_MAPPING;
+  if (value.kind !== 'affine') throw new Error('unsupported action coordinate space');
+  const coefficients = (['m11', 'm12', 'm21', 'm22', 'tx', 'ty'] as const).map((key) => value[key]);
+  if (coefficients.some((item) => typeof item !== 'number' || !Number.isFinite(item))) {
+    throw new Error('malformed action coordinate mapping');
+  }
+  const [m11, m12, m21, m22, tx, ty] = coefficients as number[];
+  if (Math.abs(m11 * m22 - m12 * m21) <= Number.EPSILON) {
+    throw new Error('malformed action coordinate mapping');
+  }
+  return Object.freeze([m11, m12, m21, m22, tx, ty] as const);
+}
+
+/** Map one screenshot point, refusing a mapping that overflows it. */
+export function mapScreenshotPoint(
+  mapping: AffineCoefficients,
+  x: number,
+  y: number
+): readonly [number, number] {
+  const [m11, m12, m21, m22, tx, ty] = mapping;
+  const actionX = m11 * x + m12 * y + tx;
+  const actionY = m21 * x + m22 * y + ty;
+  if (!Number.isFinite(actionX) || !Number.isFinite(actionY)) {
+    throw new Error('action coordinate mapping produced a non-finite point');
+  }
+  return [actionX, actionY];
+}
 
 export class VisualObservationError extends Error {
   constructor(
@@ -140,27 +187,19 @@ export function parseVisualRegions(
   const screenshotWidth = positiveInt(screenshot.width);
   const screenshotHeight = positiveInt(screenshot.height);
 
-  const space = record(capture.action_coordinate_space, 'visual result has no coordinate mapping');
-  let actionOriginX = 0;
-  let actionOriginY = 0;
-  let actionUnitsPerPixelX = 1;
-  let actionUnitsPerPixelY = 1;
-  if (space.kind === 'scaled_top_left') {
-    const values = [
-      space.action_origin_x,
-      space.action_origin_y,
-      space.action_units_per_pixel_x,
-      space.action_units_per_pixel_y,
-    ];
-    if (values.some((value) => typeof value !== 'number' || !Number.isFinite(value))) {
-      throw new Error('visual result has malformed coordinate mapping');
+  let screenshotToAction: AffineCoefficients;
+  try {
+    screenshotToAction = actionCoordinateMapping(capture.action_coordinate_space);
+    for (const [x, y] of [
+      [0, 0],
+      [screenshotWidth, 0],
+      [0, screenshotHeight],
+      [screenshotWidth, screenshotHeight],
+    ]) {
+      mapScreenshotPoint(screenshotToAction, x, y);
     }
-    [actionOriginX, actionOriginY, actionUnitsPerPixelX, actionUnitsPerPixelY] = values as number[];
-    if (actionUnitsPerPixelX <= 0 || actionUnitsPerPixelY <= 0) {
-      throw new Error('visual result has non-positive coordinate scale');
-    }
-  } else if (space.kind !== 'screenshot_pixels') {
-    throw new Error('visual result has unsupported coordinate mapping');
+  } catch (error) {
+    throw new Error(`visual result has ${(error as Error).message}`);
   }
 
   if (!Array.isArray(root.regions)) throw new Error('visual result has no region list');
@@ -213,10 +252,7 @@ export function parseVisualRegions(
     screenshotHeight,
     pid: expectedPid,
     windowId: expectedWindowId,
-    actionOriginX,
-    actionOriginY,
-    actionUnitsPerPixelX,
-    actionUnitsPerPixelY,
+    screenshotToAction,
     regions: Object.freeze(regions),
   });
 }

@@ -786,7 +786,9 @@ fn invoke_operation(
         "required GTK3 AT-SPI tree is empty"
     );
 
-    // An AX set_value row also checks the structured `value` read-back.
+    // An AX text set_value row also checks the structured `value` read-back.
+    // Slider rows keep their numeric Value formatting ("64.0") and are
+    // checked through the harness label only.
     let mut value_check: Option<(&str, &str)> = None;
     let (response, expected) = match row.operation {
         Operation::AxClick { target, expected } => {
@@ -827,7 +829,9 @@ fn invoke_operation(
             expected,
         } => {
             let index = element_index(&pre, target);
-            value_check = Some((target, value));
+            if row.action == "set_value" {
+                value_check = Some((target, value));
+            }
             (
                 driver.call(
                     "set_value",

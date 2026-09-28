@@ -116,25 +116,30 @@ impl BrowserRefusal {
 }
 
 /// Raw OS error number for "too many open files in this process"
-/// (EMFILE). Shared by Linux and macOS.
-pub const EMFILE_NUMBER: i32 = 24;
+/// (EMFILE). Unix only: Windows raw OS errors are Win32 codes.
+#[cfg(unix)]
+pub const EMFILE_NUMBER: i32 = libc::EMFILE;
 /// Raw OS error number for "too many open files system-wide" (ENFILE).
-/// Shared by Linux and macOS.
-pub const ENFILE_NUMBER: i32 = 23;
+/// Unix only: Windows raw OS errors are Win32 codes.
+#[cfg(unix)]
+pub const ENFILE_NUMBER: i32 = libc::ENFILE;
 
 /// Recovery hint attached to descriptor-exhaustion inspection refusals.
 pub const DESCRIPTOR_EXHAUSTION_HINT: &str = "restart the driver service and raise the file-descriptor limit (e.g. `ulimit -n`) before retrying";
 
 /// True when an I/O error reports file-descriptor exhaustion, either via
-/// its raw OS error number (EMFILE/ENFILE) or via its message text.
+/// its Unix raw OS error number (EMFILE/ENFILE) or via its message text.
+/// Raw codes are not compared on Windows, where 23 and 24 are unrelated
+/// Win32 errors.
 pub fn is_descriptor_exhaustion(error: &std::io::Error) -> bool {
-    match error.raw_os_error() {
-        Some(code) => code == EMFILE_NUMBER || code == ENFILE_NUMBER,
-        None => error
-            .to_string()
-            .to_ascii_lowercase()
-            .contains("too many open files"),
+    #[cfg(unix)]
+    if let Some(code) = error.raw_os_error() {
+        return code == EMFILE_NUMBER || code == ENFILE_NUMBER;
     }
+    error
+        .to_string()
+        .to_ascii_lowercase()
+        .contains("too many open files")
 }
 
 /// Best-effort snapshot of the current process's file-descriptor limit as
@@ -349,6 +354,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn descriptor_exhaustion_matches_emfile_and_enfile() {
         let emfile = std::io::Error::from_raw_os_error(EMFILE_NUMBER);
@@ -379,6 +385,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn inspection_spawn_refusal_names_resource_and_recovery_for_emfile() {
         let error = std::io::Error::from_raw_os_error(EMFILE_NUMBER);

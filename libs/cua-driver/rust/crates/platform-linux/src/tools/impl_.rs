@@ -5132,28 +5132,7 @@ fn resolve_cursor_key(args: &Value) -> String {
 /// `_session_id` is trusted lifecycle state and must behave like a public named
 /// session for cursor ownership.
 fn named_session_cursor_key(args: &Value) -> Option<String> {
-    ["session", "_session_id"].into_iter().find_map(|key| {
-        args.get(key)
-            .and_then(Value::as_str)
-            .filter(|session| !session.is_empty())
-            .map(str::to_owned)
-    })
-}
-
-fn finite_cursor_point(point: Option<(f64, f64)>) -> Option<(f64, f64)> {
-    point.filter(|(x, y)| x.is_finite() && y.is_finite())
-}
-
-fn choose_keyboard_cursor_target(
-    explicit: Option<(f64, f64)>,
-    remembered: Option<(f64, f64)>,
-    window_center: Option<(f64, f64)>,
-    current_pointer: Option<(f64, f64)>,
-) -> Option<(f64, f64)> {
-    finite_cursor_point(explicit)
-        .or_else(|| finite_cursor_point(remembered))
-        .or_else(|| finite_cursor_point(window_center))
-        .or_else(|| finite_cursor_point(current_pointer))
+    cursor_overlay::named_session_cursor_key(args)
 }
 
 fn mouse_hold_json(cursor_id: &str, hold: Option<&MouseHoldState>) -> Value {
@@ -5428,7 +5407,7 @@ async fn position_named_session_keyboard_cursor(
 
     let fallback = if named_cursor_id.is_some()
         && explicit.is_none()
-        && finite_cursor_point(remembered).is_none()
+        && cursor_overlay::keyboard_cursor_target(None, remembered, None, None).is_none()
     {
         tokio::task::spawn_blocking(move || {
             let center = keyboard_window_center(xid);
@@ -5442,7 +5421,7 @@ async fn position_named_session_keyboard_cursor(
     };
 
     let Some((sx, sy)) =
-        choose_keyboard_cursor_target(explicit, remembered, fallback.0, fallback.1)
+        cursor_overlay::keyboard_cursor_target(explicit, remembered, fallback.0, fallback.1)
     else {
         return;
     };

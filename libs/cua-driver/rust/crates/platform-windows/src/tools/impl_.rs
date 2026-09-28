@@ -29,6 +29,59 @@ fn pin_overlay_above(key: &str, hwnd: u64) {
     );
 }
 
+/// Place and reveal a named session's cursor before keyboard or text input.
+///
+/// `explicit` is the targeted element's screen centre when the action has
+/// one. Without it the cursor reuses its remembered position, then falls back
+/// to the target window's centre, so the first keyboard action of a session
+/// is visible. Anonymous calls keep their existing behavior. Geometry and
+/// overlay failures are observational and never affect the input result.
+async fn position_keyboard_cursor(
+    state: &ToolState,
+    args: &Value,
+    hwnd: u64,
+    explicit: Option<(f64, f64)>,
+) {
+    if cursor_overlay::named_session_cursor_key(args).is_none() {
+        return;
+    }
+    let cursor_key = resolve_cursor_key(args);
+    let remembered = state
+        .cursor_registry
+        .get(&cursor_key)
+        .and_then(|cursor| cursor.x.zip(cursor.y));
+    let window_center = if hwnd != 0
+        && cursor_overlay::keyboard_cursor_target(explicit, remembered, None, None).is_none()
+    {
+        keyboard_window_center(hwnd)
+    } else {
+        None
+    };
+    let Some((x, y)) =
+        cursor_overlay::keyboard_cursor_target(explicit, remembered, window_center, None)
+    else {
+        return;
+    };
+    if hwnd != 0 {
+        pin_overlay_above(&cursor_key, hwnd);
+    }
+    overlay_glide_to(&cursor_key, x, y).await;
+    state.cursor_registry.update_position(&cursor_key, x, y);
+}
+
+fn keyboard_window_center(hwnd: u64) -> Option<(f64, f64)> {
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    let mut rect = RECT::default();
+    unsafe { GetWindowRect(HWND(hwnd as *mut _), &mut rect) }.ok()?;
+    (rect.right > rect.left && rect.bottom > rect.top).then(|| {
+        (
+            f64::from(rect.left + rect.right) / 2.0,
+            f64::from(rect.top + rect.bottom) / 2.0,
+        )
+    })
+}
+
 /// Resolve the screen point a coordinate action should actuate at, scrolling
 /// the target element into view first when its cached center lands off-screen.
 ///
@@ -4603,6 +4656,12 @@ impl Tool for TypeTextTool {
             self.state
                 .cursor_registry
                 .update_position(&cursor_key, cx as f64, cy as f64);
+        } else if args.get("x").and_then(Value::as_f64).is_none()
+            || args.get("y").and_then(Value::as_f64).is_none()
+        {
+            // Untargeted text still gives a named session visible feedback:
+            // its remembered position, or the window centre on the first action.
+            position_keyboard_cursor(&self.state, &args, hwnd, None).await;
         }
         let text_len = text.chars().count();
 
@@ -5303,6 +5362,15 @@ impl Tool for PressKeyTool {
             return crate::input::delivery::background_unavailable_error(hwnd, event_kind);
         }
 
+        // The px form's focus click already moved the cursor. Otherwise place
+        // a named session's cursor so a keyboard-first session stays visible.
+        if !px_focus {
+            let element_center = admitted
+                .as_ref()
+                .map(|element| (element.center.0 as f64, element.center.1 as f64));
+            position_keyboard_cursor(&self.state, &args, hwnd, element_center).await;
+        }
+
         // W1: an element-addressed key needs the control's actual focus
         // target, not merely its owning top-level HWND. Embedded WebView hosts
         // can activate their frame from UIA SetFocus even under
@@ -5701,6 +5769,15 @@ impl Tool for HotkeyTool {
                 false
             }
         };
+
+        // The px form's focus click already moved the cursor. Otherwise place
+        // a named session's cursor so a keyboard-first session stays visible.
+        if !px_focus {
+            let element_center = admitted
+                .as_ref()
+                .map(|element| (element.center.0 as f64, element.center.1 as f64));
+            position_keyboard_cursor(&self.state, &args, hwnd, element_center).await;
+        }
 
         if !px_focus && crate::input::is_xaml_host_hwnd(hwnd) {
             let mut accelerator_keys = mods.clone();

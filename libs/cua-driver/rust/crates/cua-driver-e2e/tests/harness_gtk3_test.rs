@@ -786,6 +786,10 @@ fn invoke_operation(
         "required GTK3 AT-SPI tree is empty"
     );
 
+    // An AX text set_value row also checks the structured `value` read-back.
+    // Slider rows keep their numeric Value formatting ("64.0") and are
+    // checked through the harness label only.
+    let mut value_check: Option<(&str, &str)> = None;
     let (response, expected) = match row.operation {
         Operation::AxClick { target, expected } => {
             let index = element_index(&pre, target);
@@ -825,6 +829,9 @@ fn invoke_operation(
             expected,
         } => {
             let index = element_index(&pre, target);
+            if row.action == "set_value" {
+                value_check = Some((target, value));
+            }
             (
                 driver.call(
                     "set_value",
@@ -1032,6 +1039,23 @@ fn invoke_operation(
         response.text()
     );
     wait_for_state(driver, pid, window_id, expected);
+    if let Some((target, value)) = value_check {
+        // A named entry reports its typed text as `value`, separately from
+        // its label, as macOS and Windows do.
+        let post = snapshot(driver, pid, window_id);
+        let index = element_index(&post, target);
+        let element = post.structured()["elements"]
+            .as_array()
+            .and_then(|elements| {
+                elements
+                    .iter()
+                    .find(|element| element["element_index"].as_u64() == Some(index))
+            })
+            .cloned()
+            .unwrap_or_else(|| panic!("{target:?} missing from structured elements"));
+        assert_eq!(element["label"].as_str(), Some(target), "label: {element}");
+        assert_eq!(element["value"].as_str(), Some(value), "value: {element}");
+    }
     false
 }
 

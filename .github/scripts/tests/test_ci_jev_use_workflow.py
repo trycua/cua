@@ -166,6 +166,10 @@ def test_native_gtk3_job_uses_released_driver_and_x11_stack() -> None:
     for piece in ("xvfb-run", "dbus-run-session", "openbox", "at-spi2-core", "python3-gi"):
         assert piece in native
     assert "verify_native.py --harness gtk3 --typescript" in native
+    # save-note is gated on the first Driver that reports named AT-SPI text
+    # values (#4291), and the audit still requires the other two tasks.
+    assert 'SAVE_NOTE_MIN_DRIVER_VERSION: "0.30.3"' in native
+    assert 'assert {"gtk3-counter", "gtk3-choose-size"} <= tasks' in native
     assert "--live" not in native
     assert 'check["verified"] is True' in native
     assert "cua.jev_choice_request_v2" in native

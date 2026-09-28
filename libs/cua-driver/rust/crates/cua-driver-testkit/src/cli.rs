@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::daemon::TestDaemon;
 use crate::driver::Driver;
-use crate::paths::driver_binary;
+use crate::paths::{driver_binary, ensure_driver_binary};
 use crate::reaper::ChildReaper;
 use crate::response::ToolResponse;
 
@@ -46,7 +46,7 @@ impl CliDriver {
     }
 
     fn with_binary_and_daemon_env(bin: std::path::PathBuf, env: &[(&str, &str)]) -> Self {
-        if !bin.exists() {
+        if !ensure_driver_binary(&bin) {
             return CliDriver {
                 bin,
                 _reaper: None,
@@ -65,6 +65,12 @@ impl CliDriver {
     /// Whether the driver binary exists (caller should skip the test if not).
     pub fn available(&self) -> bool {
         self.bin.exists() && self.daemon.is_some()
+    }
+
+    /// Isolated per-user state root given to the test-owned daemon, or `None`
+    /// when the caller passed [`crate::SHARE_HOST_STATE`].
+    pub fn state_root(&self) -> Option<&std::path::Path> {
+        self.daemon.as_ref().and_then(TestDaemon::state_root)
     }
 
     pub fn daemon_socket(&self) -> Option<&str> {
@@ -88,15 +94,16 @@ impl Driver for CliDriver {
                 Value::Null,
             );
         };
-        let mut child = match Command::new(&self.bin)
+        let mut command = Command::new(&self.bin);
+        command
             .arg("call")
             .arg(tool)
             .args(["--socket", &daemon.socket])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
+            .stderr(Stdio::piped());
+        daemon.apply_state_root(&mut command);
+        let mut child = match command.spawn() {
             Ok(c) => c,
             Err(e) => {
                 let msg = format!("spawn failed: {e}");

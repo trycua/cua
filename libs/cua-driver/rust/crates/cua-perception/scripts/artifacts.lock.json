@@ -54,7 +54,7 @@
       "revision": "6600256cb0f1b07651e3bc86166196307bad7e2d",
       "license": "AGPL-3.0-only",
       "format": "file",
-      "source_offer_status": "bundled-review-only"
+      "source_offer_status": "bundled"
     },
     {
       "content_kind": "exporter-source",
@@ -68,7 +68,7 @@
       "license": "AGPL-3.0-only",
       "format": "tar.gz",
       "required_paths": ["ultralytics/engine/exporter.py", "pyproject.toml"],
-      "source_offer_status": "bundled-review-only"
+      "source_offer_status": "bundled"
     },
     {
       "content_kind": "exporter-source",
@@ -82,7 +82,7 @@
       "license": "BSD-3-Clause",
       "format": "tar.gz",
       "required_paths": ["torch/onnx", "torch/_dynamo", "setup.py"],
-      "source_offer_status": "bundled-review-only"
+      "source_offer_status": "bundled"
     },
     {
       "content_kind": "exporter-source",
@@ -96,7 +96,7 @@
       "license": "BSD-3-Clause",
       "format": "tar.gz",
       "required_paths": ["torchvision", "setup.py"],
-      "source_offer_status": "bundled-review-only"
+      "source_offer_status": "bundled"
     },
     {
       "content_kind": "exporter-source",
@@ -110,7 +110,7 @@
       "license": "Apache-2.0",
       "format": "tar.gz",
       "required_paths": ["onnx", "pyproject.toml"],
-      "source_offer_status": "bundled-review-only"
+      "source_offer_status": "bundled"
     },
     {
       "content_kind": "exporter-source",
@@ -124,7 +124,7 @@
       "license": "Apache-2.0",
       "format": "tar.gz",
       "required_paths": ["onnxslim", "VERSION"],
-      "source_offer_status": "bundled-review-only"
+      "source_offer_status": "bundled"
     }
   ],
   "artifacts": [
@@ -139,7 +139,7 @@
       "source_path": "icon_detect/model.pt",
       "source_sha256": "dab3d4351ad00b035db829909a4db98354d5a90f6990e4ac00222a9a95d4bf57",
       "license": "AGPL-3.0-only",
-      "verification_status": "license-review-required"
+      "verification_status": "release-verified"
     },
     {
       "role": "ocr-detect",

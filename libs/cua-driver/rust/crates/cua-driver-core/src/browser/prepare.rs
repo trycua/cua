@@ -5,7 +5,7 @@ use std::future::Future;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -14,9 +14,9 @@ use serde::{Deserialize, Serialize};
 use super::engine::unsupported_engine_refusal;
 use super::platform::{
     BrowserConsentOutcome, BrowserConsentRequest, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, PrepareAction, PrepareAttachment, PrepareAttachmentKind,
-    PrepareOutcome, PrepareProfile, PrepareProfileMode, PrepareRequest, PrepareSideEffects,
-    PrepareStrategy,
+    ExistingProfileSetupRequest, IsolatedBrowserProcess, PrepareAction, PrepareAttachment,
+    PrepareAttachmentKind, PrepareOutcome, PrepareProfile, PrepareProfileMode, PrepareRequest,
+    PrepareSideEffects, PrepareStrategy,
 };
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::types::{
@@ -226,7 +226,7 @@ struct PreparedProfile {
 }
 
 pub(crate) struct ManagedBrowser {
-    child: Child,
+    child: Box<dyn IsolatedBrowserProcess>,
     owned_pid: i64,
     profile: PathBuf,
     delete_profile: bool,
@@ -258,8 +258,8 @@ impl Drop for ManagedBrowser {
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
-        if self.delete_profile && profile_matches_marker(&self.profile, &self.marker) {
-            let _ = fs::remove_dir_all(&self.profile);
+        if self.delete_profile {
+            remove_owned_profile_as_browser(self.child.as_ref(), &self.profile, &self.marker);
         }
     }
 }
@@ -324,6 +324,32 @@ fn profile_matches_marker(path: &Path, expected: &ProfileMarker) -> bool {
 fn cleanup_created_profile(profile: &PreparedProfile) {
     if profile.delete_on_cleanup && profile_matches_marker(&profile.path, &profile.marker) {
         let _ = fs::remove_dir_all(&profile.path);
+    }
+}
+
+/// Remove a driver-owned profile after its browser ran. The browser could
+/// write the profile, so the marker proof and the recursive removal both use
+/// the browser's authority; a failure to assume it leaves the profile behind.
+fn remove_owned_profile_as_browser(
+    browser: &dyn IsolatedBrowserProcess,
+    path: &Path,
+    marker: &ProfileMarker,
+) {
+    let _ = browser.with_browser_file_authority(&mut || {
+        if profile_matches_marker(path, marker) {
+            let _ = fs::remove_dir_all(path);
+        }
+    });
+}
+
+fn cleanup_created_profile_as_browser(
+    browser: &mut dyn IsolatedBrowserProcess,
+    profile: &PreparedProfile,
+) {
+    let _ = browser.kill();
+    let _ = browser.wait();
+    if profile.delete_on_cleanup {
+        remove_owned_profile_as_browser(browser, &profile.path, &profile.marker);
     }
 }
 
@@ -521,7 +547,7 @@ fn prepare_profile(profile: &PrepareProfile) -> Result<PreparedProfile, BrowserR
 }
 
 async fn wait_for_spawned_endpoint(
-    child: &mut Child,
+    child: &mut dyn IsolatedBrowserProcess,
     profile: &Path,
 ) -> Result<OwnedEndpoint, BrowserRefusal> {
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -547,7 +573,20 @@ async fn wait_for_spawned_endpoint(
                 ));
             }
         }
-        if let Ok(text) = fs::read_to_string(&port_file) {
+        let mut port_file_text = None;
+        child
+            .with_browser_file_authority(&mut || {
+                port_file_text = fs::read_to_string(&port_file).ok();
+            })
+            .map_err(|error| {
+                refusal(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!(
+                        "could not read the isolated browser profile with the browser's token: {error}"
+                    ),
+                )
+            })?;
+        if let Some(text) = port_file_text {
             let mut lines = text.lines();
             if let (Some(port), Some(path)) = (lines.next(), lines.next()) {
                 if let Ok(port) = port.parse::<u16>() {
@@ -727,30 +766,24 @@ impl BrowserEngine {
             self.platform.isolated_browser_executable()?
         };
         let prepared_profile = prepare_profile(profile_request)?;
-        let mut command = isolated_browser_command(&executable, &prepared_profile.path);
-        let mut child = command.spawn().map_err(|error| {
-            cleanup_created_profile(&prepared_profile);
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not launch an isolated browser process: {error}"),
-            )
-        })?;
-        let endpoint = match wait_for_spawned_endpoint(&mut child, &prepared_profile.path).await {
+        let command = isolated_browser_command(&executable, &prepared_profile.path);
+        let mut child = self
+            .platform
+            .spawn_isolated_browser(command, &prepared_profile.path)
+            .inspect_err(|_| cleanup_created_profile(&prepared_profile))?;
+        let endpoint = match wait_for_spawned_endpoint(child.as_mut(), &prepared_profile.path).await
+        {
             Ok(endpoint) => {
                 match attest_spawned_endpoint(self, i64::from(child.id()), endpoint).await {
                     Ok(endpoint) => endpoint,
                     Err(error) => {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        cleanup_created_profile(&prepared_profile);
+                        cleanup_created_profile_as_browser(child.as_mut(), &prepared_profile);
                         return Err(error);
                     }
                 }
             }
             Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                cleanup_created_profile(&prepared_profile);
+                cleanup_created_profile_as_browser(child.as_mut(), &prepared_profile);
                 return Err(error);
             }
         };

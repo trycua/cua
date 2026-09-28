@@ -1292,7 +1292,7 @@ mod tests {
     }
 
     #[test]
-    fn extracted_skill_pack_keeps_history_consultation_policy() {
+    fn extracted_skill_pack_keeps_canonical_skill_bytes() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let files = SKILL_FILES
             .iter()
@@ -1315,7 +1315,15 @@ mod tests {
 
         let packaged = std::fs::read_to_string(dest.path().join("SKILL.md"))
             .expect("extracted skill must be readable");
-        assert_history_consultation_policy(&packaged, "extracted skill pack");
+        // The canonical guidance phrases are owned by the bundled_skill_* tests;
+        // extraction must deliver those exact bytes.
+        assert_eq!(
+            packaged.as_bytes(),
+            std::fs::read(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+                .unwrap()
+                .as_slice(),
+            "extracted SKILL.md must equal the canonical skill"
+        );
         for reference in ["WORKFLOW.md", "RUNTIME.md"] {
             assert!(
                 packaged.contains(&format!("]({reference})")),

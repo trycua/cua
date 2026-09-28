@@ -46,7 +46,7 @@ RETRYABLE_LANES=(
 
 usage() {
   cat <<'EOF'
-Usage: run-all.sh [--no-build] [--standalone-browser]
+Usage: run-all.sh [--no-build]
                   [--retry-cell <cell-id> [--retry-harness <harness>]
                    [--retry-attempts <1-3>] [--retry-only]]
 
@@ -54,8 +54,8 @@ Run the canonical cua-driver macOS GUI E2E matrix in a disposable clone of
 the maintainer Lume golden image. Start this command from Terminal in the VM's
 logged-in desktop session, not over SSH.
 
---standalone-browser also runs the optional installed Chrome/Edge browser-tool
-matrix after the canonical repo-local harness matrix.
+Every complete run also executes the installed Chrome/Edge browser-tool matrix
+after the canonical repo-local harness matrix.
 
 --retry-cell authorizes exactly one bounded retry selection. After a failing
 full matrix the runner retries that single cell only when it was the matrix's
@@ -71,7 +71,6 @@ unrestricted worker daemon first.
 EOF
 }
 
-RUN_STANDALONE_BROWSER=0
 NO_BUILD=0
 RETRY_CELL=""
 RETRY_HARNESS=""
@@ -79,7 +78,6 @@ RETRY_ATTEMPTS=""
 RETRY_ONLY=0
 
 parse_arguments() {
-  RUN_STANDALONE_BROWSER=0
   NO_BUILD=0
   RETRY_CELL=""
   RETRY_HARNESS=""
@@ -88,7 +86,10 @@ parse_arguments() {
   while (($#)); do
     case "$1" in
       --no-build) NO_BUILD=1 ;;
-      --standalone-browser) RUN_STANDALONE_BROWSER=1 ;;
+      --standalone-browser)
+        echo "--standalone-browser was removed; every complete run includes the standalone browser matrix" >&2
+        return 2
+        ;;
       --retry-only) RETRY_ONLY=1 ;;
       --retry-cell=*) RETRY_CELL="${1#*=}" ;;
       --retry-harness=*) RETRY_HARNESS="${1#*=}" ;;
@@ -146,10 +147,6 @@ validate_arguments() {
   if [[ ! "${RETRY_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] \
       || ((RETRY_ATTEMPTS > RETRY_ATTEMPTS_LIMIT)); then
     echo "--retry-attempts must be between 1 and ${RETRY_ATTEMPTS_LIMIT}" >&2
-    return 2
-  fi
-  if [[ "${RETRY_ONLY}" == 1 && "${RUN_STANDALONE_BROWSER}" == 1 ]]; then
-    echo "--retry-only cannot be combined with --standalone-browser" >&2
     return 2
   fi
 
@@ -718,7 +715,7 @@ run_computer_history_gate() {
   echo "[HISTORY] Recording one packaged action before daemon restart"
   (
     cd "${RUST_ROOT}"
-    cargo test -p cua-driver --release --test "${test_binary}" \
+    cargo test -p cua-driver-e2e --release --test "${test_binary}" \
       history_records_agent_action_before_restart -- \
       --ignored --exact --nocapture --test-threads=1
   ) 2>&1 | tee "${ARTIFACT_DIR}/history-before-restart.log"
@@ -727,7 +724,7 @@ run_computer_history_gate() {
   restart_unrestricted_daemon
   (
     cd "${RUST_ROOT}"
-    cargo test -p cua-driver --release --test "${test_binary}" \
+    cargo test -p cua-driver-e2e --release --test "${test_binary}" \
       history_reopens_after_restart_and_cryptographically_purges -- \
       --ignored --exact --nocapture --test-threads=1
   ) 2>&1 | tee "${ARTIFACT_DIR}/history-after-restart.log"
@@ -1104,25 +1101,23 @@ elif [[ -n "${RETRY_CELL}" ]]; then
   echo "[RETRY] The full matrix passed; no retry of ${RETRY_CELL} was needed"
 fi
 
-if [[ "${RUN_STANDALONE_BROWSER}" == 1 ]]; then
-  echo "[E2E] Running the optional standalone browser matrix"
-  BROWSER_ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos-standalone-browser"
-  if [[ -d "${BROWSER_ARTIFACT_DIR}" ]] \
-      && [[ -n "$(find "${BROWSER_ARTIFACT_DIR}" -mindepth 1 -print -quit)" ]]; then
-    BROWSER_ARTIFACT_ARCHIVE="$(mktemp -d "${TMPDIR:-/tmp}/cua-macos-browser-e2e.XXXXXX")"
-    mv "${BROWSER_ARTIFACT_DIR}" "${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
-    echo "Previous standalone-browser evidence preserved at ${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
-  fi
-  ensure_unrestricted_daemon
-  set +e
-  CUA_E2E_ARTIFACT_DIR="${BROWSER_ARTIFACT_DIR}" \
-    "${REPO_ROOT}/scripts/ci/run-rust-standalone-browser-e2e.sh"
-  BROWSER_STATUS=$?
-  set -e
+echo "[E2E] Running the standalone browser matrix"
+BROWSER_ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos-standalone-browser"
+if [[ -d "${BROWSER_ARTIFACT_DIR}" ]] \
+    && [[ -n "$(find "${BROWSER_ARTIFACT_DIR}" -mindepth 1 -print -quit)" ]]; then
+  BROWSER_ARTIFACT_ARCHIVE="$(mktemp -d "${TMPDIR:-/tmp}/cua-macos-browser-e2e.XXXXXX")"
+  mv "${BROWSER_ARTIFACT_DIR}" "${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
+  echo "Previous standalone-browser evidence preserved at ${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
+fi
+ensure_unrestricted_daemon
+set +e
+CUA_E2E_ARTIFACT_DIR="${BROWSER_ARTIFACT_DIR}" \
+  "${REPO_ROOT}/scripts/ci/run-rust-standalone-browser-e2e.sh"
+BROWSER_STATUS=$?
+set -e
 
-  if [[ "${BROWSER_STATUS}" != 0 ]]; then
-    exit "${BROWSER_STATUS}"
-  fi
+if [[ "${BROWSER_STATUS}" != 0 ]]; then
+  exit "${BROWSER_STATUS}"
 fi
 
 jq -n \
@@ -1130,9 +1125,8 @@ jq -n \
   --arg source_sha "${SOURCE_SHA}" \
   --arg run_id "${RUN_ID}" \
   --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --argjson standalone_browser "${RUN_STANDALONE_BROWSER}" \
   '{schema: $schema, source_sha: $source_sha, run_id: $run_id,
-    completed_at: $completed_at, standalone_browser: ($standalone_browser == 1),
+    completed_at: $completed_at, standalone_browser: true,
     passed: true}' > "${ARTIFACT_DIR}/direct-result.json"
 
 echo "macOS direct Lume run passed: ${RUN_ID}"

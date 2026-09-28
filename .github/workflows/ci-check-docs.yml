@@ -25,36 +25,27 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-check-docs-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  native-reference:
-    name: Reference / ${{ matrix.library }} / ${{ matrix.platform }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - library: cua-driver
-            platform: linux
-            os: ubuntu-latest
-          - library: cua-driver
-            platform: macos
-            os: macos-latest
-          - library: cua-driver
-            platform: windows
-            os: windows-latest
-          - library: lume
-            platform: macos
-            os: macos-latest
-          - library: sandbox
-            platform: linux
-            os: ubuntu-latest
-    runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        shell: bash
+  # Route once on Linux, then start only the generator rows this change can
+  # affect. Unaffected rows previously booted a macOS or Windows runner just to
+  # decide to skip.
+  scope:
+    name: Select affected generators
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.scope.outputs.matrix }}
+      selected: ${{ steps.scope.outputs.selected }}
     steps:
-      - uses: actions/checkout@v4
+      # The merge commit's first parent is the base, so two commits of history
+      # are enough to list exactly what the pull request changes.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          fetch-depth: 0
+          fetch-depth: 2
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
@@ -66,42 +57,106 @@ jobs:
         run: |
           node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --test-routing
           node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/runner.test.ts scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts scripts/docs-generators/sandbox.test.ts
-      - name: Select affected generator
+      - name: Select affected generator rows
         id: scope
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          LIBRARY: ${{ matrix.library }}
         run: |
-          git diff --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/docs-changed-files.txt"
+          set -euo pipefail
+          git diff --name-only HEAD^1 HEAD > "$RUNNER_TEMP/docs-changed-files.txt"
           GENERATORS=$(node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --changed-files-file "$RUNNER_TEMP/docs-changed-files.txt")
-          if [[ " $GENERATORS " == *" $LIBRARY "* ]]; then
-            echo "selected=true" >> "$GITHUB_OUTPUT"
-          fi
+          echo "Selected generators: ${GENERATORS:-none}"
+          python3 - "$GENERATORS" >> "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import sys
+
+          rows = {
+              "cua-driver": [
+                  {"library": "cua-driver", "platform": "linux", "os": "ubuntu-latest"},
+                  {"library": "cua-driver", "platform": "macos", "os": "macos-latest"},
+                  {"library": "cua-driver", "platform": "windows", "os": "windows-latest"},
+              ],
+              "lume": [{"library": "lume", "platform": "macos", "os": "macos-latest"}],
+              "sandbox": [{"library": "sandbox", "platform": "linux", "os": "ubuntu-latest"}],
+          }
+          selected = sys.argv[1].split()
+          unknown = sorted(set(selected) - set(rows))
+          if unknown:
+              raise SystemExit(f"no Check Docs row for generator(s): {', '.join(unknown)}")
+          include = [row for key in selected for row in rows[key]]
+          print(f"matrix={json.dumps({'include': include})}")
+          print(f"selected={'true' if include else 'false'}")
+          PY
+
+  native-reference:
+    name: Reference / ${{ matrix.library }} / ${{ matrix.platform }}
+    needs: scope
+    if: needs.scope.outputs.selected == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.scope.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The generators read release tags to record the documented version.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: pnpm/action-setup@v4
+      - name: Install docs dependencies
+        run: pnpm --dir docs install --frozen-lockfile
+      - name: Test generator ownership
+        run: node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/runner.test.ts scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts scripts/docs-generators/sandbox.test.ts
+      # Restore the release build that CI: cua-driver contract clients saves
+      # from main. Its MCP discovery job installs the same toolchain, so the
+      # cache key matches. Pull requests never save.
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.library == 'cua-driver'
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        if: matrix.library == 'cua-driver'
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          shared-key: mcp-client-discovery
+          save-if: false
       - name: Install Linux build dependencies
-        if: steps.scope.outputs.selected == 'true' && matrix.platform == 'linux' && matrix.library == 'cua-driver'
+        if: matrix.platform == 'linux' && matrix.library == 'cua-driver'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Check generated reference
-        if: steps.scope.outputs.selected == 'true' && matrix.platform != 'windows'
+        if: matrix.platform != 'windows'
         run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library ${{ matrix.library }} --check
       - name: Check generated reference in PowerShell
-        if: steps.scope.outputs.selected == 'true' && matrix.platform == 'windows'
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library cua-driver --check
       - name: Verify docs extraction preserves policy-filtered discovery
-        if: steps.scope.outputs.selected == 'true' && matrix.library == 'cua-driver'
+        if: matrix.library == 'cua-driver'
         run: node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/cua-driver-policy.test.ts scripts/docs-generators/cua-driver-policy-binary.test.ts
 
   check-docs-sync:
     name: Check Documentation Sync
     if: always()
-    needs: native-reference
+    needs: [scope, native-reference]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Require native checks to pass
+      - name: Require routing and every selected check to pass
         env:
+          SCOPE: ${{ needs.scope.result }}
+          SELECTED: ${{ needs.scope.outputs.selected }}
           RESULT: ${{ needs.native-reference.result }}
-        run: test "$RESULT" = success
+        run: |
+          test "$SCOPE" = success
+          if [ "$SELECTED" = true ]; then
+            test "$RESULT" = success
+          else
+            echo "No generated reference is affected by this change."
+          fi

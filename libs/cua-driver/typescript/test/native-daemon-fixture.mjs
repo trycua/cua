@@ -79,7 +79,7 @@ const server = net.createServer((connection) => {
       })}\n`,
     )
     completedCalls += 1
-    if (completedCalls === 9) server.close()
+    if (completedCalls === 10) server.close()
   })
 })
 

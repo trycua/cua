@@ -68,8 +68,21 @@ diagnostic context and must not be parsed as a stable field.
 
 ## Explicit lifecycle
 
-Use the signed catalog distributed with the reviewed candidate and inspect the
-exact target before changing local state:
+Each Cua Perception release is published as the `cua-perception-v<version>`
+GitHub release. It carries one signed catalog and one archive per target:
+
+| Target | Catalog | Archive |
+| --- | --- | --- |
+| macOS arm64 | `cua-perception-<version>-aarch64-apple-darwin.catalog.json` | `cua-perception-<version>-aarch64-apple-darwin.tar.gz` |
+| Linux x64 | `cua-perception-<version>-x86_64-unknown-linux-gnu.catalog.json` | `cua-perception-<version>-x86_64-unknown-linux-gnu.tar.gz` |
+| Windows x64 | `cua-perception-<version>-x86_64-pc-windows-msvc.catalog.json` | `cua-perception-<version>-x86_64-pc-windows-msvc.tar.gz` |
+
+The release also carries each target's SBOM, redacted provenance, runtime
+contract, the release gate's install evidence, and a `SHA256SUMS` file. The
+Driver resolves the archive named in the catalog relative to the catalog file,
+so download both into the same directory. Select the release by its
+`cua-perception-v*` tag; it is never marked as the repository's Latest release.
+Inspect the exact target before changing local state:
 
 ```bash
 cua-driver extension inspect cua-perception --catalog <catalog.json>
@@ -82,9 +95,42 @@ range, capabilities, artifact sizes and hashes, publisher, licenses, notices,
 and provenance. Do not substitute an unsigned archive or infer component
 availability from the repository-wide latest release.
 
+Each catalog expires one year after its release commit. After that, install
+from a newer `cua-perception-v*` release.
+
+## Release publication
+
+Cua Perception follows Release Please with no manual publish step. Merging its
+release pull request bumps `VERSION`, and the release workflow anchors the
+merged commit with a lightweight `cua-perception-v<version>` tag. That tag push
+runs `.github/workflows/cd-cua-perception.yml`, which:
+
+1. requires the tag to be a lightweight tag on `main` that matches `VERSION`;
+2. verifies the reviewed OmniParser ONNX conversion against
+   `scripts/artifacts.lock.json`;
+3. builds the worker on each target, assembles the bundle, and runs its health
+   check, self-test, and real parse;
+4. re-verifies, packages, and signs each target in the reviewed candidate
+   workflow, whose signing job runs in the `cua-perception-candidate-signing`
+   environment;
+5. installs the published Cua Driver with its canonical installer on each
+   target and runs `extension inspect`, `install`, `status --self-test`,
+   `perception parse`, and `remove` against the signed catalog; and
+6. publishes the verified assets only when every job passed for the exact tag
+   commit.
+
+Pull requests that change this pipeline run steps 1 through 3 plus an unsigned
+package and a developer-only install check. They never sign or publish.
+
 Inspect a replacement before running `extension update`. Remove only the
 extension-owned installation with `extension remove cua-perception`. Neither
 operation changes the default Driver or an external `cua-som` installation.
+
+Install, update, and remove take effect on a running Driver without a restart.
+A running daemon or `cua-driver mcp` session checks the installed extension
+before each `parse_visual_regions` call and fully reverifies it whenever the
+installation changed. A parse that is already running finishes with the version
+it started with.
 
 ## Capture-bound parse and action
 
@@ -105,6 +151,15 @@ registry, so a later process cannot resolve its `capture_id`.
    `x`, `y`, the exact target, `delivery_mode`, and the same `capture_id`.
 5. Reobserve after every action attempt. Never remove `capture_id` and retry an
    expired, stale, retired, or mismatched capture as an unbound click.
+
+Capture-bound click refusals use one shared code table on every platform,
+owned by `CaptureActionError::wire_code` in `cua-driver-core`:
+`capture_id_invalid`, `capture_not_found`, `capture_expired`,
+`capture_generation_mismatch`, `capture_target_mismatch`,
+`capture_coordinate_invalid`, and `capture_frame_mismatch`. Live-target
+inspection failures before admission remain adapter-owned
+(`capture_action_refused` on Windows and Linux, `capture_target_mismatch` on
+macOS).
 
 A capture-bound click consumes the capture before native dispatch. At most one
 action may derive from a capture. Capture again after an action, timeout,
@@ -138,7 +193,8 @@ The extension artifact has its own license and source obligations. The current
 candidate ledgers identify the OmniParser detector artifact as AGPL-3.0-only,
 the PP-OCR detector and recognizer artifacts as Apache-2.0, and the packaged
 ONNX Runtime by an exact version and hash selected at assembly time. Read the
-[perception third-party notices](perception-third-party-notices.md). A release
+[perception third-party notices](perception-third-party-notices.md), including
+its precautions for redistribution and hosted services. A release
 must include the reviewed notices, ledgers, SBOM, source/conversion materials,
 and any corresponding-source offer required for the way the artifact is
 distributed or offered over a network.

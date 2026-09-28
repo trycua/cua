@@ -1,4 +1,7 @@
 export type Outcome = 'verified' | 'refuted' | 'unknown' | 'abstained' | 'budget_exhausted';
+export type VisualDelivery = 'background' | 'foreground';
+
+export const SUBMIT_IDS: ReadonlySet<string> = new Set(['submit-form', 'submit-form-foreground']);
 
 export type Candidate = Readonly<{
   id: string;
@@ -52,6 +55,16 @@ export type VisualObservation = Readonly<{
   regions: readonly VisualRegion[];
 }>;
 
+export class VisualObservationError extends Error {
+  constructor(
+    message: string,
+    readonly code: string = 'invalid_visual_result'
+  ) {
+    super(message);
+    this.name = 'VisualObservationError';
+  }
+}
+
 function record(value: unknown, message: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(message);
   return value as Record<string, unknown>;
@@ -92,7 +105,10 @@ export function parseVisualRegions(
   if (root.schema !== 'cua.visual_regions_v1') throw new Error('unsupported visual region schema');
   const capture = record(root.capture, 'visual result has no capture provenance');
   if (capture.capture_id !== expectedCaptureId) {
-    throw new Error('visual result is stale or capture-mismatched');
+    throw new VisualObservationError(
+      'visual result is stale or capture-mismatched',
+      'capture_mismatch'
+    );
   }
   const source = record(capture.source, 'visual result has no capture source');
   if (
@@ -100,7 +116,10 @@ export function parseVisualRegions(
     source.pid !== expectedPid ||
     source.window_id !== expectedWindowId
   ) {
-    throw new Error('visual result has a mismatched window target');
+    throw new VisualObservationError(
+      'visual result has a mismatched window target',
+      'capture_mismatch'
+    );
   }
   const screenshot = record(capture.screenshot, 'visual result has no screenshot provenance');
   if (screenshot.mime_type !== 'image/png') {
@@ -191,11 +210,123 @@ export function parseVisualRegions(
   });
 }
 
+export const REDACTED_TOKEN = '[verification token]';
+
+function formRefs(snapshot: BrowserSnapshot) {
+  const refs = snapshot.refs ?? [];
+  const field = refs.find(
+    (item) => item.role === 'textbox' && item.name === 'verification value' && item.ref
+  );
+  const button = refs.find((item) => item.role === 'button' && item.name === 'Submit' && item.ref);
+  return { field, button };
+}
+
+export type SubmitButtonState =
+  | 'available'
+  | 'visual_only'
+  | 'visual_check_pending'
+  | 'not_found_visually'
+  | 'not_in_page_structure';
+
+export type FormState = Readonly<{
+  verification_field: 'not_found' | 'empty' | 'contains_required_token' | 'contains_other_value';
+  submit_button: SubmitButtonState;
+}>;
+
+/** Return the unique validated visual Submit region, or undefined. */
+export function visualSubmitRegion(visual?: VisualObservation) {
+  if (!visual) return undefined;
+  const matches = visual.regions.filter(
+    (region) =>
+      region.confidence >= 0.8 && asciiLower(region.text ?? region.label ?? '') === 'submit'
+  );
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+/**
+ * Summarize the form for the decision model without revealing the token. The
+ * raw field value never leaves the runner.
+ *
+ * submit_button is 'available' for a clickable page-structure ref. When the
+ * page structure has none and the capture-bound visual path is enabled
+ * (visualPath), it is 'visual_only' if this observation holds a unique
+ * validated visual Submit region, 'visual_check_pending' if no visual regions
+ * were parsed for this step yet (the runner parses them once no page-structure
+ * action remains), and 'not_found_visually' otherwise. Without a visual path it
+ * is 'not_in_page_structure'.
+ */
+export function formState(
+  snapshot: BrowserSnapshot,
+  token: string,
+  visual?: VisualObservation,
+  visualPath = false
+): FormState {
+  const { field, button } = formRefs(snapshot);
+  const verificationField = !field
+    ? 'not_found'
+    : !field.value
+      ? 'empty'
+      : field.value === token
+        ? 'contains_required_token'
+        : 'contains_other_value';
+  const submitButton: SubmitButtonState = button
+    ? 'available'
+    : !visualPath
+      ? 'not_in_page_structure'
+      : !visual
+        ? 'visual_check_pending'
+        : visualSubmitRegion(visual)
+          ? 'visual_only'
+          : 'not_found_visually';
+  return { verification_field: verificationField, submit_button: submitButton };
+}
+
+/** Replace every occurrence of the token in strings nested in value. */
+export function redactToken(value: unknown, token: string): unknown {
+  if (!token) return value;
+  if (typeof value === 'string') return value.split(token).join(REDACTED_TOKEN);
+  if (Array.isArray(value)) return value.map((item) => redactToken(item, token));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, redactToken(item, token)])
+    );
+  }
+  return value;
+}
+
+export type HistoryEntry = Readonly<{ step: number; selected_id: string; outcome: string }>;
+
+const HISTORY_OUTCOMES: Readonly<Record<string, string>> = {
+  'type-verification-value': 'typed the required token into the verification field',
+  'submit-form': 'clicked Submit; the submission was not yet confirmed',
+  'submit-form-foreground':
+    'clicked Submit in the foreground; the submission was not yet confirmed',
+  reobserve: 'took no action and requested a fresh observation',
+};
+
+/**
+ * Build the compact decision-history item shown to the model. It records what
+ * each step did, not timings or model probabilities, so earlier choices do not
+ * become a signal to repeat themselves.
+ */
+export function historyEntry(step: number, candidateId: string, refusal?: string): HistoryEntry {
+  const outcome = refusal
+    ? `Driver refused background delivery (${refusal}); no click happened and a ` +
+      'foreground Submit candidate is offered next'
+    : (HISTORY_OUTCOMES[candidateId] ?? 'completed');
+  return { step, selected_id: candidateId, outcome };
+}
+
 function reservedCandidates(): Candidate[] {
   return [
     immutableCandidate({
       id: 'reobserve',
-      description: 'Discard this decision set and obtain a fresh Driver observation.',
+      description:
+        'Take no action and obtain a fresh Driver observation, because the current ' +
+        'observation is stale or contradicts the reported form state. A Submit control ' +
+        'that is visual-only, or whose visual check is still pending, is not a reason to ' +
+        'reobserve: the runner parses visual regions for Submit once no page-structure ' +
+        'action remains.',
       tool: null,
       arguments: {},
     }),
@@ -208,24 +339,30 @@ function reservedCandidates(): Candidate[] {
   ];
 }
 
+/**
+ * Build the closed candidate set for one decision. Page-structure refs always
+ * win. The capture-bound visual Submit is offered only when no Submit ref
+ * exists. visualDelivery 'foreground' replaces the background visual click with
+ * a distinct submit-form-foreground candidate after Driver refused background
+ * delivery; the chooser must pick it explicitly.
+ */
 export function buildCandidates(
   snapshot: BrowserSnapshot,
   token: string,
   visual?: VisualObservation,
-  captureBoundClick = false
+  captureBoundClick = false,
+  visualDelivery: VisualDelivery = 'background'
 ): Candidate[] {
   const common = { target_id: snapshot.target_id, tab_id: snapshot.tab_id };
-  const refs = snapshot.refs ?? [];
-  const field = refs.find(
-    (item) => item.role === 'textbox' && item.name === 'verification value' && item.ref
-  );
-  const button = refs.find((item) => item.role === 'button' && item.name === 'Submit' && item.ref);
+  const { field, button } = formRefs(snapshot);
   const candidates: Candidate[] = [];
   if (field?.value !== token && field?.ref) {
     candidates.push(
       immutableCandidate({
         id: 'type-verification-value',
-        description: 'Replace the verification field with the required token.',
+        description:
+          'Type the required verification token into the verification field, ' +
+          'replacing its current contents.',
         tool: 'browser_type',
         arguments: { ...common, ref: field.ref, text: token, replace: true },
       })
@@ -234,7 +371,10 @@ export function buildCandidates(
     candidates.push(
       immutableCandidate({
         id: 'submit-form',
-        description: 'Submit the form now that the verification field contains the token.',
+        description:
+          "Click the form's Submit button. The observed form state reports that the " +
+          'verification field already contains the required token, so the form is ' +
+          'ready to submit.',
         tool: 'browser_click',
         arguments: { ...common, ref: button.ref, input_route: 'dom_event' },
       })
@@ -244,19 +384,21 @@ export function buildCandidates(
     visual &&
     captureBoundClick
   ) {
-    const matches = visual.regions.filter(
-      (region) =>
-        region.confidence >= 0.8 &&
-        asciiLower(region.text ?? region.label ?? '') === 'submit'
-    );
-    if (matches.length === 1) {
-      const region = matches[0];
+    const region = visualSubmitRegion(visual);
+    if (region) {
       const x = region.x + region.width / 2;
       const y = region.y + region.height / 2;
+      const foreground = visualDelivery === 'foreground';
       candidates.push(
         immutableCandidate({
-          id: 'submit-form',
-          description: 'Submit the form using the unique validated visual Submit region.',
+          id: foreground ? 'submit-form-foreground' : 'submit-form',
+          description: foreground
+            ? 'Submit the form by clicking the unique validated visual Submit region with ' +
+              'foreground delivery, which activates the browser window, because Driver ' +
+              'refused background delivery for the previous visual click.'
+            : 'Submit the form by clicking the unique validated visual Submit region. ' +
+              'The observed form state reports that the verification field already ' +
+              'contains the required token.',
           tool: 'click',
           arguments: {
             pid: visual.pid,
@@ -264,7 +406,7 @@ export function buildCandidates(
             x,
             y,
             capture_id: visual.captureId,
-            delivery_mode: 'background',
+            delivery_mode: visualDelivery,
           },
           captureId: visual.captureId,
           screenshotReference: visual.screenshotReference,
@@ -273,6 +415,10 @@ export function buildCandidates(
     }
   }
   return [...candidates, ...reservedCandidates()];
+}
+
+export function hasExecutableCandidate(candidates: readonly Candidate[]): boolean {
+  return candidates.some((candidate) => candidate.tool !== null);
 }
 
 function asciiLower(value: string): string {
@@ -287,9 +433,11 @@ export function chooseMock(candidates: Candidate[]) {
     ? 'type-verification-value'
     : ids.has('submit-form')
       ? 'submit-form'
-      : ids.has('reobserve')
-        ? 'reobserve'
-        : null;
+      : ids.has('submit-form-foreground')
+        ? 'submit-form-foreground'
+        : ids.has('reobserve')
+          ? 'reobserve'
+          : null;
   return {
     choice: selected,
     confidence: selected ? 1 : 0,

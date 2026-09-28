@@ -1,6 +1,17 @@
 name: "E2E: Rust macOS hosted"
 
 on:
+  # Stable Cua Driver tag runs call the hosted matrix as a release gate. A
+  # called workflow has no `mode` input, so the hosted jobs run unless a manual
+  # dispatch selects `lume`. Under workflow_call, `github.sha` is the caller's
+  # tag commit, so the caller passes that same SHA as `source_sha` and the
+  # workflow-ref check below still proves the harness matches the source.
+  workflow_call:
+    inputs:
+      source_sha:
+        description: "Full 40-character commit SHA to certify"
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       source_sha:
@@ -34,12 +45,14 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: e2e-rust-macos-hosted-${{ inputs.source_sha }}
+  # Separate release-gate calls from manual dispatches so a queued manual run
+  # can never replace (cancel) a pending release gate for the same SHA.
+  group: e2e-rust-macos-hosted-${{ github.event_name }}-${{ inputs.source_sha }}
   cancel-in-progress: false
 
 jobs:
   probe:
-    if: inputs.mode == 'hosted'
+    if: inputs.mode != 'lume'
     name: hosted environment probe
     runs-on: macos-26
     timeout-minutes: 20
@@ -108,7 +121,7 @@ jobs:
           retention-days: 14
 
   matrix:
-    if: inputs.mode == 'hosted'
+    if: inputs.mode != 'lume'
     needs: probe
     name: hosted ${{ matrix.lane }} lane
     runs-on: macos-26
@@ -116,7 +129,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: [shared, native, capture]
+        lane: [shared, native, capture, browser]
     env:
       CUA_E2E_SOURCE_SHA: ${{ inputs.source_sha }}
       CUA_E2E_WORKFLOW_SHA: ${{ github.sha }}
@@ -188,7 +201,7 @@ jobs:
           retention-days: 14
 
   certify:
-    if: ${{ always() && inputs.mode == 'hosted' }}
+    if: ${{ always() && inputs.mode != 'lume' }}
     needs: [probe, matrix]
     name: hosted certification result
     runs-on: ubuntu-latest
@@ -217,6 +230,8 @@ jobs:
               github: {run_id: $run_id, run_attempt: $run_attempt,
                 workflow_ref: $workflow_ref, workflow_sha: $workflow_sha},
               jobs: {probe: $probe, matrix: $matrix},
+              lanes: ["shared", "native", "capture", "browser"],
+              standalone_browser: true,
               passed: ($probe == "success" and $matrix == "success")}' \
             | tee certification.json
           jq -e '.passed == true' certification.json >/dev/null

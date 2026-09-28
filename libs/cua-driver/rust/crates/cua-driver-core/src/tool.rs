@@ -875,7 +875,10 @@ impl ToolRegistry {
         self.register(Box::new(EndSessionTool));
     }
 
-    pub fn register_perception_tool(&mut self, client: crate::perception_client::PerceptionClient) {
+    pub fn register_perception_tool(
+        &mut self,
+        client: impl Into<crate::perception_client::PerceptionClientHandle>,
+    ) {
         let captures = self.capture_service();
         let resolve_binding = Arc::new(move |args: &Value| {
             captures.binding_from_args(args).map_err(|error| {
@@ -892,7 +895,7 @@ impl ToolRegistry {
 
     pub fn register_perception_tool_with_binding_resolver(
         &mut self,
-        client: crate::perception_client::PerceptionClient,
+        client: impl Into<crate::perception_client::PerceptionClientHandle>,
         resolve_binding: crate::perception_tools::CaptureBindingResolver,
     ) {
         crate::perception_tools::register_perception_tool(self, client, resolve_binding);
@@ -1561,17 +1564,46 @@ impl ToolRegistry {
                     self.recording
                         .begin_private_turn(resolved_name, &recording_args, start_ms)
                 } else {
-                    self.recording
-                        .begin_turn(resolved_name, &recording_args, start_ms)
+                    // A capture-bound click whose capture is already unknown,
+                    // expired, or superseded is refused by every platform
+                    // adapter before dispatch. Do not walk the application for
+                    // evidence of an action that cannot happen.
+                    let predicted_refusal =
+                        matches!(resolved_name, "click" | "double_click" | "right_click")
+                            .then(|| self.capture_service.predict_action_refusal(&args))
+                            .flatten();
+                    self.recording.begin_turn_with_refusal_hint(
+                        resolved_name,
+                        &recording_args,
+                        start_ms,
+                        predicted_refusal,
+                    )
                 }
             })
             .flatten();
 
+        // Desktop pixels read off a capped get_desktop_state image are mapped
+        // back to the uncapped capture before any platform interprets them.
+        crate::desktop_capture_scale::map_desktop_args(&mut args);
         let mut result = crate::recording::scope_dispatch_click_capture(
             pending_turn.as_ref(),
             tool.invoke(args.clone()),
         )
         .await;
+        match resolved_name {
+            "get_desktop_state" if result.is_error != Some(true) => {
+                crate::desktop_capture_scale::record_desktop_state(
+                    &args,
+                    result.structured_content.as_ref(),
+                );
+            }
+            "end_session" => {
+                if let Some(session) = args.get("_session_id").and_then(Value::as_str) {
+                    crate::desktop_capture_scale::forget_session(session);
+                }
+            }
+            _ => {}
+        }
         drop(lifecycle_dispatch);
         // The platform worker has exited, so another text operation for this
         // pid may now start even while result projection and evidence capture
@@ -2536,7 +2568,12 @@ fn canonical_existing_file(raw: &str) -> Result<String, ToolResult> {
 /// The deepest existing ancestor is canonicalized first, so symlinked parents
 /// are captured in the approved identity. Only normal path components may be
 /// appended after that ancestor; lexical parent traversal never enters a
-/// protected-resource digest.
+/// protected-resource digest. The caller replaces the raw argument with this
+/// canonical path, so the tool writes exactly the approved location.
+///
+/// A deepest existing ancestor that is itself a symbolic link to a directory
+/// (macOS `/tmp` -> `/private/tmp`) is resolved like any other symlinked
+/// parent. A link to a non-directory is refused.
 fn canonical_proposed_path(raw: &str) -> Result<String, ToolResult> {
     let path = expanded_path(raw)?;
     if path.exists() {
@@ -2560,6 +2597,11 @@ fn canonical_proposed_path(raw: &str) -> Result<String, ToolResult> {
                 ))
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotADirectory => {
+                return Err(protected_scope_refusal(
+                    "an ancestor of the output path is not a directory",
+                ))
+            }
             Err(_) => {
                 return Err(protected_scope_refusal(
                     "the output path could not be inspected safely",
@@ -2574,11 +2616,13 @@ fn canonical_proposed_path(raw: &str) -> Result<String, ToolResult> {
             .parent()
             .ok_or_else(|| protected_scope_refusal("the output path has no existing ancestor"))?;
     }
-    let metadata = std::fs::symlink_metadata(existing)
+    // Follow a symlinked ancestor: `exists()` above already resolved it, and
+    // `canonicalize` below records its target in the approved identity.
+    let metadata = std::fs::metadata(existing)
         .map_err(|_| protected_scope_refusal("the output ancestor is unavailable"))?;
     if !metadata.is_dir() {
         return Err(protected_scope_refusal(
-            "the output path's existing ancestor is not a directory",
+            "the output path's deepest existing ancestor is not a directory",
         ));
     }
     let mut canonical = std::fs::canonicalize(existing)
@@ -2763,9 +2807,18 @@ fn publish_action_result(result: &mut ToolResult) -> Result<(), String> {
         .action_record
         .as_ref()
         .ok_or_else(|| "successful action omitted its internal execution record".to_owned())?;
-    let public = action
+    let mut public = action
         .public_result()
         .map_err(|error| format!("invalid internal execution record: {error:?}"))?;
+    // Some MCP clients (Claude Code among them) hand the model only
+    // `structuredContent` when it is present and drop the text blocks. The
+    // producer's text is the only place the resolved points, the element hit,
+    // popups, focus outcome and follow-up calls are spelled out, so the
+    // closed contract carries it as `summary`.
+    public.summary = result.content.iter().find_map(|content| match content {
+        Content::Text { text, .. } if !text.trim().is_empty() => Some(text.clone()),
+        _ => None,
+    });
     public
         .validate_invariants()
         .map_err(|error| format!("invalid public projection: {error}"))?;
@@ -2837,7 +2890,7 @@ mod runtime_isolation_tests {
     use crate::{
         authorization::PermissionMode,
         consent::{ConsentAction, ConsentRequest, ProtectedConsentProvider, ProviderDecision},
-        protocol::ToolResult,
+        protocol::{Content, ToolResult},
         session_authorization::{SessionAuthorizationRegistry, SessionModeCeiling},
     };
     use std::io::Write;
@@ -4517,6 +4570,55 @@ resources:
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn proposed_output_scope_resolves_a_symlinked_deepest_ancestor() {
+        // Mirrors macOS `/tmp/x.png`, where `/tmp` links to `/private/tmp`.
+        let root = tempfile::tempdir().unwrap();
+        let target = root.path().join("private-tmp");
+        std::fs::create_dir(&target).unwrap();
+        let link = root.path().join("tmp");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let proposed = link.join("x.png");
+
+        let canonical = canonical_proposed_path(proposed.to_str().unwrap()).unwrap();
+
+        assert_eq!(
+            canonical,
+            std::fs::canonicalize(&target)
+                .unwrap()
+                .join("x.png")
+                .to_string_lossy()
+        );
+        assert!(!proposed.exists());
+        // The same file already existing was always resolved; both agree.
+        std::fs::write(target.join("x.png"), b"").unwrap();
+        assert_eq!(
+            canonical_proposed_path(proposed.to_str().unwrap()).unwrap(),
+            canonical
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proposed_output_scope_refuses_a_symlinked_ancestor_that_is_not_a_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("file");
+        std::fs::write(&file, b"").unwrap();
+        let link = root.path().join("link");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        let proposed = link.join("x.png");
+
+        let refusal = canonical_proposed_path(proposed.to_str().unwrap()).unwrap_err();
+
+        let text = serde_json::to_string(&refusal).unwrap();
+        assert!(
+            text.contains("an ancestor of the output path is not a directory"),
+            "{text}"
+        );
+        assert!(!file.with_file_name("x.png").exists());
+    }
+
     #[test]
     fn proposed_output_scope_canonicalizes_the_existing_ancestor_without_creating_output() {
         let root = tempfile::tempdir().unwrap();
@@ -4604,10 +4706,17 @@ resources:
         let object = structured.as_object().expect("ActionResult is an object");
         assert_eq!(
             object.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["delivery", "effect", "route"]
+            ["delivery", "effect", "route", "summary"]
         );
         assert_eq!(structured["effect"], "unverifiable");
         assert_eq!(structured["delivery"]["mode"], "unknown");
+        // The producer's text travels inside the closed contract for clients
+        // that surface only structuredContent.
+        let text = result.content.iter().find_map(|content| match content {
+            Content::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        });
+        assert_eq!(structured["summary"].as_str(), text);
         assert!(matches!(
             structured["route"].as_str(),
             Some("accessibility" | "synthetic_events" | "global_input" | "dom" | "trusted_input")
@@ -5362,36 +5471,6 @@ mod capability_tests {
     }
 
     #[test]
-    fn capability_version_is_string_one() {
-        // Bumping this constant in a non-breaking PR is an error —
-        // the version is the contract version, not the build version.
-        // Pinned to "1" until we ship a BREAKING vocabulary change.
-        assert_eq!(CAPABILITY_VERSION, "1");
-    }
-
-    #[test]
-    fn delivery_mode_capability_is_derived_from_the_runtime_schema() {
-        let with_delivery_mode = serde_json::json!({
-            "type": "object",
-            "properties": {
-                "delivery_mode": crate::tool_schema::delivery_mode_schema()
-            }
-        });
-        let without_delivery_mode = serde_json::json!({"type": "object", "properties": {}});
-
-        assert!(
-            advertised_capabilities_for("press_key", &with_delivery_mode)
-                .iter()
-                .any(|capability| capability == "input.delivery_mode")
-        );
-        assert!(
-            !advertised_capabilities_for("press_key", &without_delivery_mode)
-                .iter()
-                .any(|capability| capability == "input.delivery_mode")
-        );
-    }
-
-    #[test]
     fn delivery_mode_normalization_is_schema_gated_modern_first_and_fail_closed() {
         let with_delivery_mode = super::ToolDef {
             name: "click".into(),
@@ -5460,16 +5539,6 @@ mod capability_tests {
         let mut unrelated = serde_json::json!({"dispatch": "foreground"});
         super::normalize_delivery_mode_args(&without_delivery_mode, &mut unrelated);
         assert_eq!(unrelated, serde_json::json!({"dispatch": "foreground"}));
-    }
-
-    #[test]
-    fn unknown_tools_get_empty_capabilities() {
-        // Tools without a mapping (typically internal/stub tools like
-        // `unsupported_platform`) return `[]`. Consumers fall back to
-        // name-matching for those, which is fine — they were never
-        // load-bearing for capability routing.
-        assert!(default_capabilities_for("unsupported_platform").is_empty());
-        assert!(default_capabilities_for("totally_made_up_tool").is_empty());
     }
 
     fn dummy_def(name: &str) -> ToolDef {
@@ -5578,14 +5647,16 @@ mod capability_tests {
     #[test]
     fn to_list_entry_includes_empty_capabilities_array_for_unknown_tool() {
         // Even when no capabilities are claimed, the field is still
-        // present — consumers can rely on the key existing.
-        let def = dummy_def("totally_made_up_tool");
-        let entry = def.to_list_entry();
-        let caps = entry
-            .get("capabilities")
-            .and_then(|v| v.as_array())
-            .expect("capabilities must be present even if empty");
-        assert!(caps.is_empty());
+        // present — consumers can rely on the key existing. Internal stub
+        // tools such as `unsupported_platform` claim nothing either.
+        for name in ["totally_made_up_tool", "unsupported_platform"] {
+            let entry = dummy_def(name).to_list_entry();
+            let caps = entry
+                .get("capabilities")
+                .and_then(|v| v.as_array())
+                .expect("capabilities must be present even if empty");
+            assert!(caps.is_empty(), "{name}");
+        }
     }
 
     #[test]

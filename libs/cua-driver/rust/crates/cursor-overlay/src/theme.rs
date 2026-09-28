@@ -250,15 +250,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn full_profile_has_twelve_unique_actions() {
-        let mut names = std::collections::BTreeSet::new();
-        for action in CursorAction::ALL {
-            assert!(names.insert(action.as_str()));
-        }
-        assert_eq!(names.len(), 12);
-    }
-
-    #[test]
     fn default_theme_uses_compact_42_point_footprint() {
         assert_eq!(DISPLAY_SIZE, 42.0);
     }

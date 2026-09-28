@@ -14,9 +14,16 @@ authority remain in Driver, and a region-derived pixel click must carry the
 same one-use `capture_id` as the observation.
 
 See the [extension and runtime contract](docs/perception-extension.md) for
-installation, failure, capture, and action boundaries. Review the [third-party
-notices](docs/perception-third-party-notices.md) before distributing the
-separate worker, model, or ONNX Runtime artifacts.
+installation, failure, capture, and action boundaries.
+
+> [!WARNING]
+> The extension is not MIT licensed. Its OmniParser icon detector is
+> AGPL-3.0-only. Installing the extension does not change the Driver's MIT
+> license. However, redistributing the extension, or offering it to users over a
+> network, can require you to provide the AGPL corresponding source. If your
+> organization does not accept AGPL components, do not install the extension.
+> Read the [third-party notices and precautions](docs/perception-third-party-notices.md)
+> before you install, redistribute, or host it.
 
 For offline inspection of an existing PNG, the CLI also provides a local-only
 mode:
@@ -98,11 +105,12 @@ reference](https://cua.ai/docs/reference/cua-driver/permission-modes).
 | `contract/`                     | Experimental generated SDK contract and fixtures                       |
 | `typescript/`                   | Generated TypeScript SDK                                               |
 | `tests/fixtures/`               | Source-built GUI harness apps and shared fixtures                      |
-| `rust/crates/cua-driver/tests/` | Rust integration tests for the driver and GUI harnesses                |
+| `rust/crates/cua-driver/tests/` | Hermetic Rust integration tests for the driver                         |
+| `rust/crates/cua-driver-e2e/tests/` | Desktop E2E suites for the GUI harnesses                       |
 | `scripts/`                      | Install, uninstall, local build, and VM sync helpers                   |
 | `docs/`                         | Small repo-local specs that are not part of the hosted docs site       |
 
-Start with `rust/README.md`, `rust/crates/cua-driver/tests/README.md`, and
+Start with `rust/README.md`, `rust/crates/cua-driver-e2e/tests/README.md`, and
 `tests/fixtures/README.md` when changing driver behavior or tests.
 
 The contract-first SDK architecture is documented in

@@ -45,7 +45,7 @@ use super::platform::{
     BrowserVisualActionKind, ExistingProfileSetupRequest,
 };
 use super::prepare::ManagedBrowsers;
-use super::reconnect::ReconnectGates;
+use super::reconnect::{ReconnectGates, ReconnectKey};
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::semantic::{
     build_dom_index, build_layout_index, compose_accessibility_tree, parse_viewport,
@@ -835,7 +835,10 @@ impl BrowserEngine {
         // socket rather than opening another browser-level connection.
         let _leader = self
             .reconnect_gates
-            .lock(&grant.fingerprint, &grant.endpoint_ws_url)
+            .lock(ReconnectKey::new(
+                &grant.fingerprint,
+                &grant.endpoint_ws_url,
+            ))
             .await;
         let mut grant = self
             .existing_profile_grant(session, transport_session, pid)
@@ -2555,10 +2558,11 @@ impl BrowserEngine {
                 OopifStatus::Unsupported
             };
             let next_offset = page.next_offset;
+            let title = document.document_title().unwrap_or(&tab.title).to_owned();
             let (outcome, new_refs) = self.semantic_outcome(
                 snapshot.id,
                 snapshot.url.clone(),
-                tab.title,
+                title,
                 page,
                 document.complete,
                 "continuation",
@@ -2627,6 +2631,7 @@ impl BrowserEngine {
             .collect_semantic_session(&conn, &cdp_session, &document, local_tree.as_ref(), None)
             .await?;
         semantic.complete &= document_complete;
+        let title = semantic.document_title().unwrap_or(&tab.title).to_owned();
 
         let oopif = if local_tree.is_some() {
             match self.attached_iframe_children(&conn, &cdp_session).await {
@@ -2722,7 +2727,7 @@ impl BrowserEngine {
         let (outcome, refs) = self.semantic_outcome(
             snapshot_id,
             url.clone(),
-            tab.title.clone(),
+            title.clone(),
             page,
             semantic.complete,
             scope,
@@ -2733,6 +2738,8 @@ impl BrowserEngine {
         self.store
             .update_target(session, target_id, |stored_target| {
                 if let Some(stored_tab) = stored_target.tabs.get_mut(tab_id) {
+                    stored_tab.url = url.clone();
+                    stored_tab.title = title;
                     let mut continuations = HashMap::new();
                     if let (Some(token), Some(offset)) = (continuation_token, next_offset) {
                         continuations.insert(

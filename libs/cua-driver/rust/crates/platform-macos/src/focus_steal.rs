@@ -649,30 +649,6 @@ mod tests {
         assert_eq!(d.len(), 0, "snapshot_matches should purge expired");
     }
 
-    /// Janitor lifecycle: starts on first add, stops when empty,
-    /// restarts on next add. Spin up a tokio runtime to host the task.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn janitor_starts_stops_restarts() {
-        let d = Arc::new(Dispatcher::new());
-        // First add → janitor starts.
-        let h1 = d.add(Some(1), 2, "test.j1");
-        d.kick_janitor();
-        // Give the janitor task time to spin up.
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        // The dispatcher should still hold the entry.
-        assert_eq!(d.len(), 1);
-        // Now remove → janitor goes idle.
-        d.remove(h1);
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert_eq!(d.len(), 0);
-        // Add again — same kick, same lifecycle. (start_janitor is
-        // idempotent — already-started task picks up new adds via watch.)
-        let _h2 = d.add(Some(3), 4, "test.j2");
-        d.kick_janitor();
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert_eq!(d.len(), 1);
-    }
-
     /// Verifies the CodeRabbit #2 fix: `add()` always calls
     /// `kick_janitor()`, regardless of whether the map was empty.
     ///

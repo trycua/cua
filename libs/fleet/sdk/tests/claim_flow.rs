@@ -35,6 +35,7 @@ async fn creates_pending_demand_immediately_for_a_nonzero_unavailable_pool() {
                 spec: Some(spec.clone()),
                 name: None,
                 labels: None,
+                secret_files: None,
             })
             .await
             .unwrap(),
@@ -64,6 +65,7 @@ async fn create_claim_defaults_missing_bind_deadline_to_900_seconds() {
             }),
             name: None,
             labels: None,
+            secret_files: None,
         })
         .await
         .unwrap();
@@ -90,6 +92,7 @@ async fn create_claim_preserves_explicit_bind_deadline() {
             spec: Some(spec),
             name: None,
             labels: None,
+            secret_files: None,
         })
         .await
         .unwrap();
@@ -115,6 +118,7 @@ async fn zero_and_nonzero_pools_post_a_single_claim_create() {
                 spec: None,
                 name: None,
                 labels: None,
+                secret_files: None,
             })
             .await
             .unwrap();
@@ -221,6 +225,7 @@ async fn create_claim_uses_a_client_supplied_name_verbatim() {
             spec: Some(spec.clone()),
             name: Some("claim-1".into()),
             labels: None,
+            secret_files: None,
         })
         .await
         .unwrap();
@@ -243,6 +248,7 @@ async fn create_claim_rejects_an_invalid_client_supplied_name_before_any_request
                 spec: None,
                 name: Some("Not A DNS Label".into()),
                 labels: None,
+                secret_files: None,
             })
             .await,
         Err(SdkError::InvalidResourceName { .. })
@@ -342,12 +348,14 @@ async fn generated_claim_names_are_unique_under_concurrency_and_fit_dns_labels()
             spec: Some(claim_spec("short-template")),
             name: None,
             labels: None,
+            secret_files: None,
         }),
         client.create_claim(CreateClaimRequest {
             pool,
             spec: Some(claim_spec("short-template")),
             name: None,
             labels: None,
+            secret_files: None,
         }),
     );
     assert!(first.is_ok());
@@ -388,6 +396,7 @@ async fn validation_and_malformed_responses_fail_without_unexpected_http() {
                 spec: None,
                 name: None,
                 labels: None,
+                secret_files: None,
             })
             .await,
         Err(SdkError::InvalidResourceName { .. })
@@ -596,6 +605,7 @@ async fn default_template_ref_for_a_63_byte_pool_passes_through_without_dns_vali
             spec: None,
             name: None,
             labels: None,
+            secret_files: None,
         })
         .await
         .unwrap();
@@ -623,6 +633,7 @@ async fn explicit_non_dns_template_ref_passes_through_but_empty_ref_is_rejected_
             spec: Some(claim_spec(template_name)),
             name: None,
             labels: None,
+            secret_files: None,
         })
         .await
         .unwrap();
@@ -639,6 +650,7 @@ async fn explicit_non_dns_template_ref_passes_through_but_empty_ref_is_rejected_
                 spec: Some(claim_spec("")),
                 name: None,
                 labels: None,
+                secret_files: None,
             })
             .await,
         Err(SdkError::Configuration { .. })
@@ -706,4 +718,208 @@ async fn wait_claim_rejects_invalid_claim_identity_before_token_or_pool_lookup()
         Err(SdkError::InvalidResourceName { .. })
     ));
     assert_eq!(http.request_count().await, 0);
+}
+
+const SECRET_COLLECTION: &str =
+    "https://cyclops.example:8443/prefix/api/k8s/api/v1/namespaces/example-pool/secrets";
+const ENV_TOKEN_VALUE: &str = "env-token-value-must-not-leak";
+
+fn env_token_files() -> std::collections::HashMap<String, String> {
+    [(
+        cyclops_sdk::claim_env_token_key(),
+        ENV_TOKEN_VALUE.to_string(),
+    )]
+    .into()
+}
+
+fn secret_claim_request(files: std::collections::HashMap<String, String>) -> CreateClaimRequest {
+    CreateClaimRequest {
+        pool: pool(1),
+        spec: None,
+        name: Some("secret-claim".into()),
+        labels: None,
+        secret_files: Some(files),
+    }
+}
+
+#[tokio::test]
+async fn create_claim_with_secret_files_creates_the_secret_first_and_references_it() {
+    let mut spec = claim_spec("example-pool-template");
+    spec.secret_ref = Some(cyclops_sdk::ClaimSecretRef {
+        name: "cua-claim-secret-claim".into(),
+    });
+    let created = claim("secret-claim", spec, None);
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(201, &serde_json::json!({}))),
+        Ok(json_response(201, &created)),
+    ]));
+
+    assert_eq!(
+        client(Arc::clone(&http), 1, 1)
+            .create_claim(secret_claim_request(env_token_files()))
+            .await
+            .unwrap(),
+        created
+    );
+
+    let requests = http.authenticated_requests().await;
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].method, "POST");
+    assert_eq!(requests[0].url, SECRET_COLLECTION);
+    let secret: serde_json::Value =
+        serde_json::from_slice(requests[0].body.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        secret,
+        serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {
+                "name": "cua-claim-secret-claim",
+                "namespace": NAMESPACE,
+                "labels": { "osgym.cua.ai/claim": "secret-claim" },
+            },
+            "type": "Opaque",
+            "stringData": { "env-token": ENV_TOKEN_VALUE },
+        })
+    );
+
+    assert_eq!(requests[1].method, "POST");
+    assert_eq!(requests[1].url, CLAIM_COLLECTION);
+    let claim_body = requests[1].body.as_deref().unwrap();
+    let claim_json: serde_json::Value = serde_json::from_slice(claim_body).unwrap();
+    assert_eq!(
+        claim_json["spec"]["secretRef"],
+        serde_json::json!({ "name": "cua-claim-secret-claim" })
+    );
+    assert!(
+        !String::from_utf8_lossy(claim_body).contains(ENV_TOKEN_VALUE),
+        "the claim body must reference the Secret, never carry its value"
+    );
+}
+
+#[tokio::test]
+async fn failed_claim_create_deletes_the_orphaned_secret_and_returns_the_claim_error() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(201, &serde_json::json!({}))),
+        Ok(response(403, b"k8s request is not allowed")),
+        Ok(response(200, b"{}")),
+    ]));
+
+    let error = client(Arc::clone(&http), 1, 1)
+        .create_claim(secret_claim_request(env_token_files()))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, SdkError::Status { operation, status: 403, .. } if operation == "create claim"),
+        "{error:?}"
+    );
+
+    let requests = http.authenticated_requests().await;
+    assert_eq!(requests.len(), 3);
+    assert_request(
+        &requests[2],
+        "DELETE",
+        &format!("{SECRET_COLLECTION}/cua-claim-secret-claim"),
+        None,
+    );
+}
+
+#[tokio::test]
+async fn an_existing_claim_secret_is_not_overwritten_and_no_claim_is_created() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(409, b"already exists")),
+    ]));
+
+    let error = client(Arc::clone(&http), 1, 1)
+        .create_claim(secret_claim_request(env_token_files()))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, SdkError::Status { status: 409, .. }),
+        "{error:?}"
+    );
+    assert_eq!(http.authenticated_requests().await.len(), 1);
+}
+
+#[tokio::test]
+async fn delete_claim_also_deletes_its_claim_secret() {
+    let mut spec = claim_spec("example-pool-template");
+    spec.secret_ref = Some(cyclops_sdk::ClaimSecretRef {
+        name: "cua-claim-secret-claim".into(),
+    });
+    let current = claim("secret-claim", spec, None);
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(200, b"{}")),
+        Ok(response(404, b"not found")),
+    ]));
+
+    client(Arc::clone(&http), 1, 1)
+        .delete_claim(current)
+        .await
+        .unwrap();
+
+    let requests = http.authenticated_requests().await;
+    assert_eq!(requests.len(), 2);
+    assert_request(
+        &requests[0],
+        "DELETE",
+        &format!("{CLAIM_COLLECTION}/secret-claim"),
+        None,
+    );
+    assert_request(
+        &requests[1],
+        "DELETE",
+        &format!("{SECRET_COLLECTION}/cua-claim-secret-claim"),
+        None,
+    );
+}
+
+#[tokio::test]
+async fn invalid_secret_file_names_and_conflicting_refs_fail_before_any_request() {
+    for key in ["", ".", "..", "a/b", "sp ace", &"k".repeat(254)] {
+        let http = Arc::new(ScriptedHttpClient::new([]));
+        let error = client(Arc::clone(&http), 1, 1)
+            .create_claim(secret_claim_request(
+                [(key.to_string(), "v".to_string())].into(),
+            ))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, SdkError::Configuration { .. }),
+            "{key:?}: {error:?}"
+        );
+        assert!(http.authenticated_requests().await.is_empty());
+    }
+
+    let mut request = secret_claim_request(env_token_files());
+    let mut spec = claim_spec("example-pool-template");
+    spec.secret_ref = Some(cyclops_sdk::ClaimSecretRef {
+        name: "cua-claim-other".into(),
+    });
+    request.spec = Some(spec);
+    let http = Arc::new(ScriptedHttpClient::new([]));
+    let error = client(Arc::clone(&http), 1, 1)
+        .create_claim(request)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, SdkError::Configuration { .. }), "{error:?}");
+    assert!(http.authenticated_requests().await.is_empty());
+}
+
+#[test]
+fn create_claim_request_debug_and_serialization_redact_secret_values() {
+    let request = secret_claim_request(env_token_files());
+    let debug = format!("{request:?}");
+    assert!(debug.contains("env-token"), "{debug}");
+    assert!(!debug.contains(ENV_TOKEN_VALUE), "{debug}");
+    let json = serde_json::to_string(&request).unwrap();
+    assert!(!json.contains(ENV_TOKEN_VALUE), "{json}");
+    assert_eq!(
+        cyclops_sdk::claim_env_token_key(),
+        cyclops_sdk::CLAIM_ENV_TOKEN_KEY
+    );
 }

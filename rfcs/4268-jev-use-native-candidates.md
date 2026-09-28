@@ -853,7 +853,7 @@ Phase 3 live evidence (released Driver 0.30.2, cua-perception 0.2.1,
 - Live Jev passed 5/5 in every native row (AppKit, WPF, GTK3 × three tasks
   × Python and TypeScript) except GTK3 `save-note`, blocked by #4291 until
   Driver 0.30.3 ships.
-- S1 missed six of 120 native runs: three `counter` runs where it abstained
+- S1 missed six of 82 native runs: three `counter` runs where it abstained
   after two increments (the value-free request makes it count from history),
   two macOS `save-note` runs where it pressed Save before typing, and one
   service error.

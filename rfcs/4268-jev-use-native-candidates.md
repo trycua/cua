@@ -3,12 +3,14 @@ title: Native accessibility candidates for jev-use decision loops
 authors:
   - f-trycua
 created: 2026-09-27
-last_updated: 2026-09-27
-status: review
+last_updated: 2026-09-28
+status: accepted
 discussion: https://github.com/trycua/cua/issues/4268
 rfc_pr: https://github.com/trycua/cua/pull/4269
 implementation:
   - https://github.com/trycua/cua/issues/4268
+  - https://github.com/trycua/cua/pull/4270
+  - https://github.com/trycua/cua/pull/4288
 supersedes:
 superseded_by:
 ---
@@ -758,6 +760,55 @@ TypeScript parity in the same change.
 
 ## Decision record
 
-Pending review. The review period should remain open for at least seven
-calendar days, because this RFC changes a model contract and authorization
-behavior across three platforms.
+**Accepted** on 2026-09-28. The maintainer decision summary is in
+[#4268](https://github.com/trycua/cua/issues/4268). The review window was
+shortened at the maintainer's direction because the change is additive and
+confined to the jev-use example layer: the browser path and its
+`cua.jev_choice_request_v1` traffic are unchanged, and every phase is gated by
+deterministic CI.
+
+Accepted changes from code review, reflected above: one `get_window_state`
+observation per step feeds both native and visual candidates; a truncated tree
+triggers a reobserve, never an OmniParser fallback; the native source owns a
+tested per-platform role table; a label equal to the element's value counts as
+unlabeled; `in_web_content` elements are excluded; per-candidate `source`
+ships in `cua.jev_choice_request_v2`; about 24 action candidates fit S1's
+26-option limit with `reobserve` and `abstain`.
+
+Rejected alternatives: visual-only candidates everywhere, model-emitted tool
+calls or coordinates, and candidate construction inside Cua Driver.
+
+Remaining risks: Jev and S1 accuracy with larger candidate sets, S1 accuracy on
+native applications, per-step latency on large trees, and misleading
+accessibility values in Electron and Catalyst applications.
+
+Implementation:
+
+- Phase 0, [#4270](https://github.com/trycua/cua/pull/4270): candidate sources
+  and the task spec, with no behavior change.
+- Phase 1, [#4288](https://github.com/trycua/cua/pull/4288): the native source,
+  role table, `cua.jev_choice_request_v2`, and AppKit tasks with the mock
+  provider in the macOS CI job. Phase 1 finalized these details:
+  - The role classes are `button`, `toggle`, `checkbox`, `radio`, `popup`,
+    `menu_item`, `link`, and `text_input` (called `text_entry` in the draft
+    table). Each platform table is keyed by the output of Driver's
+    `normalized_role`, so raw roles that `verify_state` treats as equal always
+    share a class. `AXSwitch` and AT-SPI `toggle button`/`switch` map to
+    `toggle`; Windows has no `toggle` row yet.
+  - The macOS adapter always reports `elements_complete: false`, because
+    Driver cannot yet prove absence over the actionable projection. Partial
+    trees still produce candidates. A truncated tree, or a partial tree with no
+    native candidate, is observed once more with a larger `timeout_ms`. The
+    visual fallback is used only when Driver reports `ax_tree_empty` or a
+    complete tree lacks the target. On macOS this means only an empty tree
+    reaches OmniParser today.
+  - A radio option that is already selected is not offered, and a `set_text`
+    candidate is offered only while the field differs from its parameter.
+  - `close_unsaved` matches its phrases whether or not the window reports
+    unsaved state, because Driver does not expose that state.
+  - The AppKit harness gained an opt-in `CUA_APPKIT_TASK_STATE` mode with a
+    labeled Note field, a Save button, Small/Medium/Large radio buttons, and an
+    app-owned JSON state file that serves as the oracle. Ordinary launches are
+    unchanged. The Phase 1 tasks use radio buttons in place of a pop-up
+    button, because an open AppKit menu runs a modal tracking loop that is not
+    deterministic for background CI.

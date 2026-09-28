@@ -63,6 +63,9 @@ struct DisplayMonitor {
     disabled: bool,
     #[serde(rename = "dpmsStatus", default = "powered_by_default")]
     dpms_status: bool,
+    /// Name of the output this one mirrors, or `"none"`.
+    #[serde(rename = "mirrorOf", default)]
+    mirror_of: String,
 }
 
 fn powered_by_default() -> bool {
@@ -70,9 +73,15 @@ fn powered_by_default() -> bool {
 }
 
 impl DisplayMonitor {
-    /// Enabled and not in DPMS standby: the user can actually see it.
+    /// A mirror repeats another output's content and has no area of its own
+    /// in the layout.
+    fn in_layout(&self) -> bool {
+        !self.disabled && matches!(self.mirror_of.as_str(), "" | "none")
+    }
+
+    /// In the layout and not in DPMS standby: the user can actually see it.
     fn powered(&self) -> bool {
-        !self.disabled && self.dpms_status
+        self.in_layout() && self.dpms_status
     }
 
     /// The output mode divided by its scale, rounded as Hyprland rounds its
@@ -103,8 +112,7 @@ impl DisplayMonitor {
     }
 }
 
-/// One powered output inside the desktop frame: its logical rectangle in
-/// Hyprland layout coordinates.
+/// One output's logical rectangle in Hyprland layout coordinates.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FrameOutput {
     pub name: String,
@@ -126,7 +134,8 @@ pub struct DesktopFrame {
     pub y: i32,
     pub width: u32,
     pub height: u32,
-    /// Output scale reported with the frame.
+    /// Output scale reported with the frame: the largest scale among its
+    /// outputs, so a single output reports its own scale.
     pub scale: f64,
     pub outputs: Vec<FrameOutput>,
 }
@@ -419,22 +428,25 @@ fn screen_size_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<(u32, u32,
     Ok((frame.width, frame.height, frame.scale))
 }
 
-/// Every enabled monitor with its power state, for agents that need to know
-/// which displays are actually on. Positions are relative to the desktop
-/// frame when powered; `None` for monitors outside it (standby).
+/// Every monitor in the layout with its power state and scale, for agents
+/// that need to know which displays are actually on. Sizes and positions are
+/// desktop-frame (logical) pixels; positions are `None` for monitors outside
+/// the frame (standby). Mirrors are omitted: they repeat another output.
 pub fn monitor_report() -> Result<serde_json::Value> {
     let monitors: Vec<DisplayMonitor> = query("j/monitors")?;
     let frame = desktop_frame_from_monitors(monitors.clone())?;
     Ok(serde_json::Value::Array(
         monitors
             .iter()
-            .filter(|m| !m.disabled)
+            .filter(|m| m.in_layout())
             .map(|m| {
+                let size = m.logical_size().ok();
                 let (fx, fy) = frame.from_layout(m.x, m.y);
                 serde_json::json!({
                     "name": m.name,
-                    "width": m.width,
-                    "height": m.height,
+                    "width": size.map(|(width, _)| width),
+                    "height": size.map(|(_, height)| height),
+                    "scale": m.scale,
                     "powered": m.powered(),
                     "frame_x": m.powered().then_some(fx),
                     "frame_y": m.powered().then_some(fy),
@@ -462,26 +474,28 @@ fn desktop_frame_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<DesktopF
         if monitor.transform != 0 {
             bail!("Hyprland display identity requires unrotated outputs");
         }
-        let (width, height) = monitor.logical_size()?;
-        if powered.len() > 1 && monitor.scale != 1.0 {
-            bail!("Hyprland display identity requires unscaled outputs when several are powered");
-        }
-        outputs.push(FrameOutput {
-            name: monitor.name.clone(),
-            x: monitor.x,
-            y: monitor.y,
-            width,
-            height,
-        });
+        outputs.push(frame_output(monitor)?);
     }
     let (x, y, width, height) = bounding_box(&outputs)?;
+    let scale = powered.iter().map(|m| m.scale).fold(f64::MIN, f64::max);
     Ok(DesktopFrame {
         x,
         y,
         width,
         height,
-        scale: powered[0].scale,
+        scale,
         outputs,
+    })
+}
+
+fn frame_output(monitor: &DisplayMonitor) -> Result<FrameOutput> {
+    let (width, height) = monitor.logical_size()?;
+    Ok(FrameOutput {
+        name: monitor.name.clone(),
+        x: monitor.x,
+        y: monitor.y,
+        width,
+        height,
     })
 }
 
@@ -516,26 +530,20 @@ fn bounding_box(outputs: &[FrameOutput]) -> Result<(i32, i32, u32, u32)> {
 }
 
 /// Hyprland maps absolute virtual-pointer motion across the bounding box of
-/// every enabled output's logical rectangle; DPMS standby does not change the
-/// layout. Returns `(x, y, width, height)` of that box in layout coordinates.
+/// every enabled, unmirrored output's logical rectangle; DPMS standby does
+/// not change the layout. Returns `(x, y, width, height)` of that box in
+/// layout coordinates.
 pub fn pointer_layout() -> Result<(i32, i32, u32, u32)> {
     pointer_layout_from_monitors(query("j/monitors")?)
 }
 
 fn pointer_layout_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<(i32, i32, u32, u32)> {
     let mut outputs = Vec::new();
-    for monitor in monitors.into_iter().filter(|m| !m.disabled) {
+    for monitor in monitors.iter().filter(|m| m.in_layout()) {
         if monitor.transform != 0 {
             bail!("Hyprland pointer layout requires unrotated outputs");
         }
-        let (width, height) = monitor.logical_size()?;
-        outputs.push(FrameOutput {
-            name: monitor.name,
-            x: monitor.x,
-            y: monitor.y,
-            width,
-            height,
-        });
+        outputs.push(frame_output(monitor)?);
     }
     bounding_box(&outputs)
 }
@@ -551,47 +559,85 @@ pub fn cursor_position() -> Result<(i32, i32)> {
     Ok((pos.x.round() as i32, pos.y.round() as i32))
 }
 
-/// Capture the desktop frame: each powered output is copied with `grim -o`
-/// and placed at its layout offset. Areas no powered output covers stay
-/// black. The image is exactly `frame.width` x `frame.height`.
-pub fn capture_desktop_frame_png() -> Result<Vec<u8>> {
-    let frame = desktop_frame()?;
-    let capture = |name: &str| -> Result<Vec<u8>> {
-        let out = std::process::Command::new("grim")
-            .args(["-t", "png", "-o", name, "-"])
-            .output()
-            .context("grim is required for Hyprland desktop capture")?;
-        if !out.status.success() || out.stdout.is_empty() {
-            bail!(
-                "grim could not capture output {name}: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
+/// Desktop capture for layouts the generic capture cannot represent. With a
+/// single output this returns `None` and the caller keeps its capture
+/// cascade, whose buffer is that output. With several outputs the generic
+/// capture would copy only the first one, so each powered output is copied
+/// with `grim -o`, scaled to its logical size, and placed at its layout
+/// offset. Areas no powered output covers stay black. The image is exactly
+/// the desktop frame.
+pub fn composite_desktop_capture() -> Option<Result<Vec<u8>>> {
+    let monitors: Vec<DisplayMonitor> = match query("j/monitors") {
+        Ok(monitors) => monitors,
+        Err(error) => {
+            tracing::debug!("Hyprland desktop capture keeps the generic path: {error:#}");
+            return None;
         }
-        Ok(out.stdout)
     };
-    if let [only] = frame.outputs.as_slice() {
-        return capture(&only.name);
+    if monitors.len() <= 1 {
+        return None;
     }
+    Some(desktop_frame_from_monitors(monitors).and_then(|frame| {
+        let canvas = compose_frame(&frame, |output| {
+            let png = capture_output_png(&output.name)?;
+            Ok(image::load_from_memory_with_format(&png, image::ImageFormat::Png)?.to_rgba8())
+        })?;
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(canvas).write_to(&mut encoded, image::ImageFormat::Png)?;
+        Ok(encoded.into_inner())
+    }))
+}
+
+fn capture_output_png(name: &str) -> Result<Vec<u8>> {
+    // The PNG is decoded right away, so skip compression.
+    let out = std::process::Command::new("grim")
+        .args(["-t", "png", "-l", "0", "-o", name, "-"])
+        .output()
+        .context("grim is required for multi-monitor Hyprland desktop capture")?;
+    if !out.status.success() || out.stdout.is_empty() {
+        bail!(
+            "grim could not capture output {name}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    Ok(out.stdout)
+}
+
+/// Place each output's capture at its logical rectangle inside the frame. A
+/// scaled output's capture is resized to its logical size, which must be a
+/// uniform scaling of the captured image.
+fn compose_frame(
+    frame: &DesktopFrame,
+    mut capture: impl FnMut(&FrameOutput) -> Result<image::RgbaImage>,
+) -> Result<image::RgbaImage> {
     let mut canvas = image::RgbaImage::new(frame.width, frame.height);
     for output in &frame.outputs {
-        let png = capture(&output.name)?;
-        let image = image::load_from_memory_with_format(&png, image::ImageFormat::Png)?.to_rgba8();
-        if image.width() != output.width || image.height() != output.height {
-            bail!(
-                "output {} captured at {}x{}, expected {}x{}",
-                output.name,
-                image.width(),
-                image.height(),
+        let mut image = capture(output)?;
+        if (image.width(), image.height()) != (output.width, output.height) {
+            let scale_x = f64::from(image.width()) / f64::from(output.width);
+            let scale_y = f64::from(image.height()) / f64::from(output.height);
+            if (scale_x - scale_y).abs() > 0.01 {
+                bail!(
+                    "output {} captured at {}x{}, which does not scale uniformly to its {}x{} \
+                     logical size",
+                    output.name,
+                    image.width(),
+                    image.height(),
+                    output.width,
+                    output.height
+                );
+            }
+            image = image::imageops::resize(
+                &image,
                 output.width,
-                output.height
+                output.height,
+                image::imageops::FilterType::Lanczos3,
             );
         }
         let (left, top) = frame.from_layout(output.x, output.y);
         image::imageops::replace(&mut canvas, &image, i64::from(left), i64::from(top));
     }
-    let mut encoded = std::io::Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgba8(canvas).write_to(&mut encoded, image::ImageFormat::Png)?;
-    Ok(encoded.into_inner())
+    Ok(canvas)
 }
 
 pub fn list_windows() -> Result<Vec<Window>> {
@@ -1215,6 +1261,139 @@ mod tests {
             desktop_frame_from_monitors(vec![monitor_at("A", -1920, 0), right_off]).unwrap();
         assert_eq!((frame.x, frame.width), (-1920, 1920));
         assert!(desktop_frame_from_monitors(vec![off]).is_err());
+    }
+
+    /// #4161: a laptop panel with a second monitor stacked above it, so the
+    /// top output sits at a negative layout offset.
+    fn stacked_outputs() -> Vec<DisplayMonitor> {
+        vec![monitor_at("eDP-1", 0, 0), monitor_at("HDMI-A-1", 0, -1080)]
+    }
+
+    #[test]
+    fn desktop_frame_spans_outputs_stacked_at_a_negative_offset() {
+        let frame = desktop_frame_from_monitors(stacked_outputs()).unwrap();
+        assert_eq!(
+            (frame.x, frame.y, frame.width, frame.height, frame.scale),
+            (0, -1080, 1920, 2160, 1.0)
+        );
+        assert_eq!(frame.from_layout(0, -1080), (0, 0));
+        assert_eq!(frame.from_layout(0, 0), (0, 1080));
+        assert_eq!(frame.to_layout(960, 540), (960, -540));
+        assert_eq!(
+            pointer_layout_from_monitors(stacked_outputs()).unwrap(),
+            (0, -1080, 1920, 2160)
+        );
+    }
+
+    #[test]
+    fn desktop_frame_mixes_output_scales_in_logical_pixels() {
+        let mut laptop = scaled_monitor(2160, 1350, 1.6666666);
+        laptop.name = "eDP-1".into();
+        let mut external = monitor_at("DP-1", 1296, 0);
+        (external.width, external.height) = (2560, 1440);
+        let frame = desktop_frame_from_monitors(vec![laptop.clone(), external.clone()]).unwrap();
+        assert_eq!(
+            (frame.x, frame.y, frame.width, frame.height),
+            (0, 0, 3856, 1440)
+        );
+        assert_eq!(frame.scale, 1.6666666);
+        assert_eq!(
+            frame
+                .outputs
+                .iter()
+                .map(|o| (o.name.as_str(), o.x, o.width, o.height))
+                .collect::<Vec<_>>(),
+            [("eDP-1", 0, 1296, 810), ("DP-1", 1296, 2560, 1440)]
+        );
+        assert_eq!(
+            pointer_layout_from_monitors(vec![laptop, external]).unwrap(),
+            (0, 0, 3856, 1440)
+        );
+    }
+
+    #[test]
+    fn mirrored_outputs_have_no_area_in_the_frame_or_pointer_layout() {
+        let mut mirror = monitor_at("HDMI-A-1", 1920, 0);
+        mirror.mirror_of = "eDP-1".into();
+        let monitors = vec![monitor_at("eDP-1", 0, 0), mirror];
+        let frame = desktop_frame_from_monitors(monitors.clone()).unwrap();
+        assert_eq!(
+            (frame.width, frame.height, frame.outputs.len()),
+            (1920, 1080, 1)
+        );
+        assert_eq!(
+            pointer_layout_from_monitors(monitors).unwrap(),
+            (0, 0, 1920, 1080)
+        );
+    }
+
+    #[test]
+    fn pointer_layout_keeps_outputs_in_standby() {
+        let mut standby = monitor_at("HDMI-A-1", 0, -1080);
+        standby.dpms_status = false;
+        let monitors = vec![monitor_at("eDP-1", 0, 0), standby];
+        let frame = desktop_frame_from_monitors(monitors.clone()).unwrap();
+        assert_eq!((frame.y, frame.height), (0, 1080));
+        assert_eq!(
+            pointer_layout_from_monitors(monitors).unwrap(),
+            (0, -1080, 1920, 2160)
+        );
+    }
+
+    /// A desktop-frame point must land on the same layout point after the
+    /// pointer maps `abs / extent` across its layout box.
+    #[test]
+    fn frame_points_reach_the_pointer_layout_at_a_negative_offset() {
+        let frame = desktop_frame_from_monitors(stacked_outputs()).unwrap();
+        let layout = pointer_layout_from_monitors(stacked_outputs()).unwrap();
+        let (origin_x, origin_y, extent_w, extent_h) =
+            super::super::select_virtual_pointer_space((1920, 1080), Some(layout));
+        for point in [(0, 0), (10, 80), (960, 1079), (960, 1080), (1919, 2159)] {
+            let (layout_x, layout_y) = frame.to_layout(point.0, point.1);
+            let (abs_x, abs_y) = super::super::pointer_abs(
+                origin_x, origin_y, extent_w, extent_h, layout_x, layout_y,
+            );
+            let landed = (
+                layout.0
+                    + (f64::from(abs_x) / f64::from(extent_w) * f64::from(layout.2)).round() as i32,
+                layout.1
+                    + (f64::from(abs_y) / f64::from(extent_h) * f64::from(layout.3)).round() as i32,
+            );
+            assert_eq!(landed, (layout_x, layout_y), "frame point {point:?}");
+        }
+    }
+
+    #[test]
+    fn composed_frame_places_each_output_at_its_logical_rectangle() {
+        let red = image::Rgba([255, 0, 0, 255]);
+        let blue = image::Rgba([0, 0, 255, 255]);
+        let mut panel = monitor_at("panel", 0, 0);
+        (panel.width, panel.height) = (2, 2);
+        // A scale-2 output stacked above the panel: its physical 4x4 capture
+        // covers a 2x2 logical rectangle and must not spill onto the panel.
+        let mut above = scaled_monitor(4, 4, 2.0);
+        (above.name, above.y) = ("above".into(), -2);
+        let frame = desktop_frame_from_monitors(vec![panel, above]).unwrap();
+        let canvas = compose_frame(&frame, |output| {
+            Ok(match output.name.as_str() {
+                "above" => image::RgbaImage::from_pixel(4, 4, red),
+                _ => image::RgbaImage::from_pixel(2, 2, blue),
+            })
+        })
+        .unwrap();
+        assert_eq!(canvas.dimensions(), (2, 4));
+        for x in 0..2 {
+            assert_eq!(*canvas.get_pixel(x, 0), red);
+            assert_eq!(*canvas.get_pixel(x, 1), red);
+            assert_eq!(*canvas.get_pixel(x, 2), blue);
+            assert_eq!(*canvas.get_pixel(x, 3), blue);
+        }
+
+        let error = compose_frame(&frame, |_| Ok(image::RgbaImage::new(4, 2))).unwrap_err();
+        assert!(
+            error.to_string().contains("does not scale uniformly"),
+            "{error}"
+        );
     }
 
     #[test]

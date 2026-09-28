@@ -1139,9 +1139,12 @@ fn crop_png_to_rect(
 /// 5. X11: existing root-window path.
 pub fn screenshot_display_dispatch() -> anyhow::Result<Vec<u8>> {
     if is_wayland() && hyprland::is_session() {
-        // The desktop action frame spans every powered output; capture exactly
-        // that frame so screenshot pixels and desktop actions agree.
-        return hyprland::capture_desktop_frame_png();
+        // The desktop action frame spans every powered output. The cascade
+        // below copies only the first output, so a multi-monitor layout is
+        // composed per output; a single output keeps the cascade.
+        if let Some(capture) = hyprland::composite_desktop_capture() {
+            return capture;
+        }
     }
     if is_wayland() {
         // Tier 1: the opt-in GNOME compositor helper. It avoids probing

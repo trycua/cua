@@ -28,6 +28,7 @@ import {
   windowStateArguments,
   type NativeTask,
 } from './native_tasks.js';
+import { chooseS1Service, s1ServiceUrl } from './s1_service.js';
 import { backgroundRefusalCode, Driver, DriverToolError, supportsCaptureBoundClick } from './run.js';
 import { NativeAccessibilitySource, VisualRegionSource } from './sources.js';
 import type { HistoryEntry, Outcome, TaskSources } from './tasks.js';
@@ -37,7 +38,7 @@ const REOBSERVE_TIMEOUT_MS = 5_000;
 
 type Arguments = {
   task: string;
-  provider: 'mock' | 'live';
+  provider: 'mock' | 'live' | 's1';
   pid: number;
   stateFile: string;
   noteText?: string;
@@ -69,7 +70,9 @@ export function parseArgs(argv: string[]): Arguments {
   if (!result.task || !NATIVE_TASK_IDS.includes(result.task)) {
     throw new Error(`--task must be one of ${NATIVE_TASK_IDS.join(', ')}`);
   }
-  if (result.provider !== 'mock' && result.provider !== 'live') throw new Error('--provider must be mock or live');
+  if (result.provider !== 'mock' && result.provider !== 'live' && result.provider !== 's1') {
+    throw new Error('--provider must be mock, live, or s1');
+  }
   if (!Number.isInteger(result.pid) || (result.pid as number) <= 0) throw new Error('--pid is required');
   if (!result.stateFile) throw new Error('--state-file is required');
   if (result.platform && !['macos', 'windows', 'linux'].includes(result.platform)) {
@@ -264,7 +267,9 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
       const decision =
         args.provider === 'mock'
           ? chooseMockForTask(task, sources, plan.candidates, history)
-          : await chooseLive(request);
+          : args.provider === 's1'
+            ? await chooseS1Service(request)
+            : await chooseLive(request);
       const baseEvent: Record<string, unknown> = {
         event: 'step',
         step,
@@ -343,6 +348,8 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = parseArgs(process.argv.slice(2));
+  // Fail before touching the app when the S1 service is not configured.
+  if (args.provider === 's1') s1ServiceUrl();
   const task = nativeTask(args.task, args.stateFile, {
     pid: args.pid,
     noteText: args.noteText,

@@ -43,6 +43,7 @@ from native_tasks import (
     native_choice_request,
     visual_fallback_reason,
 )
+from s1_service import choose_s1_service, s1_service_url
 from run import Driver, DriverToolError, background_refusal_code, supports_capture_bound_click
 from sources import NativeAccessibilitySource, VisualRegionSource
 from tasks import TaskSources
@@ -274,6 +275,8 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                     choice, confidence, probabilities = choose_mock_for_task(
                         task, sources, plan.candidates, history
                     )
+                elif args.provider == "s1":
+                    choice, confidence, probabilities = await asyncio.to_thread(choose_s1_service, request)
                 else:
                     choice, confidence, probabilities = await asyncio.to_thread(choose_live, request)
                 decide_ms = round((time.perf_counter() - decide_started) * 1000, 2)
@@ -352,7 +355,10 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task", choices=NATIVE_TASK_IDS, required=True)
-    parser.add_argument("--provider", choices=("mock", "live"), default="mock")
+    parser.add_argument(
+        "--provider", choices=("mock", "live", "s1"), default="mock",
+        help="s1 reads the loopback decide URL from CUA_S1_DECISION_URL",
+    )
     parser.add_argument("--pid", type=int, required=True, help="the running harness process")
     parser.add_argument("--state-file", required=True, help="the harness task-state file path")
     parser.add_argument("--note-text", help="note text for the save-note tasks")
@@ -371,6 +377,8 @@ def task_from_args(args: argparse.Namespace) -> NativeTask:
 
 def main() -> None:
     args = parse_args()
+    if args.provider == "s1":
+        s1_service_url()  # fail before touching the app when the service is not configured
     try:
         outcome = asyncio.run(run_task(args, task_from_args(args)))
     except (OracleError, NativeObservationError) as error:

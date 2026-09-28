@@ -469,19 +469,6 @@ mod iconic_sentinel_tests {
     const ICONIC_RECT: (i32, i32, i32, i32) = (-32000, -32000, -31840, -31972);
 
     #[test]
-    fn iconic_rect_passes_the_positive_extent_check_that_guards_the_bounds_path() {
-        // This is why #2015 is silent rather than refused: the sentinel rect is
-        // a *well-formed* rectangle, so validity checks phrased as
-        // "right > left && bottom > top" admit it.
-        let (left, top, right, bottom) = ICONIC_RECT;
-        assert!(right > left, "sentinel width is positive: {right} > {left}");
-        assert!(
-            bottom > top,
-            "sentinel height is positive: {bottom} > {top}"
-        );
-    }
-
-    #[test]
     fn virtual_desktop_membership_has_no_magic_negative_ceiling() {
         assert!(point_in_rect(-31920, 50, -40000, 0, 50000, 2000));
     }

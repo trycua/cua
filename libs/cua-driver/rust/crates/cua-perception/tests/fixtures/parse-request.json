@@ -1,0 +1,15 @@
+{
+  "protocol": "cua-perception/1",
+  "request_id": "fixture-parse-1",
+  "method": "parse",
+  "params": {
+    "capture_id": "synthetic-1x1",
+    "image": {
+      "media_type": "image/png",
+      "width": 1,
+      "height": 1,
+      "byte_length": 68,
+      "data_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    }
+  }
+}

@@ -42,7 +42,7 @@ func imagePolicyResponseWithContentTypes(t *testing.T, method, path, body string
 
 func TestImageTenantCRUD(t *testing.T) {
 	t.Cleanup(resetFlagsCache)
-	setCardAdmissionFlags(t, false)
+	setCardAdmissionFlags(t, false, "owner-a")
 	installCountingFacts(t, "tenant-a")
 	for _, principal := range []struct {
 		name string
@@ -80,7 +80,7 @@ func TestImageTenantCRUD(t *testing.T) {
 
 func TestImageMutationBillingAdmission(t *testing.T) {
 	t.Cleanup(resetFlagsCache)
-	setCardAdmissionFlags(t, true)
+	setCardAdmissionFlags(t, true, "admin")
 	installCountingFacts(t, "tenant-a")
 	stripe := &countingAdmissionFacts{cacheKey: StripeCardsFactProvider}
 	installAdmissionFacts(t, StripeCardsFactProvider, stripe)
@@ -92,6 +92,9 @@ func TestImageMutationBillingAdmission(t *testing.T) {
 	}{
 		{"user", &User{ID: "owner-a", AZP: "cua-cli"}},
 		{"github", &User{ID: "owner-a", PrincipalType: PrincipalTypeGitHubOIDC, AllowedNamespaces: []string{"tenant-a"}}},
+		{"admin-user", &User{ID: "admin", AZP: "cua-cli"}},
+		{"admin-user-key", &User{ID: "admin", AZP: "ukey-example", PrincipalType: PrincipalTypeUserKey}},
+		{"admin-github", &User{ID: "admin", PrincipalType: PrincipalTypeGitHubOIDC, AllowedNamespaces: []string{"tenant-a"}}},
 	} {
 		for _, hasCard := range []bool{false, true} {
 			for _, operation := range []struct{ name, method, suffix, body string }{
@@ -115,12 +118,8 @@ func TestImageMutationBillingAdmission(t *testing.T) {
 					}
 					before := stripe.loads.Load()
 					response, reached := imagePolicyResponse(t, operation.method, "apis/images.cua.ai/v1alpha1/namespaces/tenant-a/images"+operation.suffix, operation.body, principal.user)
-					billed := operation.method == "POST" || operation.method == "PATCH"
 					wantStatus, wantLoads := http.StatusNoContent, int64(0)
-					if billed {
-						wantLoads = 1
-					}
-					if operation.method == "PUT" || (billed && !hasCard) {
+					if operation.method == "PUT" || (operation.method != "GET" && principal.user.ID != "admin") {
 						wantStatus = http.StatusForbidden
 					}
 					if response.Code != wantStatus || reached != (wantStatus == http.StatusNoContent) || stripe.loads.Load()-before != wantLoads {
@@ -266,7 +265,7 @@ func TestImagePolicyBoundaries(t *testing.T) {
 	}
 }
 
-func TestImageCreationRequiresBillingAdmission(t *testing.T) {
+func TestImageCreationBillingAdmissionRemainsIndependent(t *testing.T) {
 	t.Cleanup(resetFlagsCache)
 	setCardAdmissionFlags(t, true)
 	installCountingFacts(t, "tenant-a")
@@ -275,13 +274,22 @@ func TestImageCreationRequiresBillingAdmission(t *testing.T) {
 	installAdmissionFacts(t, CurrentYearFactProvider, &countingAdmissionFacts{cacheKey: CurrentYearFactProvider, facts: FactSet{"current_year": 2026}})
 	installAdmissionFacts(t, CurrentMonthFactProvider, &countingAdmissionFacts{cacheKey: CurrentMonthFactProvider, facts: FactSet{"current_month": 9}})
 	const path = "apis/images.cua.ai/v1alpha1/namespaces/tenant-a/images"
-	user := &User{ID: "owner-a", AZP: "cua-cli"}
-	response, reached := imagePolicyResponse(t, "POST", path, `{"spec":{}}`, user)
+	checkBilling := func() (*httptest.ResponseRecorder, bool) {
+		reached := false
+		handler := PolicyMiddleware(All(BasePolicy(), CustomResourceCreationAdmissionPolicy()))(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			reached = true
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, cardAdmissionRequest("POST", path, "owner-a"))
+		return response, reached
+	}
+	response, reached := checkBilling()
 	if response.Code != http.StatusForbidden || reached || stripe.loads.Load() != 1 {
 		t.Fatalf("without card: status=%d reached=%v stripe loads=%d", response.Code, reached, stripe.loads.Load())
 	}
 	stripe.facts = FactSet{"cards": []map[string]any{{"exp_year": 2027, "exp_month": 1}}}
-	response, reached = imagePolicyResponse(t, "POST", path, `{"spec":{}}`, user)
+	response, reached = checkBilling()
 	if response.Code != http.StatusNoContent || !reached {
 		t.Fatalf("with card: status=%d reached=%v; %s", response.Code, reached, response.Body.String())
 	}

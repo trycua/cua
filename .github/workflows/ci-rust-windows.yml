@@ -10,6 +10,7 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-core/**"
       - "libs/cua-driver/rust/crates/cua-driver-sdk/**"
       - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
+      - "libs/cua-driver/rust/crates/cua-driver-e2e/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-windows/**"
@@ -26,6 +27,7 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver-core/**"
       - "libs/cua-driver/rust/crates/cua-driver-sdk/**"
       - "libs/cua-driver/rust/crates/cua-driver-testkit/**"
+      - "libs/cua-driver/rust/crates/cua-driver-e2e/**"
       - "libs/cua-driver/rust/crates/cursor-overlay/**"
       - "libs/cua-driver/rust/crates/pip-preview/**"
       - "libs/cua-driver/rust/crates/platform-windows/**"
@@ -43,7 +45,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-rust-windows-${{ github.workflow }}-${{ github.ref }}
+  group: ci-rust-windows-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -53,10 +55,11 @@ jobs:
     timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_idle_seconds > 1 && 90 || 30 }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           workspaces: "libs/cua-driver/rust -> target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Record Windows runner session
         id: runner-session
         shell: pwsh
@@ -68,23 +71,37 @@ jobs:
         working-directory: libs/cua-driver/rust
         # Compile every Rust target without executing desktop-dependent integration
         # tests; interactive behavior belongs in e2e-rust-windows.yml.
-        run: cargo test -p cua-driver -p cua-driver-core -p cua-driver-sdk -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-windows -p cua-driver-uia --all-targets --no-run --locked
+        run: cargo test -p cua-driver -p cua-driver-e2e -p cua-driver-core -p cua-driver-sdk -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-windows -p cua-driver-uia --all-targets --no-run --locked
       - name: Run complete desktop-independent core tests
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver-core --lib --test recording_shutdown_errors --locked
-      - name: Run deferred text publication regressions
+      - name: Run extension manager security regressions
         working-directory: libs/cua-driver/rust
         run: |
-          cargo test -p platform-windows post_message_readback_tests:: --lib --locked
-          if ($LASTEXITCODE -ne 0) { throw "PostMessage read-back tests failed with exit $LASTEXITCODE" }
-          cargo test -p platform-windows value_write_readback_tests:: --lib --locked
-          if ($LASTEXITCODE -ne 0) { throw "ValuePattern read-back tests failed with exit $LASTEXITCODE" }
-      - name: Run pixel click transport regressions
+          $tests = @(
+            "extension_manager::tests::hardens_a_precreated_extension_root_with_a_broad_acl",
+            "extension_manager::tests::acl_hardening_reopens_directory_and_file_handles",
+            "extension_manager::tests::recursive_acl_hardening_removes_package_access_from_staged_tree",
+            "extension_manager::tests::recursive_acl_hardening_reasserts_root_after_descendant_walk",
+            "extension_manager::tests::staged_install_verification_survives_acl_drift_during_recursive_hardening",
+            "extension_manager::tests::post_hook_acl_grant_is_removed_before_staged_version_is_placed",
+            "extension_manager::tests::health_hook_acl_grant_is_removed_before_status_returns_healthy",
+            "extension_manager::tests::acl_identity_check_rejects_a_different_object",
+            "extension_manager::tests::rejects_windows_junctions_and_broad_acl_entries"
+          )
+          foreach ($test in $tests) {
+            cargo test -p cua-driver --bin cua-driver $test --locked -- --exact
+            if ($LASTEXITCODE -ne 0) { throw "Extension manager security regression $test failed with exit $LASTEXITCODE" }
+          }
+      # Run the whole inline suite so new platform-windows test modules cannot
+      # be silently left out by a hand-maintained module filter list.
+      - name: Run platform-windows unit tests
         working-directory: libs/cua-driver/rust
-        run: "cargo test -p platform-windows pixel_click_transport_tests:: --lib --locked"
-      - name: Run bounded UIA worker regressions
-        working-directory: libs/cua-driver/rust
-        run: "cargo test -p platform-windows windows_enum::tests:: --lib --locked"
+        env:
+          # The hosted runner's clipboard is disposable; opt in to the native
+          # clipboard round trip that would clobber a developer's clipboard.
+          CUA_TEST_ALLOW_CLIPBOARD: "1"
+        run: cargo test --locked -p platform-windows --lib
       - name: Run MCP proxy lifecycle regressions
         working-directory: libs/cua-driver/rust
         run: "cargo test -p cua-driver --bin cua-driver proxy::tests:: --locked"
@@ -105,25 +122,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "cursor renderer tests failed with exit $LASTEXITCODE" }
           cargo test -p cursor-theme-cli --locked
           if ($LASTEXITCODE -ne 0) { throw "cursor theme compiler tests failed with exit $LASTEXITCODE" }
-      - name: Run Windows delivery guidance unit tests
-        working-directory: libs/cua-driver/rust
-        run: "cargo test -p platform-windows input::delivery::tests:: --lib --locked"
-      - name: Run Windows installed-app discovery unit tests
-        working-directory: libs/cua-driver/rust
-        run: "cargo test -p platform-windows win32::installed_apps::tests:: --lib --locked"
-      - name: Run Windows app-name lookup tests
-        working-directory: libs/cua-driver/rust
-        run: "cargo test -p platform-windows launch_uwp::tests:: --lib --locked"
-      - name: Run Windows Computer History adapter tests
-        working-directory: libs/cua-driver/rust
-        run: "cargo test -p platform-windows history::tests:: --lib --locked"
       - name: Validate Windows Computer History uninstall ordering
         run: .\libs\cua-driver\scripts\tests\uninstall-windows-history-regression.ps1
       - name: Prove unknown app launch stays bounded and responsive
         working-directory: libs/cua-driver/rust
+        env:
+          CUA_TEST_REQUIRE_DRIVER_BIN: "1"
         run: "cargo test -p cua-driver --test protocol_tools_call_test launch_unknown_app_is_bounded_and_keeps_mcp_session_responsive --locked -- --exact --nocapture"
       - name: Validate desktop AppsFolder launch with Microsoft Edge
         working-directory: libs/cua-driver/rust
+        env:
+          CUA_TEST_REQUIRE_DRIVER_BIN: "1"
         run: "cargo test -p cua-driver --test protocol_tools_call_test launch_edge_from_apps_folder_registration --locked -- --ignored --exact --nocapture"
       - name: Run transport-independent authorization and SDK tests
         working-directory: libs/cua-driver/rust
@@ -141,8 +150,6 @@ jobs:
           # from the manifest-free library test target.
           cargo test -p cua-driver-uia --lib authorization_tests:: --locked
           if ($LASTEXITCODE -ne 0) { throw "UIAccess authorization tests failed with exit $LASTEXITCODE" }
-          cargo test -p platform-windows diagnostics::tests:: --lib --locked
-          if ($LASTEXITCODE -ne 0) { throw "Windows desktop classification tests failed with exit $LASTEXITCODE" }
       - name: Run full SDK unit suite in an interactive runner session
         if: steps.runner-session.outputs.session_id != '0'
         working-directory: libs/cua-driver/rust
@@ -150,7 +157,11 @@ jobs:
       - name: Prove Session 0 refusal
         if: steps.runner-session.outputs.session_id == '0'
         working-directory: libs/cua-driver/rust
-        run: cargo test -p cua-driver-sdk session_zero_refuses_runtime_creation_before_platform_dispatch --lib --locked
+        shell: pwsh
+        run: |
+          cargo test -p cua-driver-sdk session_zero_refuses_runtime_creation_before_platform_dispatch --lib --locked | Tee-Object -Variable sessionZeroLog
+          if ($LASTEXITCODE -ne 0) { throw "Session 0 refusal test failed with exit $LASTEXITCODE" }
+          if (-not ($sessionZeroLog -match 'test result: ok\. 1 passed')) { throw "Session 0 refusal filter matched no test" }
       - name: Prove metadata commands remain desktop-free
         working-directory: libs/cua-driver/rust
         run: |
@@ -160,9 +171,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "describe failed with exit $LASTEXITCODE" }
           cargo run -p cua-driver --locked -- dump-docs --type cli | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "dump-docs failed with exit $LASTEXITCODE" }
-      - name: Run Windows browser platform unit tests
-        working-directory: libs/cua-driver/rust
-        run: "cargo test -p platform-windows browser_platform::tests:: --lib --locked"
       - name: Run Windows protocol schema contract
         if: steps.runner-session.outputs.session_id != '0'
         working-directory: libs/cua-driver/rust

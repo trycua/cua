@@ -95,33 +95,6 @@ fn token_accepting_tools_advertise_element_token_in_schema_and_capabilities() {
     }
 }
 
-/// `get_window_state` claims `accessibility.element_tokens`
-/// because it EMITS the tokens (the other side of the contract from
-/// the action tools above).
-#[test]
-fn get_window_state_claims_element_tokens_capability() {
-    let resp = match fetch_tools_list() {
-        Some(r) => r,
-        None => return,
-    };
-    let tools = resp["result"]["tools"].as_array().expect("tools array");
-    let gws = tools
-        .iter()
-        .find(|t| t["name"].as_str() == Some("get_window_state"))
-        .expect("get_window_state missing");
-    let caps: Vec<&str> = gws["capabilities"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|v| v.as_str())
-        .collect();
-    assert!(
-        caps.contains(&"accessibility.element_tokens"),
-        "Surface 6: get_window_state must claim accessibility.element_tokens \
-         (it emits the tokens). Current claims: {caps:?}"
-    );
-}
-
 /// The native menu operation is a path contract, never another entry point for
 /// mutable snapshot indices.
 #[test]

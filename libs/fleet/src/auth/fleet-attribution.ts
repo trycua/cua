@@ -4,6 +4,7 @@ export const ATTRIBUTION_MAX_VALUE_LENGTH = 128
 export const ATTRIBUTION_MAX_RECORD_BYTES = 2048
 
 const allowedKeys = ["campaign_id", "content_id", "utm_source", "utm_medium", "utm_campaign"] as const
+const queryKeys = [...allowedKeys, "utm_content"] as const
 type AttributionKey = (typeof allowedKeys)[number]
 export type AttributionRecord = { version: 1; capturedAt: number; values: Partial<Record<AttributionKey, string>> }
 export interface StorageLike { getItem(key: string): string | null; setItem(key: string, value: string): void; removeItem?(key: string): void }
@@ -20,10 +21,14 @@ export function captureFleetAttribution(href: string, options: Options = {}): vo
   let params: URLSearchParams
   try { params = new URL(href).searchParams } catch { return }
   const values: Partial<Record<AttributionKey, string>> = {}
-  for (const key of allowedKeys) {
+  for (const key of queryKeys) {
     const all = params.getAll(key)
     if (all.length > 1 || (all.length === 1 && !validValue(all[0]!))) return
-    if (all.length === 1) values[key] = all[0]!
+    if (all.length === 1) {
+      const canonicalKey: AttributionKey = key === "utm_content" ? "content_id" : key
+      if (values[canonicalKey] !== undefined && values[canonicalKey] !== all[0]) return
+      values[canonicalKey] = all[0]!
+    }
   }
   if (Object.keys(values).length === 0) return
   const record: AttributionRecord = { version: 1, capturedAt: (options.now ?? Date.now)(), values }

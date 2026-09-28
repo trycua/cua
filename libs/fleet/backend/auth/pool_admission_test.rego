@@ -8,6 +8,8 @@ native_path := "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxtemplates
 
 allowed_image := "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest"
 
+public_ghcr_digest := "ghcr.io/trycua/gameworld-autoresearch@sha256:d626893f7bc3c42603557e8ae2d9fdf8ca6ce4c671c1c5958cdba2152674f7ed"
+
 osworld_v2_digest := "296062593712.dkr.ecr.us-west-2.amazonaws.com/osworld-v2-ubuntu-x86@sha256:6f981825c5970027df510006fcfc1ef7a502d2911f69ed9884f7f217007931dd"
 
 omarchy_digest := "296062593712.dkr.ecr.us-west-2.amazonaws.com/omarchy-workspace@sha256:c9cdba09d8cd2f742b9e9fa3818ca29dbcb66ee40edd057621e2987098226950"
@@ -140,6 +142,26 @@ test_vm_template_ecr_secret_allowlisted_image_allowed {
 	}
 }
 
+test_native_vm_template_public_ghcr_without_pull_secret_allowed {
+	pool_admission.allow with input as {
+		"method": "POST",
+		"params": {"path": native_path},
+		"body": sprintf(`{"spec":{"vmTemplate":{"containerDiskImage":%q,"runtime":"gvisor"}}}`, [public_ghcr_digest]),
+		"user": non_admin,
+		"flags": non_admin_flags,
+	}
+}
+
+test_native_vm_template_public_ghcr_with_empty_pull_secret_denied {
+	not pool_admission.allow with input as {
+		"method": "POST",
+		"params": {"path": native_path},
+		"body": sprintf(`{"spec":{"vmTemplate":{"containerDiskImage":%q,"imagePullSecret":"","runtime":"gvisor"}}}`, [public_ghcr_digest]),
+		"user": non_admin,
+		"flags": non_admin_flags,
+	}
+}
+
 test_macos_runtime_denied_for_non_admin {
 	not pool_admission.allow with input as {
 		"method": "POST",
@@ -215,6 +237,92 @@ test_nested_virt_false_allowed_for_non_admin {
 		"method": "POST",
 		"params": {"path": native_path},
 		"body": `{"spec":{"vmTemplate":{"nestedVirtualization":false}}}`,
+		"user": non_admin,
+		"flags": non_admin_flags,
+	}
+}
+
+# ── Canonical public images, tenant registry secrets ───────────────────────
+
+canonical_linux := "ghcr.io/trycua/linux:24.04"
+
+canonical_linux_disk := "ghcr.io/trycua/linux:24.04-disk"
+
+canonical_windows_disk := "ghcr.io/trycua/windows:2022-disk"
+
+native_post(vm_template) := {
+	"method": "POST",
+	"params": {"path": native_path},
+	"body": json.marshal({"spec": {"vmTemplate": vm_template}}),
+	"user": non_admin,
+	"flags": non_admin_flags,
+}
+
+native_patch(vm_template) := {
+	"method": "PATCH",
+	"params": {"path": concat("/", [native_path, "tpl"])},
+	"body": json.marshal({"spec": {"vmTemplate": vm_template}}),
+	"user": non_admin,
+	"flags": non_admin_flags,
+}
+
+# The canonical repos are public: no allowlist entry and no pull secret.
+test_canonical_public_images_allowed_without_pull_secret {
+	pool_admission.allow with input as native_post({"containerDiskImage": canonical_linux, "runtime": "gvisor"})
+	pool_admission.allow with input as native_post({"containerDiskImage": canonical_linux_disk})
+	pool_admission.allow with input as native_post({"containerDiskImage": canonical_windows_disk, "firmware": "efi"})
+	pool_admission.allow with input as native_post({"containerDiskImage": "ghcr.io/trycua/linux@sha256:d626893f7bc3c42603557e8ae2d9fdf8ca6ce4c671c1c5958cdba2152674f7ed", "runtime": "gvisor"})
+}
+
+# The shared ECR credentials stay pinned to the ECR allowlist.
+test_canonical_image_with_shared_ecr_secret_denied {
+	not pool_admission.allow with input as native_post({"containerDiskImage": canonical_linux, "imagePullSecret": "ecr-credentials"})
+}
+
+test_tenant_registry_secret_allows_any_image {
+	pool_admission.allow with input as native_post({"containerDiskImage": "ghcr.io/acme/private-agent:1", "imagePullSecret": "cua-registry-ghcr", "runtime": "gvisor"})
+	pool_admission.allow with input as native_post({"containerDiskImage": "registry.acme.internal:5000/vm-disk:2", "imagePullSecret": "cua-registry-acme"})
+	pool_admission.allow with input as native_patch({"containerDiskImage": "ghcr.io/acme/private-agent:2", "imagePullSecret": "cua-registry-ghcr"})
+}
+
+test_registry_secret_prefix_is_exact {
+	not pool_admission.allow with input as native_post({"containerDiskImage": "ghcr.io/acme/a:1", "imagePullSecret": "cua-registry-"})
+	not pool_admission.allow with input as native_post({"containerDiskImage": "ghcr.io/acme/a:1", "imagePullSecret": "cua-registry-UPPER"})
+	not pool_admission.allow with input as native_post({"containerDiskImage": "ghcr.io/acme/a:1", "imagePullSecret": "x-cua-registry-a"})
+	not pool_admission.allow with input as native_post({"containerDiskImage": "ghcr.io/acme/a:1", "imagePullSecret": "cua-claim-a"})
+	not pool_admission.allow with input as native_post({"containerDiskImage": "ghcr.io/acme/a:1", "imagePullSecret": "workload-oidc"})
+}
+
+# Warm pools and claims carry no image configuration, so pool admission does
+# not apply to them: the idle-TTL lifecycle fields and creator-set cua.ai/
+# labels and annotations pass without a policy change.
+test_warm_pool_lifecycle_fields_and_labels_not_subject_to_pool_admission {
+	pool_admission.allow with input as {
+		"method": "POST",
+		"params": {"path": "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxwarmpools"},
+		"body": json.marshal({
+			"metadata": {
+				"name": "ns-a",
+				"labels": {"cua.ai/managed-by": "cua-sdk"},
+				"annotations": {"cua.ai/created-by": "sdk"},
+			},
+			"spec": {
+				"replicas": 0,
+				"sandboxTemplateRef": {"name": "ns-a-template"},
+				"idleTtlSeconds": 900,
+				"ttlPolicy": "Cascade",
+			},
+		}),
+		"user": non_admin,
+		"flags": non_admin_flags,
+	}
+}
+
+test_claim_label_patch_not_subject_to_pool_admission {
+	pool_admission.allow with input as {
+		"method": "PATCH",
+		"params": {"path": "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxclaims/claim-a"},
+		"body": json.marshal({"metadata": {"labels": {"cua.ai/fleet": "f1"}}}),
 		"user": non_admin,
 		"flags": non_admin_flags,
 	}

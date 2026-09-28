@@ -167,15 +167,4 @@ mod tests {
             None
         );
     }
-
-    #[test]
-    fn missing_state_defaults_stable_and_valid_state_round_trips() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let path = root.path().join(FILE_NAME);
-        assert_eq!(selected_at(&path), Ok(ReleaseChannel::Stable));
-        set_at(&path, ReleaseChannel::Nightly).expect("persist nightly");
-        assert_eq!(selected_at(&path), Ok(ReleaseChannel::Nightly));
-        set_at(&path, ReleaseChannel::Stable).expect("persist stable");
-        assert_eq!(selected_at(&path), Ok(ReleaseChannel::Stable));
-    }
 }

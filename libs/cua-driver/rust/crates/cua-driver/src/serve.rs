@@ -163,43 +163,6 @@ fn inject_browser_approvals(tool_name: &str, args: &mut serde_json::Value, sessi
     }
 }
 
-/// Resolve + apply the session identity for a tool call at the daemon boundary.
-///
-/// Resolve optional public naming and the trusted transport's default lifecycle
-/// identity independently. An explicit `session` is mirrored into the reserved
-/// `_session_id` key; otherwise the per-connection lease id becomes the implicit
-/// lifecycle key. Cursor, recording, configuration, and cleanup all use that
-/// resolved identity, so ordinary callers do not need a setup call.
-///
-/// The registry refreshes the runtime-private idle-TTL key after authorization;
-/// this transport helper only returns the effective `_session_id` for the
-/// resurrection guard.
-fn apply_session_identity(args: &mut serde_json::Value, minted: &Option<String>) -> Option<String> {
-    let explicit = args
-        .as_object()
-        .and_then(|o| o.get("session"))
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_owned());
-    if let Some(obj) = args.as_object_mut() {
-        obj.remove("_session_id");
-        obj.remove("_transport_session_id");
-        if let Some(id) = explicit.clone().or_else(|| minted.clone()) {
-            obj.insert("_session_id".to_owned(), serde_json::Value::String(id));
-        }
-        if let Some(id) = minted.clone() {
-            obj.insert(
-                "_transport_session_id".to_owned(),
-                serde_json::Value::String(id),
-            );
-        }
-    }
-    args.as_object()
-        .and_then(|o| o.get("_session_id"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_owned())
-}
-
 /// Whether `tool_name` manages session lifecycle and so must be EXEMPT from the
 /// resurrection guard. `start_session` revives an ended id (the explicit,
 /// caller-intended way to reuse one) and `end_session` is idempotent — both
@@ -487,7 +450,8 @@ async fn invoke_daemon_tool(
         .args
         .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
     cua_driver_core::tool_args::sanitize_reserved_args(&mut args);
-    let effective_session = apply_session_identity(&mut args, &req.session_id);
+    let effective_session =
+        cua_driver_core::tool_args::apply_session_identity(&mut args, req.session_id.as_deref());
     let operation = cua_driver_core::server::tool_operation(&tool_name, Some(&args));
     let observation = observation_transport.map(|transport| {
         (
@@ -2974,57 +2938,9 @@ mod service_authorization_status_tests {
 
 #[cfg(test)]
 mod session_boundary_tests {
-    use super::{active_proxy_sessions, apply_session_identity, inject_browser_approvals};
+    use super::{active_proxy_sessions, inject_browser_approvals};
     use cua_driver_core::browser::download::MCP_HOST_DOWNLOAD_APPROVAL_ARG;
     use serde_json::json;
-
-    #[test]
-    fn explicit_session_becomes_session_id_and_is_returned() {
-        let mut args = json!({ "x": 1, "session": "research-1" });
-        let eff = apply_session_identity(&mut args, &None);
-        assert_eq!(eff.as_deref(), Some("research-1"));
-        assert_eq!(args["_session_id"], "research-1");
-        assert!(args.get("_transport_session_id").is_none());
-    }
-
-    #[test]
-    fn public_and_transport_sessions_remain_independent() {
-        let mut args = json!({ "session": "capability-session" });
-        let eff = apply_session_identity(&mut args, &Some("proxy-session".to_owned()));
-        assert_eq!(eff.as_deref(), Some("capability-session"));
-        assert_eq!(args["_session_id"], "capability-session");
-        assert_eq!(args["_transport_session_id"], "proxy-session");
-    }
-
-    #[test]
-    fn no_session_falls_back_to_minted_for_session_id_only() {
-        // The minted per-connection id drives the complete implicit lifecycle,
-        // including cursor, recording, configuration, and cleanup, without
-        // manufacturing a caller-visible public `session` label.
-        let mut args = json!({ "x": 1 });
-        let eff = apply_session_identity(&mut args, &Some("mcp-123".to_owned()));
-        assert_eq!(args["_session_id"], "mcp-123");
-        assert_eq!(eff.as_deref(), Some("mcp-123"));
-        assert_eq!(args["_transport_session_id"], "mcp-123");
-        assert!(args.get("session").is_none());
-    }
-
-    #[test]
-    fn anonymous_when_no_session_and_no_minted() {
-        let mut args = json!({ "x": 1 });
-        let eff = apply_session_identity(&mut args, &None);
-        assert!(eff.is_none());
-        assert!(args.get("_session_id").is_none());
-    }
-
-    #[test]
-    fn caller_set_session_id_is_replaced_by_minted() {
-        let mut args = json!({ "_session_id": "caller-set" });
-        let eff = apply_session_identity(&mut args, &Some("mcp-999".to_owned()));
-        assert_eq!(args["_session_id"], "mcp-999");
-        assert_eq!(args["_transport_session_id"], "mcp-999");
-        assert_eq!(eff.as_deref(), Some("mcp-999"));
-    }
 
     #[test]
     fn browser_download_approval_requires_a_live_proxy_session() {

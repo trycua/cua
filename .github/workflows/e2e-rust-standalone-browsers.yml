@@ -1,6 +1,13 @@
 name: "E2E: Rust standalone browsers"
 
 on:
+  # Stable Cua Driver tag runs call these suites as a release gate.
+  workflow_call:
+    inputs:
+      ref:
+        description: "Full 40-character commit SHA to certify"
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       ref:
@@ -12,10 +19,17 @@ permissions:
   contents: read
   actions: read
 
+# Identical dispatches queue behind the running certification instead of
+# racing it. In-progress runs are never cancelled.
+concurrency:
+  group: e2e-rust-standalone-browsers-${{ github.ref }}-${{ inputs.ref }}
+  cancel-in-progress: false
+
 jobs:
   source:
     name: "Resolve exact source"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
     steps:
@@ -58,13 +72,16 @@ jobs:
       CUA_E2E_BROWSER_STDERR: "1"
       CUA_E2E_BROWSER_PRODUCTS: ${{ matrix.products }}
       CUA_TEST_REQUIRE_PROTECTED_WINDOWS_BROWSER: ${{ matrix.label == 'Windows' && '1' || '0' }}
-      CUA_E2E_WINDOWS_BROWSER_LIMITATION: ${{ matrix.label == 'Windows' && 'hosted_runner_token' || '0' }}
+      # GitHub-hosted Windows runs the job, and so the Driver, with an
+      # elevated administrator token. The isolated-launch case must prove the
+      # Driver launches its browser with a derived standard-user token.
+      CUA_E2E_EXPECT_ELEVATED_DRIVER: ${{ matrix.label == 'Windows' && '1' || '0' }}
       RUST_BACKTRACE: "1"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.source.outputs.sha }}
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       - name: Install Windows video tools
         if: runner.os == 'Windows'
         shell: pwsh
@@ -114,15 +131,15 @@ jobs:
             }
             Write-Host "[browser-trust] verified vendor-signed candidate: $($browser.Executable)"
           }
-      - name: Run standalone browsers on Windows with hosted-token limitation
+      - name: Run standalone browsers on Windows from an elevated Driver
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $artifactDir = Join-Path $PWD 'artifacts\cua-driver\standalone-browser'
           $scriptPath = Join-Path $PWD 'scripts\ci\windows\run-rust-standalone-browser-e2e.ps1'
-          # Hosted Windows does not expose a restricted token. The suite records
-          # the driver's typed refusal and proves it has no setup side effects.
+          # The elevated Driver launches isolated browsers with a derived
+          # standard-user token; the suite verifies that token independently.
           $env:CUA_E2E_ARTIFACT_DIR = $artifactDir
           & $scriptPath -NoBuild
           if ($LASTEXITCODE -ne 0) { throw "standalone-browser E2E failed with exit code $LASTEXITCODE" }

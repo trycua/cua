@@ -20,7 +20,6 @@ getrandom = { workspace = true }
 # IndexMap gives the keyed cursor render collection deterministic
 # insertion-ordered iteration = stable per-session cursor z-order frame to
 # frame (mirrors platform-macos's per-session overlay).
-indexmap = "2"
 # tiny-skia for cross-platform cursor rendering (used in overlay.rs on all targets)
 tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 
@@ -48,6 +47,9 @@ windows = { version = "0.58", features = [
     "Win32_System_LibraryLoader",
     "Win32_Graphics_OpenGL",
     "Win32_Security",
+    # SaferCreateLevel / SaferComputeTokenFromLevel: derive the standard-user
+    # token an elevated Driver uses to run isolated browsers.
+    "Win32_Security_AppLocker",
     "Win32_System_Com",
     "Win32_Storage_Xps",
     "Win32_Storage_FileSystem",

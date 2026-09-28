@@ -155,7 +155,7 @@ try {
     $previousPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $preflightOutput = @(& cargo test -p cua-driver --test e2e_environment_preflight_test -- `
+        $preflightOutput = @(& cargo test -p cua-driver-e2e --test e2e_environment_preflight_test -- `
             --ignored --exact canonical_e2e_environment_is_ready --nocapture --test-threads=1 2>&1) | `
             ForEach-Object {
                 if ($_ -is [System.Management.Automation.ErrorRecord]) {
@@ -297,7 +297,7 @@ function Invoke-ComputerHistoryGate {
     }
 
     Invoke-CargoTest "computer-history-encrypted-lifecycle" @(
-        "test", "-p", "cua-driver", "--test", "computer_history_cross_platform_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "computer_history_cross_platform_test", "--",
         "--ignored", "--exact", "encrypted_history_survives_restart_and_cryptographically_purges",
         "--nocapture", "--test-threads=1"
     )
@@ -385,12 +385,12 @@ if ($suite -in @("shared", "all")) {
         "--test-threads=1"
     )
     Invoke-CargoTest "shared behavior matrix" @(
-        "test", "-p", "cua-driver", "--test", "cross_platform_behavior_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "cross_platform_behavior_test", "--",
         "--ignored", "--exact", "shared_web_action_matrix_is_state_verified",
         "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "embedded browser routes" @(
-        "test", "-p", "cua-driver", "--test", "cross_platform_behavior_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "cross_platform_behavior_test", "--",
         "--ignored", "--exact", "embedded_browser_routes_are_exact_or_refused",
         "--nocapture", "--test-threads=1"
     )
@@ -402,38 +402,42 @@ if ($suite -in @("native", "all")) {
         "--exact", "tools_call_list_apps", "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "Agent cursor showcase" @(
-        "test", "-p", "cua-driver", "--test", "agent_cursor_showcase_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "agent_cursor_showcase_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "Windows native harnesses" @(
-        "test", "-p", "cua-driver", "--test", "harness_wpf_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "harness_wpf_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "WinUI3 harnesses" @(
-        "test", "-p", "cua-driver", "--test", "harness_winui3_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "harness_winui3_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "Windows web harnesses" @(
-        "test", "-p", "cua-driver", "--test", "harness_web_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "harness_web_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "Windows minimized launch" @(
-        "test", "-p", "cua-driver", "--test", "launch_windows_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "launch_windows_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "Windows agent cursor" @(
-        "test", "-p", "cua-driver", "--test", "agent_cursor_windows_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "agent_cursor_windows_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
 }
 
 if ($suite -in @("capture", "all")) {
     Invoke-CargoTest "capture contract" @(
-        "test", "-p", "cua-driver", "--test", "capture_contract_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "capture_contract_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "Windows desktop scope" @(
-        "test", "-p", "cua-driver", "--test", "desktop_scope_windows_test", "--",
+        "test", "-p", "cua-driver-e2e", "--test", "desktop_scope_windows_test", "--",
+        "--ignored", "--nocapture", "--test-threads=1"
+    )
+    Invoke-CargoTest "perception capture loop" @(
+        "test", "-p", "cua-driver-e2e", "--test", "perception_capture_loop_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
 }

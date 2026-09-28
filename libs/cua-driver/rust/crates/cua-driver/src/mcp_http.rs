@@ -258,31 +258,19 @@ fn serialize(resp: &Response) -> String {
     })
 }
 
-/// Mirror an explicit `session` arg into `_session_id` (the per-session config /
-/// recording key) — the HTTP-side equivalent of
-/// `serve.rs::apply_session_identity`. Runtime-private idle-TTL activity is
-/// refreshed later at the authorized registry boundary.
+/// Apply the shared session identity mapping
+/// ([`cua_driver_core::tool_args::apply_session_identity`]) to a tool call's
+/// arguments, with the MCP HTTP session as the transport session.
+/// Runtime-private idle-TTL activity is refreshed later at the authorized
+/// registry boundary.
 fn apply_session_identity(req: &mut Request, transport_session: &str) {
-    let Some(params) = req.params.as_mut() else {
-        return;
-    };
-    let Some(args) = params.get_mut("arguments").and_then(|a| a.as_object_mut()) else {
-        return;
-    };
-    let session = args
-        .get("session")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_owned());
-    let effective = session.unwrap_or_else(|| transport_session.to_owned());
-    args.insert(
-        "_session_id".to_owned(),
-        serde_json::Value::String(effective),
-    );
-    args.insert(
-        "_transport_session_id".to_owned(),
-        serde_json::Value::String(transport_session.to_owned()),
-    );
+    if let Some(args) = req
+        .params
+        .as_mut()
+        .and_then(|params| params.get_mut("arguments"))
+    {
+        cua_driver_core::tool_args::apply_session_identity(args, Some(transport_session));
+    }
 }
 
 /// One parsed HTTP/1.1 request.
@@ -611,20 +599,6 @@ mod tests {
             assert!(response["result"]["capabilities"].get("apps").is_none());
         }
         sdk.shutdown().await.expect("SDK shutdown");
-    }
-
-    #[test]
-    fn apply_session_identity_mirrors_session_to_session_id() {
-        let mut req: Request = serde_json::from_value(json!({
-            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": { "name": "click", "arguments": { "pid": 1, "session": "alpha" } }
-        }))
-        .unwrap();
-        apply_session_identity(&mut req, "http-test");
-        let args = req.params.unwrap();
-        let args = args.get("arguments").unwrap();
-        assert_eq!(args.get("_session_id").unwrap(), "alpha");
-        assert_eq!(args.get("session").unwrap(), "alpha");
     }
 
     #[test]

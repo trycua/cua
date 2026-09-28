@@ -416,6 +416,21 @@ fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
     if !draws_cursor(&key) {
         return false;
     }
+    if matches!(
+        &cmd,
+        OverlayCommand::SetEnabled(_)
+            | OverlayCommand::SetMotion(_)
+            | OverlayCommand::SetTheme { .. }
+    ) {
+        if let Ok(mut guard) = RENDER.lock() {
+            if let Some(map) = guard.as_mut() {
+                map.apply_command(key.clone(), cmd.clone());
+            }
+        }
+        if matches!(&cmd, OverlayCommand::SetEnabled(false)) {
+            arrival_cancel(&key);
+        }
+    }
     let msg = OverlayMsg::Cmd(KeyedOverlayCommand {
         key: key.clone(),
         cmd: cmd.clone(),
@@ -630,13 +645,25 @@ pub fn is_visible_for_session(key: &str) -> bool {
             guard
                 .as_ref()
                 .and_then(|map| map.cursors.get(key))
-                .map(|rs| rs.core.cfg.enabled && rs.core.is_revealed())
+                .map(|rs| rs.core.is_revealed())
         })
         .unwrap_or(false)
 }
 
 pub fn current_position_for(key: &str) -> Option<(f64, f64)> {
     read_render(|map| map.placed_position(key)).flatten()
+}
+
+pub fn is_placed_for(key: &str) -> bool {
+    RENDER
+        .lock()
+        .ok()
+        .and_then(|g| {
+            g.as_ref()
+                .and_then(|m| m.cursors.get(key))
+                .map(|rs| rs.core.is_placed())
+        })
+        .unwrap_or(false)
 }
 
 pub fn current_motion_for(key: &str) -> cursor_overlay::MotionConfig {
@@ -682,9 +709,7 @@ pub async fn animate_cursor_to_target_for(
         let guard = RENDER.lock().unwrap();
         matches!(
             guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled
-                && rs.core.visible
-                && rs.core.placed
+            Some(rs) if rs.core.is_enabled() && rs.core.placed
         )
     };
     if !should_animate {

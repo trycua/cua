@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::daemon::TestDaemon;
 use crate::driver::{BehaviorRecording, Driver};
-use crate::paths::driver_binary;
+use crate::paths::{driver_binary, ensure_driver_binary};
 use crate::reaper::{spawn_in_job, ChildReaper};
 use crate::response::ToolResponse;
 use crate::CALL_TIMEOUT;
@@ -25,6 +25,7 @@ use crate::CALL_TIMEOUT;
 pub struct McpDriver {
     reaper: ChildReaper,
     _daemon: Option<TestDaemon>,
+    socket: String,
     stdin: ChildStdin,
     rx: Receiver<String>,
     next_id: u32,
@@ -38,13 +39,39 @@ static RECORDING_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 // durably emitted its first sample. This total includes the 300 ms baseline
 // settle and keeps immediate-refusal trajectories from finalizing empty.
 const MIN_BEHAVIOR_RECORDING_DURATION: Duration = Duration::from_millis(750);
+// A recorded macOS action includes one synchronous window capture before and
+// after dispatch. Keep the ordinary timeout for every other platform and for
+// the recording controls themselves.
+const MACOS_RECORDED_CALL_TIMEOUT: Duration = Duration::from_secs(CALL_TIMEOUT.as_secs() * 3);
+
+fn call_timeout(recording_started: bool, tool: &str, is_macos: bool) -> Duration {
+    let recording_meta_tool = matches!(
+        tool,
+        "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
+    );
+    if is_macos && recording_started && !recording_meta_tool {
+        MACOS_RECORDED_CALL_TIMEOUT
+    } else {
+        CALL_TIMEOUT
+    }
+}
+
+fn timeout_error_message(tool: &str, timeout: Duration) -> String {
+    format!("TIMEOUT (>{}s) on {tool}", timeout.as_secs())
+}
 
 impl McpDriver {
     /// Spawn the driver, start the stdout reader thread, and `initialize`.
     /// Returns `None` (with a skip message) if the binary isn't built — the
     /// caller's test should early-return so an un-built binary skips, not fails.
+    /// `CUA_TEST_REQUIRE_DRIVER_BIN=1` makes a missing binary panic instead.
     pub fn spawn() -> Option<Self> {
         Self::spawn_internal(&[], &[], None, false, true)
+    }
+
+    /// Spawn through the exact binary selected by the caller.
+    pub fn spawn_with_binary(bin: impl Into<PathBuf>) -> Option<Self> {
+        Self::spawn_internal_with_binary(bin.into(), &[], &[], None, false, true)
     }
 
     /// Spawn the driver with a stable recording label for artifact naming.
@@ -97,12 +124,34 @@ impl McpDriver {
         Self::spawn_internal(&[], &["mcp", "--socket", socket], None, false, false)
     }
 
+    pub fn spawn_peer_unrecorded(&self) -> Option<Self> {
+        Self::spawn_daemon_proxy_unrecorded(&self.socket)
+    }
+
     /// Spawn the driver with extra environment variables set on the child.
     pub fn spawn_with_env(env: &[(&str, &str)]) -> Option<Self> {
         Self::spawn_internal(env, &[], None, false, true)
     }
 
     fn spawn_internal(
+        env: &[(&str, &str)],
+        args: &[&str],
+        recording_label: Option<&str>,
+        overlay_enabled: bool,
+        prepare_recording: bool,
+    ) -> Option<Self> {
+        Self::spawn_internal_with_binary(
+            driver_binary(),
+            env,
+            args,
+            recording_label,
+            overlay_enabled,
+            prepare_recording,
+        )
+    }
+
+    fn spawn_internal_with_binary(
+        bin: PathBuf,
         env: &[(&str, &str)],
         args: &[&str],
         recording_label: Option<&str>,
@@ -124,9 +173,7 @@ impl McpDriver {
                 ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
             ]);
         }
-        let bin = driver_binary();
-        if !bin.exists() {
-            eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
+        if !ensure_driver_binary(&bin) {
             return None;
         }
 
@@ -158,12 +205,13 @@ impl McpDriver {
             .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false");
         if let Some(daemon) = &daemon {
             cmd.args(["mcp", "--socket", &daemon.socket]);
+            daemon.apply_state_root(&mut cmd);
         } else {
+            // Proxies to an externally owned daemon deliberately keep the
+            // host's per-user state; the external daemon owns that state.
             cmd.args(args);
         }
-        for (key, value) in &daemon_env {
-            cmd.env(key, value);
-        }
+        crate::host_state::apply_env(&mut cmd, None, &daemon_env);
         let mut driver = spawn_in_job(&mut cmd)
             .inspect_err(|e| eprintln!("[testkit] driver spawn failed: {e}"))
             .ok()?;
@@ -188,9 +236,18 @@ impl McpDriver {
             }
         });
 
+        let socket = daemon
+            .as_ref()
+            .map(|daemon| daemon.socket.clone())
+            .or_else(|| {
+                args.windows(2)
+                    .find(|pair| pair[0] == "--socket")
+                    .map(|pair| pair[1].to_owned())
+            })?;
         let mut d = McpDriver {
             reaper,
             _daemon: daemon,
+            socket,
             stdin,
             rx,
             next_id: 2,
@@ -242,6 +299,13 @@ impl McpDriver {
             false,
             true,
         )
+    }
+
+    /// Isolated per-user state root (`HOME`, XDG/AppData directories) given to
+    /// the test-owned daemon, or `None` for external-daemon proxies and spawns
+    /// that passed [`crate::SHARE_HOST_STATE`].
+    pub fn state_root(&self) -> Option<&std::path::Path> {
+        self._daemon.as_ref().and_then(TestDaemon::state_root)
     }
 
     fn initialize(&mut self) {
@@ -422,15 +486,16 @@ impl McpDriver {
     pub fn call_raw(&mut self, tool: &str, args: Value) -> Value {
         let id = self.next_id;
         self.next_id += 1;
+        let timeout = call_timeout(self.recording_started, tool, cfg!(target_os = "macos"));
         self.send(serde_json::json!({
             "jsonrpc": "2.0", "id": id, "method": "tools/call",
             "params": { "name": tool, "arguments": args }
         }));
-        match self.rx.recv_timeout(CALL_TIMEOUT) {
+        match self.rx.recv_timeout(timeout) {
             Ok(line) => serde_json::from_str(&line)
                 .unwrap_or_else(|_| serde_json::json!({ "error": format!("bad json: {line}") })),
             Err(_) => serde_json::json!({
-                "error": format!("TIMEOUT (>{}s) on {tool}", CALL_TIMEOUT.as_secs())
+                "error": timeout_error_message(tool, timeout)
             }),
         }
     }
@@ -548,7 +613,11 @@ fn unix_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{recording_label, remaining_behavior_recording_time};
+    use super::{
+        call_timeout, recording_label, remaining_behavior_recording_time, timeout_error_message,
+        MACOS_RECORDED_CALL_TIMEOUT,
+    };
+    use crate::CALL_TIMEOUT;
     use std::time::Duration;
 
     #[test]
@@ -568,5 +637,46 @@ mod tests {
         );
         assert!(remaining_behavior_recording_time(Duration::from_millis(750)).is_zero());
         assert!(remaining_behavior_recording_time(Duration::from_secs(2)).is_zero());
+    }
+
+    #[test]
+    fn ordinary_calls_keep_the_base_timeout() {
+        assert_eq!(call_timeout(false, "click", true), CALL_TIMEOUT);
+    }
+
+    #[test]
+    fn recorded_macos_calls_allow_two_evidence_captures() {
+        assert_eq!(
+            call_timeout(true, "click", true),
+            MACOS_RECORDED_CALL_TIMEOUT
+        );
+        assert_eq!(
+            MACOS_RECORDED_CALL_TIMEOUT,
+            Duration::from_secs(CALL_TIMEOUT.as_secs() * 3)
+        );
+    }
+
+    #[test]
+    fn recording_controls_keep_the_base_timeout() {
+        assert_eq!(call_timeout(true, "start_recording", true), CALL_TIMEOUT);
+        assert_eq!(call_timeout(true, "stop_recording", true), CALL_TIMEOUT);
+        assert_eq!(
+            call_timeout(true, "get_recording_state", true),
+            CALL_TIMEOUT
+        );
+        assert_eq!(call_timeout(true, "replay_trajectory", true), CALL_TIMEOUT);
+    }
+
+    #[test]
+    fn non_macos_calls_keep_the_base_timeout_during_recording() {
+        assert_eq!(call_timeout(true, "click", false), CALL_TIMEOUT);
+    }
+
+    #[test]
+    fn timeout_errors_report_the_effective_deadline() {
+        assert_eq!(
+            timeout_error_message("click", MACOS_RECORDED_CALL_TIMEOUT),
+            "TIMEOUT (>75s) on click"
+        );
     }
 }

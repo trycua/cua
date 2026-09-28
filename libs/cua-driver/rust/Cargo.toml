@@ -6,6 +6,7 @@ members = [
     "crates/cua-driver-sdk",
     "crates/cua-driver-bindgen",
     "crates/cua-driver-testkit",
+    "crates/cua-driver-e2e",
     "crates/cua-driver-uia",
     "crates/cua-driver-core",
     "crates/platform-macos",
@@ -14,10 +15,11 @@ members = [
     "crates/cursor-overlay",
     "crates/cursor-theme-cli",
     "crates/pip-preview",
+    "crates/cua-perception",
 ]
 
 [workspace.package]
-version = "0.28.2"
+version = "0.30.2"
 edition = "2021"
 authors = ["trycua"]
 license = "MIT"
@@ -41,6 +43,9 @@ zune-core = "=0.5.1"
 uniffi = "=0.31.0"
 postcard = { version = "1", features = ["alloc"] }
 sha2 = "0.10"
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "load-dynamic"] }
+serde_yaml = "0.9"
+libloading = "0.8"
 zstd = "0.13"
 chacha20poly1305 = { version = "0.11", features = ["rand_core", "zeroize"] }
 hkdf = "0.12"

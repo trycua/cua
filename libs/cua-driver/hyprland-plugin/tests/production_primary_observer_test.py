@@ -15,10 +15,11 @@ import unittest
 from unittest.mock import Mock, patch
 from types import SimpleNamespace
 
-from primary_observer import (MAX_BYTES, PrimaryObserver, analyze, journal_rows,
+import proofs_path
+from primary_observer import (MAX_BYTES, MAX_INTERVAL_NS, PrimaryObserver, analyze, journal_rows,
                               primary_wire_state, sync_barrier, verify_negative_control, wire_rows)
 from production_realapp_proof import run
-from production_realapp_proof_test import plan
+from proof_fixtures import harness_args, patch_module, plan, run_replacements
 
 
 def wire(*lines):
@@ -209,24 +210,33 @@ class ObserverAnalysisTests(unittest.TestCase):
             verify_negative_control(analyze(*values))
 
     def test_full_interval_fresh_heartbeats_and_sync_callbacks_are_mandatory(self):
-        for mutation in (
-            lambda v: v[1]['identity'].update(pid=11),
-            lambda v: v[1]['marker'].update(nonce='a' * 32),
-            lambda v: v[1]['marker'].update(time=4_000_000_000),
-            lambda v: v[4].append((1_999_999_999, 2_100_000_000)),
-            lambda v: v[4].append((2_100_000_000, 2_300_000_000)),
-            lambda v: v[4].clear(),
-            lambda v: v[0]['marker'].update(held=False),
-            lambda v: v[0]['marker'].update(canvas_focus=False),
-            lambda v: v[0]['marker'].update(wire_end=len(BASE)),
+        def end_after(ns):
+            def mutate(values):
+                # The end marker is also the retained journal row.
+                values[1]['marker']['time'] = values[0]['marker']['time'] + ns
+            return mutate
+        for pattern, mutation in (
+            ('observer identity changed', lambda v: v[1]['identity'].update(pid=11)),
+            ('sync markers are not distinct', lambda v: v[1]['marker'].update(nonce='a' * 32)),
+            ('empty or exceeds its bound', end_after(0)),
+            ('empty or exceeds its bound', end_after(MAX_INTERVAL_NS + 1)),
+            ('heartbeat gap', end_after(MAX_INTERVAL_NS)),
+            ('does not cover', lambda v: v[4].append((1_999_999_999, 2_100_000_000))),
+            ('does not cover', lambda v: v[4].append((2_100_000_000, 2_300_000_000))),
+            ('does not cover', lambda v: v[4].clear()),
+            ('lacks the held primary grab', lambda v: v[0]['marker'].update(held=False)),
+            ('not focused', lambda v: v[0]['marker'].update(canvas_focus=False)),
+            ('do not bracket the wire log', lambda v: v[0]['marker'].update(wire_end=len(BASE))),
         ):
             values = observation(DUPLICATES)
             mutation(values)
-            with self.assertRaises(AssertionError):
+            with self.subTest(pattern=pattern), self.assertRaisesRegex(AssertionError, pattern):
                 analyze(*values)
-        for data in (b'', SYNC.replace(b'wl_callback#21.done(2)\n', b''),
+        # Drop the whole second callback record, not just its text: a truncated
+        # line would fail as an incomplete log before the barrier is checked.
+        for data in (b'', SYNC.replace(wire('wl_callback#21.done(2)'), b''),
                      SYNC.replace(b'wl_callback#21.done', b'wl_callback#22.done')):
-            with self.assertRaises(AssertionError):
+            with self.subTest(data=data), self.assertRaisesRegex(AssertionError, 'missing complete independent Wayland sync'):
                 sync_barrier(data)
 
     def test_baseline_requires_one_native_surface_with_proven_pointer_grab_and_idle_keyboard(self):
@@ -253,11 +263,8 @@ class ObserverAnalysisTests(unittest.TestCase):
 
 
 class ObserverFileTests(unittest.TestCase):
-    def test_fixture_help_is_portable_and_optimized_execution_is_refused(self):
-        fixture = Path(__file__).with_name('primary_observer_fixture.py')
-        help_text = subprocess.check_output([sys.executable, str(fixture), '--help'], text=True, timeout=5)
-        self.assertIn('--control', help_text)
-        self.assertIn('--wire', help_text)
+    def test_optimized_fixture_execution_is_refused(self):
+        fixture = proofs_path.PROOFS / 'primary_observer_fixture.py'
         optimized = subprocess.run([sys.executable, '-O', str(fixture), '--help'], text=True,
                                    capture_output=True, timeout=5)
         self.assertNotEqual(optimized.returncode, 0)
@@ -267,7 +274,11 @@ class ObserverFileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / 'fixture.py'
             source.write_text('synthetic fixture')
-            for fault in (None, 'peer', 'uid', 'nonce', 'stale', 'future', 'source', 'truncated', 'process'):
+            errors = {None: None, 'peer': 'socket peer mismatch', 'uid': 'socket peer mismatch',
+                      'nonce': 'stale observer synchronization', 'stale': 'stale observer synchronization',
+                      'future': 'stale observer synchronization', 'source': 'source identity mismatch',
+                      'truncated': 'incomplete observer acknowledgement', 'process': 'observer process changed'}
+            for fault, error in errors.items():
                 with self.subTest(fault=fault):
                     observer = object.__new__(PrimaryObserver)
                     observer.control = Mock(lstat=Mock(return_value=SimpleNamespace(st_mode=stat.S_IFSOCK, st_uid=os.getuid())))
@@ -294,7 +305,7 @@ class ObserverFileTests(unittest.TestCase):
                         if fault is None:
                             self.assertEqual(observer._sync()['controller_interval'], [1000, 2000])
                         else:
-                            with self.assertRaises(AssertionError):
+                            with self.assertRaisesRegex(AssertionError, error):
                                 observer._sync()
 
     def test_inode_prefix_size_and_recording_limits_fail_closed(self):
@@ -340,11 +351,7 @@ class ObserverGateTests(unittest.TestCase):
                     output = root / f'output-{i}'
                     output.write_bytes(b'baseline')
                     oracle['path'] = str(output)
-                path = root / 'plan.json'
-                path.write_text(json.dumps(candidate))
-                args = SimpleNamespace(plan=path, evidence=root / 'evidence', artifact_role='production', trace_socket=None,
-                                       primary_observer=root / 'control.sock', foreground_journal=root / 'journal',
-                                       primary_grab=root / 'primary-grab', driver=root / 'driver', record_video=False)
+                args = harness_args(root, candidate, artifact_role='production', primary_observer=root / 'control.sock')
                 agents = [Mock(process=Mock(pid=101 + i, poll=Mock(return_value=None))) for i in range(2)]
                 recorder = Mock()
                 def tool(name, arguments):
@@ -370,16 +377,10 @@ class ObserverGateTests(unittest.TestCase):
                     self.assertTrue(all(began[0] <= first < last <= time.monotonic_ns() for first, last in intervals))
                     return result
                 observer.finish.side_effect = finish
-                replacements = {'provenance': Mock(return_value={}), 'PrimaryObserver': Mock(return_value=observer),
+                patch_module(stack, 'production_realapp_proof', run_replacements(self, held, **{
+                    'PrimaryObserver': Mock(return_value=observer),
                     'DirectMCP': Mock(side_effect=agents + [recorder]), 'subprocess.Popen': Mock(return_value=grab),
-                    'subprocess.run': Mock(), 'primary_acknowledgement': Mock(return_value='HELD\n'),
-                    'verify_output': Mock(return_value={'verified': True}),
-                    'wait_for': lambda predicate: self.assertTrue(predicate()),
-                    'state': lambda path: {'held': held[0], 'clicks': 0, 'keys': 0, 'scroll': 0},
-                    'wm': lambda: {'pid': 10, 'address': '0x64', 'workspace': 1, 'cursor': {'x': 100, 'y': 200}},
-                    'stop_process': lambda process: held.__setitem__(0, False)}
-                for name, replacement in replacements.items():
-                    stack.enter_context(patch('production_realapp_proof.' + name, replacement))
+                    'subprocess.run': Mock(), 'verify_output': Mock(return_value={'verified': True})}))
                 should_pass = (purpose == 'apps') == (detection == 'passed')
                 self.assertEqual(run(args), 0 if should_pass else 1)
                 observer.start.assert_called_once()
@@ -394,19 +395,6 @@ class ObserverGateTests(unittest.TestCase):
                     self.assertEqual(report['scope'], 'production-package-primary-control')
                 self.assertFalse(held[0])
 
-    def test_explicit_production_requires_observer_before_any_driver_process(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            path = root / 'plan.json'
-            path.write_text(json.dumps(plan()))
-            args = SimpleNamespace(plan=path, evidence=root / 'evidence', artifact_role='production', trace_socket=None)
-            with patch('production_realapp_proof.provenance') as origin, patch('production_realapp_proof.DirectMCP') as spawn:
-                self.assertEqual(run(args), 1)
-                origin.assert_not_called()
-                spawn.assert_not_called()
-            result = json.loads((args.evidence / 'result.json').read_text())
-            self.assertIn('requires the independent primary observer', result['error'])
-            self.assertEqual(result['continuous_isolation'], 'unproven')
 
 
 if __name__ == '__main__':

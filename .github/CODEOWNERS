@@ -26,6 +26,7 @@
 /.github/workflows/ci-distro-compat-cua-driver.yml @f-trycua @injaneity
 /.github/workflows/ci-rust-format.yml @f-trycua @injaneity
 /.github/workflows/ci-rust-linux.yml @f-trycua @injaneity
+/.github/workflows/ci-rust-macos.yml @f-trycua @injaneity
 /.github/workflows/ci-rust-windows.yml @f-trycua @injaneity
 /.github/workflows/clawhub-cua-driver.yml @f-trycua @injaneity
 /.github/workflows/e2e-rust-linux-wayland.yml @f-trycua @injaneity

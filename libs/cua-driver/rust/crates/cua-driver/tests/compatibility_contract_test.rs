@@ -216,8 +216,15 @@ fn assert_mcp_contract(driver: &mut RawDriver, fixture: &Value) {
         );
     }
 
+    // A notification gets no response: the next message read must answer the
+    // following request, not the notification.
+    driver.send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
     driver.send(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
     let tools_list = driver.recv();
+    assert_eq!(
+        tools_list["id"], 2,
+        "notifications/initialized must not produce a response: {tools_list:?}"
+    );
     let expected_tools = &fixture["tools_list"];
     assert_eq!(
         tools_list["result"]["schema_version"],

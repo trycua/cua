@@ -330,7 +330,9 @@ impl ToolOutput for SetAgentCursorThemeOutput {}
 pub struct GetAgentCursorStateOutput {
     pub session: String,
     pub enabled: bool,
-    #[schemars(required)]
+    // Wire contract: the key is always present, and its value is `null` until
+    // the session cursor first moves.
+    #[schemars(required, schema_with = "nullable_cursor_point_schema")]
     pub position: Option<CursorPointOutput>,
     pub theme: CursorThemeOutput,
     pub visual_state: CursorVisualOutput,
@@ -363,16 +365,92 @@ pub struct DesktopStateOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub screenshot_file_path: Option<String>,
+    /// Whether the Driver's own overlay pixels (agent cursor, session pill)
+    /// were kept out of this capture. Absent from producers that predate the
+    /// report.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_overlay_capture: Option<AgentOverlayCapture>,
     #[serde(flatten)]
     pub extensions: BTreeMap<String, Value>,
 }
 
+/// How a Driver-owned desktop capture treated Driver-owned overlay pixels.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentOverlayCaptureStatus {
+    /// Overlay windows were on screen and were kept out of the pixels.
+    Excluded,
+    /// No Driver overlay pixels were on screen, so there was nothing to keep out.
+    NotPresent,
+    /// Overlay pixels may be in the capture; `reason` says why.
+    NotExcluded,
+}
+
+/// Report attached to desktop captures about Driver-owned overlay pixels.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AgentOverlayCapture {
+    pub status: AgentOverlayCaptureStatus,
+    /// Native mechanism that kept the overlay out, when `status` is `excluded`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    /// Why the overlay could not be kept out, when `status` is `not_excluded`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl AgentOverlayCapture {
+    pub fn excluded(method: impl Into<String>) -> Self {
+        Self {
+            status: AgentOverlayCaptureStatus::Excluded,
+            method: Some(method.into()),
+            reason: None,
+        }
+    }
+
+    pub fn not_present() -> Self {
+        Self {
+            status: AgentOverlayCaptureStatus::NotPresent,
+            method: None,
+            reason: None,
+        }
+    }
+
+    pub fn not_excluded(reason: impl Into<String>) -> Self {
+        Self {
+            status: AgentOverlayCaptureStatus::NotExcluded,
+            method: None,
+            reason: Some(reason.into()),
+        }
+    }
+
+    /// Whether the capture is free of Driver overlay pixels.
+    pub fn is_clean(&self) -> bool {
+        self.status != AgentOverlayCaptureStatus::NotExcluded
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        match (self.status, &self.method, &self.reason) {
+            (AgentOverlayCaptureStatus::Excluded, Some(_), None)
+            | (AgentOverlayCaptureStatus::NotPresent, None, None)
+            | (AgentOverlayCaptureStatus::NotExcluded, None, Some(_)) => Ok(()),
+            _ => Err(
+                "agent_overlay_capture: excluded requires only method, not_excluded requires \
+                 only reason, not_present carries neither"
+                    .into(),
+            ),
+        }
+    }
+}
+
 impl ToolOutput for DesktopStateOutput {
     fn validate(&self) -> Result<(), String> {
-        if self.screenshot_mime_type == "image/png" {
-            Ok(())
-        } else {
-            Err("screenshot_mime_type must be image/png".into())
+        if self.screenshot_mime_type != "image/png" {
+            return Err("screenshot_mime_type must be image/png".into());
+        }
+        match &self.agent_overlay_capture {
+            Some(report) => report.validate(),
+            None => Ok(()),
         }
     }
 }
@@ -510,6 +588,19 @@ pub enum ActionEvidenceKind {
 #[serde(deny_unknown_fields)]
 pub struct ActionEvidence {
     pub kind: ActionEvidenceKind,
+    /// Human-readable readback the evidence rests on (what changed, which
+    /// popup or window appeared and how to target it). Never request data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// Why a `refused` action sent no input, and what to do instead.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ActionError {
+    pub code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
@@ -549,6 +640,15 @@ pub struct ActionResult {
     pub evidence: Option<Vec<ActionEvidence>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub escalation: Option<ActionEscalation>,
+    /// The producer's human summary of what happened (resolved points, the
+    /// element hit, popups that opened, focus outcome, follow-up calls).
+    /// Clients that read only `structuredContent` still get everything the
+    /// text content says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// Present only with `effect: refused`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ActionError>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -557,6 +657,7 @@ pub enum ActionResultValidationError {
     PartialRequiresDeliveredCount,
     RefusedCannotHaveDelivery,
     RefusedCannotHaveEvidence,
+    ErrorRequiresRefused,
 }
 
 impl std::fmt::Display for ActionResultValidationError {
@@ -566,6 +667,7 @@ impl std::fmt::Display for ActionResultValidationError {
             Self::PartialRequiresDeliveredCount => "partial effect requires delivered_count",
             Self::RefusedCannotHaveDelivery => "refused effect cannot include delivery",
             Self::RefusedCannotHaveEvidence => "refused effect cannot include evidence",
+            Self::ErrorRequiresRefused => "error is only reported with a refused effect",
         })
     }
 }
@@ -597,6 +699,9 @@ impl ActionResult {
             }
             ActionEffect::Refused if self.evidence.is_some() => {
                 Err(ActionResultValidationError::RefusedCannotHaveEvidence)
+            }
+            effect if effect != ActionEffect::Refused && self.error.is_some() => {
+                Err(ActionResultValidationError::ErrorRequiresRefused)
             }
             _ => Ok(()),
         }
@@ -639,6 +744,11 @@ fn platform_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
 
 fn nullable_string_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({ "anyOf": [{ "type": "string" }, { "type": "null" }] })
+}
+
+fn nullable_cursor_point_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let point = generator.subschema_for::<CursorPointOutput>();
+    schemars::json_schema!({ "anyOf": [point, { "type": "null" }] })
 }
 
 fn nullable_escalation_reason_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -686,8 +796,11 @@ mod tests {
             }),
             evidence: Some(vec![ActionEvidence {
                 kind: ActionEvidenceKind::ValueReadback,
+                detail: None,
             }]),
             escalation: None,
+            summary: None,
+            error: None,
         }
     }
 
@@ -700,7 +813,15 @@ mod tests {
         let properties = schema["properties"].as_object().expect("properties");
         assert_eq!(
             properties.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["delivery", "effect", "escalation", "evidence", "route"]
+            [
+                "delivery",
+                "effect",
+                "error",
+                "escalation",
+                "evidence",
+                "route",
+                "summary"
+            ]
         );
         assert_eq!(
             properties["effect"]["enum"],
@@ -814,9 +935,39 @@ mod tests {
         delivery_extension["delivery"]["requested"] = json!("background");
         assert!(serde_json::from_value::<ActionResult>(delivery_extension).is_err());
 
+        // Evidence carries its human detail so a client that reads only
+        // structuredContent still sees what the readback said; other
+        // evidence extensions stay closed.
+        let mut evidence_detail = serde_json::to_value(&result).expect("serialize");
+        evidence_detail["evidence"][0]["detail"] = json!("value read back as 42");
+        assert_eq!(
+            serde_json::from_value::<ActionResult>(evidence_detail)
+                .expect("detail")
+                .evidence
+                .expect("evidence")[0]
+                .detail
+                .as_deref(),
+            Some("value read back as 42")
+        );
         let mut evidence_extension = serde_json::to_value(&result).expect("serialize");
-        evidence_extension["evidence"][0]["detail"] = json!("private readback");
+        evidence_extension["evidence"][0]["raw"] = json!("private readback");
         assert!(serde_json::from_value::<ActionResult>(evidence_extension).is_err());
+
+        let refusal = json!({
+            "effect": "refused",
+            "route": "synthetic_events",
+            "summary": "no input was sent",
+            "error": {"code": "point_outside_window", "hint": "use window-local pixels"}
+        });
+        let refusal = serde_json::from_value::<ActionResult>(refusal).expect("refusal");
+        assert_eq!(refusal.validate_invariants(), Ok(()));
+        assert_eq!(
+            refusal.error.as_ref().map(|error| error.code.as_str()),
+            Some("point_outside_window")
+        );
+        let mut error_extension = serde_json::to_value(&refusal).expect("serialize");
+        error_extension["error"]["detail"] = json!({"x": 1});
+        assert!(serde_json::from_value::<ActionResult>(error_extension).is_err());
 
         let escalation_extension = json!({
             "effect": "unverifiable",
@@ -863,6 +1014,7 @@ mod tests {
         result.delivery = None;
         result.evidence = Some(vec![ActionEvidence {
             kind: ActionEvidenceKind::WindowChange,
+            detail: None,
         }]);
         assert_eq!(
             result.validate_invariants(),
@@ -870,6 +1022,17 @@ mod tests {
         );
         result.evidence = None;
         assert_eq!(result.validate_invariants(), Ok(()));
+
+        result.error = Some(ActionError {
+            code: "window_target_not_found".into(),
+            hint: None,
+        });
+        assert_eq!(result.validate_invariants(), Ok(()));
+        result.effect = ActionEffect::Unverifiable;
+        assert_eq!(
+            result.validate_invariants(),
+            Err(ActionResultValidationError::ErrorRequiresRefused)
+        );
     }
 }
 

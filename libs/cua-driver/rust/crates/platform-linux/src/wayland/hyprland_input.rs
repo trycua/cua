@@ -566,15 +566,6 @@ impl Client {
         }
     }
 
-    fn execute_routed(
-        &mut self,
-        action: Action,
-        started: Option<tokio::sync::oneshot::Sender<()>>,
-        route: DeliveryRoute,
-    ) -> Result<Value> {
-        self.execute_routed_with_attest(action, started, route, Self::attest)
-    }
-
     fn execute_routed_with_attest(
         &mut self,
         action: Action,
@@ -644,26 +635,6 @@ impl Client {
         unreachable!("bounded stale geometry retry loop always returns")
     }
 
-    #[cfg(test)]
-    fn dispatch(
-        &self,
-        packet: &str,
-        is_drag: bool,
-        started: Option<tokio::sync::oneshot::Sender<()>>,
-    ) -> Result<Value> {
-        self.dispatch_routed(packet, is_drag, started, DeliveryRoute::Background)
-    }
-
-    fn dispatch_routed(
-        &self,
-        packet: &str,
-        is_drag: bool,
-        mut started: Option<tokio::sync::oneshot::Sender<()>>,
-        route: DeliveryRoute,
-    ) -> Result<Value> {
-        self.dispatch_routed_with_started(packet, is_drag, &mut started, route)
-    }
-
     fn dispatch_routed_with_started(
         &self,
         packet: &str,
@@ -720,11 +691,6 @@ impl Client {
             reply["delivery"] = json!({"mode":route.mode(),"delivered_count":1});
         }
         Ok(reply)
-    }
-
-    #[cfg(test)]
-    fn target_packet(&self, action: &Action) -> String {
-        self.target_packet_routed(action, DeliveryRoute::Background)
     }
 
     fn check_route(&self, route: DeliveryRoute) -> Result<()> {
@@ -1341,6 +1307,18 @@ mod tests {
         );
     }
 
+    /// Send one raw packet through the production dispatch path.
+    fn dispatch(
+        client: &Client,
+        packet: &str,
+        is_drag: bool,
+        started: Option<tokio::sync::oneshot::Sender<()>>,
+        route: DeliveryRoute,
+    ) -> Result<Value> {
+        let mut started = started;
+        client.dispatch_routed_with_started(packet, is_drag, &mut started, route)
+    }
+
     fn dispatch_production_key(slot: &mut Option<Client>, route: DeliveryRoute) -> Result<Value> {
         dispatch_actions_in_slot(
             slot,
@@ -1387,33 +1365,28 @@ mod tests {
                     .unwrap();
             }
         });
-        let mut attestations = 0;
+        let mut handshake_attestations = 0;
         assert!(client
             .attest_and_handshake(0, |_| {
-                attestations += 1;
+                handshake_attestations += 1;
                 Ok(())
             })
             .unwrap());
-        assert_eq!(attestations, 1);
+        assert_eq!(handshake_attestations, 1);
+        reset_test_attestations();
         let mut slot = Some(client);
         for (call, text) in ["abc", "de"].into_iter().enumerate() {
-            let result = dispatch_in_slot(
+            let result = dispatch_actions_in_slot(
                 &mut slot,
-                |_| {
-                    attestations += 1;
-                    Ok(())
-                },
-                |client| {
-                    execute_text_actions(
-                        text_actions(text).unwrap(),
-                        DeliveryRoute::Foreground,
-                        |action| client.execute_routed(action, None, DeliveryRoute::Foreground),
-                    )
-                },
+                text_actions(text).unwrap(),
+                None,
+                DeliveryRoute::Foreground,
+                true,
+                record_test_attestation,
             )
             .unwrap();
             assert_eq!(result["delivery"]["delivered_count"], text.len());
-            assert_eq!(attestations, call + 2);
+            assert_eq!(test_attestations(), call + 1);
             assert!(slot.is_some());
         }
         server.join().unwrap();
@@ -1545,16 +1518,13 @@ mod tests {
             );
         });
         let mut slot = Some(client);
-        let result = dispatch_in_slot(
+        let result = dispatch_actions_in_slot(
             &mut slot,
-            |_| Ok(()),
-            |client| {
-                execute_text_actions(
-                    text_actions("abc").unwrap(),
-                    DeliveryRoute::Foreground,
-                    |action| client.execute_routed(action, None, DeliveryRoute::Foreground),
-                )
-            },
+            text_actions("abc").unwrap(),
+            None,
+            DeliveryRoute::Foreground,
+            true,
+            record_test_attestation,
         )
         .unwrap();
         assert_eq!(result["code"], "desktop_changed");
@@ -1598,16 +1568,13 @@ mod tests {
             );
         });
         let mut slot = Some(client);
-        let result = dispatch_in_slot(
+        let result = dispatch_actions_in_slot(
             &mut slot,
-            |_| Ok(()),
-            |client| {
-                execute_text_actions(
-                    text_actions("abc").unwrap(),
-                    DeliveryRoute::Foreground,
-                    |action| client.execute_routed(action, None, DeliveryRoute::Foreground),
-                )
-            },
+            text_actions("abc").unwrap(),
+            None,
+            DeliveryRoute::Foreground,
+            true,
+            record_test_attestation,
         )
         .unwrap();
         assert_eq!(result["code"], "target_changed");
@@ -1623,13 +1590,14 @@ mod tests {
         client.lane = Some(0);
         // This socket's peer is the test process, never the Wayland compositor.
         assert!(client
-            .execute_routed(
+            .execute_routed_with_attest(
                 Action::Key {
                     key: "a".into(),
                     modifiers: vec![]
                 },
                 None,
                 DeliveryRoute::Background,
+                Client::attest,
             )
             .is_err());
         drop(client);
@@ -1815,14 +1783,14 @@ mod tests {
                 .unwrap();
         });
         let (started, acknowledgement) = tokio::sync::oneshot::channel();
-        let reply = client
-            .dispatch_routed(
-                "DRAG synthetic",
-                true,
-                Some(started),
-                DeliveryRoute::Foreground,
-            )
-            .unwrap();
+        let reply = dispatch(
+            &client,
+            "DRAG synthetic",
+            true,
+            Some(started),
+            DeliveryRoute::Foreground,
+        )
+        .unwrap();
         assert!(acknowledgement.blocking_recv().is_ok());
         assert_eq!(reply["effect"], "partial");
         assert_eq!(
@@ -1840,10 +1808,15 @@ mod tests {
             peer.send(br#"{"ok":true,"effect":"unverifiable","route":"synthetic_events"}"#)
                 .unwrap();
         });
-        assert!(client
-            .dispatch_routed("KEY synthetic", false, None, DeliveryRoute::Foreground)
-            .unwrap_err()
-            .is::<DispatchUnknown>());
+        assert!(dispatch(
+            &client,
+            "KEY synthetic",
+            false,
+            None,
+            DeliveryRoute::Foreground
+        )
+        .unwrap_err()
+        .is::<DispatchUnknown>());
         server.join().unwrap();
     }
 
@@ -1868,9 +1841,8 @@ mod tests {
                     0
                 );
             });
-            let error = client
-                .dispatch_routed(packet, started, None, DeliveryRoute::Foreground)
-                .unwrap_err();
+            let error =
+                dispatch(&client, packet, started, None, DeliveryRoute::Foreground).unwrap_err();
             assert_eq!(
                 error
                     .downcast_ref::<DispatchUnknown>()
@@ -1901,7 +1873,15 @@ mod tests {
         let error = execute_text_actions(
             text_actions("abc").unwrap(),
             DeliveryRoute::Foreground,
-            |_| client.dispatch_routed("KEY synthetic", false, None, DeliveryRoute::Foreground),
+            |_| {
+                dispatch(
+                    &client,
+                    "KEY synthetic",
+                    false,
+                    None,
+                    DeliveryRoute::Foreground,
+                )
+            },
         )
         .unwrap_err();
         assert_eq!(
@@ -1922,7 +1902,14 @@ mod tests {
             assert_eq!(read_packet(&peer), "KEY synthetic");
             peer.send(br#"{"ok":false,"code":"foreground_partial_unknown","detail":"foreground_partial_unknown"}"#).unwrap();
         });
-        let reply = client.dispatch("KEY synthetic", false, None).unwrap();
+        let reply = dispatch(
+            &client,
+            "KEY synthetic",
+            false,
+            None,
+            DeliveryRoute::Background,
+        )
+        .unwrap();
         assert_eq!(reply["ok"], false);
         assert_eq!(reply["code"], "foreground_partial_unknown");
         server.join().unwrap();
@@ -1983,32 +1970,6 @@ mod tests {
             );
             assert!(terminal_connection_result(&reply));
         }
-    }
-
-    #[test]
-    fn foreground_text_unknown_delivery_keeps_only_acknowledged_key_count() {
-        let mut calls = 0;
-        let error = execute_text_actions(
-            text_actions("abc").unwrap(),
-            DeliveryRoute::Foreground,
-            |_| {
-                calls += 1;
-                if calls == 1 {
-                    Ok(json!({"ok":true}))
-                } else {
-                    Err(unknown_dispatch(anyhow::anyhow!("peer closed"), 0))
-                }
-            },
-        )
-        .unwrap_err();
-        assert_eq!(calls, 2);
-        assert_eq!(
-            error
-                .downcast_ref::<DispatchUnknown>()
-                .unwrap()
-                .acknowledged_phases,
-            1
-        );
     }
 
     #[test]
@@ -2258,7 +2219,13 @@ mod tests {
             |_| Ok(()),
             |client| {
                 client.request("TARGET synthetic")?;
-                client.dispatch("CLICK synthetic", false, None)
+                dispatch(
+                    client,
+                    "CLICK synthetic",
+                    false,
+                    None,
+                    DeliveryRoute::Background,
+                )
             },
         )
         .unwrap();
@@ -2300,7 +2267,13 @@ mod tests {
                 |_| Ok(()),
                 |client| {
                     dispatches += 1;
-                    client.dispatch("CLICK synthetic", false, None)
+                    dispatch(
+                        client,
+                        "CLICK synthetic",
+                        false,
+                        None,
+                        DeliveryRoute::Background,
+                    )
                 },
             )
             .unwrap_err();
@@ -2641,7 +2614,15 @@ mod tests {
                 let result = dispatch_in_slot(
                     &mut slot,
                     |_| Ok(()),
-                    |client| client.dispatch("DRAG synthetic", true, Some(started)),
+                    |client| {
+                        dispatch(
+                            client,
+                            "DRAG synthetic",
+                            true,
+                            Some(started),
+                            DeliveryRoute::Background,
+                        )
+                    },
                 );
                 assert!(slot.is_none());
                 finished.send(result).unwrap();
@@ -2713,9 +2694,7 @@ mod tests {
             let (guard, cancellation) = ActionCancellation::invocation();
             client.cancellation = cancellation;
             drop(guard);
-            let error = client
-                .dispatch_routed("CLICK synthetic", false, None, route)
-                .unwrap_err();
+            let error = dispatch(&client, "CLICK synthetic", false, None, route).unwrap_err();
             assert!(error.is::<ActionCancelled>());
             assert!(!error.is::<DispatchUnknown>());
             let mut byte = [0u8];
@@ -2778,9 +2757,7 @@ mod tests {
                         std::io::ErrorKind::WouldBlock
                     );
                 });
-                let error = client
-                    .dispatch_routed(packet, is_drag, Some(started), route)
-                    .unwrap_err();
+                let error = dispatch(&client, packet, is_drag, Some(started), route).unwrap_err();
                 let unknown = error.downcast_ref::<DispatchUnknown>().unwrap();
                 assert_eq!(unknown.acknowledged_phases, u32::from(is_drag));
                 assert_eq!(unknown.detail, ActionCancelled.to_string());
@@ -2810,7 +2787,13 @@ mod tests {
                 }
             });
             let (started, acknowledged) = tokio::sync::oneshot::channel();
-            let result = client.dispatch("DRAG synthetic", true, Some(started));
+            let result = dispatch(
+                &client,
+                "DRAG synthetic",
+                true,
+                Some(started),
+                DeliveryRoute::Background,
+            );
             assert!(acknowledged.blocking_recv().is_ok());
             if expected_cancel {
                 let reply = result.unwrap();
@@ -2839,7 +2822,14 @@ mod tests {
         let server = std::thread::spawn(move || {
             assert_eq!(read_packet(&peer), "CLICK synthetic");
         });
-        let result = client.dispatch("CLICK synthetic", false, None).unwrap_err();
+        let result = dispatch(
+            &client,
+            "CLICK synthetic",
+            false,
+            None,
+            DeliveryRoute::Background,
+        )
+        .unwrap_err();
         assert_eq!(
             result
                 .downcast_ref::<DispatchUnknown>()
@@ -2936,10 +2926,15 @@ mod tests {
                 8,
             ),
         ] {
-            assert_eq!(
-                client.target_packet(&action),
-                format!("TARGET 1 1 {capability}")
-            );
+            for (route, command) in [
+                (DeliveryRoute::Background, "TARGET"),
+                (DeliveryRoute::Foreground, "FOREGROUND_TARGET"),
+            ] {
+                assert_eq!(
+                    client.target_packet_routed(&action, route),
+                    format!("{command} 1 1 {capability}")
+                );
+            }
         }
         for lane in 0..MAX_LANES {
             assert_ne!(

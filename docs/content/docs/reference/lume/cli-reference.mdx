@@ -155,6 +155,13 @@ Stop a virtual machine
 | Name | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
 | `--storage` | String | - | VM storage location to use |
+| `--timeout` | Int | 10 | Seconds to wait for a graceful shutdown before forcing power off |
+
+**Flags:**
+
+| Name | Default | Description |
+| ---- | ------- | ----------- |
+| `--force` | false | Power off the VM immediately instead of attempting a graceful shutdown first |
 
 ### lume delete
 

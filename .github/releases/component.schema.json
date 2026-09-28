@@ -54,17 +54,28 @@
           "items": { "$ref": "#/$defs/repositoryPath" },
           "uniqueItems": true
         },
+        "changeDetectionExcludePaths": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/repositoryPath" },
+          "uniqueItems": true
+        },
+        "changeDetectionCompanionPaths": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/repositoryPath" },
+          "uniqueItems": true
+        },
         "buildVersionSites": {
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "#/$defs/versionSite" }
         },
+        "candidateOnly": { "type": "boolean" },
         "channels": {
           "type": "object",
           "additionalProperties": false,
           "required": ["nightly", "registries"],
           "properties": {
-            "nightly": { "const": true },
+            "nightly": { "type": "boolean" },
             "registries": {
               "type": "array",
               "maxItems": 0

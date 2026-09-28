@@ -1,6 +1,5 @@
 //! macOS identity and endpoint evidence for the first-class browser tools.
 
-use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -8,7 +7,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
     BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
@@ -19,6 +17,10 @@ use cua_driver_core::browser::types::{
     BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
     EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
+};
+use cua_driver_core::browser::{
+    existing_profile_setup_descriptor, is_firefox, loopback_websocket_port,
+    parse_devtools_active_port, BrowserCursorTracker,
 };
 use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -202,54 +204,6 @@ pub struct MacOsBrowserPlatform {
     browser_cursors: Arc<Mutex<BrowserCursorTracker>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BrowserCursorBinding {
-    window_id: u64,
-    cdp_target_id: String,
-}
-
-#[derive(Debug, Default)]
-struct BrowserCursorTracker {
-    bindings: HashMap<String, BrowserCursorBinding>,
-}
-
-impl BrowserCursorTracker {
-    /// Record the session-to-tab binding and return the exact overlay
-    /// visibility changes needed for this action. An active tab owns the sole
-    /// visible browser cursor in its native window. An inactive tab hides only
-    /// its own cursor and never disturbs the cursor for the selected tab.
-    fn update(
-        &mut self,
-        session: &str,
-        window_id: u64,
-        cdp_target_id: &str,
-        tab_is_active: bool,
-    ) -> Vec<(String, bool)> {
-        self.bindings.insert(
-            session.to_owned(),
-            BrowserCursorBinding {
-                window_id,
-                cdp_target_id: cdp_target_id.to_owned(),
-            },
-        );
-
-        if !tab_is_active {
-            return vec![(session.to_owned(), false)];
-        }
-
-        self.bindings
-            .iter()
-            .filter(|(_, binding)| binding.window_id == window_id)
-            .map(|(key, binding)| {
-                (
-                    key.clone(),
-                    key == session && binding.cdp_target_id == cdp_target_id,
-                )
-            })
-            .collect()
-    }
-}
-
 impl MacOsBrowserPlatform {
     pub fn new(cursor_registry: Arc<crate::cursor::CursorRegistry>) -> Self {
         Self {
@@ -278,13 +232,6 @@ fn is_chromium(name: &str, bundle_id: &str) -> bool {
     value
         .split(|ch: char| !ch.is_ascii_alphanumeric())
         .any(|token| products.contains(&token))
-}
-
-fn is_firefox(name: &str, bundle_id: &str) -> bool {
-    format!("{name} {bundle_id}")
-        .to_ascii_lowercase()
-        .split(|ch: char| !ch.is_ascii_alphanumeric())
-        .any(|token| token == "firefox")
 }
 
 fn browser_product(name: &str, bundle_id: &str) -> BrowserProduct {
@@ -381,18 +328,6 @@ fn has_trusted_codesign_identity(
         )
 }
 
-fn loopback_websocket_port(url: &str) -> Option<u16> {
-    ["ws://127.0.0.1:", "ws://localhost:", "ws://[::1]:"]
-        .iter()
-        .find_map(|prefix| {
-            url.strip_prefix(prefix)?
-                .split('/')
-                .next()?
-                .parse::<u16>()
-                .ok()
-        })
-}
-
 fn stable_hash(value: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     value.hash(&mut hasher);
@@ -408,21 +343,6 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
         _ => return None,
     };
     Some(home.join(relative))
-}
-
-fn parse_devtools_active_port(text: &str) -> Option<(u16, &str)> {
-    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
-    let port = lines.next()?.parse::<u16>().ok()?;
-    let path = lines.next()?;
-    if lines.next().is_some() {
-        return None;
-    }
-    let instance = path.strip_prefix("/devtools/browser/")?;
-    (!instance.is_empty()
-        && instance
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))
-    .then_some((port, path))
 }
 
 fn process_arguments(pid: i64) -> Result<Vec<Vec<u8>>, BrowserRefusal> {
@@ -852,7 +772,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             .unwrap_or("");
         let chromium = is_chromium(name, bundle_id);
         let webkit = bundle_id == "com.apple.Safari" || name.eq_ignore_ascii_case("Safari");
-        let gecko = is_firefox(name, bundle_id);
+        let gecko = is_firefox(&format!("{name} {bundle_id}"));
         let product_kind = browser_product(name, bundle_id);
         let helper = name.to_ascii_lowercase().contains("helper")
             || bundle_id.to_ascii_lowercase().contains(".helper")
@@ -1635,32 +1555,6 @@ mod tests {
     }
 
     #[test]
-    fn browser_cursor_tracker_shows_only_the_active_tabs_session_per_window() {
-        let mut tracker = BrowserCursorTracker::default();
-        assert_eq!(
-            tracker.update("session-red", 77, "tab-A", false),
-            vec![("session-red".to_owned(), false)]
-        );
-
-        let first_active = tracker.update("session-red", 77, "tab-A", true);
-        assert_eq!(first_active, vec![("session-red".to_owned(), true)]);
-
-        let second_active = tracker
-            .update("session-blue", 77, "tab-B", true)
-            .into_iter()
-            .collect::<HashMap<_, _>>();
-        assert_eq!(second_active.get("session-red"), Some(&false));
-        assert_eq!(second_active.get("session-blue"), Some(&true));
-
-        let other_window = tracker.update("session-green", 88, "tab-C", true);
-        assert_eq!(
-            other_window,
-            vec![("session-green".to_owned(), true)],
-            "an active tab in another native window must not hide this window"
-        );
-    }
-
-    #[test]
     fn lsof_parser_accepts_only_loopback_listeners() {
         let input = "n127.0.0.1:9222\nn*:9333\nn[::1]:9444\nn0.0.0.0:9555\n";
         assert_eq!(parse_loopback_lsof_ports(input), vec![9222, 9444]);
@@ -1673,55 +1567,6 @@ mod tests {
         assert!(!is_chromium("Safari", "com.apple.Safari"));
         assert!(!is_chromium("Search", "com.example.Search"));
         assert!(!is_chromium("Operator", "com.example.Operator"));
-    }
-
-    #[test]
-    fn firefox_classifier_uses_product_tokens() {
-        assert!(is_firefox("Firefox", "org.mozilla.firefox"));
-        assert!(is_firefox("Mozilla Firefox", "org.mozilla.firefox"));
-        assert!(!is_firefox("FirefoxHelper", "com.example.FirefoxHelper"));
-        assert!(!is_firefox("Waterfox", "net.waterfox.current"));
-    }
-
-    #[test]
-    fn websocket_url_must_keep_the_attested_listener_port() {
-        assert_eq!(
-            loopback_websocket_port("ws://127.0.0.1:9222/devtools/browser/id"),
-            Some(9222)
-        );
-        assert_ne!(
-            loopback_websocket_port("ws://localhost:9333/devtools/browser/foreign"),
-            Some(9222)
-        );
-        assert_eq!(
-            loopback_websocket_port("ws://192.0.2.1:9222/devtools"),
-            None
-        );
-    }
-
-    #[test]
-    fn active_port_parser_requires_one_exact_browser_path() {
-        assert_eq!(
-            parse_devtools_active_port(
-                "9222\n/devtools/browser/f1d991b4-2694-4b28-b63a-1f2a8da3a435\n"
-            ),
-            Some((
-                9222,
-                "/devtools/browser/f1d991b4-2694-4b28-b63a-1f2a8da3a435"
-            ))
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/page/id\n"),
-            None
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser/id\nextra\n"),
-            None
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser/../page\n"),
-            None
-        );
     }
 
     #[test]

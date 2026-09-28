@@ -1,4 +1,9 @@
-"""Train and evaluate the Cua-S1 form-specialist choice scorer."""
+"""Train and evaluate the Cua-S1 form-specialist choice scorer.
+
+# TODO: this script is specific to `cua_s1.model`'s form-specialist scorer;
+# generalizing it (or adding a sibling script) to train `cua_s1.nano`'s
+# option-attention architecture is future work, not covered by this change.
+"""
 
 from __future__ import annotations
 

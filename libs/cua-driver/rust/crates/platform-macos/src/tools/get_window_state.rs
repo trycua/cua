@@ -20,6 +20,10 @@ impl GetWindowStateTool {
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+/// Slack past `timeout_ms` before the walk task is abandoned: one in-flight AX
+/// call may still be waiting on its messaging timeout.
+const AX_WALK_BACKSTOP_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "get_window_state".into(),
@@ -49,15 +53,16 @@ fn def() -> &'static ToolDef {
             the tree only — the cheap path when you're just re-indexing before an \
             element ax action.\n\n\
             The mirror image: pass `include_accessibility_tree:false` to SKIP the \
-            AX walk entirely (the expensive part, up to 20 s) and return just the \
+            AX walk entirely (the expensive part, bounded by timeout_ms) and return just the \
             screenshot plus window metadata — `window_bounds`, `screenshot_scale`, \
             `screenshot_width`/`screenshot_height`, `app_name`, and `window_title` \
             — the capture-only path for rendering a live window preview / \
             picture-in-picture without paying for perception. Setting BOTH \
             `include_accessibility_tree:false` and `include_screenshot:false` is an \
-            error (nothing to return). Optional `max_dimension` caps the returned \
-            screenshot's long edge in pixels (aspect preserved) for a cheap \
-            thumbnail.\n\n\
+            error (nothing to return). Optional `max_image_dimension` overrides the \
+            configured screenshot long-edge limit for this call; use 0 for native \
+            resolution. The legacy `max_dimension` remains a tighter cap for \
+            compatibility.\n\n\
             The snapshot is SCOPED to `window_id`: a window_id that no longer exists is \
             refused with `window_id_not_found`, and one owned by another process is \
             refused with `window_owner_pid_mismatch` naming the real `owner_pid` to retry \
@@ -65,7 +70,9 @@ fn def() -> &'static ToolDef {
             window belongs to the panel service, not the app). If the window is live under \
             this pid but its accessibility surface can't be resolved, the tree comes back \
             EMPTY with `degraded_reason: ax_window_unresolved` and the screenshot of the \
-            requested window — act by pixel there. This tool never returns another \
+            requested window; background input is refused until it resolves, so \
+            re-snapshot or act with `delivery_mode:\"foreground\"`. A window on another \
+            Space still resolves by its exact CGWindowID. This tool never returns another \
             surface's elements under your window_id. Before exposing a screenshot, \
             its raw dimensions are validated as a coherent 1x/2x representation of \
             the requested WindowServer bounds. `px_frame_mismatch` or \
@@ -92,7 +99,7 @@ fn def() -> &'static ToolDef {
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
                 "include_accessibility_tree": {
                     "type": "boolean",
-                    "description": "Default true — walk the AX tree and return `elements` + `tree_markdown` alongside the screenshot. Set false to SKIP the AX walk entirely (the expensive part, up to 20 s) and return just the screenshot plus window metadata (bounds, scale, app_name, window_title) — the capture-only path for rendering a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."
+                    "description": "Default true — walk the AX tree and return `elements` + `tree_markdown` alongside the screenshot. Set false to SKIP the AX walk entirely (the expensive part, bounded by timeout_ms) and return just the screenshot plus window metadata (bounds, scale, app_name, window_title) — the capture-only path for rendering a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."
                 },
                 "include_screenshot": {
                     "type": "boolean",
@@ -112,10 +119,16 @@ fn def() -> &'static ToolDef {
                     "minimum": 1,
                     "description": "Cap on the AX-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower this for deep menu/Electron trees."
                 },
+                "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
                 "max_dimension": {
                     "type": "integer",
                     "minimum": 1,
                     "description": "Optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved) — the cheap path for a small preview / thumbnail. Applied on top of the session/global max_image_dimension ceiling; the tighter of the two wins. Omit for the configured default."
+                },
+                "max_image_dimension": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Per-call override for the returned screenshot's long edge in pixels. An explicit value wins over the session/global setting; 0 returns native resolution. Omit to preserve configured behavior."
                 }
             },
             "additionalProperties": false
@@ -125,19 +138,6 @@ fn def() -> &'static ToolDef {
         idempotent: false,
         open_world: false,
     })
-}
-
-/// Fold a per-call `max_dimension` cap with the session/global
-/// `max_image_dimension` ceiling. `resize_png_if_needed` treats `0` as "no
-/// limit", so when the ceiling is unlimited the per-call cap stands alone;
-/// otherwise the tighter (smaller, non-zero) of the two wins. Returns `0` only
-/// when neither imposes a limit.
-fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
-    match per_call {
-        Some(md) if ceiling == 0 => md,
-        Some(md) => ceiling.min(md),
-        None => ceiling,
-    }
 }
 
 fn chromium_browser_window(pid: i32) -> bool {
@@ -184,7 +184,7 @@ impl Tool for GetWindowStateTool {
         };
 
         // Issue #2237: pre-flight the requested window against WindowServer
-        // BEFORE the (up to 20 s) AX walk. An id that no window carries, or
+        // BEFORE the (timeout_ms-bounded) AX walk. An id that no window carries, or
         // that another process owns, used to fall through the scoped filter and
         // return the app's MENU BAR as a healthy snapshot of the requested
         // window — with a screenshot of the requested window beside it. macOS
@@ -267,6 +267,10 @@ impl Tool for GetWindowStateTool {
             .get("max_dimension")
             .and_then(|v| v.as_u64())
             .map(|v| v.max(1) as u32);
+        let max_image_dimension = args
+            .get("max_image_dimension")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32);
         // Internal direct-tool mode used by verify_state. Registry ingress
         // strips underscore-prefixed arguments before public dispatch; only
         // a trusted direct in-process invocation can enable this mode.
@@ -288,35 +292,36 @@ impl Tool for GetWindowStateTool {
             .and_then(|v| v.as_u64())
             .map(|v| v.max(1) as usize)
             .unwrap_or(crate::ax::tree::DEFAULT_MAX_DEPTH);
+        let timeout_ms = cua_driver_core::tool_schema::resolve_timeout_ms(args.get("timeout_ms"));
 
         let (tree_result, prepared_snapshot) = if want_tree {
             let q = query.clone();
-            // Keep the product deadline below the public client's 25-second
-            // deadline so callers receive a structured driver error. The AX
-            // walker also applies a native per-element messaging timeout because
-            // dropping a spawn_blocking JoinHandle cannot cancel a blocked AX call.
+            // `timeout_ms` bounds the walk itself: it returns the partial tree
+            // when the budget runs out. The outer deadline is only a backstop
+            // for an AX call that ignores the per-element messaging timeout
+            // (dropping a spawn_blocking JoinHandle cannot cancel it).
             let walk_future = tokio::task::spawn_blocking(move || {
-                let tree = crate::ax::tree::walk_tree_bounded(
+                let tree = crate::ax::tree::walk_tree_budgeted(
                     pid,
                     Some(window_id),
                     q.as_deref(),
-                    max_elements,
                     max_depth,
+                    cua_driver_core::walk_budget::WalkBudget::new(timeout_ms, max_elements),
                 );
                 let payload = crate::ax::cache::CachedSnapshot::from_nodes(&tree.nodes);
                 (tree, payload)
             });
-            match tokio::time::timeout(std::time::Duration::from_secs(20), walk_future).await {
+            let backstop = std::time::Duration::from_millis(timeout_ms) + AX_WALK_BACKSTOP_GRACE;
+            match tokio::time::timeout(backstop, walk_future).await {
                 Ok(Ok((tree, payload))) => (Some(tree), Some(payload)),
                 Ok(Err(e)) => return ToolResult::error(format!("AX tree walk failed: {e}")),
                 Err(_elapsed) => {
                     return ToolResult::error(format!(
-                        "AX tree walk for pid={pid} timed out after 20 s. \
-                         The app (likely Arc, Electron, or Safari with many tabs) has a \
-                         pathologically large accessibility tree. \
-                         Workaround: re-call with a depth-limited scan \
-                         (max_elements / max_depth), then act by pixel (x,y) off \
-                         the screenshot if the tree stays unusable."
+                        "AX tree walk for pid={pid} did not return within {} s: an \
+                         accessibility call stopped answering past the {timeout_ms} ms \
+                         timeout_ms budget. Retry, or act by pixel (x,y) off a \
+                         screenshot-only get_window_state (include_accessibility_tree:false).",
+                        backstop.as_secs()
                     ));
                 }
             }
@@ -346,28 +351,35 @@ impl Tool for GetWindowStateTool {
         // against. Skipped only when `include_screenshot:false` (and no
         // screenshot_out_file). With `screenshot_out_file` set, write to disk and
         // surface the path instead of embedding base64; otherwise embed base64.
-        // Fold the per-call `max_dimension` with the session/global ceiling
-        // (the tighter of the two wins).
-        let max_dim = fold_max_dimension(effective_max_dim, max_dimension);
-        // Returns the encoded/file capture, delivered dimensions, optional
-        // downscale source width, the WindowServer bounds it was validated
+        // The portable `max_image_dimension` is an explicit per-call override,
+        // including 0 for native resolution. Without it, preserve the existing
+        // configured ceiling and legacy `max_dimension` tighter-cap behavior.
+        let max_dim = cua_driver_core::image_utils::ImageDimensionLimits {
+            configured: effective_max_dim,
+            legacy_max_dimension: max_dimension,
+            max_image_dimension,
+        }
+        .resolve();
+        // Returns the exact delivered PNG bytes, optional file path, delivered
+        // and native dimensions, the WindowServer bounds it was validated
         // against, and the raw capture's backing scale.
         let mut screenshot_frame_error = None;
+        let mut screenshot_resize_scale = None;
         let screenshot = if should_capture {
             let out_file = screenshot_out_file.clone();
             let res = tokio::task::spawn_blocking(move || -> Result<
                 (
-                    Option<String>,
+                    Vec<u8>,
                     Option<String>,
                     u32,
                     u32,
-                    Option<u32>,
+                    u32,
+                    u32,
                     crate::windows::WindowBounds,
                     f64,
                 ),
                 super::px_frame::PxFrameError,
             > {
-                use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
                 let bounds = crate::windows::window_bounds_by_id(window_id)
                     .filter(|b| b.width > 0.0 && b.height > 0.0)
                     .ok_or(super::px_frame::PxFrameError::WindowNotFound { window_id })?;
@@ -397,7 +409,6 @@ impl Tool for GetWindowStateTool {
                         reason: e.to_string(),
                     }
                 })?;
-                let original_w = if w < orig_w { Some(orig_w) } else { None };
                 if let Some(ref path) = out_file {
                     std::fs::write(path, &png).map_err(|e| {
                         super::px_frame::PxFrameError::CaptureUnavailable {
@@ -406,55 +417,39 @@ impl Tool for GetWindowStateTool {
                         }
                     })?;
                     Ok((
-                        None,
+                        png,
                         Some(path.clone()),
                         w,
                         h,
-                        original_w,
+                        orig_w,
+                        orig_h,
                         bounds,
                         scale,
                     ))
                 } else {
                     Ok((
-                        Some(BASE64.encode(&png)),
+                        png,
                         None,
                         w,
                         h,
-                        original_w,
+                        orig_w,
+                        orig_h,
                         bounds,
                         scale,
                     ))
                 }
             }).await;
             match res {
-                Ok(Ok((b64, file_path, w, h, orig_w, bounds, scale))) => {
-                    // Record resize ratio so ClickTool can scale coordinates back
-                    // up. Keyed per window: two windows of one pid can carry
-                    // different ratios (only the large one downscales), and a
-                    // pid-only key leaked one window's ratio into the other's
-                    // pixel clicks.
+                Ok(Ok((png, file_path, w, h, orig_w, orig_h, bounds, scale))) => {
                     if !observation_only {
-                        if let Some(ow) = orig_w {
-                            if w > 0 {
-                                self.state.resize_registry.set_ratio(
-                                    pid,
-                                    window_id,
-                                    ow as f64 / w as f64,
-                                );
-                            }
-                        } else {
-                            self.state.resize_registry.clear_ratio(pid, window_id);
-                        }
+                        screenshot_resize_scale = Some(orig_w as f64 / w as f64);
                     }
-                    Some((b64, file_path, w, h, bounds, scale))
+                    Some((png, file_path, w, h, orig_w, orig_h, bounds, scale))
                 }
                 Ok(Err(e)) => {
                     tracing::warn!(
                         "Screenshot frame could not be verified for window {window_id}: {e:?}"
                     );
-                    if !observation_only {
-                        self.state.resize_registry.clear_ratio(pid, window_id);
-                    }
                     screenshot_frame_error = Some(e);
                     None
                 }
@@ -468,20 +463,21 @@ impl Tool for GetWindowStateTool {
         };
 
         // Capture screenshot dimensions before consuming.
-        let screenshot_dims = screenshot.as_ref().map(|(_, _, w, h, _, _)| (*w, *h));
+        let screenshot_dims = screenshot.as_ref().map(|(_, _, w, h, _, _, _, _)| (*w, *h));
         let screenshot_file_path = screenshot
             .as_ref()
-            .and_then(|(_, fp, _, _, _, _)| fp.clone());
+            .and_then(|(_, fp, _, _, _, _, _, _)| fp.clone());
         let screenshot_frame = screenshot
             .as_ref()
-            .map(|(_, _, _, _, bounds, scale)| (bounds.clone(), *scale));
+            .map(|(_, _, _, _, _, _, bounds, scale)| (bounds.clone(), *scale));
 
         // Build response.
         let mut content: Vec<Content> = Vec::new();
 
-        if let Some((b64_opt, _file_path, w, h, _bounds, _scale)) = screenshot {
-            if let Some(b64) = b64_opt {
-                content.push(Content::image_png(b64));
+        if let Some((png, ref file_path, w, h, _, _, _, _)) = screenshot.as_ref() {
+            if file_path.is_none() {
+                use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+                content.push(Content::image_png(BASE64.encode(png)));
             }
 
             // Summary text line (matching Swift reference format).
@@ -521,13 +517,43 @@ impl Tool for GetWindowStateTool {
             .map(|r| r.tree_markdown.clone())
             .unwrap_or_default();
 
-        let snapshot_id = prepared_snapshot
+        let snapshot_payload = prepared_snapshot.or_else(|| {
+            screenshot_resize_scale
+                .is_some()
+                .then(|| crate::ax::cache::CachedSnapshot::from_nodes(&[]))
+        });
+        let snapshot_id = snapshot_payload
             .filter(|_| scope_matched && !observation_only)
-            .map(|payload| {
-                self.state
-                    .element_cache
-                    .publish(pid, u64::from(window_id), payload)
+            .and_then(|payload| {
+                self.state.element_cache.publish_for_session(
+                    pid,
+                    u64::from(window_id),
+                    payload,
+                    session_id.as_deref(),
+                    screenshot_resize_scale,
+                )
             });
+        if let Some(snapshot_id) = snapshot_id {
+            self.state
+                .zoom_registry
+                .retire_replaced(pid, u64::from(window_id), snapshot_id);
+        }
+        let capture_id = match (snapshot_id, screenshot.as_ref()) {
+            (Some(_), Some((png, _, width, height, native_width, native_height, _, _))) => {
+                match self.state.capture_bindings.publish_window(
+                    &args,
+                    pid,
+                    window_id,
+                    png.clone(),
+                    (*width, *height),
+                    (*native_width, *native_height),
+                ) {
+                    Ok(capture_id) => Some(capture_id),
+                    Err(error) => return error,
+                }
+            }
+            _ => None,
+        };
 
         // Build the structured `elements` array — one entry per actionable
         // node, matching the order (and indices) of the markdown rendering.
@@ -545,6 +571,18 @@ impl Tool for GetWindowStateTool {
             query.as_deref(),
             &tree_md,
         );
+        // Screenshot pixels of the delivered capture: window origin in screen
+        // points, delivered pixels per point (backing scale x downsizing).
+        let elements_json = match (screenshot_frame.as_ref(), screenshot_dims) {
+            (Some((bounds, _)), Some((width, _))) if bounds.width > 0.0 => {
+                cua_driver_core::element_frame::with_screenshot_frames(
+                    elements_json,
+                    (bounds.x, bounds.y),
+                    f64::from(width) / bounds.width,
+                )
+            }
+            _ => elements_json,
+        };
         let filtered_element_count = elements_json.len();
         // The structured array intentionally contains only actionable nodes,
         // and AX child reads can fail independently of the element/depth caps.
@@ -569,6 +607,9 @@ impl Tool for GetWindowStateTool {
         if query.is_some() {
             structured["filtered_element_count"] = serde_json::json!(filtered_element_count);
         }
+        if let Some(r) = tree_result.as_ref() {
+            r.walk.apply(&mut structured);
+        }
         // Surface 6: an opaque snapshot identifier consumers can log
         // alongside the per-element tokens for debug correlation. Same value
         // embedded in every `element_token` emitted in `elements[]` above.
@@ -579,6 +620,9 @@ impl Tool for GetWindowStateTool {
                 serde_json::json!(cua_driver_core::element_token::token_for(sid, 0)
                     .trim_end_matches(":0")
                     .to_string());
+        }
+        if let Some(capture_id) = capture_id {
+            structured["capture_id"] = serde_json::json!(capture_id);
         }
         // Best-effort-background ladder, rung (2). Both rungs point the agent at
         // the same next move: an empty AX tree means element_index has nothing
@@ -710,7 +754,7 @@ impl Tool for GetWindowStateTool {
 /// remedy-in-the-refusal shape the rest of the driver uses.
 ///
 /// The owner pid is REPORTED, not followed: `element_cache`, the element-token
-/// registry and `ResizeRegistry` are all keyed on the caller-supplied pid, so
+/// registry and snapshot-owned screenshot transform are keyed on the caller-supplied pid, so
 /// walking under `owner_pid` while echoing the requested pid would hand back
 /// indices the caller replays against the wrong key. One retry with the named
 /// pid is correct and cheap.
@@ -1054,6 +1098,7 @@ mod window_scope_contract_tests {
             props.get("max_dimension").is_some(),
             "schema must advertise max_dimension"
         );
+        assert_eq!(props["max_image_dimension"]["minimum"], 0);
         let required: Vec<&str> = d.input_schema["required"]
             .as_array()
             .expect("required array")
@@ -1070,29 +1115,12 @@ mod window_scope_contract_tests {
             "description must document the both-false error"
         );
     }
-
-    /// The per-call `max_dimension` folds with the session/global ceiling: the
-    /// tighter non-zero cap wins, an unlimited (0) ceiling defers to the
-    /// per-call cap, and absent inputs pass the ceiling through unchanged.
-    #[test]
-    fn max_dimension_folds_tighter_cap() {
-        // Ceiling wins when it is tighter than the per-call cap.
-        assert_eq!(fold_max_dimension(1024, Some(2048)), 1024);
-        // Per-call wins when it is tighter than the ceiling.
-        assert_eq!(fold_max_dimension(4096, Some(512)), 512);
-        // Unlimited ceiling (0) defers entirely to the per-call cap.
-        assert_eq!(fold_max_dimension(0, Some(768)), 768);
-        // No per-call cap → the ceiling passes through (0 stays unlimited).
-        assert_eq!(fold_max_dimension(1600, None), 1600);
-        assert_eq!(fold_max_dimension(0, None), 0);
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ax::tree::AXNode;
-    use cua_driver_core::element_query::project_elements_for_query;
     use serde_json::json;
 
     fn node(
@@ -1175,95 +1203,6 @@ mod tests {
             vec![0, 1, 2],
             "ordering must match DFS / element_index assignment"
         );
-    }
-
-    #[test]
-    fn query_projection_keeps_only_rendered_actionable_rows() {
-        let nodes = vec![
-            node(Some(0), "AXWindow", Some("Document"), 0, None, None, vec![]),
-            node(
-                Some(1),
-                "AXMenuItem",
-                Some("Window"),
-                1,
-                Some(0),
-                None,
-                vec![],
-            ),
-            node(
-                Some(2),
-                "AXMenuItem",
-                Some("Move & Resize"),
-                2,
-                Some(1),
-                None,
-                vec![],
-            ),
-            node(
-                Some(3),
-                "AXMenuItem",
-                Some("Left"),
-                3,
-                Some(2),
-                None,
-                vec![],
-            ),
-            node(
-                Some(4),
-                "AXButton",
-                Some("Unrelated"),
-                1,
-                Some(0),
-                None,
-                vec![],
-            ),
-        ];
-        let elements = build_elements_array_with_token(&nodes, None);
-        let filtered_markdown = concat!(
-            "- [0] AXWindow \"Document\"\n",
-            "  - [1] AXMenuItem \"Window\"\n",
-            "    - [2] AXMenuItem \"Move & Resize\"\n",
-            "      - [3] AXMenuItem \"Left\"\n",
-        );
-
-        let projected = project_elements_for_query(elements, Some("Left"), filtered_markdown);
-        let indices: Vec<u64> = projected
-            .iter()
-            .map(|entry| entry["element_index"].as_u64().unwrap())
-            .collect();
-
-        assert_eq!(indices, vec![0, 1, 2, 3]);
-    }
-
-    #[test]
-    fn query_projection_returns_no_elements_when_markdown_has_no_match() {
-        let nodes = vec![node(
-            Some(0),
-            "AXButton",
-            Some("Unrelated"),
-            0,
-            None,
-            None,
-            vec![],
-        )];
-        let elements = build_elements_array_with_token(&nodes, None);
-
-        let projected = project_elements_for_query(elements, Some("zoomLeft"), "");
-
-        assert!(projected.is_empty());
-    }
-
-    #[test]
-    fn unfiltered_projection_preserves_every_element() {
-        let nodes = vec![
-            node(Some(0), "AXButton", Some("One"), 0, None, None, vec![]),
-            node(Some(1), "AXButton", Some("Two"), 0, None, None, vec![]),
-        ];
-        let elements = build_elements_array_with_token(&nodes, None);
-
-        let projected = project_elements_for_query(elements, None, "");
-
-        assert_eq!(projected.len(), 2);
     }
 
     #[test]
@@ -1541,35 +1480,6 @@ mod tests {
             entries[0].get("element_token").is_none(),
             "observation-only entries must not emit unregistered element_token: {}",
             entries[0]
-        );
-    }
-
-    #[test]
-    fn walk_tree_bounded_signature_accepts_caps_no_panic() {
-        // Regression guard for #22865: the bounded variant must accept
-        // arbitrary cap values without panicking, even against a pid that
-        // has no AX tree to walk. Returns a TreeWalkResult either way.
-        // Use pid that won't be a real process. Don't assume tree is empty
-        // (CI may have process re-use) — only assert that the call returns
-        // and the result struct shape is intact.
-        let r1 = crate::ax::tree::walk_tree_bounded(i32::MAX, None, None, 5, 2);
-        // Cap of 5 is the contract test from the task: when this many
-        // visible nodes existed, the walker must stop early. The dead pid
-        // exercises the early-return path; the assertion is that the call
-        // honors the cap without overflowing or panicking.
-        assert!(r1.nodes.len() <= 5, "max_elements=5 must cap nodes ≤ 5");
-        assert!(
-            r1.nodes.iter().all(|n| n.depth <= 2),
-            "max_depth=2 must cap depth ≤ 2"
-        );
-        // And the uncapped variant — same dead-pid path, just validating
-        // walk_tree(...) (which delegates to walk_tree_bounded with
-        // DEFAULT_MAX_*) returns the same empty/safe shape.
-        let r2 = crate::ax::tree::walk_tree(i32::MAX, None, None);
-        assert_eq!(
-            r1.nodes.len(),
-            r2.nodes.len(),
-            "no-pid case: both bounded and unbounded must agree on the empty result"
         );
     }
 }

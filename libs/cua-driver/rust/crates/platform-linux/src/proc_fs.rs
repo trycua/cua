@@ -37,10 +37,13 @@ pub fn is_process_live(pid: u32) -> bool {
     is_process_live_state(&status)
 }
 
-fn process_start_time_from_stat(stat: &str) -> Option<u64> {
-    // `comm` is parenthesized and may contain spaces. Fields after its closing
-    // parenthesis begin with state (field 3); starttime is field 22.
-    stat.rsplit_once(") ")?
+/// Parse the kernel start time (field 22, in clock ticks) from the contents
+/// of `/proc/<pid>/stat`.
+pub(crate) fn process_start_time_from_stat(stat: &str) -> Option<u64> {
+    // `comm` is parenthesized and may contain spaces and closing parentheses.
+    // Fields after its final `)` begin with state (field 3); starttime is
+    // field 22.
+    stat.rsplit_once(')')?
         .1
         .split_whitespace()
         .nth(19)?
@@ -116,8 +119,24 @@ mod tests {
         let mut fields = vec!["S".to_owned()];
         fields.extend((4..=21).map(|field| field.to_string()));
         fields.push("987654".to_owned());
-        let stat = format!("42 (fixture with spaces) {}", fields.join(" "));
-        assert_eq!(super::process_start_time_from_stat(&stat), Some(987654));
+        let fields = fields.join(" ");
+        for comm in [
+            "fixture with spaces",
+            "name with ) parentheses",
+            "ends with )",
+        ] {
+            let stat = format!("42 ({comm}) {fields} 23");
+            assert_eq!(
+                super::process_start_time_from_stat(&stat),
+                Some(987654),
+                "{comm}"
+            );
+        }
+        assert_eq!(super::process_start_time_from_stat("bad"), None);
+        assert_eq!(
+            super::process_start_time_from_stat("42 (short) S 1 2"),
+            None
+        );
     }
 
     #[test]

@@ -48,8 +48,9 @@ impl Tool for StartRecordingTool {
             description: "Start trajectory recording for the calling session. Each action-tool \
                 invocation (click, right_click, scroll, type_text, press_key, hotkey, \
                 set_value) from that session writes a turn folder under `output_dir`. \
-                Other sessions and session lifecycle calls (`start_session` / \
-                `end_session`) are not recorded. CLI recordings started with \
+                Without `session`, every call on the same connection is recorded, \
+                including named-session calls. Other connections and session lifecycle \
+                calls (`start_session` / `end_session`) are not recorded. CLI recordings started with \
                 `cua-driver recording start` are daemon-wide.\n\n\
                 Each turn folder holds:\n\n\
                 - `before_state.json` / `after_state.json` — application AX/UIA/AT-SPI \

@@ -1566,8 +1566,11 @@ impl ToolRegistry {
         };
         let pending_turn = should_record
             .then(|| {
-                // Use the same trusted session identity as the recording owner.
-                let caller = runtime_session.as_deref();
+                // Use the same trusted identities the recording owner was minted from.
+                let caller = crate::recording::RecordingCaller {
+                    session: runtime_session.as_deref(),
+                    transport: args.get("_transport_session_id").and_then(Value::as_str),
+                };
                 if private_consent_turn {
                     self.recording.begin_private_turn(
                         resolved_name,

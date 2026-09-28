@@ -2,7 +2,7 @@
 
 Record only when the user requests it. Keep the recording controls and actions
 on one persistent MCP connection; see [RUNTIME.md](RUNTIME.md). When the actions
-pass a `session` label, pass the same label to `start_recording`.
+pass a `session` label, you may pass the same label to `start_recording`.
 `stop_recording` and `get_recording_state` do not accept `session`.
 
 ## Start, observe, stop
@@ -23,12 +23,13 @@ off by default; explicitly set `record_video:true` when requested. Inspect
 `video_active` and `last_error`, not just the successful tool status. Per-turn
 capture may continue even when video initialization failed.
 
-A recording keeps only the actions of the session that started it: the
-`session` label passed to `start_recording`, or the connection's implicit
-session when it is omitted. Other sessions' calls, including one-shot
-`cua-driver <tool>` processes, and `start_session` / `end_session` write no
-turns. A recording started with CLI `cua-driver recording start` has no owning
-session and records every session's actions.
+A recording keeps only its owner's actions. With a `session` label, it keeps
+that session's calls. Without one, it keeps every call on the connection that
+started it, including calls that pass a `session` label. Calls from other
+connections, including one-shot `cua-driver <tool>` processes, and
+`start_session` / `end_session` write no turns. A recording started with CLI
+`cua-driver recording start` has no owning session and records every
+session's actions.
 
 There is still one recorder per runtime. Manual `stop_recording` stops
 whichever recording is active, regardless of its starting session. Do not

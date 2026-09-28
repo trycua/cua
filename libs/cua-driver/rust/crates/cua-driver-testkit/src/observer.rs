@@ -685,6 +685,29 @@ pub mod macos {
         }
     }
 
+    /// Whether AppKit reports `pid` as finished launching and WindowServer
+    /// shows one of its windows on screen, observed without the driver.
+    ///
+    /// AppKit registers a window with WindowServer when the app constructs it,
+    /// before the app enters its run loop, so a fixture that only waits for its
+    /// window to be listed can start a case while every accessibility request
+    /// to the app still fails. Fixtures wait for this posture instead.
+    pub fn application_presented(pid: u32) -> bool {
+        let Ok(pid) = i32::try_from(pid) else {
+            return false;
+        };
+        // SAFETY: plain Objective-C messages on a retained
+        // NSRunningApplication; neither requires the main thread.
+        let finished = unsafe {
+            objc2_app_kit::NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+                .is_some_and(|app| app.isFinishedLaunching())
+        };
+        finished
+            && window_rows()
+                .iter()
+                .any(|row| row.pid == pid as u32 && row.on_screen)
+    }
+
     fn frontmost_pid() -> Option<u64> {
         unsafe {
             Some(

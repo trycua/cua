@@ -16,6 +16,10 @@ pub enum WalkStop {
     Timeout,
     /// The `max_elements` node budget ran out.
     NodeBudget,
+    /// The application could not be reached through the platform
+    /// accessibility API before `timeout_ms` ran out (still launching, or not
+    /// yet registered), so nothing was walked.
+    AppLookupTimeout,
 }
 
 impl WalkStop {
@@ -23,6 +27,7 @@ impl WalkStop {
         match self {
             WalkStop::Timeout => "timeout",
             WalkStop::NodeBudget => "node_budget",
+            WalkStop::AppLookupTimeout => "app_lookup_timeout",
         }
     }
 }
@@ -41,6 +46,8 @@ pub struct WalkBudget {
     started: Option<Instant>,
     timeout: Duration,
     timeout_ms: u64,
+    /// False for [`WalkBudget::nodes_only`], whose clock never fires.
+    time_bounded: bool,
     max_elements: usize,
     visited: usize,
     pending: usize,
@@ -55,6 +62,7 @@ impl WalkBudget {
             started: None,
             timeout: Duration::from_millis(timeout_ms),
             timeout_ms,
+            time_bounded: true,
             max_elements,
             visited: 0,
             pending: 0,
@@ -66,7 +74,17 @@ impl WalkBudget {
     /// caller-supplied time budget).
     pub fn nodes_only(max_elements: usize) -> Self {
         // A year: never fires, without overflowing Instant.
-        Self::new(365 * 24 * 60 * 60 * 1000, max_elements)
+        Self {
+            time_bounded: false,
+            ..Self::new(365 * 24 * 60 * 60 * 1000, max_elements)
+        }
+    }
+
+    /// The caller's wall-clock budget, or `None` for a node-only budget.
+    /// Backends use it to bound setup that happens before the first node,
+    /// such as waiting for a launching application to become reachable.
+    pub fn time_limit(&self) -> Option<Duration> {
+        self.time_bounded.then_some(self.timeout)
     }
 
     /// Admit one node for visiting. `false` means the walk must not visit it:
@@ -99,6 +117,12 @@ impl WalkBudget {
     /// (a bulk fetch that returned after the deadline).
     pub fn stop_for_timeout(&mut self) {
         self.stop.get_or_insert(WalkStop::Timeout);
+    }
+
+    /// Record that the application never became reachable within the budget,
+    /// so the walk visited nothing.
+    pub fn stop_for_app_lookup_timeout(&mut self) {
+        self.stop.get_or_insert(WalkStop::AppLookupTimeout);
     }
 
     pub fn outcome(&self) -> WalkOutcome {
@@ -183,9 +207,10 @@ pub fn truncation_note(
         Some("app_unresponsive") => {
             "the application stopped answering its accessibility API".to_owned()
         }
-        Some("app_lookup_timeout") => {
-            format!("the application did not register with AT-SPI within {timeout_ms} ms")
-        }
+        Some("app_lookup_timeout") => format!(
+            "the application was not reachable through its accessibility API (AT-SPI, AX) \
+             within {timeout_ms} ms; it may still be launching"
+        ),
         Some("huge_container") => "a container with more children than can be enumerated \
             (e.g. a spreadsheet's cell grid) was not expanded"
             .to_owned(),
@@ -213,6 +238,32 @@ mod tests {
         let outcome = budget.outcome();
         assert_eq!(outcome.reason(), Some("node_budget"));
         assert_eq!((outcome.nodes_visited, outcome.nodes_pending), (2, 2));
+    }
+
+    #[test]
+    fn only_a_caller_budget_bounds_setup_waits() {
+        assert_eq!(
+            WalkBudget::new(1500, 10).time_limit(),
+            Some(Duration::from_millis(1500))
+        );
+        assert_eq!(WalkBudget::nodes_only(10).time_limit(), None);
+    }
+
+    #[test]
+    fn an_unreachable_application_reports_app_lookup_timeout() {
+        let mut budget = WalkBudget::new(1000, 10);
+        budget.stop_for_app_lookup_timeout();
+        let outcome = budget.outcome();
+        assert!(outcome.truncated());
+        assert_eq!(outcome.reason(), Some("app_lookup_timeout"));
+        assert_eq!((outcome.nodes_visited, outcome.nodes_pending), (0, 0));
+        let mut structured = json!({});
+        outcome.apply(&mut structured);
+        assert_eq!(structured["truncated"], true);
+        assert_eq!(structured["truncation_reason"], "app_lookup_timeout");
+        let note = outcome.note().unwrap();
+        assert!(note.contains("not reachable through its accessibility API"));
+        assert!(note.contains("1000 ms"));
     }
 
     #[test]
@@ -277,6 +328,7 @@ mod tests {
         assert!(note.contains("stopped answering"));
         let note = truncation_note(Some("app_lookup_timeout"), 250, 0, 0);
         assert!(note.contains("250 ms"));
+        assert!(note.contains("still be launching"));
         let note = truncation_note(Some("huge_container"), 1000, 1918, 0);
         assert!(note.contains("not expanded"));
     }

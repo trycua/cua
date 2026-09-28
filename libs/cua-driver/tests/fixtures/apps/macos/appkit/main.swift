@@ -775,6 +775,14 @@ struct CuaAppKitHarness {
         }
         app.activate(ignoringOtherApps: true)
         writeBringToFrontWindowReport(main: controller.window, matrix: matrixWindows)
+        if let delay = ProcessInfo.processInfo.environment["CUA_APPKIT_LAUNCH_DELAY_MS"]
+            .flatMap(Double.init), delay > 0 {
+            // A slow launch on demand: the titled window is already registered
+            // with WindowServer, but the app has not entered its run loop, so
+            // it cannot answer accessibility yet. Cold hosted runners reach
+            // this state on their own for seconds.
+            Thread.sleep(forTimeInterval: delay / 1000)
+        }
         app.run()
         _ = matrixWindows
     }

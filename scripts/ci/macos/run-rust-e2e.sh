@@ -344,6 +344,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
       --ignored --nocapture --test-threads=1
     for appkit_test in \
     harness_appkit_smoke \
+    harness_appkit_first_snapshot_waits_for_a_launching_app \
     harness_appkit_query_projects_structured_elements \
     harness_appkit_stale_element_token_fails_closed \
     snapshot_publication::harness_appkit_pending_snapshot_cannot_retarget_token \

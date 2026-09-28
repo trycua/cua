@@ -115,6 +115,9 @@ jobs:
       - name: Run named-pipe readiness regression
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver-testkit stalled_pipe_attempt_is_bounded_and_does_not_block_the_next_probe --lib --locked
+      - name: Run named-pipe instance recovery regression
+        working-directory: libs/cua-driver/rust
+        run: cargo test -p cua-driver --test named_pipe_instance_recovery_test --locked -- --nocapture
       - name: Run cross-platform cursor renderer unit tests
         working-directory: libs/cua-driver/rust
         run: |

@@ -122,6 +122,11 @@ runs `.github/workflows/cd-cua-perception.yml`, which:
 Pull requests that change this pipeline run steps 1 through 3 plus an unsigned
 package and a developer-only install check. They never sign or publish.
 
+After publication, the capture lane of the canonical macOS, Windows, and Linux
+X11 desktop E2E installs a pinned published catalog as `publisher-verified`
+and runs the full capture-bound loop below against a visual-only fixture. The
+row is described in [the test matrix](test-matrix.md).
+
 Inspect a replacement before running `extension update`. Remove only the
 extension-owned installation with `extension remove cua-perception`. Neither
 operation changes the default Driver or an external `cua-som` installation.

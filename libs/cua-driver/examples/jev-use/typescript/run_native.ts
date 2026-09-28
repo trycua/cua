@@ -184,6 +184,7 @@ async function maybeVisual(
     return { sources, record: { status: 'unavailable', reason } };
   }
   const observation = sources.ax!.observation;
+  const started = performance.now();
   try {
     const result = await driver.call('parse_visual_regions', {
       capture_id: observation.captureId,
@@ -192,7 +193,12 @@ async function maybeVisual(
     const visual = parseVisualRegions(result, observation.captureId!, observation.pid, observation.windowId);
     return {
       sources: { ...sources, visual: new VisualRegionSource(visual, 'background', captureBoundClick), visualPath: true },
-      record: { status: 'ok', reason, region_count: visual.regions.length },
+      record: {
+        status: 'ok',
+        reason,
+        region_count: visual.regions.length,
+        parse_ms: Math.round((performance.now() - started) * 100) / 100,
+      },
     };
   } catch (error) {
     if (error instanceof DriverToolError) {

@@ -425,9 +425,16 @@ resets the fixture and prepares/navigates the browser; it is not side-effect-fre
 
 The managed verifier bounds each child runner to 180 seconds. Provider SDKs may
 retry network requests, so action and process limits do not guarantee a billing
-cap. `decision_ms` includes the browser snapshot as well as the provider call.
-Logs contain choices and timings, not a complete request, token-usage, or billing
-audit. The fixture tests integration rather than general agent capability.
+cap. `decision_ms` remains the backward-compatible aggregate from the start of
+the fresh semantic snapshot through validated provider choice. Step events also
+report `semantic_observe_ms`, `visual_observe_ms`,
+`candidate_build_ms`, and `provider_decision_ms`; `action_ms` remains
+separate and `total_step_ms` measures through the end of the action (or a
+reobserve decision). Lazy visual parsing is timed only when it actually runs.
+The small residual between the aggregate and named phases is local
+validation/bookkeeping, not another model or Driver call. Logs contain choices
+and timings, not a complete request, token-usage, or billing audit. The fixture
+tests integration rather than general agent capability.
 
 ## MCP, CLI, and perception boundaries
 

@@ -56,6 +56,25 @@ through an independent `/state` endpoint. Each runner:
 8. checks the fixture's `/state` endpoint instead of treating the action
    response or a screenshot as proof of success.
 
+### Candidate sources and task specs
+
+The loop separates where candidates come from from what the task needs. A
+candidate source (`python/sources.py`, `typescript/sources.ts`) finds controls
+in one observation and builds fully specified candidates for them:
+`BrowserSemanticSource` reads the `get_browser_state` snapshot and acts through
+page refs, and `VisualRegionSource` reads validated `parse_visual_regions`
+regions and acts through a capture-bound `click`. A task spec
+(`python/tasks.py`, `typescript/tasks.ts`) holds the goal, the parameters with
+the secret token marked for redaction, the step budget, the allowed Driver
+action kinds, the `form` state summary, the candidate IDs and descriptions, and
+the success oracle. The fixture above is the one built-in task,
+`FixtureFormTask`, and its oracle is the fixture's `/state` endpoint. A native
+accessibility source for desktop applications is planned in
+[RFC #4268](https://github.com/trycua/cua/issues/4268) and is not implemented.
+The model request and response are unchanged: the golden files
+`fixtures/jev-provider-request-golden-*-v1.json` pin the exact provider
+requests and candidate tables for the page-structure and visual fixtures.
+
 The MCP connection stays open across the entire loop. This preserves the
 explicit named Cua Driver session and avoids rebuilding tool state for every
 step.

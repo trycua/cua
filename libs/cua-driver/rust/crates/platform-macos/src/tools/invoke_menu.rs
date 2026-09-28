@@ -193,6 +193,36 @@ unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
     result
 }
 
+fn select_frontmost_pid(
+    front_process_matches: Option<bool>,
+    workspace_fallback: impl FnOnce() -> Option<i32>,
+    pid: i32,
+) -> Option<i32> {
+    match front_process_matches {
+        Some(true) => Some(pid),
+        Some(false) => None,
+        None => workspace_fallback(),
+    }
+}
+
+fn live_frontmost_pid(pid: i32, window_id: u32) -> Option<i32> {
+    select_frontmost_pid(
+        crate::input::skylight::front_process_matches(pid, window_id),
+        crate::apps::frontmost_pid,
+        pid,
+    )
+}
+
+fn live_frontmost_app() -> Option<i32> {
+    crate::windows::visible_windows()
+        .into_iter()
+        .find(|window| {
+            crate::input::skylight::front_process_matches(window.pid, window.window_id)
+                == Some(true)
+        })
+        .map(|window| window.pid)
+}
+
 /// Make one exact application window key before resolving focus-sensitive
 /// native menu state.
 ///
@@ -307,7 +337,7 @@ fn focus_ax_window_with_thread_affinity(pid: i32, window_id: u32) -> Result<(), 
 fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
     let native_key_requested = crate::input::skylight::make_exact_window_key(pid, window_id);
     if !native_key_requested
-        && crate::apps::frontmost_pid() != Some(pid)
+        && live_frontmost_pid(pid, window_id) != Some(pid)
         && !crate::apps::activate_pid(pid)
     {
         return Err("invoke_menu: target application could not be activated".into());
@@ -327,7 +357,7 @@ fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
     loop {
         let now = std::time::Instant::now();
         if exact_window_is_ready(
-            crate::apps::frontmost_pid(),
+            live_frontmost_pid(pid, window_id),
             pid,
             crate::ax::bindings::focused_window_id_of_pid(pid),
             window_id,
@@ -396,7 +426,7 @@ impl Tool for InvokeMenuTool {
         }
 
         let outcome = tokio::task::spawn_blocking(move || {
-            let prior_frontmost = crate::apps::frontmost_pid();
+            let prior_frontmost = live_frontmost_app().or_else(crate::apps::frontmost_pid);
             let prior_frontmost_window =
                 prior_frontmost.and_then(crate::ax::bindings::focused_window_id_of_pid);
             let needs_activation = prior_frontmost != Some(pid);
@@ -474,5 +504,23 @@ mod tests {
         assert!(!exact_window_is_ready(Some(8), 7, Some(42), 42));
         assert!(!exact_window_is_ready(Some(7), 7, Some(41), 42));
         assert!(!exact_window_is_ready(Some(7), 7, None, 42));
+    }
+
+    fn workspace_frontmost_must_not_be_read() -> Option<i32> {
+        panic!("stale workspace state must not be consulted");
+    }
+
+    #[test]
+    fn windowserver_mismatch_never_falls_back_to_stale_workspace_state() {
+        assert_eq!(
+            select_frontmost_pid(Some(true), workspace_frontmost_must_not_be_read, 7),
+            Some(7)
+        );
+        assert_eq!(
+            select_frontmost_pid(Some(false), workspace_frontmost_must_not_be_read, 7),
+            None
+        );
+        assert_eq!(select_frontmost_pid(None, || Some(8), 7), Some(8));
+        assert_eq!(select_frontmost_pid(None, || None, 7), None);
     }
 }

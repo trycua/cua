@@ -21,8 +21,8 @@ import { chooseBoundedWithTypeSafe, chooseMockForTask } from './jev_adapter.js';
 import { parseWindowState, type NativeObservation } from './native.js';
 import type { Platform } from './native_roles.js';
 import {
-  APPKIT_TASK_IDS,
-  appkitTask,
+  NATIVE_TASK_IDS,
+  nativeTask,
   nativeChoiceRequest,
   visualFallbackReason,
   windowStateArguments,
@@ -66,8 +66,8 @@ export function parseArgs(argv: string[]): Arguments {
     else if (value === '--log') result.log = argv[++index];
     else throw new Error(`unknown argument: ${value}`);
   }
-  if (!result.task || !(APPKIT_TASK_IDS as readonly string[]).includes(result.task)) {
-    throw new Error(`--task must be one of ${APPKIT_TASK_IDS.join(', ')}`);
+  if (!result.task || !NATIVE_TASK_IDS.includes(result.task)) {
+    throw new Error(`--task must be one of ${NATIVE_TASK_IDS.join(', ')}`);
   }
   if (result.provider !== 'mock' && result.provider !== 'live') throw new Error('--provider must be mock or live');
   if (!Number.isInteger(result.pid) || (result.pid as number) <= 0) throw new Error('--pid is required');
@@ -343,7 +343,7 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = parseArgs(process.argv.slice(2));
-  const task = appkitTask(args.task, args.stateFile, {
+  const task = nativeTask(args.task, args.stateFile, {
     pid: args.pid,
     noteText: args.noteText,
     allowForeground: args.allowForeground,

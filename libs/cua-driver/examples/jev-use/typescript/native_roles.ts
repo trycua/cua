@@ -120,6 +120,20 @@ export const ROLE_TABLES: Readonly<Record<Platform, ReadonlyMap<string, RoleClas
 };
 
 /** Return the role class for a raw Driver role, or null when excluded. */
+// Window-chrome containers, by normalized role. Their actionable descendants
+// (Windows' title-bar System menu, Minimize, Maximize, and Close) belong to the
+// window manager, not the application, so they are never candidates. Mirrors
+// python/native_roles.py WINDOW_CHROME_ROLES.
+export const WINDOW_CHROME_ROLES: Readonly<Record<Platform, ReadonlySet<string>>> = {
+  macos: new Set(),
+  windows: new Set([normalizedRole('TitleBar')]),
+  linux: new Set(),
+};
+
+export function isWindowChrome(rawRole: unknown, platform: Platform): boolean {
+  return typeof rawRole === 'string' && WINDOW_CHROME_ROLES[platform].has(normalizedRole(rawRole));
+}
+
 export function roleClass(rawRole: unknown, platform: Platform): RoleClass | null {
   if (typeof rawRole !== 'string' || !rawRole) return null;
   return ROLE_TABLES[platform].get(normalizedRole(rawRole)) ?? null;

@@ -93,18 +93,40 @@ task parameters. Actions are element-bound `click`, `set_value`, or
 observation. Native steps send `cua.jev_choice_request_v2`, which adds a
 per-candidate `source` and compact value-free `elements`.
 
-Three tasks drive the repository's AppKit harness, whose opt-in
-`CUA_APPKIT_TASK_STATE` file is the independent oracle: `appkit-counter` (set
-the counter to 3), `appkit-save-note` (set the Note field and save), and
-`appkit-choose-size` (select Large and check I agree). On macOS with Cua
-Driver 0.30.1 or later:
+The same three tasks run on three repository harnesses: `<harness>-counter`
+(set the counter to 3), `<harness>-save-note` (set the Note field and save),
+and `<harness>-choose-size` (select Large and check I agree). The harness is
+`appkit` (macOS AX), `wpf` (Windows UIA), or `gtk3` (Linux AT-SPI). In task
+mode, each harness shows the same labeled controls, so candidate IDs and the
+mock provider's choices are identical on every platform. Task mode is selected
+with `CUA_APPKIT_TASK_STATE`, `CUA_WPF_TASK_STATE`, or `CUA_GTK3_TASK_STATE`.
+WPF and GTK3 show a small dedicated task window. Each harness rewrites that
+state file on every change, and the file is the independent oracle. On
+Windows, the title bar's System menu, Minimize, Maximize, and Close buttons
+are window chrome and never become candidates. With Cua Driver 0.30.1 or
+later, run from this directory:
 
 ```bash
+# macOS
 bash ../../tests/fixtures/build/macos.sh --only appkit
-uv run --frozen python verify_native.py --typescript --output-dir /tmp/jev-native-proof
+uv run --frozen python verify_native.py --harness appkit --typescript --output-dir /tmp/jev-native-proof
+# Linux (X11 session with AT-SPI; the harness runs on the system python3 with PyGObject)
+bash ../../tests/fixtures/build/linux.sh --only gtk3
+.venv/bin/python verify_native.py --harness gtk3 --typescript --output-dir /tmp/jev-native-proof
 ```
 
-Windows (UIA) and Linux (AT-SPI) tasks are the next RFC phase.
+```powershell
+# Windows
+..\..\tests\fixtures\build\windows.ps1 -Targets wpf
+uv run --frozen python verify_native.py --harness wpf --typescript --output-dir $env:TEMP\jev-native-proof
+```
+
+`--capture-dir` also records sanitized `get_window_state` fixtures like the
+ones under `fixtures/native/`. On Linux, Cua Driver 0.30.2 and earlier report
+no `value` for a named text field
+([#4291](https://github.com/trycua/cua/issues/4291)). With those Drivers,
+`gtk3-save-note` cannot observe its own write, so it keeps offering the write
+until the step budget runs out.
 
 The MCP connection stays open across the entire loop. This preserves the
 explicit named Cua Driver session and avoids rebuilding tool state for every

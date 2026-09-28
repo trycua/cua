@@ -12,7 +12,8 @@ call would publish a new snapshot and invalidate every token in the set.
 
 Element rules (all must hold):
 
-1. the raw role maps to a role class (``native_roles.py``);
+1. the raw role maps to a role class (``native_roles.py``), and no actionable
+   ancestor is window chrome (the Windows title bar);
 2. ``enabled`` is not ``false``;
 3. ``frame`` exists, has positive size, and intersects ``window_bounds``;
 4. the redacted label is non-empty, is not a copy of the element's own value,
@@ -32,7 +33,15 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, Mapping
 
-from native_roles import ROLE_CLASS_ACTION, ActionKind, Platform, RoleClass, normalized_role, role_class
+from native_roles import (
+    ROLE_CLASS_ACTION,
+    ActionKind,
+    Platform,
+    RoleClass,
+    is_window_chrome,
+    normalized_role,
+    role_class,
+)
 
 ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}\Z")
 PARAMETER_NAME_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,7}\Z")
@@ -214,7 +223,7 @@ class NativeControl:
 
 
 ExclusionReason = Literal[
-    "unknown_role", "disabled", "off_screen", "unlabeled", "web_content", "no_token"
+    "unknown_role", "window_chrome", "disabled", "off_screen", "unlabeled", "web_content", "no_token"
 ]
 
 
@@ -258,11 +267,24 @@ def eligible_controls(
             parent = ancestor.get("parent_index")
         return tuple(reversed(path))
 
+    def in_window_chrome(element: Mapping[str, Any]) -> bool:
+        seen: set[int] = set()
+        parent = element.get("parent_index")
+        while isinstance(parent, int) and parent in by_index and parent not in seen:
+            seen.add(parent)
+            if is_window_chrome(by_index[parent].get("role"), platform):
+                return True
+            parent = by_index[parent].get("parent_index")
+        return False
+
     pending: list[tuple[Mapping[str, Any], RoleClass, str, tuple[tuple[str, str], ...]]] = []
     for element in observation.elements:
         klass = role_class(element.get("role"), platform)
         if klass is None:
             exclude("unknown_role")
+            continue
+        if in_window_chrome(element):
+            exclude("window_chrome")
             continue
         if element.get("enabled") is False:
             exclude("disabled")

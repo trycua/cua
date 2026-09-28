@@ -7,9 +7,10 @@ the closed candidate set, send a validated ``cua.jev_choice_request_v2`` to
 the chooser, dispatch the one selected element-bound action, and read the
 oracle again. The chooser only ever selects a supplied ID.
 
-Built-in tasks drive the AppKit harness launched with
-``CUA_APPKIT_TASK_STATE=<path>``; ``verify_native.py`` launches it, runs this
-runner, and checks the state file independently.
+Built-in tasks drive the AppKit, WPF, or GTK3 harness launched in task mode
+(``CUA_APPKIT_TASK_STATE``, ``CUA_WPF_TASK_STATE``, or ``CUA_GTK3_TASK_STATE``
+set to ``<path>``); ``verify_native.py`` launches it, runs this runner, and
+checks the state file independently.
 """
 
 from __future__ import annotations
@@ -35,10 +36,10 @@ from jev_adapter import choose_mock_for_task
 from native import NativeObservation, NativeObservationError
 from native_roles import Platform
 from native_tasks import (
-    APPKIT_TASK_IDS,
+    NATIVE_TASK_IDS,
     NativeTask,
     OracleError,
-    appkit_task,
+    native_task,
     native_choice_request,
     visual_fallback_reason,
 )
@@ -350,11 +351,11 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--task", choices=APPKIT_TASK_IDS, required=True)
+    parser.add_argument("--task", choices=NATIVE_TASK_IDS, required=True)
     parser.add_argument("--provider", choices=("mock", "live"), default="mock")
     parser.add_argument("--pid", type=int, required=True, help="the running harness process")
-    parser.add_argument("--state-file", required=True, help="the harness CUA_APPKIT_TASK_STATE path")
-    parser.add_argument("--note-text", help="note text for appkit-save-note")
+    parser.add_argument("--state-file", required=True, help="the harness task-state file path")
+    parser.add_argument("--note-text", help="note text for the save-note tasks")
     parser.add_argument("--allow-foreground", action="store_true")
     parser.add_argument("--platform", choices=("macos", "windows", "linux"))
     parser.add_argument("--log", help="optional JSONL output path")
@@ -365,7 +366,7 @@ def task_from_args(args: argparse.Namespace) -> NativeTask:
     options: dict[str, Any] = {"pid": args.pid, "allow_foreground": args.allow_foreground}
     if args.note_text:
         options["note_text"] = args.note_text
-    return appkit_task(args.task, Path(args.state_file), **options)
+    return native_task(args.task, Path(args.state_file), **options)
 
 
 def main() -> None:

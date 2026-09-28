@@ -127,6 +127,23 @@ ROLE_TABLES: Mapping[Platform, Mapping[str, RoleClass]] = {
 }
 
 
+# Window-chrome containers, by normalized role. Their actionable descendants
+# (Windows' title-bar System menu, Minimize, Maximize, and Close) belong to
+# the window manager, not the application, so they are never candidates. On
+# macOS the AppKit fixtures carry no such container, and on Linux the window
+# decorations are not part of the application's AT-SPI tree.
+WINDOW_CHROME_ROLES: Mapping[Platform, frozenset[str]] = {
+    "macos": frozenset(),
+    "windows": frozenset({normalized_role("TitleBar")}),
+    "linux": frozenset(),
+}
+
+
+def is_window_chrome(raw_role: object, platform: Platform) -> bool:
+    """Whether a raw Driver role is a window-chrome container on ``platform``."""
+    return isinstance(raw_role, str) and normalized_role(raw_role) in WINDOW_CHROME_ROLES[platform]
+
+
 def role_class(raw_role: object, platform: Platform) -> RoleClass | None:
     """Return the role class for a raw Driver role, or ``None`` when excluded."""
     if not isinstance(raw_role, str) or not raw_role:

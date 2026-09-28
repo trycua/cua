@@ -7,10 +7,11 @@ a step budget, and an app-owned success oracle. It builds each step's closed
 candidate set from the native accessibility source, plus visual regions only
 under the fallback rule, and composes them in the fixed order page, ax, visual.
 
-The built-in tasks drive the repository's AppKit harness
-(``libs/cua-driver/tests/fixtures/apps/macos/appkit``) launched with
-``CUA_APPKIT_TASK_STATE``. Their oracle is the harness's own JSON state file,
-which the app rewrites on every change; it never depends on Driver output.
+The built-in tasks drive the repository's harness applications in task mode:
+AppKit (``CUA_APPKIT_TASK_STATE``), WPF (``CUA_WPF_TASK_STATE``), and GTK3
+(``CUA_GTK3_TASK_STATE``), under ``libs/cua-driver/tests/fixtures/apps``.
+Their oracle is the harness's own JSON state file, which the app rewrites on
+every change; it never depends on Driver output.
 """
 
 from __future__ import annotations
@@ -476,15 +477,55 @@ def native_choice_request(
     }
 
 
-# -- AppKit harness tasks ---------------------------------------------------
+# -- Harness tasks ------------------------------------------------------------
+#
+# The same three tasks run on every repository harness that has a task mode:
+# AppKit (macOS AX), WPF (Windows UIA), and GTK3 (Linux AT-SPI). Each harness
+# shows the same labeled controls in task mode (Increment, Reset, I agree,
+# Small/Medium/Large, Note, Save note, Exit) and rewrites the same app-owned
+# JSON state file, so the task semantics, candidate IDs, and mock choices are
+# identical across platforms. Only the window, the state schema, and the
+# platform role table differ.
 
-APPKIT_WINDOW_TITLE = "CuaTestHarness AppKit"
-APPKIT_BUNDLE_ID = "com.trycua.harness.appkit"
-APPKIT_STATE_SCHEMA = "cua.appkit_task_state_v1"
-APPKIT_STATE_ENV = "CUA_APPKIT_TASK_STATE"
+
+@dataclass(frozen=True)
+class HarnessSpec:
+    """A repository harness application that has a jev-use task mode."""
+
+    name: str
+    platform: str
+    window_title: str
+    state_schema: str
+    state_env: str
+    bundle_id: str | None = None
+    process_name: str | None = None
+
+
+HARNESSES: Mapping[str, HarnessSpec] = {
+    "appkit": HarnessSpec(
+        "appkit", "macos", "CuaTestHarness AppKit", "cua.appkit_task_state_v1",
+        "CUA_APPKIT_TASK_STATE", bundle_id="com.trycua.harness.appkit",
+    ),
+    # WPF and GTK3 show a dedicated task window in task mode: their ordinary
+    # main windows scroll, so most controls would be off screen (and excluded).
+    "wpf": HarnessSpec(
+        "wpf", "windows", "CuaTestHarness WPF Tasks", "cua.wpf_task_state_v1",
+        "CUA_WPF_TASK_STATE", process_name="CuaTestHarness.Wpf",
+    ),
+    "gtk3": HarnessSpec(
+        "gtk3", "linux", "CuaTestHarness GTK3 Tasks", "cua.gtk3_task_state_v1",
+        "CUA_GTK3_TASK_STATE", process_name="python3",
+    ),
+}
+
+APPKIT_WINDOW_TITLE = HARNESSES["appkit"].window_title
+APPKIT_BUNDLE_ID = HARNESSES["appkit"].bundle_id
+APPKIT_STATE_SCHEMA = HARNESSES["appkit"].state_schema
+APPKIT_STATE_ENV = HARNESSES["appkit"].state_env
 COUNTER_TARGET = 3
 DEFAULT_NOTE_TEXT = "jev-use native note"
 TARGET_SIZE = "large"
+TASK_KINDS = ("counter", "save-note", "choose-size")
 
 
 def _counter_check(state: Mapping[str, Any]) -> Check:
@@ -514,10 +555,23 @@ def _size_check(state: Mapping[str, Any]) -> Check:
     return "pending"
 
 
-APPKIT_TASK_IDS = ("appkit-counter", "appkit-save-note", "appkit-choose-size")
+def harness_task_ids(harness: str) -> tuple[str, ...]:
+    return tuple(f"{harness}-{kind}" for kind in TASK_KINDS)
 
 
-def appkit_task(
+APPKIT_TASK_IDS = harness_task_ids("appkit")
+NATIVE_TASK_IDS = tuple(task for name in HARNESSES for task in harness_task_ids(name))
+
+
+def split_task_id(task_id: str) -> tuple[HarnessSpec, str]:
+    """Return the harness and task kind of a built-in task ID."""
+    harness, _, kind = task_id.partition("-")
+    if harness not in HARNESSES or kind not in TASK_KINDS:
+        raise ValueError(f"unknown native task: {task_id}")
+    return HARNESSES[harness], kind
+
+
+def native_task(
     task_id: str,
     state_path: Path,
     *,
@@ -525,10 +579,13 @@ def appkit_task(
     note_text: str = DEFAULT_NOTE_TEXT,
     allow_foreground: bool = False,
 ) -> NativeTask:
-    """Build one AppKit harness task bound to its app-owned state file."""
-    oracle = AppStateOracle(Path(state_path), APPKIT_STATE_SCHEMA, pid)
-    scope = WindowScope(APPKIT_WINDOW_TITLE, bundle_id=APPKIT_BUNDLE_ID)
-    if task_id == "appkit-counter":
+    """Build one harness task bound to its app-owned state file."""
+    harness, kind = split_task_id(task_id)
+    oracle = AppStateOracle(Path(state_path), harness.state_schema, pid)
+    scope = WindowScope(
+        harness.window_title, bundle_id=harness.bundle_id, process_name=harness.process_name
+    )
+    if kind == "counter":
         return NativeTask(
             id=task_id,
             goal=(
@@ -543,7 +600,7 @@ def appkit_task(
             max_steps=COUNTER_TARGET + 3,
             mock_preferences=("ax:button:increment",),
         )
-    if task_id == "appkit-save-note":
+    if kind == "save-note":
         return NativeTask(
             id=task_id,
             goal="Enter the note text into the Note field, then save the note.",
@@ -556,16 +613,30 @@ def appkit_task(
             max_steps=5,
             mock_preferences=("ax:text_input:note:set:note", "ax:button:save-note"),
         )
-    if task_id == "appkit-choose-size":
-        return NativeTask(
-            id=task_id,
-            goal="Choose the Large size option and check the I agree checkbox.",
-            scope=scope,
-            allowed_actions=frozenset({"select", "toggle"}),
-            oracle=oracle,
-            check=_size_check,
-            allow_foreground=allow_foreground,
-            max_steps=5,
-            mock_preferences=("ax:radio:large", "ax:checkbox:i-agree"),
-        )
-    raise ValueError(f"unknown AppKit task: {task_id}")
+    return NativeTask(
+        id=task_id,
+        goal="Choose the Large size option and check the I agree checkbox.",
+        scope=scope,
+        allowed_actions=frozenset({"select", "toggle"}),
+        oracle=oracle,
+        check=_size_check,
+        allow_foreground=allow_foreground,
+        max_steps=5,
+        mock_preferences=("ax:radio:large", "ax:checkbox:i-agree"),
+    )
+
+
+def appkit_task(
+    task_id: str,
+    state_path: Path,
+    *,
+    pid: int | None = None,
+    note_text: str = DEFAULT_NOTE_TEXT,
+    allow_foreground: bool = False,
+) -> NativeTask:
+    """Build one AppKit harness task (kept for Phase 1 callers)."""
+    if task_id not in APPKIT_TASK_IDS:
+        raise ValueError(f"unknown AppKit task: {task_id}")
+    return native_task(
+        task_id, state_path, pid=pid, note_text=note_text, allow_foreground=allow_foreground
+    )

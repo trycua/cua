@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 
 import {
   ROLE_CLASS_ACTION,
+  isWindowChrome,
   normalizedRole,
   roleClass,
   type ActionKind,
@@ -217,11 +218,27 @@ export function eligibleControls(
     return path.reverse();
   };
 
+  const inWindowChrome = (item: WindowElement): boolean => {
+    const seen = new Set<number>();
+    let parent = item.parent_index;
+    while (Number.isInteger(parent) && byIndex.has(parent as number) && !seen.has(parent as number)) {
+      seen.add(parent as number);
+      const ancestor = byIndex.get(parent as number)!;
+      if (isWindowChrome(ancestor.role, platform)) return true;
+      parent = ancestor.parent_index;
+    }
+    return false;
+  };
+
   const pending: { item: WindowElement; klass: RoleClass; label: string; path: [string, string][] }[] = [];
   for (const item of observation.elements) {
     const klass = roleClass(item.role, platform);
     if (!klass) {
       exclude('unknown_role');
+      continue;
+    }
+    if (inWindowChrome(item)) {
+      exclude('window_chrome');
       continue;
     }
     if (item.enabled === false) {

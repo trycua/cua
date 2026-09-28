@@ -250,8 +250,11 @@ $action = New-ScheduledTaskAction `
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Hours 0)
-Unregister-ScheduledTask -TaskName $env:CUA_DRIVER_AS_TASK -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName $env:CUA_DRIVER_AS_TASK -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description "${env:CUA_DRIVER_AS_CLI}: serve daemon, auto-start at interactive logon, RunLevel=Highest for UWP/AppContainer support" | Out-Null
+# -Force replaces an existing task in one Task Scheduler call. Never
+# unregister first: if the new registration then failed (for example as
+# SYSTEM or without elevation), the machine would be left with no task
+# (#4090). A failed replacement keeps the existing task.
+Register-ScheduledTask -Force -TaskName $env:CUA_DRIVER_AS_TASK -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description "${env:CUA_DRIVER_AS_CLI}: serve daemon, auto-start at interactive logon, RunLevel=Highest for UWP/AppContainer support" | Out-Null
 
 # The uiAccess worker (`cua-driver-uia.exe`) has no public client route and is
 # not started by this task. The High-IL daemon is the supported path for

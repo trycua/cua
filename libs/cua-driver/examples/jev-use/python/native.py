@@ -20,6 +20,13 @@ Element rules (all must hold):
    and the element is not marked ``unlabelled``;
 5. ``in_web_content`` is not ``true`` (web content uses the browser source).
 
+An observation *has no application elements* when every element it reports is
+a window root (``window``, ``application``, ``frame``) or window chrome (the
+Windows title bar and its descendants). Driver reports such a tree for a
+custom-painted surface: X11 property metadata only on Linux, or only the title
+bar on Windows. That view has no accessibility tree to act through, so, like an
+empty tree, it may fall back to visual regions.
+
 Stable IDs never use ``element_index``: ``ax:<role_class>:<slug(label)>``,
 plus a short hash of the actionable-ancestor path and ordinal when the base
 repeats in one observation.
@@ -144,8 +151,9 @@ class NativeObservation:
     ``complete`` is Driver's ``elements_complete`` claim. ``truncated`` means
     the walk ran out of budget (``truncated`` or a ``truncation_reason``).
     ``tree_empty`` means Driver reported the tree empty (``degraded_reason``
-    ``ax_tree_empty``); only then, or for a complete tree, may a view without
-    native candidates fall back to visual regions.
+    ``ax_tree_empty``). A view without native candidates may fall back to
+    visual regions only then, for a complete tree, or when the tree has no
+    application elements (see ``has_application_elements``).
     """
 
     pid: int
@@ -203,6 +211,44 @@ class NativeObservation:
         )
 
 
+WINDOW_ROOT_ROLES = frozenset({"window", "application", "frame"})
+
+
+def _index_elements(observation: NativeObservation) -> dict[int, Mapping[str, Any]]:
+    return {
+        item["element_index"]: item
+        for item in observation.elements
+        if isinstance(item.get("element_index"), int)
+    }
+
+
+def _in_window_chrome(
+    element: Mapping[str, Any], by_index: Mapping[int, Mapping[str, Any]], platform: Platform
+) -> bool:
+    """Whether an ancestor of ``element`` is a window-chrome container."""
+    seen: set[int] = set()
+    parent = element.get("parent_index")
+    while isinstance(parent, int) and parent in by_index and parent not in seen:
+        seen.add(parent)
+        if is_window_chrome(by_index[parent].get("role"), platform):
+            return True
+        parent = by_index[parent].get("parent_index")
+    return False
+
+
+def has_application_elements(observation: NativeObservation, platform: Platform) -> bool:
+    """Whether any element is more than a window root or window chrome."""
+    by_index = _index_elements(observation)
+    for element in observation.elements:
+        role = element.get("role")
+        if isinstance(role, str) and normalized_role(role) in WINDOW_ROOT_ROLES:
+            continue
+        if is_window_chrome(role, platform) or _in_window_chrome(element, by_index, platform):
+            continue
+        return True
+    return False
+
+
 @dataclass(frozen=True)
 class NativeControl:
     """One eligible native element in one observation.
@@ -240,11 +286,7 @@ def eligible_controls(
     redact: Callable[[str], str] = lambda value: value,
 ) -> NativeControls:
     """Apply the element rules and assign stable IDs, in ``element_index`` order."""
-    by_index = {
-        item["element_index"]: item
-        for item in observation.elements
-        if isinstance(item.get("element_index"), int)
-    }
+    by_index = _index_elements(observation)
     excluded: dict[str, int] = {}
 
     def exclude(reason: ExclusionReason) -> None:
@@ -267,23 +309,13 @@ def eligible_controls(
             parent = ancestor.get("parent_index")
         return tuple(reversed(path))
 
-    def in_window_chrome(element: Mapping[str, Any]) -> bool:
-        seen: set[int] = set()
-        parent = element.get("parent_index")
-        while isinstance(parent, int) and parent in by_index and parent not in seen:
-            seen.add(parent)
-            if is_window_chrome(by_index[parent].get("role"), platform):
-                return True
-            parent = by_index[parent].get("parent_index")
-        return False
-
     pending: list[tuple[Mapping[str, Any], RoleClass, str, tuple[tuple[str, str], ...]]] = []
     for element in observation.elements:
         klass = role_class(element.get("role"), platform)
         if klass is None:
             exclude("unknown_role")
             continue
-        if in_window_chrome(element):
+        if _in_window_chrome(element, by_index, platform):
             exclude("window_chrome")
             continue
         if element.get("enabled") is False:

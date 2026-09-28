@@ -141,6 +141,38 @@ export function isTreeEmpty(observation: NativeObservation): boolean {
   return Boolean(observation.degradedReason?.startsWith('ax_tree_empty'));
 }
 
+export const WINDOW_ROOT_ROLES: ReadonlySet<string> = new Set(['window', 'application', 'frame']);
+
+function indexElements(observation: NativeObservation): Map<number, WindowElement> {
+  const byIndex = new Map<number, WindowElement>();
+  for (const item of observation.elements) {
+    if (Number.isInteger(item.element_index)) byIndex.set(item.element_index as number, item);
+  }
+  return byIndex;
+}
+
+/** Whether an ancestor of `item` is a window-chrome container. */
+function inWindowChrome(item: WindowElement, byIndex: Map<number, WindowElement>, platform: Platform): boolean {
+  const seen = new Set<number>();
+  let parent = item.parent_index;
+  while (Number.isInteger(parent) && byIndex.has(parent as number) && !seen.has(parent as number)) {
+    seen.add(parent as number);
+    const ancestor = byIndex.get(parent as number)!;
+    if (isWindowChrome(ancestor.role, platform)) return true;
+    parent = ancestor.parent_index;
+  }
+  return false;
+}
+
+/** Whether any element is more than a window root or window chrome (mirrors native.py). */
+export function hasApplicationElements(observation: NativeObservation, platform: Platform): boolean {
+  const byIndex = indexElements(observation);
+  return observation.elements.some((item) => {
+    if (typeof item.role === 'string' && WINDOW_ROOT_ROLES.has(normalizedRole(item.role))) return false;
+    return !isWindowChrome(item.role, platform) && !inWindowChrome(item, byIndex, platform);
+  });
+}
+
 export function parseWindowState(
   payload: Readonly<Record<string, unknown>>,
   expectedPid: number,
@@ -195,10 +227,7 @@ export function eligibleControls(
   platform: Platform,
   redact: (value: string) => string = (value) => value
 ): NativeControls {
-  const byIndex = new Map<number, WindowElement>();
-  for (const item of observation.elements) {
-    if (Number.isInteger(item.element_index)) byIndex.set(item.element_index as number, item);
-  }
+  const byIndex = indexElements(observation);
   const excluded: Record<string, number> = {};
   const exclude = (reason: string) => {
     excluded[reason] = (excluded[reason] ?? 0) + 1;
@@ -218,18 +247,6 @@ export function eligibleControls(
     return path.reverse();
   };
 
-  const inWindowChrome = (item: WindowElement): boolean => {
-    const seen = new Set<number>();
-    let parent = item.parent_index;
-    while (Number.isInteger(parent) && byIndex.has(parent as number) && !seen.has(parent as number)) {
-      seen.add(parent as number);
-      const ancestor = byIndex.get(parent as number)!;
-      if (isWindowChrome(ancestor.role, platform)) return true;
-      parent = ancestor.parent_index;
-    }
-    return false;
-  };
-
   const pending: { item: WindowElement; klass: RoleClass; label: string; path: [string, string][] }[] = [];
   for (const item of observation.elements) {
     const klass = roleClass(item.role, platform);
@@ -237,7 +254,7 @@ export function eligibleControls(
       exclude('unknown_role');
       continue;
     }
-    if (inWindowChrome(item)) {
+    if (inWindowChrome(item, byIndex, platform)) {
       exclude('window_chrome');
       continue;
     }

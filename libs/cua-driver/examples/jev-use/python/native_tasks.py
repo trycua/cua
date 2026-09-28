@@ -12,17 +12,32 @@ AppKit (``CUA_APPKIT_TASK_STATE``), WPF (``CUA_WPF_TASK_STATE``), and GTK3
 (``CUA_GTK3_TASK_STATE``), under ``libs/cua-driver/tests/fixtures/apps``.
 Their oracle is the harness's own JSON state file, which the app rewrites on
 every change; it never depends on Driver output.
+
+``canvas-save`` drives the cross-platform visual-only canvas fixture
+(``tests/fixtures/apps/cross-platform/visual-only-canvas``), a custom-painted
+Tk surface with no accessibility tree. Its only executable candidate is a
+capture-bound visual click, so it proves the OmniParser fallback. The fixture
+publishes its state to a loopback journal; the caller (``verify_native.py``)
+writes each published state to the task's state file unchanged except for the
+schema name.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping
 
 from choose_action import MAX_ELEMENTS, MAX_HISTORY, REQUEST_SCHEMA_V2
-from native import PARAMETER_NAME_PATTERN, NativeControl, element_state, field_state, slug
+from native import (
+    PARAMETER_NAME_PATTERN,
+    NativeControl,
+    element_state,
+    field_state,
+    has_application_elements,
+    slug,
+)
 from native_roles import ACTION_KINDS
 from sources import Candidate, NativeAccessibilitySource, TextMethod
 from tasks import Outcome, TaskParameter, TaskSources, redact_token
@@ -309,13 +324,24 @@ class NativeTask:
             if control is None:
                 continue
             candidate_id = f"visual:{slug(target)}"
-            candidate = visual.click(
+            description = (
+                f"Click the unique validated visual region reading {_quoted(target)}; "
+                "no accessibility element covers it."
+            )
+            source = visual
+            if candidate_id in sources.foreground_ids:
+                if not self.allow_foreground:
+                    continue
+                candidate_id = f"{candidate_id}:foreground"
+                description += (
+                    " Use foreground delivery, which activates the window, because Driver "
+                    "refused background delivery for this region."
+                )
+                source = replace(visual, delivery="foreground")
+            candidate = source.click(
                 control,
                 candidate_id=candidate_id,
-                description=(
-                    f"Click the unique validated visual region reading {_quoted(target)}; "
-                    "no accessibility element covers it."
-                ),
+                description=description,
             )
             if candidate is not None:
                 candidates.append(candidate)
@@ -395,9 +421,12 @@ def visual_fallback_reason(sources: TaskSources, task: NativeTask, native_count:
     """Return why this step may parse visual regions, or ``None``.
 
     Visual regions are consulted only when the task allows ``visual_click`` and
-    declares visual targets, and either Driver reported the tree empty, or a
+    declares visual targets, and one of these holds: Driver reported the tree
+    empty; the tree is not truncated but has no application elements (only
+    window roots and window chrome, as for a custom-painted surface); or a
     complete tree has no native candidate (or no native control labeled like a
-    declared target). A truncated or merely partial tree never qualifies.
+    declared target). A truncated tree, or a partial tree that does contain
+    application elements, never qualifies.
     """
     ax = sources.ax
     if ax is None or "visual_click" not in task.allowed_actions or not task.visual_targets:
@@ -407,8 +436,14 @@ def visual_fallback_reason(sources: TaskSources, task: NativeTask, native_count:
         return None
     if observation.tree_empty:
         return "tree_empty"
-    if not observation.complete or observation.truncated:
+    if observation.truncated:
         return None
+    if not observation.complete:
+        # A partial tree qualifies only when it holds nothing but window roots
+        # and window chrome, as for a custom-painted surface.
+        if has_application_elements(observation, ax.platform):
+            return None
+        return "no_application_elements"
     if native_count == 0:
         return "no_native_candidates"
     labels = {control.label.lower() for control in ax.controls}
@@ -555,16 +590,39 @@ def _size_check(state: Mapping[str, Any]) -> Check:
     return "pending"
 
 
+def _canvas_check(state: Mapping[str, Any]) -> Check:
+    selected = state.get("selected")
+    if selected == slug(CANVAS_TARGET) and state.get("action_count") == 1:
+        return "verified"
+    if selected is not None:
+        return "refuted"  # another card, or Save clicked more than once
+    return "pending"
+
+
 def harness_task_ids(harness: str) -> tuple[str, ...]:
     return tuple(f"{harness}-{kind}" for kind in TASK_KINDS)
 
 
+# The cross-platform visual-only canvas has no accessibility tree, so it is not
+# a form harness: it has one task, reached only through the visual fallback.
+CANVAS = HarnessSpec(
+    "canvas", "any", "Cua Visual-Only Canvas Fixture", "cua.visual_canvas_task_state_v1",
+    "CUA_CANVAS_TASK_STATE",
+)
+CANVAS_TASK_ID = "canvas-save"
+CANVAS_TARGET = "Save"
+
 APPKIT_TASK_IDS = harness_task_ids("appkit")
-NATIVE_TASK_IDS = tuple(task for name in HARNESSES for task in harness_task_ids(name))
+NATIVE_TASK_IDS = (
+    *(task for name in HARNESSES for task in harness_task_ids(name)),
+    CANVAS_TASK_ID,
+)
 
 
 def split_task_id(task_id: str) -> tuple[HarnessSpec, str]:
     """Return the harness and task kind of a built-in task ID."""
+    if task_id == CANVAS_TASK_ID:
+        return CANVAS, "save"
     harness, _, kind = task_id.partition("-")
     if harness not in HARNESSES or kind not in TASK_KINDS:
         raise ValueError(f"unknown native task: {task_id}")
@@ -585,6 +643,22 @@ def native_task(
     scope = WindowScope(
         harness.window_title, bundle_id=harness.bundle_id, process_name=harness.process_name
     )
+    if kind == "save":
+        return NativeTask(
+            id=task_id,
+            goal=(
+                f"The window is a painted canvas with {CANVAS_TARGET}, Send, and Cancel cards. "
+                f"Click the {CANVAS_TARGET} card once, then stop."
+            ),
+            scope=scope,
+            allowed_actions=frozenset({"visual_click"}),
+            oracle=oracle,
+            check=_canvas_check,
+            allow_foreground=allow_foreground,
+            max_steps=4,
+            visual_targets=(CANVAS_TARGET,),
+            mock_preferences=(f"visual:{slug(CANVAS_TARGET)}",),
+        )
     if kind == "counter":
         return NativeTask(
             id=task_id,

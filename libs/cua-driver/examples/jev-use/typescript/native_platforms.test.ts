@@ -42,9 +42,13 @@ function sources(task: NativeTask, harness: string, name: string): TaskSources {
 test('every harness has the same three tasks', () => {
   assert.deepEqual(
     NATIVE_TASK_IDS,
-    ['appkit', 'wpf', 'gtk3'].flatMap((h) => ['counter', 'save-note', 'choose-size'].map((k) => `${h}-${k}`))
+    [
+      ...['appkit', 'wpf', 'gtk3'].flatMap((h) => ['counter', 'save-note', 'choose-size'].map((k) => `${h}-${k}`)),
+      'canvas-save',
+    ]
   );
   for (const taskId of NATIVE_TASK_IDS) {
+    if (taskId === 'canvas-save') continue; // not a form harness (see native_canvas.test.ts)
     const [harness, kind] = splitTaskId(taskId);
     const task = nativeTask(taskId, '/tmp/none.json', { pid: 7 });
     assert.equal(task.scope.windowTitle, harness.windowTitle);

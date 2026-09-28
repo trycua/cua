@@ -10,9 +10,22 @@
 import { readFile } from 'node:fs/promises';
 
 import { MAX_ELEMENTS, REQUEST_SCHEMA_V2 } from './choose_action.js';
-import { PARAMETER_NAME_PATTERN, elementState, fieldState, slug, type NativeControl } from './native.js';
+import {
+  PARAMETER_NAME_PATTERN,
+  elementState,
+  fieldState,
+  hasApplicationElements,
+  slug,
+  type NativeControl,
+} from './native.js';
 import { ACTION_KINDS, type ActionKind } from './native_roles.js';
-import { immutableCandidate, type Candidate, type NativeAccessibilitySource, type TextMethod } from './sources.js';
+import {
+  immutableCandidate,
+  VisualRegionSource,
+  type Candidate,
+  type NativeAccessibilitySource,
+  type TextMethod,
+} from './sources.js';
 import { redactToken, type HistoryEntry, type Outcome, type Task, type TaskParameter, type TaskSources } from './tasks.js';
 
 export const MAX_EXECUTABLE_CANDIDATES = 24;
@@ -296,12 +309,17 @@ export class NativeTask implements Task {
     for (const target of this.visualTargets) {
       const control = visual.find('button', target);
       if (!control) continue;
-      const id = `visual:${slug(target)}`;
-      const candidate = visual.click(
-        control,
-        id,
-        `Click the unique validated visual region reading ${quoted(target)}; no accessibility element covers it.`
-      );
+      let id = `visual:${slug(target)}`;
+      let description = `Click the unique validated visual region reading ${quoted(target)}; no accessibility element covers it.`;
+      let source = visual;
+      if (sources.foregroundIds?.has(id)) {
+        if (!this.allowForeground) continue;
+        id = `${id}:foreground`;
+        description +=
+          ' Use foreground delivery, which activates the window, because Driver refused background delivery for this region.';
+        source = new VisualRegionSource(visual.observation, 'foreground', visual.captureBound);
+      }
+      const candidate = source.click(control, id, description);
       if (candidate) {
         candidates.push(candidate);
         outcomes[id] = `clicked the visual region ${quoted(target)}`;
@@ -385,7 +403,12 @@ export function visualFallbackReason(
   const observation = ax.observation;
   if (!observation.captureId) return undefined;
   if (observation.degradedReason?.startsWith('ax_tree_empty')) return 'tree_empty';
-  if (!observation.complete || observation.truncated) return undefined;
+  if (observation.truncated) return undefined;
+  // A partial tree qualifies only when it holds nothing but window roots and
+  // window chrome, as for a custom-painted surface.
+  if (!observation.complete) {
+    return hasApplicationElements(observation, ax.platform) ? undefined : 'no_application_elements';
+  }
   if (nativeCount === 0) return 'no_native_candidates';
   const labels = new Set(ax.controls.map((control) => control.label.toLowerCase()));
   if (task.visualTargets.some((target) => !labels.has(target.toLowerCase()))) return 'target_without_element';
@@ -480,11 +503,28 @@ export const COUNTER_TARGET = 3;
 export const DEFAULT_NOTE_TEXT = 'jev-use native note';
 export const TASK_KINDS = ['counter', 'save-note', 'choose-size'] as const;
 
+// The cross-platform visual-only canvas has no accessibility tree, so it is not
+// a form harness: it has one task, reached only through the visual fallback.
+export type TaskHarness = Omit<HarnessSpec, 'platform'> & Readonly<{ platform: HarnessSpec['platform'] | 'any' }>;
+
+export const CANVAS: TaskHarness = {
+  name: 'canvas',
+  platform: 'any',
+  windowTitle: 'Cua Visual-Only Canvas Fixture',
+  stateSchema: 'cua.visual_canvas_task_state_v1',
+  stateEnv: 'CUA_CANVAS_TASK_STATE',
+};
+export const CANVAS_TASK_ID = 'canvas-save';
+export const CANVAS_TARGET = 'Save';
+
 export const harnessTaskIds = (harness: string): string[] => TASK_KINDS.map((kind) => `${harness}-${kind}`);
 export const APPKIT_TASK_IDS = harnessTaskIds('appkit');
-export const NATIVE_TASK_IDS = Object.keys(HARNESSES).flatMap(harnessTaskIds);
+export const NATIVE_TASK_IDS = [...Object.keys(HARNESSES).flatMap(harnessTaskIds), CANVAS_TASK_ID];
 
-export function splitTaskId(taskId: string): [HarnessSpec, (typeof TASK_KINDS)[number]] {
+type TaskKind = (typeof TASK_KINDS)[number] | 'save';
+
+export function splitTaskId(taskId: string): [TaskHarness, TaskKind] {
+  if (taskId === CANVAS_TASK_ID) return [CANVAS, 'save'];
   const index = taskId.indexOf('-');
   const harness = index > 0 ? HARNESSES[taskId.slice(0, index)] : undefined;
   const kind = taskId.slice(index + 1) as (typeof TASK_KINDS)[number];
@@ -503,6 +543,25 @@ export function nativeTask(taskId: string, statePath: string, options: HarnessTa
     ...(harness.processName ? { processName: harness.processName } : {}),
   };
   const allowForeground = options.allowForeground ?? false;
+  if (kind === 'save') {
+    return new NativeTask({
+      id: taskId,
+      goal:
+        `The window is a painted canvas with ${CANVAS_TARGET}, Send, and Cancel cards. ` +
+        `Click the ${CANVAS_TARGET} card once, then stop.`,
+      scope,
+      allowedActions: new Set<ActionKind>(['visual_click']),
+      oracle,
+      check: (state) => {
+        if (state.selected === slug(CANVAS_TARGET) && state.action_count === 1) return 'verified';
+        return state.selected != null ? 'refuted' : 'pending';
+      },
+      allowForeground,
+      maxSteps: 4,
+      visualTargets: [CANVAS_TARGET],
+      mockPreferences: [`visual:${slug(CANVAS_TARGET)}`],
+    });
+  }
   if (kind === 'counter') {
     return new NativeTask({
       id: taskId,

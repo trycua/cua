@@ -93,6 +93,17 @@ task parameters. Actions are element-bound `click`, `set_value`, or
 observation. Native steps send `cua.jev_choice_request_v2`, which adds a
 per-candidate `source` and compact value-free `elements`.
 
+Visual regions from OmniParser are parsed, from the same `capture_id`, only
+when the tree offers nothing to act through: Driver reports `ax_tree_empty`, a
+complete tree lacks a task's declared visual target, or a non-truncated tree,
+observed again with a larger budget, holds only window roots and window chrome
+(`no_application_elements`). The last case covers custom-painted surfaces,
+for which Linux X11 returns only window metadata and Windows UIA only the
+title bar. A partial tree with any application element never falls back.
+A visual click is background first; after a structured background refusal,
+the next step offers a separate `<id>:foreground` candidate when the task
+allows foreground delivery.
+
 The same three tasks run on three repository harnesses: `<harness>-counter`
 (set the counter to 3), `<harness>-save-note` (set the Note field and save),
 and `<harness>-choose-size` (select Large and check I agree). The harness is
@@ -100,7 +111,13 @@ and `<harness>-choose-size` (select Large and check I agree). The harness is
 mode, each harness shows the same labeled controls, so candidate IDs and the
 mock provider's choices are identical on every platform. Task mode is selected
 with `CUA_APPKIT_TASK_STATE`, `CUA_WPF_TASK_STATE`, or `CUA_GTK3_TASK_STATE`.
-WPF and GTK3 show a small dedicated task window. Each harness rewrites that
+WPF and GTK3 show a small dedicated task window.
+A fourth task, `canvas-save`, clicks the Save card on the cross-platform
+visual-only canvas fixture (a custom-painted Tk window with no accessibility
+tree), so it can only succeed through the visual fallback and needs the
+cua-perception extension. Run it with `verify_native.py --harness canvas`; the
+verifier serves the loopback journal the fixture publishes its state to and
+writes that state to the task's state file. Each harness rewrites that
 state file on every change, and the file is the independent oracle. On
 Windows, the title bar's System menu, Minimize, Maximize, and Close buttons
 are window chrome and never become candidates. With Cua Driver 0.30.1 or

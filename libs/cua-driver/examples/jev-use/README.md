@@ -98,8 +98,12 @@ when the tree offers nothing to act through: Driver reports `ax_tree_empty`, a
 complete tree lacks a task's declared visual target, or a non-truncated tree,
 observed again with a larger budget, holds only window roots and window chrome
 (`no_application_elements`). The last case covers custom-painted surfaces,
-for which Linux X11 returns only window metadata and Windows UIA only the
-title bar. A partial tree with any application element never falls back.
+for which Linux X11 returns only window metadata, Windows UIA only the title
+bar, and macOS AX only the unlabeled window buttons and the application's
+global menu bar (which on macOS are not window content). A partial tree with
+any application element never falls back. Visual targets must reach an OCR
+confidence of 0.8 unless a task opts into a lower bar; an exact, unique text
+match is required either way.
 A visual click is background first; after a structured background refusal,
 the next step offers a separate `<id>:foreground` candidate when the task
 allows foreground delivery.
@@ -115,7 +119,10 @@ WPF and GTK3 show a small dedicated task window.
 A fourth task, `canvas-save`, clicks the Save card on the cross-platform
 visual-only canvas fixture (a custom-painted Tk window with no accessibility
 tree), so it can only succeed through the visual fallback and needs the
-cua-perception extension. Run it with `verify_native.py --harness canvas`; the
+cua-perception extension. It observes only the window's top level
+(`max_depth: 1`), so macOS does not spend the walk budget in the menu bar, and
+accepts the Save label at OCR confidence 0.7, because a 1x macOS capture reads
+it at about 0.75. Run it with `verify_native.py --harness canvas`; the
 verifier serves the loopback journal the fixture publishes its state to and
 writes that state to the task's state file. Each harness rewrites that
 state file on every change, and the file is the independent oracle. On

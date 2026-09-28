@@ -47,6 +47,7 @@ class Harness(NamedTuple):
     state_schema: str
     state_env: str
     journal: bool = False  # the app posts its state to a loopback journal
+    max_depth: int | None = None  # the task scope's walk depth, for --capture-dir
 
 
 
@@ -68,7 +69,7 @@ HARNESSES = {
     "canvas": Harness(
         REPO / "libs/cua-driver/tests/fixtures/apps/cross-platform/visual-only-canvas/main.py", "",
         "Cua Visual-Only Canvas Fixture", "cua.visual_canvas_task_state_v1", "CUA_CANVAS_TASK_STATE",
-        journal=True,
+        journal=True, max_depth=1,
     ),
 }
 FORM_KINDS = ("choose-size", "counter", "save-note")
@@ -209,7 +210,8 @@ def capture(harness_name: str, pid: int, output: Path, label: str) -> None:
     completed = subprocess.run(
         [sys.executable, "python/capture_window_state.py", "--pid", str(pid),
          "--title", harness.window_title, "--output", str(output),
-         "--source", f"CuaTestHarness {harness_name} task mode ({label}), observed by get_window_state"],
+         "--source", f"CuaTestHarness {harness_name} task mode ({label}), observed by get_window_state",
+         *(["--max-depth", str(harness.max_depth)] if harness.max_depth is not None else [])],
         cwd=BASE, check=False, timeout=120,
     )
     if completed.returncode != 0:

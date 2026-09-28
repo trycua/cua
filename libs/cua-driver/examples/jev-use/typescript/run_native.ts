@@ -188,11 +188,15 @@ async function maybeVisual(
   try {
     const result = await driver.call('parse_visual_regions', {
       capture_id: observation.captureId,
-      options: { kinds: ['text', 'icon'], min_confidence: 0.8, max_regions: 100 },
+      options: { kinds: ['text', 'icon'], min_confidence: task.visualMinConfidence, max_regions: 100 },
     });
     const visual = parseVisualRegions(result, observation.captureId!, observation.pid, observation.windowId);
     return {
-      sources: { ...sources, visual: new VisualRegionSource(visual, 'background', captureBoundClick), visualPath: true },
+      sources: {
+        ...sources,
+        visual: new VisualRegionSource(visual, 'background', captureBoundClick, task.visualMinConfidence),
+        visualPath: true,
+      },
       record: {
         status: 'ok',
         reason,

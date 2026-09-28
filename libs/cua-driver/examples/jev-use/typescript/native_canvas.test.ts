@@ -23,7 +23,7 @@ import {
 import { NativeAccessibilitySource, VisualRegionSource } from './sources.js';
 import type { TaskSources } from './tasks.js';
 
-const CANVAS_FIXTURES = { linux: 'canvas-linux', windows: 'canvas-windows' } as const;
+const CANVAS_FIXTURES = { linux: 'canvas-linux', windows: 'canvas-windows', macos: 'canvas-macos' } as const;
 
 function windowState(name: string): any {
   const url = new URL(`../fixtures/native/${name}-window-state-initial-v1.json`, import.meta.url);
@@ -66,11 +66,21 @@ test('recorded canvas trees have no application elements', () => {
   }
   // Linux has no chrome rule, so the same title-bar buttons count as application elements.
   assert.equal(hasApplicationElements(observe(windowState('canvas-windows')), 'linux'), true);
+  // The macOS menu bar and unlabeled window buttons are content everywhere else.
+  assert.equal(hasApplicationElements(observe(windowState('canvas-macos')), 'linux'), true);
+  const mac = windowState('canvas-macos');
+  for (const extra of [
+    [{ element_index: 90, parent_index: 0, role: 'AXButton', label: 'Save' }],
+    [{ element_index: 92, parent_index: 0, role: 'AXGroup' }],
+    [{ element_index: 92, parent_index: 0, role: 'AXGroup' }, { element_index: 91, parent_index: 92, role: 'AXButton' }],
+  ]) {
+    assert.equal(hasApplicationElements(observe({ ...mac, elements: [...mac.elements, ...extra] }), 'macos'), true);
+  }
 });
 
 test('canvas trees fall back to visual regions; partial, truncated, and form cases do not', () => {
   const task = nativeTask(CANVAS_TASK_ID, '/tmp/none.json');
-  for (const platform of ['linux', 'windows'] as const) {
+  for (const platform of ['linux', 'windows', 'macos'] as const) {
     assert.equal(visualFallbackReason(canvasSources(platform, { visual: false }), task, 0), 'no_application_elements');
   }
   const appkit = NativeAccessibilitySource.fromObservation(observe(windowState('appkit')), 'macos');
@@ -91,11 +101,18 @@ test('the canvas task is registered and bound to its state file', () => {
   assert.equal(task.scope.windowTitle, 'Cua Visual-Only Canvas Fixture');
   assert.equal(task.oracle.schema, 'cua.visual_canvas_task_state_v1');
   assert.equal(task.oracle.expectedPid, 7);
+  assert.deepEqual(task.scope.maxDepth, 1);
+  assert.equal(task.visualMinConfidence, 0.7);
+  assert.equal(nativeTask('appkit-counter', '/tmp/none.json').visualMinConfidence, 0.8);
+  const sources = canvasSources('macos');
+  const low = { ...sources.visual!.observation, regions: sources.visual!.observation.regions.map((r) => ({ ...r, confidence: 0.75 })) };
+  assert.equal(new VisualRegionSource(low, 'background', true).find('button', 'Save'), undefined);
+  assert.ok(new VisualRegionSource(low, 'background', true, 0.7).find('button', 'Save'));
 });
 
 test('only the Save region is executable, through a capture-bound click', () => {
   const task = nativeTask(CANVAS_TASK_ID, '/tmp/none.json');
-  for (const platform of ['linux', 'windows'] as const) {
+  for (const platform of ['linux', 'windows', 'macos'] as const) {
     const sources = canvasSources(platform);
     const step = task.plan(sources);
     assert.deepEqual(step.candidates.map((c) => c.id), ['visual:save', 'reobserve', 'abstain'], platform);

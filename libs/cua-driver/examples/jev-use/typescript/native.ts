@@ -142,6 +142,34 @@ export function isTreeEmpty(observation: NativeObservation): boolean {
 }
 
 export const WINDOW_ROOT_ROLES: ReadonlySet<string> = new Set(['window', 'application', 'frame']);
+const MACOS_MENU_BAR_ROLE = 'menubar';
+const normalizedOf = (item: WindowElement | undefined) =>
+  item && typeof item.role === 'string' ? normalizedRole(item.role) : '';
+
+function inMacosMenuBar(item: WindowElement, byIndex: Map<number, WindowElement>): boolean {
+  const seen = new Set<number>();
+  let current: WindowElement | undefined = item;
+  while (current) {
+    if (normalizedOf(current) === MACOS_MENU_BAR_ROLE) return true;
+    const parent = current.parent_index;
+    if (!Number.isInteger(parent) || seen.has(parent as number)) return false;
+    seen.add(parent as number);
+    current = byIndex.get(parent as number);
+  }
+  return false;
+}
+
+/** An unlabeled, valueless button directly under the window root (close, minimize, zoom). */
+function isMacosWindowButton(item: WindowElement, byIndex: Map<number, WindowElement>): boolean {
+  const parent = Number.isInteger(item.parent_index) ? byIndex.get(item.parent_index as number) : undefined;
+  return (
+    normalizedOf(item) === 'button' &&
+    Boolean(parent) &&
+    WINDOW_ROOT_ROLES.has(normalizedOf(parent)) &&
+    !str(item.label) &&
+    !str(item.value)
+  );
+}
 
 function indexElements(observation: NativeObservation): Map<number, WindowElement> {
   const byIndex = new Map<number, WindowElement>();
@@ -164,12 +192,14 @@ function inWindowChrome(item: WindowElement, byIndex: Map<number, WindowElement>
   return false;
 }
 
-/** Whether any element is more than a window root or window chrome (mirrors native.py). */
+/** Whether any element is window content (mirrors native.py has_application_elements). */
 export function hasApplicationElements(observation: NativeObservation, platform: Platform): boolean {
   const byIndex = indexElements(observation);
   return observation.elements.some((item) => {
-    if (typeof item.role === 'string' && WINDOW_ROOT_ROLES.has(normalizedRole(item.role))) return false;
-    return !isWindowChrome(item.role, platform) && !inWindowChrome(item, byIndex, platform);
+    if (WINDOW_ROOT_ROLES.has(normalizedOf(item))) return false;
+    if (isWindowChrome(item.role, platform) || inWindowChrome(item, byIndex, platform)) return false;
+    if (platform === 'macos' && (inMacosMenuBar(item, byIndex) || isMacosWindowButton(item, byIndex))) return false;
+    return true;
   });
 }
 

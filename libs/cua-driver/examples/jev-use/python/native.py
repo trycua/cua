@@ -22,10 +22,14 @@ Element rules (all must hold):
 
 An observation *has no application elements* when every element it reports is
 a window root (``window``, ``application``, ``frame``) or window chrome (the
-Windows title bar and its descendants). Driver reports such a tree for a
-custom-painted surface: X11 property metadata only on Linux, or only the title
-bar on Windows. That view has no accessibility tree to act through, so, like an
-empty tree, it may fall back to visual regions.
+Windows title bar and its descendants). On macOS, the application's global menu
+bar and its descendants, and unlabeled, valueless direct children of the window
+root that are buttons (the standard window buttons), are not window content either. Driver
+reports such a tree for a custom-painted surface: X11 property metadata only on
+Linux, only the title bar on Windows, and only the window buttons and menu bar
+on macOS. That view has no accessibility tree to act through, so, like an empty
+tree, it may fall back to visual regions. This check never changes which
+elements become candidates.
 
 Stable IDs never use ``element_index``: ``ax:<role_class>:<slug(label)>``,
 plus a short hash of the actionable-ancestor path and ordinal when the base
@@ -212,6 +216,7 @@ class NativeObservation:
 
 
 WINDOW_ROOT_ROLES = frozenset({"window", "application", "frame"})
+MACOS_MENU_BAR_ROLE = "menubar"
 
 
 def _index_elements(observation: NativeObservation) -> dict[int, Mapping[str, Any]]:
@@ -236,14 +241,48 @@ def _in_window_chrome(
     return False
 
 
+def _normalized(element: Mapping[str, Any]) -> str:
+    role = element.get("role")
+    return normalized_role(role) if isinstance(role, str) else ""
+
+
+def _in_macos_menu_bar(element: Mapping[str, Any], by_index: Mapping[int, Mapping[str, Any]]) -> bool:
+    seen: set[int] = set()
+    current: Mapping[str, Any] | None = element
+    while current is not None:
+        if _normalized(current) == MACOS_MENU_BAR_ROLE:
+            return True
+        parent = current.get("parent_index")
+        if not isinstance(parent, int) or parent in seen:
+            return False
+        seen.add(parent)
+        current = by_index.get(parent)
+    return False
+
+
+def _is_macos_window_button(element: Mapping[str, Any], by_index: Mapping[int, Mapping[str, Any]]) -> bool:
+    """An unlabeled, valueless button directly under the window root (close, minimize, zoom)."""
+    parent = by_index.get(element.get("parent_index")) if isinstance(element.get("parent_index"), int) else None
+    return (
+        _normalized(element) == "button"
+        and parent is not None
+        and _normalized(parent) in WINDOW_ROOT_ROLES
+        and not _string(element.get("label"))
+        and not _string(element.get("value"))
+    )
+
+
 def has_application_elements(observation: NativeObservation, platform: Platform) -> bool:
-    """Whether any element is more than a window root or window chrome."""
+    """Whether any element is window content (see the module docstring)."""
     by_index = _index_elements(observation)
     for element in observation.elements:
-        role = element.get("role")
-        if isinstance(role, str) and normalized_role(role) in WINDOW_ROOT_ROLES:
+        if _normalized(element) in WINDOW_ROOT_ROLES:
             continue
-        if is_window_chrome(role, platform) or _in_window_chrome(element, by_index, platform):
+        if is_window_chrome(element.get("role"), platform) or _in_window_chrome(element, by_index, platform):
+            continue
+        if platform == "macos" and (
+            _in_macos_menu_bar(element, by_index) or _is_macos_window_button(element, by_index)
+        ):
             continue
         return True
     return False

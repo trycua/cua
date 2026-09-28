@@ -152,7 +152,8 @@ class VisualRegionSource:
     """Controls from validated OmniParser regions, clicked through their capture.
 
     Regions carry no role, so ``find`` matches the visible text or icon label
-    (ASCII case-insensitive) of regions at or above ``MIN_CONFIDENCE`` and
+    (ASCII case-insensitive) of regions at or above ``min_confidence`` (default
+    ``MIN_CONFIDENCE``; a task may opt into a lower bar) and
     returns a control only when exactly one region matches. ``click`` is offered
     only when Driver advertises a capture-bound ``click`` (``capture_bound``); it
     targets the region's screenshot-pixel center with the exact ``capture_id``
@@ -162,6 +163,7 @@ class VisualRegionSource:
     observation: VisualObservation
     delivery: VisualDelivery = "background"
     capture_bound: bool = False
+    min_confidence: float = 0.8
     kind: ClassVar[SourceKind] = "visual"
     MIN_CONFIDENCE: ClassVar[float] = 0.8
 
@@ -170,7 +172,7 @@ class VisualRegionSource:
         matches = [
             region
             for region in self.observation.regions
-            if region.confidence >= self.MIN_CONFIDENCE
+            if region.confidence >= self.min_confidence
             and _ascii_lower(region.text or region.label or "") == wanted
         ]
         if len(matches) != 1:

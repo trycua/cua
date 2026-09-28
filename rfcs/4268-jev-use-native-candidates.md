@@ -808,8 +808,11 @@ Implementation:
     bar. Both are partial trees, so OmniParser was unreachable. The fallback
     therefore also applies to a non-truncated tree, re-observed once with the
     larger budget, whose elements are all window roots or window chrome
-    (`no_application_elements`). A partial tree with any application element
-    still never falls back.
+    (`no_application_elements`). On macOS, the application's global menu bar
+    and the unlabeled window buttons do not count as window content. The
+    canvas task scopes its walk to `max_depth: 1`, because the menu bar
+    otherwise exhausts the walk budget and truncates the tree. A partial tree
+    with any application element still never falls back.
   - A radio option that is already selected is not offered, and a `set_text`
     candidate is offered only while the field differs from its parameter.
   - `close_unsaved` matches its phrases whether or not the window reports

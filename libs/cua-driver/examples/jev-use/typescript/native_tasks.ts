@@ -183,6 +183,7 @@ export type NativeTaskSpec = Readonly<{
   maxSteps?: number;
   textMethod?: TextMethod;
   visualTargets?: readonly string[];
+  visualMinConfidence?: number;
   mockPreferences?: readonly string[];
 }>;
 
@@ -199,6 +200,8 @@ export class NativeTask implements Task {
   readonly maxSteps: number;
   readonly textMethod: TextMethod;
   readonly visualTargets: readonly string[];
+  /** OCR confidence a visual target must reach; exact-text uniqueness still applies. */
+  readonly visualMinConfidence: number;
   readonly mockPreferences: readonly string[];
   /** The oracle is polled after every action, so no candidate is special. */
   readonly completionCandidateIds: ReadonlySet<string> = new Set();
@@ -216,6 +219,7 @@ export class NativeTask implements Task {
     this.maxSteps = spec.maxSteps ?? 6;
     this.textMethod = spec.textMethod ?? 'set_value';
     this.visualTargets = spec.visualTargets ?? [];
+    this.visualMinConfidence = spec.visualMinConfidence ?? 0.8;
     this.mockPreferences = spec.mockPreferences ?? [];
     const unknown = [...this.allowedActions].filter((action) => !ACTION_KINDS.has(action));
     if (unknown.length) throw new Error(`unknown action kinds: ${unknown.sort().join(', ')}`);
@@ -317,7 +321,7 @@ export class NativeTask implements Task {
         id = `${id}:foreground`;
         description +=
           ' Use foreground delivery, which activates the window, because Driver refused background delivery for this region.';
-        source = new VisualRegionSource(visual.observation, 'foreground', visual.captureBound);
+        source = new VisualRegionSource(visual.observation, 'foreground', visual.captureBound, visual.minConfidence);
       }
       const candidate = source.click(control, id, description);
       if (candidate) {
@@ -516,6 +520,9 @@ export const CANVAS: TaskHarness = {
 };
 export const CANVAS_TASK_ID = 'canvas-save';
 export const CANVAS_TARGET = 'Save';
+// A painted surface has no deeper tree; see python/native_tasks.py CANVAS_MAX_DEPTH.
+export const CANVAS_MAX_DEPTH = 1;
+export const CANVAS_MIN_CONFIDENCE = 0.7;
 
 export const harnessTaskIds = (harness: string): string[] => TASK_KINDS.map((kind) => `${harness}-${kind}`);
 export const APPKIT_TASK_IDS = harnessTaskIds('appkit');
@@ -549,7 +556,7 @@ export function nativeTask(taskId: string, statePath: string, options: HarnessTa
       goal:
         `The window is a painted canvas with ${CANVAS_TARGET}, Send, and Cancel cards. ` +
         `Click the ${CANVAS_TARGET} card once, then stop.`,
-      scope,
+      scope: { ...scope, maxDepth: CANVAS_MAX_DEPTH },
       allowedActions: new Set<ActionKind>(['visual_click']),
       oracle,
       check: (state) => {
@@ -559,6 +566,7 @@ export function nativeTask(taskId: string, statePath: string, options: HarnessTa
       allowForeground,
       maxSteps: 4,
       visualTargets: [CANVAS_TARGET],
+      visualMinConfidence: CANVAS_MIN_CONFIDENCE,
       mockPreferences: [`visual:${slug(CANVAS_TARGET)}`],
     });
   }

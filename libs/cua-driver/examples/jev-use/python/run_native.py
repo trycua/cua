@@ -176,7 +176,11 @@ async def maybe_visual(
             "parse_visual_regions",
             {
                 "capture_id": observation.capture_id,
-                "options": {"kinds": ["text", "icon"], "min_confidence": 0.8, "max_regions": 100},
+                "options": {
+                    "kinds": ["text", "icon"],
+                    "min_confidence": task.visual_min_confidence,
+                    "max_regions": 100,
+                },
             },
         )
         visual = parse_visual_regions(
@@ -192,7 +196,9 @@ async def maybe_visual(
     return (
         TaskSources(
             ax=sources.ax,
-            visual=VisualRegionSource(visual, "background", capture_bound_click),
+            visual=VisualRegionSource(
+                visual, "background", capture_bound_click, min_confidence=task.visual_min_confidence
+            ),
             visual_path=True,
             foreground_ids=sources.foreground_ids,
         ),

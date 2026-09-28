@@ -147,7 +147,8 @@ export class BrowserSemanticSource implements CandidateSource {
 /**
  * Controls from validated OmniParser regions, clicked through their capture.
  * Regions carry no role, so find matches the visible text or icon label (ASCII
- * case-insensitive) of regions at or above MIN_CONFIDENCE and returns a
+ * case-insensitive) of regions at or above minConfidence (default
+ * MIN_CONFIDENCE; a task may opt into a lower bar) and returns a
  * control only when exactly one region matches. click is offered only when
  * Driver advertises a capture-bound click (captureBound); it targets the
  * region's screenshot-pixel center with the exact capture_id and the source's
@@ -160,14 +161,15 @@ export class VisualRegionSource implements CandidateSource {
   constructor(
     readonly observation: VisualObservation,
     readonly delivery: VisualDelivery = 'background',
-    readonly captureBound = false
+    readonly captureBound = false,
+    readonly minConfidence: number = VisualRegionSource.MIN_CONFIDENCE
   ) {}
 
   find(role: string, name: string): Control<VisualRegion> | undefined {
     const wanted = asciiLower(name);
     const matches = this.observation.regions.filter(
       (region) =>
-        region.confidence >= VisualRegionSource.MIN_CONFIDENCE &&
+        region.confidence >= this.minConfidence &&
         asciiLower(region.text ?? region.label ?? '') === wanted
     );
     if (matches.length !== 1) return undefined;

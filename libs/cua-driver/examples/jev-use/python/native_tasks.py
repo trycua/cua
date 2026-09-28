@@ -210,6 +210,9 @@ class NativeTask:
     max_steps: int = 6
     text_method: TextMethod = "set_value"
     visual_targets: tuple[str, ...] = ()
+    # OCR confidence a visual target must reach; the default matches the
+    # browser path. Exact-text uniqueness still applies at any bar.
+    visual_min_confidence: float = 0.8
     mock_preferences: tuple[str, ...] = ()
     # The oracle is polled after every action, so no candidate is special.
     completion_candidate_ids: frozenset[str] = field(default=frozenset(), init=False)
@@ -611,6 +614,13 @@ CANVAS = HarnessSpec(
 )
 CANVAS_TASK_ID = "canvas-save"
 CANVAS_TARGET = "Save"
+# A painted surface has no deeper tree. Walking only the window's top level
+# keeps macOS from spending the walk budget in the application menu bar (which
+# would truncate the tree and forbid the fallback). Any content container still
+# appears at depth 1 and blocks the fallback.
+CANVAS_MAX_DEPTH = 1
+# The macOS VM's 1x capture reads the canvas's "Save" label at about 0.75.
+CANVAS_MIN_CONFIDENCE = 0.7
 
 APPKIT_TASK_IDS = harness_task_ids("appkit")
 NATIVE_TASK_IDS = (
@@ -650,13 +660,14 @@ def native_task(
                 f"The window is a painted canvas with {CANVAS_TARGET}, Send, and Cancel cards. "
                 f"Click the {CANVAS_TARGET} card once, then stop."
             ),
-            scope=scope,
+            scope=replace(scope, max_depth=CANVAS_MAX_DEPTH),
             allowed_actions=frozenset({"visual_click"}),
             oracle=oracle,
             check=_canvas_check,
             allow_foreground=allow_foreground,
             max_steps=4,
             visual_targets=(CANVAS_TARGET,),
+            visual_min_confidence=CANVAS_MIN_CONFIDENCE,
             mock_preferences=(f"visual:{slug(CANVAS_TARGET)}",),
         )
     if kind == "counter":

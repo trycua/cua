@@ -2,8 +2,9 @@
 
 The recorded fixtures are real ``get_window_state`` results for the
 cross-platform visual-only canvas (a custom-painted Tk surface): on Linux X11,
-Driver recovers only window metadata, and on Windows, UIA exposes only the
-title bar. Neither holds an application element, so the canvas task may parse
+Driver recovers only window metadata; on Windows, UIA exposes only the title
+bar; on macOS, AX exposes only the two unlabeled window buttons and the
+application menu bar. None holds an application element, so the canvas task may parse
 visual regions from the same capture, and its only executable candidate is a
 capture-bound visual click.
 """
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 import tempfile
 import unittest
 import urllib.request
@@ -38,7 +40,7 @@ from sources import NativeAccessibilitySource, VisualRegionSource
 from tasks import TaskSources
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures/native"
-CANVAS_FIXTURES = {"linux": "canvas-linux", "windows": "canvas-windows"}
+CANVAS_FIXTURES = {"linux": "canvas-linux", "windows": "canvas-windows", "macos": "canvas-macos"}
 
 
 def observation(name: str) -> NativeObservation:
@@ -91,6 +93,26 @@ class ApplicationElementsTest(unittest.TestCase):
         # Linux has no chrome rule, so the same buttons count as application elements.
         self.assertTrue(has_application_elements(observation("canvas-windows"), "linux"))
 
+    def test_macos_menu_bar_and_window_buttons_are_not_content(self) -> None:
+        payload = json.loads((FIXTURES / "canvas-macos-window-state-initial-v1.json").read_text(encoding="utf-8"))
+        # The menu bar and unlabeled window buttons count as content on other platforms.
+        self.assertTrue(has_application_elements(observation("canvas-macos"), "linux"))
+        cases = {
+            "labeled window button": {"element_index": 90, "parent_index": 0, "role": "AXButton", "label": "Save"},
+            "unlabeled nested button": {"element_index": 91, "parent_index": 92, "role": "AXButton"},
+            "group": {"element_index": 92, "parent_index": 0, "role": "AXGroup"},
+        }
+        for name, extra in cases.items():
+            with self.subTest(name=name):
+                elements = payload["elements"] + [extra]
+                if name == "unlabeled nested button":
+                    elements.append(cases["group"])
+                observed = NativeObservation.from_window_state(
+                    {**payload, "elements": elements},
+                    expected_pid=payload["pid"], expected_window_id=payload["window_id"],
+                )
+                self.assertTrue(has_application_elements(observed, "macos"))
+
 
 class FallbackRuleTest(unittest.TestCase):
     def test_canvas_trees_fall_back_to_visual_regions(self) -> None:
@@ -123,6 +145,19 @@ class FallbackRuleTest(unittest.TestCase):
 
 
 class CanvasTaskTest(unittest.TestCase):
+    def test_scope_and_confidence(self) -> None:
+        task = native_task(CANVAS_TASK_ID, Path("/tmp/none.json"))
+        self.assertEqual(task.scope.window_state_arguments(), {"max_depth": 1})
+        self.assertEqual(task.visual_min_confidence, 0.7)
+        form = native_task("appkit-counter", Path("/tmp/none.json"))
+        self.assertEqual(form.scope.window_state_arguments(), {})
+        self.assertEqual(form.visual_min_confidence, 0.8)
+        sources = canvas_sources("macos")
+        low = [replace(region, confidence=0.75) for region in sources.visual.observation.regions]
+        observed = replace(sources.visual.observation, regions=tuple(low))
+        self.assertIsNone(VisualRegionSource(observed, "background", True).find("button", "Save"))
+        self.assertIsNotNone(VisualRegionSource(observed, "background", True, 0.7).find("button", "Save"))
+
     def test_registry(self) -> None:
         self.assertIn(CANVAS_TASK_ID, NATIVE_TASK_IDS)
         self.assertEqual(split_task_id(CANVAS_TASK_ID), (CANVAS, "save"))

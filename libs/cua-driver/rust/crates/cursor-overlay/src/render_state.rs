@@ -54,6 +54,8 @@ pub struct RenderStateCore {
     pub motion: MotionConfig,
     /// Current rendered position in screen / overlay-window coordinates.
     pub pos: (f64, f64),
+    /// Whether the cursor has been placed on screen at least once.
+    pub placed: bool,
     /// Visual heading in radians (tip direction = motion_dir + π).
     pub heading: f64,
     /// In-flight planned path; `None` = at rest.
@@ -105,9 +107,10 @@ pub struct RenderStateCore {
 
 impl RenderStateCore {
     /// Build the core from a launch-time CursorConfig.
-    /// `pos` starts at the off-screen sentinel `(-200, -200)` to indicate
-    /// "never placed on screen yet" — the click path uses this to detect
-    /// first-placement and snap rather than animate.
+    /// `pos` starts at the off-screen sentinel `(-200, -200)` with `placed: false`
+    /// to indicate "never placed on screen yet" — the click path uses `is_placed()`
+    /// to detect first-placement and snap/seed rather than treating negative
+    /// secondary-display coordinates as unplaced.
     pub fn new(cfg: CursorConfig) -> Self {
         let motion = cfg.motion.clone();
         let visual = CursorVisualState {
@@ -132,6 +135,7 @@ impl RenderStateCore {
             theme,
             theme_fallback,
             pos: (-200.0, -200.0),
+            placed: false,
             heading: std::f64::consts::FRAC_PI_4,
             path: None,
             dist: 0.0,
@@ -152,10 +156,25 @@ impl RenderStateCore {
         }
     }
 
-    /// Whether the cursor currently paints pixels: user-visible, placed on
-    /// screen (not the `(-200, -200)` sentinel), and not fully idle-faded.
+    /// Whether this cursor has been placed on screen at least once.
+    ///
+    /// Also treats a directly mutated `pos != (-200.0, -200.0)` as placed so
+    /// callers and unit tests that assign `pos` directly remain compatible
+    /// without misclassifying negative-coordinate displays as unplaced.
+    pub fn is_placed(&self) -> bool {
+        self.placed || self.pos != (-200.0, -200.0)
+    }
+
+    /// Whether this cursor is both enabled in its launch config and currently
+    /// visible (not disabled at runtime via [`OverlayCommand::SetEnabled`]).
+    pub fn is_enabled(&self) -> bool {
+        self.cfg.enabled && self.visible
+    }
+
+    /// Whether the cursor currently paints pixels: enabled, user-visible,
+    /// placed on screen, and not fully idle-faded.
     pub fn is_revealed(&self) -> bool {
-        self.visible && self.pos.0 >= -100.0 && self.idle_alpha >= 0.004
+        self.is_enabled() && self.is_placed() && self.idle_alpha >= 0.004
     }
 
     /// Whether a revealed cursor keeps changing pixels while it rests.
@@ -196,8 +215,8 @@ impl RenderStateCore {
     /// `motion.idle_hide_ms` of inactivity) is currently animating.
     pub fn idle_fade_in_progress(&self) -> bool {
         self.motion.idle_hide_ms > 0.0
-            && self.visible
-            && self.pos.0 >= -100.0
+            && self.is_enabled()
+            && self.is_placed()
             && self.idle_secs >= self.motion.idle_hide_ms / 1000.0
             && self.idle_alpha >= 0.004
     }
@@ -211,12 +230,13 @@ impl RenderStateCore {
     /// its opaque idle-hide delay are quiescent; platforms advance that
     /// countdown with [`Self::idle_fade_wait`] or their own slow heartbeat.
     pub fn needs_frame_tick(&self) -> bool {
-        self.path.is_some()
-            || self.spring.is_some()
-            || self.click_t.is_some()
-            || self.session_badge_needs_frame_tick()
-            || self.has_resting_motion()
-            || self.idle_fade_in_progress()
+        self.is_enabled()
+            && (self.path.is_some()
+                || self.spring.is_some()
+                || self.click_t.is_some()
+                || self.session_badge_needs_frame_tick()
+                || self.has_resting_motion()
+                || self.idle_fade_in_progress())
     }
 
     /// Time until the idle fade starts for a placed, visible, settled cursor,
@@ -224,8 +244,8 @@ impl RenderStateCore {
     /// `None` when idle hide is off, the cursor is moving or not shown, or
     /// the fade has already started.
     pub fn idle_fade_wait(&self) -> Option<std::time::Duration> {
-        if !self.visible
-            || self.pos.0 < -100.0
+        if !self.is_enabled()
+            || !self.is_placed()
             || self.motion.idle_hide_ms <= 0.0
             || self.path.is_some()
             || self.spring.is_some()
@@ -652,9 +672,10 @@ impl RenderStateCore {
 
                 // macOS-only: if the cursor is still at the initial off-screen
                 // sentinel, snap it to the offset target so the path starts on-screen.
-                if move_to_snap_sentinel && self.pos.0 < -50.0 {
+                if move_to_snap_sentinel && !self.is_placed() {
                     self.pos = (tx, ty);
                 }
+                self.placed = true;
                 let (x0, y0) = self.pos;
                 let th0 = self.heading + std::f64::consts::PI;
                 let th1 = end_heading_radians + std::f64::consts::PI;
@@ -686,6 +707,7 @@ impl RenderStateCore {
             } => {
                 let reveal_badge = !self.is_revealed();
                 self.pos = (x, y);
+                self.placed = true;
                 if let Some(heading) = heading_radians {
                     self.heading = heading;
                 }
@@ -709,14 +731,18 @@ impl RenderStateCore {
                 true
             }
             OverlayCommand::ClickPulse { x, y } => {
+                if !self.is_enabled() {
+                    return true;
+                }
                 let reveal_badge = !self.is_revealed();
                 // macOS only snaps on first placement (sentinel state); after
                 // that the cursor stays where the animation landed. Windows
                 // and Linux always snap. Both anchor the click point so the
                 // hotspot stays on it instead of jumping by the anchor offset.
-                if !click_pulse_sentinel_only || self.pos.0 < -50.0 {
+                if !click_pulse_sentinel_only || !self.is_placed() {
                     self.pos = crate::anchor_for_pointer(x, y, self.heading);
                 }
+                self.placed = true;
                 self.click_t = Some(0.0);
                 if matches!(
                     self.visual.resolved_action,
@@ -749,6 +775,14 @@ impl RenderStateCore {
             OverlayCommand::SetEnabled(v) => {
                 let reveal_badge = v && !self.visible;
                 self.visible = v;
+                if !v {
+                    self.path = None;
+                    self.dist = 0.0;
+                    self.spring = None;
+                    self.spring_tgt = None;
+                    self.click_t = None;
+                    self.pressed = false;
+                }
                 if reveal_badge {
                     self.reveal_session_badge();
                 }
@@ -887,9 +921,9 @@ pub fn paint_cursor(
     focus_rect: Option<FocusRect>,
     backing_scale: f32,
 ) {
-    if !core.visible
+    if !core.is_enabled()
         || core.pinned_target_off_workspace
-        || core.pos.0 < -100.0
+        || !core.is_placed()
         || core.idle_alpha < 0.004
     {
         return;
@@ -1383,6 +1417,74 @@ mod backing_scale_tests {
         core.pinned_target_off_workspace = false;
         paint_cursor(&mut pm, &core, 0.0, 0.0, None, 1.0);
         assert!(visible_pixel_count(&pm) > 0);
+    }
+
+    #[test]
+    fn negative_coordinate_display_cursor_paints_and_runtime_disable_quiesces() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        assert!(!core.is_placed());
+        assert!(!core.is_revealed());
+
+        // First placement on a secondary display at negative X (`-1920..0`).
+        core.apply_command_base(
+            OverlayCommand::ClickPulse {
+                x: -1800.0,
+                y: 500.0,
+            },
+            true,
+            true,
+        );
+        assert!(core.is_placed());
+        assert!(core.is_revealed());
+        let first_anchor = core.pos;
+        assert!(first_anchor.0 < -1700.0);
+
+        let mut pm = tiny_skia::Pixmap::new(256, 256).unwrap();
+        paint_cursor(&mut pm, &core, -1920.0, 400.0, None, 1.0);
+        assert!(
+            visible_pixel_count(&pm) > 0,
+            "placed cursor at negative screen coordinates must paint when offset by origin"
+        );
+
+        // A consecutive MoveTo on the negative-coordinate display must start
+        // from `first_anchor` rather than snapping as if unplaced (#4276).
+        core.apply_command_base(
+            OverlayCommand::MoveTo {
+                x: -1750.0,
+                y: 500.0,
+                end_heading_radians: std::f64::consts::FRAC_PI_4,
+            },
+            true,
+            true,
+        );
+        assert_eq!(core.pos, first_anchor);
+        assert!(core.path.is_some());
+        assert!(core.needs_frame_tick());
+
+        // Disabling at runtime (`set_agent_cursor_enabled(false)`) hides the
+        // cursor and quiesces in-flight motion immediately, and ClickPulse
+        // while disabled does not place an unplaced cursor or start a pulse.
+        core.apply_command_base(OverlayCommand::SetEnabled(false), true, true);
+        assert!(!core.is_enabled());
+        assert!(!core.is_revealed());
+        assert!(!core.needs_frame_tick());
+        assert!(core.path.is_none());
+        let mut disabled_pm = tiny_skia::Pixmap::new(256, 256).unwrap();
+        paint_cursor(&mut disabled_pm, &core, -1920.0, 400.0, None, 1.0);
+        assert_eq!(visible_pixel_count(&disabled_pm), 0);
+
+        let mut unplaced_disabled = RenderStateCore::new(CursorConfig::default());
+        unplaced_disabled.apply_command_base(OverlayCommand::SetEnabled(false), false, false);
+        unplaced_disabled.apply_command_base(
+            OverlayCommand::ClickPulse {
+                x: -1800.0,
+                y: 500.0,
+            },
+            false,
+            false,
+        );
+        assert!(!unplaced_disabled.is_placed());
+        assert!(unplaced_disabled.click_t.is_none());
     }
 
     /// The compiled artifact contains vector geometry. Skia must rasterize it

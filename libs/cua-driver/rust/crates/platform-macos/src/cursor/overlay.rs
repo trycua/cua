@@ -129,11 +129,35 @@ pub(crate) fn overlay_may_show_pixels() -> bool {
 
 fn cursor_may_paint(state: &RenderState) -> bool {
     state.focus_rect.is_some()
-        || (state.core.cfg.enabled
-            && state.core.visible
-            && state.core.idle_alpha > 0.0
-            && state.core.pos.0 > -50.0
-            && state.core.pos.1 > -50.0)
+        || (state.core.is_enabled()
+            && !state.core.pinned_target_off_workspace
+            && state.core.idle_alpha >= 0.004
+            && state.core.is_placed())
+}
+
+const CURSOR_WINDOW_MARGIN: f64 = 360.0;
+
+fn cursor_may_paint_in_window(state: &RenderState, win_w: f64, win_h: f64) -> bool {
+    if win_w <= 0.0 || win_h <= 0.0 {
+        return cursor_may_paint(state);
+    }
+    let focus_in_window = state.focus_rect.is_some_and(|[fx, fy, fw, fh]| {
+        fw > 0.0
+            && fh > 0.0
+            && fx + fw >= -8.0
+            && fx <= win_w + 8.0
+            && fy + fh >= -8.0
+            && fy <= win_h + 8.0
+    });
+    let cursor_in_window = state.core.is_enabled()
+        && !state.core.pinned_target_off_workspace
+        && state.core.idle_alpha >= 0.004
+        && state.core.is_placed()
+        && state.core.pos.0 >= -CURSOR_WINDOW_MARGIN
+        && state.core.pos.0 <= win_w + CURSOR_WINDOW_MARGIN
+        && state.core.pos.1 >= -CURSOR_WINDOW_MARGIN
+        && state.core.pos.1 <= win_h + CURSOR_WINDOW_MARGIN;
+    focus_in_window || cursor_in_window
 }
 
 /// Screen-global geometry kept beside the shared keyed render map
@@ -227,6 +251,21 @@ pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
     if key.is_empty() {
         return;
     }
+    if matches!(
+        &cmd,
+        OverlayCommand::SetEnabled(_)
+            | OverlayCommand::SetMotion(_)
+            | OverlayCommand::SetTheme { .. }
+    ) {
+        if let Ok(mut guard) = RENDER.lock() {
+            if let Some(map) = guard.as_mut() {
+                map.apply_command(key.clone(), cmd.clone());
+            }
+        }
+        if matches!(&cmd, OverlayCommand::SetEnabled(false)) {
+            arrival_cancel(&key);
+        }
+    }
     if let Some(tx) = CMD_TX.get() {
         let _ = tx.try_send(OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }));
     }
@@ -318,10 +357,10 @@ pub fn current_theme_state(
 /// the sentinel and only `ClickPulse` snapped a static arrow, which is easy to
 /// miss. See the AX-no-glide report.
 ///
-/// No-op when the cursor is already on-screen (pos.0 > -50.0) or absent. The
-/// seed is clamped to the main screen frame so it never starts off-display.
-/// Returns true if a seed was applied (i.e. the cursor was at the sentinel and
-/// is now primed to glide).
+/// No-op when the cursor is already placed on-screen or absent. The seed is
+/// clamped to the main screen frame when the target lies on that screen so it
+/// never starts off-display. Returns true if a seed was applied (i.e. the
+/// cursor was unplaced and is now primed to glide).
 fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
     let mut guard = RENDER.lock().unwrap();
     let Some(map) = guard.as_mut() else {
@@ -348,8 +387,8 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
     if key.is_empty() {
         return;
     }
-    // Seed a sentinel cursor on-screen so the MoveTo below glides instead of
-    // being short-circuited. After this the cursor's pos.0 > -50.0, so the
+    // Seed an unplaced cursor on-screen so the MoveTo below glides instead of
+    // being short-circuited. After this `is_placed()` holds, so the
     // should-animate check passes on the first action just like later ones.
     seed_start_if_sentinel(&key, x, y);
 
@@ -359,7 +398,7 @@ pub async fn animate_cursor_to(key: CursorKey, x: f64, y: f64) {
         let guard = RENDER.lock().unwrap();
         matches!(
             guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled && rs.core.pos.0 > -50.0
+            Some(rs) if rs.core.is_enabled() && rs.core.is_placed()
         )
     };
     if !should_animate {
@@ -501,9 +540,19 @@ impl RenderEntry for RenderState {
         //     the sentinel (otherwise the animation already landed it there).
         match cmd {
             OverlayCommand::ShowFocusRect(rect) => {
+                if !self.core.is_enabled() && rect.is_some() {
+                    return false;
+                }
                 self.focus_rect = rect;
                 self.focus_rect_t = 0.0; // reset fade to fully visible
                 true
+            }
+            OverlayCommand::SetEnabled(v) => {
+                if !v {
+                    self.focus_rect = None;
+                    self.focus_rect_t = 1.0;
+                }
+                self.core.apply_command_base(cmd, true, true)
             }
             OverlayCommand::PinAbove(wid) => {
                 // The overlay window joins every Space, so a target on another
@@ -528,8 +577,8 @@ impl RenderEntry for RenderState {
         self.core.needs_frame_tick()
             || self.focus_rect.is_some()
             || (self.core.motion.idle_hide_ms > 0.0
-                && self.core.visible
-                && self.core.pos.0 >= -100.0
+                && self.core.is_enabled()
+                && self.core.is_placed()
                 && self.core.idle_alpha >= 0.004)
     }
 }
@@ -679,6 +728,7 @@ fn render_loop(
     // the periodic defensive-repin (every ~60 active frames ≈ 1 s).
     let mut last_pinned: Option<u64> = None;
     let mut repin_frames: u32 = 0;
+    let mut layer_has_pixels = false;
 
     loop {
         // When no cursor animation/fade is active, block until the MCP side
@@ -832,43 +882,56 @@ fn render_loop(
         // change pixels. A final frame is emitted as animations/fades finish so
         // the layer is left in the completed/cleared state before blocking.
         if had_msg || hover_changed || frame_tick_needed || next_frame_tick_needed {
-            let pixmap = {
+            let (pixmap, any_paints) = {
                 let guard = RENDER.lock().unwrap();
                 if let Some(map) = guard.as_ref() {
-                    // Allocate the pixmap at the screen's PHYSICAL pixel
-                    // dimensions so the cursor rasterises at retina resolution.
-                    // The cursor's logical coordinates are scaled into pixmap
-                    // pixels inside `paint_cursor` (it multiplies px/py/sizes
-                    // by `backing_scale`).
-                    let scale = map.platform.backing_scale.max(1.0);
-                    let w = (win_w * scale).max(1.0) as u32;
-                    let h = (win_h * scale).max(1.0) as u32;
-                    let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
-                        .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
-                    let backing_scale_f32 = scale as f32;
-                    note_overlay_frame(map.cursors.values().any(cursor_may_paint));
-                    for (_k, rs) in &map.cursors {
-                        let focus = rs.focus_rect.map(|rect| FocusRect {
-                            rect,
-                            t: rs.focus_rect_t,
-                        });
-                        cursor_overlay::paint_cursor(
-                            &mut pm,
-                            &rs.core,
-                            0.0,
-                            0.0, // macOS uses screen-local coords (no origin offset)
-                            focus,
-                            backing_scale_f32,
-                        );
+                    let any_paints = map
+                        .cursors
+                        .values()
+                        .any(|rs| cursor_may_paint_in_window(rs, win_w, win_h));
+                    note_overlay_frame(any_paints);
+                    if !any_paints {
+                        let clear_pm =
+                            layer_has_pixels.then(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+                        (clear_pm, false)
+                    } else {
+                        // Allocate the pixmap at the screen's PHYSICAL pixel
+                        // dimensions so the cursor rasterises at retina resolution.
+                        // The cursor's logical coordinates are scaled into pixmap
+                        // pixels inside `paint_cursor` (it multiplies px/py/sizes
+                        // by `backing_scale`).
+                        let scale = map.platform.backing_scale.max(1.0);
+                        let w = (win_w * scale).max(1.0) as u32;
+                        let h = (win_h * scale).max(1.0) as u32;
+                        let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
+                            .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+                        let backing_scale_f32 = scale as f32;
+                        for (_k, rs) in &map.cursors {
+                            let focus = rs.focus_rect.map(|rect| FocusRect {
+                                rect,
+                                t: rs.focus_rect_t,
+                            });
+                            cursor_overlay::paint_cursor(
+                                &mut pm,
+                                &rs.core,
+                                0.0,
+                                0.0, // macOS uses screen-local coords (no origin offset)
+                                focus,
+                                backing_scale_f32,
+                            );
+                        }
+                        (Some(pm), true)
                     }
-                    pm
                 } else {
                     break;
                 }
             };
+            layer_has_pixels = any_paints;
 
             // Convert to CGImage and update layer on the main queue.
-            dispatch_set_layer_contents(layer_ptr, pixmap);
+            if let Some(pixmap) = pixmap {
+                dispatch_set_layer_contents(layer_ptr, pixmap);
+            }
         }
 
         frame_tick_needed = next_frame_tick_needed;
@@ -896,11 +959,7 @@ fn hardware_cursor_position() -> Option<(f64, f64)> {
 }
 
 fn cursor_is_externally_visible(state: &RenderState) -> bool {
-    state.core.cfg.enabled
-        && state.core.visible
-        && state.core.pos.0 > -50.0
-        && state.core.pos.1 > -50.0
-        && state.core.idle_alpha >= 0.004
+    state.core.is_revealed()
 }
 
 /// Convert a `tiny_skia::Pixmap` to a `CGImage` and set it as the contents
@@ -1275,12 +1334,43 @@ mod tests {
     fn only_enabled_on_screen_cursor_is_externally_visible() {
         let mut map = empty_map();
         assert!(!cursor_is_externally_visible(&map.cursors["default"]));
+        assert!(!cursor_may_paint_in_window(
+            &map.cursors["default"],
+            1920.0,
+            1080.0
+        ));
 
         placed(&mut map, "sessA");
         assert!(cursor_is_externally_visible(&map.cursors["sessA"]));
+        assert!(cursor_may_paint_in_window(
+            &map.cursors["sessA"],
+            1920.0,
+            1080.0
+        ));
+
+        // A cursor placed on a negative-coordinate secondary display is also
+        // externally visible until disabled at runtime or launch, and does not
+        // force full-screen Retina pixmap composites on the primary screen
+        // window when outside its margin (#4276).
+        let primary = Some(ScreenFrame::new(0.0, 0.0, 1920.0, 1080.0));
+        assert!(map.seed_start_if_sentinel("neg", -800.0, 1200.0, primary));
+        assert_eq!(map.cursors["neg"].core.pos, (-940.0, 1060.0));
+        assert!(cursor_is_externally_visible(&map.cursors["neg"]));
+        assert!(!cursor_may_paint_in_window(
+            &map.cursors["neg"],
+            1920.0,
+            1080.0
+        ));
+        map.apply_command("neg".to_owned(), OverlayCommand::SetEnabled(false));
+        assert!(!cursor_is_externally_visible(&map.cursors["neg"]));
 
         map.cursors.get_mut("sessA").unwrap().core.cfg.enabled = false;
         assert!(!cursor_is_externally_visible(&map.cursors["sessA"]));
+        assert!(!cursor_may_paint_in_window(
+            &map.cursors["sessA"],
+            1920.0,
+            1080.0
+        ));
     }
 
     #[test]

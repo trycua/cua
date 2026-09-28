@@ -126,10 +126,7 @@ test('visual text is redacted too', () => {
     screenshotHeight: 100,
     pid: 7,
     windowId: 9,
-    actionOriginX: 0,
-    actionOriginY: 0,
-    actionUnitsPerPixelX: 1,
-    actionUnitsPerPixelY: 1,
+    screenshotToAction: [1, 0, 0, 1, 0, 0],
     regions: [
       {
         id: 'r1',

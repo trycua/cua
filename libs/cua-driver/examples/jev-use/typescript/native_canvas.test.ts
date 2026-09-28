@@ -47,8 +47,7 @@ function canvasSources(
   ];
   const parsed: VisualObservation = {
     captureId: observed.captureId ?? '', screenshotReference: 'ref', screenshotWidth: 762, screenshotHeight: 492,
-    pid: observed.pid, windowId: observed.windowId, actionOriginX: 0, actionOriginY: 0,
-    actionUnitsPerPixelX: 1, actionUnitsPerPixelY: 1, regions,
+    pid: observed.pid, windowId: observed.windowId, screenshotToAction: [1, 0, 0, 1, 0, 0], regions,
   };
   return { ax, visual: new VisualRegionSource(parsed, 'background', true), visualPath: true, foregroundIds };
 }

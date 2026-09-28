@@ -445,6 +445,10 @@ removes the Submit button ref so only the visual candidate can submit. The optio
 Driver internals to this example. It validates capture identity, PNG geometry,
 coordinate mapping, region IDs, bounds, content, confidence, and ambiguity
 before constructing a `click` candidate containing the exact `capture_id`.
+The coordinate mapping is `screenshot_pixels` for an identity capture or a
+finite, invertible `affine` transform otherwise (for example, a Retina window).
+The click still carries the original screenshot-pixel point; Driver applies the
+capture's mapping itself, so the example never maps a point twice.
 Visual evidence never replaces the semantic editable ref required by
 `browser_type`.
 

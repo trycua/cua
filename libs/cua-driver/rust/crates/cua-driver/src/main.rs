@@ -727,17 +727,11 @@ fn main() {
             // park main in NSApplication.run() when --experimental-pip is
             // on. Otherwise just join the serve thread so the process
             // stays up as long as the daemon does.
-            if pip_cfg.enabled {
-                platform_macos::pip::run_appkit_main_loop();
-            } else if cursor_cfg.enabled {
-                // Render the agent-cursor overlay: park the main thread in the
-                // AppKit run loop so the overlay NSWindow draws. `run_on_main_thread`
-                // self-guards on `has_graphic_access()` and returns immediately
-                // when the daemon has no Window Server session — fall through to
-                // join so the daemon still serves headless. The serve thread runs
-                // on its background thread regardless.
+            if cursor_cfg.enabled {
                 platform_macos::cursor::overlay::run_on_main_thread();
                 let _ = serve_handle.join();
+            } else if pip_cfg.enabled {
+                platform_macos::pip::run_appkit_main_loop();
             } else {
                 let _ = serve_handle.join();
             }

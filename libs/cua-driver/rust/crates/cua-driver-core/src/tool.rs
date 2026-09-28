@@ -413,8 +413,24 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "history_status" => &["history.status"],
         "history_query" => &["history.query"],
 
+        // ── diagnostics ──────────────────────────────────────────────
+        // `health_report` is a runtime-only diagnostic that intentionally
+        // claims no capability token. Keep it explicit so the catch-all below
+        // stays a true "unmapped tool" signal.
+        "health_report" => &[],
+
         // ── unsupported_platform stub & anything else ────────────────
-        _ => &[],
+        // A registered tool that reaches this arm has no capability mapping.
+        // Advertise none rather than guessing, but make the omission loud so a
+        // newly added tool cannot silently ship with an empty capability
+        // surface that consumers read as "supports nothing".
+        _ => {
+            tracing::warn!(
+                tool = tool_name,
+                "tool has no capability mapping in default_capabilities_for; advertising none"
+            );
+            &[]
+        }
     };
     caps.iter().map(|s| (*s).to_owned()).collect()
 }

@@ -10,6 +10,11 @@ use sha2::{Digest, Sha256};
 
 pub const POLICY_FILE_ENV: &str = "CUA_DRIVER_POLICY_FILE";
 pub const MANAGED_POLICY_FILE_ENV: &str = "CUA_DRIVER_MANAGED_POLICY_FILE";
+/// Opt-in fail-closed guard: when set to exactly `1`, startup refuses to expose
+/// any action endpoint unless at least one policy layer is configured. Without
+/// it, an unset [`POLICY_FILE_ENV`] keeps the documented backward-compatible
+/// no-enforcement behavior.
+pub const REQUIRE_POLICY_ENV: &str = "CUA_DRIVER_REQUIRE_POLICY";
 #[cfg(feature = "rego")]
 const REGO_ALLOW_RULE: &str = "data.cua.policy.allow";
 
@@ -310,6 +315,30 @@ pub fn authorize_tool_call(tool: &str, args: &Value) -> Result<(), Authorization
     authorize_policy_layers(tool, args, layers)
 }
 
+/// Whether [`REQUIRE_POLICY_ENV`] requests fail-closed startup. Only the exact
+/// value `1` counts; any other value (including unset) keeps the historical
+/// opt-in behavior.
+pub fn require_policy_configured() -> bool {
+    std::env::var_os(REQUIRE_POLICY_ENV).is_some_and(|value| value == "1")
+}
+
+/// Effective capability-policy mode for this process, suitable for the
+/// transport metadata handshake.
+///
+/// - `"enforced"`: at least one policy layer loaded successfully.
+/// - `"error"`: a configured layer failed to load (startup should have failed,
+///   but a peer that asks only for metadata still gets the truth).
+/// - `"disabled"`: no policy configured; calls are not constrained by policy.
+///   This is the documented default and is rejected at startup when
+///   [`REQUIRE_POLICY_ENV`] is `1`.
+pub fn policy_mode() -> &'static str {
+    match (configured_managed_policy(), configured_policy()) {
+        (Err(_), _) | (_, Err(_)) => "error",
+        (Ok(Some(_)), _) | (_, Ok(Some(_))) => "enforced",
+        _ => "disabled",
+    }
+}
+
 /// Returns `true` when the tool should be advertised in `tools/list`.
 ///
 /// Unlike [`authorize_tool_call`], this does not require a full argument set:
@@ -318,17 +347,31 @@ pub fn authorize_tool_call(tool: &str, args: &Value) -> Result<(), Authorization
 /// `allow.rules` are still listed so that callers can attempt a constrained
 /// invocation.  When no policy is configured, all tools are listable.
 ///
-/// On a policy loading error, this returns `true` (fail-open for listing).
-/// The error will surface at invocation time through [`authorize_tool_call`],
-/// and [`validate_configured_policy`] is expected to have caught it at startup.
+/// On a policy loading error this **fails closed** and lists nothing: an
+/// unloadable policy is a configuration fault, and advertising tools the
+/// daemon cannot authorize would invite calls that only fail at dispatch time.
+/// [`validate_configured_policy`] is expected to have caught the same error at
+/// startup, so this is defense in depth rather than the primary guard.
 pub fn is_tool_listable(tool: &str) -> bool {
     let managed = match configured_managed_policy() {
         Ok(policy) => policy,
-        Err(_) => return true,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "permission policy failed to load; refusing to list any tool"
+            );
+            return false;
+        }
     };
     let user = match configured_policy() {
         Ok(policy) => policy,
-        Err(_) => return true,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "permission policy failed to load; refusing to list any tool"
+            );
+            return false;
+        }
     };
     for policy in [managed, user].into_iter().flatten() {
         if !policy.is_potentially_listable(tool) {
@@ -338,14 +381,39 @@ pub fn is_tool_listable(tool: &str) -> bool {
     true
 }
 
+/// Pure decision behind the `CUA_DRIVER_REQUIRE_POLICY` startup guard, split
+/// out so every case is unit-testable without touching the process
+/// environment or the cached policy layers.
+fn missing_policy_under_requirement(
+    managed_configured: bool,
+    user_configured: bool,
+    require: bool,
+) -> bool {
+    require && !managed_configured && !user_configured
+}
+
 /// Eagerly validate the immutable process policy before any action endpoint is
 /// exposed. This prevents a configured typo from producing a listening daemon
 /// that only discovers the error after clients begin issuing calls.
+///
+/// When `CUA_DRIVER_REQUIRE_POLICY=1` is set, a process with no policy layer at
+/// all is also refused here, so a hardened deployment cannot silently run
+/// unconstrained because the policy variable was never wired up.
 pub fn validate_configured_policy() -> Result<(), AuthorizationError> {
-    configured_managed_policy()
+    let managed = configured_managed_policy()
         .map_err(|message| AuthorizationError::Loading(format!("managed policy: {message}")))?;
-    configured_policy()
+    let user = configured_policy()
         .map_err(|message| AuthorizationError::Loading(format!("user policy: {message}")))?;
+    if missing_policy_under_requirement(
+        managed.is_some(),
+        user.is_some(),
+        require_policy_configured(),
+    ) {
+        return Err(AuthorizationError::Loading(format!(
+            "{REQUIRE_POLICY_ENV}=1 but no permission policy is configured; \
+             set {POLICY_FILE_ENV} or {MANAGED_POLICY_FILE_ENV} (or unset {REQUIRE_POLICY_ENV})"
+        )));
+    }
     Ok(())
 }
 
@@ -1042,5 +1110,17 @@ allow if {
         assert!(error
             .to_string()
             .contains("configured permission policy path does not exist"));
+    }
+
+    #[test]
+    fn required_policy_rejects_a_process_with_no_configured_layer() {
+        // Requirement off: no policy is the documented, allowed default.
+        assert!(!missing_policy_under_requirement(false, false, false));
+        // Requirement on: unset policy is refused.
+        assert!(missing_policy_under_requirement(false, false, true));
+        // Requirement on: any configured layer satisfies it.
+        assert!(!missing_policy_under_requirement(true, false, true));
+        assert!(!missing_policy_under_requirement(false, true, true));
+        assert!(!missing_policy_under_requirement(true, true, true));
     }
 }

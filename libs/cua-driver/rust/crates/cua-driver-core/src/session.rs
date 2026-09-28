@@ -611,7 +611,10 @@ pub fn activate_or_revive_session_for_owner(
 
     let needs_cleanup = {
         let ended = ended_sessions().lock().unwrap();
-        match ended.get(session_id) {
+        match ended
+            .get(session_id)
+            .map(|tombstone| tombstone.owner_transport.clone())
+        {
             Some(Some(owner)) if owner != owner_transport => {
                 return Err("session is not available to this transport");
             }
@@ -629,7 +632,10 @@ pub fn activate_or_revive_session_for_owner(
     let now = Instant::now();
     let revived = {
         let mut ended = ended_sessions().lock().unwrap();
-        let revived = match ended.get(session_id) {
+        let revived = match ended
+            .get(session_id)
+            .map(|tombstone| tombstone.owner_transport.clone())
+        {
             Some(Some(owner)) if owner != owner_transport => {
                 return Err("session is not available to this transport");
             }
@@ -714,7 +720,7 @@ fn session_owner_matches(session_id: &str, owner_transport: &str) -> bool {
         .lock()
         .unwrap()
         .get(session_id)
-        .is_some_and(|owner| owner.as_deref() == Some(owner_transport))
+        .is_some_and(|tombstone| tombstone.owner_transport.as_deref() == Some(owner_transport))
 }
 
 /// End a lifecycle episode only when it belongs to the authenticated
@@ -933,9 +939,30 @@ fn capture_modality_for(tool_name: &str, args: &serde_json::Value) -> Option<Cap
 /// `session_end` method that a mixed-version (new proxy / old proxy) rollout
 /// might still send — `fire_session_end` is the single fan-out point and must
 /// be idempotent because the overlay Remove + recording stop must run exactly
-/// once. Growth is bounded (one short string per ended session over the
-/// daemon's lifetime); eviction is a deliberate non-blocking follow-up.
-static ENDED_SESSIONS: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+/// once. Growth is bounded by [`MAX_ENDED_SESSION_TOMBSTONES`].
+static ENDED_SESSIONS: OnceLock<Mutex<HashMap<String, EndedSessionTombstone>>> = OnceLock::new();
+
+/// Retained end-of-session tombstone.
+///
+/// `owner_transport` preserves the resurrection guard's ownership check;
+/// `ended_at` exists only to order eviction so a long-lived daemon can bound
+/// its memory.
+#[derive(Debug, Clone)]
+struct EndedSessionTombstone {
+    owner_transport: Option<String>,
+    ended_at: Instant,
+}
+
+/// Hard cap on retained end-of-session tombstones for one process.
+///
+/// A tombstone must outlive the episode it guards so a stray late action cannot
+/// recreate session-owned state, and an explicit `start_session` is the only
+/// supported revival path. A daemon can still run for a very long time and
+/// accumulate one tombstone per ended session, so once this cap is exceeded the
+/// oldest tombstones are evicted; the newest (the ones a live caller could
+/// plausibly still race) are always retained.
+const MAX_ENDED_SESSION_TOMBSTONES: usize = 4096;
+
 /// Runtime generations that have received terminal revoke-all.
 ///
 /// This latch is intentionally independent of grants and public session
@@ -955,7 +982,7 @@ fn revive_hooks() -> &'static Mutex<HashMap<u64, SessionReviveHook>> {
     SESSION_REVIVE_HOOKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn ended_sessions() -> &'static Mutex<HashMap<String, Option<String>>> {
+fn ended_sessions() -> &'static Mutex<HashMap<String, EndedSessionTombstone>> {
     ENDED_SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -1211,10 +1238,36 @@ fn mark_session_ended(session_id: &str, owner_transport: Option<&str>) -> bool {
     } else {
         ended.insert(
             session_id.to_owned(),
-            owner_transport.map(str::to_owned).or(record_owner),
+            EndedSessionTombstone {
+                owner_transport: owner_transport.map(str::to_owned).or(record_owner),
+                ended_at: Instant::now(),
+            },
         );
+        prune_ended_sessions(&mut ended);
         true
     }
+}
+
+/// Bound tombstone growth by evicting the oldest entries once the cap is
+/// exceeded. Runs only on insert, while the tombstone lock is held.
+fn prune_ended_sessions(ended: &mut HashMap<String, EndedSessionTombstone>) {
+    if ended.len() <= MAX_ENDED_SESSION_TOMBSTONES {
+        return;
+    }
+    let excess = ended.len() - MAX_ENDED_SESSION_TOMBSTONES;
+    let mut oldest = ended
+        .iter()
+        .map(|(id, tombstone)| (id.clone(), tombstone.ended_at))
+        .collect::<Vec<_>>();
+    oldest.sort_by_key(|(_, ended_at)| *ended_at);
+    for (id, _) in oldest.into_iter().take(excess) {
+        ended.remove(&id);
+    }
+    tracing::warn!(
+        cap = MAX_ENDED_SESSION_TOMBSTONES,
+        evicted = excess,
+        "evicted oldest session-end tombstones to bound memory"
+    );
 }
 
 fn initialize_session_cleanup(session_id: &str) {
@@ -1438,10 +1491,13 @@ pub fn revive_session_for_owner(
     // trigger work for that lifecycle episode.
     {
         let ended = ended_sessions().lock().unwrap();
-        let Some(ended_owner) = ended.get(session_id) else {
+        let Some(ended_owner) = ended
+            .get(session_id)
+            .map(|tombstone| tombstone.owner_transport.as_deref())
+        else {
             return Ok(false);
         };
-        match ended_owner.as_deref() {
+        match ended_owner {
             Some(owner) if owner != owner_transport => {
                 return Err("session is not available to this transport");
             }
@@ -1462,7 +1518,10 @@ pub fn revive_session_for_owner(
     // Recheck after cleanup because another thread may have completed the
     // revival while callbacks were running.
     let mut ended = ended_sessions().lock().unwrap();
-    let Some(ended_owner) = ended.get(session_id) else {
+    let Some(ended_owner) = ended
+        .get(session_id)
+        .map(|tombstone| tombstone.owner_transport.clone())
+    else {
         return Ok(false);
     };
     match ended_owner.as_deref() {
@@ -2363,5 +2422,39 @@ mod tests {
             .iter()
             .any(|(id, reason, _)| { id == idle && *reason == SessionEndReason::IdleTimeout }));
         assert!(!ends.iter().any(|(id, _, _)| id == control));
+    }
+
+    #[test]
+    fn ended_session_tombstones_are_capped_with_oldest_first_eviction() {
+        let mut ended: HashMap<String, EndedSessionTombstone> = HashMap::new();
+        let base = Instant::now();
+        for index in 0..MAX_ENDED_SESSION_TOMBSTONES + 3 {
+            ended.insert(
+                format!("session-{index}"),
+                EndedSessionTombstone {
+                    owner_transport: Some("transport".to_owned()),
+                    ended_at: base + Duration::from_millis(index as u64),
+                },
+            );
+        }
+        prune_ended_sessions(&mut ended);
+
+        assert_eq!(ended.len(), MAX_ENDED_SESSION_TOMBSTONES);
+        for index in 0..3 {
+            assert!(
+                !ended.contains_key(&format!("session-{index}")),
+                "oldest tombstone session-{index} should have been evicted"
+            );
+        }
+        let newest = format!("session-{}", MAX_ENDED_SESSION_TOMBSTONES + 2);
+        assert!(ended.contains_key(&newest));
+        // Retained tombstones keep their ownership payload so the
+        // resurrection guard still works after a prune.
+        assert_eq!(
+            ended
+                .get(&newest)
+                .and_then(|tombstone| tombstone.owner_transport.as_deref()),
+            Some("transport")
+        );
     }
 }

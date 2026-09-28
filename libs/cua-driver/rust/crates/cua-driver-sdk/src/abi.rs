@@ -1652,6 +1652,53 @@ mod tests {
         }
     }
 
+    /// The read-only introspection entry points are the only way a C client can
+    /// prove which driver it is talking to before invoking anything. Bind the
+    /// three symbols through their C linkage independently of the internal
+    /// `ffi` module so a dropped `#[no_mangle]` (or a renamed symbol) fails to
+    /// resolve instead of silently vanishing from the stable contract.
+    #[test]
+    fn availability_and_introspection_symbols_are_exported_with_c_linkage() {
+        unsafe extern "C" {
+            fn cua_driver_is_available_v1(
+                handle: *mut ffi::Handle,
+                out_available: *mut bool,
+                out_error: *mut CuaDriverBuffer,
+            ) -> CuaDriverStatus;
+            fn cua_driver_metadata_json_v1(
+                handle: *mut ffi::Handle,
+                out_json: *mut CuaDriverBuffer,
+                out_error: *mut CuaDriverBuffer,
+            ) -> CuaDriverStatus;
+            fn cua_driver_list_tools_json_v1(
+                handle: *mut ffi::Handle,
+                out_json: *mut CuaDriverBuffer,
+                out_error: *mut CuaDriverBuffer,
+            ) -> CuaDriverStatus;
+        }
+
+        // A null handle is rejected with the documented status, proving each
+        // symbol is live at runtime and not merely declared.
+        assert_eq!(
+            unsafe {
+                cua_driver_is_available_v1(ptr::null_mut(), ptr::null_mut(), ptr::null_mut())
+            },
+            CuaDriverStatus::NullPointer
+        );
+        assert_eq!(
+            unsafe {
+                cua_driver_metadata_json_v1(ptr::null_mut(), ptr::null_mut(), ptr::null_mut())
+            },
+            CuaDriverStatus::NullPointer
+        );
+        assert_eq!(
+            unsafe {
+                cua_driver_list_tools_json_v1(ptr::null_mut(), ptr::null_mut(), ptr::null_mut())
+            },
+            CuaDriverStatus::NullPointer
+        );
+    }
+
     #[test]
     fn panic_is_contained_as_status() {
         let mut error = CuaDriverBuffer::empty();

@@ -1339,6 +1339,7 @@ mod tests {
             pid: 42,
             embedded: true,
             host_bundle_id: Some("com.example.host".into()),
+            policy_mode: None,
         };
         assert!(validate_metadata(&metadata, 42, "com.example.host").is_ok());
         assert!(validate_metadata(&metadata, 43, "com.example.host").is_err());

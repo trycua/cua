@@ -3,8 +3,9 @@
  * python/native_tasks.py: a NativeTask declares goal, parameters (the only
  * source of text), window scope, allowed action kinds, opt-in risks,
  * foreground permission, step budget, and an app-owned oracle. The built-in
- * tasks drive the AppKit harness launched with CUA_APPKIT_TASK_STATE, whose
- * JSON state file is the oracle.
+ * tasks drive the AppKit, WPF, and GTK3 harnesses in task mode
+ * (CUA_APPKIT_TASK_STATE, CUA_WPF_TASK_STATE, CUA_GTK3_TASK_STATE), whose JSON
+ * state file is the oracle.
  */
 import { readFile } from 'node:fs/promises';
 
@@ -427,25 +428,82 @@ export function nativeChoiceRequest(
   };
 }
 
-// AppKit harness tasks.
+// Harness tasks. The same three tasks run on every repository harness that has
+// a task mode: AppKit (macOS AX), WPF (Windows UIA), and GTK3 (Linux AT-SPI).
+// Each shows the same labeled controls and rewrites the same app-owned JSON
+// state file, so task semantics, candidate IDs, and mock choices are identical
+// across platforms. Only the window, the state schema, and the role table differ.
 
-export const APPKIT_WINDOW_TITLE = 'CuaTestHarness AppKit';
-export const APPKIT_BUNDLE_ID = 'com.trycua.harness.appkit';
-export const APPKIT_STATE_SCHEMA = 'cua.appkit_task_state_v1';
+export type HarnessSpec = Readonly<{
+  name: string;
+  platform: 'macos' | 'windows' | 'linux';
+  windowTitle: string;
+  stateSchema: string;
+  stateEnv: string;
+  bundleId?: string;
+  processName?: string;
+}>;
+
+export const HARNESSES: Readonly<Record<string, HarnessSpec>> = {
+  appkit: {
+    name: 'appkit',
+    platform: 'macos',
+    windowTitle: 'CuaTestHarness AppKit',
+    stateSchema: 'cua.appkit_task_state_v1',
+    stateEnv: 'CUA_APPKIT_TASK_STATE',
+    bundleId: 'com.trycua.harness.appkit',
+  },
+  // WPF and GTK3 show a dedicated task window in task mode: their ordinary
+  // main windows scroll, so most controls would be off screen (and excluded).
+  wpf: {
+    name: 'wpf',
+    platform: 'windows',
+    windowTitle: 'CuaTestHarness WPF Tasks',
+    stateSchema: 'cua.wpf_task_state_v1',
+    stateEnv: 'CUA_WPF_TASK_STATE',
+    processName: 'CuaTestHarness.Wpf',
+  },
+  gtk3: {
+    name: 'gtk3',
+    platform: 'linux',
+    windowTitle: 'CuaTestHarness GTK3 Tasks',
+    stateSchema: 'cua.gtk3_task_state_v1',
+    stateEnv: 'CUA_GTK3_TASK_STATE',
+    processName: 'python3',
+  },
+};
+
+export const APPKIT_WINDOW_TITLE = HARNESSES.appkit.windowTitle;
+export const APPKIT_BUNDLE_ID = HARNESSES.appkit.bundleId as string;
+export const APPKIT_STATE_SCHEMA = HARNESSES.appkit.stateSchema;
 export const COUNTER_TARGET = 3;
 export const DEFAULT_NOTE_TEXT = 'jev-use native note';
-export const APPKIT_TASK_IDS = ['appkit-counter', 'appkit-save-note', 'appkit-choose-size'] as const;
-export type AppKitTaskId = (typeof APPKIT_TASK_IDS)[number];
+export const TASK_KINDS = ['counter', 'save-note', 'choose-size'] as const;
 
-export function appkitTask(
-  taskId: string,
-  statePath: string,
-  options: { pid?: number; noteText?: string; allowForeground?: boolean } = {}
-): NativeTask {
-  const oracle = new AppStateOracle(statePath, APPKIT_STATE_SCHEMA, options.pid);
-  const scope: WindowScope = { windowTitle: APPKIT_WINDOW_TITLE, bundleId: APPKIT_BUNDLE_ID };
+export const harnessTaskIds = (harness: string): string[] => TASK_KINDS.map((kind) => `${harness}-${kind}`);
+export const APPKIT_TASK_IDS = harnessTaskIds('appkit');
+export const NATIVE_TASK_IDS = Object.keys(HARNESSES).flatMap(harnessTaskIds);
+
+export function splitTaskId(taskId: string): [HarnessSpec, (typeof TASK_KINDS)[number]] {
+  const index = taskId.indexOf('-');
+  const harness = index > 0 ? HARNESSES[taskId.slice(0, index)] : undefined;
+  const kind = taskId.slice(index + 1) as (typeof TASK_KINDS)[number];
+  if (!harness || !TASK_KINDS.includes(kind)) throw new Error(`unknown native task: ${taskId}`);
+  return [harness, kind];
+}
+
+export type HarnessTaskOptions = { pid?: number; noteText?: string; allowForeground?: boolean };
+
+export function nativeTask(taskId: string, statePath: string, options: HarnessTaskOptions = {}): NativeTask {
+  const [harness, kind] = splitTaskId(taskId);
+  const oracle = new AppStateOracle(statePath, harness.stateSchema, options.pid);
+  const scope: WindowScope = {
+    windowTitle: harness.windowTitle,
+    ...(harness.bundleId ? { bundleId: harness.bundleId } : {}),
+    ...(harness.processName ? { processName: harness.processName } : {}),
+  };
   const allowForeground = options.allowForeground ?? false;
-  if (taskId === 'appkit-counter') {
+  if (kind === 'counter') {
     return new NativeTask({
       id: taskId,
       goal:
@@ -464,7 +522,7 @@ export function appkitTask(
       mockPreferences: ['ax:button:increment'],
     });
   }
-  if (taskId === 'appkit-save-note') {
+  if (kind === 'save-note') {
     const note = options.noteText ?? DEFAULT_NOTE_TEXT;
     return new NativeTask({
       id: taskId,
@@ -480,18 +538,21 @@ export function appkitTask(
       mockPreferences: ['ax:text_input:note:set:note', 'ax:button:save-note'],
     });
   }
-  if (taskId === 'appkit-choose-size') {
-    return new NativeTask({
-      id: taskId,
-      goal: 'Choose the Large size option and check the I agree checkbox.',
-      scope,
-      allowedActions: new Set<ActionKind>(['select', 'toggle']),
-      oracle,
-      check: (state) => (state.size === 'large' && state.agreed === true ? 'verified' : 'pending'),
-      allowForeground,
-      maxSteps: 5,
-      mockPreferences: ['ax:radio:large', 'ax:checkbox:i-agree'],
-    });
-  }
-  throw new Error(`unknown AppKit task: ${taskId}`);
+  return new NativeTask({
+    id: taskId,
+    goal: 'Choose the Large size option and check the I agree checkbox.',
+    scope,
+    allowedActions: new Set<ActionKind>(['select', 'toggle']),
+    oracle,
+    check: (state) => (state.size === 'large' && state.agreed === true ? 'verified' : 'pending'),
+    allowForeground,
+    maxSteps: 5,
+    mockPreferences: ['ax:radio:large', 'ax:checkbox:i-agree'],
+  });
+}
+
+/** Build one AppKit harness task (kept for Phase 1 callers). */
+export function appkitTask(taskId: string, statePath: string, options: HarnessTaskOptions = {}): NativeTask {
+  if (!APPKIT_TASK_IDS.includes(taskId)) throw new Error(`unknown AppKit task: ${taskId}`);
+  return nativeTask(taskId, statePath, options);
 }

@@ -129,6 +129,29 @@ showing or saving it. If `TYPESAFE_API_KEY` is already set in the process
 environment, it uses that instead. Never put the key in a command argument or
 file. Use `--task` to run a single task, for example `--task counter`.
 
+## 3. Run with Cua-S1 (optional)
+
+The native runners can also choose with the local Cua-S1-4B model. Loading the
+model takes 10 to 35 seconds, longer than a step can wait before its capture
+expires, so the runners send each request to a model that is already loaded
+behind a loopback HTTP endpoint. The example doesn't ship that service. The
+[jev-use README](https://github.com/trycua/cua/blob/main/libs/cua-driver/examples/jev-use/README.md#choose-with-cua-s1)
+describes the request and response it must accept, and
+[Closed-candidate decision models](https://github.com/trycua/cua/blob/main/libs/cua-driver/examples/jev-use/decision-models.md)
+covers getting the weights.
+
+With the service running, point the example at it and add `--s1`:
+
+```bash
+export CUA_S1_DECISION_URL=http://127.0.0.1:8791/decide
+uv run --frozen python verify_native.py --harness appkit --typescript --s1 --output-dir runs/native-s1
+```
+
+The URL must use `127.0.0.1`, `localhost`, or `::1`. Reach a model on another
+computer through an SSH tunnel. The runner rejects a response that doesn't match
+its request, and it resolves the chosen ID against its own candidate list, the
+same as for Jev.
+
 ## Adapt the example to your app
 
 A native task spec in `python/native_tasks.py` (and `typescript/native_tasks.ts`)

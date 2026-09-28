@@ -518,20 +518,21 @@ export const CANVAS: TaskHarness = {
   stateSchema: 'cua.visual_canvas_task_state_v1',
   stateEnv: 'CUA_CANVAS_TASK_STATE',
 };
-export const CANVAS_TASK_ID = 'canvas-save';
-export const CANVAS_TARGET = 'Save';
+export const CANVAS_TASK_ID = 'canvas-cancel';
+// Cancel, not Save: see python/native_tasks.py CANVAS_TARGET.
+export const CANVAS_TARGET = 'Cancel';
 // A painted surface has no deeper tree; see python/native_tasks.py CANVAS_MAX_DEPTH.
 export const CANVAS_MAX_DEPTH = 1;
-export const CANVAS_MIN_CONFIDENCE = 0.7;
+export const CANVAS_MIN_CONFIDENCE = 0.8;
 
 export const harnessTaskIds = (harness: string): string[] => TASK_KINDS.map((kind) => `${harness}-${kind}`);
 export const APPKIT_TASK_IDS = harnessTaskIds('appkit');
 export const NATIVE_TASK_IDS = [...Object.keys(HARNESSES).flatMap(harnessTaskIds), CANVAS_TASK_ID];
 
-type TaskKind = (typeof TASK_KINDS)[number] | 'save';
+type TaskKind = (typeof TASK_KINDS)[number] | 'cancel';
 
 export function splitTaskId(taskId: string): [TaskHarness, TaskKind] {
-  if (taskId === CANVAS_TASK_ID) return [CANVAS, 'save'];
+  if (taskId === CANVAS_TASK_ID) return [CANVAS, 'cancel'];
   const index = taskId.indexOf('-');
   const harness = index > 0 ? HARNESSES[taskId.slice(0, index)] : undefined;
   const kind = taskId.slice(index + 1) as (typeof TASK_KINDS)[number];
@@ -550,11 +551,11 @@ export function nativeTask(taskId: string, statePath: string, options: HarnessTa
     ...(harness.processName ? { processName: harness.processName } : {}),
   };
   const allowForeground = options.allowForeground ?? false;
-  if (kind === 'save') {
+  if (kind === 'cancel') {
     return new NativeTask({
       id: taskId,
       goal:
-        `The window is a painted canvas with ${CANVAS_TARGET}, Send, and Cancel cards. ` +
+        'The window is a painted canvas with Save, Send, and Cancel cards. ' +
         `Click the ${CANVAS_TARGET} card once, then stop.`,
       scope: { ...scope, maxDepth: CANVAS_MAX_DEPTH },
       allowedActions: new Set<ActionKind>(['visual_click']),

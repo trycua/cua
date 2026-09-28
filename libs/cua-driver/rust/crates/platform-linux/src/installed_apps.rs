@@ -25,6 +25,34 @@ pub struct InstalledApp {
     /// RFC3339 timestamp from the `.desktop` file's filesystem mtime, or
     /// `None` if the metadata could not be read.
     pub last_used: Option<String>,
+    /// `StartupWMClass=`: the WM_CLASS the entry's windows carry when it
+    /// differs from the launcher (`libreoffice --calc` → `libreoffice-calc`).
+    pub startup_wm_class: Option<String>,
+}
+
+impl InstalledApp {
+    /// Whether a top-level window with this WM_CLASS belongs to the app.
+    ///
+    /// Mirrors the shell's own window-to-app matching: `StartupWMClass`
+    /// first, then the desktop file id (`org.gnome.Nautilus`), its last
+    /// segment (`Nautilus`), and the launcher basename (`gnome-terminal`).
+    pub fn owns_window_class(&self, wm_class: &str) -> bool {
+        if wm_class.is_empty() {
+            return false;
+        }
+        let id_stem = self.bundle_id.rsplit('.').next().unwrap_or(&self.bundle_id);
+        let exec = self
+            .launch_path
+            .split_whitespace()
+            .next()
+            .and_then(|token| token.rsplit('/').next())
+            .unwrap_or("");
+        self.startup_wm_class
+            .as_deref()
+            .into_iter()
+            .chain([self.bundle_id.as_str(), id_stem, exec])
+            .any(|key| !key.is_empty() && key.eq_ignore_ascii_case(wm_class))
+    }
 }
 
 /// Return every visible application installed on the system.
@@ -147,13 +175,14 @@ fn parse_desktop_file(path: &Path, bundle_id: &str) -> Option<InstalledApp> {
         .ok()
         .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| unix_secs_to_rfc3339(d.as_secs() as i64));
+        .and_then(|d| cua_driver_core::timestamp::unix_secs_to_rfc3339(d.as_secs() as i64));
 
     Some(InstalledApp {
         name,
         bundle_id,
         launch_path,
         last_used,
+        startup_wm_class: string_key(&entry, "StartupWMClass").filter(|class| !class.is_empty()),
     })
 }
 
@@ -238,32 +267,6 @@ fn strip_exec_field_codes(exec: &str) -> String {
     out.trim().to_owned()
 }
 
-/// Format Unix epoch seconds as `YYYY-MM-DDTHH:MM:SSZ` (UTC).
-fn unix_secs_to_rfc3339(secs: i64) -> String {
-    let days = secs.div_euclid(86_400);
-    let seconds_of_day = secs.rem_euclid(86_400);
-    let hour = seconds_of_day / 3600;
-    let minute = (seconds_of_day % 3600) / 60;
-    let second = seconds_of_day % 60;
-
-    // Howard Hinnant's civil-from-days algorithm.
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        y, m, d, hour, minute, second
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +318,29 @@ Exec=/opt/demo/bin/demo %U
     }
 
     #[test]
+    fn owns_window_class_by_startup_wm_class_id_or_launcher() {
+        let entry = |bundle_id: &str, launch_path: &str, wm_class: Option<&str>| InstalledApp {
+            name: "x".into(),
+            bundle_id: bundle_id.into(),
+            launch_path: launch_path.into(),
+            last_used: None,
+            startup_wm_class: wm_class.map(str::to_owned),
+        };
+        let calc = entry("libreoffice-calc", "libreoffice", Some("libreoffice-calc"));
+        assert!(calc.owns_window_class("libreoffice-calc"));
+        assert!(!calc.owns_window_class("libreoffice-writer"));
+        assert!(!calc.owns_window_class(""));
+        let chrome = entry("google-chrome", "chrome-stable", Some("Google-chrome"));
+        assert!(chrome.owns_window_class("google-chrome"));
+        let files = entry("org.gnome.Nautilus", "nautilus --new-window", None);
+        assert!(files.owns_window_class("Org.gnome.Nautilus"));
+        assert!(files.owns_window_class("nautilus"));
+        let terminal = entry("org.gnome.Terminal", "gnome-terminal", None);
+        assert!(terminal.owns_window_class("Gnome-terminal"));
+        assert!(!terminal.owns_window_class("Terminal-server"));
+    }
+
+    #[test]
     fn desktop_file_id_flat() {
         let root = Path::new("/usr/share/applications");
         let path = Path::new("/usr/share/applications/firefox.desktop");
@@ -342,11 +368,5 @@ Exec=/opt/demo/bin/demo %U
         let root = Path::new("/usr/share/applications");
         let other = Path::new("/opt/something.desktop");
         assert_eq!(desktop_file_id(root, other), "");
-    }
-
-    #[test]
-    fn rfc3339_known_epoch() {
-        // 1234567890 → 2009-02-13T23:31:30Z
-        assert_eq!(unix_secs_to_rfc3339(1_234_567_890), "2009-02-13T23:31:30Z");
     }
 }

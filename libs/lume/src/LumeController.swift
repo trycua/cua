@@ -1032,9 +1032,15 @@ final class LumeController {
     }
 
     @MainActor
-    public func stopVM(name: String, storage: String? = nil) async throws {
+    public func stopVM(
+        name: String,
+        storage: String? = nil,
+        force: Bool = false,
+        timeout: TimeInterval = VM.defaultStopTimeout
+    ) async throws {
         let normalizedName = normalizeVMName(name: name)
-        Logger.info("Stopping VM", metadata: ["name": normalizedName])
+        Logger.info(
+            "Stopping VM", metadata: ["name": normalizedName, "force": "\(force)"])
 
         do {
             // Find the actual location of the VM
@@ -1053,7 +1059,7 @@ final class LumeController {
                 vm = try get(name: normalizedName, storage: actualLocation)
             }
 
-            try await vm.stop()
+            try await vm.stop(force: force, timeout: timeout)
             // Remove VM from cache after stopping
             SharedVM.shared.removeVM(name: normalizedName)
             Logger.info("VM stopped successfully", metadata: ["name": normalizedName])

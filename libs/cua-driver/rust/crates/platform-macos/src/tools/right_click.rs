@@ -97,9 +97,9 @@ impl Tool for RightClickTool {
 
         // Surface 6: element_token / element_index precedence resolution.
         let element_token_arg = args.opt_str("element_token");
-        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
+        let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match self.state.element_cache.resolve_element_args(
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
@@ -110,13 +110,10 @@ impl Tool for RightClickTool {
             Ok(r) => r,
             Err(e) => return e,
         };
-        let (element_index, window_id) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid,
-                element_index: idx,
-                via_token: _,
-            } => (Some(idx), wid),
+        let (element_index, window_id, element_guard) = resolved.into_parts(window_id_arg);
+        let window_id = match super::native_window_id(window_id) {
+            Ok(window_id) => window_id,
+            Err(error) => return error,
         };
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
@@ -140,17 +137,9 @@ impl Tool for RightClickTool {
         }
 
         // ── AX element path ──────────────────────────────────────────────────
-        if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            // Retain out of the cache so a concurrent get_window_state can't
-            // free the element mid-action (use-after-free → daemon crash).
-            let element_guard = match self.state.element_cache.get_element_retained(pid, wid, idx) {
-                Some(e) => e,
-                None => {
-                    return ToolResult::error(format!(
-                        "Element index {idx} not found. Call get_window_state first."
-                    ))
-                }
-            };
+        if let (Some(idx), Some(wid), Some(element_guard)) =
+            (element_index, window_id, element_guard)
+        {
             let element_ptr = element_guard.as_ptr();
 
             let _mutation_lease = match super::gate_background_window_action(
@@ -165,8 +154,10 @@ impl Tool for RightClickTool {
                 Err(refusal_result) => return refusal_result,
             };
 
-            let result =
-                tokio::task::spawn_blocking(move || ax_show_menu(element_ptr, idx, pid, wid)).await;
+            let result = tokio::task::spawn_blocking(move || {
+                ax_show_menu(element_guard.as_ptr(), idx, pid, wid)
+            })
+            .await;
 
             return match result {
                 Ok(Ok(msg)) => ToolResult::text(msg),
@@ -178,10 +169,12 @@ impl Tool for RightClickTool {
         // ── Pixel path ───────────────────────────────────────────────────────
         let (mut cx, mut cy) = (x.unwrap(), y.unwrap());
         // Scale back from downscaled-image space to native pixels when needed.
-        if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
-            cx *= ratio;
-            cy *= ratio;
-        }
+        let ratio = match super::screenshot_scale(&self.state, &args, pid, window_id) {
+            Ok(ratio) => ratio,
+            Err(refusal) => return refusal,
+        };
+        cx *= ratio;
+        cy *= ratio;
 
         // Window-local → screen coordinate translation + win-local logical coords
         // for CGEventSetWindowLocation (shared with click.rs via px_frame, which
@@ -254,9 +247,21 @@ impl Tool for RightClickTool {
         };
 
         let fg = delivery_mode.is_foreground() && window_id.is_some();
+        let route = match super::pixel_route::resolve(pid, fg, window_id, "mouse_right_click").await
+        {
+            Ok(route) => route,
+            Err(refusal) => return refusal,
+        };
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             let do_it = move || -> anyhow::Result<()> {
                 let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                if route == super::pixel_route::PixelClickRoute::ForegroundHid {
+                    // Warp the hardware pointer and post at the HID tap; see
+                    // `pixel_route` for the cross-platform foreground contract.
+                    return crate::input::mouse::click_at_xy_desktop_with_modifiers(
+                        screen_x, screen_y, 1, "right", &m,
+                    );
+                }
                 if let Some(wid) = window_id {
                     crate::input::mouse::right_click_at_xy_with_window_local(
                         pid,
@@ -271,26 +276,36 @@ impl Tool for RightClickTool {
                     crate::input::mouse::right_click_at_xy(pid, screen_x, screen_y, &m)
                 }
             };
-            // Foreground rung: brief front → right-click → restore prior frontmost.
-            match (fg, window_id) {
-                (true, Some(wid)) => {
-                    crate::input::skylight::with_foreground_assist(pid as libc::pid_t, wid, do_it)?;
-                    Ok(())
+            // Foreground rung: front the exact window → HID right-click →
+            // restore the prior frontmost. No input is sent unless the exact
+            // window is proven focused.
+            match (route, window_id) {
+                (super::pixel_route::PixelClickRoute::ForegroundHid, Some(wid)) => {
+                    crate::input::skylight::with_foreground_hid_activation(
+                        pid as libc::pid_t,
+                        wid,
+                        do_it,
+                    )
                 }
                 _ => do_it(),
             }
         })
         .await;
-        let mode_label = if fg {
-            " (delivery_mode:foreground)"
-        } else {
-            ""
-        };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Right-clicked{mod_suffix} at ({screen_x:.1}, {screen_y:.1}){mode_label}."))
-                .with_structured(serde_json::json!({
-                    "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
-                })),
+            Ok(Ok(())) => ToolResult::text(format!(
+                "Right-clicked{mod_suffix} at ({screen_x:.1}, {screen_y:.1}) ({}).",
+                super::pixel_route::delivery_note(route)
+            ))
+            .with_structured(serde_json::json!({
+                "path": super::pixel_route::path_label(route), "verified": false, "effect": "unverifiable"
+            })),
+            Ok(Err(e)) if route == super::pixel_route::PixelClickRoute::ForegroundHid => {
+                super::pixel_route::foreground_unavailable(
+                    "Right-click",
+                    window_id.unwrap_or_default(),
+                    &e.to_string(),
+                )
+            }
             Ok(Err(e)) => ToolResult::error(format!("Right-click failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }

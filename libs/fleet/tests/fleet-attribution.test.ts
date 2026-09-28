@@ -76,10 +76,7 @@ test("GitHub README CTA preserves all four fields through a simulated Keycloak b
     },
   }
 
-  for (const href of [
-    cta,
-    `${cta}&utm_content=ignored&email=person%40example.test&identity=raw-subject&url=https%3A%2F%2Fexample.test`,
-  ]) {
+  for (const href of [cta, `${cta}&email=person%40example.test&identity=raw-subject&url=https%3A%2F%2Fexample.test`]) {
     const storage = memoryStorage()
     captureFleetAttribution(href, { storage, now: () => firstTouch })
     assert.deepEqual(JSON.parse(storage.getItem(ATTRIBUTION_STORAGE_KEY) ?? "null"), expected)
@@ -102,9 +99,22 @@ test("GitHub README CTA preserves all four fields through a simulated Keycloak b
       getAccessToken: async () => "access-token",
     })
 
-    // Exact records exclude the raw URL, email, identity, and unknown utm_content.
+    // Exact records exclude the raw URL, email, identity, and unknown keys.
     assert.deepEqual(bound, [expected])
     assert.equal(storage.getItem(ATTRIBUTION_STORAGE_KEY), null)
+  }
+})
+
+test("standard utm_content is stored under canonical content_id without loss", () => {
+  for (const href of [
+    "https://run.cua.ai/?utm_source=x&utm_medium=organic-social&utm_campaign=cursor-cloud-fleets&utm_content=thread-post-5",
+    "https://run.cua.ai/?utm_content=thread-post-5&content_id=thread-post-5",
+  ]) {
+    const storage = memoryStorage()
+    captureFleetAttribution(href, { storage, now: () => 50 })
+    const record = JSON.parse(storage.getItem(ATTRIBUTION_STORAGE_KEY) ?? "null")
+    assert.equal(record.values.content_id, "thread-post-5")
+    assert.equal(record.values.utm_content, undefined)
   }
 })
 
@@ -133,6 +143,8 @@ test("capture rejects repeated, empty, invalid, and oversized values without tru
   const invalidQueries = [
     "?campaign_id=",
     "?campaign_id=one&campaign_id=two",
+    "?utm_content=one&utm_content=two",
+    "?content_id=legacy&utm_content=standard",
     "?campaign_id=has%20space",
     `?campaign_id=${"x".repeat(ATTRIBUTION_MAX_VALUE_LENGTH + 1)}`,
   ]

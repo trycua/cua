@@ -182,12 +182,17 @@ class Image:
         *,
         os_type: str = "linux",
         kind: Optional[str] = None,
+        agent_type: Optional[str] = None,
     ) -> Image:
         """Create an image from a registry reference.
 
         os_type selects the firmware: Windows guest disks are built UEFI-only,
         so a Windows containerDisk pulled from a registry must say so or it is
         handed BIOS and will not boot. kind is resolved after pull when omitted.
+        agent_type names the guest control server the disk already runs, the
+        same hint as ``from_file``: ``"osworld"`` selects the OSWorld Flask
+        server on port 5000 instead of the computer-server on 8000, both for
+        local QEMU and for Fleet pools.
         """
         return cls(
             os_type=os_type,
@@ -195,6 +200,7 @@ class Image:
             version="latest",
             kind=kind,
             _registry=ref,
+            _agent_type=agent_type,
         )
 
     @classmethod
@@ -239,6 +245,7 @@ class Image:
             version=data["version"],
             kind=data.get("kind"),
             _registry=data.get("registry"),
+            _agent_type=data.get("agent_type"),
         )
         # Replay layers
         for layer in data.get("layers", []):
@@ -511,6 +518,8 @@ class Image:
             d["files"] = [list(f) for f in self._files]
         if self._registry:
             d["registry"] = self._registry
+        if self._agent_type:
+            d["agent_type"] = self._agent_type
         return d
 
     def to_cloud_init(self) -> str:

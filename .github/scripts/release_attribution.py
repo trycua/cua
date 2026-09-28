@@ -70,6 +70,18 @@ NOREPLY_RE = re.compile(
     re.IGNORECASE,
 )
 RELEASING_TYPES = {"feat", "fix", "perf", "revert"}
+STABLE_VERSION_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+NO_RELEASE_LABEL = "no-release"
+PERCEPTION_OWNED_PATHS = (
+    ".github/releases/cua-perception",
+    "libs/cua-driver/rust/crates/cua-perception",
+    "libs/cua-driver/experiments/cua-perception-inference",
+)
+PERCEPTION_EXACT_PATHS = ("libs/cua-driver/docs/cua-perception-rust-inference-spike.md",)
+PERCEPTION_COMPANION_PATHS = (
+    "libs/cua-driver/rust/Cargo.toml",
+    "libs/cua-driver/rust/Cargo.lock",
+)
 ALLOWED_TITLE_TYPES = RELEASING_TYPES | {
     "build",
     "chore",
@@ -190,9 +202,31 @@ def resolve_tag_sha(repo_root: Path, tag: str) -> str:
     return run_git(repo_root, "rev-list", "-n", "1", tag).strip()
 
 
+def _stable_version_key(tag: str, tag_prefix: str) -> tuple[int, int, int] | None:
+    if not tag.startswith(tag_prefix):
+        return None
+    match = STABLE_VERSION_RE.match(tag[len(tag_prefix) :])
+    if not match:
+        return None
+    major, minor, patch = (int(part) for part in match.groups())
+    return major, minor, patch
+
+
 def find_previous_tag(repo_root: Path, current_tag: str, tag_prefix: str) -> str | None:
+    """Return the newest tag whose version precedes the current release.
+
+    A higher version tag, such as an abandoned Release Please tag, is never a
+    valid base: selecting it would silently drop real changes from the range.
+    """
     tags = run_git(repo_root, "tag", "--list", f"{tag_prefix}*", "--sort=-v:refname").splitlines()
-    return next((tag for tag in tags if tag and tag != current_tag), None)
+    current_key = _stable_version_key(current_tag, tag_prefix)
+    for tag in tags:
+        if not tag or tag == current_tag:
+            continue
+        tag_key = _stable_version_key(tag, tag_prefix)
+        if current_key is None or (tag_key is not None and tag_key < current_key):
+            return tag
+    return None
 
 
 def commits_in_range(
@@ -201,6 +235,7 @@ def commits_in_range(
     current_tag: str,
     paths: Sequence[str],
     exclude_paths: Sequence[str] = (),
+    exclude_companion_paths: Sequence[str] = (),
 ) -> list[CommitRecord]:
     range_spec = f"{previous_tag}..{current_tag}" if previous_tag else current_tag
     pathspecs = [*paths, *(f":(exclude){path}" for path in exclude_paths)]
@@ -209,10 +244,54 @@ def commits_in_range(
     for commit_sha in shas.splitlines():
         if not commit_sha:
             continue
+        if exclude_companion_paths:
+            changed_files = run_git(
+                repo_root,
+                "show",
+                "--format=",
+                "--name-only",
+                commit_sha,
+            ).splitlines()
+            owns_excluded_path = any(
+                file == excluded or file.startswith(f"{excluded}/")
+                for file in changed_files
+                for excluded in exclude_paths
+            )
+            only_excluded_or_companion = all(
+                file in exclude_companion_paths
+                or any(
+                    file == excluded or file.startswith(f"{excluded}/")
+                    for excluded in exclude_paths
+                )
+                for file in changed_files
+            )
+            if owns_excluded_path and only_excluded_or_companion:
+                continue
         raw = run_git(repo_root, "show", "-s", "--format=%s%x00%B", commit_sha)
         subject, _, body = raw.partition("\x00")
         records.append(CommitRecord(commit_sha, subject.strip(), body.strip()))
     return records
+
+
+def is_release_metadata_only_commit(
+    repo_root: Path,
+    commit_sha: str,
+    paths: Sequence[str],
+    exclude_paths: Sequence[str],
+    metadata_paths: Sequence[str],
+) -> bool:
+    """Return whether a commit's in-scope diff touches only release metadata files."""
+    if not metadata_paths:
+        return False
+    pathspecs = [*paths, *(f":(exclude){path}" for path in exclude_paths)]
+    changed_files = [
+        file
+        for file in run_git(
+            repo_root, "show", "--format=", "--name-only", commit_sha, "--", *pathspecs
+        ).splitlines()
+        if file
+    ]
+    return bool(changed_files) and all(file in metadata_paths for file in changed_files)
 
 
 def parse_conventional_line(line: str) -> ConventionalEntry | None:
@@ -251,6 +330,8 @@ def validate_pr_title(
     *,
     require_release: bool = False,
     allow_non_release: bool = False,
+    forbid_any_releasing_title: bool = False,
+    pull_body: str = "",
 ) -> None:
     entry = parse_conventional_line(title)
     if not entry:
@@ -263,6 +344,27 @@ def validate_pr_title(
         raise ReleaseError(
             f"unsupported pull request type '{entry.change_type}'; use one of: {allowed}"
         )
+    override = OVERRIDE_RE.search(pull_body or "")
+    override_entries = (
+        [
+            parsed
+            for line in override.group("body").splitlines()
+            if (parsed := parse_conventional_line(line))
+        ]
+        if override
+        else []
+    )
+    forbidden_entries = [entry, *override_entries]
+    if forbid_any_releasing_title and any(
+        candidate.change_type in RELEASING_TYPES or candidate.breaking
+        for candidate in forbidden_entries
+    ):
+        raise ReleaseError(
+            "Perception changes that also modify shared Cargo metadata cannot use a "
+            "releasing or breaking title or commit override because Release Please would "
+            "also classify the commit as a Driver release; use an accurate non-releasing "
+            "type with the 'no-release' label"
+        )
     if require_release and entry.change_type not in RELEASING_TYPES and not allow_non_release:
         raise ReleaseError(
             f"pull request type '{entry.change_type}' makes Release Please skip changes to "
@@ -271,6 +373,21 @@ def validate_pr_title(
             "release, or add the 'no-release' label when the change is intentionally "
             "non-releasing"
         )
+
+
+def is_perception_only_diff(paths: Sequence[str]) -> bool:
+    """Return whether the complete diff is Perception-owned plus allowed companions."""
+    perception_owned = False
+    for path in paths:
+        if path in PERCEPTION_EXACT_PATHS or any(
+            path == root or path.startswith(f"{root}/") for root in PERCEPTION_OWNED_PATHS
+        ):
+            perception_owned = True
+            continue
+        if path in PERCEPTION_COMPANION_PATHS:
+            continue
+        return False
+    return perception_owned
 
 
 def login_from_email(email: str, overrides: Mapping[str, str]) -> str | None:
@@ -361,7 +478,7 @@ def validate_pr_attribution(
     pull: Mapping[str, Any],
     commits: Sequence[Mapping[str, Any]],
     base_config: Mapping[str, Any],
-    head_config: Mapping[str, Any],
+    identity_changes: Mapping[str, str | None],
     github: GitHubClient,
 ) -> None:
     """Fail closed when preserved human authorship cannot reach a GitHub login.
@@ -376,21 +493,17 @@ def validate_pr_attribution(
     opt_out = _normalized_set(base_config, "optOutHandles")
     ignored = _normalized_set(base_config, "ignoredCoauthorEmails")
     base_overrides = _normalized_map(base_config, "identityOverrides")
-    head_overrides = _normalized_map(head_config, "identityOverrides")
     coauthor_overrides = _normalized_map(base_config, "coauthorOverrides")
 
-    changed_existing = {
-        email: (login, head_overrides.get(email))
-        for email, login in base_overrides.items()
-        if head_overrides.get(email) != login
-    }
-    if changed_existing:
-        details = ", ".join(
-            f"{email}={actual!r} (expected {expected!r})"
-            for email, (expected, actual) in sorted(changed_existing.items())
-        )
+    override_errors = [
+        f"{email}={login!r} (expected {base_overrides[email]!r})"
+        for email, login in sorted(identity_changes.items())
+        if email in base_overrides and login != base_overrides[email]
+    ]
+    if override_errors:
         raise ReleaseError(
-            "the pull request removes or changes trusted identityOverrides: " + details
+            "the pull request removes or changes trusted identityOverrides: "
+            + ", ".join(override_errors)
         )
 
     pull_number = int(pull.get("number") or 0)
@@ -520,7 +633,9 @@ def validate_pr_attribution(
                 )
 
     new_overrides = {
-        email: login for email, login in head_overrides.items() if email not in base_overrides
+        email: login
+        for email, login in identity_changes.items()
+        if login is not None and email not in base_overrides
     }
     if not unresolved and not new_overrides and not preserved_authors and not early_errors:
         return
@@ -615,7 +730,7 @@ def validate_pr_attribution(
             )
 
     for email, expected in sorted(suggestions.items()):
-        actual = head_overrides.get(email)
+        actual = identity_changes.get(email)
         if actual != expected:
             fragment = json.dumps(
                 {"identityOverrides": {email: expected}}, indent=2, sort_keys=True
@@ -873,6 +988,8 @@ def build_manifest(
     github: GitHubClient,
     release_ref: str | None = None,
     exclude_paths: Sequence[str] = (),
+    exclude_companion_paths: Sequence[str] = (),
+    release_metadata_paths: Sequence[str] = (),
     asset_dir: Path | None = None,
     channel: str = "stable",
 ) -> dict[str, Any]:
@@ -891,7 +1008,14 @@ def build_manifest(
     all_contributors: list[dict[str, Any]] = []
     visual_requested = False
 
-    for commit in commits_in_range(repo_root, previous_tag, current_ref, paths, exclude_paths):
+    for commit in commits_in_range(
+        repo_root,
+        previous_tag,
+        current_ref,
+        paths,
+        exclude_paths,
+        exclude_companion_paths,
+    ):
         if (
             re.match(r"^chore(?:\([^)]+\))?: release\b", commit.subject, re.IGNORECASE)
             or LEGACY_RELEASE_BUMP_RE.match(commit.subject)
@@ -911,6 +1035,17 @@ def build_manifest(
             continue
         pull_body = str(pull.get("body") or "")
         if not subject_is_included and not OVERRIDE_RE.search(pull_body):
+            continue
+        # A maintainer-labeled release-control pull request that only edits
+        # version or changelog metadata is part of preparing this release, not
+        # a product change the changelog must cite. Product diffs stay required.
+        if (
+            channel == "stable"
+            and NO_RELEASE_LABEL in {str(label.get("name")) for label in pull.get("labels") or []}
+            and is_release_metadata_only_commit(
+                repo_root, commit.sha, paths, exclude_paths, release_metadata_paths
+            )
+        ):
             continue
         pull_number = int(pull["number"])
         pull_commits[pull_number].add(commit.sha)
@@ -1185,6 +1320,8 @@ def collect_command(args: argparse.Namespace) -> None:
         github=client,
         release_ref=args.ref,
         exclude_paths=args.exclude_path,
+        exclude_companion_paths=args.exclude_companion_path,
+        release_metadata_paths=args.release_metadata_path,
         asset_dir=args.asset_dir.resolve() if args.asset_dir else None,
         channel=args.channel,
     )
@@ -1220,12 +1357,27 @@ def validate_pr_command(args: argparse.Namespace) -> None:
 
     base_config = json.loads(args.config.read_text())
     head_config = client.file_json(head_repository, args.config.as_posix(), head_sha)
+    trusted_sha = run_git(Path.cwd(), "rev-parse", "HEAD").strip()
+    comparison = client.get(
+        f"repos/{repository}/compare/{trusted_sha}...{head_sha}?per_page=1"
+    )
+    ancestor_sha = str((comparison.get("merge_base_commit") or {}).get("sha") or "")
+    if not ancestor_sha:
+        raise ReleaseError("GitHub returned no merge base for attribution validation")
+    ancestor_config = client.file_json(repository, args.config.as_posix(), ancestor_sha)
+    ancestor_overrides = _normalized_map(ancestor_config, "identityOverrides")
+    head_overrides = _normalized_map(head_config, "identityOverrides")
+    identity_changes = {
+        email: head_overrides.get(email)
+        for email in ancestor_overrides.keys() | head_overrides.keys()
+        if head_overrides.get(email) != ancestor_overrides.get(email)
+    }
     validate_pr_attribution(
         repository=repository,
         pull=pull,
         commits=commits,
         base_config=base_config,
-        head_config=head_config,
+        identity_changes=identity_changes,
         github=client,
     )
     print(f"contributor attribution is merge-ready for pull request #{number}")
@@ -1258,6 +1410,11 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--title", required=True)
     validate.add_argument("--require-release", action="store_true")
     validate.add_argument("--allow-non-release", action="store_true")
+    validate.add_argument("--forbid-any-releasing-title", action="store_true")
+    validate.add_argument("--pull-body", default="")
+
+    classify = subparsers.add_parser("classify-perception-diff")
+    classify.add_argument("--path", action="append", default=[])
 
     validate_pr = subparsers.add_parser("validate-pr")
     validate_pr.add_argument("--event", type=Path, required=True)
@@ -1278,6 +1435,13 @@ def build_parser() -> argparse.ArgumentParser:
     collect.add_argument("--sha", required=True)
     collect.add_argument("--path", action="append", required=True)
     collect.add_argument("--exclude-path", action="append", default=[])
+    collect.add_argument("--exclude-companion-path", action="append", default=[])
+    collect.add_argument(
+        "--release-metadata-path",
+        action="append",
+        default=[],
+        help="version or changelog file a no-release release-control PR may edit",
+    )
     collect.add_argument("--changelog", type=Path, required=True)
     collect.add_argument(
         "--config", type=Path, default=Path(".github/release-attribution-config.json")
@@ -1305,8 +1469,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.title,
                 require_release=args.require_release,
                 allow_non_release=args.allow_non_release,
+                forbid_any_releasing_title=args.forbid_any_releasing_title,
+                pull_body=args.pull_body,
             )
             print("release title is valid")
+        elif args.command == "classify-perception-diff":
+            print("true" if is_perception_only_diff(args.path) else "false")
         elif args.command == "validate-pr":
             validate_pr_command(args)
         elif args.command == "collect":

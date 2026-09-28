@@ -52,7 +52,7 @@ Run from `libs/cua-driver/rust`. Focused examples:
 
 ```bash
 cargo test -p cua-driver-core --locked
-cargo test -p cua-driver --test protocol_mcp_test --locked
+cargo test -p cua-driver --test protocol_schema_test --locked
 ```
 
 Linux source and package checks run through Nix. Windows and Linux compile gates

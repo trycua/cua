@@ -234,9 +234,11 @@ impl DriverRuntime {
         cua_driver_core::session::forget_suspended_runtime_scope(
             &self.compatibility_context.runtime_scope_key(),
         );
-        cua_driver_core::element_token::global()
-            .clear_runtime_scope(&self.compatibility_context.runtime_scope_key());
-        let _ = self.registry.recording.stop_owner(None);
+        cua_driver_core::element_cache::retire_runtime_scope(
+            &self.compatibility_context.runtime_scope_key(),
+        );
+        let recording = self.registry.recording.clone();
+        let _ = tokio::task::spawn_blocking(move || recording.stop_owner(None)).await;
     }
 
     fn stop_lifecycle_maintenance(&self) {
@@ -454,7 +456,7 @@ impl Drop for DriverRuntime {
         cua_driver_core::session::revoke_sessions_with_prefix(&runtime_prefix);
         cua_driver_core::session::forget_ended_sessions_with_prefix(&runtime_prefix);
         cua_driver_core::session::forget_suspended_runtime_scope(&runtime_scope);
-        cua_driver_core::element_token::global().clear_runtime_scope(&runtime_scope);
+        cua_driver_core::element_cache::retire_runtime_scope(&runtime_scope);
         // Explicit `shutdown()` drains work and finalizes recordings. Drop is
         // runtime-scoped and non-blocking so a retained binding cannot affect
         // another generation.
@@ -588,6 +590,16 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     if let Some(register_host_tools) = options.register_host_tools {
         register_host_tools(&mut registry);
     }
+    let perception_registered = registry.tools_list()["tools"]
+        .as_array()
+        .is_some_and(|tools| {
+            tools.iter().any(|tool| {
+                tool.get("name").and_then(Value::as_str) == Some("parse_visual_regions")
+            })
+        });
+    if !perception_registered {
+        registry.register_perception_tool(crate::configured_perception_client());
+    }
     let recording = Arc::downgrade(&registry.recording);
     let recording_session_end = cua_driver_core::session::register_scoped_fallible_session_end_hook(
         "recording",
@@ -622,8 +634,8 @@ fn configure_macos_runtime() {
     cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
         platform_macos::capture::crosshair_png_bytes(png_bytes, x, y).ok()
     });
-    cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
-        platform_macos::recording_hooks::app_state_json_for(window_id, pid)
+    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(|window_id, pid, budget| {
+        platform_macos::recording_hooks::app_state_json_for(window_id, pid, budget)
     });
     cua_driver_core::recording::set_element_bounds_fn(|window_id, pid, index| {
         platform_macos::recording_hooks::element_window_local_xy(window_id, pid, index)
@@ -641,8 +653,8 @@ fn configure_windows_runtime() {
     cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
         platform_windows::capture::crosshair_png_bytes(png_bytes, x, y).ok()
     });
-    cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
-        platform_windows::recording_hooks::app_state_json_for(window_id, pid)
+    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(|window_id, pid, budget| {
+        platform_windows::recording_hooks::app_state_json_for(window_id, pid, budget)
     });
     cua_driver_core::recording::set_element_bounds_fn(|window_id, pid, index| {
         platform_windows::recording_hooks::element_window_local_xy(window_id, pid, index)
@@ -670,8 +682,8 @@ fn configure_linux_runtime(prepare_desktop_environment: bool) {
     cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
         platform_linux::capture::crosshair_png_bytes(png_bytes, x, y).ok()
     });
-    cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
-        platform_linux::recording_hooks::app_state_json_for(window_id, pid)
+    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(|window_id, pid, budget| {
+        platform_linux::recording_hooks::app_state_json_for(window_id, pid, budget)
     });
     cua_driver_core::recording::set_element_bounds_fn(|window_id, pid, index| {
         platform_linux::recording_hooks::element_window_local_xy(window_id, pid, index)
@@ -727,6 +739,40 @@ mod tests {
             RuntimeOptions::embedded_with_ceiling(false, ceiling, PermissionMode::Standard, None);
         options.authorization_host = Some(Arc::new(TestProtectedHost));
         options
+    }
+
+    #[test]
+    fn canonical_inventory_advertises_unavailable_perception_tool() {
+        let inventory = tool_inventory(RuntimeOptions::embedded(false));
+        let tools = inventory["tools"].as_array().unwrap();
+        assert_eq!(
+            tools
+                .iter()
+                .filter(|tool| tool["name"] == "parse_visual_regions")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn host_perception_registration_is_not_duplicated_in_inventory() {
+        fn register(registry: &mut ToolRegistry) {
+            registry.register_perception_tool(
+                cua_driver_core::perception_client::PerceptionClient::unavailable(),
+            );
+        }
+        let mut options = RuntimeOptions::embedded(false);
+        options.register_host_tools = Some(register);
+        let inventory = tool_inventory(options);
+        assert_eq!(
+            inventory["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|tool| tool["name"] == "parse_visual_regions")
+                .count(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -901,13 +947,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shutdown_joins_lifecycle_maintenance() {
+    async fn shutdown_stops_lifecycle_maintenance() {
         let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
         let runtime = DriverRuntime::create(standard_options()).unwrap();
-        assert!(runtime.lifecycle_maintenance.lock().unwrap().is_some());
+        // The maintenance thread owns the only receiver, so sends fail once it
+        // exits. This proves the thread stopped; it cannot distinguish the join
+        // from the thread's own prompt exit after the stop signal.
+        let probe = runtime
+            .lifecycle_maintenance
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("runtime creation starts lifecycle maintenance")
+            .shutdown
+            .clone();
 
         runtime.shutdown().await;
 
         assert!(runtime.lifecycle_maintenance.lock().unwrap().is_none());
+        assert!(
+            probe.send(()).is_err(),
+            "lifecycle maintenance is still running after shutdown"
+        );
     }
 }

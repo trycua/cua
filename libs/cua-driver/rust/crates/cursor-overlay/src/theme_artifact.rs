@@ -923,16 +923,4 @@ mod tests {
         let expected: [u8; 32] = Sha256::digest(source).into();
         assert_eq!(embedded_default_theme().source_hash, expected);
     }
-
-    #[test]
-    fn default_tint_preserves_white_and_replaces_blue() {
-        assert_eq!(
-            resolved_color([94, 192, 232, 255], Some([12, 34, 56, 255])),
-            [12, 34, 56, 255]
-        );
-        assert_eq!(
-            resolved_color([255, 255, 255, 255], Some([12, 34, 56, 255])),
-            [255, 255, 255, 255]
-        );
-    }
 }

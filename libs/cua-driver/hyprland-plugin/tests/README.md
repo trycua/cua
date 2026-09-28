@@ -5,8 +5,8 @@ Tests of that build must fail closed; they must not enable mutation merely to
 exercise a path. The separately selected, nonshipping
 [input experiment](../protocol/input-experiment.md) has an explicit build flag
 and external test-operator grant. Its
-[VM validation record](input-validation.md) is not production acceptance.
-The [concurrent real-app follow-up](realapp-validation.md) records two-lane
+[VM validation record](../docs/input-validation.md) is not production acceptance.
+The [concurrent real-app follow-up](../docs/realapp-validation.md) records two-lane
 Calc/Inkscape tasks, moving-primary measurement, a warp-and-return negative
 control, per-lane Cancel, and global Stop on its exact tested candidate.
 
@@ -128,7 +128,7 @@ recovery, restart-required lifetime markers, and inode-aware socket cleanup.
 These mock/unit checks do not establish native seat delivery, keymap refresh,
 brief desktop-transition revocation, or real multi-process lane behavior.
 
-The [native reliability record](lifecycle-validation.md) identifies the tested
+The [native reliability record](../docs/lifecycle-validation.md) identifies the tested
 source, measured results, recordings, setup failures, and remaining limits.
 
 Run `input_lifecycle_live.py` only in a disposable Fleet guest with the
@@ -262,7 +262,7 @@ with synthetic data; it is not native retirement evidence.
 
 ## Desktop-state fault controls
 
-The [native desktop-state validation record](desktop-state-validation.md)
+The [native desktop-state validation record](../docs/desktop-state-validation.md)
 contains five matched fault/control pairs, artifact identities, measured
 cancellation and cleanup times, retained failures, and limits.
 
@@ -408,3 +408,32 @@ unload command separately; none is application mutation proof. Likewise,
 individual `cua-driver call` requests are driver-side tests, not plugin
 capabilities. They may be exercised to diagnose an agent integration, but
 must not appear in the plugin capability result.
+
+## Portable harness test ownership
+
+The production proof harnesses live in [`../proofs`](../proofs), and their
+reviewed procedures and validation records in [`../docs`](../docs). This
+directory keeps their `*_test.py` suites, the live runners, the helpers both
+share, and the compiled fixtures. A test imports `proofs_path` before any
+proof; a proof imports `harness_paths` before any helper in this directory.
+
+The `*_test.py` suites run in hosted CI with every native boundary mocked. Keep
+them cheap to trust:
+
+- Put shared plans, trace pages, status builders, and UI snapshots in
+  `proof_fixtures.py`. Never import one `*_test.py` from another or borrow a
+  `TestCase` as a helper. Proofs that hash their own tests into
+  `provenance.json` also hash `proof_fixtures.py`. They resolve each hashed
+  name through `harness_paths.harness_file`, which requires the name to exist
+  in exactly one of the two directories. Update those lists when a file is
+  added, renamed, moved, or removed.
+- Test a shared helper once, at its owner: `trace_interval` in
+  `production_realapp_proof_test.py`, `primary_trace.analyze` in
+  `primary_trace_test.py`, `validate_app_profile` and
+  `verify_fresh_observation` in `production_cancel_proof_test.py`, and
+  `verify_status` and `validate_min_motion` in
+  `production_desktop_fault_proof_test.py`. A consumer keeps one case that
+  proves it calls the helper.
+- Give every negative row the error it must raise. A bare
+  `assertRaises(AssertionError)` also passes when an earlier, unrelated guard
+  fails.

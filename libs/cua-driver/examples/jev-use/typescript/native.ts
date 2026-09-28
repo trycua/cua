@@ -141,6 +141,68 @@ export function isTreeEmpty(observation: NativeObservation): boolean {
   return Boolean(observation.degradedReason?.startsWith('ax_tree_empty'));
 }
 
+export const WINDOW_ROOT_ROLES: ReadonlySet<string> = new Set(['window', 'application', 'frame']);
+const MACOS_MENU_BAR_ROLE = 'menubar';
+const normalizedOf = (item: WindowElement | undefined) =>
+  item && typeof item.role === 'string' ? normalizedRole(item.role) : '';
+
+function inMacosMenuBar(item: WindowElement, byIndex: Map<number, WindowElement>): boolean {
+  const seen = new Set<number>();
+  let current: WindowElement | undefined = item;
+  while (current) {
+    if (normalizedOf(current) === MACOS_MENU_BAR_ROLE) return true;
+    const parent = current.parent_index;
+    if (!Number.isInteger(parent) || seen.has(parent as number)) return false;
+    seen.add(parent as number);
+    current = byIndex.get(parent as number);
+  }
+  return false;
+}
+
+/** An unlabeled, valueless button directly under the window root (close, minimize, zoom). */
+function isMacosWindowButton(item: WindowElement, byIndex: Map<number, WindowElement>): boolean {
+  const parent = Number.isInteger(item.parent_index) ? byIndex.get(item.parent_index as number) : undefined;
+  return (
+    normalizedOf(item) === 'button' &&
+    Boolean(parent) &&
+    WINDOW_ROOT_ROLES.has(normalizedOf(parent)) &&
+    !str(item.label) &&
+    !str(item.value)
+  );
+}
+
+function indexElements(observation: NativeObservation): Map<number, WindowElement> {
+  const byIndex = new Map<number, WindowElement>();
+  for (const item of observation.elements) {
+    if (Number.isInteger(item.element_index)) byIndex.set(item.element_index as number, item);
+  }
+  return byIndex;
+}
+
+/** Whether an ancestor of `item` is a window-chrome container. */
+function inWindowChrome(item: WindowElement, byIndex: Map<number, WindowElement>, platform: Platform): boolean {
+  const seen = new Set<number>();
+  let parent = item.parent_index;
+  while (Number.isInteger(parent) && byIndex.has(parent as number) && !seen.has(parent as number)) {
+    seen.add(parent as number);
+    const ancestor = byIndex.get(parent as number)!;
+    if (isWindowChrome(ancestor.role, platform)) return true;
+    parent = ancestor.parent_index;
+  }
+  return false;
+}
+
+/** Whether any element is window content (mirrors native.py has_application_elements). */
+export function hasApplicationElements(observation: NativeObservation, platform: Platform): boolean {
+  const byIndex = indexElements(observation);
+  return observation.elements.some((item) => {
+    if (WINDOW_ROOT_ROLES.has(normalizedOf(item))) return false;
+    if (isWindowChrome(item.role, platform) || inWindowChrome(item, byIndex, platform)) return false;
+    if (platform === 'macos' && (inMacosMenuBar(item, byIndex) || isMacosWindowButton(item, byIndex))) return false;
+    return true;
+  });
+}
+
 export function parseWindowState(
   payload: Readonly<Record<string, unknown>>,
   expectedPid: number,
@@ -195,10 +257,7 @@ export function eligibleControls(
   platform: Platform,
   redact: (value: string) => string = (value) => value
 ): NativeControls {
-  const byIndex = new Map<number, WindowElement>();
-  for (const item of observation.elements) {
-    if (Number.isInteger(item.element_index)) byIndex.set(item.element_index as number, item);
-  }
+  const byIndex = indexElements(observation);
   const excluded: Record<string, number> = {};
   const exclude = (reason: string) => {
     excluded[reason] = (excluded[reason] ?? 0) + 1;
@@ -218,18 +277,6 @@ export function eligibleControls(
     return path.reverse();
   };
 
-  const inWindowChrome = (item: WindowElement): boolean => {
-    const seen = new Set<number>();
-    let parent = item.parent_index;
-    while (Number.isInteger(parent) && byIndex.has(parent as number) && !seen.has(parent as number)) {
-      seen.add(parent as number);
-      const ancestor = byIndex.get(parent as number)!;
-      if (isWindowChrome(ancestor.role, platform)) return true;
-      parent = ancestor.parent_index;
-    }
-    return false;
-  };
-
   const pending: { item: WindowElement; klass: RoleClass; label: string; path: [string, string][] }[] = [];
   for (const item of observation.elements) {
     const klass = roleClass(item.role, platform);
@@ -237,7 +284,7 @@ export function eligibleControls(
       exclude('unknown_role');
       continue;
     }
-    if (inWindowChrome(item)) {
+    if (inWindowChrome(item, byIndex, platform)) {
       exclude('window_chrome');
       continue;
     }

@@ -974,6 +974,51 @@ mod tests {
     }
 
     #[test]
+    fn recreating_an_idle_reclaimed_implicit_session_keeps_its_old_tokens_stale() {
+        use crate::session::{
+            begin_session_dispatch, evict_idle_with_prefix, register_scoped_session_end_hook,
+            SessionClientKind, SessionTransport,
+        };
+        let session = format!("element-cache-idle-implicit-{}", std::process::id());
+        let cache = Arc::new(ElementCacheCore::<Payload>::new());
+        let retiring = cache.clone();
+        let _hook = register_scoped_session_end_hook(move |ended| {
+            retiring.retire_session_screenshots(ended);
+        });
+        let begin = || {
+            begin_session_dispatch(
+                &session,
+                None,
+                &session,
+                true,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            )
+        };
+
+        let guard = begin().expect("first unnamed call starts the session");
+        let snapshot = cache
+            .publish_for_session(10, 20, Payload(vec![0, 1]), Some(&session), Some(1.0))
+            .expect("live session publishes");
+        let token = token_for(snapshot, 1);
+        drop(guard);
+        assert_eq!(
+            evict_idle_with_prefix(std::time::Duration::ZERO, &session),
+            [session.clone()]
+        );
+
+        let guard = begin().expect("next unnamed call recreates the session");
+        assert_eq!(resolve(&cache, 10, &token), Err(STALE_TOKEN_ERROR.into()));
+        let fresh = cache
+            .publish_for_session(10, 20, Payload(vec![0, 1]), Some(&session), Some(1.0))
+            .expect("recreated session publishes again");
+        assert_eq!(resolve(&cache, 10, &token_for(fresh, 1)), Ok((20, 1)));
+        drop(guard);
+        crate::session::end_session(&session);
+        crate::session::revive_session(&session);
+    }
+
+    #[test]
     fn session_retirement_removes_only_snapshots_owned_by_that_session() {
         let cache = ElementCacheCore::new();
         cache.publish_for_session(10, 20, Payload(vec![]), Some("ending"), Some(7.35));

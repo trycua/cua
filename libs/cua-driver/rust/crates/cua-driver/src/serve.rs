@@ -469,12 +469,18 @@ async fn invoke_daemon_tool(
     if let Some(sid) = &effective_session {
         if !is_session_lifecycle_tool(&tool_name) && sdk.is_session_ended(sid) {
             observe_daemon_error(observation, 1);
-            return DaemonResponse::err(
+            // An unnamed call's lifecycle id is the transport session, which
+            // is not a label the caller can pass back to start_session.
+            let recovery = if req.session_id.as_deref() == Some(sid.as_str()) {
+                "Call start_session without a session label to start a new unnamed session."
+                    .to_owned()
+            } else {
                 format!(
-                    "session '{sid}' has ended; tool call '{tool_name}' was rejected. \
-                     Call start_session with this id to revive it before issuing further \
-                     actions, or use a new session id."
-                ),
+                    "Call start_session with session '{sid}' to start it again, or use a new session label."
+                )
+            };
+            return DaemonResponse::err(
+                format!("session has ended; tool call '{tool_name}' was rejected. {recovery}"),
                 1,
             );
         }

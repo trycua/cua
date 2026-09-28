@@ -1,0 +1,571 @@
+"""Native task specs for jev-use (RFC #4268, Phase 1).
+
+A ``NativeTask`` declares one application task: its goal, parameters (text is
+taken only from these), the window it may observe and act on, the allowed
+action kinds, opt-in risk categories, whether foreground delivery is allowed,
+a step budget, and an app-owned success oracle. It builds each step's closed
+candidate set from the native accessibility source, plus visual regions only
+under the fallback rule, and composes them in the fixed order page, ax, visual.
+
+The built-in tasks drive the repository's AppKit harness
+(``libs/cua-driver/tests/fixtures/apps/macos/appkit``) launched with
+``CUA_APPKIT_TASK_STATE``. Their oracle is the harness's own JSON state file,
+which the app rewrites on every change; it never depends on Driver output.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Literal, Mapping
+
+from choose_action import MAX_ELEMENTS, MAX_HISTORY, REQUEST_SCHEMA_V2
+from native import PARAMETER_NAME_PATTERN, NativeControl, element_state, field_state, slug
+from native_roles import ACTION_KINDS
+from sources import Candidate, NativeAccessibilitySource, TextMethod
+from tasks import Outcome, TaskParameter, TaskSources, redact_token
+
+MAX_EXECUTABLE_CANDIDATES = 24
+SOURCE_ORDER = ("page", "ax", "visual")
+Check = Literal["verified", "refuted", "pending"]
+
+NATIVE_RESERVED = (
+    Candidate(
+        "reobserve",
+        "Take no action and obtain a fresh observation of the window, because the current "
+        "observation looks stale, incomplete, or contradicts the goal's progress.",
+        None,
+        {},
+    ),
+    Candidate(
+        "abstain",
+        "Stop without acting if none of the proposed actions is safe or moves toward the goal.",
+        None,
+        {},
+    ),
+)
+
+_VERBS = {
+    "press": "pressed",
+    "toggle": "toggled",
+    "select": "selected",
+    "open_menu": "opened",
+    "visual_click": "clicked the visual region",
+}
+
+
+@dataclass(frozen=True)
+class WindowScope:
+    """The one window a task may observe and act on."""
+
+    window_title: str
+    bundle_id: str | None = None
+    process_name: str | None = None
+    query: str | None = None
+    max_elements: int | None = None
+    max_depth: int | None = None
+
+    def window_state_arguments(self) -> dict[str, Any]:
+        arguments: dict[str, Any] = {}
+        if self.query is not None:
+            arguments["query"] = self.query
+        if self.max_elements is not None:
+            arguments["max_elements"] = self.max_elements
+        if self.max_depth is not None:
+            arguments["max_depth"] = self.max_depth
+        return arguments
+
+
+class OracleError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class AppStateOracle:
+    """An ``app_check`` oracle over an app-owned JSON state file.
+
+    The file must carry the expected ``schema`` and, when given, the ``pid`` of
+    the exact app process under test, so a stale file from another run never
+    counts as evidence.
+    """
+
+    path: Path
+    schema: str
+    expected_pid: int | None = None
+
+    def read(self) -> dict[str, Any]:
+        try:
+            state = json.loads(Path(self.path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise OracleError(f"app state is unreadable: {type(error).__name__}") from None
+        if not isinstance(state, dict) or state.get("schema") != self.schema:
+            raise OracleError("app state has an unexpected schema")
+        if self.expected_pid is not None and state.get("pid") != self.expected_pid:
+            raise OracleError("app state belongs to a different process")
+        return state
+
+
+@dataclass(frozen=True)
+class ComposeStats:
+    """Content-free counts logged for every step."""
+
+    sources: Mapping[str, int]
+    duplicates: int
+    risk_excluded: Mapping[str, int]
+    dropped: int
+
+    def to_log(self) -> dict[str, Any]:
+        return {
+            "sources": dict(self.sources),
+            "duplicates": self.duplicates,
+            "risk_excluded": dict(self.risk_excluded),
+            "dropped": self.dropped,
+        }
+
+
+def compose(
+    groups: Mapping[str, list[Candidate]],
+    *,
+    allowed_risks: frozenset[str],
+    reserved: tuple[Candidate, ...] = NATIVE_RESERVED,
+    cap: int = MAX_EXECUTABLE_CANDIDATES,
+) -> tuple[list[Candidate], ComposeStats]:
+    """Merge source outputs in the order page, ax, visual.
+
+    Duplicate IDs are dropped deterministically (first source wins). A
+    candidate tagged with a risk category the task did not allow is removed.
+    At most ``cap`` executable candidates remain, in source then element
+    order; the count dropped is reported, never silently truncated. The
+    reserved ``reobserve`` and ``abstain`` candidates are always appended.
+    """
+    seen: set[str] = {candidate.id for candidate in reserved}
+    merged: list[Candidate] = []
+    duplicates = 0
+    risk_excluded: dict[str, int] = {}
+    for source in SOURCE_ORDER:
+        for candidate in groups.get(source, []):
+            if candidate.id in seen:
+                duplicates += 1
+                continue
+            seen.add(candidate.id)
+            blocked = sorted(candidate.risk - allowed_risks)
+            if blocked:
+                for category in blocked:
+                    risk_excluded[category] = risk_excluded.get(category, 0) + 1
+                continue
+            merged.append(candidate)
+    kept = merged[:cap]
+    counts = {source: 0 for source in SOURCE_ORDER}
+    for candidate in kept:
+        if candidate.source in counts:
+            counts[candidate.source] += 1
+    stats = ComposeStats(counts, duplicates, risk_excluded, len(merged) - len(kept))
+    return kept + list(reserved), stats
+
+
+@dataclass(frozen=True)
+class NativeStep:
+    """One step's closed candidate set and its model-safe context."""
+
+    candidates: list[Candidate]
+    stats: ComposeStats
+    elements: list[dict[str, str]]
+    outcomes: Mapping[str, str]
+
+
+def _quoted(label: str, limit: int = 60) -> str:
+    return json.dumps(label if len(label) <= limit else label[: limit - 1] + "…", ensure_ascii=False)
+
+
+@dataclass(frozen=True)
+class NativeTask:
+    """A declarative native task. See the module docstring."""
+
+    id: str
+    goal: str
+    scope: WindowScope
+    allowed_actions: frozenset[str]
+    oracle: AppStateOracle
+    check: Callable[[Mapping[str, Any]], Check]
+    parameters: tuple[TaskParameter, ...] = ()
+    allowed_risks: frozenset[str] = frozenset()
+    allow_foreground: bool = False
+    max_steps: int = 6
+    text_method: TextMethod = "set_value"
+    visual_targets: tuple[str, ...] = ()
+    mock_preferences: tuple[str, ...] = ()
+    # The oracle is polled after every action, so no candidate is special.
+    completion_candidate_ids: frozenset[str] = field(default=frozenset(), init=False)
+
+    def __post_init__(self) -> None:
+        unknown = set(self.allowed_actions) - ACTION_KINDS
+        if unknown:
+            raise ValueError(f"unknown action kinds: {sorted(unknown)}")
+        for parameter in self.parameters:
+            if not PARAMETER_NAME_PATTERN.fullmatch(parameter.name):
+                raise ValueError("parameter names must match [a-z][a-z0-9_]{0,7}")
+        if self.max_steps < 1:
+            raise ValueError("max_steps must be positive")
+
+    @property
+    def allowed_action_kinds(self) -> frozenset[str]:
+        """The Driver tools this task can dispatch."""
+        tools = set()
+        if self.allowed_actions & {"press", "toggle", "select", "open_menu", "visual_click"}:
+            tools.add("click")
+        if "set_text" in self.allowed_actions:
+            tools.add(self.text_method)
+        return frozenset(tools)
+
+    def redact(self, value: Any) -> Any:
+        for parameter in self.parameters:
+            if parameter.secret:
+                value = redact_token(value, parameter.value, parameter.redaction)
+        return value
+
+    def redact_text(self, value: str) -> str:
+        return self.redact(value)
+
+    # -- candidates -------------------------------------------------------
+
+    def _native_candidates(
+        self, ax: NativeAccessibilitySource, foreground_ids: frozenset[str]
+    ) -> tuple[list[Candidate], dict[str, str]]:
+        candidates: list[Candidate] = []
+        outcomes: dict[str, str] = {}
+        for native in ax.controls:
+            if native.action not in self.allowed_actions:
+                continue
+            control = ax.control(native)
+            label = _quoted(native.label)
+            if native.action == "set_text":
+                for parameter in self.parameters:
+                    if native.value == parameter.value:
+                        continue
+                    candidate_id = f"{native.id}:set:{parameter.name}"
+                    state = field_state(native.value, parameter.value)
+                    candidates.append(
+                        ax.type_text(
+                            control,
+                            parameter.value,
+                            candidate_id=candidate_id,
+                            description=(
+                                f"Set the text field {label} to the task parameter "
+                                f"{json.dumps(parameter.name)}, replacing its contents. The field "
+                                f"currently reports {state}."
+                            ),
+                        )
+                    )
+                    outcomes[candidate_id] = f"set {label} to parameter {parameter.name}"
+                continue
+            if native.action == "select" and native.selected:
+                continue  # selecting an already selected option is a no-op
+            description = self._describe(native, label)
+            candidate_id = native.id
+            delivery: Literal["background", "foreground"] = "background"
+            if native.id in foreground_ids:
+                if not self.allow_foreground:
+                    continue
+                candidate_id = f"{native.id}:foreground"
+                delivery = "foreground"
+                description += (
+                    " Use foreground delivery, which activates the window, because Driver "
+                    "refused background delivery for this control."
+                )
+            candidates.append(
+                ax.click(control, candidate_id=candidate_id, description=description, delivery=delivery)
+            )
+            outcomes[candidate_id] = f"{_VERBS[native.action]} {label}"
+        return candidates, outcomes
+
+    @staticmethod
+    def _describe(native: NativeControl, label: str) -> str:
+        kind = native.role_class
+        if native.action == "toggle":
+            now = "checked" if native.selected else "unchecked"
+            after = "unchecked" if native.selected else "checked"
+            noun = "switch" if kind == "toggle" else "checkbox"
+            return f"Toggle the {noun} {label}. It is currently {now}; afterward it will be {after}."
+        if native.action == "select":
+            return f"Select the radio option {label}. It is currently not selected."
+        if native.action == "open_menu":
+            return (
+                f"Open the pop-up menu {label}. Its options become candidates on the next "
+                "observation."
+            )
+        noun = {"menu_item": "menu item", "link": "link"}.get(kind, "button")
+        return f"Press the {noun} labeled {label}."
+
+    def _visual_candidates(self, sources: TaskSources) -> tuple[list[Candidate], dict[str, str]]:
+        visual = sources.visual
+        if visual is None or "visual_click" not in self.allowed_actions:
+            return [], {}
+        candidates: list[Candidate] = []
+        outcomes: dict[str, str] = {}
+        for target in self.visual_targets:
+            control = visual.find("button", target)
+            if control is None:
+                continue
+            candidate_id = f"visual:{slug(target)}"
+            candidate = visual.click(
+                control,
+                candidate_id=candidate_id,
+                description=(
+                    f"Click the unique validated visual region reading {_quoted(target)}; "
+                    "no accessibility element covers it."
+                ),
+            )
+            if candidate is not None:
+                candidates.append(candidate)
+                outcomes[candidate_id] = f"clicked the visual region {_quoted(target)}"
+        return candidates, outcomes
+
+    def plan(self, sources: TaskSources) -> NativeStep:
+        """Build the step's closed candidate set, stats, and compact elements."""
+        groups: dict[str, list[Candidate]] = {}
+        outcomes: dict[str, str] = {}
+        elements: list[dict[str, str]] = []
+        if sources.ax is not None:
+            groups["ax"], native_outcomes = self._native_candidates(
+                sources.ax, sources.foreground_ids
+            )
+            outcomes.update(native_outcomes)
+            elements = [
+                {
+                    "role_class": control.role_class,
+                    "label": control.label,
+                    "state": element_state(control),
+                }
+                for control in sources.ax.controls[:MAX_ELEMENTS]
+            ]
+        groups["visual"], visual_outcomes = self._visual_candidates(sources)
+        outcomes.update(visual_outcomes)
+        candidates, stats = compose(groups, allowed_risks=self.allowed_risks)
+        for candidate in candidates:
+            if candidate.tool is not None and candidate.tool not in self.allowed_action_kinds:
+                raise ValueError(f"task {self.id} does not allow action kind {candidate.tool}")
+        return NativeStep(candidates, stats, elements, outcomes)
+
+    def candidates(self, sources: TaskSources) -> list[Candidate]:
+        return self.plan(sources).candidates
+
+    def state_summary(self, sources: TaskSources) -> dict[str, str]:
+        """Value-free control states, keyed by stable candidate ID."""
+        if sources.ax is None:
+            return {}
+        return {control.id: element_state(control) for control in sources.ax.controls}
+
+    def history_entry(
+        self,
+        step: int,
+        candidate_id: str,
+        *,
+        refusal: str | None = None,
+        outcome: str | None = None,
+        stale: bool = False,
+    ) -> dict[str, Any]:
+        if stale:
+            text = "the observation was stale; nothing happened and the window is observed again"
+        elif refusal is not None:
+            text = f"Driver refused background delivery ({refusal}); nothing happened"
+        elif candidate_id == "reobserve":
+            text = "took no action and requested a fresh observation"
+        else:
+            text = outcome or "completed"
+        return {"step": step, "selected_id": candidate_id, "outcome": self.redact(text)[:128]}
+
+    def reset(self) -> None:
+        """The harness starts fresh for every run; there is nothing to reset."""
+
+    def read_oracle(self) -> Mapping[str, Any]:
+        return self.oracle.read()
+
+    def classify(self, oracle: Mapping[str, Any], *, steps: int) -> Outcome:
+        result = self.check(oracle)
+        if result in {"verified", "refuted"}:
+            return result  # type: ignore[return-value]
+        if steps >= self.max_steps:
+            return "budget_exhausted"
+        return "unknown"
+
+
+def visual_fallback_reason(sources: TaskSources, task: NativeTask, native_count: int) -> str | None:
+    """Return why this step may parse visual regions, or ``None``.
+
+    Visual regions are consulted only when the task allows ``visual_click`` and
+    declares visual targets, and either Driver reported the tree empty, or a
+    complete tree has no native candidate (or no native control labeled like a
+    declared target). A truncated or merely partial tree never qualifies.
+    """
+    ax = sources.ax
+    if ax is None or "visual_click" not in task.allowed_actions or not task.visual_targets:
+        return None
+    observation = ax.observation
+    if observation.capture_id is None:
+        return None
+    if observation.tree_empty:
+        return "tree_empty"
+    if not observation.complete or observation.truncated:
+        return None
+    if native_count == 0:
+        return "no_native_candidates"
+    labels = {control.label.lower() for control in ax.controls}
+    if any(target.lower() not in labels for target in task.visual_targets):
+        return "target_without_element"
+    return None
+
+
+def visual_regions_wire(sources: TaskSources, task: NativeTask) -> list[dict[str, Any]]:
+    if sources.visual is None:
+        return []
+    return [
+        task.redact(
+            {
+                "id": region.id,
+                "kind": region.kind,
+                "bounds": {
+                    "x": region.x,
+                    "y": region.y,
+                    "width": region.width,
+                    "height": region.height,
+                },
+                "text": region.text,
+                "label": region.label,
+                "confidence": region.confidence,
+                "interactive": region.interactive,
+            }
+        )
+        for region in sources.visual.observation.regions
+    ]
+
+
+def native_choice_request(
+    task: NativeTask,
+    sources: TaskSources,
+    step: NativeStep,
+    history: list[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Build the ``cua.jev_choice_request_v2`` the provider receives.
+
+    It carries candidate IDs, descriptions and sources, compact value-free
+    elements, and compact history. Element tokens, values, and pixels stay in
+    the runner.
+    """
+    if sources.ax is None or sources.ax.observation.capture_id is None:
+        raise ValueError("a native request needs an observation with a capture_id")
+    observation = sources.ax.observation
+    candidates = []
+    for candidate in step.candidates:
+        item: dict[str, Any] = {"id": candidate.id, "description": task.redact(candidate.description)}
+        if candidate.source is not None:
+            item["source"] = candidate.source
+        candidates.append(item)
+    return {
+        "schema": REQUEST_SCHEMA_V2,
+        "goal": task.redact(task.goal),
+        "capture_id": observation.capture_id,
+        "snapshot_id": observation.snapshot_id,
+        "regions": visual_regions_wire(sources, task),
+        "elements": [task.redact(item) for item in step.elements],
+        "history": [
+            {"selected_id": item["selected_id"], "outcome": item["outcome"]}
+            for item in history[-MAX_HISTORY:]
+        ],
+        "candidates": candidates,
+    }
+
+
+# -- AppKit harness tasks ---------------------------------------------------
+
+APPKIT_WINDOW_TITLE = "CuaTestHarness AppKit"
+APPKIT_BUNDLE_ID = "com.trycua.harness.appkit"
+APPKIT_STATE_SCHEMA = "cua.appkit_task_state_v1"
+APPKIT_STATE_ENV = "CUA_APPKIT_TASK_STATE"
+COUNTER_TARGET = 3
+DEFAULT_NOTE_TEXT = "jev-use native note"
+TARGET_SIZE = "large"
+
+
+def _counter_check(state: Mapping[str, Any]) -> Check:
+    counter = state.get("counter")
+    if counter == COUNTER_TARGET:
+        return "verified"
+    if isinstance(counter, int) and counter > COUNTER_TARGET:
+        return "refuted"  # Reset is a destructive control this task never offers
+    return "pending"
+
+
+def _note_check(note: str) -> Callable[[Mapping[str, Any]], Check]:
+    def check(state: Mapping[str, Any]) -> Check:
+        saved = state.get("note_saved")
+        if saved == note:
+            return "verified"
+        if saved is not None:
+            return "refuted"
+        return "pending"
+
+    return check
+
+
+def _size_check(state: Mapping[str, Any]) -> Check:
+    if state.get("size") == TARGET_SIZE and state.get("agreed") is True:
+        return "verified"
+    return "pending"
+
+
+APPKIT_TASK_IDS = ("appkit-counter", "appkit-save-note", "appkit-choose-size")
+
+
+def appkit_task(
+    task_id: str,
+    state_path: Path,
+    *,
+    pid: int | None = None,
+    note_text: str = DEFAULT_NOTE_TEXT,
+    allow_foreground: bool = False,
+) -> NativeTask:
+    """Build one AppKit harness task bound to its app-owned state file."""
+    oracle = AppStateOracle(Path(state_path), APPKIT_STATE_SCHEMA, pid)
+    scope = WindowScope(APPKIT_WINDOW_TITLE, bundle_id=APPKIT_BUNDLE_ID)
+    if task_id == "appkit-counter":
+        return NativeTask(
+            id=task_id,
+            goal=(
+                f"The counter starts at 0. Set it to exactly {COUNTER_TARGET} by pressing "
+                "Increment once per step, then stop."
+            ),
+            scope=scope,
+            allowed_actions=frozenset({"press"}),
+            oracle=oracle,
+            check=_counter_check,
+            allow_foreground=allow_foreground,
+            max_steps=COUNTER_TARGET + 3,
+            mock_preferences=("ax:button:increment",),
+        )
+    if task_id == "appkit-save-note":
+        return NativeTask(
+            id=task_id,
+            goal="Enter the note text into the Note field, then save the note.",
+            scope=scope,
+            allowed_actions=frozenset({"press", "set_text"}),
+            oracle=oracle,
+            check=_note_check(note_text),
+            parameters=(TaskParameter("note", note_text, secret=True, redaction="[note text]"),),
+            allow_foreground=allow_foreground,
+            max_steps=5,
+            mock_preferences=("ax:text_input:note:set:note", "ax:button:save-note"),
+        )
+    if task_id == "appkit-choose-size":
+        return NativeTask(
+            id=task_id,
+            goal="Choose the Large size option and check the I agree checkbox.",
+            scope=scope,
+            allowed_actions=frozenset({"select", "toggle"}),
+            oracle=oracle,
+            check=_size_check,
+            allow_foreground=allow_foreground,
+            max_steps=5,
+            mock_preferences=("ax:radio:large", "ax:checkbox:i-agree"),
+        )
+    raise ValueError(f"unknown AppKit task: {task_id}")

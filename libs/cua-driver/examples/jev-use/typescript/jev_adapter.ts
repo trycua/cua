@@ -7,7 +7,14 @@ import {
   type Candidate,
   type VisualObservation,
 } from './core.js';
-import { FIXTURE_GOAL, FixtureFormTask, fixtureSources, type Task, type TaskSources } from './tasks.js';
+import {
+  FIXTURE_GOAL,
+  FixtureFormTask,
+  fixtureSources,
+  requirePage,
+  type Task,
+  type TaskSources,
+} from './tasks.js';
 
 type TypeSafeClientLike = Pick<TypeSafeClient, 'systemOne'>;
 
@@ -112,7 +119,7 @@ export function taskDecisionState(
   sources: TaskSources,
   history: readonly HistoryEntry[]
 ) {
-  const snapshot = sources.page.snapshot;
+  const snapshot = requirePage(sources).snapshot;
   return {
     goal: task.goal,
     observation: {
@@ -192,13 +199,30 @@ export function chooseLiveForTask(
   return chooseForTask(new TypeSafeClient(), task, sources, candidates, history);
 }
 
+/**
+ * Deterministic mock provider. A task may declare mockPreferences: the first
+ * preferred ID present wins (a refused control's `<id>:foreground` variant
+ * counts as its ID), otherwise reobserve. Tasks without preferences keep the
+ * fixed browser-fixture order.
+ */
 export function chooseMockForTask(
-  _task: Task,
+  task: Task,
   _sources: TaskSources,
   candidates: Candidate[],
   _history: readonly HistoryEntry[]
 ) {
-  return chooseMock(candidates);
+  const preferences = (task as { mockPreferences?: readonly string[] }).mockPreferences ?? [];
+  if (!preferences.length) return chooseMock(candidates);
+  const ids = candidates.map((candidate) => candidate.id);
+  const selected =
+    preferences
+      .flatMap((preferred) => [preferred, `${preferred}:foreground`])
+      .find((id) => ids.includes(id)) ?? (ids.includes('reobserve') ? 'reobserve' : null);
+  return {
+    choice: selected,
+    confidence: selected ? 1 : 0,
+    probabilities: Object.fromEntries(ids.map((id) => [id, Number(id === selected)])),
+  };
 }
 
 export function chooseLive(

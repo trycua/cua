@@ -12,8 +12,16 @@ from pathlib import Path
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", choices=("mock", "jev", "s1"), required=True)
-    parser.add_argument("--expected-id", default="submit-form")
-    parser.add_argument("--fixture", choices=("positive", "negative"), default="positive")
+    parser.add_argument(
+        "--expected-id",
+        help="expected selection (default: submit-form, or ax:button:increment for --fixture native)",
+    )
+    parser.add_argument(
+        "--fixture",
+        choices=("positive", "negative", "native"),
+        default="positive",
+        help="native uses the cua.jev_choice_request_v2 fixture",
+    )
     parser.add_argument(
         "--screenshot",
         type=Path,
@@ -24,11 +32,13 @@ def main() -> None:
         parser.error("--screenshot requires --model s1")
 
     root = Path(__file__).resolve().parent
-    fixture_name = (
-        "jev-choice-request-v1.json"
-        if args.fixture == "positive"
-        else "jev-choice-negative-v1.json"
-    )
+    fixture_name = {
+        "positive": "jev-choice-request-v1.json",
+        "negative": "jev-choice-negative-v1.json",
+        "native": "jev-choice-request-v2.json",
+    }[args.fixture]
+    if args.expected_id is None:
+        args.expected_id = "ax:button:increment" if args.fixture == "native" else "submit-form"
     request = json.loads((root / "fixtures" / fixture_name).read_text(encoding="utf-8"))
     command = [sys.executable, str(root / "python/choose_decision.py"), "--model", args.model]
     if args.screenshot is not None:

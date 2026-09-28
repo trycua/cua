@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Protocol
 from urllib.request import Request, urlopen
 
-from sources import BrowserSemanticSource, Candidate, VisualRegionSource
+from sources import BrowserSemanticSource, Candidate, NativeAccessibilitySource, VisualRegionSource
 
 if TYPE_CHECKING:
     from core import VisualDelivery, VisualObservation, VisualRegion
@@ -64,11 +64,22 @@ class TaskSources:
     ``visual`` is present only when this step parsed visual regions.
     ``visual_path`` reports whether a capture-bound visual path exists at all,
     so a task can say a control is still pending a visual check.
+
+    ``page`` is present for browser tasks. ``ax`` is present for native tasks
+    (RFC #4268); ``foreground_ids`` names the native candidate IDs for which
+    Driver refused background delivery on an earlier step.
     """
 
-    page: BrowserSemanticSource
+    page: BrowserSemanticSource | None = None
     visual: VisualRegionSource | None = None
     visual_path: bool = False
+    ax: NativeAccessibilitySource | None = None
+    foreground_ids: frozenset[str] = frozenset()
+
+    def require_page(self) -> BrowserSemanticSource:
+        if self.page is None:
+            raise ValueError("this task needs a browser page source")
+        return self.page
 
 
 class Task(Protocol):
@@ -215,7 +226,7 @@ class FixtureFormTask:
         delivery yields a distinct ``submit-form-foreground`` candidate after
         Driver refused background delivery; the chooser must pick it explicitly.
         """
-        page = sources.page
+        page = sources.require_page()
         # Every page candidate addresses the snapshot's target; reject a snapshot
         # without one before offering anything.
         page.require_target()
@@ -283,8 +294,9 @@ class FixtureFormTask:
         action remains), and ``not_found_visually`` otherwise. Without a visual path
         it is ``not_in_page_structure``.
         """
-        field_control = sources.page.find("textbox", FIELD_NAME)
-        button = sources.page.find("button", SUBMIT_NAME)
+        page = sources.require_page()
+        field_control = page.find("textbox", FIELD_NAME)
+        button = page.find("button", SUBMIT_NAME)
         if field_control is None:
             field_state = "not_found"
         elif not field_control.value:

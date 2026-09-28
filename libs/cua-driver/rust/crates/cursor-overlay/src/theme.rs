@@ -196,9 +196,8 @@ pub(crate) fn shared_float_motion(visual: &CursorVisualState) -> (f32, f32, f32)
 
 /// Paint one frame of the embedded actions-v2 theme.
 ///
-/// `anchor_x/y` is the existing overlay's cursor centre. The Lottie canvas is
-/// centred there so the established click offset and path physics remain
-/// unchanged. `heading` rotates the artwork around the canvas centre.
+/// `anchor_x/y` is where the theme hotspot is drawn. `heading` and the
+/// display scale pivot around that hotspot.
 pub fn paint_default_theme(
     pm: &mut tiny_skia::Pixmap,
     visual: &CursorVisualState,

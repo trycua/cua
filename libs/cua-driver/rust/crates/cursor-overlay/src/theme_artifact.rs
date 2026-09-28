@@ -763,6 +763,9 @@ pub fn paint_compiled_theme(
 /// Paint a compiled theme, optionally replacing the embedded default's blue
 /// palette key with a stable per-session fill.
 ///
+/// The theme hotspot is drawn at `anchor_x/y`; heading and display scale
+/// pivot around it so the tip stays put while the artwork turns.
+///
 /// Custom themes pass `None` and retain their authored colors. Only the
 /// checked-in `cua.default` path passes a tint.
 #[allow(clippy::too_many_arguments)]

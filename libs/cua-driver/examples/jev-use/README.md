@@ -128,6 +128,30 @@ no `value` for a named text field
 `gtk3-save-note` cannot observe its own write, so it keeps offering the write
 until the step budget runs out.
 
+#### Choose with Cua-S1
+
+The native runners also accept `--provider s1`, and `verify_native.py` accepts
+`--s1`. Loading Cua-S1 takes 10 to 35 seconds, so a per-step model load would
+not fit inside Driver's 60-second capture lifetime. The runners therefore send
+each validated `cua.jev_choice_request_v2` request to an already loaded model
+behind a loopback HTTP endpoint, and read one `cua.decision_choice_v1`
+response. `CUA_S1_DECISION_URL` names that endpoint. It must be a plain
+`http://` URL on `127.0.0.1`, `localhost`, or `::1`; a model on another host is
+reached through an SSH tunnel. The runner rejects a response whose schema,
+`capture_id`, kind, selected ID, or probabilities do not match the request, and
+it resolves the selected ID to its own candidate as with every other provider.
+
+The service is not part of this example. Any server that loads the pinned
+checkpoint from [`libs/cua-s1`](../../../cua-s1/README.md), validates the
+request with `python/choose_action.py`, and answers with
+`decision_models.choose(S1DecisionModel(...), request).to_wire()` fits the
+contract. For example, to verify the native tasks with it:
+
+```bash
+export CUA_S1_DECISION_URL=http://127.0.0.1:8791/decide
+uv run --frozen python verify_native.py --harness appkit --typescript --s1 --output-dir /tmp/jev-native-s1
+```
+
 The MCP connection stays open across the entire loop. This preserves the
 explicit named Cua Driver session and avoids rebuilding tool state for every
 step.

@@ -40,6 +40,7 @@ int main(int argc, char** argv) {
     auto* context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
     auto* us = context ? compile(context, "us", "", "") : nullptr;
     if (!us) {
+        check(!std::getenv("CUA_HYPRLAND_REQUIRE_XKBCOMMON"), "XKB data unavailable");
         std::puts("SKIP: XKB data unavailable");
         return 77;
     }

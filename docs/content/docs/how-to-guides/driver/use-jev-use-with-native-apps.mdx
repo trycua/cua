@@ -124,8 +124,8 @@ then can't see its own write and runs out of steps. Update Driver to fix this.
 </Tabs>
 
 To prove the fallback, run the `canvas` harness. It is a custom-painted
-window with no accessibility tree, so its `canvas-save` task succeeds only by
-clicking the **Save** label through visual regions. It needs the
+window with no accessibility tree, so its `canvas-cancel` task succeeds only by
+clicking the **Cancel** label through visual regions. It needs the
 [cua-perception extension](/concepts/how-the-perception-extension-works)
 installed and a Python with Tk. It needs no build step and works on all three platforms:
 

@@ -6,6 +6,21 @@
 
 * **cua-driver:** deliver X11 key-down before the tap delay and finish background keyboard delivery before closing the input connection.
 
+## [0.30.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.30.3...cua-driver-rs-v0.30.4) (2026-09-28)
+
+
+### Bug Fixes
+
+* **cua-driver:** anchor theme transforms at hotspot ([#4246](https://github.com/trycua/cua/issues/4246)) ([b0ebd91](https://github.com/trycua/cua/commit/b0ebd915daf85beeb8e3301a2ae83df8d4499752))
+* **cua-driver:** capture X11 DirectColor window colors ([#3758](https://github.com/trycua/cua/issues/3758)) ([0dd44d6](https://github.com/trycua/cua/commit/0dd44d62226fe09dd2ee1a5bf0952d4572077b83))
+* **cua-driver:** drop schemars uint/float formats from contract schema ([#3462](https://github.com/trycua/cua/issues/3462)) ([efd75df](https://github.com/trycua/cua/commit/efd75df76f2ccdc2f9c63ca8fb65e0356a46a1b4))
+* **cua-driver:** keep a foreground key chord's modifiers on its base key ([#3855](https://github.com/trycua/cua/issues/3855)) ([f71044a](https://github.com/trycua/cua/commit/f71044a940b8eb5c604e461157bd9e64adefcf5a)), closes [#3849](https://github.com/trycua/cua/issues/3849)
+* **cua-driver:** preserve delivered X11 mouse click timing ([#3762](https://github.com/trycua/cua/issues/3762)) ([1db9aca](https://github.com/trycua/cua/commit/1db9aca009b79f9462e28949ef68e07487d9a118))
+* **cua-driver:** render browser cursor on Linux ([#3778](https://github.com/trycua/cua/issues/3778)) ([b75b0b0](https://github.com/trycua/cua/commit/b75b0b08c947e7d9b2a400e33694566771f9910d))
+* **cua-driver:** scope trajectory recording to the session that started it ([#3632](https://github.com/trycua/cua/issues/3632)) ([758488e](https://github.com/trycua/cua/commit/758488e582b7e48a396b44416135b45d2769fdfc))
+* **cua-driver:** support fractionally scaled Hyprland desktops ([#4244](https://github.com/trycua/cua/issues/4244)) ([3034435](https://github.com/trycua/cua/commit/3034435724d4621679f9e99f4dc0d348d6a684ef))
+* **cua-driver:** verify a raised window on its display, not global order ([#3785](https://github.com/trycua/cua/issues/3785)) ([0a91a11](https://github.com/trycua/cua/commit/0a91a118675bf8d7c36f43e096275952c2225770))
+
 ## [0.30.3](https://github.com/trycua/cua/compare/cua-driver-rs-v0.30.2...cua-driver-rs-v0.30.3) (2026-09-28)
 
 

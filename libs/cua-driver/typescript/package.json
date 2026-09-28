@@ -1,6 +1,6 @@
 {
   "name": "@trycua/cua-driver",
-  "version": "0.30.3",
+  "version": "0.30.4",
   "description": "Rust-backed Cua Driver SDK and embedded Node host",
   "type": "module",
   "license": "MIT",

@@ -124,6 +124,13 @@ pub struct ForegroundReport {
     /// a menu opened, a dialog mapped or closed. `None` when nothing changed
     /// or the observation was unavailable.
     pub window_change: Option<String>,
+    /// A window in `window_change` is positively attributed to the target
+    /// process: its pid was known and the window resolved to it. The window
+    /// set also lists override-redirect popups that name no pid (a VCL menu,
+    /// but equally another client's popup) and, when the target pid is
+    /// unknown, every on-screen window; a change among those alone is not
+    /// the target's own.
+    pub window_change_owned: bool,
 }
 
 impl ForegroundReport {
@@ -145,12 +152,40 @@ impl ForegroundReport {
     pub fn focus_kept(&self) -> bool {
         matches!(self.focus_after, FocusAfter::Target | FocusAfter::SamePid)
     }
+
+    /// The window change confirms the action wherever the focus ended up
+    /// when the changed window is the target process's own (a dialog closed
+    /// by its own OK button takes the focus with it); a change among
+    /// unattributed windows only counts while the focus stayed in the
+    /// target process.
+    pub fn window_change_confirms(&self) -> bool {
+        self.window_change.is_some() && (self.window_change_owned || self.focus_kept())
+    }
+}
+
+/// One on-screen toplevel of a window set read for a before/after diff.
+#[derive(Clone, Debug)]
+struct WindowEntry {
+    window: u64,
+    description: String,
+    /// Positively attributed to the target pid (see
+    /// [`ForegroundReport::window_change_owned`]).
+    owned: bool,
+}
+
+/// What changed between two window sets.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WindowChange {
+    summary: String,
+    owned: bool,
 }
 
 /// The on-screen toplevels of `pid` (managed windows plus override-redirect
-/// popups), as `(window, description)` pairs, for a before/after diff.
-fn pid_window_set(pid: Option<u32>) -> Vec<(u64, String)> {
-    let mut set: Vec<(u64, String)> = crate::x11::list_windows(pid)
+/// popups) for a before/after diff. Managed windows are listed by resolved
+/// owner, so they are `owned` whenever `pid` is known; a popup is `owned`
+/// only when it carries `pid` itself.
+fn pid_window_set(pid: Option<u32>) -> Vec<WindowEntry> {
+    let mut set: Vec<WindowEntry> = crate::x11::list_windows(pid)
         .into_iter()
         .filter(|w| w.is_on_screen)
         .map(|w| {
@@ -159,44 +194,53 @@ fn pid_window_set(pid: Option<u32>) -> Vec<(u64, String)> {
             } else {
                 format!(" \"{}\"", w.title)
             };
-            (w.xid, format!("window {}{title}", w.xid))
+            WindowEntry {
+                window: w.xid,
+                description: format!("window {}{title}", w.xid),
+                owned: pid.is_some(),
+            }
         })
         .collect();
     set.extend(
         super::mapped_popup_windows()
             .into_iter()
             .filter(|p| pid.is_none() || p.pid.is_none() || p.pid == pid)
-            .map(|p| (p.window, p.describe())),
+            .map(|p| WindowEntry {
+                window: p.window,
+                description: p.describe(),
+                owned: pid.is_some() && p.pid == pid,
+            }),
     );
     set
 }
 
 /// Describe what changed between two window sets, or `None` when nothing did.
-pub(crate) fn describe_window_change(
-    before: &[(u64, String)],
-    after: &[(u64, String)],
-) -> Option<String> {
-    let appeared: Vec<&str> = after
-        .iter()
-        .filter(|(id, _)| !before.iter().any(|(b, _)| b == id))
-        .map(|(_, d)| d.as_str())
-        .collect();
-    let vanished: Vec<&str> = before
-        .iter()
-        .filter(|(id, _)| !after.iter().any(|(a, _)| a == id))
-        .map(|(_, d)| d.as_str())
-        .collect();
+fn describe_window_change(before: &[WindowEntry], after: &[WindowEntry]) -> Option<WindowChange> {
+    let absent_from =
+        |set: &[WindowEntry], entry: &WindowEntry| !set.iter().any(|e| e.window == entry.window);
+    let appeared: Vec<&WindowEntry> = after.iter().filter(|e| absent_from(before, e)).collect();
+    let vanished: Vec<&WindowEntry> = before.iter().filter(|e| absent_from(after, e)).collect();
     if appeared.is_empty() && vanished.is_empty() {
         return None;
     }
+    let join = |entries: &[&WindowEntry]| {
+        entries
+            .iter()
+            .map(|e| e.description.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     let mut parts = Vec::new();
     if !appeared.is_empty() {
-        parts.push(format!("appeared: {}", appeared.join(", ")));
+        parts.push(format!("appeared: {}", join(&appeared)));
     }
     if !vanished.is_empty() {
-        parts.push(format!("closed: {}", vanished.join(", ")));
+        parts.push(format!("closed: {}", join(&vanished)));
     }
-    Some(parts.join("; "))
+    Some(WindowChange {
+        summary: parts.join("; "),
+        owned: appeared.iter().chain(&vanished).any(|e| e.owned),
+    })
 }
 
 /// How often the target process's window set is re-read after the body.
@@ -212,10 +256,14 @@ const WINDOW_CHANGE_DEADLINE: Duration = Duration::from_millis(800);
 /// (`_NET_WM_NAME` arrives a moment after the map) so the summary names it.
 const WINDOW_CHANGE_TITLE_GRACE: Duration = Duration::from_millis(60);
 
-/// How long the post-check retries an empty core focus (`None` /
-/// `PointerRoot`): a popup destroyed by the click leaves the focus unset for
-/// a beat before the toolkit re-focuses its toplevel.
-const FOCUS_RETRY: Duration = Duration::from_millis(250);
+/// How long the post-check retries a core focus that says nothing about
+/// where input went: `None` / `PointerRoot`, or a window of the window
+/// manager's own X client. A popup destroyed by the click leaves the focus
+/// unset for a beat before the toolkit re-focuses its toplevel, and mutter
+/// parks the focus on its `no_focus_window` while it picks the next window
+/// after a dialog closes (measured on GNOME 42: from ~500 ms after the close
+/// for ~200 ms).
+const FOCUS_RETRY: Duration = Duration::from_millis(500);
 
 /// Post-action observation bounds: `WINDOW_CHANGE_DEADLINE` /
 /// `WINDOW_CHANGE_POLL` unless the embedding host set
@@ -235,9 +283,9 @@ fn window_change_bounds() -> WindowObservationBounds {
 /// `confirmed` window-change evidence it never looked for.
 fn wait_for_window_change(
     pid: Option<u32>,
-    before: &[(u64, String)],
+    before: &[WindowEntry],
     bounds: WindowObservationBounds,
-) -> (Vec<(u64, String)>, Option<String>) {
+) -> (Vec<WindowEntry>, Option<WindowChange>) {
     if bounds.skips_observation() {
         return (pid_window_set(pid), None);
     }
@@ -307,6 +355,17 @@ struct X11 {
     root: Window,
     net_active_window: u32,
     net_wm_pid: u32,
+    resource_id_mask: u32,
+    /// The window manager's `_NET_SUPPORTING_WM_CHECK` window, when one is
+    /// advertised: any window sharing its X client base belongs to the WM.
+    wm_check_window: Option<Window>,
+}
+
+/// Whether two X resource ids were allocated by the same client: the server
+/// hands each client a base and lets it fill in the bits under
+/// `resource_id_mask`.
+fn same_x11_client(a: Window, b: Window, resource_id_mask: u32) -> bool {
+    a & !resource_id_mask == b & !resource_id_mask
 }
 
 impl X11 {
@@ -315,17 +374,38 @@ impl X11 {
             anyhow!("{CODE_UNAVAILABLE}: cannot open DISPLAY to verify X11 input focus: {e}")
         })?;
         let root = conn.setup().roots[screen].root;
+        let resource_id_mask = conn.setup().resource_id_mask;
         let net_active_window = conn
             .intern_atom(false, b"_NET_ACTIVE_WINDOW")?
             .reply()?
             .atom;
         let net_wm_pid = conn.intern_atom(false, b"_NET_WM_PID")?.reply()?.atom;
+        let wm_check = conn
+            .intern_atom(false, b"_NET_SUPPORTING_WM_CHECK")?
+            .reply()?
+            .atom;
+        let wm_check_window = conn
+            .get_property(false, root, wm_check, AtomEnum::WINDOW, 0, 1)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .and_then(|reply| reply.value32()?.next())
+            .filter(|w| *w != 0);
         Ok(Self {
             conn,
             root,
             net_active_window,
             net_wm_pid,
+            resource_id_mask,
+            wm_check_window,
         })
+    }
+
+    /// The focus sits on a window the window manager created for itself
+    /// (mutter's `no_focus_window` between two focused clients): a parking
+    /// spot, not a destination.
+    fn held_by_window_manager(&self, focused: Window) -> bool {
+        self.wm_check_window
+            .is_some_and(|check| same_x11_client(focused, check, self.resource_id_mask))
     }
 
     fn active_window(&self) -> Option<Window> {
@@ -594,35 +674,49 @@ fn confirm_phase(target: Window, settle: Duration) -> Result<ConfirmOutcome> {
     }
 }
 
+/// Poll `read_focus` until it names a window that is not a parking spot
+/// (`read_focus` already drops `None` / `PointerRoot`; `parked` marks the
+/// window manager's own windows) or `deadline` passes.
+fn await_focus_destination(
+    deadline: Instant,
+    mut read_focus: impl FnMut() -> Option<Window>,
+    parked: impl Fn(Window) -> bool,
+) -> Option<Window> {
+    loop {
+        if let Some(focused) = read_focus().filter(|f| !parked(*f)) {
+            return Some(focused);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 /// Where the focus sits after the body. `pid_windows` is the target
 /// process's window set read after the body (managed windows and popups):
 /// focus inside any of them is `SamePid` even when neither the target nor
 /// the focused window carries `_NET_WM_PID` (a VCL popup menu closed by the
-/// click, the popup that the click opened).
-fn post_check(
-    target: Window,
-    target_pid: Option<u32>,
-    pid_windows: &[(u64, String)],
-) -> FocusAfter {
+/// click, the popup that the click opened). A focus that is unset or parked
+/// on the window manager's own window for the whole `FOCUS_RETRY` is
+/// `Unknown`: it names no client the input could have reached.
+fn post_check(target: Window, target_pid: Option<u32>, pid_windows: &[WindowEntry]) -> FocusAfter {
     let Ok(x) = X11::open() else {
         return FocusAfter::Unknown;
     };
-    let retry_until = Instant::now() + FOCUS_RETRY;
-    let focused = loop {
-        if let Some(focused) = x.focused() {
-            break focused;
-        }
-        if Instant::now() >= retry_until {
-            return FocusAfter::Elsewhere;
-        }
-        std::thread::sleep(Duration::from_millis(25));
+    let Some(focused) = await_focus_destination(
+        Instant::now() + FOCUS_RETRY,
+        || x.focused(),
+        |focused| x.held_by_window_manager(focused),
+    ) else {
+        return FocusAfter::Unknown;
     };
     if x.is_within(focused, target) {
         return FocusAfter::Target;
     }
     if pid_windows
         .iter()
-        .any(|(window, _)| x.is_within(focused, *window as Window))
+        .any(|entry| x.is_within(focused, entry.window as Window))
     {
         return FocusAfter::SamePid;
     }
@@ -700,7 +794,8 @@ pub fn with_x11_foreground_opts<T>(
             retried_activation: outcome.retried,
             confirm_ms: outcome.elapsed.as_millis() as u64,
             focus_after,
-            window_change,
+            window_change_owned: window_change.as_ref().is_some_and(|c| c.owned),
+            window_change: window_change.map(|c| c.summary),
         },
     ))
 }
@@ -808,11 +903,66 @@ mod tests {
             WINDOW_CHANGE_DEADLINE,
             WINDOW_CHANGE_POLL,
         );
-        let before = vec![(u64::MAX, "window that never existed".to_string())];
+        let before = vec![entry(u64::MAX, "window that never existed", true)];
         let started = Instant::now();
         let (_after, change) = wait_for_window_change(Some(u32::MAX), &before, bounds);
         assert_eq!(change, None);
         assert!(started.elapsed() < WINDOW_CHANGE_DEADLINE);
+    }
+
+    /// mutter's `no_focus_window` (0x1600058) and its `_NET_SUPPORTING_WM_CHECK`
+    /// window (0x1600006) share the client base above the 21-bit resource mask;
+    /// a LibreOffice toplevel (0x3e00096) does not.
+    #[test]
+    fn wm_windows_share_the_wm_check_client_base() {
+        let mask = 0x1f_ffff;
+        assert!(same_x11_client(0x160_0058, 0x160_0006, mask));
+        assert!(!same_x11_client(0x3e0_0096, 0x160_0006, mask));
+    }
+
+    /// The focus sequence mutter produces after a focused dialog closes:
+    /// unset, then parked on its own window, then the next toplevel. The
+    /// post-check waits the parking out and reports the toplevel.
+    #[test]
+    fn focus_parked_on_the_window_manager_is_waited_out() {
+        let mask = 0x1f_ffff;
+        let wm_check = 0x160_0006;
+        let mut readings = [None, Some(0x160_0058), Some(0x160_0058), Some(0x3e0_0096)].into_iter();
+        let focused = await_focus_destination(
+            Instant::now() + Duration::from_secs(2),
+            || readings.next().flatten(),
+            |w| same_x11_client(w, wm_check, mask),
+        );
+        assert_eq!(focused, Some(0x3e0_0096));
+    }
+
+    /// A focus that never leaves the window manager names no destination:
+    /// `None` at the deadline, never the parking window itself.
+    #[test]
+    fn focus_left_on_the_window_manager_is_unknown_at_the_deadline() {
+        let mask = 0x1f_ffff;
+        let deadline = Instant::now() + Duration::from_millis(80);
+        let focused = await_focus_destination(
+            deadline,
+            || Some(0x160_0058),
+            |w| same_x11_client(w, 0x160_0006, mask),
+        );
+        assert_eq!(focused, None);
+        assert!(Instant::now() >= deadline);
+    }
+
+    /// A focus already on a client window returns on the first read: the
+    /// happy path pays no retry.
+    #[test]
+    fn settled_focus_returns_without_waiting() {
+        let started = Instant::now();
+        let focused = await_focus_destination(
+            started + Duration::from_secs(2),
+            || Some(0x3e0_0096),
+            |_| false,
+        );
+        assert_eq!(focused, Some(0x3e0_0096));
+        assert!(started.elapsed() < Duration::from_millis(25));
     }
 
     #[test]
@@ -848,6 +998,7 @@ mod tests {
             confirm_ms: 3,
             focus_after: FocusAfter::SamePid,
             window_change: Some("appeared: popup window 7 (200x300 at 1,2)".into()),
+            window_change_owned: false,
         };
         let json = report.to_json();
         assert_eq!(json["activated"], false);
@@ -860,21 +1011,45 @@ mod tests {
         assert!(report.focus_kept());
     }
 
+    fn entry(window: u64, description: &str, owned: bool) -> WindowEntry {
+        WindowEntry {
+            window,
+            description: description.to_string(),
+            owned,
+        }
+    }
+
     #[test]
     fn window_change_diff_names_appeared_and_closed() {
         let before = vec![
-            (1u64, "window 1 \"GIMP\"".to_string()),
-            (2, "window 2".to_string()),
+            entry(1, "window 1 \"GIMP\"", true),
+            entry(2, "window 2", true),
         ];
         let after = vec![
-            (1u64, "window 1 \"GIMP\"".to_string()),
-            (9, "popup window 9".to_string()),
+            entry(1, "window 1 \"GIMP\"", true),
+            entry(9, "popup window 9", false),
         ];
         assert_eq!(
-            describe_window_change(&before, &after).as_deref(),
-            Some("appeared: popup window 9; closed: window 2")
+            describe_window_change(&before, &after),
+            Some(WindowChange {
+                summary: "appeared: popup window 9; closed: window 2".into(),
+                owned: true,
+            })
         );
         assert_eq!(describe_window_change(&before, &before), None);
+    }
+
+    /// A popup that names no pid (a VCL menu, or another client's) is listed
+    /// in the target's set, but its change alone is not the target's own.
+    #[test]
+    fn unattributed_popup_change_is_not_owned() {
+        let before = vec![entry(1, "window 1 \"Calc\"", true)];
+        let after = vec![
+            entry(1, "window 1 \"Calc\"", true),
+            entry(9, "popup window 9", false),
+        ];
+        let change = describe_window_change(&before, &after).expect("a popup appeared");
+        assert!(!change.owned);
     }
 
     #[test]

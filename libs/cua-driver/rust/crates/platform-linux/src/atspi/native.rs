@@ -422,6 +422,54 @@ mod listener_startup_tests {
 
 /// A node discovered during the pre-order walk, with its proxy retained so the
 /// per-index operations can act on it without re-walking the tree.
+/// The `value` of one walked node: its Value-interface value, else, for an
+/// editable text widget without a Value interface, its non-empty Text
+/// content (the typed string). A SpinButton implements Text and Value, so it
+/// keeps its numeric value. Callers pass `has_editable: false` for password
+/// fields.
+fn editable_text_value(
+    has_editable: bool,
+    has_value: bool,
+    value: Option<String>,
+    text_content: &str,
+) -> Option<String> {
+    if value.is_some() || has_value || !has_editable || text_content.is_empty() {
+        return value;
+    }
+    Some(text_content.to_owned())
+}
+
+#[cfg(test)]
+mod editable_text_value_tests {
+    use super::editable_text_value;
+
+    #[test]
+    fn editable_text_reports_its_content_as_value() {
+        assert_eq!(
+            editable_text_value(true, false, None, "jev-use native note").as_deref(),
+            Some("jev-use native note")
+        );
+    }
+
+    #[test]
+    fn empty_or_non_editable_text_has_no_value() {
+        assert_eq!(editable_text_value(true, false, None, ""), None);
+        assert_eq!(
+            editable_text_value(false, false, None, "static label"),
+            None
+        );
+    }
+
+    #[test]
+    fn value_interface_wins() {
+        assert_eq!(
+            editable_text_value(true, true, Some("3".into()), "3.0").as_deref(),
+            Some("3")
+        );
+        assert_eq!(editable_text_value(true, true, None, "3.0"), None);
+    }
+}
+
 struct Visited<'a> {
     depth: usize,
     role: String,
@@ -1636,6 +1684,14 @@ async fn collect_visited_bounded_opts<'a>(
                 }
             }
         }
+
+        // An editable text widget's typed content is its value, reported
+        // separately from its name (parity with macOS AXValue and the Windows
+        // ValuePattern). Without it a named entry ("Note") hides what it holds
+        // from `elements[].value` and `verify_state`.
+        // A password field's content is never surfaced.
+        let editable_text = has_editable && !role_lower.contains("password");
+        value = editable_text_value(editable_text, has_value, value, &text_content);
 
         // Surface Text content as the display name when the widget has no
         // name — for text widgets. A value control (GtkSpinButton implements

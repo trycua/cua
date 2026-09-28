@@ -1108,6 +1108,22 @@ impl ToolRegistry {
             return ToolResult::error(format!("Unknown tool: {name}"));
         };
 
+        // MCP types `arguments` as an object and transports substitute `{}`
+        // when it is absent, but a client can still send any JSON value.
+        // Everything below indexes into the object (session stamping,
+        // protected-resource fingerprints, replay rewrites), so refuse other
+        // shapes here instead of panicking the dispatcher on a caller's input.
+        if !args.is_object() {
+            return ToolResult::error(format!(
+                "{resolved_name}: invalid arguments: expected a JSON object"
+            ))
+            .with_structured(serde_json::json!({
+                "code": "invalid_arguments",
+                "tool": resolved_name,
+                "detail": "arguments must be a JSON object",
+            }));
+        }
+
         // Normalize deprecated public argument spellings before any policy,
         // consent, recording, or implementation layer interprets the call.
         normalize_delivery_mode_args(tool.def(), &mut args);
@@ -1157,13 +1173,21 @@ impl ToolRegistry {
             .and_then(Value::as_str)
             .map(str::to_owned);
         if let Some(session) = runtime_session.as_deref() {
+            let owner = args
+                .get("_transport_session_id")
+                .and_then(Value::as_str)
+                .unwrap_or(session);
+            // An unnamed session reclaimed by the idle sweep is recreated at
+            // lifecycle admission below; every other ended episode refuses
+            // with the recovery that actually applies to its identity.
             if !matches!(resolved_name, "start_session" | "end_session")
                 && crate::session::is_session_ended(session)
+                && !crate::session::recreates_on_next_call(session, owner)
             {
-                let mut result = protected_refusal(
-                    "session_ended",
-                    "this session has ended; call start_session explicitly to reuse its label",
+                let message = ended_session_refusal_message(
+                    args.get("_public_session_label").and_then(Value::as_str),
                 );
+                let mut result = protected_refusal("session_ended", &message);
                 restore_public_runtime_result(&mut result, &runtime_prefix);
                 return result;
             }
@@ -3675,6 +3699,106 @@ resources:
     }
 
     #[tokio::test]
+    async fn idle_reclaimed_unnamed_session_recreates_and_ended_sessions_name_a_working_recovery() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let mut registry = super::ToolRegistry::new_with_protected_consent_provider(None);
+        registry.register(Box::new(ObservationProbe {
+            hits: hits.clone(),
+            def: super::ToolDef {
+                name: "get_window_state".into(),
+                description: "test observation".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            },
+        }));
+        registry.register(Box::new(crate::session_tools::StartSessionTool));
+        registry.register(Box::new(crate::session_tools::EndSessionTool));
+        let context = standard_context();
+        let prefix = format!("__cua_runtime_{}:", context.runtime_scope_key());
+        let call = |args: serde_json::Value| {
+            let registry = &registry;
+            let context = context.clone();
+            async move {
+                let mut args = args;
+                args["pid"] = 42.into();
+                args["window_id"] = 7.into();
+                registry
+                    .invoke_with_context("get_window_state", args, context)
+                    .await
+            }
+        };
+        let refusal = |result: &ToolResult| {
+            let refusal = &result.structured_content.as_ref().unwrap()["refusal"];
+            (
+                refusal["code"].as_str().unwrap().to_owned(),
+                refusal["message"].as_str().unwrap().to_owned(),
+            )
+        };
+
+        assert_ne!(call(serde_json::json!({})).await.is_error, Some(true));
+        assert_ne!(
+            call(serde_json::json!({"session": "named"})).await.is_error,
+            Some(true)
+        );
+        assert_eq!(
+            crate::session::evict_idle_with_prefix(Duration::ZERO, &prefix).len(),
+            2
+        );
+
+        // The unnamed session comes back on its next call.
+        assert_ne!(call(serde_json::json!({})).await.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
+
+        // A named session stays refused, and the named recovery works.
+        let named = call(serde_json::json!({"session": "named"})).await;
+        assert_eq!(
+            refusal(&named),
+            (
+                "session_ended".to_owned(),
+                "session 'named' has ended; call start_session with session 'named' to start it again, or use a new session label".to_owned()
+            )
+        );
+        let started = registry
+            .invoke_with_context(
+                "start_session",
+                serde_json::json!({"session": "named"}),
+                context.clone(),
+            )
+            .await;
+        assert_ne!(started.is_error, Some(true), "{started:?}");
+        assert_ne!(
+            call(serde_json::json!({"session": "named"})).await.is_error,
+            Some(true)
+        );
+
+        // An explicitly ended unnamed session names the unlabeled recovery.
+        let ended = registry
+            .invoke_with_context("end_session", serde_json::json!({}), context.clone())
+            .await;
+        assert_ne!(ended.is_error, Some(true), "{ended:?}");
+        let unnamed = call(serde_json::json!({})).await;
+        assert_eq!(
+            refusal(&unnamed),
+            (
+                "session_ended".to_owned(),
+                "this transport's unnamed session has ended; call start_session without a session label to start a new one".to_owned()
+            )
+        );
+        let restarted = registry
+            .invoke_with_context("start_session", serde_json::json!({}), context.clone())
+            .await;
+        assert_ne!(restarted.is_error, Some(true), "{restarted:?}");
+        assert_ne!(call(serde_json::json!({})).await.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 5);
+
+        crate::session::revoke_sessions_with_prefix(&prefix);
+        crate::session::forget_ended_sessions_with_prefix(&prefix);
+    }
+
+    #[tokio::test]
     async fn ended_session_and_runtime_suspend_latches_fail_closed_at_dispatch() {
         let ended_hits = Arc::new(AtomicUsize::new(0));
         let ended_registry = observation_registry(None, ended_hits.clone());
@@ -5126,6 +5250,18 @@ fn protected_consent_refusal(error: crate::consent::ConsentError) -> ToolResult 
 
 fn protected_scope_refusal(message: &str) -> ToolResult {
     protected_refusal("protected_resource_scope_invalid", message)
+}
+
+/// Recovery text for a call on an ended lifecycle episode. A named session is
+/// restarted by name from its own transport; an unnamed one has no label to
+/// pass, so naming one would only start an unrelated session.
+fn ended_session_refusal_message(public_label: Option<&str>) -> String {
+    match public_label {
+        Some(label) => format!(
+            "session '{label}' has ended; call start_session with session '{label}' to start it again, or use a new session label"
+        ),
+        None => "this transport's unnamed session has ended; call start_session without a session label to start a new one".to_owned(),
+    }
 }
 
 fn protected_refusal(code: &str, message: &str) -> ToolResult {

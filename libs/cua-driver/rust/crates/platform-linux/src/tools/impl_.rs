@@ -13290,18 +13290,99 @@ impl Tool for KillAppTool {
                 )
             }
         };
+        // Read the instance before signaling so the confirmation below can
+        // tell its exit from a later process that reused the pid.
+        let before = match crate::proc_fs::read_process_stat(pid_i as u32) {
+            Ok(Some(before)) => before,
+            Ok(None) => {
+                return kill_app_failure(
+                    pid_i,
+                    "process_not_found",
+                    format!("kill_app: pid {pid_i} does not exist; no signal was sent."),
+                )
+            }
+            Err(error) => {
+                return kill_app_failure(
+                    pid_i,
+                    "process_identity_unavailable",
+                    format!(
+                        "kill_app: cannot read /proc/{pid_i}/stat to verify termination: \
+                         {error}; no signal was sent."
+                    ),
+                )
+            }
+        };
         // SAFETY: libc::kill is a thin syscall wrapper, no thread-safety concerns.
         let rc = unsafe { libc::kill(pid_i, libc::SIGKILL) };
-        if rc == 0 {
-            ToolResult::text(format!("✅ Sent SIGKILL to pid {pid_i}."))
-        } else {
+        if rc != 0 {
             let err = std::io::Error::last_os_error();
-            ToolResult::error(format!(
-                "kill_app: kill(pid={pid_i}, SIGKILL) failed: {err}. \
-                 The process may not exist, or the daemon lacks permission to signal it."
-            ))
+            return kill_app_failure(
+                pid_i,
+                "signal_failed",
+                format!(
+                    "kill_app: kill(pid={pid_i}, SIGKILL) failed: {err}. \
+                     The process may not exist, or the daemon lacks permission to signal it."
+                ),
+            );
+        }
+        // An accepted signal is not an exit: a sandbox (gVisor) can accept
+        // SIGKILL for a process that keeps running. Report success only once
+        // the same instance is gone.
+        let deadline = tokio::time::Instant::now() + KILL_CONFIRM_TIMEOUT;
+        loop {
+            let now = crate::proc_fs::read_process_stat(pid_i as u32);
+            if let Some(observation) = now
+                .as_ref()
+                .ok()
+                .and_then(|now| crate::proc_fs::process_exit_observation(before, *now))
+            {
+                return ToolResult::text(format!(
+                    "✅ Terminated pid {pid_i} with SIGKILL (confirmed: {observation})."
+                ))
+                .with_structured(json!({
+                    "status": "terminated",
+                    "effect": "confirmed",
+                    "pid": pid_i,
+                    "terminated": true,
+                    "observation": observation,
+                }));
+            }
+            if tokio::time::Instant::now() >= deadline {
+                let detail = match now {
+                    Err(error) => format!("/proc/{pid_i}/stat became unreadable: {error}"),
+                    Ok(_) => format!(
+                        "the same process was still alive {} ms later",
+                        KILL_CONFIRM_TIMEOUT.as_millis()
+                    ),
+                };
+                let mut result = kill_app_failure(
+                    pid_i,
+                    "termination_unconfirmed",
+                    format!("kill_app: SIGKILL was accepted for pid {pid_i}, but {detail}."),
+                );
+                if let Some(structured) = result.structured_content.as_mut() {
+                    structured["effect"] = json!("suspected_noop");
+                }
+                return result;
+            }
+            tokio::time::sleep(KILL_CONFIRM_INTERVAL).await;
         }
     }
+}
+
+/// How long `kill_app` waits for the signaled process to exit, and how often
+/// it re-reads `/proc/<pid>/stat` meanwhile.
+const KILL_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+const KILL_CONFIRM_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+
+fn kill_app_failure(pid: i32, code: &str, message: String) -> ToolResult {
+    ToolResult::error(message.clone()).with_structured(json!({
+        "status": "failed",
+        "pid": pid,
+        "terminated": false,
+        "code": code,
+        "message": message,
+    }))
 }
 
 fn kill_app_stale_process_refusal(message: String) -> ToolResult {

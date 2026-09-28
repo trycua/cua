@@ -191,8 +191,160 @@ fn authenticode_identity_matches(details: &str, expected_cn: &str, expected_org:
     let Some(subject) = lines.next() else {
         return false;
     };
-    let fields = subject.split(',').map(str::trim).collect::<Vec<_>>();
-    fields.contains(&expected_cn) && fields.contains(&expected_org)
+    let Some(attributes) = parse_distinguished_name(subject) else {
+        return false;
+    };
+    [expected_cn, expected_org].iter().all(|expected| {
+        let Some((expected_type, expected_value)) = expected.split_once('=') else {
+            return false;
+        };
+        let expected_type = expected_type.trim();
+        let expected_value = expected_value.trim();
+        attributes.iter().any(|(attribute_type, value)| {
+            attribute_type.eq_ignore_ascii_case(expected_type) && value == expected_value
+        })
+    })
+}
+
+/// Parses a certificate subject distinguished name into `(type, value)` pairs.
+///
+/// Accepts the RFC 4514 string form and the Windows `X500DistinguishedName`
+/// rendering used by `Get-AuthenticodeSignature`: attributes separated by
+/// unquoted, unescaped `,` / `;` (RDNs) or `+` (multi-valued RDNs); values may
+/// be double-quoted (a doubled `""` is a literal quote) or contain
+/// backslash-escaped characters (`\,`, `\"`, or a `\XX` hex byte). Unescaped
+/// whitespace around types and values is ignored. Returns `None` for malformed
+/// input so callers fail closed.
+fn parse_distinguished_name(subject: &str) -> Option<Vec<(String, String)>> {
+    let chars = subject.chars().collect::<Vec<_>>();
+    let mut attributes = Vec::new();
+    let mut index = 0;
+    loop {
+        while chars.get(index).is_some_and(|c| c.is_whitespace()) {
+            index += 1;
+        }
+        if index >= chars.len() {
+            // An empty subject has no attributes; a trailing separator is malformed.
+            return if attributes.is_empty() {
+                Some(attributes)
+            } else {
+                None
+            };
+        }
+
+        let type_start = index;
+        while chars.get(index).is_some_and(|&c| c != '=') {
+            if matches!(chars[index], ',' | ';' | '+' | '"' | '\\') {
+                return None;
+            }
+            index += 1;
+        }
+        if index >= chars.len() {
+            return None;
+        }
+        let attribute_type = chars[type_start..index]
+            .iter()
+            .collect::<String>()
+            .trim()
+            .to_owned();
+        if attribute_type.is_empty() {
+            return None;
+        }
+        index += 1; // '='
+
+        while chars.get(index).is_some_and(|c| c.is_whitespace()) {
+            index += 1;
+        }
+        let mut value = String::new();
+        if chars.get(index) == Some(&'"') {
+            index += 1;
+            loop {
+                match chars.get(index) {
+                    None => return None,
+                    Some('"') if chars.get(index + 1) == Some(&'"') => {
+                        value.push('"');
+                        index += 2;
+                    }
+                    Some('"') => {
+                        index += 1;
+                        break;
+                    }
+                    Some('\\') => {
+                        let (decoded, consumed) = decode_dn_escape(&chars[index + 1..])?;
+                        value.push_str(&decoded);
+                        index += 1 + consumed;
+                    }
+                    Some(&c) => {
+                        value.push(c);
+                        index += 1;
+                    }
+                }
+            }
+            while chars.get(index).is_some_and(|c| c.is_whitespace()) {
+                index += 1;
+            }
+            if chars
+                .get(index)
+                .is_some_and(|c| !matches!(c, ',' | ';' | '+'))
+            {
+                return None;
+            }
+        } else {
+            // Length of `value` that must survive trailing-whitespace trimming
+            // because it ends in an escaped character.
+            let mut protected_len = 0;
+            while let Some(&c) = chars.get(index) {
+                match c {
+                    ',' | ';' | '+' => break,
+                    '"' => return None,
+                    '\\' => {
+                        let (decoded, consumed) = decode_dn_escape(&chars[index + 1..])?;
+                        value.push_str(&decoded);
+                        protected_len = value.len();
+                        index += 1 + consumed;
+                    }
+                    _ => {
+                        value.push(c);
+                        index += 1;
+                    }
+                }
+            }
+            let trimmed_len = value.trim_end().len().max(protected_len);
+            value.truncate(trimmed_len);
+        }
+        attributes.push((attribute_type, value));
+
+        match chars.get(index) {
+            None => return Some(attributes),
+            Some(_) => index += 1, // separator
+        }
+    }
+}
+
+/// Decodes the character(s) following a `\` in a DN value. Returns the decoded
+/// text and the number of characters consumed after the backslash.
+fn decode_dn_escape(rest: &[char]) -> Option<(String, usize)> {
+    let first = *rest.first()?;
+    if first.is_ascii_hexdigit() {
+        // One or more consecutive `\XX` hex pairs encode UTF-8 bytes.
+        let mut bytes = Vec::new();
+        let mut consumed = 0;
+        loop {
+            let high = rest.get(consumed)?.to_digit(16)?;
+            let low = rest.get(consumed + 1)?.to_digit(16)?;
+            bytes.push((high * 16 + low) as u8);
+            consumed += 2;
+            let continues = rest.get(consumed) == Some(&'\\')
+                && rest.get(consumed + 1).is_some_and(char::is_ascii_hexdigit)
+                && rest.get(consumed + 2).is_some_and(char::is_ascii_hexdigit);
+            if !continues {
+                break;
+            }
+            consumed += 1;
+        }
+        return String::from_utf8(bytes).ok().map(|text| (text, consumed));
+    }
+    Some((first.to_string(), 1))
 }
 
 fn has_trusted_authenticode_identity(
@@ -2302,6 +2454,117 @@ mod tests {
         ));
         assert!(!authenticode_identity_matches(
             "Valid\r\nCN=Google LLC, O=Google LLC Evil\r\n",
+            "CN=Google LLC",
+            "O=Google LLC"
+        ));
+    }
+
+    #[test]
+    fn authenticode_identity_matches_current_browser_subjects() {
+        for (subject, cn, org) in [
+            (
+                "CN=Google LLC, O=Google LLC, L=Mountain View, S=California, C=US",
+                "CN=Google LLC",
+                "O=Google LLC",
+            ),
+            (
+                "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+                "CN=Microsoft Corporation",
+                "O=Microsoft Corporation",
+            ),
+        ] {
+            let details = format!("Valid\r\n{subject}\r\n");
+            assert!(
+                authenticode_identity_matches(&details, cn, org),
+                "{subject}"
+            );
+        }
+        assert!(!authenticode_identity_matches(
+            "Valid\r\nCN=Microsoft Corporation, O=Google LLC\r\n",
+            "CN=Google LLC",
+            "O=Google LLC"
+        ));
+    }
+
+    #[test]
+    fn authenticode_identity_matches_plain_names() {
+        assert!(authenticode_identity_matches(
+            "Valid\nCN=Example Inc,O=Example Inc\n",
+            "CN=Example Inc",
+            "O=Example Inc"
+        ));
+        assert!(authenticode_identity_matches(
+            "Valid\ncn = Example Inc ; o=Example Inc\n",
+            "CN=Example Inc",
+            "O=Example Inc"
+        ));
+    }
+
+    #[test]
+    fn authenticode_identity_matches_quoted_organization_with_comma() {
+        let details = "Valid\r\nCN=\"Example, Inc.\", O=\"Example, Inc.\", L=Somewhere, C=US\r\n";
+        assert!(authenticode_identity_matches(
+            details,
+            "CN=Example, Inc.",
+            "O=Example, Inc."
+        ));
+        // A quoted value is one attribute: its inner text never forms new fields.
+        assert!(!authenticode_identity_matches(
+            "Valid\r\nCN=\"Other, CN=Example\", O=\"x, O=Example\"\r\n",
+            "CN=Example",
+            "O=Example"
+        ));
+        assert!(!authenticode_identity_matches(
+            "Valid\r\nCN=\"Example, Inc.\", O=Example\r\n",
+            "CN=Example",
+            "O=Example"
+        ));
+    }
+
+    #[test]
+    fn authenticode_identity_matches_escaped_commas() {
+        let details = "Valid\nCN=Example\\, Inc., O=Example\\2C Inc.\n";
+        assert!(authenticode_identity_matches(
+            details,
+            "CN=Example, Inc.",
+            "O=Example, Inc."
+        ));
+        assert!(!authenticode_identity_matches(
+            details,
+            "CN=Example",
+            "O=Example"
+        ));
+    }
+
+    #[test]
+    fn distinguished_name_parser_handles_rfc4514_forms() {
+        let parsed = parse_distinguished_name(
+            r#"CN="Say ""Hi"", Ltd" + OU=Unit, O=A\;B, L=Trailing\ , C=US"#,
+        )
+        .expect("well-formed subject");
+        assert_eq!(
+            parsed,
+            vec![
+                ("CN".to_owned(), r#"Say "Hi", Ltd"#.to_owned()),
+                ("OU".to_owned(), "Unit".to_owned()),
+                ("O".to_owned(), "A;B".to_owned()),
+                ("L".to_owned(), "Trailing ".to_owned()),
+                ("C".to_owned(), "US".to_owned()),
+            ]
+        );
+        assert_eq!(
+            parse_distinguished_name("O=Caf\\C3\\A9").unwrap()[0].1,
+            "Café"
+        );
+        assert!(parse_distinguished_name("CN=\"unterminated").is_none());
+        assert!(parse_distinguished_name("CN=\"quoted\" junk").is_none());
+        assert!(parse_distinguished_name("CN=Google LLC,").is_none());
+        assert!(parse_distinguished_name("=Google LLC").is_none());
+        assert!(parse_distinguished_name("Google LLC").is_none());
+        assert!(parse_distinguished_name("CN=trailing\\").is_none());
+        assert!(parse_distinguished_name("CN=bad\\2G").is_none());
+        assert!(!authenticode_identity_matches(
+            "Valid\nCN=\"Google LLC\nO=Google LLC\n",
             "CN=Google LLC",
             "O=Google LLC"
         ));

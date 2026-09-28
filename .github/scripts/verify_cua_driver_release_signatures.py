@@ -12,9 +12,15 @@ macOS (``macos``, run on a macOS runner)
     signature from the pinned team, be accepted by ``spctl -a -t exec`` with
     source ``Notarized Developer ID``, and have a stapled notarization ticket
     (``xcrun stapler validate``). The standalone ``cua-driver``,
-    ``cua-cursor-theme``, and ``libcua_driver_sdk.dylib`` copies must carry the
-    same team's hardened-runtime signature. Any ``.pkg`` or ``.dmg`` asset must
-    be notarized and stapled too.
+    ``cua-cursor-theme``, ``libcua_driver_sdk.dylib``, and
+    ``cua_driver_node_runtime.node`` copies must carry the same team's
+    hardened-runtime signature. Any ``.pkg`` or ``.dmg`` asset must be
+    notarized and stapled too.
+
+    Releases published before #4168 shipped an unsigned
+    ``cua_driver_node_runtime.node``. ``--legacy-unsigned-node-runtime`` skips
+    only that file, for checking those older releases; candidate and newly
+    published archives are always verified without it.
 
 Windows (``windows``, run on a Windows runner)
     Every PE file (``.exe``, ``.dll``, ``.node``) inside a Windows archive must
@@ -43,10 +49,10 @@ RELEASE_TEAM_ID = "YCK386LBJ7"
 RELEASE_SIGNER = "Cua AI, Inc."
 DARWIN_LABELS = ("darwin-arm64", "darwin-x86_64", "darwin-universal")
 WINDOWS_ARCHES = ("x86_64", "arm64")
-# Mach-O files that the release pipeline signs with the Developer ID identity.
-# cua_driver_node_runtime.node is loaded by Node and is not Developer ID signed
-# by the current pipeline, so it is intentionally not listed here.
-SIGNED_MACHO_FILES = ("cua-driver", "cua-cursor-theme", "libcua_driver_sdk.dylib")
+# Standalone Mach-O files that the release pipeline signs with the Developer ID
+# identity. Every one of them ships in every darwin archive.
+NODE_RUNTIME = "cua_driver_node_runtime.node"
+SIGNED_MACHO_FILES = ("cua-driver", "cua-cursor-theme", "libcua_driver_sdk.dylib", NODE_RUNTIME)
 APP_EXECUTABLES = ("Contents/MacOS/cua-driver", "Contents/MacOS/cua-cursor-theme")
 PE_SUFFIXES = (".exe", ".dll", ".node")
 
@@ -169,11 +175,17 @@ def verify_macos(
     version: str,
     team_id: str = RELEASE_TEAM_ID,
     *,
+    legacy_unsigned_node_runtime: bool = False,
     run: Runner | None = None,
     workdir: Path | None = None,
 ) -> Report:
     run = run or run_command
     report = Report()
+    signed_files = tuple(
+        name
+        for name in SIGNED_MACHO_FILES
+        if not (legacy_unsigned_node_runtime and name == NODE_RUNTIME)
+    )
     archives = sorted(artifacts.rglob(f"cua-driver-rs-{version}-darwin-*.tar.gz"))
     by_name = {archive.name: archive for archive in archives}
     expected = [f"cua-driver-rs-{version}-{label}.tar.gz" for label in DARWIN_LABELS]
@@ -214,7 +226,7 @@ def verify_macos(
                             )
                         else:
                             report.fail(f"{label}: {executable} is missing")
-            for file_name in SIGNED_MACHO_FILES:
+            for file_name in signed_files:
                 target = root / file_name
                 if not target.is_file():
                     report.fail(f"{name}: {file_name} is missing")
@@ -336,6 +348,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     subcommands = parser.add_subparsers(dest="platform", required=True)
     macos = subcommands.add_parser("macos", help="verify darwin archives (run on macOS)")
     macos.add_argument("--team-id", default=RELEASE_TEAM_ID)
+    macos.add_argument(
+        "--legacy-unsigned-node-runtime",
+        action="store_true",
+        help=f"skip {NODE_RUNTIME}, which releases published before #4168 left unsigned",
+    )
     windows = subcommands.add_parser("windows", help="verify Windows archives (run on Windows)")
     windows.add_argument("--signer", default=RELEASE_SIGNER)
     for command in (macos, windows):
@@ -352,7 +369,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: artifact directory {args.artifacts} does not exist", file=sys.stderr)
         return 2
     if args.platform == "macos":
-        report = verify_macos(args.artifacts, args.version, args.team_id)
+        report = verify_macos(
+            args.artifacts,
+            args.version,
+            args.team_id,
+            legacy_unsigned_node_runtime=args.legacy_unsigned_node_runtime,
+        )
     else:
         report = verify_windows(args.artifacts, args.version, args.signer)
 

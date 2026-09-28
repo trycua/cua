@@ -780,6 +780,10 @@ jobs:
             --sign "$IDENTITY" release/universal/cua-cursor-theme
           codesign --force --timestamp --options runtime \
             --sign "$IDENTITY" release/universal/libcua_driver_sdk.dylib
+          # Node loads this addon; every archive ships it next to the SDK
+          # dylib, so it carries the same identity (#4168).
+          codesign --force --timestamp --options runtime \
+            --sign "$IDENTITY" release/universal/cua_driver_node_runtime.node
           codesign --verify --strict --verbose=2 release/universal/cua-driver
           codesign -d --entitlements - --xml release/universal/cua-driver \
             > release/actual-cua-driver-entitlements.plist
@@ -796,6 +800,7 @@ jobs:
           PY
           codesign --verify --strict --verbose=2 release/universal/cua-cursor-theme
           codesign --verify --strict --verbose=2 release/universal/libcua_driver_sdk.dylib
+          codesign --verify --strict --verbose=2 release/universal/cua_driver_node_runtime.node
       - name: Assemble CuaDriver.app bundle
         working-directory: libs/cua-driver/rust
         run: |

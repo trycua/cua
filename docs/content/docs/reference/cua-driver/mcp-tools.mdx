@@ -491,7 +491,7 @@ Mapping: by='page' → larger step; by='line' → smaller step; amount = number 
 
 **Arguments:**
 
-- `amount` (integer, optional): Pixel-wheel path: number of wheel notches. Keystroke path: number of keystroke repetitions. Default: 3. range: 1–50
+- `amount` (integer, optional): Pixel-wheel path: number of wheel notches. Keystroke path: number of keystroke repetitions. Larger requests are clamped to the maximum. Default: 3. range: 1–50
 - `by` (string, optional): Scroll granularity. Default: line.
 - `delivery_mode` (string, optional): Best-effort-background ladder rung (default "background"). "background": inject without fronting or raising the target — no focus steal. "foreground": briefly front the target, act, then restore the prior frontmost — the explicit last resort when a background attempt didn't land. Re-call with "foreground" only for the action that needs it.
 - `direction` (string, required): Scroll direction.

@@ -7,6 +7,7 @@ use cua_driver_contract::{
     CAPABILITY_VERSION, CONTRACT_VERSION, MCP_PROTOCOL_VERSION, TOOLS_LIST_SCHEMA_VERSION,
 };
 use cua_driver_core::daemon::{request_daemon_metadata, DaemonMetadata};
+use cua_driver_core::window_observation::{WINDOW_CHANGE_POLL_ENV, WINDOW_CHANGE_TIMEOUT_ENV};
 use std::collections::BTreeMap;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -835,6 +836,8 @@ fn configuration_error<T>(reason: impl Into<String>) -> Result<T, EmbeddedDriver
 pub(crate) fn allowed_environment_name(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();
     upper.starts_with("LC_")
+        || upper == WINDOW_CHANGE_TIMEOUT_ENV
+        || upper == WINDOW_CHANGE_POLL_ENV
         || matches!(
             upper.as_str(),
             "PATH"
@@ -1221,6 +1224,10 @@ mod tests {
         assert!(!allowed_environment_name("CUA_DRIVER_PERMISSION_MODE"));
         assert!(!allowed_environment_name("LD_PRELOAD"));
         assert!(!allowed_environment_name("NODE_OPTIONS"));
+        assert!(allowed_environment_name(
+            "CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS"
+        ));
+        assert!(allowed_environment_name("CUA_DRIVER_WINDOW_CHANGE_POLL_MS"));
     }
 
     #[test]

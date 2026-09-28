@@ -78,6 +78,10 @@ pub struct Snapshot {
 pub struct Changes {
     pub new_windows: Vec<WindowEvent>,
     pub foreground_changed: bool,
+    /// Whether the post-action window poll ran. `false` when the host bound
+    /// skipped it or the poll task was lost: an empty `new_windows` then means
+    /// nothing was watched, not that nothing opened.
+    pub polled: bool,
 }
 
 impl Changes {
@@ -85,6 +89,14 @@ impl Changes {
         Self {
             new_windows: Vec::new(),
             foreground_changed: false,
+            polled: true,
+        }
+    }
+
+    pub fn not_polled() -> Self {
+        Self {
+            polled: false,
+            ..Self::no_change()
         }
     }
 
@@ -285,7 +297,7 @@ impl Snapshot {
     pub(crate) fn detect_bounded(self, bounds: WindowObservationBounds) -> Changes {
         if bounds.skips_observation() {
             drop(self);
-            return Changes::no_change();
+            return Changes::not_polled();
         }
         self.detect_with(bounds.timeout, bounds.poll)
     }
@@ -299,7 +311,7 @@ impl Snapshot {
         // thread; the lease's Drop runs there when detect_with returns.
         tokio::task::spawn_blocking(move || self.detect())
             .await
-            .unwrap_or_else(|_| Changes::no_change())
+            .unwrap_or_else(|_| Changes::not_polled())
     }
 
     /// Same as `detect()` but with configurable timing.
@@ -333,6 +345,7 @@ impl Snapshot {
                 return Changes {
                     new_windows,
                     foreground_changed,
+                    polled: true,
                 };
             }
             if Instant::now() >= deadline {
@@ -358,6 +371,7 @@ mod tests {
     #[test]
     fn changes_result_suffix_single_new_window_with_title() {
         let c = Changes {
+            polled: true,
             new_windows: vec![WindowEvent {
                 window_id: 99,
                 pid: 100,
@@ -376,6 +390,7 @@ mod tests {
     #[test]
     fn changes_result_suffix_groups_windows_by_app() {
         let c = Changes {
+            polled: true,
             new_windows: vec![
                 WindowEvent {
                     window_id: 1,
@@ -409,6 +424,7 @@ mod tests {
     #[test]
     fn changes_result_suffix_foreground_change_only() {
         let c = Changes {
+            polled: true,
             new_windows: vec![],
             foreground_changed: true,
         };
@@ -422,6 +438,7 @@ mod tests {
     #[test]
     fn changes_result_suffix_empty_title_is_dropped() {
         let c = Changes {
+            polled: true,
             new_windows: vec![WindowEvent {
                 window_id: 1,
                 pid: 100,
@@ -487,8 +504,19 @@ mod tests {
         let started = Instant::now();
         let changes = snap.detect_bounded(observation_bounds_from(Some("0"), None));
         assert!(started.elapsed() < DEFAULT_POLL_INTERVAL);
+        assert!(!changes.polled);
         assert!(!changes.needs_restore());
         assert_eq!(changes.result_suffix(), "");
+    }
+
+    /// The other half of the pair above: a poll that ran is `polled` whether
+    /// or not anything opened before its deadline, so a skipped poll never
+    /// reads as a quiet one.
+    #[test]
+    fn a_poll_that_ran_is_polled_even_when_it_times_out() {
+        let snap = WindowChangeDetector::snapshot(None);
+        let changes = snap.detect_bounded(observation_bounds_from(Some("30"), Some("10")));
+        assert!(changes.polled);
     }
 
     /// Regression: `snapshot(prior_front)` must store the caller's

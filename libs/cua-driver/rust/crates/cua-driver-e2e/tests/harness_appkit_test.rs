@@ -26,7 +26,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cua_driver_testkit::ax::{element_index_by_id, element_index_containing, has_id, looks_empty};
 use cua_driver_testkit::e2e::{
@@ -129,6 +129,58 @@ fn snapshot_elements(driver: &mut McpDriver, pid: u32, window_id: u64) -> ToolRe
             "capture_mode": "ax"
         }),
     )
+}
+
+struct FrontWindow {
+    window_id: u64,
+    z_index: i64,
+    app_name: String,
+    title: String,
+}
+
+impl std::fmt::Display for FrontWindow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "window {} (z_index {}, {} {:?})",
+            self.window_id, self.z_index, self.app_name, self.title
+        )
+    }
+}
+
+/// The window WindowServer ranks first in the global layer-0 order, read from
+/// `list_windows` (`z_index`: higher values are closer to the front) so the
+/// observation does not depend on the tool under test.
+fn front_layer_zero_window(driver: &mut McpDriver) -> Option<FrontWindow> {
+    let response = driver.call("list_windows", serde_json::json!({"on_screen_only": true}));
+    response.structured()["windows"]
+        .as_array()?
+        .iter()
+        .filter(|window| window["layer"].as_i64() == Some(0))
+        .filter_map(|window| {
+            Some(FrontWindow {
+                window_id: window["window_id"].as_u64()?,
+                z_index: window["z_index"].as_i64()?,
+                app_name: window["app_name"].as_str().unwrap_or_default().to_owned(),
+                title: window["title"].as_str().unwrap_or_default().to_owned(),
+            })
+        })
+        .max_by_key(|window| window.z_index)
+}
+
+/// Poll the global layer-0 order until `window_id` leads it, up to 3s, and
+/// return the last observation so a caller can name whatever leads instead.
+fn await_front_layer_zero_window(driver: &mut McpDriver, window_id: u64) -> Option<FrontWindow> {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let front = front_layer_zero_window(driver);
+        if front.as_ref().map(|window| window.window_id) == Some(window_id)
+            || Instant::now() >= deadline
+        {
+            return front;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
@@ -333,20 +385,20 @@ fn harness_appkit_exact_activation_with_agent_cursor() {
 
 #[test]
 #[ignore]
-fn harness_appkit_exact_activation_refuses_competing_window() {
+fn harness_appkit_exact_activation_ignores_competing_application_window() {
     let mut case = native_foreground_case(
         "appkit",
         "exact_activation_competing_window",
         Targeting::NotApplicable,
         DriverRoute::WindowState,
-    )
-    .expecting_refusal(vec![RefusalCode::BringToFrontExactWindowUnverified]);
+    );
     case.oracles.push(OracleKind::Cursor);
     run_case(case, |pid, wid, driver| {
         let competitor = Harness::launch_with_options(None, None, true);
         let (competing_wid, _) = driver
             .find_window(competitor.pid as i64, "CuaTestHarness AppKit")
             .expect("find competing ordinary window");
+        assert_ne!(competing_wid, u64::from(wid));
         let snapshot = snapshot_elements(driver, pid, wid);
         assert!(!snapshot.is_error(), "target snapshot: {}", snapshot.text());
         let observer = NativeObserver::new();
@@ -355,38 +407,47 @@ fn harness_appkit_exact_activation_refuses_competing_window() {
             native_id: wid,
         };
         let before = observer.snapshot(target).expect("observe competing window");
+        let front = await_front_layer_zero_window(driver, competing_wid);
+        let leader = front
+            .as_ref()
+            .map(FrontWindow::to_string)
+            .unwrap_or_else(|| "no on-screen layer-0 window".to_owned());
+        assert_eq!(
+            front.map(|window| window.window_id),
+            Some(competing_wid),
+            "competing window {competing_wid} must lead the global layer-0 order before \
+             bring_to_front; list_windows ranks {leader} first"
+        );
         let response = driver.call(
             "bring_to_front",
             serde_json::json!({"pid": pid, "window_id": wid}),
         );
         assert!(
-            response.is_error(),
-            "competing window must prevent verification"
+            !response.is_error(),
+            "another application ordering its window front must not unverify activation: {}",
+            response.raw
         );
         assert_eq!(
             response.structured()["code"],
-            "bring_to_front_exact_window_unverified"
+            "bring_to_front_exact_window_verified"
         );
-        assert_eq!(response.structured()["activated"], false);
+        assert_eq!(response.structured()["activated"], true);
         assert_eq!(response.structured()["process_activated"], true);
         assert_eq!(
             response.structured()["exact_window_effect"]["focused"],
             true
         );
         assert_eq!(
-            response.structured()["observed"]["frontmost_ordinary_window_id"].as_u64(),
-            Some(competing_wid)
+            response.structured()["exact_window_effect"]["front_in_process_on_display"],
+            true
         );
-        let after = observer
-            .snapshot(target)
-            .expect("observe refused activation");
+        assert_eq!(
+            response.structured()["observed"]["focused_window_id"].as_u64(),
+            Some(u64::from(wid))
+        );
+        let after = observer.snapshot(target).expect("observe activated target");
         assert_eq!(after.cursor_pos, before.cursor_pos, "real pointer moved");
-        Observation::refused(
-            RefusalCode::BringToFrontExactWindowUnverified,
-            vec![OracleKind::FixtureState, OracleKind::Cursor],
-            response.text(),
-            Evidence::default(),
-        )
+        Observation::delivered_with_fixture_state(vec![OracleKind::Cursor])
     });
 }
 

@@ -871,7 +871,7 @@ fn tick_all_cores(cores: &mut CursorMap<RenderStateCore>, dt: f64) -> Vec<Cursor
 /// gated on a shown, placed cursor: a hidden cursor's motion is quiesced by
 /// [`quiesce_hidden`] and never repaints a layer surface.
 fn needs_frame_tick(core: &RenderStateCore) -> bool {
-    core.visible && cursor_overlay::render_state::is_placed(core.pos) && core.needs_frame_tick()
+    core.is_enabled() && core.is_placed() && core.needs_frame_tick()
 }
 
 fn quiesce_hidden(core: &mut RenderStateCore) {

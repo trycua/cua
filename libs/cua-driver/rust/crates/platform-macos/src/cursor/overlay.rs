@@ -148,8 +148,8 @@ fn on_main_screen(pos: (f64, f64)) -> bool {
 
 fn cursor_may_paint(state: &RenderState) -> bool {
     state.focus_rect.is_some()
-        || (state.core.cfg.enabled
-            && state.core.visible
+        || (state.core.is_enabled()
+            && !state.core.pinned_target_off_workspace
             && state.core.idle_alpha > 0.0
             && on_main_screen(state.core.pos))
 }
@@ -276,6 +276,21 @@ pub fn send_command(key: CursorKey, cmd: OverlayCommand) {
     if !draws_cursor(&key) {
         return;
     }
+    if matches!(
+        &cmd,
+        OverlayCommand::SetEnabled(_)
+            | OverlayCommand::SetMotion(_)
+            | OverlayCommand::SetTheme { .. }
+    ) {
+        if let Ok(mut guard) = RENDER.lock() {
+            if let Some(map) = guard.as_mut() {
+                map.apply_command(key.clone(), cmd.clone());
+            }
+        }
+        if matches!(&cmd, OverlayCommand::SetEnabled(false)) {
+            arrival_cancel(&key);
+        }
+    }
     if let Some(tx) = CMD_TX.get() {
         let _ = tx.try_send(OverlayMsg::Cmd(KeyedOverlayCommand { key, cmd }));
     }
@@ -367,10 +382,10 @@ pub fn current_theme_state(
 /// the sentinel and only `ClickPulse` snapped a static arrow, which is easy to
 /// miss. See the AX-no-glide report.
 ///
-/// No-op when the cursor is already placed (`is_placed`) or absent. The
-/// seed is clamped to the main screen frame so it never starts off-display.
-/// Returns true if a seed was applied (i.e. the cursor was at the sentinel and
-/// is now primed to glide).
+/// No-op when the cursor is already placed (is_placed) or absent. The
+/// seed is clamped to the main screen frame when the target lies on that screen so it
+/// never starts off-display. Returns true if a seed was applied (i.e. the
+/// cursor was at the sentinel and is now primed to glide).
 fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
     let mut guard = RENDER.lock().unwrap();
     let Some(map) = guard.as_mut() else {
@@ -405,8 +420,8 @@ pub async fn animate_cursor_to_target(key: CursorKey, x: f64, y: f64, target: Op
     if key.is_empty() {
         return;
     }
-    // Seed a sentinel cursor on-screen so the MoveTo below glides instead of
-    // being short-circuited. After this the cursor is placed (`is_placed`), so the
+    // Seed an unplaced cursor on-screen so the MoveTo below glides instead of
+    // being short-circuited. After this is_placed() holds, so the
     // should-animate check passes on the first action just like later ones.
     seed_start_if_sentinel(&key, x, y);
 
@@ -416,7 +431,7 @@ pub async fn animate_cursor_to_target(key: CursorKey, x: f64, y: f64, target: Op
         let guard = RENDER.lock().unwrap();
         matches!(
             guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled && cursor_overlay::render_state::is_placed(rs.core.pos)
+            Some(rs) if rs.core.is_enabled() && cursor_overlay::render_state::is_placed(rs.core.pos)
         )
     };
     if !should_animate {
@@ -592,9 +607,19 @@ impl RenderEntry for RenderState {
         //     the sentinel (otherwise the animation already landed it there).
         match cmd {
             OverlayCommand::ShowFocusRect(rect) => {
+                if !self.core.is_enabled() && rect.is_some() {
+                    return false;
+                }
                 self.focus_rect = rect;
                 self.focus_rect_t = 0.0; // reset fade to fully visible
                 true
+            }
+            OverlayCommand::SetEnabled(v) => {
+                if !v {
+                    self.focus_rect = None;
+                    self.focus_rect_t = 1.0;
+                }
+                self.core.apply_command_base(cmd, true, true)
             }
             OverlayCommand::PinAbove(wid) => {
                 // The overlay window joins every Space, so a target on another
@@ -778,6 +803,7 @@ fn render_loop(
             map.platform.backing_scale,
         )
     }));
+    let mut layer_has_pixels = false;
 
     loop {
         // When no cursor animation/fade is active, block until the MCP side
@@ -955,30 +981,40 @@ fn render_loop(
         // change pixels. A final frame is emitted as animations/fades finish so
         // the layer is left in the completed/cleared state before blocking.
         if had_msg || refit || hover_changed || frame_tick_needed || next_frame_tick_needed {
-            let pixmap = {
+            let (pixmap, any_paints) = {
                 let guard = RENDER.lock().unwrap();
                 if let Some(map) = guard.as_ref() {
-                    // Allocate the pixmap at the screen's PHYSICAL pixel
-                    // dimensions so the cursor rasterises at retina resolution.
-                    // The cursor's logical coordinates are scaled into pixmap
-                    // pixels inside `paint_cursor` (it multiplies px/py/sizes
-                    // by `backing_scale`).
-                    let scale = map.platform.backing_scale.max(1.0);
-                    let w = (win_w * scale).max(1.0) as u32;
-                    let h = (win_h * scale).max(1.0) as u32;
-                    let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
-                        .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
-                    let backing_scale_f32 = scale as f32;
-                    note_overlay_frame(map.cursors.values().any(cursor_may_paint));
-                    paint_main_screen(&mut pm, map, backing_scale_f32);
-                    pm
+                    let any_paints = map.cursors.values().any(cursor_may_paint);
+                    note_overlay_frame(any_paints);
+                    if !any_paints {
+                        let clear_pm =
+                            layer_has_pixels.then(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+                        (clear_pm, false)
+                    } else {
+                        // Allocate the pixmap at the screen's PHYSICAL pixel
+                        // dimensions so the cursor rasterises at retina resolution.
+                        // The cursor's logical coordinates are scaled into pixmap
+                        // pixels inside paint_cursor (it multiplies px/py/sizes
+                        // by acking_scale).
+                        let scale = map.platform.backing_scale.max(1.0);
+                        let w = (win_w * scale).max(1.0) as u32;
+                        let h = (win_h * scale).max(1.0) as u32;
+                        let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
+                            .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
+                        let backing_scale_f32 = scale as f32;
+                        paint_main_screen(&mut pm, map, backing_scale_f32);
+                        (Some(pm), true)
+                    }
                 } else {
                     break;
                 }
             };
+            layer_has_pixels = any_paints;
 
             // Convert to CGImage and update layer on the main queue.
-            dispatch_set_layer_contents(layer_ptr, pixmap);
+            if let Some(pixmap) = pixmap {
+                dispatch_set_layer_contents(layer_ptr, pixmap);
+            }
         }
 
         frame_tick_needed = next_frame_tick_needed;
@@ -1071,10 +1107,7 @@ fn hardware_cursor_position() -> Option<(f64, f64)> {
 }
 
 fn cursor_is_externally_visible(state: &RenderState) -> bool {
-    state.core.cfg.enabled
-        && state.core.visible
-        && on_main_screen(state.core.pos)
-        && state.core.idle_alpha >= 0.004
+    state.core.is_enabled() && on_main_screen(state.core.pos) && state.core.idle_alpha >= 0.004
 }
 
 /// Convert a `tiny_skia::Pixmap` to a `CGImage` and set it as the contents
@@ -1405,11 +1438,14 @@ mod tests {
             .unwrap()
     }
 
+    static RENDER_LOOP_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// cua-spacesd `serve` initialized the overlay (a GUI session) but never
     /// ran its AppKit loop, and the first animated click waited forever for
     /// an arrival only the render loop fires, wedging the driver.
     #[test]
     fn animate_without_a_render_loop_never_waits() {
+        let _lock = RENDER_LOOP_TEST_MUTEX.lock().unwrap();
         init(CursorConfig {
             enabled: true,
             ..CursorConfig::default()
@@ -1440,6 +1476,47 @@ mod tests {
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         tx.send(()).unwrap();
         assert!(rt.block_on(wait_for_arrival(rx, true, Duration::from_secs(60))));
+    }
+
+    #[test]
+    fn animate_cursor_to_returns_immediately_when_disabled_mid_session() {
+        let _lock = RENDER_LOOP_TEST_MUTEX.lock().unwrap();
+        init(CursorConfig {
+            enabled: true,
+            ..CursorConfig::default()
+        });
+        seed_start_if_sentinel(&"sess-mid-disable".to_owned(), 400.0, 300.0);
+
+        // Disable the cursor mid-session.
+        send_command(
+            "sess-mid-disable".to_owned(),
+            OverlayCommand::SetEnabled(false),
+        );
+
+        // Mark the render loop running so that an enabled cursor would wait for arrival.
+        RENDER_LOOP_RUNNING.store(true, Ordering::Release);
+        struct LoopGuard;
+        impl Drop for LoopGuard {
+            fn drop(&mut self) {
+                RENDER_LOOP_RUNNING.store(false, Ordering::Release);
+            }
+        }
+        let _guard = LoopGuard;
+
+        let started = Instant::now();
+        runtime().block_on(async {
+            tokio::time::timeout(
+                Duration::from_millis(500),
+                animate_cursor_to("sess-mid-disable".to_owned(), 600.0, 500.0),
+            )
+            .await
+            .expect("animate_cursor_to must not wait or time out when disabled mid-session");
+        });
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "animate_cursor_to took too long for a disabled cursor: {:?}",
+            started.elapsed()
+        );
     }
 
     fn window(window_id: u32, pid: i32, z_index: usize) -> crate::windows::WindowInfo {
@@ -1509,12 +1586,27 @@ mod tests {
     fn only_enabled_on_screen_cursor_is_externally_visible() {
         let mut map = empty_map();
         assert!(!cursor_is_externally_visible(&map.cursors["default"]));
+        assert!(!cursor_may_paint(&map.cursors["default"]));
 
         placed(&mut map, "sessA");
         assert!(cursor_is_externally_visible(&map.cursors["sessA"]));
+        assert!(cursor_may_paint(&map.cursors["sessA"]));
+
+        // A cursor placed on a negative-coordinate secondary display is outside
+        // the main screen, so it is not externally visible on the main-screen
+        // overlay window and does not force full-screen Retina pixmap composites
+        // there (#4276).
+        let primary = Some(ScreenFrame::new(0.0, 0.0, 1920.0, 1080.0));
+        assert!(map.seed_start_if_sentinel("neg", -800.0, 1200.0, primary));
+        assert_eq!(map.cursors["neg"].core.pos, (-940.0, 1060.0));
+        assert!(!cursor_is_externally_visible(&map.cursors["neg"]));
+        assert!(!cursor_may_paint(&map.cursors["neg"]));
+        map.apply_command("neg".to_owned(), OverlayCommand::SetEnabled(false));
+        assert!(!cursor_is_externally_visible(&map.cursors["neg"]));
 
         map.cursors.get_mut("sessA").unwrap().core.cfg.enabled = false;
         assert!(!cursor_is_externally_visible(&map.cursors["sessA"]));
+        assert!(!cursor_may_paint(&map.cursors["sessA"]));
     }
 
     #[test]

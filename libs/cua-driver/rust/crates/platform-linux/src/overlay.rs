@@ -367,6 +367,21 @@ fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
     if !draws_cursor(&key) {
         return false;
     }
+    if matches!(
+        &cmd,
+        OverlayCommand::SetEnabled(_)
+            | OverlayCommand::SetMotion(_)
+            | OverlayCommand::SetTheme { .. }
+    ) {
+        if let Ok(mut guard) = RENDER.lock() {
+            if let Some(map) = guard.as_mut() {
+                map.apply_command(key.clone(), cmd.clone());
+            }
+        }
+        if matches!(&cmd, OverlayCommand::SetEnabled(false)) {
+            arrival_cancel(&key);
+        }
+    }
     let msg = OverlayMsg::Cmd(KeyedOverlayCommand {
         key: key.clone(),
         cmd: cmd.clone(),
@@ -556,7 +571,7 @@ pub fn is_enabled_for(key: &str) -> bool {
         .ok()
         .and_then(|g| {
             g.as_ref()
-                .and_then(|m| m.cursor_or_default(key).map(|rs| rs.core.visible))
+                .and_then(|m| m.cursor_or_default(key).map(|rs| rs.core.is_enabled()))
         })
         .unwrap_or(false)
 }
@@ -571,7 +586,7 @@ pub fn is_visible_for_session(key: &str) -> bool {
             guard
                 .as_ref()
                 .and_then(|map| map.cursors.get(key))
-                .map(|rs| rs.core.cfg.enabled && rs.core.is_revealed())
+                .map(|rs| rs.core.is_revealed())
         })
         .unwrap_or(false)
 }
@@ -590,6 +605,18 @@ pub fn current_position_for(key: &str) -> (f64, f64) {
                 .map(|rs| rs.core.pos)
         })
         .unwrap_or(cursor_overlay::render_state::UNPLACED_POS)
+}
+
+pub fn is_placed_for(key: &str) -> bool {
+    RENDER
+        .lock()
+        .ok()
+        .and_then(|g| {
+            g.as_ref()
+                .and_then(|m| m.cursors.get(key))
+                .map(|rs| rs.core.is_placed())
+        })
+        .unwrap_or(false)
 }
 
 pub fn current_motion_for(key: &str) -> cursor_overlay::MotionConfig {
@@ -660,9 +687,7 @@ pub async fn animate_cursor_to_target_for(
         let guard = RENDER.lock().unwrap();
         matches!(
             guard.as_ref().and_then(|m| m.cursors.get(&key)),
-            Some(rs) if rs.core.cfg.enabled
-                && rs.core.visible
-                && cursor_overlay::render_state::is_placed(rs.core.pos)
+            Some(rs) if rs.core.is_enabled() && cursor_overlay::render_state::is_placed(rs.core.pos)
         )
     };
     if !should_animate {

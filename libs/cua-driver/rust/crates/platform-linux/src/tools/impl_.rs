@@ -11927,7 +11927,8 @@ impl Tool for GetScreenSizeTool {
                 // Shared manifest admission needs content-free display
                 // metadata even when this native desktop has no X11 DISPLAY.
                 // The adapter attests the IPC/Wayland compositor peer and
-                // refuses layouts outside its qualified 1:1 single-output frame.
+                // refuses layouts outside its qualified single-output frame.
+                // Scaled outputs report logical pixels plus the output scale.
                 return crate::wayland::hyprland::screen_size();
             }
             // X11 reports pixel dimensions; scale factor on X11 is not

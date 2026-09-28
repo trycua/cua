@@ -317,9 +317,13 @@ fn valid_dimensions(width: u32, height: u32) -> bool {
     width > 0 && height > 0 && u64::from(width) * u64::from(height) <= MAX_LOGICAL_PIXELS
 }
 
-/// Content-free geometry for the qualified single-output, 1:1 desktop.
-/// The common policy adapter uses this for display-scoped observation. Never
-/// substitute a screenshot, XWayland root, or guessed primary monitor here.
+/// Content-free logical geometry for a qualified single-output desktop: the
+/// output mode divided by its scale, rounded as Hyprland rounds its logical
+/// monitor size, plus that scale. Desktop capture, desktop action admission,
+/// and the virtual-pointer extent all use this frame, matching the logical
+/// window geometry and window captures. The common policy adapter uses it for
+/// display-scoped observation. Never substitute a screenshot, XWayland root,
+/// or guessed primary monitor here.
 pub fn screen_size() -> Result<(u32, u32, f64)> {
     screen_size_from_monitors(query("j/monitors")?)
 }
@@ -328,13 +332,32 @@ fn screen_size_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<(u32, u32,
     let [monitor] = monitors.as_slice() else {
         bail!("Hyprland display identity requires exactly one active output");
     };
-    if monitor.scale != 1.0 || monitor.transform != 0 || monitor.x != 0 || monitor.y != 0 {
-        bail!("Hyprland display identity requires an unscaled, unrotated output at the origin");
+    if !monitor.scale.is_finite() || monitor.scale <= 0.0 {
+        bail!("invalid Hyprland display scale");
+    }
+    if monitor.transform != 0 || monitor.x != 0 || monitor.y != 0 {
+        bail!("Hyprland display identity requires an unrotated output at the origin");
     }
     if !valid_dimensions(monitor.width, monitor.height) {
         bail!("invalid Hyprland display dimensions");
     }
-    Ok((monitor.width, monitor.height, monitor.scale))
+
+    let logical_width = (f64::from(monitor.width) / monitor.scale).round();
+    let logical_height = (f64::from(monitor.height) / monitor.scale).round();
+    if !logical_width.is_finite()
+        || !logical_height.is_finite()
+        || logical_width < 1.0
+        || logical_height < 1.0
+        || logical_width > f64::from(u32::MAX)
+        || logical_height > f64::from(u32::MAX)
+    {
+        bail!("invalid Hyprland logical display dimensions");
+    }
+    let (logical_width, logical_height) = (logical_width as u32, logical_height as u32);
+    if !valid_dimensions(logical_width, logical_height) {
+        bail!("invalid Hyprland logical display dimensions");
+    }
+    Ok((logical_width, logical_height, monitor.scale))
 }
 
 pub fn list_windows() -> Result<Vec<Window>> {
@@ -843,19 +866,86 @@ mod tests {
         .unwrap()
     }
 
+    fn scaled_monitor(width: u32, height: u32, scale: f64) -> DisplayMonitor {
+        let mut monitor = display_monitor();
+        (monitor.width, monitor.height, monitor.scale) = (width, height, scale);
+        monitor
+    }
+
+    // (output mode, scale, logical frame). 1.6666666 is the #4219 laptop.
+    const SCALED_OUTPUTS: [((u32, u32), f64, (u32, u32)); 5] = [
+        ((1920, 1080), 1.0, (1920, 1080)),
+        ((2560, 1600), 1.25, (2048, 1280)),
+        ((2880, 1800), 1.5, (1920, 1200)),
+        ((2160, 1350), 1.6666666, (1296, 810)),
+        ((3840, 2160), 2.0, (1920, 1080)),
+    ];
+
     #[test]
-    fn display_identity_accepts_qualified_native_geometry() {
-        assert_eq!(
-            screen_size_from_monitors(vec![display_monitor()]).unwrap(),
-            (1920, 1080, 1.0)
-        );
+    fn display_identity_publishes_the_logical_frame_and_scale() {
+        for ((width, height), scale, logical) in SCALED_OUTPUTS {
+            assert_eq!(
+                screen_size_from_monitors(vec![scaled_monitor(width, height, scale)]).unwrap(),
+                (logical.0, logical.1, scale),
+                "{width}x{height} @ {scale}"
+            );
+        }
+    }
+
+    /// Hyprland maps `motion_absolute(x, y, x_extent, y_extent)` onto its
+    /// logical layout as `x / x_extent`. A desktop screenshot pixel must put
+    /// the pointer on the physical pixel the agent saw in the native capture.
+    #[test]
+    fn scaled_desktop_frame_and_virtual_pointer_extent_agree() {
+        for ((mode_w, mode_h), scale, _) in SCALED_OUTPUTS {
+            let (frame_w, frame_h, _) =
+                screen_size_from_monitors(vec![scaled_monitor(mode_w, mode_h, scale)]).unwrap();
+            let extent = super::super::select_virtual_pointer_extent(
+                (mode_w, mode_h),
+                Some((frame_w, frame_h)),
+            );
+            assert_eq!(extent, (frame_w, frame_h), "{mode_w}x{mode_h} @ {scale}");
+
+            let landed = |(x, y): (u32, u32), (extent_w, extent_h): (u32, u32)| {
+                (
+                    f64::from(x) / f64::from(extent_w) * f64::from(frame_w) * scale,
+                    f64::from(y) / f64::from(extent_h) * f64::from(frame_h) * scale,
+                )
+            };
+            for point in [
+                (0, 0),
+                (frame_w / 3, frame_h / 5),
+                (frame_w / 2, frame_h / 2),
+                (frame_w - 1, frame_h - 1),
+            ] {
+                // Desktop capture resizes the native buffer to the frame.
+                let seen = (
+                    f64::from(point.0) * f64::from(mode_w) / f64::from(frame_w),
+                    f64::from(point.1) * f64::from(mode_h) / f64::from(frame_h),
+                );
+                let (x, y) = landed(point, extent);
+                assert!(
+                    (x - seen.0).abs() < 0.5 && (y - seen.1).abs() < 0.5,
+                    "{mode_w}x{mode_h} @ {scale}: {point:?} landed at ({x}, {y}), saw {seen:?}"
+                );
+            }
+
+            // The physical wl_output mode is the wrong extent on scaled
+            // outputs: the pointer lands at 1 / scale of the target.
+            if scale != 1.0 {
+                let center = (frame_w / 2, frame_h / 2);
+                let seen_x = f64::from(center.0) * f64::from(mode_w) / f64::from(frame_w);
+                let (x, _) = landed(center, (mode_w, mode_h));
+                assert!((x - seen_x / scale).abs() < 1.0 && (x - seen_x).abs() > 1.0);
+            }
+        }
     }
 
     #[test]
     fn display_identity_rejects_ambiguous_outputs_and_unsupported_frames() {
         assert!(screen_size_from_monitors(vec![]).is_err());
         assert!(screen_size_from_monitors(vec![display_monitor(), display_monitor()]).is_err());
-        for scale in [0.0, 1.25, 2.0, f64::NAN, f64::INFINITY] {
+        for scale in [0.0, f64::NAN, f64::INFINITY] {
             let mut monitor = display_monitor();
             monitor.scale = scale;
             assert!(screen_size_from_monitors(vec![monitor]).is_err());

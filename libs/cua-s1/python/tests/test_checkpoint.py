@@ -153,3 +153,24 @@ def test_existing_ambiguous_same_stem_pairs_remain_compatible(tmp_path):
     config_json = tmp_path / "config.json"
     config_weights.write_bytes(b"placeholder")
     assert resolve_checkpoint_paths(config_json) == (config_weights, config_json)
+
+
+def test_canonical_pair_wins_over_stale_same_stem_siblings(tmp_path):
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("safetensors")
+    checkpoint_dir = tmp_path / "checkpoint"
+    checkpoint_dir.mkdir()
+    (checkpoint_dir / "model.json").write_text('{"stale": true}', encoding="utf-8")
+    (checkpoint_dir / "config.safetensors").write_bytes(b"stale")
+    state = {"layer.weight": torch.tensor([[1.0, 2.0], [3.0, 4.0]])}
+
+    weights_path, config_path = save_checkpoint_files(
+        checkpoint_dir, state, {"width": 2}, {"version": 1}
+    )
+
+    assert resolve_checkpoint_paths(weights_path) == (weights_path, config_path)
+    assert resolve_checkpoint_paths(config_path) == (weights_path, config_path)
+    for locator in (checkpoint_dir, weights_path, config_path):
+        loaded_state, config, _ = load_checkpoint_files(locator)
+        assert config == {"width": 2}
+        assert torch.equal(loaded_state["layer.weight"], state["layer.weight"])

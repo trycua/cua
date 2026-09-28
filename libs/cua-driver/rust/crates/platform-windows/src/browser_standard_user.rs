@@ -75,8 +75,20 @@ unsafe impl Send for OwnedHandle {}
 unsafe impl Sync for OwnedHandle {}
 
 impl OwnedHandle {
+    /// Take ownership of `handle`, which is closed on drop.
+    pub(crate) fn new(handle: HANDLE) -> Self {
+        Self(handle)
+    }
+
     pub(crate) fn raw(&self) -> HANDLE {
         self.0
+    }
+
+    /// Release ownership without closing the handle.
+    pub(crate) fn into_raw(self) -> HANDLE {
+        let handle = self.0;
+        std::mem::forget(self);
+        handle
     }
 }
 

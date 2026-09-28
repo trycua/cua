@@ -2024,6 +2024,11 @@ async fn restore_foreground_polling_best_effort(prior_foreground_addr: usize, sp
     }
 }
 
+/// Bound on one standard-user shell launch helper. It stays inside the 15 s
+/// launch deadline so a helper stuck on a shell dialog is terminated rather
+/// than left behind.
+const STANDARD_USER_SHELL_LAUNCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
+
 pub struct LaunchAppTool;
 static LAUNCH_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -2396,9 +2401,14 @@ impl Tool for LaunchAppTool {
                 Err(e) => return ToolResult::error(format!("Task error: {e}")),
             }
         } else {
-            // Legacy ShellExecuteExW path — unchanged behavior for plain
-            // Win32 apps and for callers passing an explicit `path` /
-            // `launch_path`.
+            // Legacy ShellExecuteExW path for plain Win32 apps and for
+            // callers passing an explicit `path` / `launch_path`. An elevated
+            // Driver runs these launches with its standard-user token so the
+            // app does not inherit administrator rights (#3607).
+            let launch_token = match crate::standard_user_launch::app_launch_token() {
+                Ok(token) => token,
+                Err(message) => return ToolResult::error(message),
+            };
             let urls_clone = urls.clone();
             let target_for_shell = target_file_opt.clone();
             let extra_for_shell = extra_joined.clone();
@@ -2442,39 +2452,64 @@ impl Tool for LaunchAppTool {
                 });
                 let args_w = to_wide(&extra_for_shell);
 
+                use crate::standard_user_launch::AppLaunchToken;
                 let pid = if direct_minimized_exe {
                     let target = target_for_shell
                         .as_deref()
                         .expect("checked executable path");
-                    let mut command_line = to_wide(&if extra_for_shell.is_empty() {
+                    let command_line_text = if extra_for_shell.is_empty() {
                         format!(r#""{target}""#)
                     } else {
                         format!(r#""{target}" {extra_for_shell}"#)
-                    });
-                    let startup = STARTUPINFOW {
-                        cb: std::mem::size_of::<STARTUPINFOW>() as u32,
-                        dwFlags: STARTF_USESHOWWINDOW,
-                        wShowWindow: n_show_for_shell as u16,
-                        ..Default::default()
                     };
-                    let mut process = PROCESS_INFORMATION::default();
-                    unsafe {
-                        CreateProcessW(
-                            PCWSTR(file_w.as_ptr()),
-                            PWSTR(command_line.as_mut_ptr()),
-                            None,
-                            None,
-                            false,
-                            PROCESS_CREATION_FLAGS(0),
-                            None,
-                            PCWSTR::null(),
-                            &startup,
-                            &mut process,
-                        )?;
-                        let _ = CloseHandle(process.hThread);
-                        let _ = CloseHandle(process.hProcess);
+                    if let AppLaunchToken::StandardUser(token) = &launch_token {
+                        crate::standard_user_launch::create_process(
+                            token,
+                            target,
+                            &command_line_text,
+                            n_show_for_shell,
+                        )
+                        .map_err(anyhow::Error::msg)?
+                    } else {
+                        let mut command_line = to_wide(&command_line_text);
+                        let startup = STARTUPINFOW {
+                            cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+                            dwFlags: STARTF_USESHOWWINDOW,
+                            wShowWindow: n_show_for_shell as u16,
+                            ..Default::default()
+                        };
+                        let mut process = PROCESS_INFORMATION::default();
+                        unsafe {
+                            CreateProcessW(
+                                PCWSTR(file_w.as_ptr()),
+                                PWSTR(command_line.as_mut_ptr()),
+                                None,
+                                None,
+                                false,
+                                PROCESS_CREATION_FLAGS(0),
+                                None,
+                                PCWSTR::null(),
+                                &startup,
+                                &mut process,
+                            )?;
+                            let _ = CloseHandle(process.hThread);
+                            let _ = CloseHandle(process.hProcess);
+                        }
+                        process.dwProcessId
                     }
-                    process.dwProcessId
+                } else if let AppLaunchToken::StandardUser(token) = &launch_token {
+                    let file = target_for_shell
+                        .as_deref()
+                        .or_else(|| urls_clone.first().map(String::as_str))
+                        .unwrap_or("");
+                    crate::standard_user_launch::shell_execute(
+                        token,
+                        file,
+                        &extra_for_shell,
+                        n_show_for_shell,
+                        STANDARD_USER_SHELL_LAUNCH_TIMEOUT,
+                    )
+                    .map_err(anyhow::Error::msg)?
                 } else {
                     let mut info = SHELLEXECUTEINFOW {
                         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
@@ -2511,6 +2546,16 @@ impl Tool for LaunchAppTool {
                 // `lpFile`, so only their remaining URLs belong here.
                 let first_unopened_url = first_unopened_shell_url_index(target_for_shell.is_some());
                 for url in &urls_clone[first_unopened_url.min(urls_clone.len())..] {
+                    if let AppLaunchToken::StandardUser(token) = &launch_token {
+                        let _ = crate::standard_user_launch::shell_execute(
+                            token,
+                            url,
+                            "",
+                            n_show_for_shell,
+                            STANDARD_USER_SHELL_LAUNCH_TIMEOUT,
+                        );
+                        continue;
+                    }
                     let file = to_wide(url);
                     let mut url_info = SHELLEXECUTEINFOW {
                         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,

@@ -901,6 +901,15 @@ fn main() {
 
 #[cfg(not(target_os = "macos"))]
 fn main() -> anyhow::Result<()> {
+    // An elevated Driver runs shell launches through this executable with a
+    // standard-user token (#3607). Checked first so the helper does no other
+    // Driver work.
+    #[cfg(target_os = "windows")]
+    if let Some(code) =
+        platform_windows::standard_user_launch::run_shell_launch_helper_if_requested()
+    {
+        std::process::exit(code);
+    }
     cua_driver_sdk::configure_perception_client_resolver(
         extension_manager::perception_client_resolver(),
     );

@@ -42,8 +42,14 @@ pub enum LaunchStep {
     TimedOut,
 }
 
-/// The bounded wait for one walk. The deadline starts at the first unresolved
-/// attempt, so an app that resolves immediately pays nothing.
+/// The bounded wait for one walk.
+///
+/// The deadline is anchored at the start of the first unresolved attempt, so
+/// an app that resolves immediately pays nothing and the time an attempt
+/// itself takes counts against the budget. An app whose AX server is
+/// registered but busy answers each request only after the messaging timeout;
+/// a retry is refused once another attempt of the same length would overrun
+/// the deadline, so the wait never extends a slow walk by a whole attempt.
 #[derive(Debug)]
 pub struct LaunchWait {
     limit: Option<Duration>,
@@ -60,20 +66,28 @@ impl LaunchWait {
         }
     }
 
-    /// Decide the next step after an unresolved attempt at `now`.
-    /// `still_launching` is only consulted when the budget allows a wait.
-    pub fn step(&mut self, now: Instant, still_launching: impl FnOnce() -> bool) -> LaunchStep {
+    /// Decide the next step after an unresolved attempt that started at
+    /// `attempt_started` and ended at `now`. `still_launching` is only
+    /// consulted when the budget allows a wait.
+    pub fn step(
+        &mut self,
+        attempt_started: Instant,
+        now: Instant,
+        still_launching: impl FnOnce() -> bool,
+    ) -> LaunchStep {
         let Some(limit) = self.limit else {
             return LaunchStep::Proceed;
         };
         if !still_launching() {
             return LaunchStep::Proceed;
         }
-        let deadline = *self.deadline.get_or_insert(now + limit);
-        match deadline.checked_duration_since(now) {
-            Some(remaining) if !remaining.is_zero() => {
-                LaunchStep::Retry(remaining.min(LAUNCH_POLL))
-            }
+        let deadline = *self.deadline.get_or_insert(attempt_started + limit);
+        let attempt = now.saturating_duration_since(attempt_started);
+        match deadline
+            .checked_duration_since(now)
+            .and_then(|remaining| remaining.checked_sub(attempt))
+        {
+            Some(slack) if !slack.is_zero() => LaunchStep::Retry(slack.min(LAUNCH_POLL)),
             _ => LaunchStep::TimedOut,
         }
     }
@@ -83,10 +97,13 @@ impl LaunchWait {
 mod tests {
     use super::*;
 
+    const FAST: Duration = Duration::from_millis(5);
+
     #[test]
     fn a_node_only_walk_never_waits_or_asks_about_launch_state() {
         let mut wait = LaunchWait::new(None);
-        let step = wait.step(Instant::now(), || {
+        let now = Instant::now();
+        let step = wait.step(now, now, || {
             panic!("a node-only walk must not query launch state")
         });
         assert_eq!(step, LaunchStep::Proceed);
@@ -96,10 +113,14 @@ mod tests {
     fn a_finished_app_fails_fast() {
         let mut wait = LaunchWait::new(Some(Duration::from_secs(1)));
         let start = Instant::now();
-        assert_eq!(wait.step(start, || false), LaunchStep::Proceed);
-        // No deadline was armed: a later launching attempt gets the whole budget.
         assert_eq!(
-            wait.step(start + Duration::from_secs(5), || true),
+            wait.step(start, start + FAST, || false),
+            LaunchStep::Proceed
+        );
+        // No deadline was armed: a later launching attempt gets the whole budget.
+        let later = start + Duration::from_secs(5);
+        assert_eq!(
+            wait.step(later, later + FAST, || true),
             LaunchStep::Retry(LAUNCH_POLL)
         );
     }
@@ -108,18 +129,36 @@ mod tests {
     fn a_launching_app_is_retried_until_the_budget_runs_out() {
         let start = Instant::now();
         let mut wait = LaunchWait::new(Some(Duration::from_millis(120)));
-        assert_eq!(wait.step(start, || true), LaunchStep::Retry(LAUNCH_POLL));
         assert_eq!(
-            wait.step(start + Duration::from_millis(100), || true),
-            LaunchStep::Retry(Duration::from_millis(20)),
-            "the last retry is clamped to the remaining budget"
+            wait.step(start, start + FAST, || true),
+            LaunchStep::Retry(LAUNCH_POLL)
         );
+        let late = start + Duration::from_millis(95);
         assert_eq!(
-            wait.step(start + Duration::from_millis(120), || true),
+            wait.step(late, late + FAST, || true),
+            LaunchStep::Retry(Duration::from_millis(15)),
+            "the last pause leaves room for one more attempt of the same length"
+        );
+        let last = start + Duration::from_millis(115);
+        assert_eq!(wait.step(last, last + FAST, || true), LaunchStep::TimedOut);
+        let past = start + Duration::from_millis(500);
+        assert_eq!(wait.step(past, past + FAST, || true), LaunchStep::TimedOut);
+    }
+
+    #[test]
+    fn a_busy_launch_is_not_retried_past_its_budget() {
+        // AX is registered but the app is blocked, so each attempt waits out
+        // the messaging timeout. The first attempt already spent the budget.
+        let start = Instant::now();
+        let mut wait = LaunchWait::new(Some(Duration::from_secs(1)));
+        assert_eq!(
+            wait.step(start, start + Duration::from_secs(4), || true),
             LaunchStep::TimedOut
         );
+        // A slow attempt that fits once but not twice is not repeated.
+        let mut wait = LaunchWait::new(Some(Duration::from_secs(5)));
         assert_eq!(
-            wait.step(start + Duration::from_millis(500), || true),
+            wait.step(start, start + Duration::from_secs(3), || true),
             LaunchStep::TimedOut
         );
     }
@@ -128,9 +167,13 @@ mod tests {
     fn an_app_that_finishes_launching_mid_wait_proceeds() {
         let start = Instant::now();
         let mut wait = LaunchWait::new(Some(Duration::from_secs(1)));
-        assert_eq!(wait.step(start, || true), LaunchStep::Retry(LAUNCH_POLL));
         assert_eq!(
-            wait.step(start + Duration::from_millis(300), || false),
+            wait.step(start, start + FAST, || true),
+            LaunchStep::Retry(LAUNCH_POLL)
+        );
+        let later = start + Duration::from_millis(300);
+        assert_eq!(
+            wait.step(later, later + FAST, || false),
             LaunchStep::Proceed
         );
     }

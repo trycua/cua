@@ -247,6 +247,7 @@ pub fn walk_tree_budgeted(
             // the now-materialized (potentially large) tree bounded. An app that
             // has not started answering AX rejects the flip without caching the
             // refusal, so each launch-wait attempt asks again.
+            let attempt_started = Instant::now();
             super::enablement::ensure_chromium_ax_enabled(pid, app_elem);
 
             let top_level = copy_top_level(app_elem, pid, window_id);
@@ -262,7 +263,8 @@ pub fn walk_tree_budgeted(
             };
             let decision = scope_top_level(&top_level, pid, wid);
             if matches!(decision.scope, WindowScope::AxUnresolved { .. }) {
-                match launch_wait.step(Instant::now(), || is_still_launching(pid)) {
+                match launch_wait.step(attempt_started, Instant::now(), || is_still_launching(pid))
+                {
                     LaunchStep::Retry(pause) => {
                         release_all(top_level);
                         std::thread::sleep(pause);

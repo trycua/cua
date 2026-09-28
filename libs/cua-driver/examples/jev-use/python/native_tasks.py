@@ -13,7 +13,7 @@ AppKit (``CUA_APPKIT_TASK_STATE``), WPF (``CUA_WPF_TASK_STATE``), and GTK3
 Their oracle is the harness's own JSON state file, which the app rewrites on
 every change; it never depends on Driver output.
 
-``canvas-save`` drives the cross-platform visual-only canvas fixture
+``canvas-cancel`` drives the cross-platform visual-only canvas fixture
 (``tests/fixtures/apps/cross-platform/visual-only-canvas``), a custom-painted
 Tk surface with no accessibility tree. Its only executable candidate is a
 capture-bound visual click, so it proves the OmniParser fallback. The fixture
@@ -612,15 +612,17 @@ CANVAS = HarnessSpec(
     "canvas", "any", "Cua Visual-Only Canvas Fixture", "cua.visual_canvas_task_state_v1",
     "CUA_CANVAS_TASK_STATE",
 )
-CANVAS_TASK_ID = "canvas-save"
-CANVAS_TARGET = "Save"
+CANVAS_TASK_ID = "canvas-cancel"
+# Cancel, not Save: OmniParser reads the 32 px "Save" label inconsistently on a
+# 1x macOS capture ("Save", then "Saye"), and the exact text match (correctly)
+# withholds the candidate. "Send" is a risk phrase. "Cancel" reads reliably.
+CANVAS_TARGET = "Cancel"
 # A painted surface has no deeper tree. Walking only the window's top level
 # keeps macOS from spending the walk budget in the application menu bar (which
 # would truncate the tree and forbid the fallback). Any content container still
 # appears at depth 1 and blocks the fallback.
 CANVAS_MAX_DEPTH = 1
-# The macOS VM's 1x capture reads the canvas's "Save" label at about 0.75.
-CANVAS_MIN_CONFIDENCE = 0.7
+CANVAS_MIN_CONFIDENCE = 0.8
 
 APPKIT_TASK_IDS = harness_task_ids("appkit")
 NATIVE_TASK_IDS = (
@@ -632,7 +634,7 @@ NATIVE_TASK_IDS = (
 def split_task_id(task_id: str) -> tuple[HarnessSpec, str]:
     """Return the harness and task kind of a built-in task ID."""
     if task_id == CANVAS_TASK_ID:
-        return CANVAS, "save"
+        return CANVAS, "cancel"
     harness, _, kind = task_id.partition("-")
     if harness not in HARNESSES or kind not in TASK_KINDS:
         raise ValueError(f"unknown native task: {task_id}")
@@ -653,11 +655,11 @@ def native_task(
     scope = WindowScope(
         harness.window_title, bundle_id=harness.bundle_id, process_name=harness.process_name
     )
-    if kind == "save":
+    if kind == "cancel":
         return NativeTask(
             id=task_id,
             goal=(
-                f"The window is a painted canvas with {CANVAS_TARGET}, Send, and Cancel cards. "
+                "The window is a painted canvas with Save, Send, and Cancel cards. "
                 f"Click the {CANVAS_TARGET} card once, then stop."
             ),
             scope=replace(scope, max_depth=CANVAS_MAX_DEPTH),

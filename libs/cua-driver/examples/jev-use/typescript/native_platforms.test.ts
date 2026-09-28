@@ -44,11 +44,11 @@ test('every harness has the same three tasks', () => {
     NATIVE_TASK_IDS,
     [
       ...['appkit', 'wpf', 'gtk3'].flatMap((h) => ['counter', 'save-note', 'choose-size'].map((k) => `${h}-${k}`)),
-      'canvas-save',
+      'canvas-cancel',
     ]
   );
   for (const taskId of NATIVE_TASK_IDS) {
-    if (taskId === 'canvas-save') continue; // not a form harness (see native_canvas.test.ts)
+    if (taskId === 'canvas-cancel') continue; // not a form harness (see native_canvas.test.ts)
     const [harness, kind] = splitTaskId(taskId);
     const task = nativeTask(taskId, '/tmp/none.json', { pid: 7 });
     assert.equal(task.scope.windowTitle, harness.windowTitle);

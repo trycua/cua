@@ -52,11 +52,11 @@ class HarnessRegistryTest(unittest.TestCase):
             NATIVE_TASK_IDS,
             (
                 *(f"{h}-{k}" for h in ("appkit", "wpf", "gtk3") for k in ("counter", "save-note", "choose-size")),
-                "canvas-save",
+                "canvas-cancel",
             ),
         )
         for task_id in NATIVE_TASK_IDS:
-            if task_id == "canvas-save":
+            if task_id == "canvas-cancel":
                 continue  # the visual-only canvas is not a form harness (see test_native_canvas.py)
             harness, kind = split_task_id(task_id)
             task = native_task(task_id, Path("/tmp/none.json"), pid=7)

@@ -116,13 +116,14 @@ mode, each harness shows the same labeled controls, so candidate IDs and the
 mock provider's choices are identical on every platform. Task mode is selected
 with `CUA_APPKIT_TASK_STATE`, `CUA_WPF_TASK_STATE`, or `CUA_GTK3_TASK_STATE`.
 WPF and GTK3 show a small dedicated task window.
-A fourth task, `canvas-save`, clicks the Save card on the cross-platform
+A fourth task, `canvas-cancel`, clicks the Cancel card on the cross-platform
 visual-only canvas fixture (a custom-painted Tk window with no accessibility
 tree), so it can only succeed through the visual fallback and needs the
 cua-perception extension. It observes only the window's top level
-(`max_depth: 1`), so macOS does not spend the walk budget in the menu bar, and
-accepts the Save label at OCR confidence 0.7, because a 1x macOS capture reads
-it at about 0.75. Run it with `verify_native.py --harness canvas`; the
+(`max_depth: 1`), so macOS does not spend the walk budget in the menu bar. It
+targets Cancel because OmniParser reads the Save label inconsistently on a 1x
+macOS capture (`Save`, then `Saye`), and the exact text match then correctly
+offers no candidate. Send is a risk phrase. Run it with `verify_native.py --harness canvas`; the
 verifier serves the loopback journal the fixture publishes its state to and
 writes that state to the task's state file. Each harness rewrites that
 state file on every change, and the file is the independent oracle. On

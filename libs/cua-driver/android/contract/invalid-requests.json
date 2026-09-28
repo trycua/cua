@@ -1,0 +1,62 @@
+[
+  {
+    "name": "unknown-envelope-field",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-01","operation":"doctor","params":{},"extra":true}
+  },
+  {
+    "name": "unknown-params-field",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-02","operation":"doctor","params":{"extra":true}}
+  },
+  {
+    "name": "null-session-id",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-03","operation":"session.inspect","session_id":null,"params":{}}
+  },
+  {
+    "name": "missing-session-id",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-04","operation":"session.inspect","params":{}}
+  },
+  {
+    "name": "numeric-session-id",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-05","operation":"session.inspect","session_id":42,"params":{}}
+  },
+  {
+    "name": "null-target-id",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-06","operation":"snapshot","session_id":"fixture-session","params":{"target_id":null}}
+  },
+  {
+    "name": "missing-target-id",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-07","operation":"preview","session_id":"fixture-session","params":{}}
+  },
+  {
+    "name": "negative-tap-coordinate",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-08","operation":"tap","session_id":"fixture-session","params":{"snapshot_id":"fixture-snapshot","x":-1,"y":0}}
+  },
+  {
+    "name": "width-below-minimum",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-09","operation":"session.create","params":{"allowed_apps":["ai.example"],"width":319}}
+  },
+  {
+    "name": "height-above-maximum",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-10","operation":"session.create","params":{"allowed_apps":["ai.example"],"height":2401}}
+  },
+  {
+    "name": "density-below-minimum",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-11","operation":"session.create","params":{"allowed_apps":["ai.example"],"density":119}}
+  },
+  {
+    "name": "swipe-duration-below-minimum",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-12","operation":"gesture.swipe","session_id":"fixture-session","params":{"snapshot_id":"fixture-snapshot","from_x":0,"from_y":0,"to_x":1,"to_y":1,"duration_ms":0}}
+  },
+  {
+    "name": "swipe-duration-above-maximum",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-13","operation":"gesture.swipe","session_id":"fixture-session","params":{"snapshot_id":"fixture-snapshot","from_x":0,"from_y":0,"to_x":1,"to_y":1,"duration_ms":1001}}
+  },
+  {
+    "name": "invalid-package",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-14","operation":"app.launch","session_id":"fixture-session","params":{"package":"ai..example"}}
+  },
+  {
+    "name": "unsupported-operation",
+    "request": {"contract_version":"cua.android.v0","request_id":"invalid-15","operation":"unsupported.operation","session_id":"fixture-session","params":{}}
+  }
+]

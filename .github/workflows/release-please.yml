@@ -86,87 +86,17 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           BEFORE_SHA: ${{ github.event.before }}
           VERSION_PATH: libs/cua-driver/rust/crates/cua-perception/VERSION
-        run: |
-          set -euo pipefail
-          git checkout --detach "$GITHUB_SHA"
+        # The tag push starts cd-cua-perception.yml, which publishes the
+        # release. A missed tag heals on the next main push.
+        run: bash .github/scripts/anchor_perception_release_tag.sh
 
-          if [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
-            echo "Skipping Perception tag creation for the initial branch push"
-            exit 0
-          fi
-          if ! git merge-base --is-ancestor "$BEFORE_SHA" "$GITHUB_SHA"; then
-            echo "::error::Refusing to create a release tag for a non-fast-forward main push"
-            exit 1
-          fi
-          BEFORE_VERSION=$(git show "$BEFORE_SHA:$VERSION_PATH" 2>/dev/null | tr -d '[:space:]' || true)
-          VERSION=$(tr -d '[:space:]' < "$VERSION_PATH")
-          if [[ "$BEFORE_VERSION" == "$VERSION" ]]; then
-            echo "Perception version did not change in this main push"
-            exit 0
-          fi
-
-          python3 .github/scripts/validate_release_versions.py --product perception
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Refusing to tag invalid Perception version: $VERSION"
-            exit 1
-          fi
-          if [[ -n "$BEFORE_VERSION" ]]; then
-            python3 - "$BEFORE_VERSION" "$VERSION" <<'PY'
-          import re
-          import sys
-
-          semver = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
-          previous, current = sys.argv[1:]
-          previous_match = semver.fullmatch(previous)
-          current_match = semver.fullmatch(current)
-          if not previous_match or not current_match:
-              raise SystemExit("Perception versions must be stable SemVer")
-          if tuple(map(int, current_match.groups())) <= tuple(map(int, previous_match.groups())):
-              raise SystemExit(
-                  f"Perception version must increase: previous={previous}, current={current}"
-              )
-          PY
-          fi
-          git fetch origin "+refs/heads/main:refs/remotes/origin/main"
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::Refusing to tag a commit outside main"
-            exit 1
-          fi
-
-          TAG="cua-perception-v$VERSION"
-          read_remote_tag() {
-            gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" \
-              --jq '[.object.type, .object.sha] | @tsv' 2>/dev/null || true
-          }
-          require_exact_lightweight_tag() {
-            local tag_record="$1"
-            local tag_type tag_sha
-            IFS=$'\t' read -r tag_type tag_sha <<<"$tag_record"
-            if [[ "$tag_type" != "commit" || "$tag_sha" != "$GITHUB_SHA" ]]; then
-              echo "::error::$TAG already exists but is not a lightweight tag at $GITHUB_SHA"
-              exit 1
-            fi
-          }
-
-          EXISTING=$(read_remote_tag)
-          if [[ -n "$EXISTING" ]]; then
-            require_exact_lightweight_tag "$EXISTING"
-            echo "$TAG already points to the merged Perception version"
-            exit 0
-          fi
-
-          if ! gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
-            -f ref="refs/tags/$TAG" \
-            -f sha="$GITHUB_SHA" >/dev/null; then
-            # A concurrent run may have created the same immutable anchor.
-            EXISTING=$(read_remote_tag)
-            if [[ -z "$EXISTING" ]]; then
-              echo "::error::Failed to create $TAG"
-              exit 1
-            fi
-            require_exact_lightweight_tag "$EXISTING"
-          fi
-          require_exact_lightweight_tag "$(read_remote_tag)"
+      # Release Please aborts every release PR while a merged release PR is
+      # still labeled `autorelease: pending`. Perception skips GitHub releases,
+      # so Release Please never relabels it; do that once its tag is anchored.
+      - name: Mark tagged Perception release pull requests
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: python3 .github/scripts/mark_perception_release_prs_tagged.py
 
       # release-please-action v4.4.1, embedding release-please 17.3.0.
       - name: Open or update automatic release pull requests
@@ -331,12 +261,15 @@ jobs:
               git push --force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD" \
                 origin "HEAD:refs/heads/$BRANCH"
             fi
-          # Search by head branch: an unfiltered list returns only the newest
-          # 100 open pull requests and can silently skip an older release PR.
-          done < <(gh pr list --state open --base main \
-            --search "head:release-please--branches--" --limit 100 \
-            --json number,headRefName \
-            --jq '.[] | select(.headRefName | startswith("release-please--branches--")) | .number')
+          # Look up each component's release branch directly. An unfiltered
+          # list returns only the newest 100 open pull requests, and the search
+          # index can miss a release PR that Release Please opened moments ago.
+          done < <(jq -r '.packages[].component' release-please-config.json |
+            while read -r component; do
+              gh pr list --state open --base main \
+                --head "release-please--branches--main--components--$component" \
+                --json number --jq '.[].number'
+            done)
 
       - name: Verify repository release versions
         run: python3 .github/scripts/validate_release_versions.py --product all

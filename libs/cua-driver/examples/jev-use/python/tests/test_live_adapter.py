@@ -56,7 +56,7 @@ class LiveAdapterTest(unittest.TestCase):
         )
         candidates = build_candidates(snapshot, "expected", visual, capture_bound_click=True)
         selected, confidence, probabilities = choose_with_typesafe(
-            FakeClient(), candidates, snapshot, visual, []
+            FakeClient(), candidates, snapshot, visual, [], "expected"
         )
 
         self.assertEqual(selected, "submit-form")
@@ -70,6 +70,9 @@ class LiveAdapterTest(unittest.TestCase):
         sent_visual = FakeClient.request["state"]["observation"]["visual"]
         self.assertEqual(sent_visual["capture_id"], "capture-submit")
         self.assertEqual(sent_visual["regions"][0]["id"], "submit-text")
+        sent_form = FakeClient.request["state"]["observation"]["form"]
+        self.assertEqual(sent_form["verification_field"], "contains_required_token")
+        self.assertNotIn("expected", json.dumps(FakeClient.request["state"]))
 
     def test_live_adapter_rejects_id_outside_the_supplied_table(self) -> None:
         snapshot = {"target_id": "target", "tab_id": "tab", "refs": []}
@@ -88,7 +91,7 @@ class LiveAdapterTest(unittest.TestCase):
                 )
 
         with self.assertRaisesRegex(ValueError, "unknown candidate"):
-            choose_with_typesafe(UnknownClient(), candidates, snapshot, None, [])
+            choose_with_typesafe(UnknownClient(), candidates, snapshot, None, [], "expected")
 
 
 if __name__ == "__main__":

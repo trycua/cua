@@ -6,24 +6,37 @@ tag namespaces, build-time version sites, builder workflow, and change paths.
 It intentionally does not describe signing, packaging, or registry publishing;
 those remain owned by each component workflow.
 
-## cua-perception candidates
+## cua-perception releases
 
 `cua-perception` has an independent version and changelog beside its Rust crate
 in `libs/cua-driver/rust/crates/cua-perception`. Keeping the Release Please root
 at that crate scopes its commits without unsupported path traversal. The
 `.github/releases/cua-perception` directory remains the authority for schemas,
-trust, and candidate controls. Release Please may open version PRs for the
-component, while `skip-github-release` keeps the stream candidate-only and does
-not create GitHub releases. The workflow creates an idempotent lightweight
-`cua-perception-v<semver>` git tag on the exact main commit carrying each version
-so later candidate changelogs have an immutable range anchor.
+trust, and candidate controls. Release Please opens version PRs for the
+component with `skip-github-release`, so it creates no GitHub release itself.
+On each merged version, `release-please.yml` creates an idempotent lightweight
+`cua-perception-v<semver>` tag on the exact main commit, using the release app
+token so the tag push starts other workflows.
+
+That tag push runs `cd-cua-perception.yml`. It builds the release input on each
+target, passes it to the reviewed candidate workflow
+(`cd-cua-perception-candidate.yml`) for verification, packaging, and signing,
+installs every signed catalog with the published Cua Driver, and then publishes
+the verified catalogs, archives, SBOMs, provenance, and install evidence as the
+`cua-perception-v<semver>` GitHub release. The release is never marked Latest.
+Nobody dispatches anything to publish. The signing job still runs in the
+`cua-perception-candidate-signing` environment, so any protection rules on that
+environment apply to each release.
 
 The candidate workflow accepts prebuilt payloads. It does not download model
 weights or compile product code. Every supplied worker, runtime, model, notice,
 and source file must be declared with its exact size, SHA-256, license source,
 target, and protocol version as applicable. Models and bundled source also need
 complete ledgers. The workflow emits a deterministic archive, SPDX SBOM, signed
-catalog, redacted provenance, and checksums as retained CI artifacts only.
+catalog, redacted provenance, and checksums as retained CI artifacts; only the
+release workflow publishes them. `cd-cua-perception-candidate-manual.yml`
+remains for staging candidates from a reviewed pull request head and never
+publishes.
 
 Candidate catalogs use the same Ed25519 envelope consumed by Cua Driver's
 extension manager: `{ "payload": <compact catalog payload>,

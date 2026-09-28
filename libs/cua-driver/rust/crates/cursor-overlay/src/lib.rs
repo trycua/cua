@@ -8,6 +8,7 @@
 
 pub mod badge_glyphs;
 pub mod bezier;
+pub mod capture_exclusion;
 pub mod capture_utils;
 pub mod motion;
 pub mod path_planner;
@@ -330,6 +331,10 @@ pub enum OverlayMsg {
     /// This deliberately does not recreate a cursor; the next command does so
     /// lazily after the successful `start_session` boundary.
     Revive(CursorKey),
+    /// No state change: wakes a parked render loop so it services an
+    /// out-of-band request (such as hiding for a Driver desktop capture)
+    /// without waiting for its next maintenance tick.
+    Wake,
 }
 
 /// Commands sent from MCP tool handlers to the overlay's render thread.

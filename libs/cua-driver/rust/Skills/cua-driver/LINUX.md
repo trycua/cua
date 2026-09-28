@@ -95,6 +95,19 @@ stays in screen coordinates, as on every platform); `frame_scale` < 1 and
 pixels back to the window.
 An explicit per-call `max_image_dimension` (0 = native) replaces this cap.
 
+**Windows without `_NET_WM_PID`.** Tk, many Java/AWT builds, Wine, and legacy
+Xlib/Xt clients do not publish `_NET_WM_PID`. On X11, `list_windows` then asks
+the X server's X-Resource extension (XRes 1.2 `LocalClientPID`) which local
+process created the window, so these windows still carry a `pid` and accept
+`get_window_state` / `click` by `pid` + `window_id`. The driver never guesses:
+`pid` stays `null` when XRes is missing or older than 1.2, when the client
+is remote (TCP, or SSH-forwarded with a `WM_CLIENT_MACHINE` naming another
+host), or when the X server cannot report the driver's own PID correctly
+(remote `DISPLAY`, container PID namespace). A `pid: null` window can only be
+reached through desktop scope. An SSH-forwarded client that publishes
+neither `_NET_WM_PID` nor `WM_CLIENT_MACHINE` is attributed to the local
+`ssh` process, because that is the socket peer the server sees.
+
 **Keys while the app's own popup is open.** A Qt combo list / completer or a
 GTK/VCL menu holds a keyboard grab that makes the X server drop keys from the
 virtual keyboard. `press_key` / `hotkey` / `type_text` / `set_value` then go
@@ -197,7 +210,13 @@ takes the focus-free AT-SPI `do_action`-at-point path (`x11_atspi`), exactly
 like the macOS/Windows background pixel click. It falls to the MPX
 virtual-pointer path (`x11_pixel`) only for non-AX surfaces, **and that path
 needs a real Xorg + `/dev/uinput`** — under Xvnc / minimal containers without
-uinput, escalate to `delivery_mode:"foreground"`. (`type_text` in the
+uinput, escalate to `delivery_mode:"foreground"`. The AT-SPI path only fires
+a control under the point: when the hit test finds nothing deeper than the
+application's own frame or window (Chromium page content before its AT-SPI
+tree is populated), no action is fired. Chromium/Electron targets without a
+real focus-free pointer return `background_unavailable` before the capture is
+consumed, so retry the same capture-bound click with
+`delivery_mode:"foreground"` when foreground input is authorized. (`type_text` in the
 `background` rung is focus-dependent for non-editable widgets; that's the one
 genuine background limitation, and `foreground` is the documented escalation.)
 

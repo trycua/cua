@@ -1566,8 +1566,25 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             .as_ref()
             .and_then(|value| value["arguments"]["pid"].as_i64())
             .is_some();
+    // An action refused before dispatch cannot change the application, so
+    // the recorder skips its accessibility walk and says so explicitly.
+    let refused_without_dispatch = action.as_ref().is_some_and(|value| {
+        value["result_error"].as_bool() == Some(true)
+            && (value.get("action_truth").is_none()
+                || value["action_truth"]["effect"].as_str() == Some("refused"))
+    });
+    let state_skipped_for_refusal = |phase: &str| {
+        refused_without_dispatch
+            && manifest.as_ref().is_some_and(|value| {
+                value[phase]["state"]["status"] == "not_applicable"
+                    && value[phase]["state"]["classification"] == "action_refused_before_dispatch"
+            })
+    };
     if state_expected {
         for phase in ["before", "after"] {
+            if state_skipped_for_refusal(phase) {
+                continue;
+            }
             validate_capture_status(
                 manifest.as_ref(),
                 &[phase, "state"],
@@ -1581,6 +1598,9 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             ("after_state.json", "after"),
             ("app_state.json", "after"),
         ] {
+            if state_skipped_for_refusal(phase) {
+                continue;
+            }
             validate_json_file(
                 &turn.join(file),
                 cell_id,
@@ -2534,6 +2554,48 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.contains("turn-00001/click.png")));
+    }
+
+    #[test]
+    fn validator_accepts_state_skipped_only_for_a_refusal_before_dispatch() {
+        let refused_evidence = br#"{
+            "schema":"cua-turn-evidence/v1",
+            "before":{"state":{"status":"not_applicable","classification":"action_refused_before_dispatch"},"screenshot":{"status":"captured"}},
+            "after":{"state":{"status":"not_applicable","classification":"action_refused_before_dispatch"},"screenshot":{"status":"captured"}},
+            "click":{"status":"not_applicable","classification":"action_refused_before_dispatch"}
+        }"#;
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"click",
+                "arguments":{"pid":1,"window_id":2,"x":3,"y":4,"capture_id":"expired"},
+                "click_point":{"x":3,"y":4},
+                "result_error":true,
+                "action_truth":{"effect":"refused","refusal":{"code":"capture_expired"}}
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(turn.join("evidence.json"), refused_evidence).unwrap();
+        for file in [
+            "click.png",
+            "before_state.json",
+            "after_state.json",
+            "app_state.json",
+        ] {
+            std::fs::remove_file(turn.join(file)).unwrap();
+        }
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("a refusal before dispatch needs no application-state walk");
+
+        // A dispatched click must still carry captured state.
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(turn.join("evidence.json"), refused_evidence).unwrap();
+        let errors = validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect_err("a dispatched action cannot skip state as refused");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("turn-00001/before state")));
     }
 
     #[test]

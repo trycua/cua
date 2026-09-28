@@ -306,6 +306,132 @@ def test_tcc_guest_seed_requires_certificate_backed_requirement_by_default() -> 
     assert "^Signature=adhoc$" in text
     assert 'certificate (leaf|root) = H"[[:xdigit:]]{40}"' in text
     assert "is not signed with a certificate-backed identity" in text
+    assert 'classify_designated_requirement "${REQUIREMENT}" "${SIGNING_IDENTIFIER}"' in text
+
+
+# The designated requirement codesign derives for the released, notarized
+# CuaDriver.app (Developer ID Application: Cua AI, Inc.).
+RELEASED_DEVELOPER_ID_DR = (
+    'identifier "com.trycua.driver" and anchor apple generic and '
+    "certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and "
+    "certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and "
+    "certificate leaf[subject.OU] = YCK386LBJ7"
+)
+LOCAL_LEAF_HASH_DR = (
+    'identifier "com.trycua.driver.local" and '
+    'certificate leaf = H"0123456789abcdef0123456789abcdef01234567"'
+)
+
+
+def _classify_requirement(requirement: str, identifier: str = "") -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            'script="$1" requirement="$2" identifier="$3"; set --; '
+            'source "$script"; classify_designated_requirement "$requirement" "$identifier"',
+            "classify-test",
+            str(SEED_TCC_GUEST),
+            requirement,
+            identifier,
+        ],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CUA_TCC_SEED_LIB_ONLY": "1"},
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("requirement", "identifier", "kind"),
+    [
+        pytest.param(RELEASED_DEVELOPER_ID_DR, "com.trycua.driver", "developer-id", id="released-developer-id"),
+        pytest.param(RELEASED_DEVELOPER_ID_DR, "", "developer-id", id="released-developer-id-no-identifier"),
+        pytest.param(
+            RELEASED_DEVELOPER_ID_DR.replace("= YCK386LBJ7", '= "YCK386LBJ7"'),
+            "com.trycua.driver",
+            "developer-id",
+            id="quoted-team-id",
+        ),
+        pytest.param(LOCAL_LEAF_HASH_DR, "com.trycua.driver.local", "leaf-hash", id="local-leaf-hash"),
+        pytest.param(
+            'identifier "com.trycua.driver.local" and anchor apple generic and '
+            'certificate root = H"89abcdef0123456789abcdef0123456789abcdef"',
+            "com.trycua.driver.local",
+            "leaf-hash",
+            id="root-hash",
+        ),
+    ],
+)
+def test_tcc_guest_seed_accepts_certificate_backed_requirements(
+    requirement: str, identifier: str, kind: str
+) -> None:
+    completed = _classify_requirement(requirement, identifier)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == kind
+
+
+@pytest.mark.parametrize(
+    ("requirement", "identifier"),
+    [
+        pytest.param('cdhash H"0123456789abcdef0123456789abcdef01234567"', "", id="adhoc-cdhash"),
+        pytest.param(
+            'identifier "com.trycua.driver.local" and cdhash H"0123456789abcdef0123456789abcdef01234567"',
+            "com.trycua.driver.local",
+            id="adhoc-identifier-cdhash",
+        ),
+        pytest.param("", "", id="empty"),
+        pytest.param(
+            RELEASED_DEVELOPER_ID_DR.replace("YCK386LBJ7", "YCK386LBJ"),
+            "com.trycua.driver",
+            id="short-team-id",
+        ),
+        pytest.param(
+            RELEASED_DEVELOPER_ID_DR.replace("YCK386LBJ7", "yck386lbj7"),
+            "com.trycua.driver",
+            id="lowercase-team-id",
+        ),
+        pytest.param(
+            RELEASED_DEVELOPER_ID_DR.replace("YCK386LBJ7", "YCK386LBJ7 or cdhash H\"00\""),
+            "com.trycua.driver",
+            id="trailing-disjunction",
+        ),
+        pytest.param(
+            RELEASED_DEVELOPER_ID_DR.replace("= YCK386LBJ7", '= "YCK386LBJ7'),
+            "com.trycua.driver",
+            id="unbalanced-quote",
+        ),
+        pytest.param(
+            RELEASED_DEVELOPER_ID_DR.replace("anchor apple generic and ", ""),
+            "com.trycua.driver",
+            id="missing-apple-anchor",
+        ),
+        pytest.param(
+            RELEASED_DEVELOPER_ID_DR.replace('identifier "com.trycua.driver" and ', ""),
+            "",
+            id="missing-identifier",
+        ),
+        pytest.param(RELEASED_DEVELOPER_ID_DR, "com.trycua.driver.local", id="identifier-mismatch"),
+    ],
+)
+def test_tcc_guest_seed_rejects_non_certificate_backed_requirements(
+    requirement: str, identifier: str
+) -> None:
+    completed = _classify_requirement(requirement, identifier)
+    assert completed.returncode == 1
+    assert completed.stdout.strip() == "rejected"
+
+
+def test_tcc_guest_seed_library_mode_fails_closed_when_executed() -> None:
+    completed = subprocess.run(
+        ["bash", str(SEED_TCC_GUEST)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CUA_TCC_SEED_LIB_ONLY": "1"},
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "valid only when this script is sourced" in completed.stderr
 
 
 @pytest.mark.parametrize(
@@ -323,6 +449,42 @@ def test_harness_guides_route_automated_tcc_through_guarded_helper(document: Pat
     assert "rows alone" in text or "helper exit alone" in text
 
 
+def test_tcc_host_seed_parses_lume_json_with_jq_not_python() -> None:
+    text = SEED_TCC.read_text(encoding="utf-8")
+    assert "python3 -c" not in text
+    assert "command -v python3" not in text
+    assert "command -v jq" in text
+    assert "jq -r --arg name" in text
+
+
+@requires_jq
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ('[{"status":"stopped","ipAddress":null}]', "expected running VM with an IP"),
+        ('[{"status":"running","ipAddress":"192.0.2.10","sshAvailable":false}]', "SSH is not available yet"),
+        ("[]", "lume get returned no VM record"),
+    ],
+)
+def test_tcc_host_seed_refuses_unready_vms(tmp_path: Path, payload: str, message: str) -> None:
+    fake_bin = tmp_path / "bin"
+    for tool in ("scp", "ssh"):
+        _write_executable(fake_bin / tool, "exit 99\n")
+    _write_executable(fake_bin / "lume", f"printf '%s\\n' '{payload}'\n")
+    completed = subprocess.run(
+        ["bash", str(SEED_TCC), "--timeout", "5", "worker-a"],
+        capture_output=True,
+        stdin=subprocess.DEVNULL,
+        text=True,
+        env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+        check=False,
+    )
+    assert completed.returncode != 0
+    assert f"worker-a: {message}" in completed.stderr
+    assert "installing guest TCC seeder" not in completed.stdout
+
+
+@requires_jq
 def test_tcc_host_seed_runs_the_guest_helper_once_per_vm(tmp_path: Path) -> None:
     fake_bin = tmp_path / "bin"
     fake_lume = fake_bin / "lume"

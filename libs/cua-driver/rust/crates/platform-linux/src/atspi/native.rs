@@ -3188,7 +3188,7 @@ fn at_point_activation_index(
     actions: &[String],
     is_deepest_hit: bool,
 ) -> Option<usize> {
-    if is_container_role(role) {
+    if is_container_role(role) || crate::at_point_policy::is_top_level_shell_role(role) {
         return None;
     }
     if !is_deepest_hit && role.trim().eq_ignore_ascii_case("canvas") {
@@ -4895,7 +4895,11 @@ pub fn perform_action_at_point(
             // children, but the area/role split is what actually disambiguates.
             let mut frames: Vec<(usize, i32, i32, u32, u32, bool)> = Vec::new();
             for (i, v) in visited.iter().enumerate() {
-                if v.actions.is_empty() || !v.has_component || is_container_role(&v.role) {
+                if v.actions.is_empty()
+                    || !v.has_component
+                    || is_container_role(&v.role)
+                    || crate::at_point_policy::is_top_level_shell_role(&v.role)
+                {
                     continue;
                 }
                 let Some(Ok(proxies)) = call(v.acc.proxies()).await else {
@@ -5023,6 +5027,9 @@ pub fn perform_action_at_screen_point(
                 .await
                 .0
                 .into_iter()
+                .filter(|&(idx, ..)| {
+                    !crate::at_point_policy::is_top_level_shell_role(&action_nodes[idx].role)
+                })
                 .map(|(idx, x, y, w, h)| {
                     (idx, x, y, w, h, is_passive_role(&action_nodes[idx].role))
                 })
@@ -7073,6 +7080,27 @@ mod at_point_rules_tests {
         );
         assert_eq!(
             at_point_activation_index("canvas", &acts(&["activate"]), true),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn top_level_frame_default_action_is_never_a_pixel_click() {
+        // Chrome 151 on X11: the hit test over page content resolves only to
+        // `frame "… - Google Chrome"` [doDefault]. Firing it changes nothing,
+        // so it must not be reported as the click, as ancestor or deepest hit.
+        for role in ["frame", "window", "application", "desktop frame"] {
+            for deepest in [false, true] {
+                assert_eq!(
+                    at_point_activation_index(role, &acts(&["doDefault"]), deepest),
+                    None,
+                    "{role} deepest={deepest}"
+                );
+            }
+        }
+        // The page content itself remains actionable once exposed.
+        assert_eq!(
+            at_point_activation_index("push button", &acts(&["doDefault"]), true),
             Some(0)
         );
     }

@@ -581,20 +581,30 @@ fn inference_result(
             }),
         );
     }
+    // Driver validates the whole parse and rejects it if any region is empty,
+    // outside the image, or carries whitespace-only text, so drop such
+    // regions here instead of failing every region with them.
     let regions = regions
         .into_iter()
+        .filter_map(|region| {
+            let x = (region.bounds.x1.floor().max(0.0) as u32).min(width);
+            let y = (region.bounds.y1.floor().max(0.0) as u32).min(height);
+            let right = region.bounds.x2.ceil().min(width as f32).max(0.0) as u32;
+            let bottom = region.bounds.y2.ceil().min(height as f32).max(0.0) as u32;
+            let blank_text = region
+                .text
+                .as_deref()
+                .is_some_and(|text| text.trim().is_empty());
+            (right > x && bottom > y && !blank_text).then_some((region, x, y, right, bottom))
+        })
         .enumerate()
-        .map(|(index, region)| {
+        .map(|(index, (region, x, y, right, bottom))| {
             let kind = region.kind;
             let class_id = region.class_id;
-            let x = region.bounds.x1.floor().max(0.0) as u32;
-            let y = region.bounds.y1.floor().max(0.0) as u32;
-            let right = region.bounds.x2.ceil().min(width as f32) as u32;
-            let bottom = region.bounds.y2.ceil().min(height as f32) as u32;
             let mut value = json!({
                 "id": format!("{}-{}", kind, index + 1),
                 "kind": kind,
-                "bounds": { "x": x, "y": y, "width": right.saturating_sub(x), "height": bottom.saturating_sub(y) },
+                "bounds": { "x": x, "y": y, "width": right - x, "height": bottom - y },
                 "confidence": region.confidence,
                 "interactive": false
             });
@@ -809,6 +819,44 @@ mod tests {
             })
         );
         assert_eq!(decoded["text_geometry"], "axis_aligned_bounds");
+    }
+
+    #[test]
+    fn degenerate_and_blank_regions_are_dropped_before_numbering() {
+        let region = |kind: &'static str, x1: f32, x2: f32, text: Option<&str>| InferenceRegion {
+            kind,
+            bounds: Rect {
+                x1,
+                y1: 1.0,
+                x2,
+                y2: 9.0,
+            },
+            text: text.map(str::to_owned),
+            confidence: 0.9,
+            class_id: None,
+        };
+        let result = inference_result(
+            "capture-1",
+            "abc123",
+            100,
+            50,
+            vec![
+                region("text", 1.0, 5.0, Some(" ")),
+                region("icon", 100.0, 120.0, None),
+                region("text", 3.0, 3.0, Some("zero width")),
+                region("text", 10.0, 30.0, Some("Submit")),
+            ],
+            json!({ "backend": "test" }),
+            (env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")),
+        );
+        assert_eq!(
+            result["regions"],
+            json!([{
+                "id": "text-1", "kind": "text",
+                "bounds": { "x": 10, "y": 1, "width": 20, "height": 8 },
+                "confidence": 0.8999999761581421, "text": "Submit", "interactive": false
+            }])
+        );
     }
 
     #[test]

@@ -401,6 +401,12 @@ EOF
     run_test bring-to-front env -u CUA_E2E_RECORDINGS_ROOT \
       cargo test -p cua-driver-e2e --test bring_to_front_macos_test -- \
       --ignored --nocapture --test-threads=1
+    # Tk derives click locations from the hardware pointer. The rows skip with
+    # an explicit reason when python3 lacks tkinter (hosted images may not ship
+    # it); set CUA_TEST_REQUIRE_TK=1 where Tk is provisioned.
+    run_test tk-pointer-click env -u CUA_E2E_RECORDINGS_ROOT \
+      cargo test -p cua-driver-e2e --test tk_pointer_click_macos_test -- \
+      --ignored --nocapture --test-threads=1
   fi
 fi
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
@@ -410,6 +416,11 @@ if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
     cargo test -p cua-driver-e2e --test macos_capture_environment_test -- \
     --ignored --nocapture --test-threads=1
   run_test desktop-scope cargo test -p cua-driver-e2e --test desktop_scope_macos_test -- \
+    --ignored --nocapture --test-threads=1
+  # Runs a dedicated instance of the installed app with an isolated extension
+  # home, so the shared daemon never gains the developer-only E2E extension.
+  run_test perception-capture-loop cargo test -p cua-driver-e2e \
+    --test perception_capture_loop_test -- \
     --ignored --nocapture --test-threads=1
 fi
 

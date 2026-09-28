@@ -168,7 +168,10 @@ pub(crate) fn hit_test(pid: u32, xid: u64, sx: i32, sy: i32) -> Option<(usize, C
         .enumerate()
         .filter_map(|(pos, (_, e))| {
             let (x, y, w, h) = e.bounds?;
-            (w > 0 && h > 0).then_some((pos, x, y, w, h, native::is_passive_role(&e.role)))
+            // The application's own frame is never the control under a
+            // point; leave such a hit to the live descent.
+            (w > 0 && h > 0 && !crate::at_point_policy::is_top_level_shell_role(&e.role))
+                .then_some((pos, x, y, w, h, native::is_passive_role(&e.role)))
         })
         .collect();
     let pos = native::select_click_target(&frames, sx, sy)?;

@@ -31,7 +31,7 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -87,6 +87,53 @@ static OVERLAY_WINDOW_ID: AtomicU32 = AtomicU32::new(0);
 
 pub(crate) fn is_overlay_window(window_id: u32) -> bool {
     window_id != 0 && OVERLAY_WINDOW_ID.load(Ordering::Acquire) == window_id
+}
+
+/// CGWindowID of the live overlay window, if one is on screen.
+pub(crate) fn overlay_window_id() -> Option<u32> {
+    match OVERLAY_WINDOW_ID.load(Ordering::Acquire) {
+        0 => None,
+        window_id => Some(window_id),
+    }
+}
+
+/// Whether the last composed frame could hold visible pixels, and when that
+/// was last true. The layer update reaches WindowServer asynchronously, so a
+/// frame that just cleared is still treated as visible for a short grace.
+static OVERLAY_FRAME_PAINTS: AtomicBool = AtomicBool::new(false);
+static OVERLAY_LAST_PAINT: Mutex<Option<Instant>> = Mutex::new(None);
+const OVERLAY_CLEAR_GRACE: Duration = Duration::from_millis(250);
+
+fn note_overlay_frame(paints: bool) {
+    OVERLAY_FRAME_PAINTS.store(paints, Ordering::Release);
+    if paints {
+        if let Ok(mut last) = OVERLAY_LAST_PAINT.lock() {
+            *last = Some(Instant::now());
+        }
+    }
+}
+
+/// Whether overlay pixels may be on screen right now: a cursor, its session
+/// pill, a fade, or a focus rect. Desktop captures only need to exclude the
+/// overlay window when this is true.
+pub(crate) fn overlay_may_show_pixels() -> bool {
+    if OVERLAY_FRAME_PAINTS.load(Ordering::Acquire) {
+        return true;
+    }
+    OVERLAY_LAST_PAINT
+        .lock()
+        .ok()
+        .and_then(|last| *last)
+        .is_some_and(|last| last.elapsed() < OVERLAY_CLEAR_GRACE)
+}
+
+fn cursor_may_paint(state: &RenderState) -> bool {
+    state.focus_rect.is_some()
+        || (state.core.cfg.enabled
+            && state.core.visible
+            && state.core.idle_alpha > 0.0
+            && state.core.pos.0 > -50.0
+            && state.core.pos.1 > -50.0)
 }
 
 /// Screen-global geometry kept beside the shared keyed render map
@@ -799,6 +846,7 @@ fn render_loop(
                     let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1))
                         .unwrap_or_else(|| tiny_skia::Pixmap::new(1, 1).unwrap());
                     let backing_scale_f32 = scale as f32;
+                    note_overlay_frame(map.cursors.values().any(cursor_may_paint));
                     for (_k, rs) in &map.cursors {
                         let focus = rs.focus_rect.map(|rect| FocusRect {
                             rect,

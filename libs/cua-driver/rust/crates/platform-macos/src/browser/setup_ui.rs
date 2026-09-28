@@ -34,6 +34,64 @@ fn field_equals(node: &AXNode, expected: &str) -> bool {
     .any(|value| value.trim().eq_ignore_ascii_case(expected))
 }
 
+/// Whether a native tab's accessible name belongs to the page titled
+/// `title`. Chromium names a tab after its page and can later append
+/// ` - <status>` segments, such as a memory-usage readout, once the tab has
+/// loaded. Those segments are appended asynchronously, so an exact-name
+/// proof that passed at first stops matching a few seconds later (#4121).
+/// Only that separator-delimited suffix is accepted, never a prefix or an
+/// arbitrary substring.
+fn tab_name_matches_title(node: &AXNode, title: &str) -> bool {
+    let title = title.trim();
+    if title.is_empty() {
+        return false;
+    }
+    [
+        node.title.as_deref(),
+        node.value.as_deref(),
+        node.description.as_deref(),
+        node.help.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .any(|name| {
+        name.eq_ignore_ascii_case(title)
+            || name
+                .get(..title.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(title))
+                && name[title.len()..].starts_with(" - ")
+    })
+}
+
+/// How long the omnibox may take to apply queued setup keystrokes.
+const TYPED_URL_SETTLE_TIMEOUT: Duration = Duration::from_millis(1500);
+
+/// Poll `read` until it returns exactly `expected` (trimmed, ASCII
+/// case-insensitive) or `timeout` elapses. On timeout, returns the last value
+/// observed so the refusal can say how far the field got.
+fn await_exact_value(
+    mut read: impl FnMut() -> Option<String>,
+    expected: &str,
+    timeout: Duration,
+    poll: Duration,
+) -> Result<(), Option<String>> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let value = read();
+        if value
+            .as_deref()
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case(expected))
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(value);
+        }
+        std::thread::sleep(poll);
+    }
+}
+
 fn has_action(node: &AXNode, action: &str) -> bool {
     node.actions.iter().any(|value| value == action)
 }
@@ -107,7 +165,7 @@ fn native_setup_page_proven(nodes: &[AXNode], descriptor: &BrowserSetupDescripto
                 && descriptor
                     .page_titles
                     .iter()
-                    .any(|title| field_equals(node, title))
+                    .any(|title| tab_name_matches_title(node, title))
         })
         .count();
     let omnibox_popup_open = nodes
@@ -399,6 +457,25 @@ impl PixelCheckbox {
             && (self.window_local_y - other.window_local_y).abs() <= tolerance
             && frames_agree(self.window_frame, other.window_frame, tolerance)
     }
+}
+
+/// A system prompt, such as macOS's local-network consent alert, can take key
+/// focus at the moment the bounded setup click lands and swallow it. Retry the
+/// same proven control a bounded number of times, only after the previous click
+/// had time to flip it, so a delivered click is never repeated into a toggle.
+const PIXEL_CHECKBOX_MAX_ATTEMPTS: u8 = 3;
+const PIXEL_CHECKBOX_RETRY_SETTLE: Duration = Duration::from_millis(1500);
+
+fn pixel_checkbox_click_allowed(
+    attempts: u8,
+    last_attempt: Option<Instant>,
+    now: Instant,
+    original: Option<PixelCheckbox>,
+    observed: PixelCheckbox,
+) -> bool {
+    attempts < PIXEL_CHECKBOX_MAX_ATTEMPTS
+        && last_attempt.is_none_or(|last| now.duration_since(last) >= PIXEL_CHECKBOX_RETRY_SETTLE)
+        && original.is_none_or(|original| original.same_control_as(observed, 3.0))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -892,7 +969,8 @@ pub struct SetupUiHandle {
     close_button: Option<usize>,
     enable_attempted: bool,
     trusted_checkbox_fallback_attempted: bool,
-    pixel_checkbox_fallback_attempted: bool,
+    pixel_checkbox_attempts: u8,
+    last_pixel_checkbox_attempt: Option<Instant>,
     setup_navigation_committed: bool,
     remote_debugging_mutation_possible: bool,
     pixel_checkbox: Option<PixelCheckbox>,
@@ -1183,7 +1261,8 @@ fn set_remote_debugging(
             close_button: None,
             enable_attempted: false,
             trusted_checkbox_fallback_attempted: false,
-            pixel_checkbox_fallback_attempted: false,
+            pixel_checkbox_attempts: 0,
+            last_pixel_checkbox_attempt: None,
             setup_navigation_committed: false,
             remote_debugging_mutation_possible: false,
             pixel_checkbox: None,
@@ -1260,7 +1339,8 @@ fn set_remote_debugging(
                 close_button: Some(close_button),
                 enable_attempted: false,
                 trusted_checkbox_fallback_attempted: false,
-                pixel_checkbox_fallback_attempted: false,
+                pixel_checkbox_attempts: 0,
+                last_pixel_checkbox_attempt: None,
                 setup_navigation_committed: false,
                 remote_debugging_mutation_possible: false,
                 pixel_checkbox: None,
@@ -1429,16 +1509,23 @@ fn set_remote_debugging(
                                 crate::input::keyboard::press_key_global("a", &["cmd"])?;
                                 std::thread::sleep(Duration::from_millis(30));
                                 crate::input::keyboard::type_text(pid, descriptor.setup_url)?;
-                                std::thread::sleep(Duration::from_millis(100));
-                                let typed_exact_value = unsafe {
-                                    copy_string_attr(omnibox as AXUIElementRef, "AXValue")
-                                }
-                                .is_some_and(|value| {
-                                    value.trim().eq_ignore_ascii_case(descriptor.setup_url)
-                                });
-                                if !typed_exact_value {
+                                // The omnibox applies queued keystrokes
+                                // asynchronously; a single fixed-delay read
+                                // can observe a prefix of the URL. Poll the
+                                // exact value within a bound before refusing.
+                                let typed = await_exact_value(
+                                    || unsafe {
+                                        copy_string_attr(omnibox as AXUIElementRef, "AXValue")
+                                    },
+                                    descriptor.setup_url,
+                                    TYPED_URL_SETTLE_TIMEOUT,
+                                    Duration::from_millis(50),
+                                );
+                                if let Err(observed) = typed {
                                     anyhow::bail!(
-                                        "trusted setup typing did not retain the fixed URL"
+                                        "trusted setup typing did not retain the fixed URL (observed {} of {} characters)",
+                                        observed.map_or(0, |value| value.trim().chars().count()),
+                                        descriptor.setup_url.chars().count()
                                     );
                                 }
                                 crate::input::keyboard::press_key_global("return", &[])?;
@@ -1626,10 +1713,19 @@ fn set_remote_debugging(
                     release_actionable_nodes(&tree.nodes);
                     return Ok(handle);
                 }
-                Ok(Some(checkbox)) if !handle.pixel_checkbox_fallback_attempted => {
-                    handle.pixel_checkbox_fallback_attempted = true;
+                Ok(Some(checkbox))
+                    if pixel_checkbox_click_allowed(
+                        handle.pixel_checkbox_attempts,
+                        handle.last_pixel_checkbox_attempt,
+                        Instant::now(),
+                        handle.pixel_checkbox,
+                        checkbox,
+                    ) =>
+                {
+                    handle.pixel_checkbox_attempts += 1;
+                    handle.last_pixel_checkbox_attempt = Some(Instant::now());
                     handle.remote_debugging_mutation_possible = true;
-                    handle.pixel_checkbox = Some(checkbox);
+                    handle.pixel_checkbox.get_or_insert(checkbox);
                     handle.used_bounded_pixel_fallback = true;
                     release_actionable_nodes(&tree.nodes);
                     handle.injected_global_input = true;
@@ -1813,6 +1909,72 @@ mod tests {
                 .code,
             BrowserRefusalCode::BrowserWrongTargetRefused
         );
+    }
+
+    #[test]
+    fn typed_setup_url_is_confirmed_after_late_keystrokes_but_never_a_different_value() {
+        let url = "edge://inspect/#remote-debugging";
+        let mut reads = ["edge://ins", "edge://inspect/#remote", url].into_iter();
+        assert_eq!(
+            await_exact_value(
+                || reads.next().map(str::to_owned),
+                url,
+                Duration::from_secs(1),
+                Duration::from_millis(1),
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            await_exact_value(
+                || Some(format!("{url}x")),
+                url,
+                Duration::from_millis(20),
+                Duration::from_millis(1),
+            ),
+            Err(Some(format!("{url}x")))
+        );
+        assert!(TYPED_URL_SETTLE_TIMEOUT < EXISTING_PROFILE_SETUP_READY_TIMEOUT);
+    }
+
+    #[test]
+    fn setup_tab_proof_survives_chromium_status_suffixes_only() {
+        // Hosted macOS Chrome 153 renamed the selected setup tab a few seconds
+        // after load, while the local-network alert delayed confirmation
+        // (#4121). The exact-name proof then never matched again.
+        let omnibox = node(
+            "AXTextField",
+            Some("Address and search bar"),
+            Some(chrome().setup_url),
+            &["AXPress"],
+        );
+        let tab_named = |name: &str| {
+            let mut tab = node("AXRadioButton", None, Some("1"), &["AXPress"]);
+            tab.description = Some(name.to_owned());
+            tab.selected = Some(true);
+            tab
+        };
+        let title = chrome().page_titles[0];
+        for name in [
+            title.to_owned(),
+            format!("{title} - Memory usage - 38.3 MB"),
+            format!("{title} - Speicherverbrauch – 38,3 MB"),
+        ] {
+            assert!(
+                native_setup_page_proven(&[omnibox.clone(), tab_named(&name)], chrome()),
+                "{name:?} must still prove the selected setup tab"
+            );
+        }
+        for name in [
+            format!("{title}X"),
+            format!("{title}- Memory usage"),
+            format!("Other {title}"),
+            format!("x - {title}"),
+        ] {
+            assert!(
+                !native_setup_page_proven(&[omnibox.clone(), tab_named(&name)], chrome()),
+                "{name:?} must not prove the selected setup tab"
+            );
+        }
     }
 
     #[test]
@@ -2236,6 +2398,63 @@ mod tests {
         ));
         assert!(remote_debugging_cleanup_required(false, true));
         assert!(!remote_debugging_cleanup_required(false, false));
+    }
+
+    #[test]
+    fn pixel_checkbox_click_retries_only_the_same_control_after_it_settles() {
+        let original = PixelCheckbox {
+            screen_x: 106.0,
+            screen_y: 136.0,
+            window_local_x: 106.0,
+            window_local_y: 86.0,
+            window_frame: [0.0, 50.0, 400.0, 250.0],
+            state: CheckboxState::Off,
+        };
+        let moved = PixelCheckbox {
+            window_local_x: 130.0,
+            ..original
+        };
+        let start = Instant::now();
+        let settled = start + PIXEL_CHECKBOX_RETRY_SETTLE;
+
+        // The first click needs no prior identity or settle interval.
+        assert!(pixel_checkbox_click_allowed(0, None, start, None, original));
+        // A swallowed click is retried once the previous click had time to land.
+        assert!(!pixel_checkbox_click_allowed(
+            1,
+            Some(start),
+            start + Duration::from_millis(200),
+            Some(original),
+            original
+        ));
+        assert!(pixel_checkbox_click_allowed(
+            1,
+            Some(start),
+            settled,
+            Some(original),
+            original
+        ));
+        // A different control is never clicked as a retry.
+        assert!(!pixel_checkbox_click_allowed(
+            1,
+            Some(start),
+            settled,
+            Some(original),
+            moved
+        ));
+        // Retries stay bounded.
+        assert!(!pixel_checkbox_click_allowed(
+            PIXEL_CHECKBOX_MAX_ATTEMPTS,
+            Some(start),
+            settled,
+            Some(original),
+            original
+        ));
+        // Every allowed click, including the settle waits, fits the setup deadline.
+        assert!(
+            PIXEL_CHECKBOX_RETRY_SETTLE * u32::from(PIXEL_CHECKBOX_MAX_ATTEMPTS - 1)
+                < EXISTING_PROFILE_SETUP_READY_TIMEOUT
+        );
     }
 
     #[test]

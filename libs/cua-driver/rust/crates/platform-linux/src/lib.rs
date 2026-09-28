@@ -14,11 +14,15 @@ use cua_driver_core::tool::ToolRegistry;
 
 pub mod health_report;
 pub mod overlay;
+pub mod overlay_capture;
 pub mod pip;
 pub mod tools;
 
 #[cfg(target_os = "linux")]
 pub mod x11;
+
+#[cfg(any(target_os = "linux", test))]
+mod x11_client_pid;
 
 #[cfg(target_os = "linux")]
 pub mod input;
@@ -71,6 +75,11 @@ pub mod wayland;
 // `terminal` is OS-independent (pure string matching + a thin x11 hook).
 // Keeping it un-gated lets the unit tests run on any host.
 pub mod terminal;
+
+// Pure background pixel-click routing facts; un-gated so their unit tests run
+// on every host.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+mod at_point_policy;
 
 #[cfg(target_os = "linux")]
 pub mod xauth;

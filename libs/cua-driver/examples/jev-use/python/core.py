@@ -6,6 +6,9 @@ from types import MappingProxyType
 from typing import Any, Literal, Mapping
 
 Outcome = Literal["verified", "refuted", "unknown", "abstained", "budget_exhausted"]
+VisualDelivery = Literal["background", "foreground"]
+
+SUBMIT_IDS = frozenset({"submit-form", "submit-form-foreground"})
 
 
 def _freeze(value: Any) -> Any:
@@ -62,7 +65,9 @@ class VisualObservation:
 
 
 class VisualObservationError(ValueError):
-    pass
+    def __init__(self, message: str, code: str = "invalid_visual_result") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def _nonempty(value: Any) -> str:
@@ -94,7 +99,9 @@ def parse_visual_regions(
         raise VisualObservationError("unsupported visual region schema")
     capture = payload.get("capture")
     if not isinstance(capture, dict) or capture.get("capture_id") != expected_capture_id:
-        raise VisualObservationError("visual result is stale or capture-mismatched")
+        raise VisualObservationError(
+            "visual result is stale or capture-mismatched", code="capture_mismatch"
+        )
     source = capture.get("source")
     if (
         not isinstance(source, dict)
@@ -102,7 +109,9 @@ def parse_visual_regions(
         or source.get("pid") != expected_pid
         or source.get("window_id") != expected_window_id
     ):
-        raise VisualObservationError("visual result has a mismatched window target")
+        raise VisualObservationError(
+            "visual result has a mismatched window target", code="capture_mismatch"
+        )
     screenshot = capture.get("screenshot")
     if not isinstance(screenshot, dict) or screenshot.get("mime_type") != "image/png":
         raise VisualObservationError("visual result has invalid screenshot provenance")
@@ -204,11 +213,127 @@ def parse_visual_regions(
     )
 
 
+FIELD_NAME = "verification value"
+SUBMIT_NAME = "Submit"
+REDACTED_TOKEN = "[verification token]"
+
+
+def _form_refs(snapshot: Mapping[str, Any]) -> tuple[Any, Any]:
+    refs = snapshot.get("refs") or []
+    field = next(
+        (ref for ref in refs if ref.get("role") == "textbox" and ref.get("name") == FIELD_NAME),
+        None,
+    )
+    button = next(
+        (ref for ref in refs if ref.get("role") == "button" and ref.get("name") == SUBMIT_NAME),
+        None,
+    )
+    return field, button
+
+
+def visual_submit_region(visual: VisualObservation | None) -> VisualRegion | None:
+    """Return the unique validated visual Submit region, or ``None``."""
+    if visual is None:
+        return None
+    matches = [
+        region
+        for region in visual.regions
+        if region.confidence >= 0.8
+        and _ascii_lower(region.text or region.label or "") == "submit"
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def form_state(
+    snapshot: Mapping[str, Any],
+    token: str,
+    visual: VisualObservation | None = None,
+    *,
+    visual_path: bool = False,
+) -> dict[str, str]:
+    """Summarize the form for the decision model without revealing the token.
+
+    The raw field value never leaves the runner; the model receives only whether
+    the field is empty, holds the required token, or holds something else.
+
+    ``submit_button`` is ``available`` for a clickable page-structure ref. When
+    the page structure has none and the capture-bound visual path is enabled
+    (``visual_path``), it is ``visual_only`` if this observation holds a unique
+    validated visual Submit region, ``visual_check_pending`` if no visual regions
+    were parsed for this step yet (the runner parses them once no page-structure
+    action remains), and ``not_found_visually`` otherwise. Without a visual path
+    it is ``not_in_page_structure``.
+    """
+    field, button = _form_refs(snapshot)
+    if field is None:
+        field_state = "not_found"
+    elif not field.get("value"):
+        field_state = "empty"
+    elif field.get("value") == token:
+        field_state = "contains_required_token"
+    else:
+        field_state = "contains_other_value"
+    if button is not None:
+        submit_state = "available"
+    elif not visual_path:
+        submit_state = "not_in_page_structure"
+    elif visual is None:
+        submit_state = "visual_check_pending"
+    elif visual_submit_region(visual) is not None:
+        submit_state = "visual_only"
+    else:
+        submit_state = "not_found_visually"
+    return {"verification_field": field_state, "submit_button": submit_state}
+
+
+def redact_token(value: Any, token: str) -> Any:
+    """Replace every occurrence of the token in strings nested in ``value``."""
+    if not token:
+        return value
+    if isinstance(value, str):
+        return value.replace(token, REDACTED_TOKEN)
+    if isinstance(value, Mapping):
+        return {key: redact_token(item, token) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [redact_token(item, token) for item in value]
+    return value
+
+
+HISTORY_OUTCOMES = {
+    "type-verification-value": "typed the required token into the verification field",
+    "submit-form": "clicked Submit; the submission was not yet confirmed",
+    "submit-form-foreground": "clicked Submit in the foreground; the submission was not yet confirmed",
+    "reobserve": "took no action and requested a fresh observation",
+}
+
+
+def history_entry(
+    step: int, candidate_id: str, *, refusal: str | None = None
+) -> dict[str, Any]:
+    """Build the compact decision-history item shown to the model.
+
+    It records what each step did, not timings or model probabilities, so earlier
+    choices do not become a signal to repeat themselves.
+    """
+    if refusal is not None:
+        outcome = (
+            f"Driver refused background delivery ({refusal}); no click happened and a "
+            "foreground Submit candidate is offered next"
+        )
+    else:
+        outcome = HISTORY_OUTCOMES.get(candidate_id, "completed")
+    return {"step": step, "selected_id": candidate_id, "outcome": outcome}
+
+
 def _reserved_candidates() -> list[Candidate]:
     return [
         Candidate(
             "reobserve",
-            "Discard this decision set and obtain a fresh Driver observation.",
+            "Take no action and obtain a fresh Driver observation, because the current "
+            "observation is stale or contradicts the reported form state. A Submit control "
+            "that is visual-only, or whose visual check is still pending, is not a reason to "
+            "reobserve: the runner parses visual regions for Submit once no page-structure "
+            "action remains.",
             None,
             {},
         ),
@@ -227,30 +352,27 @@ def build_candidates(
     visual: VisualObservation | None = None,
     *,
     capture_bound_click: bool = False,
+    visual_delivery: VisualDelivery = "background",
 ) -> list[Candidate]:
+    """Build the closed candidate set for one decision.
+
+    Page-structure refs always win. The capture-bound visual Submit is offered
+    only when no Submit ref exists. ``visual_delivery="foreground"`` replaces the
+    background visual click with a distinct ``submit-form-foreground`` candidate
+    after Driver refused background delivery; the chooser must pick it explicitly.
+    """
     common = {
         "target_id": snapshot["target_id"],
         "tab_id": snapshot["tab_id"],
     }
-    refs = snapshot.get("refs", [])
-    field = next(
-        (
-            ref
-            for ref in refs
-            if ref.get("role") == "textbox" and ref.get("name") == "verification value"
-        ),
-        None,
-    )
-    button = next(
-        (ref for ref in refs if ref.get("role") == "button" and ref.get("name") == "Submit"),
-        None,
-    )
+    field, button = _form_refs(snapshot)
     candidates: list[Candidate] = []
     if field and field.get("value") != token:
         candidates.append(
             Candidate(
                 "type-verification-value",
-                "Replace the verification field with the required token.",
+                "Type the required verification token into the verification field, "
+                "replacing its current contents.",
                 "browser_type",
                 {**common, "ref": field["ref"], "text": token, "replace": True},
             )
@@ -259,7 +381,9 @@ def build_candidates(
         candidates.append(
             Candidate(
                 "submit-form",
-                "Submit the form now that the verification field contains the token.",
+                "Click the form's Submit button. The observed form state reports that the "
+                "verification field already contains the required token, so the form is "
+                "ready to submit.",
                 "browser_click",
                 {**common, "ref": button["ref"], "input_route": "dom_event"},
             )
@@ -270,18 +394,23 @@ def build_candidates(
         and visual
         and capture_bound_click
     ):
-        matches = [
-            region
-            for region in visual.regions
-            if region.confidence >= 0.8
-            and _ascii_lower(region.text or region.label or "") == "submit"
-        ]
-        if len(matches) == 1:
-            x, y = visual.screenshot_center(matches[0])
+        region = visual_submit_region(visual)
+        if region is not None:
+            x, y = visual.screenshot_center(region)
+            foreground = visual_delivery == "foreground"
             candidates.append(
                 Candidate(
-                    "submit-form",
-                    "Submit the form using the unique validated visual Submit region.",
+                    "submit-form-foreground" if foreground else "submit-form",
+                    (
+                        "Submit the form by clicking the unique validated visual Submit "
+                        "region with foreground delivery, which activates the browser "
+                        "window, because Driver refused background delivery for the "
+                        "previous visual click."
+                        if foreground
+                        else "Submit the form by clicking the unique validated visual Submit "
+                        "region. The observed form state reports that the verification field "
+                        "already contains the required token."
+                    ),
                     "click",
                     {
                         "pid": visual.pid,
@@ -289,13 +418,17 @@ def build_candidates(
                         "x": x,
                         "y": y,
                         "capture_id": visual.capture_id,
-                        "delivery_mode": "background",
+                        "delivery_mode": visual_delivery,
                     },
                     capture_id=visual.capture_id,
                     screenshot_reference=visual.screenshot_reference,
                 )
             )
     return candidates + _reserved_candidates()
+
+
+def has_executable_candidate(candidates: list[Candidate]) -> bool:
+    return any(candidate.tool is not None for candidate in candidates)
 
 
 def _ascii_lower(value: str) -> str:
@@ -307,7 +440,13 @@ def choose_mock(candidates: list[Candidate]) -> tuple[str | None, float, dict[st
     selected = (
         "type-verification-value"
         if "type-verification-value" in ids
-        else "submit-form" if "submit-form" in ids else "reobserve" if "reobserve" in ids else None
+        else "submit-form"
+        if "submit-form" in ids
+        else "submit-form-foreground"
+        if "submit-form-foreground" in ids
+        else "reobserve"
+        if "reobserve" in ids
+        else None
     )
     probabilities = {candidate.id: float(candidate.id == selected) for candidate in candidates}
     return selected, 1.0 if selected else 0.0, probabilities

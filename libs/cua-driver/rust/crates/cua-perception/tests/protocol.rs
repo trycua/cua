@@ -208,18 +208,47 @@ fn fixture_parse_matches_the_checked_in_golden() {
     assert_eq!(numbers_as_f64(response(FIXTURE_REQUEST)), expected);
 }
 
+/// Rewrites every integral-valued float as an integer, which is how Release
+/// Please's JSON updater reserializes the golden when it bumps the version.
+fn integral_floats_as_integers(value: Value) -> Value {
+    match value {
+        Value::Number(number) => match number.as_f64() {
+            Some(float) if number.is_f64() && float.fract() == 0.0 && float.abs() < 1e15 => {
+                Value::Number(serde_json::Number::from(float as i64))
+            }
+            _ => Value::Number(number),
+        },
+        Value::Array(items) => {
+            Value::Array(items.into_iter().map(integral_floats_as_integers).collect())
+        }
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .map(|(key, value)| (key, integral_floats_as_integers(value)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
 #[test]
 fn response_golden_survives_release_please_reserialization() {
     // Release Please's JSON updater writes integral floats without their
-    // fraction, so the bumped golden says `1` where the worker emits `1.0`.
-    let reserialized = FIXTURE_RESPONSE.replace("\"confidence\": 1.0", "\"confidence\": 1");
-    assert_ne!(
-        reserialized, FIXTURE_RESPONSE,
-        "golden should contain a float confidence"
+    // fraction, so a bumped golden says `1` where the worker emits `1.0`.
+    // The checked-in golden may be in either form: before a release pull
+    // request it keeps `1.0`, and the release pull request rewrites it to `1`.
+    let golden: Value = serde_json::from_str(FIXTURE_RESPONSE).expect("parse response golden");
+    let reserialized = integral_floats_as_integers(golden.clone());
+    let reserialized_text =
+        serde_json::to_string_pretty(&reserialized).expect("serialize reserialized golden");
+    assert!(
+        reserialized_text.contains("\"confidence\": 1\n")
+            || reserialized_text.contains("\"confidence\": 1,"),
+        "reserialized golden should contain an integral confidence"
     );
-    let expected =
-        numbers_as_f64(serde_json::from_str(&reserialized).expect("parse reserialized golden"));
-    assert_eq!(numbers_as_f64(response(FIXTURE_REQUEST)), expected);
+    let actual = numbers_as_f64(response(FIXTURE_REQUEST));
+    assert_eq!(actual, numbers_as_f64(golden));
+    assert_eq!(actual, numbers_as_f64(reserialized));
 }
 
 #[test]

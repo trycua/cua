@@ -34,6 +34,7 @@ pub(crate) mod get_screen_size;
 mod health_report;
 mod move_cursor;
 mod page;
+mod pixel_route;
 pub(crate) mod px_frame;
 mod set_config;
 mod type_text_chars;

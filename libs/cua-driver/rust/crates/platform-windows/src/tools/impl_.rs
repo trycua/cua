@@ -7786,9 +7786,12 @@ impl Tool for GetDesktopStateTool {
         // blocking GDI capture off the async runtime.
         let out_file = screenshot_out_file.clone();
         let res = tokio::task::spawn_blocking(
-            move || -> anyhow::Result<(Option<String>, Option<String>, u32, u32, Vec<u8>, (u32, u32))> {
+            move || -> anyhow::Result<(Option<String>, Option<String>, u32, u32, Vec<u8>, (u32, u32), cursor_overlay::capture_exclusion::AgentOverlayCapture)> {
                 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-                let png = crate::capture::screenshot_display_bytes()?;
+                // The agent reads this image, so the Driver's own cursor and
+                // session pill must not sit over the controls it is reading.
+                let (png, overlay_capture) =
+                    crate::capture::screenshot_display_bytes_excluding_overlay()?;
                 let full = crate::capture::png_dimensions_pub(&png)?;
                 // Opt-in cap; later desktop-scope pixels from the capped
                 // image are mapped back at dispatch and by its capture_id.
@@ -7801,15 +7804,23 @@ impl Tool for GetDesktopStateTool {
                 let (w, h) = crate::capture::png_dimensions_pub(&png)?;
                 if let Some(ref path) = out_file {
                     std::fs::write(path, &png)?;
-                    Ok((None, Some(path.clone()), w, h, png, full))
+                    Ok((None, Some(path.clone()), w, h, png, full, overlay_capture))
                 } else {
-                    Ok((Some(BASE64.encode(&png)), None, w, h, png, full))
+                    Ok((Some(BASE64.encode(&png)), None, w, h, png, full, overlay_capture))
                 }
             },
         )
         .await;
 
-        let (b64_opt, file_path, screenshot_width, screenshot_height, png, full_size) = match res {
+        let (
+            b64_opt,
+            file_path,
+            screenshot_width,
+            screenshot_height,
+            png,
+            full_size,
+            overlay_capture,
+        ) = match res {
             Ok(Ok(v)) => v,
             Ok(Err(e)) => return ToolResult::error(format!("Desktop screenshot failed: {e}")),
             Err(e) => return ToolResult::error(format!("Desktop screenshot task error: {e}")),
@@ -7819,10 +7830,11 @@ impl Tool for GetDesktopStateTool {
         if let Some(b64) = b64_opt {
             content.push(Content::image_png(b64));
         }
-        let summary = format!(
+        let mut summary = format!(
             "desktop screenshot {screenshot_width}x{screenshot_height} px \
              (screen {screen_width}x{screen_height} px)"
         );
+        cursor_overlay::capture_exclusion::append_summary_note(&mut summary, &overlay_capture);
         content.push(Content::text(summary));
 
         let mut structured = json!({
@@ -7837,6 +7849,7 @@ impl Tool for GetDesktopStateTool {
                 if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 }
             },
             "screenshot_mime_type": "image/png",
+            "agent_overlay_capture": overlay_capture,
         });
         if full_size != (screenshot_width, screenshot_height) {
             structured["screenshot_original_width"] = json!(full_size.0);

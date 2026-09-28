@@ -30,7 +30,9 @@ use cua_driver_core::perception_client::containment::{
 use cua_driver_core::perception_client::containment::{
     run_contained_hook, ContainmentLimits, HookOutcome,
 };
-use cua_driver_core::perception_client::{PerceptionClient, PerceptionWorkerConfig};
+use cua_driver_core::perception_client::{
+    PerceptionClient, PerceptionClientResolver, PerceptionWorkerConfig,
+};
 use cua_driver_core::protocol::ToolResult;
 use cua_driver_core::tool::{Tool, ToolDef, ToolRegistry};
 
@@ -42,6 +44,14 @@ const ACTIVE_NEW_NAME: &str = "active.new.json";
 const TRUST_NAME: &str = ".publisher-trust.json";
 const TRUST_NEW_NAME: &str = ".publisher-trust.new.json";
 const TRUST_BACKUP_NAME: &str = ".publisher-trust.backup.json";
+// The accepted-catalog ledger lives beside, not inside, the publisher trust
+// file so that trust files and install-record trust snapshots keep the exact
+// schema that earlier drivers parse with `deny_unknown_fields`.
+const CATALOG_LEDGER_NAME: &str = ".publisher-catalogs.json";
+const CATALOG_LEDGER_NEW_NAME: &str = ".publisher-catalogs.new.json";
+const CATALOG_LEDGER_BACKUP_NAME: &str = ".publisher-catalogs.backup.json";
+const CATALOG_LEDGER_SCHEMA_VERSION: u32 = 1;
+const MAX_CATALOG_LEDGER_ENTRIES: usize = 64;
 const MANIFEST_SCHEMA_VERSION: u32 = 1;
 const CATALOG_SCHEMA_VERSION: u32 = 1;
 // The initial lifecycle targets one executable plus a moderate model bundle.
@@ -242,6 +252,32 @@ struct PublisherTrust {
     highest_catalog_version: u64,
     current_key: PublisherKey,
     pending_key: Option<PublisherKey>,
+}
+
+/// Signed catalog payloads accepted at the publisher's highest trusted
+/// catalog version, one per `(extension_id, target)`.
+///
+/// Anti-rollback refuses every catalog older than the trusted version. A
+/// catalog at exactly the trusted version is accepted only when this ledger
+/// is bound to that version and either records the byte-identical signed
+/// payload for the catalog's `(extension_id, target)` or has no entry for that
+/// pair yet (another artifact of the same publisher release). A different
+/// payload for an already-accepted pair at the same version is refused, so a
+/// same-version catalog can never point to a different archive.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct CatalogLedger {
+    schema_version: u32,
+    catalog_version: u64,
+    accepted: Vec<AcceptedCatalog>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
+struct AcceptedCatalog {
+    extension_id: String,
+    target: String,
+    payload_sha256: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1021,8 +1057,8 @@ fn extension_root() -> Result<PathBuf> {
 
 /// Resolve the optional perception worker through the same active-pointer and
 /// installed-payload verification used by extension lifecycle commands.
-pub(crate) fn perception_client() -> PerceptionClient {
-    match perception_worker_config() {
+fn perception_client_in(store: &ExtensionStore) -> PerceptionClient {
+    match perception_worker_config_in(store) {
         Ok(Some(config)) => PerceptionClient::new(config).unwrap_or_else(|error| {
             tracing::warn!("installed cua-perception configuration is unusable: {error:?}");
             PerceptionClient::unavailable()
@@ -1033,6 +1069,106 @@ pub(crate) fn perception_client() -> PerceptionClient {
             PerceptionClient::unavailable()
         }
     }
+}
+
+/// Resolver a running Driver consults before every `parse_visual_regions`
+/// request. It fingerprints the installation cheaply and re-runs the full
+/// startup verification only when install, update, or removal changed it.
+pub(crate) fn perception_client_resolver() -> std::sync::Arc<dyn PerceptionClientResolver> {
+    std::sync::Arc::new(InstalledPerceptionResolver { root: None })
+}
+
+struct InstalledPerceptionResolver {
+    /// Fixed extension root for tests; production follows the environment.
+    root: Option<PathBuf>,
+}
+
+impl InstalledPerceptionResolver {
+    fn store(&self) -> Result<ExtensionStore> {
+        match &self.root {
+            Some(root) => Ok(ExtensionStore::new(root.clone())),
+            None => Ok(ExtensionStore::new(extension_root()?)),
+        }
+    }
+}
+
+impl PerceptionClientResolver for InstalledPerceptionResolver {
+    fn fingerprint(&self) -> String {
+        match self.store() {
+            Ok(store) => perception_install_fingerprint(&store),
+            Err(error) => format!("unresolved-root:{error:#}"),
+        }
+    }
+
+    fn resolve(&self) -> PerceptionClient {
+        match self.store() {
+            Ok(store) => perception_client_in(&store),
+            Err(error) => {
+                tracing::warn!("installed cua-perception extension is unavailable: {error:#}");
+                PerceptionClient::unavailable()
+            }
+        }
+    }
+}
+
+/// Cheap change detector for the installed perception extension.
+///
+/// Every lifecycle operation that changes what the worker resolves to renames,
+/// creates, or removes the activation pointer, the extension directory, the
+/// installed version's manifest and ownership record, or the publisher trust
+/// record. Their metadata and the pointer's contents change with it, so this
+/// never hashes payloads; a changed fingerprint triggers full verification.
+fn perception_install_fingerprint(store: &ExtensionStore) -> String {
+    fn metadata_token(path: &Path) -> String {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) => {
+                #[cfg(unix)]
+                let identity = {
+                    use std::os::unix::fs::MetadataExt as _;
+                    format!("{}:{}", metadata.dev(), metadata.ino())
+                };
+                #[cfg(not(unix))]
+                let identity = String::new();
+                format!(
+                    "{:?}:{}:{:?}:{:?}:{identity}",
+                    metadata.file_type(),
+                    metadata.len(),
+                    metadata.modified().ok(),
+                    metadata.created().ok(),
+                )
+            }
+            Err(error) => format!("absent:{:?}", error.kind()),
+        }
+    }
+
+    let extension = store.extension_dir(PERCEPTION_ID);
+    let active = extension.join(ACTIVE_NAME);
+    let mut parts = vec![
+        metadata_token(&store.root),
+        metadata_token(&store.root.join(TRUST_NAME)),
+        metadata_token(&extension),
+        metadata_token(&active),
+        metadata_token(&extension.join(ACTIVE_BACKUP_NAME)),
+        metadata_token(&extension.join(ACTIVE_NEW_NAME)),
+    ];
+    let pointer = fs::symlink_metadata(&active)
+        .ok()
+        .filter(|metadata| metadata.is_file() && metadata.len() <= MAX_IN_MEMORY_BYTES)
+        .and_then(|_| fs::read(&active).ok());
+    if let Some(bytes) = pointer {
+        parts.push(hex_sha256(&bytes));
+        if let Some(version) = serde_json::from_slice::<ActivePointer>(&bytes)
+            .ok()
+            .filter(|pointer| validate_version_segment(&pointer.version).is_ok())
+            .map(|pointer| pointer.version)
+        {
+            let version = store.versions_dir(PERCEPTION_ID).join(version);
+            parts.push(metadata_token(&version));
+            parts.push(metadata_token(&version.join(MANIFEST_NAME)));
+            parts.push(metadata_token(&version.join(INSTALL_RECORD_NAME)));
+        }
+    }
+    parts.join("|")
 }
 
 pub(crate) fn perception_client_for_cli() -> Result<PerceptionClient> {
@@ -1334,7 +1470,8 @@ fn resolve_install_source(
     let signed: SignedCatalog =
         serde_json::from_slice(&bytes).context("parse signed extension catalog")?;
     let trust = store.load_publisher_trust()?;
-    let trust_update = verify_catalog_at(entry, &signed, &trust, unix_now()?)?;
+    let ledger = store.load_catalog_ledger();
+    let trust_update = verify_catalog_at(entry, &signed, &trust, ledger.as_ref(), unix_now()?)?;
     let archive_rel = safe_relative_path(Path::new(&signed.payload.archive))?;
     if archive_rel.as_os_str().is_empty() || archive_rel != Path::new(&signed.payload.archive) {
         bail!("catalog archive path must be canonical and relative");
@@ -1356,6 +1493,7 @@ fn verify_catalog_at(
     entry: &RegistryEntry,
     signed: &SignedCatalog,
     trust: &PublisherTrust,
+    ledger: Option<&CatalogLedger>,
     now: u64,
 ) -> Result<PublisherTrust> {
     validate_publisher_trust(trust)?;
@@ -1376,12 +1514,17 @@ fn verify_catalog_at(
     {
         bail!("catalog publisher identity is not trusted");
     }
-    if payload.catalog_version <= trust.highest_catalog_version {
+    if payload.catalog_version < trust.highest_catalog_version {
         bail!(
-            "catalog anti-rollback version {} must be newer than trusted version {}",
+            "catalog anti-rollback version {} is older than the trusted version {}; refusing to \
+             roll back to an older signed catalog (use the catalog for version {} or newer)",
             payload.catalog_version,
+            trust.highest_catalog_version,
             trust.highest_catalog_version
         );
+    }
+    if payload.catalog_version == trust.highest_catalog_version {
+        verify_same_version_catalog(payload, trust, ledger)?;
     }
     if payload.extension_id != entry.id {
         bail!("catalog extension id does not match requested extension");
@@ -1466,6 +1609,124 @@ fn verify_catalog_at(
     }
     updated.highest_catalog_version = payload.catalog_version;
     Ok(updated)
+}
+
+/// SHA-256 of the exact bytes the publisher signature covers.
+fn catalog_payload_sha256(payload: &CatalogPayload) -> Result<String> {
+    Ok(hex_sha256(&serde_json::to_vec(payload)?))
+}
+
+/// Admit a catalog at exactly the trusted anti-rollback version only when it
+/// cannot substitute a different artifact for one already accepted at that
+/// version. The signature is still verified by the caller afterwards.
+fn verify_same_version_catalog(
+    payload: &CatalogPayload,
+    trust: &PublisherTrust,
+    ledger: Option<&CatalogLedger>,
+) -> Result<()> {
+    let version = payload.catalog_version;
+    let Some(ledger) = ledger.filter(|ledger| ledger.catalog_version == version) else {
+        bail!(
+            "catalog anti-rollback version {version} equals the trusted version {}, but this \
+             extension store has no record of which signed catalog was accepted at that version \
+             (the trust state predates same-version reinstall support, or its last update was \
+             interrupted), so reinstalling from it cannot be proven safe; install from a catalog \
+             newer than version {version} once one is published",
+            trust.highest_catalog_version
+        );
+    };
+    let digest = catalog_payload_sha256(payload)?;
+    match ledger.accepted.iter().find(|accepted| {
+        accepted.extension_id == payload.extension_id && accepted.target == payload.target
+    }) {
+        Some(accepted) if accepted.payload_sha256 == digest => Ok(()),
+        Some(_) => bail!(
+            "catalog anti-rollback version {version} equals the trusted version, but its signed \
+             contents differ from the catalog already accepted for {} on {} at that version; \
+             refusing a conflicting catalog (use the originally accepted catalog or a newer one)",
+            payload.extension_id,
+            payload.target
+        ),
+        // Another extension or target from the same publisher release.
+        None => Ok(()),
+    }
+}
+
+/// The ledger that results from accepting `payload`, whose signature and
+/// anti-rollback position `verify_catalog_at` has already approved against
+/// `trust` and `current`. Entries are kept only for the payload's version.
+fn next_catalog_ledger(
+    current: Option<&CatalogLedger>,
+    trust: &PublisherTrust,
+    payload: &CatalogPayload,
+) -> Result<CatalogLedger> {
+    let version = payload.catalog_version;
+    let mut accepted = match current {
+        Some(ledger)
+            if ledger.catalog_version == version && trust.highest_catalog_version == version =>
+        {
+            ledger.accepted.clone()
+        }
+        _ => Vec::new(),
+    };
+    let digest = catalog_payload_sha256(payload)?;
+    match accepted
+        .iter()
+        .find(|entry| entry.extension_id == payload.extension_id && entry.target == payload.target)
+    {
+        Some(existing) if existing.payload_sha256 != digest => {
+            bail!("signed catalog conflicts with the catalog already accepted at its version")
+        }
+        Some(_) => {}
+        None => accepted.push(AcceptedCatalog {
+            extension_id: payload.extension_id.clone(),
+            target: payload.target.clone(),
+            payload_sha256: digest,
+        }),
+    }
+    accepted.sort();
+    let ledger = CatalogLedger {
+        schema_version: CATALOG_LEDGER_SCHEMA_VERSION,
+        catalog_version: version,
+        accepted,
+    };
+    validate_catalog_ledger(&ledger)?;
+    Ok(ledger)
+}
+
+fn validate_catalog_ledger(ledger: &CatalogLedger) -> Result<()> {
+    if ledger.schema_version != CATALOG_LEDGER_SCHEMA_VERSION
+        || ledger.catalog_version == 0
+        || ledger.accepted.len() > MAX_CATALOG_LEDGER_ENTRIES
+        || ledger.accepted.windows(2).any(|pair| {
+            (&pair[0].extension_id, &pair[0].target) >= (&pair[1].extension_id, &pair[1].target)
+        })
+        || ledger.accepted.iter().any(|entry| {
+            entry.extension_id.is_empty()
+                || entry.target.is_empty()
+                || validate_sha256("accepted catalog", &entry.payload_sha256).is_err()
+        })
+    {
+        bail!("accepted catalog ledger is invalid");
+    }
+    Ok(())
+}
+
+/// Missing, interrupted, non-private, unreadable, or invalid ledgers read as
+/// absent. The ledger only ever relaxes the same-version check, so treating
+/// it as absent fails closed (same-version catalogs are refused) without
+/// blocking newer catalogs.
+fn load_catalog_ledger_at(root: &Dir) -> Option<CatalogLedger> {
+    if !matches!(
+        private_regular_file_or_missing_at(root, CATALOG_LEDGER_NAME),
+        Ok(true)
+    ) {
+        return None;
+    }
+    let bytes = read_small_file_at(root, Path::new(CATALOG_LEDGER_NAME)).ok()?;
+    serde_json::from_slice::<CatalogLedger>(&bytes)
+        .ok()
+        .filter(|ledger| validate_catalog_ledger(ledger).is_ok())
 }
 
 fn initial_publisher_trust() -> PublisherTrust {
@@ -1649,89 +1910,112 @@ fn print_preview(preview: &InstallReview, json: bool) -> Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(&preview)?);
     } else {
-        println!("Extension: {} {}", preview.id, preview.version);
-        println!("Name: {}", preview.name);
-        println!("Trust: {}", trust_label(&preview.trust));
-        println!("Evidence class: {}", preview.evidence_class);
-        #[cfg(feature = "review-trust-root")]
-        if preview.trust == TrustClass::ReviewOnlyPublisherVerified {
-            println!("{REVIEW_TRUST_NOTICE}");
-        }
-        if let (Some(publisher), Some(key), Some(catalog), Some(expires)) = (
-            &preview.publisher_name,
-            &preview.publisher_key_id,
-            preview.catalog_version,
-            preview.catalog_expires_unix,
-        ) {
-            println!(
-                "Publisher signature: verified {} with key {} (catalog {}, expires {})",
-                publisher, key, catalog, expires
-            );
-        }
-        println!("Signing key status: {}", preview.signing_key_status);
-        if let Some(publisher_id) = &preview.publisher_id {
-            println!("Publisher ID: {publisher_id}");
-        }
-        if let Some(algorithm) = &preview.signing_key_algorithm {
-            println!("Signing key algorithm: {algorithm}");
-        }
-        println!("Artifact source: {}", preview.artifact_source);
-        println!("Destination: {}", preview.destination);
-        println!("Download size: {} bytes", preview.download_size);
-        println!("Installed size: {} bytes", preview.installed_size);
-        println!("License: {}", preview.license);
-        println!("Source: {}", preview.source);
-        println!(
-            "Corresponding source: {} @ {}",
-            preview.corresponding_source_uri, preview.corresponding_source_revision
-        );
-        if let Some(file) = &preview.corresponding_source.file {
-            println!(
-                "Corresponding source file: {} | SHA-256 {}",
+        // Render first and print once so a closed stdout takes the same
+        // broken-pipe path as every other CLI `print!`.
+        let mut text = Vec::new();
+        write_preview_text(&mut text, preview)?;
+        print!("{}", String::from_utf8_lossy(&text));
+    }
+    Ok(())
+}
+
+/// Human-readable install review. The "no extension state was changed"
+/// footer is only true for a preview that does not authorize mutation
+/// (`inspect`); `install` and `update` go on to change state and print their
+/// own result line instead.
+fn write_preview_text(out: &mut impl Write, preview: &InstallReview) -> std::io::Result<()> {
+    writeln!(out, "Extension: {} {}", preview.id, preview.version)?;
+    writeln!(out, "Name: {}", preview.name)?;
+    writeln!(out, "Trust: {}", trust_label(&preview.trust))?;
+    writeln!(out, "Evidence class: {}", preview.evidence_class)?;
+    #[cfg(feature = "review-trust-root")]
+    if preview.trust == TrustClass::ReviewOnlyPublisherVerified {
+        writeln!(out, "{REVIEW_TRUST_NOTICE}")?;
+    }
+    if let (Some(publisher), Some(key), Some(catalog), Some(expires)) = (
+        &preview.publisher_name,
+        &preview.publisher_key_id,
+        preview.catalog_version,
+        preview.catalog_expires_unix,
+    ) {
+        writeln!(
+            out,
+            "Publisher signature: verified {} with key {} (catalog {}, expires {})",
+            publisher, key, catalog, expires
+        )?;
+    }
+    writeln!(out, "Signing key status: {}", preview.signing_key_status)?;
+    if let Some(publisher_id) = &preview.publisher_id {
+        writeln!(out, "Publisher ID: {publisher_id}")?;
+    }
+    if let Some(algorithm) = &preview.signing_key_algorithm {
+        writeln!(out, "Signing key algorithm: {algorithm}")?;
+    }
+    writeln!(out, "Artifact source: {}", preview.artifact_source)?;
+    writeln!(out, "Destination: {}", preview.destination)?;
+    writeln!(out, "Download size: {} bytes", preview.download_size)?;
+    writeln!(out, "Installed size: {} bytes", preview.installed_size)?;
+    writeln!(out, "License: {}", preview.license)?;
+    writeln!(out, "Source: {}", preview.source)?;
+    writeln!(
+        out,
+        "Corresponding source: {} @ {}",
+        preview.corresponding_source_uri, preview.corresponding_source_revision
+    )?;
+    if let Some(file) = &preview.corresponding_source.file {
+        writeln!(
+            out,
+            "Corresponding source file: {} | SHA-256 {}",
+            file.path, file.sha256
+        )?;
+    }
+    writeln!(out, "Provenance: {}", preview.provenance)?;
+    for component in &preview.components {
+        writeln!(
+            out,
+            "Component: {} {} | {} | {} @ {} | notice: {}",
+            component.name,
+            component.version,
+            component.license,
+            component.source_uri,
+            component.source_revision,
+            component.notice
+        )?;
+        if let Some(file) = &component.notice_file {
+            writeln!(
+                out,
+                "Component notice file: {} | SHA-256 {}",
                 file.path, file.sha256
-            );
+            )?;
         }
-        println!("Provenance: {}", preview.provenance);
-        for component in &preview.components {
-            println!(
-                "Component: {} {} | {} | {} @ {} | notice: {}",
-                component.name,
-                component.version,
-                component.license,
-                component.source_uri,
-                component.source_revision,
-                component.notice
-            );
-            if let Some(file) = &component.notice_file {
-                println!(
-                    "Component notice file: {} | SHA-256 {}",
-                    file.path, file.sha256
-                );
-            }
+    }
+    for model in &preview.models {
+        writeln!(
+            out,
+            "Model: {} @ {} | original {} | conversion {}",
+            model.path, model.revision, model.original_sha256, model.conversion_sha256
+        )?;
+        if let Some(file) = &model.license_file {
+            writeln!(
+                out,
+                "Model license file: {} | SHA-256 {}",
+                file.path, file.sha256
+            )?;
         }
-        for model in &preview.models {
-            println!(
-                "Model: {} @ {} | original {} | conversion {}",
-                model.path, model.revision, model.original_sha256, model.conversion_sha256
-            );
-            if let Some(file) = &model.license_file {
-                println!(
-                    "Model license file: {} | SHA-256 {}",
-                    file.path, file.sha256
-                );
-            }
-        }
-        println!("Target: {}", preview.target);
-        println!("Archive SHA-256: {}", preview.archive_sha256);
-        println!("Manifest SHA-256: {}", preview.manifest_sha256);
-        println!(
-            "Authorization: request={}, confirmation_required={}, confirmation_received={}, mutation_authorized={}",
-            preview.authorization.request,
-            preview.authorization.confirmation_required,
-            preview.authorization.confirmation_received,
-            preview.authorization.mutation_authorized,
-        );
-        println!("Preview complete; no extension state was changed.");
+    }
+    writeln!(out, "Target: {}", preview.target)?;
+    writeln!(out, "Archive SHA-256: {}", preview.archive_sha256)?;
+    writeln!(out, "Manifest SHA-256: {}", preview.manifest_sha256)?;
+    writeln!(
+        out,
+        "Authorization: request={}, confirmation_required={}, confirmation_received={}, mutation_authorized={}",
+        preview.authorization.request,
+        preview.authorization.confirmation_required,
+        preview.authorization.confirmation_received,
+        preview.authorization.mutation_authorized,
+    )?;
+    if !preview.authorization.mutation_authorized {
+        writeln!(out, "Preview complete; no extension state was changed.")?;
     }
     Ok(())
 }
@@ -1808,6 +2092,54 @@ impl ExtensionStore {
         }
         if had_active {
             root.remove_file(TRUST_BACKUP_NAME)?;
+        }
+        sync_cap_dir(root)
+    }
+
+    fn load_catalog_ledger(&self) -> Option<CatalogLedger> {
+        if !self.root.exists() {
+            return None;
+        }
+        let root = open_directory_path_nofollow(&self.root).ok()?;
+        verify_cap_directory_permissions_portable(&root).ok()?;
+        load_catalog_ledger_at(&root)
+    }
+
+    /// Replace the accepted-catalog ledger. An interruption at any point
+    /// leaves the ledger absent or bound to a superseded version, both of
+    /// which `load_catalog_ledger_at` treats as "no same-version proof".
+    fn commit_catalog_ledger_locked(&self, root: &Dir, ledger: &CatalogLedger) -> Result<()> {
+        validate_catalog_ledger(ledger)?;
+        for stale in [CATALOG_LEDGER_NEW_NAME, CATALOG_LEDGER_BACKUP_NAME] {
+            match root.remove_file(stale) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error).with_context(|| format!("remove stale {stale}"));
+                }
+            }
+        }
+        write_new_file_at(
+            root,
+            CATALOG_LEDGER_NEW_NAME,
+            &serde_json::to_vec_pretty(ledger)?,
+        )?;
+        let had_active = match root.symlink_metadata(CATALOG_LEDGER_NAME) {
+            Ok(_) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error).context("inspect accepted catalog ledger"),
+        };
+        if had_active {
+            root.rename(CATALOG_LEDGER_NAME, root, CATALOG_LEDGER_BACKUP_NAME)
+                .context("back up accepted catalog ledger")?;
+        }
+        if let Err(error) = root.rename(CATALOG_LEDGER_NEW_NAME, root, CATALOG_LEDGER_NAME) {
+            let _ = root.remove_file(CATALOG_LEDGER_NEW_NAME);
+            return Err(error).context("activate accepted catalog ledger");
+        }
+        if had_active {
+            root.remove_file(CATALOG_LEDGER_BACKUP_NAME)
+                .context("remove accepted catalog ledger backup")?;
         }
         sync_cap_dir(root)
     }
@@ -2054,12 +2386,29 @@ impl ExtensionStore {
         self.recover_publisher_trust_locked(&lock.root)?;
         self.recover_activation_locked(&lock.root, entry.id)?;
         self.recover_publisher_trust_from_active_locked(&lock.root, entry.id)?;
+        let mut ledger_update = None;
         if let Some(signed) = &source.signed_catalog {
             let current_trust = load_publisher_trust_at(&lock.root)?;
-            let verified = verify_catalog_at(entry, signed, &current_trust, unix_now()?)
-                .context("signed catalog changed or became stale before mutation")?;
+            let current_ledger = load_catalog_ledger_at(&lock.root);
+            let verified = verify_catalog_at(
+                entry,
+                signed,
+                &current_trust,
+                current_ledger.as_ref(),
+                unix_now()?,
+            )
+            .context("signed catalog changed or became stale before mutation")?;
             if source.trust_update.as_ref() != Some(&verified) {
                 bail!("signed catalog trust decision changed before mutation; inspect it again");
+            }
+            // Derive the ledger now, under the lock and from the same state as
+            // the trust decision, but persist it only once the artifact is
+            // active: a refused or failed install must not discard the proof
+            // for the catalog that is currently trusted.
+            let next_ledger =
+                next_catalog_ledger(current_ledger.as_ref(), &current_trust, &signed.payload)?;
+            if current_ledger.as_ref() != Some(&next_ledger) {
+                ledger_update = Some(next_ledger);
             }
         }
         let active = self.active_pointer_locked(&lock.root, entry.id)?;
@@ -2087,7 +2436,14 @@ impl ExtensionStore {
                     .as_ref()
                     .map(|catalog| catalog.catalog_version),
             ) {
-                if next <= previous {
+                if next == previous {
+                    bail!(
+                        "{} is already installed from catalog anti-rollback version {previous}; \
+                         an update requires a newer catalog",
+                        entry.id
+                    );
+                }
+                if next < previous {
                     bail!(
                         "catalog anti-rollback version {next} must be newer than installed version {previous}"
                     );
@@ -2229,6 +2585,12 @@ impl ExtensionStore {
             &version_text,
             ActivationFailpoint::None,
         )?;
+        // The ledger is bound to its catalog version, so committing it before
+        // the trust file is safe: until trust reaches that version it proves
+        // nothing, and startup recovery raises trust from this install record.
+        if let Some(ledger) = &ledger_update {
+            self.commit_catalog_ledger_locked(&lock.root, ledger)?;
+        }
         if let Some(trust) = &source.trust_update {
             self.commit_publisher_trust_locked(&lock.root, trust)?;
         }
@@ -4701,6 +5063,51 @@ mod tests {
         0x7f, 0x60,
     ];
 
+    #[test]
+    fn preview_footer_is_reserved_for_non_mutating_inspection() {
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let entry = registry_entry(PERCEPTION_ID).unwrap();
+        let archive = fixture_archive(
+            temp.path(),
+            "1.0.0",
+            &current_target().unwrap(),
+            1,
+            b"worker",
+        );
+        let source = InstallSource {
+            archive,
+            trust: TrustClass::DeveloperUnsignedLocal,
+            catalog: None,
+            signed_catalog: None,
+            trust_update: None,
+        };
+        let inspected = inspect_without_mutation(entry, &source).unwrap();
+        let render = |request| {
+            let mut text = Vec::new();
+            write_preview_text(
+                &mut text,
+                &install_review(entry, &store, &inspected, &source, request),
+            )
+            .unwrap();
+            String::from_utf8(text).unwrap()
+        };
+        const FOOTER: &str = "Preview complete; no extension state was changed.";
+
+        let inspect = render(InstallReviewRequest::CliInspect);
+        assert!(inspect.contains("mutation_authorized=false"));
+        assert!(inspect.trim_end().ends_with(FOOTER));
+        for request in [
+            InstallReviewRequest::CliInstall,
+            InstallReviewRequest::CliUpdate,
+        ] {
+            let review = render(request);
+            assert!(review.contains("mutation_authorized=true"));
+            assert!(!review.contains(FOOTER), "{review}");
+        }
+        assert!(!store.extension_dir(PERCEPTION_ID).exists());
+    }
+
     fn acl_drift_error() -> anyhow::Error {
         anyhow!(WindowsAclDrift)
             .context("extension Windows ACL grants access to untrusted principal in test fixture")
@@ -5251,6 +5658,88 @@ mod tests {
         path
     }
 
+    #[tokio::test]
+    async fn live_perception_client_follows_install_update_and_remove() {
+        use cua_driver_contract::VisualParseErrorCode;
+        use cua_driver_core::perception_client::{PerceptionCancellation, PerceptionClientHandle};
+
+        async fn parse_code(handle: &PerceptionClientHandle) -> VisualParseErrorCode {
+            handle
+                .current()
+                .await
+                .parse(
+                    "capture-test",
+                    1,
+                    1,
+                    &[1, 2, 3, 4],
+                    &PerceptionCancellation::default(),
+                )
+                .await
+                .expect_err("the fixture payload is not a runnable worker")
+                .code
+        }
+        fn active_version(client: &PerceptionClient) -> Option<String> {
+            client
+                .worker_config()
+                .and_then(|config| config.args.last().cloned())
+        }
+
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("extensions");
+        let store = ExtensionStore::new(root.clone());
+        let entry = registry_entry(PERCEPTION_ID).unwrap();
+        let runtime_name = if cfg!(target_os = "windows") {
+            "onnxruntime.dll"
+        } else if cfg!(target_os = "macos") {
+            "libonnxruntime.dylib"
+        } else {
+            "libonnxruntime.so"
+        };
+        // One handle stands in for a runtime built before the extension existed.
+        let resolver = std::sync::Arc::new(InstalledPerceptionResolver {
+            root: Some(root.clone()),
+        });
+        let handle = PerceptionClientHandle::live(resolver.clone());
+
+        assert!(!handle.current().await.is_available());
+        assert_eq!(
+            parse_code(&handle).await,
+            VisualParseErrorCode::NotInstalled
+        );
+        let absent = resolver.fingerprint();
+        assert_eq!(resolver.fingerprint(), absent, "fingerprint must be stable");
+
+        let first = perception_fixture_archive(temp.path(), "1.0.0", runtime_name);
+        store.install_archive(entry, &first).unwrap();
+        let installed = handle.current().await;
+        assert_eq!(active_version(&installed).as_deref(), Some("1.0.0"));
+        assert_ne!(
+            parse_code(&handle).await,
+            VisualParseErrorCode::NotInstalled,
+            "a running runtime must reach the newly installed worker"
+        );
+        let installed_fingerprint = resolver.fingerprint();
+        assert_ne!(installed_fingerprint, absent);
+        assert_eq!(resolver.fingerprint(), installed_fingerprint);
+
+        let second_directory = temp.path().join("update");
+        fs::create_dir_all(&second_directory).unwrap();
+        let second = perception_fixture_archive(&second_directory, "1.1.0", runtime_name);
+        store.install_archive(entry, &second).unwrap();
+        assert_ne!(resolver.fingerprint(), installed_fingerprint);
+        let updated = handle.current().await;
+        assert_eq!(active_version(&updated).as_deref(), Some("1.1.0"));
+        // The pre-update client stays usable for a request that already holds it.
+        assert_eq!(active_version(&installed).as_deref(), Some("1.0.0"));
+
+        store.remove(entry).unwrap();
+        assert!(!handle.current().await.is_available());
+        assert_eq!(
+            parse_code(&handle).await,
+            VisualParseErrorCode::NotInstalled
+        );
+    }
+
     #[test]
     fn absent_perception_extension_has_no_worker_config() {
         let temp = TempDir::new().unwrap();
@@ -5539,8 +6028,20 @@ mod tests {
 
     #[cfg(feature = "review-trust-root")]
     fn review_fixture(directory: &Path) -> (PathBuf, PathBuf) {
-        use ring::signature::Ed25519KeyPair;
+        let pair = ring::signature::Ed25519KeyPair::from_seed_unchecked(&REVIEW_SEED).unwrap();
+        let (archive, signed) = signed_fixture(directory, &pair, REVIEW_KEY_ID, 1);
+        let catalog = directory.join("review-catalog.json");
+        fs::write(&catalog, serde_json::to_vec_pretty(&signed).unwrap()).unwrap();
+        (archive, catalog)
+    }
 
+    /// A publisher-verifiable extension archive and its signed catalog.
+    fn signed_fixture(
+        directory: &Path,
+        pair: &ring::signature::Ed25519KeyPair,
+        key_id: &str,
+        catalog_version: u64,
+    ) -> (PathBuf, SignedCatalog) {
         let worker = b"#!/bin/sh\nexit 0\n";
         let model = b"model";
         let notice = b"notice";
@@ -5616,11 +6117,11 @@ mod tests {
         let archive_bytes = fs::read(&archive).unwrap();
         let payload = CatalogPayload {
             schema_version: 1,
-            catalog_version: 1,
+            catalog_version,
             expires_unix: u64::MAX,
-            publisher_id: REVIEW_PUBLISHER_ID.to_owned(),
-            publisher_name: REVIEW_PUBLISHER_NAME.to_owned(),
-            key_id: REVIEW_KEY_ID.to_owned(),
+            publisher_id: expected_publisher_id().to_owned(),
+            publisher_name: expected_publisher_name().to_owned(),
+            key_id: key_id.to_owned(),
             extension_id: PERCEPTION_ID.to_owned(),
             version: manifest.version.clone(),
             target: manifest.target.clone(),
@@ -5635,11 +6136,7 @@ mod tests {
             provenance: manifest.provenance.clone(),
             next_key: None,
         };
-        let pair = Ed25519KeyPair::from_seed_unchecked(&REVIEW_SEED).unwrap();
-        let signed = sign_test_catalog(&pair, payload);
-        let catalog = directory.join("review-catalog.json");
-        fs::write(&catalog, serde_json::to_vec_pretty(&signed).unwrap()).unwrap();
-        (archive, catalog)
+        (archive, sign_test_catalog(pair, payload))
     }
 
     fn append(builder: &mut tar::Builder<GzEncoder<fs::File>>, path: &str, bytes: &[u8]) {
@@ -6906,12 +7403,12 @@ mod tests {
         let entry = registry_entry("cua-perception").unwrap();
 
         let valid = sign_test_catalog(&current, test_catalog_payload("current", 1));
-        let accepted = verify_catalog_at(entry, &valid, &trust, 150).unwrap();
+        let accepted = verify_catalog_at(entry, &valid, &trust, None, 150).unwrap();
         assert_eq!(accepted.highest_catalog_version, 1);
 
         let mut tampered = valid.clone();
         tampered.payload.archive_size = 2;
-        assert!(verify_catalog_at(entry, &tampered, &trust, 150)
+        assert!(verify_catalog_at(entry, &tampered, &trust, None, 150)
             .unwrap_err()
             .to_string()
             .contains("signature verification"));
@@ -6919,7 +7416,7 @@ mod tests {
         let mut rotation_payload = test_catalog_payload("current", 2);
         rotation_payload.next_key = Some(next_key.clone());
         let rotation = sign_test_catalog(&current, rotation_payload);
-        let pending = verify_catalog_at(entry, &rotation, &trust, 150).unwrap();
+        let pending = verify_catalog_at(entry, &rotation, &trust, None, 150).unwrap();
         assert_eq!(pending.pending_key.as_ref().unwrap().key_id, "next");
 
         let mut retrograde_payload = test_catalog_payload("current", 2);
@@ -6928,6 +7425,7 @@ mod tests {
             entry,
             &sign_test_catalog(&current, retrograde_payload),
             &trust,
+            None,
             150,
         )
         .unwrap_err()
@@ -6935,23 +7433,23 @@ mod tests {
         .contains("invalid rotation window"));
 
         let next_catalog = sign_test_catalog(&next, test_catalog_payload("next", 3));
-        assert!(verify_catalog_at(entry, &next_catalog, &pending, 199)
+        assert!(verify_catalog_at(entry, &next_catalog, &pending, None, 199)
             .unwrap_err()
             .to_string()
             .contains("not valid yet"));
-        let promoted = verify_catalog_at(entry, &next_catalog, &pending, 250).unwrap();
+        let promoted = verify_catalog_at(entry, &next_catalog, &pending, None, 250).unwrap();
         assert_eq!(promoted.current_key.key_id, "next");
         assert_eq!(promoted.generation, 2);
         assert!(promoted.pending_key.is_none());
 
         let retired = sign_test_catalog(&current, test_catalog_payload("current", 4));
-        assert!(verify_catalog_at(entry, &retired, &promoted, 300)
+        assert!(verify_catalog_at(entry, &retired, &promoted, None, 300)
             .unwrap_err()
             .to_string()
             .contains("retired"));
 
         let rollback = sign_test_catalog(&next, test_catalog_payload("next", 3));
-        assert!(verify_catalog_at(entry, &rollback, &promoted, 300)
+        assert!(verify_catalog_at(entry, &rollback, &promoted, None, 300)
             .unwrap_err()
             .to_string()
             .contains("anti-rollback"));
@@ -6961,10 +7459,12 @@ mod tests {
             ..trust
         };
         let expired = sign_test_catalog(&current, test_catalog_payload("expired", 5));
-        assert!(verify_catalog_at(entry, &expired, &expired_trust, 200)
-            .unwrap_err()
-            .to_string()
-            .contains("expired"));
+        assert!(
+            verify_catalog_at(entry, &expired, &expired_trust, None, 200)
+                .unwrap_err()
+                .to_string()
+                .contains("expired")
+        );
     }
 
     #[test]
@@ -6985,7 +7485,7 @@ mod tests {
         };
         let mut invalid_trust = trust.clone();
         invalid_trust.generation = 0;
-        assert!(verify_catalog_at(entry, &signed, &invalid_trust, 100)
+        assert!(verify_catalog_at(entry, &signed, &invalid_trust, None, 100)
             .unwrap_err()
             .to_string()
             .contains("trust state is invalid"));
@@ -6994,7 +7494,7 @@ mod tests {
         let store = ExtensionStore::new(temp.path().join("extensions"));
         let root = ensure_private_directory_path(&store.root).unwrap();
         store.commit_publisher_trust_locked(&root, &trust).unwrap();
-        let decision = verify_catalog_at(entry, &signed, &trust, 100).unwrap();
+        let decision = verify_catalog_at(entry, &signed, &trust, None, 100).unwrap();
         let mut advanced = trust.clone();
         advanced.highest_catalog_version = 2;
         store
@@ -7028,6 +7528,294 @@ mod tests {
         assert_eq!(store.load_publisher_trust().unwrap(), trust);
         assert!(!store.root.join(TRUST_BACKUP_NAME).exists());
         assert!(!store.root.join(TRUST_NEW_NAME).exists());
+    }
+
+    fn test_trust(key: PublisherKey, highest_catalog_version: u64) -> PublisherTrust {
+        PublisherTrust {
+            schema_version: 1,
+            publisher_id: expected_publisher_id().to_owned(),
+            generation: 1,
+            highest_catalog_version,
+            current_key: key,
+            pending_key: None,
+        }
+    }
+
+    #[test]
+    fn same_version_catalog_is_accepted_only_when_byte_identical() {
+        let pair = ring::signature::Ed25519KeyPair::from_seed_unchecked(&[21; 32]).unwrap();
+        let key = test_publisher_key("current", &pair, 100, 800);
+        let entry = registry_entry("cua-perception").unwrap();
+        let initial = test_trust(key.clone(), 4);
+        let catalog = sign_test_catalog(&pair, test_catalog_payload("current", 5));
+
+        let trusted = verify_catalog_at(entry, &catalog, &initial, None, 150).unwrap();
+        assert_eq!(trusted.highest_catalog_version, 5);
+        let ledger = next_catalog_ledger(None, &initial, &catalog.payload).unwrap();
+        assert_eq!(ledger.catalog_version, 5);
+        assert_eq!(ledger.accepted.len(), 1);
+
+        // Remove -> reinstall of the same signed catalog: the trust decision
+        // is unchanged and the ledger does not grow.
+        assert_eq!(
+            verify_catalog_at(entry, &catalog, &trusted, Some(&ledger), 150).unwrap(),
+            trusted
+        );
+        assert_eq!(
+            next_catalog_ledger(Some(&ledger), &trusted, &catalog.payload).unwrap(),
+            ledger
+        );
+
+        // A different signed payload at the same version for the same
+        // extension and target is refused, even though it is validly signed.
+        let mut conflicting = test_catalog_payload("current", 5);
+        conflicting.archive_sha256 = "2".repeat(64);
+        let conflicting = sign_test_catalog(&pair, conflicting);
+        let error = verify_catalog_at(entry, &conflicting, &trusted, Some(&ledger), 150)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("signed contents differ"), "{error}");
+        assert!(next_catalog_ledger(Some(&ledger), &trusted, &conflicting.payload).is_err());
+
+        // Older catalogs stay refused regardless of the ledger.
+        let older = sign_test_catalog(&pair, test_catalog_payload("current", 4));
+        let error = verify_catalog_at(entry, &older, &trusted, Some(&ledger), 150)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("older than the trusted version 5"),
+            "{error}"
+        );
+
+        // A ledger bound to another version proves nothing about version 5.
+        let stale = CatalogLedger {
+            catalog_version: 4,
+            ..ledger.clone()
+        };
+        let error = verify_catalog_at(entry, &catalog, &trusted, Some(&stale), 150)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("no record"), "{error}");
+
+        // Newer catalogs are accepted and reset the ledger to their version.
+        let newer = sign_test_catalog(&pair, test_catalog_payload("current", 6));
+        let advanced = verify_catalog_at(entry, &newer, &trusted, Some(&ledger), 150).unwrap();
+        assert_eq!(advanced.highest_catalog_version, 6);
+        let advanced_ledger = next_catalog_ledger(Some(&ledger), &trusted, &newer.payload).unwrap();
+        assert_eq!(advanced_ledger.catalog_version, 6);
+        assert_eq!(advanced_ledger.accepted.len(), 1);
+        assert_eq!(
+            advanced_ledger.accepted[0].payload_sha256,
+            catalog_payload_sha256(&newer.payload).unwrap()
+        );
+    }
+
+    #[test]
+    fn same_version_catalogs_for_other_targets_do_not_corrupt_the_ledger() {
+        let pair = ring::signature::Ed25519KeyPair::from_seed_unchecked(&[23; 32]).unwrap();
+        let key = test_publisher_key("current", &pair, 100, 800);
+        let entry = registry_entry("cua-perception").unwrap();
+        let initial = test_trust(key, 0);
+        let native = sign_test_catalog(&pair, test_catalog_payload("current", 9));
+        let trusted = verify_catalog_at(entry, &native, &initial, None, 150).unwrap();
+        let ledger = next_catalog_ledger(None, &initial, &native.payload).unwrap();
+
+        // The per-target catalog for another platform, signed at the same
+        // release version, passes anti-rollback but is refused for this host
+        // before any trust or ledger state is derived from it.
+        let mut foreign_payload = test_catalog_payload("current", 9);
+        foreign_payload.target = "other-os-other-arch".to_owned();
+        let foreign = sign_test_catalog(&pair, foreign_payload);
+        let error = verify_catalog_at(entry, &foreign, &trusted, Some(&ledger), 150)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("target does not match"), "{error}");
+
+        // Even if a ledger records several targets of one release, each
+        // (extension, target) keeps its own payload, entries stay sorted and
+        // unique, and the native catalog remains reinstallable.
+        let merged = next_catalog_ledger(Some(&ledger), &trusted, &foreign.payload).unwrap();
+        assert_eq!(merged.accepted.len(), 2);
+        validate_catalog_ledger(&merged).unwrap();
+        assert_eq!(
+            next_catalog_ledger(Some(&merged), &trusted, &native.payload).unwrap(),
+            merged
+        );
+        assert_eq!(
+            verify_catalog_at(entry, &native, &trusted, Some(&merged), 150).unwrap(),
+            trusted
+        );
+        let mut conflicting = test_catalog_payload("current", 9);
+        conflicting.version = "1.0.99".to_owned();
+        let conflicting = sign_test_catalog(&pair, conflicting);
+        assert!(
+            verify_catalog_at(entry, &conflicting, &trusted, Some(&merged), 150)
+                .unwrap_err()
+                .to_string()
+                .contains("signed contents differ")
+        );
+
+        // Duplicate or unsorted entries are rejected as an invalid ledger.
+        let mut duplicate = merged.clone();
+        duplicate.accepted.push(duplicate.accepted[0].clone());
+        assert!(validate_catalog_ledger(&duplicate).is_err());
+    }
+
+    #[test]
+    fn stores_without_a_catalog_ledger_keep_working() {
+        let pair = ring::signature::Ed25519KeyPair::from_seed_unchecked(&[25; 32]).unwrap();
+        let key = test_publisher_key("current", &pair, 1, u64::MAX);
+        let entry = registry_entry("cua-perception").unwrap();
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let root = ensure_private_directory_path(&store.root).unwrap();
+
+        // A trust file written by an earlier driver (same schema, no ledger).
+        let legacy = test_trust(key, 7);
+        write_new_file_at(
+            &root,
+            TRUST_NAME,
+            &serde_json::to_vec_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(store.load_publisher_trust().unwrap(), legacy);
+        assert!(store.load_catalog_ledger().is_none());
+
+        let mut same = test_catalog_payload("current", 7);
+        same.expires_unix = u64::MAX;
+        let same = sign_test_catalog(&pair, same);
+        let error = verify_catalog_at(entry, &same, &legacy, None, 100)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("equals the trusted version 7"), "{error}");
+        assert!(error.contains("newer than version 7"), "{error}");
+
+        let mut newer = test_catalog_payload("current", 8);
+        newer.expires_unix = u64::MAX;
+        let newer = sign_test_catalog(&pair, newer);
+        assert_eq!(
+            verify_catalog_at(entry, &newer, &legacy, None, 100)
+                .unwrap()
+                .highest_catalog_version,
+            8
+        );
+
+        // The ledger round-trips, and a corrupt or non-private ledger reads as
+        // absent (fails closed) instead of blocking every install.
+        let ledger = next_catalog_ledger(None, &legacy, &newer.payload).unwrap();
+        store.commit_catalog_ledger_locked(&root, &ledger).unwrap();
+        assert_eq!(store.load_catalog_ledger(), Some(ledger.clone()));
+        store.commit_catalog_ledger_locked(&root, &ledger).unwrap();
+        assert_eq!(store.load_catalog_ledger(), Some(ledger));
+        assert!(!store.root.join(CATALOG_LEDGER_NEW_NAME).exists());
+        assert!(!store.root.join(CATALOG_LEDGER_BACKUP_NAME).exists());
+        root.remove_file(CATALOG_LEDGER_NAME).unwrap();
+        write_new_file_at(&root, CATALOG_LEDGER_NAME, b"{not json").unwrap();
+        assert!(store.load_catalog_ledger().is_none());
+        // The publisher trust file format itself is unchanged.
+        let serialized: serde_json::Value =
+            serde_json::from_slice(&serde_json::to_vec(&legacy).unwrap()).unwrap();
+        assert_eq!(
+            serialized.as_object().unwrap().keys().collect::<Vec<_>>(),
+            [
+                "current_key",
+                "generation",
+                "highest_catalog_version",
+                "pending_key",
+                "publisher_id",
+                "schema_version"
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verified_extension_can_be_removed_and_reinstalled_from_the_same_catalog() {
+        fn verified_source(
+            store: &ExtensionStore,
+            archive: &Path,
+            signed: &SignedCatalog,
+        ) -> Result<InstallSource> {
+            let entry = registry_entry(PERCEPTION_ID).unwrap();
+            let trust = store.load_publisher_trust()?;
+            let ledger = store.load_catalog_ledger();
+            let trust_update =
+                verify_catalog_at(entry, signed, &trust, ledger.as_ref(), unix_now()?)?;
+            Ok(InstallSource {
+                archive: archive.to_owned(),
+                trust: verified_trust_class(),
+                catalog: Some(signed.payload.clone()),
+                signed_catalog: Some(signed.clone()),
+                trust_update: Some(trust_update),
+            })
+        }
+
+        let pair = ring::signature::Ed25519KeyPair::from_seed_unchecked(&[27; 32]).unwrap();
+        let key = test_publisher_key("current", &pair, 1, u64::MAX);
+        let entry = registry_entry(PERCEPTION_ID).unwrap();
+        let temp = TempDir::new().unwrap();
+        let store = ExtensionStore::new(temp.path().join("extensions"));
+        let root = ensure_private_directory_path(&store.root).unwrap();
+        store
+            .commit_publisher_trust_locked(&root, &test_trust(key, 0))
+            .unwrap();
+        let (archive, catalog) = signed_fixture(temp.path(), &pair, "current", 2026092402);
+
+        let source = verified_source(&store, &archive, &catalog).unwrap();
+        store.install_source(entry, &source, false).unwrap();
+        assert_eq!(
+            store
+                .load_publisher_trust()
+                .unwrap()
+                .highest_catalog_version,
+            2026092402
+        );
+
+        // `update` to the catalog that is already installed is a clear no-op
+        // refusal rather than an anti-rollback failure.
+        let source = verified_source(&store, &archive, &catalog).unwrap();
+        let error = store.install_source(entry, &source, true).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("already installed from catalog"),
+            "{error:#}"
+        );
+
+        // D-MAC-9: remove, then reinstall the same signed catalog.
+        store.remove(entry).unwrap();
+        let source = verified_source(&store, &archive, &catalog).unwrap();
+        store.install_source(entry, &source, false).unwrap();
+        assert!(store.active_path(PERCEPTION_ID).unwrap().is_some());
+
+        // A refused mutation with a newer catalog must not discard the proof
+        // for the catalog that is currently trusted.
+        let ledger = store.load_catalog_ledger().unwrap();
+        let (_, newer) = signed_fixture(temp.path(), &pair, "current", 2026092403);
+        let source = verified_source(&store, &archive, &newer).unwrap();
+        assert!(store.install_source(entry, &source, false).is_err());
+        assert_eq!(store.load_catalog_ledger(), Some(ledger));
+        store.remove(entry).unwrap();
+        let source = verified_source(&store, &archive, &catalog).unwrap();
+        store.install_source(entry, &source, false).unwrap();
+
+        // A different payload signed at the same version is still refused.
+        store.remove(entry).unwrap();
+        let mut conflicting = catalog.payload.clone();
+        conflicting.expires_unix -= 1;
+        let conflicting = sign_test_catalog(&pair, conflicting);
+        let error = verified_source(&store, &archive, &conflicting)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("signed contents differ"), "{error}");
+
+        // A store that predates the ledger refuses the same-version reinstall
+        // with guidance instead of silently weakening anti-rollback.
+        fs::remove_file(store.root.join(CATALOG_LEDGER_NAME)).unwrap();
+        let error = verified_source(&store, &archive, &catalog)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("no record"), "{error}");
     }
 
     #[test]

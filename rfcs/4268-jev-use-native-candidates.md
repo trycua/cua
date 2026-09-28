@@ -11,6 +11,11 @@ implementation:
   - https://github.com/trycua/cua/issues/4268
   - https://github.com/trycua/cua/pull/4270
   - https://github.com/trycua/cua/pull/4288
+  - https://github.com/trycua/cua/pull/4290
+  - https://github.com/trycua/cua/pull/4295
+  - https://github.com/trycua/cua/pull/4298
+  - https://github.com/trycua/cua/pull/4301
+  - https://github.com/trycua/cua/pull/4299
 supersedes:
 superseded_by:
 ---
@@ -828,3 +833,39 @@ Implementation:
     unchanged. The Phase 1 tasks use radio buttons in place of a pop-up
     button, because an open AppKit menu runs a modal tracking loop that is not
     deterministic for background CI.
+- Phase 2, [#4290](https://github.com/trycua/cua/pull/4290): the same tasks
+  on the WPF (UIA) and GTK3 (AT-SPI) harnesses, with mock E2E jobs on all
+  three platforms. Linux named text fields reported no `value` on Driver
+  0.30.2 and earlier ([#4291](https://github.com/trycua/cua/issues/4291),
+  fixed by [#4292](https://github.com/trycua/cua/pull/4292)).
+- Phase 3: [#4295](https://github.com/trycua/cua/pull/4295) adds the Cua-S1
+  provider to the native runners through a loopback decision service;
+  [#4298](https://github.com/trycua/cua/pull/4298) adds the
+  `no_application_elements` fallback and the canvas task;
+  [#4301](https://github.com/trycua/cua/pull/4301) retargets the canvas task
+  to Cancel.
+- Phase 4, [#4299](https://github.com/trycua/cua/pull/4299): the native
+  apps guide and the `skills/jev-use` update.
+
+Phase 3 live evidence (released Driver 0.30.2, cua-perception 0.2.1,
+`cua-s1-4b-0.2@16818868`; each run verified by the harness's own state file):
+
+- Live Jev passed 5/5 in every native row (AppKit, WPF, GTK3 × three tasks
+  × Python and TypeScript) except GTK3 `save-note`, blocked by #4291 until
+  Driver 0.30.3 ships.
+- S1 missed six of 82 native runs: three `counter` runs where it abstained
+  after two increments (the value-free request makes it count from history),
+  two macOS `save-note` runs where it pressed Save before typing, and one
+  service error.
+- The canvas task, reachable only through OmniParser, passed 15/15 per
+  provider and language across the three platforms. The browser regression
+  passed on both the page and visual paths.
+- Median decide time was about 0.25 s for Jev and 2.0–2.2 s for S1. The
+  median OmniParser parse was 2.1 s on macOS, 4.7 s on Linux, and 8.1 s on
+  Windows.
+- The tasks produce 3–7 candidates. Jev chose correctly in 220/220 decisions
+  and S1 in 211/216.
+
+Acceptance criteria not yet met, which keep this RFC `accepted`: S1 5/5 in
+every native row, GTK3 `save-note` on a released Driver, WinUI3 coverage,
+and accuracy at about 12 and 24 candidates.

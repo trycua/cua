@@ -1,0 +1,198 @@
+---
+title: 'Use jev-use with native apps'
+description: 'Let TypeSafe Jev choose from accessibility-tree candidates in a macOS, Windows, or Linux desktop app while Cua Driver acts and verifies.'
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+The [jev-use browser guide](/how-to-guides/driver/jev-use) builds candidates
+from a web page. The same loop also works in native desktop apps. Candidates
+come from the accessibility tree that Cua Driver reports through macOS
+Accessibility, Windows UI Automation, or Linux AT-SPI.
+
+You'll run three small tasks against a test app included in the repository:
+set a counter to 3, type and save a note, and choose a size and tick a
+checkbox. The example checks each result against a state file the app writes
+itself, not against what the model or Driver reports.
+
+## How native candidates work
+
+On each step the agent makes one `get_window_state` call, which returns the
+element tree and the screenshot together. From that single observation it
+builds a closed list of candidates:
+
+- **Only usable controls.** An element becomes a candidate only when it is
+  enabled, on screen, labeled, and part of the native app rather than
+  embedded web content. Window chrome such as the Windows title bar buttons
+  is skipped.
+- **One vocabulary across platforms.** Raw platform roles map to a small set
+  of role classes: `button`, `toggle`, `checkbox`, `radio`, `popup`,
+  `menu_item`, `link`, and `text_input`. The same task produces the same
+  candidate IDs on macOS, Windows, and Linux.
+- **Stable IDs.** Candidate IDs come from the role class, the label, and the
+  path of actionable ancestors, not from element indexes that change between
+  observations.
+- **Bounded and safe.** At most 24 actions are offered, plus `reobserve` and
+  `abstain`. In a window with more controls, the ones that perform the task's
+  declared steps are kept first, and the offered actions keep their accessibility-tree
+  order. Controls whose labels suggest deleting, sending, purchasing, or
+  closing are left out unless the task allows that risk. Typed text comes
+  only from the task's parameters.
+
+Jev receives the goal, compact element descriptions without their values, and
+the candidate IDs. It returns one ID. The agent resolves that ID to an
+element-bound `click`, `set_value`, or `type_text` call, runs it with
+background delivery, and observes again. If an element token has gone stale,
+the next step observes afresh instead of guessing.
+
+Some apps draw their own controls and expose little or nothing to
+accessibility. When the tree offers nothing to act through, the agent falls
+back to [visual regions](/how-to-guides/driver/parse-visual-regions) parsed by
+the cua-perception extension from the same capture. This happens when Driver
+reports an empty tree, when a complete tree lacks a control the task declares,
+or when the tree holds only the window itself and its title bar or menu bar.
+A partial tree that has any app control never falls back. A visual target
+needs an exact, unique text match with an OCR confidence of at least 0.8,
+unless the task sets a lower bar. Visual clicks are bound to the capture and
+try background delivery first. If Driver refuses that, the next step offers a
+separate foreground click when the task allows it.
+
+Native requests use the `cua.jev_choice_request_v2` contract, which adds a
+`source` to each candidate (`page`, `ax`, or `visual`). The built-in tasks
+also send `progress`: each required step and how many times this run has
+performed it. The runner counts its own successful actions and never reads the
+count from the app. Browser tasks keep sending `cua.jev_choice_request_v1`.
+
+## Before you start
+
+You need a logged-in graphical desktop and:
+
+- [Cua Driver](/how-to-guides/driver/install), version 0.30.1 or later, with
+  the permissions its install guide describes.
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) and Git.
+- For the TypeScript runner, Node.js 22 or later and npm.
+- For live runs, an API key from the [TypeSafe console](https://console.typesafe.ai/).
+  The mock run needs no key.
+
+Download the example as in the browser guide:
+
+```bash
+git clone --depth 1 https://github.com/trycua/cua.git cua-jev-use
+cd cua-jev-use/libs/cua-driver/examples/jev-use
+uv sync --frozen --python 3.12
+npm ci   # in PowerShell, use npm.cmd ci
+```
+
+## 1. Build the test app and run the mock proof
+
+The mock provider returns fixed choices, so this step checks the Driver
+connection, candidate building, and the oracle without calling Jev.
+
+<Tabs items={['macOS', 'Windows', 'Linux']}>
+  <Tab value="macOS">
+
+The test app is an AppKit harness:
+
+```bash
+bash ../../tests/fixtures/build/macos.sh --only appkit
+uv run --frozen python verify_native.py --harness appkit --typescript --output-dir runs/native-mock
+```
+
+  </Tab>
+  <Tab value="Windows">
+
+The test app is a WPF harness. Run from PowerShell in the interactive desktop
+session:
+
+```powershell
+..\..\tests\fixtures\build\windows.ps1 -Targets wpf
+uv run --frozen python verify_native.py --harness wpf --typescript --output-dir runs/native-mock
+```
+
+The same tasks also run on a WinUI3 harness. Build it with `-Targets winui3`
+and pass `--harness winui3`.
+
+  </Tab>
+  <Tab value="Linux">
+
+The test app is a GTK3 harness. Use an X11 session with the accessibility bus
+running; the harness uses the system `python3` with PyGObject:
+
+```bash
+bash ../../tests/fixtures/build/linux.sh --only gtk3
+.venv/bin/python verify_native.py --harness gtk3 --typescript --output-dir runs/native-mock
+```
+
+With Cua Driver 0.30.2 or earlier, Linux reports no value for a named text
+field ([#4291](https://github.com/trycua/cua/issues/4291)). The save-note task
+then can't see its own write and runs out of steps. Update Driver to fix this.
+
+  </Tab>
+</Tabs>
+
+To prove the fallback, run the `canvas` harness. It is a custom-painted
+window with no accessibility tree, so its `canvas-cancel` task succeeds only by
+clicking the **Cancel** label through visual regions. It needs the
+[cua-perception extension](/concepts/how-the-perception-extension-works)
+installed and a Python with Tk. It needs no build step and works on all three platforms:
+
+```bash
+uv run --frozen python verify_native.py --harness canvas --output-dir runs/native-canvas
+```
+
+The command launches the harness, runs each task in Python and TypeScript, and
+closes the harness when done. Results are in `runs/native-mock/summary.json`.
+Each task passes only when the harness state file shows the expected result.
+
+## 2. Run with Jev
+
+Add `--live` to the same command and use a new output directory. For example,
+on macOS:
+
+```bash
+uv run --frozen python verify_native.py --harness appkit --typescript --live --output-dir runs/native-live
+```
+
+At an interactive terminal, the command asks for your TypeSafe API key without
+showing or saving it. If `TYPESAFE_API_KEY` is already set in the process
+environment, it uses that instead. Never put the key in a command argument or
+file. Use `--task` to run a single task, for example `--task counter`.
+
+## 3. Run with Cua-S1 (optional)
+
+The native runners can also choose with the local Cua-S1-4B model. Loading the
+model takes 10 to 35 seconds, longer than a step can wait before its capture
+expires, so the runners send each request to a model that is already loaded
+behind a loopback HTTP endpoint. The example doesn't ship that service. The
+[jev-use README](https://github.com/trycua/cua/blob/main/libs/cua-driver/examples/jev-use/README.md#choose-with-cua-s1)
+describes the request and response it must accept, and
+[Closed-candidate decision models](https://github.com/trycua/cua/blob/main/libs/cua-driver/examples/jev-use/decision-models.md)
+covers getting the weights.
+
+With the service running, point the example at it and add `--s1`:
+
+```bash
+export CUA_S1_DECISION_URL=http://127.0.0.1:8791/decide
+uv run --frozen python verify_native.py --harness appkit --typescript --s1 --output-dir runs/native-s1
+```
+
+The URL must use `127.0.0.1`, `localhost`, or `::1`. Reach a model on another
+computer through an SSH tunnel. The runner rejects a response that doesn't match
+its request, and it resolves the chosen ID against its own candidate list, the
+same as for Jev.
+
+## Adapt the example to your app
+
+A native task spec in `python/native_tasks.py` (and `typescript/native_tasks.ts`)
+defines:
+
+| Part | Purpose |
+| --- | --- |
+| Goal and parameters | What to accomplish, and any text to type. Secret parameters are redacted from logs. |
+| Allowed actions and risk | Which Driver actions the task may use, and whether risky labels are allowed. |
+| Oracle | How to confirm success from the app's own state, independent of the accessibility tree. |
+
+Keep candidate building in the example layer. Don't add model logic to Cua
+Driver, and don't let the model supply element tokens, coordinates, or text.
+The design and its trade-offs are recorded in
+[RFC 4268](https://github.com/trycua/cua/blob/main/rfcs/4268-jev-use-native-candidates.md).

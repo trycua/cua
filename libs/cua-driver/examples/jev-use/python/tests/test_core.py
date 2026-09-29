@@ -269,6 +269,94 @@ class CoreTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate"):
             validate_choice("duplicate", [duplicate, duplicate])
 
+    def test_retina_affine_mapping_keeps_the_original_screenshot_point(self) -> None:
+        # Issue #4289: Driver reports a non-identity capture as ``affine``
+        # (never ``scaled_top_left``). A Retina-like 2x capture of a window at
+        # (100, 200) maps pixels to points with scale 0.5 plus that offset.
+        payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
+        self.assertEqual(payload["capture"]["action_coordinate_space"]["kind"], "affine")
+        visual = parse_visual_regions(
+            payload,
+            expected_capture_id="capture-submit",
+            expected_pid=7,
+            expected_window_id=9,
+        )
+        self.assertEqual(visual.screenshot_to_action, (0.5, 0.0, 0.0, 0.5, 100.0, 200.0))
+        page = self.snapshot("expected")
+        page["refs"] = page["refs"][:1]
+        selected = validate_choice(
+            "submit-form",
+            build_candidates(page, "expected", visual, capture_bound_click=True),
+            current_capture_id="capture-submit",
+        )
+        # Driver applies the mapping for the capture ID, so the click carries
+        # the region center in screenshot pixels, not mapped (275, 330).
+        self.assertEqual(
+            (selected.arguments["x"], selected.arguments["y"], selected.arguments["capture_id"]),
+            (350.0, 260.0, "capture-submit"),
+        )
+
+        # The reporter's observed macOS Retina mapping from #4289.
+        payload["capture"]["action_coordinate_space"] = {
+            "kind": "affine",
+            "m11": 1.530612244897959,
+            "m12": 0.0,
+            "m21": 0.0,
+            "m22": 1.5304487179487178,
+            "tx": 0.0,
+            "ty": 0.0,
+        }
+        observed = parse_visual_regions(
+            payload,
+            expected_capture_id="capture-submit",
+            expected_pid=7,
+            expected_window_id=9,
+        )
+        self.assertEqual(observed.screenshot_to_action[0], 1.530612244897959)
+
+    def test_identity_screenshot_pixels_mapping(self) -> None:
+        payload = json.loads((FIXTURES / "parse-visual-regions-ambiguous-v1.json").read_text())
+        visual = parse_visual_regions(
+            payload,
+            expected_capture_id="capture-ambiguous",
+            expected_pid=7,
+            expected_window_id=9,
+        )
+        self.assertEqual(visual.screenshot_to_action, (1.0, 0.0, 0.0, 1.0, 0.0, 0.0))
+
+    def test_unrepresentable_coordinate_mappings_fail_closed(self) -> None:
+        base = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
+        affine = base["capture"]["action_coordinate_space"]
+        cases = {
+            "non-invertible": {**affine, "m11": 0.0, "m22": 0.0},
+            "singular": {**affine, "m11": 1.0, "m12": 2.0, "m21": 2.0, "m22": 4.0},
+            "nan": {**affine, "m11": float("nan")},
+            "infinite": {**affine, "tx": float("inf")},
+            "missing coefficient": {key: value for key, value in affine.items() if key != "ty"},
+            "boolean coefficient": {**affine, "m12": False},
+            "overflowing": {**affine, "m11": 1e308, "m22": 1e308},
+            "scaled_top_left": {
+                "kind": "scaled_top_left",
+                "action_origin_x": 100.0,
+                "action_origin_y": 200.0,
+                "action_units_per_pixel_x": 0.5,
+                "action_units_per_pixel_y": 0.5,
+            },
+            "unknown kind": {"kind": "projective"},
+            "absent": None,
+        }
+        for name, space in cases.items():
+            with self.subTest(name):
+                payload = json.loads(json.dumps(base))
+                payload["capture"]["action_coordinate_space"] = space
+                with self.assertRaisesRegex(ValueError, "coordinate"):
+                    parse_visual_regions(
+                        payload,
+                        expected_capture_id="capture-submit",
+                        expected_pid=7,
+                        expected_window_id=9,
+                    )
+
     def test_capture_bound_choice_rejects_a_newer_capture(self) -> None:
         payload = json.loads((FIXTURES / "parse-visual-regions-submit-v1.json").read_text())
         visual = parse_visual_regions(

@@ -170,9 +170,8 @@ fn live_action_dimensions(_target: &CaptureTarget) -> anyhow::Result<NativeActio
 
 #[cfg(target_os = "linux")]
 pub(crate) fn desktop_action_dimensions(native: (u32, u32)) -> anyhow::Result<(u32, u32)> {
-    let logical = if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
-        let (width, height, _) = crate::wayland::hyprland::screen_size()?;
-        Some((width, height))
+    let logical = if crate::wayland::is_wayland() {
+        crate::wayland::compositor_logical_frame().transpose()?
     } else {
         None
     };

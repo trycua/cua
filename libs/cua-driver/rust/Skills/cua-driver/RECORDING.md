@@ -1,8 +1,9 @@
 # Recording and replay
 
 Record only when the user requests it. Keep the recording controls and actions
-on one persistent MCP connection; see [RUNTIME.md](RUNTIME.md). The recording
-tools do not advertise a public `session` parameter. Do not add one.
+on one persistent MCP connection; see [RUNTIME.md](RUNTIME.md). When the actions
+pass a `session` label, you may pass the same label to `start_recording`.
+`stop_recording` and `get_recording_state` do not accept `session`.
 
 ## Start, observe, stop
 
@@ -22,11 +23,18 @@ off by default; explicitly set `record_video:true` when requested. Inspect
 `video_active` and `last_error`, not just the successful tool status. Per-turn
 capture may continue even when video initialization failed.
 
-The current recorder is shared within its runtime. Manual `stop_recording`
-stops whichever recording is active, regardless of its starting session.
-Do not start over or stop another run's recording. Session-owned teardown
-does not establish concurrent recording isolation. If a recorder is already
-active, coordinate with its owner rather than taking it over.
+A recording keeps only its owner's actions. With a `session` label, it keeps
+that session's calls. Without one, it keeps every call on the connection that
+started it, including calls that pass a `session` label. Calls from other
+connections, including one-shot `cua-driver <tool>` processes, and
+`start_session` / `end_session` write no turns. A recording started with CLI
+`cua-driver recording start` has no owning session and records every
+session's actions.
+
+There is still one recorder per runtime. Manual `stop_recording` stops
+whichever recording is active, regardless of its starting session. Do not
+start over or stop another run's recording. If a recorder is already active,
+coordinate with its owner rather than taking it over.
 
 Stop and inspect `last_video_path` before ending the connection. A disconnect
 can tear down owned recording; a runtime restart loses in-memory state.

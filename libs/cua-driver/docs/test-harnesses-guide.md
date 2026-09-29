@@ -226,10 +226,18 @@ These run without a repo-local GUI application and normally run without
 | `schema_*_test.rs`                     | Shared schema and backend consistency                         |
 | `transport_config_persistence_test.rs` | CLI configuration persistence across processes                |
 | `protocol_element_token_test.rs`       | Element-token protocol behavior                               |
+| `tool_boundary_fuzz_smoke.rs`          | Tool-call boundary fuzz targets over seeds and random bytes   |
 
 These tests should be fast, deterministic, and safe to run on ordinary CI
 workers. They do not prove that a real click, key, scroll, or background input
 reached an application.
+
+The fuzz smoke test drives the target bodies in
+`cua_driver_testkit::boundary_fuzz` (JSON-RPC parsing, reserved-argument
+stripping, argument normalisation, authorization, typed contract inputs, and
+`ToolRegistry` dispatch against stubs). The same bodies run under libFuzzer
+from `rust/fuzz/`; see `rust/fuzz/README.md` and
+`docs/2026-09-04-tool-call-boundary-fuzzing-design.md`.
 
 ### Harness E2E Tests
 
@@ -638,7 +646,7 @@ Perception tests have four owners, and each tests different code:
 | `libs/cua-driver/rust/crates/cua-perception/scripts/tests/` | Model artifact tooling and quality measurement scripts | `ci-cua-perception-release.yml` |
 | `libs/cua-driver/tests/perception-demo/` | Visual demo evidence sanitizing, caching, and envelopes | `ci-test-scripts.yml` |
 | `.github/scripts/tests/test_cua_perception_*.py`, `test_perception_release.py` | Perception release, review-trigger, and review-pipeline workflows and `.github/scripts` helpers | `ci-test-scripts.yml`, `ci-cua-perception-release.yml` |
-| `libs/cua-driver/rust/crates/cua-driver-e2e/tests/perception_capture_loop_test.rs` | Driver's desktop capture, parse, capture-bound click, and reobserve loop with a deterministic developer-only worker | Capture lane of the canonical macOS, Windows, and Linux X11 desktop E2E |
+| `libs/cua-driver/rust/crates/cua-driver-e2e/tests/perception_capture_loop_test.rs` | Driver's desktop capture, parse, capture-bound click, and reobserve loop, with a deterministic developer-only worker and with the published extension installed from its signed release catalog | Capture lane of the canonical macOS, Windows, and Linux X11 desktop E2E |
 | `libs/cua-driver/rust/crates/cua-driver-e2e/tests/perception_s1_decision_loop_test.rs` | The same loop with the published extension (OmniParser) and a resident Cua-S1-4B choosing the region, plus consumed and expired capture refusals | `s1-perception` lane of the Linux X11 runner, selected only by `ci-cua-s1-weights.yml` |
 
 Add a perception test to the directory that owns the code it exercises.

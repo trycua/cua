@@ -4,7 +4,8 @@ import math
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
 
-from core import Candidate, VisualObservation, choose_mock, form_state, redact_token
+from core import Candidate, VisualObservation, choose_mock
+from tasks import FIXTURE_GOAL, FixtureFormTask, Task, TaskSources, fixture_sources
 
 
 class TypeSafeClientLike(Protocol):
@@ -95,7 +96,31 @@ def visual_decision_state(visual: VisualObservation | None) -> dict[str, Any] | 
     }
 
 
-GOAL = "Enter the required verification token into the verification field, then submit the form."
+GOAL = FIXTURE_GOAL
+
+
+def task_decision_state(
+    task: Task, sources: TaskSources, history: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Build the compact, deterministic, secret-redacted state sent to Jev.
+
+    ``form`` is the task's state summary, which states what the runner verified
+    from its candidate sources, so the model does not have to infer it from the
+    outline. Every secret task parameter is replaced everywhere, including the
+    outline and visual text.
+    """
+    snapshot = sources.require_page().snapshot
+    visual = sources.visual.observation if sources.visual is not None else None
+    return {
+        "goal": task.goal,
+        "observation": {
+            "page": task.redact(snapshot.get("page")),
+            "form": task.state_summary(sources),
+            "outline": task.redact(snapshot.get("outline")),
+            "visual": task.redact(visual_decision_state(visual)),
+        },
+        "history": [dict(item) for item in history],
+    }
 
 
 def decision_state(
@@ -105,23 +130,40 @@ def decision_state(
     token: str,
     visual_path: bool = False,
 ) -> dict[str, Any]:
-    """Build the compact, deterministic, token-redacted state sent to Jev.
+    """Build the fixture task's decision state; see ``task_decision_state``."""
+    return task_decision_state(
+        FixtureFormTask(token),
+        fixture_sources(snapshot, visual, visual_path=visual_path),
+        history,
+    )
 
-    ``form`` states the field and Submit status the runner verified from the page
-    structure and, when ``visual_path`` is enabled, from the validated visual
-    regions, so the model does not have to infer it from the outline. The token
-    itself is replaced everywhere, including the outline and visual text.
-    """
-    return {
-        "goal": GOAL,
-        "observation": {
-            "page": redact_token(snapshot.get("page"), token),
-            "form": form_state(snapshot, token, visual, visual_path=visual_path),
-            "outline": redact_token(snapshot.get("outline"), token),
-            "visual": redact_token(visual_decision_state(visual), token),
+
+DRIVER_ACTION_INSTRUCTIONS = "Which complete executable action should Cua Driver run next?"
+
+
+def choose_for_task(
+    client: TypeSafeClientLike,
+    task: Task,
+    sources: TaskSources,
+    candidates: list[Candidate],
+    history: list[dict[str, Any]],
+) -> tuple[str, float, dict[str, float]]:
+    from typesafe_sdk import Choice
+
+    criteria = _candidate_criteria(candidates)
+    response = client.system_one(
+        state=task_decision_state(task, sources, history),
+        questions={
+            "driver_action": Choice(
+                instructions=DRIVER_ACTION_INSTRUCTIONS,
+                criteria=criteria,
+            )
         },
-        "history": [dict(item) for item in history],
-    }
+    )
+    answer = response.choices["driver_action"]
+    if answer.choice not in criteria:
+        raise ValueError(f"Jev selected unknown candidate: {answer.choice}")
+    return answer.choice, answer.confidence, answer.probabilities
 
 
 def choose_with_typesafe(
@@ -133,22 +175,55 @@ def choose_with_typesafe(
     token: str,
     visual_path: bool = False,
 ) -> tuple[str, float, dict[str, float]]:
-    from typesafe_sdk import Choice
-
-    criteria = _candidate_criteria(candidates)
-    response = client.system_one(
-        state=decision_state(snapshot, visual, history, token, visual_path),
-        questions={
-            "driver_action": Choice(
-                instructions="Which complete executable action should Cua Driver run next?",
-                criteria=criteria,
-            )
-        },
+    return choose_for_task(
+        client,
+        FixtureFormTask(token),
+        fixture_sources(snapshot, visual, visual_path=visual_path),
+        candidates,
+        history,
     )
-    answer = response.choices["driver_action"]
-    if answer.choice not in criteria:
-        raise ValueError(f"Jev selected unknown candidate: {answer.choice}")
-    return answer.choice, answer.confidence, answer.probabilities
+
+
+def choose_live_for_task(
+    task: Task,
+    sources: TaskSources,
+    candidates: list[Candidate],
+    history: list[dict[str, Any]],
+) -> tuple[str, float, dict[str, float]]:
+    from typesafe_sdk import TypeSafeClient
+
+    with TypeSafeClient() as client:
+        return choose_for_task(client, task, sources, candidates, history)
+
+
+def choose_mock_for_task(
+    task: Task,
+    _sources: TaskSources,
+    candidates: list[Candidate],
+    _history: list[dict[str, Any]],
+) -> tuple[str | None, float, dict[str, float]]:
+    """Deterministic mock provider.
+
+    A task may declare ``mock_preferences``: the first preferred ID present in
+    the candidate set wins (a refused control's ``<id>:foreground`` variant
+    counts as its ID), otherwise ``reobserve``. Tasks without preferences keep
+    the fixed browser-fixture choice order.
+    """
+    preferences = getattr(task, "mock_preferences", ())
+    if not preferences:
+        return choose_mock(candidates)
+    ids = [candidate.id for candidate in candidates]
+    selected = next(
+        (
+            candidate_id
+            for preferred in preferences
+            for candidate_id in (preferred, f"{preferred}:foreground")
+            if candidate_id in ids
+        ),
+        "reobserve" if "reobserve" in ids else None,
+    )
+    probabilities = {candidate_id: float(candidate_id == selected) for candidate_id in ids}
+    return selected, 1.0 if selected else 0.0, probabilities
 
 
 def choose_live(
@@ -159,12 +234,12 @@ def choose_live(
     token: str,
     visual_path: bool = False,
 ) -> tuple[str, float, dict[str, float]]:
-    from typesafe_sdk import TypeSafeClient
-
-    with TypeSafeClient() as client:
-        return choose_with_typesafe(
-            client, candidates, snapshot, visual, history, token, visual_path
-        )
+    return choose_live_for_task(
+        FixtureFormTask(token),
+        fixture_sources(snapshot, visual, visual_path=visual_path),
+        candidates,
+        history,
+    )
 
 
 def choose_mock_adapter(

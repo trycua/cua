@@ -125,6 +125,8 @@ def test_signature_jobs_verify_exact_candidate_archives(cd: dict) -> None:
         assert job["with"]["source"] == "artifacts"
         assert job["with"]["version"] == "${{ needs.release-attribution-preflight.outputs.version }}"
         assert "expect_macos" not in job["with"] and "expect_windows" not in job["with"]
+        # Candidate archives must carry a signed Node runtime (#4168).
+        assert "legacy_unsigned_node_runtime" not in job["with"]
     assert needs(macos) == {"release-attribution-preflight", "build-macos-universal"}
     assert needs(windows) == {"release-attribution-preflight", "build-windows"}
     assert macos["with"]["verify_macos"] is True and macos["with"]["verify_windows"] is False
@@ -198,9 +200,18 @@ def test_no_gate_is_bypassed_by_a_status_override(cd: dict) -> None:
 def test_signature_workflow_checks_what_the_operating_systems_check() -> None:
     workflow = load(SIGNATURES)
     trigger = workflow[True]["workflow_call"]["inputs"]  # PyYAML parses `on` as True
-    assert set(trigger) == {"version", "source", "verify_macos", "verify_windows", "expect_macos", "expect_windows"}
+    assert set(trigger) == {
+        "version",
+        "source",
+        "verify_macos",
+        "verify_windows",
+        "expect_macos",
+        "expect_windows",
+        "legacy_unsigned_node_runtime",
+    }
     assert trigger["expect_macos"]["default"] == "pass"
     assert trigger["expect_windows"]["default"] == "pass"
+    assert trigger["legacy_unsigned_node_runtime"]["default"] is False
     assert workflow["permissions"] == {"contents": "read"}
 
     macos = workflow["jobs"]["macos"]
@@ -213,9 +224,15 @@ def test_signature_workflow_checks_what_the_operating_systems_check() -> None:
     windows_verify = step(windows, "Verify Windows Authenticode signatures")["run"]
     assert "verify_cua_driver_release_signatures.py windows" in windows_verify
     assert '--signer "Cua AI, Inc."' in windows_verify
-    for run in (macos_verify, windows_verify):
+    assert (
+        'if [[ "$LEGACY_UNSIGNED_NODE_RUNTIME" == "true" ]]; then\n'
+        "  OPTIONS+=(--legacy-unsigned-node-runtime)\n"
+        "fi"
+    ) in macos_verify
+    assert macos_verify.count("--legacy-unsigned-node-runtime") == 1
+    for run, options in ((macos_verify, "OPTIONS"), (windows_verify, "ANNOTATE")):
         # GitHub runs `bash -e`; the status must be captured, not aborted on.
-        assert '${ANNOTATE[@]+"${ANNOTATE[@]}"} || STATUS=$?' in run
+        assert '${%s[@]+"${%s[@]}"} || STATUS=$?' % (options, options) in run
         assert run.index("STATUS=0") < run.index("|| STATUS=$?")
         assert "expect_verification_result.sh \"$EXPECT\" \"$STATUS\"" in run
     assert step(macos, "Download candidate darwin archives")["with"]["name"] == "cua-driver-rs-darwin"
@@ -234,7 +251,19 @@ def test_signature_team_matches_the_pinned_signing_team() -> None:
 def test_self_test_proves_the_gate_in_both_directions() -> None:
     workflow = load(SELF_TEST)
     jobs = workflow["jobs"]
-    assert jobs["signed-release"]["with"] == {"version": "0.28.2", "source": "release"}
+    # 0.28.2 predates the signed Node runtime (#4168): it passes only in
+    # legacy mode, and the strict gate must reject its real archives.
+    assert jobs["signed-release"]["with"] == {
+        "version": "0.28.2",
+        "source": "release",
+        "legacy_unsigned_node_runtime": True,
+    }
+    assert jobs["unsigned-node-runtime"]["with"] == {
+        "version": "0.28.2",
+        "source": "release",
+        "verify_windows": False,
+        "expect_macos": "fail",
+    }
     assert jobs["unsigned-release"]["with"] == {
         "version": "0.28.3",
         "source": "release",

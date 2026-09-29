@@ -110,3 +110,100 @@ def test_macos_seeds_tcc_only_for_the_released_app_identity() -> None:
     assert "seed-tcc-guest.sh" in macos
     assert "--app /Applications/CuaDriver.app --expected-client com.trycua.driver\n" in macos
     assert "install-local.sh" not in macos
+
+
+def test_native_appkit_job_uses_released_driver_and_source_harness() -> None:
+    """RFC #4268 Phase 1: native tasks on the AppKit harness with the mock provider."""
+    jobs = load()["jobs"]
+    assert jobs["native-appkit-macos"]["runs-on"].startswith("macos-")
+    native = job_text("native-appkit-macos")
+    assert "https://cua.ai/driver/install.sh" in native
+    assert "cargo build" not in native
+    assert 'MIN_RELEASED_DRIVER_VERSION: "0.30.1"' in native
+    assert "tests/fixtures/build/macos.sh --only appkit" in native
+    assert "--app /Applications/CuaDriver.app --expected-client com.trycua.driver" in native
+    assert "verify_native.py --typescript" in native
+    assert "--live" not in native
+    # The audit reads the harness-owned oracle result and the v2 contract.
+    assert 'check["verified"] is True' in native
+    assert "cua.jev_choice_request_v2" in native
+
+
+def test_native_harness_changes_trigger_the_workflow() -> None:
+    triggers = load()[True]
+    for event in ("pull_request", "push"):
+        assert "libs/cua-driver/tests/fixtures/apps/macos/appkit/**" in triggers[event]["paths"]
+
+
+def test_native_wpf_job_uses_released_driver_default_install_and_source_harness() -> None:
+    """RFC #4268 Phase 2: native tasks on the WPF harness (Windows UIA)."""
+    jobs = load()["jobs"]
+    assert jobs["native-wpf-windows"]["runs-on"].startswith("windows-")
+    native = job_text("native-wpf-windows")
+    assert "https://cua.ai/driver/install.ps1" in native
+    assert "cargo build" not in native
+    assert 'MIN_RELEASED_DRIVER_VERSION: "0.30.1"' in native
+    # The default install registers the elevated autostart; no opt-out flag.
+    assert '$task.Principal.RunLevel -ne "Highest"' in native
+    assert "-NoAutostart" not in native
+    assert "verify-user-session.ps1" in native
+    assert "tests\\fixtures\\build\\windows.ps1 -Targets wpf" in native
+    assert "verify_native.py --harness wpf --typescript" in native
+    assert "--live" not in native
+    assert 'check["verified"] is True' in native
+    assert "cua.jev_choice_request_v2" in native
+
+
+def test_native_winui3_job_uses_released_driver_default_install_and_source_harness() -> None:
+    """RFC #4268 (#4314): native tasks on the WinUI3 harness (Windows UIA)."""
+    jobs = load()["jobs"]
+    assert jobs["native-winui3-windows"]["runs-on"].startswith("windows-")
+    native = job_text("native-winui3-windows")
+    assert "https://cua.ai/driver/install.ps1" in native
+    assert "cargo build" not in native
+    assert 'MIN_RELEASED_DRIVER_VERSION: "0.30.1"' in native
+    assert '$task.Principal.RunLevel -ne "Highest"' in native
+    assert "-NoAutostart" not in native
+    assert "verify-user-session.ps1" in native
+    assert "tests\\fixtures\\build\\windows.ps1 -Targets winui3" in native
+    assert "verify_native.py --harness winui3 --typescript" in native
+    assert "--live" not in native
+    assert 'check["verified"] is True' in native
+    assert "cua.jev_choice_request_v2" in native
+    triggers = load()[True]
+    for event in ("pull_request", "push"):
+        assert "libs/cua-driver/tests/fixtures/apps/windows/winui3/**" in triggers[event]["paths"]
+
+
+def test_native_gtk3_job_uses_released_driver_and_x11_stack() -> None:
+    """RFC #4268 Phase 2: native tasks on the GTK3 harness (Linux AT-SPI)."""
+    jobs = load()["jobs"]
+    assert jobs["native-gtk3-linux"]["runs-on"].startswith("ubuntu-")
+    native = job_text("native-gtk3-linux")
+    assert "https://cua.ai/driver/install.sh" in native
+    assert "cargo build" not in native
+    assert 'MIN_RELEASED_DRIVER_VERSION: "0.30.1"' in native
+    assert "tests/fixtures/build/linux.sh --only gtk3" in native
+    for piece in ("xvfb-run", "dbus-run-session", "openbox", "at-spi2-core", "python3-gi"):
+        assert piece in native
+    assert "verify_native.py --harness gtk3 --typescript" in native
+    # save-note is gated on the first Driver that reports named AT-SPI text
+    # values (#4291), and the audit still requires the other two tasks.
+    assert 'SAVE_NOTE_MIN_DRIVER_VERSION: "0.30.3"' in native
+    assert 'assert {"gtk3-counter", "gtk3-choose-size"} <= tasks' in native
+    assert "--live" not in native
+    assert 'check["verified"] is True' in native
+    assert "cua.jev_choice_request_v2" in native
+
+
+def test_windows_and_linux_harness_changes_trigger_the_workflow() -> None:
+    triggers = load()[True]
+    for event in ("pull_request", "push"):
+        paths = triggers[event]["paths"]
+        for path in (
+            "libs/cua-driver/tests/fixtures/apps/windows/wpf/**",
+            "libs/cua-driver/tests/fixtures/build/windows.ps1",
+            "libs/cua-driver/tests/fixtures/apps/linux/gtk3/**",
+            "libs/cua-driver/tests/fixtures/build/linux.sh",
+        ):
+            assert path in paths

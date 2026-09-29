@@ -1,3 +1,4 @@
+using System;
 using Microsoft.UI.Xaml;
 
 namespace CuaTestHarness.WinUI3;
@@ -8,9 +9,14 @@ public partial class App : Application
 
     public App() { InitializeComponent(); }
 
+    // Ordinary launches show MainWindow exactly as before.
+    // CUA_WINUI3_TASK_STATE selects the opt-in jev-use task window.
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        _window = new MainWindow();
+        var taskState = Environment.GetEnvironmentVariable(TaskWindow.StateEnv);
+        _window = string.IsNullOrWhiteSpace(taskState)
+            ? new MainWindow()
+            : new TaskWindow(taskState);
         _window.Activate();
     }
 }

@@ -469,12 +469,18 @@ async fn invoke_daemon_tool(
     if let Some(sid) = &effective_session {
         if !is_session_lifecycle_tool(&tool_name) && sdk.is_session_ended(sid) {
             observe_daemon_error(observation, 1);
-            return DaemonResponse::err(
+            // An unnamed call's lifecycle id is the transport session, which
+            // is not a label the caller can pass back to start_session.
+            let recovery = if req.session_id.as_deref() == Some(sid.as_str()) {
+                "Call start_session without a session label to start a new unnamed session."
+                    .to_owned()
+            } else {
                 format!(
-                    "session '{sid}' has ended; tool call '{tool_name}' was rejected. \
-                     Call start_session with this id to revive it before issuing further \
-                     actions, or use a new session id."
-                ),
+                    "Call start_session with session '{sid}' to start it again, or use a new session label."
+                )
+            };
+            return DaemonResponse::err(
+                format!("session has ended; tool call '{tool_name}' was rejected. {recovery}"),
                 1,
             );
         }
@@ -1662,8 +1668,6 @@ pub async fn run_serve(
 
     cua_driver_core::authorization::validate_startup_authorization()?;
 
-    eprintln!("Cua Driver daemon listening on {socket_path}");
-
     // Build the current-user descriptor once and reuse it for every pipe
     // instance. Both service and embedded mode fail closed if the ACL cannot
     // be created; an Everyone ACL would expose the desktop-action endpoint to
@@ -1711,29 +1715,81 @@ pub async fn run_serve(
         None => None,
     };
 
+    // A failure to create or connect a later pipe instance must not end the
+    // daemon: connections already being served keep their instances, and the
+    // next instance usually succeeds. Only the first instance is fatal, since
+    // it proves the daemon owns the name. A daemon that cannot recover exits
+    // after `PIPE_INSTANCE_FAILURE_LIMIT` consecutive failures so its
+    // supervisor can restart it instead of leaving a live PID behind an
+    // unreachable pipe.
     let mut first_pipe = true;
+    let mut consecutive_failures: u32 = 0;
+    let mut fatal_error: Option<anyhow::Error> = None;
     loop {
+        if consecutive_failures > 0 {
+            if consecutive_failures >= PIPE_INSTANCE_FAILURE_LIMIT {
+                fatal_error = Some(anyhow::anyhow!(
+                    "named pipe {socket_path}: {consecutive_failures} consecutive pipe instance failures"
+                ));
+                break;
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(PIPE_INSTANCE_RETRY_DELAY) => {}
+                _ = &mut shutdown_rx => {
+                    eprintln!("Cua Driver daemon shutting down.");
+                    break;
+                }
+                _ = &mut parent_liveness => {
+                    eprintln!("Cua Driver embedded host closed its lifetime pipe; shutting down.");
+                    break;
+                }
+            }
+        }
+
         // All daemons use the current-user descriptor. Embedded daemons also
         // reserve the pipe name with their first instance.
         let first_pipe_instance = embedded && first_pipe;
-        let server = if sec_attrs_ptr.is_null() {
+        let created = if sec_attrs_ptr.is_null() {
             ServerOptions::new()
                 .first_pipe_instance(first_pipe_instance)
                 .create(socket_path)
-                .map_err(|e| anyhow::anyhow!("create named pipe {socket_path}: {e}"))?
         } else {
             unsafe {
                 ServerOptions::new()
                     .first_pipe_instance(first_pipe_instance)
                     .create_with_security_attributes_raw(socket_path, sec_attrs_ptr)
-                    .map_err(|e| anyhow::anyhow!("create named pipe {socket_path}: {e}"))?
             }
         };
-        first_pipe = false;
+        let server = match created {
+            Ok(server) => server,
+            Err(error) if first_pipe => {
+                anyhow::bail!("create named pipe {socket_path}: {error}");
+            }
+            Err(error) => {
+                consecutive_failures += 1;
+                eprintln!(
+                    "Cua Driver: create named pipe {socket_path} failed ({consecutive_failures} consecutive): {error}; retrying"
+                );
+                continue;
+            }
+        };
+        if first_pipe {
+            first_pipe = false;
+            // Announce only after the name is bound, so the banner never
+            // claims a pipe that failed to open.
+            eprintln!("Cua Driver daemon listening on {socket_path}");
+        }
 
         tokio::select! {
             result = server.connect() => {
-                result.map_err(|e| anyhow::anyhow!("named pipe connect: {e}"))?;
+                if let Err(error) = result {
+                    consecutive_failures += 1;
+                    eprintln!(
+                        "Cua Driver: named pipe connect on {socket_path} failed ({consecutive_failures} consecutive): {error}; recreating the instance"
+                    );
+                    continue;
+                }
+                consecutive_failures = 0;
                 let expected_sid = unsafe { current_user_sid_string() };
                 let client_process_id =
                     unsafe { named_pipe_client_process_id(server.as_raw_handle().cast()) };
@@ -2115,8 +2171,20 @@ pub async fn run_serve(
     sdk.shutdown()
         .await
         .map_err(|error| anyhow::anyhow!("shut down SDK runtime: {error}"))?;
-    Ok(())
+    match fatal_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
+
+/// Pause between attempts to replace a named-pipe instance that failed.
+#[cfg(target_os = "windows")]
+const PIPE_INSTANCE_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Consecutive instance failures (about one minute of retries) after which
+/// the daemon gives up and exits.
+#[cfg(target_os = "windows")]
+const PIPE_INSTANCE_FAILURE_LIMIT: u32 = 120;
 
 #[cfg(all(test, target_os = "windows"))]
 mod named_pipe_authentication_tests {
@@ -2272,13 +2340,6 @@ pub fn run_stop_cmd(socket_path: &str) {
 /// `cua-driver status` implementation.
 pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
     if is_daemon_listening(socket_path) {
-        println!("Cua Driver daemon is running");
-        println!("  socket: {socket_path}");
-        if let Some(pid) = read_pid_file(pid_file_path) {
-            println!("  pid: {pid}");
-        } else {
-            println!("  pid: unknown (no pid file)");
-        }
         let request = DaemonRequest {
             method: "authorization_status".to_owned(),
             name: None,
@@ -2287,7 +2348,26 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
             observation_origin: Some(ToolObservationOrigin::Direct),
             client_kind: None,
         };
-        if let Ok(response) = send_request(socket_path, &request) {
+        let response = send_request(socket_path, &request);
+        if let Err(error) = &response {
+            eprintln!("Cua Driver daemon endpoint exists but is not reachable");
+            eprintln!("  socket: {socket_path}");
+            eprintln!("  error: {error}");
+            #[cfg(target_os = "windows")]
+            eprintln!(
+                "  hint: the named pipe accepts only the Windows account that owns the daemon. \
+                 Run `whoami /user` in this shell and in the interactive desktop; the SIDs must match."
+            );
+            std::process::exit(1);
+        }
+        println!("Cua Driver daemon is running");
+        println!("  socket: {socket_path}");
+        if let Some(pid) = read_pid_file(pid_file_path) {
+            println!("  pid: {pid}");
+        } else {
+            println!("  pid: unknown (no pid file)");
+        }
+        if let Ok(response) = response {
             if let Some(status) = response.result {
                 println!(
                     "  permission mode: {} ({})",

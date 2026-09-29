@@ -293,6 +293,21 @@ fn codesign_identity_matches(details: &str, identifier: &str, team_identifier: &
     observed_identifier == Some(identifier) && observed_team == Some(team_identifier)
 }
 
+fn codesign_verification_args(requirement: &str) -> [&str; 4] {
+    // The explicit requirement already pins the Apple anchor, vendor team, and
+    // bundle identifier. Bare `--strict` also enables the `sideband` check,
+    // which rejects Finder/resource-fork metadata, including the
+    // non-removable `com.apple.provenance` attribute that newer macOS releases
+    // attach to stock vendor-signed browsers (#4058). Retain sealed-symlink
+    // validation without requiring sideband hygiene.
+    [
+        "--verify",
+        "--strict=symlinks",
+        "--test-requirement",
+        requirement,
+    ]
+}
+
 fn has_trusted_codesign_identity(
     executable: &std::path::Path,
     identifier: &str,
@@ -302,7 +317,7 @@ fn has_trusted_codesign_identity(
         "=anchor apple generic and certificate leaf[subject.OU] = \"{team_identifier}\" and identifier \"{identifier}\""
     );
     let verified = std::process::Command::new("/usr/bin/codesign")
-        .args(["--verify", "--strict", "--test-requirement", &requirement])
+        .args(codesign_verification_args(&requirement))
         .arg(executable)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -494,9 +509,11 @@ async fn process_details(pid: i64) -> Result<(String, String), BrowserRefusal> {
         .output()
         .await
         .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not inspect browser process {pid}: {error}"),
+            cua_driver_core::browser::refusal::inspection_spawn_refusal(
+                format!("could not inspect browser process {pid}"),
+                "ps",
+                Some(pid),
+                &error,
             )
         })?;
     if !output.status.success() {
@@ -554,9 +571,11 @@ async fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
         .output()
         .await
         .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not inspect browser listeners: {error}"),
+            cua_driver_core::browser::refusal::inspection_spawn_refusal(
+                "could not inspect browser listeners",
+                "lsof",
+                Some(pid),
+                &error,
             )
         })?;
     Ok(parse_loopback_lsof_ports(&String::from_utf8_lossy(
@@ -1483,6 +1502,21 @@ mod tests {
             "com.google.Chrome",
             "EQHXZ8M8AV"
         ));
+    }
+
+    #[test]
+    fn vendor_verification_does_not_require_filesystem_metadata_hygiene() {
+        let requirement = "=anchor apple generic and identifier \"com.example.Browser\"";
+        assert_eq!(
+            codesign_verification_args(requirement),
+            [
+                "--verify",
+                "--strict=symlinks",
+                "--test-requirement",
+                requirement
+            ]
+        );
+        assert!(!codesign_verification_args(requirement).contains(&"--strict"));
     }
 
     fn window(window_id: u32, pid: i32, title: &str) -> crate::windows::WindowInfo {

@@ -383,18 +383,42 @@ pub enum OverlayCommand {
     ShowFocusRect(Option<[f64; 4]>),
 }
 
+/// Distance, in points, between a cursor's pointer point and its anchor.
+///
+/// `RenderStateCore::pos` is the anchor that path motion, the session badge,
+/// and platform damage regions follow. The theme hotspot is drawn at the
+/// pointer point, `POINTER_ANCHOR_OFFSET` points from the anchor opposite the
+/// heading, so a cursor anchored by [`anchor_for_pointer`] draws its tip on
+/// the requested coordinate at every heading and backing scale.
+pub const POINTER_ANCHOR_OFFSET: f64 = 16.0;
+
+/// Anchor that places a cursor's hotspot on `(x, y)` at `heading`.
+pub fn anchor_for_pointer(x: f64, y: f64, heading: f64) -> (f64, f64) {
+    (
+        x + heading.cos() * POINTER_ANCHOR_OFFSET,
+        y + heading.sin() * POINTER_ANCHOR_OFFSET,
+    )
+}
+
+/// Pointer point, where the theme hotspot is drawn, for an anchor at `heading`.
+pub fn pointer_for_anchor(x: f64, y: f64, heading: f64) -> (f64, f64) {
+    (
+        x - heading.cos() * POINTER_ANCHOR_OFFSET,
+        y - heading.sin() * POINTER_ANCHOR_OFFSET,
+    )
+}
+
 /// Build the shared overlay command for one native pointer position.
 ///
-/// Native drag implementations report the actual event coordinate while the
-/// cursor artwork is centred 16 points down-right so its tip lands on that
-/// coordinate. Keeping this transform here prevents platform-specific drag
-/// loops from drifting apart.
+/// Native drag implementations report the actual event coordinate. Anchoring
+/// it here keeps the theme hotspot on that coordinate and prevents
+/// platform-specific drag loops from drifting apart.
 pub fn track_pointer_command(x: f64, y: f64) -> OverlayCommand {
-    const CLICK_OFFSET: f64 = 16.0;
     let heading = std::f64::consts::FRAC_PI_4;
+    let (x, y) = anchor_for_pointer(x, y, heading);
     OverlayCommand::SnapTo {
-        x: x + heading.cos() * CLICK_OFFSET,
-        y: y + heading.sin() * CLICK_OFFSET,
+        x,
+        y,
         heading_radians: Some(heading),
     }
 }
@@ -444,22 +468,6 @@ mod pointer_tracking_tests {
         assert!(sibling.get());
         drop(sibling_guard);
         assert!(!sibling.get());
-    }
-
-    #[test]
-    fn tracked_artwork_keeps_its_tip_on_the_native_pointer() {
-        let OverlayCommand::SnapTo {
-            x,
-            y,
-            heading_radians: Some(heading),
-        } = track_pointer_command(120.0, 80.0)
-        else {
-            panic!("pointer tracking must produce an anchored snap");
-        };
-        // The artwork centre sits 16 points down-right of the tip at 45 degrees.
-        assert_eq!(heading, std::f64::consts::FRAC_PI_4);
-        assert!((x - 131.313_708_498_984_76).abs() < 1e-9, "x = {x}");
-        assert!((y - 91.313_708_498_984_76).abs() < 1e-9, "y = {y}");
     }
 
     #[test]

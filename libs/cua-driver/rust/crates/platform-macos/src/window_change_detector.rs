@@ -78,6 +78,10 @@ pub struct Snapshot {
 pub struct Changes {
     pub new_windows: Vec<WindowEvent>,
     pub foreground_changed: bool,
+    /// Whether the post-action window poll ran. `false` when the host bound
+    /// skipped it or the poll task was lost: an empty `new_windows` then means
+    /// nothing was watched, not that nothing opened.
+    pub polled: bool,
 }
 
 impl Changes {
@@ -85,6 +89,14 @@ impl Changes {
         Self {
             new_windows: Vec::new(),
             foreground_changed: false,
+            polled: true,
+        }
+    }
+
+    pub fn not_polled() -> Self {
+        Self {
+            polled: false,
+            ..Self::no_change()
         }
     }
 
@@ -136,6 +148,13 @@ impl Changes {
             "\n\n🔀 Action caused a different app to become frontmost.".to_string()
         }
     }
+}
+
+/// Returns true when a window belongs to this cua-driver process, including
+/// transient UI such as the agent cursor overlay. Those windows are internal
+/// implementation details rather than action-triggered application windows.
+fn is_daemon_window(window: &WindowInfo) -> bool {
+    window.pid == std::process::id() as i32
 }
 
 /// Default poll deadline — new windows triggered by a click typically
@@ -285,7 +304,7 @@ impl Snapshot {
     pub(crate) fn detect_bounded(self, bounds: WindowObservationBounds) -> Changes {
         if bounds.skips_observation() {
             drop(self);
-            return Changes::no_change();
+            return Changes::not_polled();
         }
         self.detect_with(bounds.timeout, bounds.poll)
     }
@@ -299,7 +318,7 @@ impl Snapshot {
         // thread; the lease's Drop runs there when detect_with returns.
         tokio::task::spawn_blocking(move || self.detect())
             .await
-            .unwrap_or_else(|_| Changes::no_change())
+            .unwrap_or_else(|_| Changes::not_polled())
     }
 
     /// Same as `detect()` but with configurable timing.
@@ -312,17 +331,10 @@ impl Snapshot {
                 .into_iter()
                 .filter(|w| w.layer == 0)
                 .collect();
+            // Keep the live detector and the pure regression tests on the same
+            // diff path so daemon-window filtering cannot drift between them.
+            let (new_windows, _closed) = Self::diff(&self.window_ids, &current);
 
-            let new_windows: Vec<WindowEvent> = current
-                .iter()
-                .filter(|w| !self.window_ids.contains(&w.window_id))
-                .map(|w| WindowEvent {
-                    window_id: w.window_id,
-                    pid: w.pid,
-                    app_name: w.app_name.clone(),
-                    title: w.title.clone(),
-                })
-                .collect();
             let current_front = apps::frontmost_pid();
             let foreground_changed = match (self.front_pid, current_front) {
                 (Some(orig), Some(cur)) => orig != cur,
@@ -333,12 +345,45 @@ impl Snapshot {
                 return Changes {
                     new_windows,
                     foreground_changed,
+                    polled: true,
                 };
             }
             if Instant::now() >= deadline {
                 return Changes::no_change();
             }
         }
+    }
+
+    // ── Internal helpers — also used by unit tests so the diff logic can be
+    // exercised without driving the live window enumerator. ──────────────
+
+    /// Pure-function diff: given the snapshot's window-id set + a
+    /// list of currently-visible windows, return the (opened, closed)
+    /// classification. Opened windows owned by this daemon are excluded so
+    /// transient UI such as the cursor overlay is not reported as an action
+    /// side effect.
+    pub(crate) fn diff(
+        snapshot_ids: &HashSet<u32>,
+        current: &[WindowInfo],
+    ) -> (Vec<WindowEvent>, Vec<u32>) {
+        let current_ids: HashSet<u32> = current.iter().map(|w| w.window_id).collect();
+        let opened: Vec<WindowEvent> = current
+            .iter()
+            .filter(|w| !snapshot_ids.contains(&w.window_id))
+            .filter(|w| !is_daemon_window(w))
+            .map(|w| WindowEvent {
+                window_id: w.window_id,
+                pid: w.pid,
+                app_name: w.app_name.clone(),
+                title: w.title.clone(),
+            })
+            .collect();
+        let closed: Vec<u32> = snapshot_ids
+            .iter()
+            .copied()
+            .filter(|id| !current_ids.contains(id))
+            .collect();
+        (opened, closed)
     }
 }
 
@@ -347,6 +392,49 @@ impl Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::windows::WindowBounds;
+
+    fn win(window_id: u32, pid: i32, app_name: &str, title: &str) -> WindowInfo {
+        WindowInfo {
+            window_id,
+            pid,
+            app_name: app_name.to_owned(),
+            title: title.to_owned(),
+            bounds: WindowBounds {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 100.0,
+            },
+            layer: 0,
+            z_index: 0,
+            is_on_screen: true,
+            current_space_id: None,
+            on_current_space: None,
+            space_ids: None,
+        }
+    }
+
+    /// Regression for trycua/cua#1592 Bug 2. This exercises the same `diff`
+    /// path used by `detect_with`, rather than separately testing a predicate
+    /// that production could accidentally stop applying.
+    #[test]
+    fn diff_excludes_new_windows_owned_by_the_daemon() {
+        let snap: HashSet<u32> = [1].into_iter().collect();
+        let daemon_pid = std::process::id() as i32;
+        let cur = vec![
+            win(1, daemon_pid + 1, "Safari", "Home"),
+            win(2, daemon_pid, "Cua Driver", ""),
+            win(3, daemon_pid + 2, "Mail", "Inbox"),
+        ];
+
+        let (opened, closed) = Snapshot::diff(&snap, &cur);
+
+        assert_eq!(opened.len(), 1);
+        assert_eq!(opened[0].window_id, 3);
+        assert_eq!(opened[0].app_name, "Mail");
+        assert!(closed.is_empty());
+    }
 
     #[test]
     fn changes_result_suffix_no_change_is_empty() {
@@ -358,6 +446,7 @@ mod tests {
     #[test]
     fn changes_result_suffix_single_new_window_with_title() {
         let c = Changes {
+            polled: true,
             new_windows: vec![WindowEvent {
                 window_id: 99,
                 pid: 100,
@@ -376,6 +465,7 @@ mod tests {
     #[test]
     fn changes_result_suffix_groups_windows_by_app() {
         let c = Changes {
+            polled: true,
             new_windows: vec![
                 WindowEvent {
                     window_id: 1,
@@ -409,6 +499,7 @@ mod tests {
     #[test]
     fn changes_result_suffix_foreground_change_only() {
         let c = Changes {
+            polled: true,
             new_windows: vec![],
             foreground_changed: true,
         };
@@ -422,6 +513,7 @@ mod tests {
     #[test]
     fn changes_result_suffix_empty_title_is_dropped() {
         let c = Changes {
+            polled: true,
             new_windows: vec![WindowEvent {
                 window_id: 1,
                 pid: 100,
@@ -487,8 +579,19 @@ mod tests {
         let started = Instant::now();
         let changes = snap.detect_bounded(observation_bounds_from(Some("0"), None));
         assert!(started.elapsed() < DEFAULT_POLL_INTERVAL);
+        assert!(!changes.polled);
         assert!(!changes.needs_restore());
         assert_eq!(changes.result_suffix(), "");
+    }
+
+    /// The other half of the pair above: a poll that ran is `polled` whether
+    /// or not anything opened before its deadline, so a skipped poll never
+    /// reads as a quiet one.
+    #[test]
+    fn a_poll_that_ran_is_polled_even_when_it_times_out() {
+        let snap = WindowChangeDetector::snapshot(None);
+        let changes = snap.detect_bounded(observation_bounds_from(Some("30"), Some("10")));
+        assert!(changes.polled);
     }
 
     /// Regression: `snapshot(prior_front)` must store the caller's

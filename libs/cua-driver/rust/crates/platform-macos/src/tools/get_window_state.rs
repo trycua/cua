@@ -71,7 +71,11 @@ fn def() -> &'static ToolDef {
             this pid but its accessibility surface can't be resolved, the tree comes back \
             EMPTY with `degraded_reason: ax_window_unresolved` and the screenshot of the \
             requested window; background input is refused until it resolves, so \
-            re-snapshot or act with `delivery_mode:\"foreground\"`. A window on another \
+            re-snapshot or act with `delivery_mode:\"foreground\"`. When that pid is an \
+            app still launching (its window exists before it answers accessibility), the \
+            walk first waits up to `timeout_ms` for it; if it never answers, the tree comes \
+            back EMPTY with `degraded_reason: ax_app_launching`, `truncated: true` and \
+            `truncation_reason: app_lookup_timeout`. A window on another \
             Space still resolves by its exact CGWindowID. This tool never returns another \
             surface's elements under your window_id. Before exposing a screenshot, \
             its raw dimensions are validated as a coherent 1x/2x representation of \
@@ -311,7 +315,10 @@ impl Tool for GetWindowStateTool {
                 let payload = crate::ax::cache::CachedSnapshot::from_nodes(&tree.nodes);
                 (tree, payload)
             });
-            let backstop = std::time::Duration::from_millis(timeout_ms) + AX_WALK_BACKSTOP_GRACE;
+            // A launching app is waited on for up to `timeout_ms` before the
+            // walk's own `timeout_ms` starts (see `ax::launch`).
+            let backstop =
+                std::time::Duration::from_millis(timeout_ms) * 2 + AX_WALK_BACKSTOP_GRACE;
             match tokio::time::timeout(backstop, walk_future).await {
                 Ok(Ok((tree, payload))) => (Some(tree), Some(payload)),
                 Ok(Err(e)) => return ToolResult::error(format!("AX tree walk failed: {e}")),
@@ -630,7 +637,15 @@ impl Tool for GetWindowStateTool {
         // the screenshot already in this response and click by pixel (x,y).
         // macOS can pixel-target in the background, so the recommendation is
         // `px`, not `foreground`.
-        match degradation_for(tree_result.is_some(), element_count, window_scope.as_ref()) {
+        let app_lookup_timed_out = tree_result
+            .as_ref()
+            .is_some_and(|r| r.walk.reason() == Some("app_lookup_timeout"));
+        match degradation_for(
+            tree_result.is_some(),
+            element_count,
+            window_scope.as_ref(),
+            app_lookup_timed_out,
+        ) {
             Degradation::None => {}
             Degradation::AxTreeEmpty => {
                 structured["degraded"] = serde_json::json!(true);
@@ -646,6 +661,24 @@ impl Tool for GetWindowStateTool {
                     "recommended": "px",
                     "reason": "non-AX surface — act by pixel (x,y) off the screenshot \
                                in this response (an element px action)."
+                });
+            }
+            Degradation::AxAppLaunching => {
+                structured["degraded"] = serde_json::json!(true);
+                structured["degraded_reason"] = serde_json::json!(format!(
+                    "ax_app_launching: window_id {window_id} exists and is owned by pid \
+                     {pid}, but that app has not finished launching and did not answer \
+                     accessibility within the {timeout_ms} ms timeout_ms budget. The tree is \
+                     returned EMPTY because the window's accessibility surface is not \
+                     available yet."
+                ));
+                structured["escalation"] = serde_json::json!({
+                    "recommended": "foreground",
+                    "reason": "observation-only until the app finishes launching: re-snapshot \
+                               in a moment or with a larger timeout_ms. Background input \
+                               (including px) is refused while the window's AX surface is \
+                               unresolved; act with delivery_mode:\"foreground\" only if \
+                               you cannot wait."
                 });
             }
             Degradation::AxWindowUnresolved { ax_window_count } => {
@@ -819,6 +852,9 @@ enum Degradation {
     /// The requested window is live and owned by this pid, but no AXWindow
     /// claims its CGWindowID, so the walk deliberately covered nothing.
     AxWindowUnresolved { ax_window_count: usize },
+    /// The window scope is unresolved because the app is still launching and
+    /// did not answer accessibility within the caller's budget.
+    AxAppLaunching,
 }
 
 /// Decide the degradation rung. Pure: `walk_attempted` is false in the
@@ -829,11 +865,15 @@ fn degradation_for(
     walk_attempted: bool,
     element_count: usize,
     scope: Option<&crate::ax::WindowScope>,
+    app_lookup_timed_out: bool,
 ) -> Degradation {
     if !walk_attempted {
         return Degradation::None;
     }
     if let Some(crate::ax::WindowScope::AxUnresolved { ax_window_count }) = scope {
+        if app_lookup_timed_out {
+            return Degradation::AxAppLaunching;
+        }
         return Degradation::AxWindowUnresolved {
             ax_window_count: *ax_window_count,
         };
@@ -1039,9 +1079,30 @@ mod window_scope_contract_tests {
             degradation_for(
                 true,
                 0,
-                Some(&WindowScope::AxUnresolved { ax_window_count: 3 })
+                Some(&WindowScope::AxUnresolved { ax_window_count: 3 }),
+                false
             ),
             Degradation::AxWindowUnresolved { ax_window_count: 3 }
+        );
+    }
+
+    /// A window that exists before its app answers accessibility is not an
+    /// unscoped window: the degradation names the launch instead.
+    #[test]
+    fn a_launch_that_outlasts_the_budget_degrades_as_app_launching() {
+        assert_eq!(
+            degradation_for(
+                true,
+                0,
+                Some(&WindowScope::AxUnresolved { ax_window_count: 0 }),
+                true
+            ),
+            Degradation::AxAppLaunching
+        );
+        // A walk cut short for another reason after resolving keeps its rung.
+        assert_eq!(
+            degradation_for(true, 0, Some(&WindowScope::Matched), true),
+            Degradation::AxTreeEmpty
         );
     }
 
@@ -1049,7 +1110,7 @@ mod window_scope_contract_tests {
     fn empty_tree_still_degrades_as_ax_tree_empty() {
         // Back-compat with the pre-existing rung.
         assert_eq!(
-            degradation_for(true, 0, Some(&WindowScope::Matched)),
+            degradation_for(true, 0, Some(&WindowScope::Matched), false),
             Degradation::AxTreeEmpty
         );
     }
@@ -1057,14 +1118,14 @@ mod window_scope_contract_tests {
     #[test]
     fn resolved_window_with_elements_is_not_degraded() {
         assert_eq!(
-            degradation_for(true, 42, Some(&WindowScope::Matched)),
+            degradation_for(true, 42, Some(&WindowScope::Matched), false),
             Degradation::None
         );
     }
 
     #[test]
     fn screenshot_only_path_does_not_degrade() {
-        assert_eq!(degradation_for(false, 0, None), Degradation::None);
+        assert_eq!(degradation_for(false, 0, None, false), Degradation::None);
     }
 
     #[test]
@@ -1074,6 +1135,8 @@ mod window_scope_contract_tests {
             "window_id_not_found",
             "window_owner_pid_mismatch",
             "ax_window_unresolved",
+            "ax_app_launching",
+            "app_lookup_timeout",
         ] {
             assert!(
                 description.contains(code),

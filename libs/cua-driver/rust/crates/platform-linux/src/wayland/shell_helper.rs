@@ -618,22 +618,28 @@ impl VisualDispatcher {
     }
 
     fn enqueue(&self, request: VisualRequest) -> Result<(), VisualQueueError> {
+        self.enqueue_batch(vec![request])
+    }
+
+    // Capacity counts helper calls, not batches. Only a singleton hide may
+    // use the reserved terminal slot; ordinary batches fit completely or fail.
+    fn enqueue_batch(&self, requests: Vec<VisualRequest>) -> Result<(), VisualQueueError> {
         let (lock, ready) = &*self.shared;
         let mut queue = lock.lock().unwrap_or_else(|e| e.into_inner());
         if queue.closed {
             return Err(VisualQueueError::Closed);
         }
-        if request.is_hide() {
+        if requests.len() == 1 && requests[0].is_hide() {
             // Reserve one terminal slot so removal cannot be lost to a full
             // queue. Consecutive hides are idempotent. Ordinary commands count
             // ALL pending entries toward capacity, keeping the total <= N + 1.
             if queue.pending.back().is_some_and(VisualRequest::is_hide) {
                 return Ok(());
             }
-        } else if queue.pending.len() >= VISUAL_QUEUE_CAPACITY {
+        } else if requests.len() > VISUAL_QUEUE_CAPACITY.saturating_sub(queue.pending.len()) {
             return Err(VisualQueueError::Full);
         }
-        queue.pending.push_back(request);
+        queue.pending.extend(requests);
         ready.notify_one();
         Ok(())
     }
@@ -676,10 +682,29 @@ fn with_visual_dispatcher<R>(body: impl FnOnce(Option<&VisualDispatcher>) -> R) 
 }
 
 fn enqueue_visual(method: &'static str, args: Vec<String>) {
+    enqueue_visual_with_color(None, method, args);
+}
+
+/// Admit a semantic update and its session color under one queue lock.
+/// This is atomic admission, not atomic execution of separate helper calls.
+pub(crate) fn enqueue_visual_with_color(
+    color: Option<String>,
+    method: &'static str,
+    args: Vec<String>,
+) {
     let result = with_visual_dispatcher(|dispatcher| {
-        dispatcher
-            .ok_or(VisualQueueError::Closed)
-            .and_then(|dispatcher| dispatcher.enqueue(VisualRequest { method, args }))
+        let dispatcher = dispatcher.ok_or(VisualQueueError::Closed)?;
+        let request = VisualRequest { method, args };
+        match color {
+            Some(color) => dispatcher.enqueue_batch(vec![
+                VisualRequest {
+                    method: "SetCursorColor",
+                    args: vec![color],
+                },
+                request,
+            ]),
+            None => dispatcher.enqueue(request),
+        }
     });
     if let Err(error) = result {
         tracing::warn!(method, ?error, "GNOME visual queue rejected command");
@@ -760,6 +785,15 @@ mod tests {
         fn drop(&mut self) {
             VISUAL_OVERRIDE.with(|slot| slot.borrow_mut().take());
         }
+    }
+
+    /// Run `body` with the public helpers routed to `dispatcher`.
+    fn with_override(dispatcher: &Arc<VisualDispatcher>, body: impl FnOnce()) {
+        VISUAL_OVERRIDE.with(|slot| {
+            assert!(slot.borrow_mut().replace(Arc::clone(dispatcher)).is_none());
+        });
+        body();
+        VISUAL_OVERRIDE.with(|slot| slot.borrow_mut().take());
     }
 
     fn visual_request(method: &'static str, args: &[&str]) -> VisualRequest {
@@ -940,6 +974,201 @@ mod tests {
                 visual_request("MoveCursor", &["in-flight"]),
                 VisualRequest::hide()
             ]
+        );
+    }
+
+    fn idle_visual_queue() -> Arc<VisualDispatcher> {
+        // No worker: nothing drains the queue while admission is checked.
+        Arc::new(VisualDispatcher {
+            shared: Arc::new((Mutex::new(VisualQueue::default()), Condvar::new())),
+        })
+    }
+
+    fn pending(dispatcher: &VisualDispatcher) -> Vec<VisualRequest> {
+        let queue = dispatcher.shared.0.lock().unwrap();
+        queue
+            .pending
+            .iter()
+            .map(|request| VisualRequest {
+                method: request.method,
+                args: request.args.clone(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn semantic_update_and_its_color_are_admitted_together_or_not_at_all() {
+        let color = || visual_request("SetCursorColor", &["#123456"]);
+        let moved = || visual_request("MoveCursor", &["10", "20"]);
+        let admit = |dispatcher: &Arc<VisualDispatcher>| {
+            with_override(dispatcher, || {
+                enqueue_visual_with_color(
+                    Some("#123456".to_owned()),
+                    "MoveCursor",
+                    vec!["10".to_owned(), "20".to_owned()],
+                );
+            });
+        };
+
+        // Two free slots: both are admitted, color first.
+        let dispatcher = idle_visual_queue();
+        for _ in 0..VISUAL_QUEUE_CAPACITY - 2 {
+            dispatcher
+                .enqueue(visual_request("MoveCursor", &["old"]))
+                .unwrap();
+        }
+        admit(&dispatcher);
+        let queued = pending(&dispatcher);
+        assert_eq!(queued.len(), VISUAL_QUEUE_CAPACITY);
+        assert_eq!(queued[VISUAL_QUEUE_CAPACITY - 2..], [color(), moved()]);
+
+        // One free slot: previously the color was admitted and the move was
+        // dropped. Now neither is admitted.
+        let dispatcher = idle_visual_queue();
+        for _ in 0..VISUAL_QUEUE_CAPACITY - 1 {
+            dispatcher
+                .enqueue(visual_request("MoveCursor", &["old"]))
+                .unwrap();
+        }
+        admit(&dispatcher);
+        assert_eq!(pending(&dispatcher).len(), VISUAL_QUEUE_CAPACITY - 1);
+        assert!(!pending(&dispatcher).contains(&color()));
+
+        // A legacy (colorless) update still uses a single slot.
+        with_override(&dispatcher, || move_cursor(10, 20));
+        assert_eq!(pending(&dispatcher).last(), Some(&moved()));
+    }
+
+    #[test]
+    fn hide_keeps_its_reserved_slot_after_a_rejected_pair() {
+        let pair = || {
+            vec![
+                visual_request("SetCursorColor", &["#123456"]),
+                visual_request("MoveCursor", &["10", "20"]),
+            ]
+        };
+        let dispatcher = idle_visual_queue();
+        for _ in 0..VISUAL_QUEUE_CAPACITY - 1 {
+            dispatcher
+                .enqueue(visual_request("MoveCursor", &["old"]))
+                .unwrap();
+        }
+        assert_eq!(
+            dispatcher.enqueue_batch(pair()),
+            Err(VisualQueueError::Full)
+        );
+        dispatcher
+            .enqueue(visual_request("MoveCursor", &["single"]))
+            .unwrap();
+        dispatcher.enqueue(VisualRequest::hide()).unwrap();
+        dispatcher.enqueue(VisualRequest::hide()).unwrap();
+        assert_eq!(pending(&dispatcher).len(), VISUAL_QUEUE_CAPACITY + 1);
+        assert_eq!(
+            dispatcher.enqueue_batch(pair()),
+            Err(VisualQueueError::Full)
+        );
+        assert_eq!(pending(&dispatcher).last(), Some(&VisualRequest::hide()));
+    }
+
+    #[test]
+    fn batches_count_helper_calls_toward_capacity() {
+        let pair = || {
+            vec![
+                visual_request("SetCursorColor", &["#123456"]),
+                visual_request("MoveCursor", &["10", "20"]),
+            ]
+        };
+        let dispatcher = idle_visual_queue();
+        for _ in 0..VISUAL_QUEUE_CAPACITY / 2 {
+            dispatcher.enqueue_batch(pair()).unwrap();
+        }
+        assert_eq!(pending(&dispatcher).len(), VISUAL_QUEUE_CAPACITY);
+        assert_eq!(
+            dispatcher.enqueue_batch(pair()),
+            Err(VisualQueueError::Full)
+        );
+        assert_eq!(
+            dispatcher.enqueue(visual_request("MoveCursor", &["extra"])),
+            Err(VisualQueueError::Full)
+        );
+    }
+
+    #[test]
+    fn closed_queue_rejects_the_whole_batch() {
+        let dispatcher = idle_visual_queue();
+        dispatcher.shared.0.lock().unwrap().closed = true;
+        assert_eq!(
+            dispatcher.enqueue_batch(vec![
+                visual_request("SetCursorColor", &["#123456"]),
+                visual_request("MoveCursor", &["10", "20"]),
+            ]),
+            Err(VisualQueueError::Closed)
+        );
+        assert!(pending(&dispatcher).is_empty());
+    }
+
+    #[test]
+    fn concurrent_producers_cannot_split_the_last_pair() {
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (observed_tx, observed_rx) = std::sync::mpsc::channel();
+        let mut first = true;
+        let (dispatcher, worker) = VisualDispatcher::spawn(move |request| {
+            if first {
+                first = false;
+                started_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            }
+            observed_tx.send(request).unwrap();
+        })
+        .unwrap();
+        let dispatcher = Arc::new(dispatcher);
+        dispatcher
+            .enqueue(visual_request("MoveCursor", &["in-flight"]))
+            .unwrap();
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        // Leave room for exactly one pair; two producers race for it.
+        for _ in 0..VISUAL_QUEUE_CAPACITY - 2 {
+            dispatcher
+                .enqueue(visual_request("MoveCursor", &["old"]))
+                .unwrap();
+        }
+        let start = Arc::new(std::sync::Barrier::new(3));
+        let producers: Vec<_> = ["#BBBBBB", "#CCCCCC"]
+            .into_iter()
+            .map(|color| {
+                let dispatcher = Arc::clone(&dispatcher);
+                let start = Arc::clone(&start);
+                std::thread::spawn(move || {
+                    VISUAL_OVERRIDE.with(|slot| *slot.borrow_mut() = Some(dispatcher));
+                    start.wait();
+                    enqueue_visual_with_color(
+                        Some(color.to_owned()),
+                        "MoveCursor",
+                        vec!["10".to_owned(), "20".to_owned()],
+                    );
+                    VISUAL_OVERRIDE.with(|slot| slot.borrow_mut().take());
+                })
+            })
+            .collect();
+        start.wait();
+        for producer in producers {
+            producer.join().unwrap();
+        }
+        assert_eq!(pending(&dispatcher).len(), VISUAL_QUEUE_CAPACITY);
+        release_tx.send(()).unwrap();
+        let observed: Vec<_> = (0..VISUAL_QUEUE_CAPACITY + 1)
+            .map(|_| observed_rx.recv_timeout(Duration::from_secs(5)).unwrap())
+            .collect();
+        let tail = &observed[VISUAL_QUEUE_CAPACITY - 1..];
+        assert_eq!(tail[0].method, "SetCursorColor");
+        assert!(tail[0].args == ["#BBBBBB"] || tail[0].args == ["#CCCCCC"]);
+        assert_eq!(tail[1], visual_request("MoveCursor", &["10", "20"]));
+        drop(dispatcher);
+        worker.join().unwrap();
+        assert_eq!(
+            observed_rx.into_iter().collect::<Vec<_>>(),
+            vec![VisualRequest::hide()]
         );
     }
 

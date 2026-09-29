@@ -502,44 +502,79 @@ fn dispatch_wayland_overlay_message(msg: &OverlayMsg) -> WaylandOverlayBackend {
     backend
 }
 
+/// The one helper update an overlay command maps to, if any. Semantic
+/// updates also carry the session color; see `dispatch_shell_helper_command`.
 #[cfg(target_os = "linux")]
-fn dispatch_shell_helper_command(key: &str, cmd: &OverlayCommand, semantic: bool) {
-    if semantic {
-        crate::wayland::shell_helper::set_cursor_color(&cursor_overlay::session_fill_hex(key));
-    }
-    match cmd {
-        OverlayCommand::ClickPulse { x, y } if semantic => {
-            crate::wayland::shell_helper::click_pulse(*x as i32, *y as i32);
-        }
+fn shell_helper_update(
+    cmd: &OverlayCommand,
+    semantic: bool,
+) -> Option<(&'static str, Vec<String>)> {
+    let update = match cmd {
+        OverlayCommand::ClickPulse { x, y } if semantic => (
+            "ClickPulse",
+            vec![(*x as i32).to_string(), (*y as i32).to_string()],
+        ),
         OverlayCommand::MoveTo { x, y, .. }
         | OverlayCommand::SnapTo { x, y, .. }
-        | OverlayCommand::ClickPulse { x, y } => {
-            crate::wayland::shell_helper::move_cursor(*x as i32, *y as i32);
-        }
+        | OverlayCommand::ClickPulse { x, y } => (
+            "MoveCursor",
+            vec![(*x as i32).to_string(), (*y as i32).to_string()],
+        ),
         OverlayCommand::BeginAction {
             action,
             delivery,
             target,
-        } if semantic => {
-            crate::wayland::shell_helper::set_cursor_state(
-                action.as_str(),
-                delivery.as_ref().map_or("", |value| value.as_str()),
-                target.as_ref().map_or("", |value| value.as_str()),
-                true,
-            );
+        } if semantic => (
+            "SetCursorState",
+            vec![
+                action.as_str().to_owned(),
+                delivery
+                    .as_ref()
+                    .map_or("", |value| value.as_str())
+                    .to_owned(),
+                target
+                    .as_ref()
+                    .map_or("", |value| value.as_str())
+                    .to_owned(),
+                true.to_string(),
+            ],
+        ),
+        OverlayCommand::EndAction(action) if semantic => (
+            "SetCursorState",
+            vec![
+                action.as_str().to_owned(),
+                String::new(),
+                String::new(),
+                false.to_string(),
+            ],
+        ),
+        OverlayCommand::SetSessionLabel(label) if semantic => (
+            "SetSessionLabel",
+            vec![cursor_overlay::sanitize_session_label(label).unwrap_or_default()],
+        ),
+        _ => return None,
+    };
+    Some(update)
+}
+
+#[cfg(target_os = "linux")]
+fn dispatch_shell_helper_command(key: &str, cmd: &OverlayCommand, semantic: bool) {
+    let color = semantic.then(|| cursor_overlay::session_fill_hex(key));
+    match shell_helper_update(cmd, semantic) {
+        // The color and the update it decorates are admitted together or not
+        // at all, so a full queue cannot apply the color and drop the update.
+        Some((method, args)) => {
+            crate::wayland::shell_helper::enqueue_visual_with_color(color, method, args);
         }
-        OverlayCommand::EndAction(action) if semantic => {
-            crate::wayland::shell_helper::set_cursor_state(action.as_str(), "", "", false);
+        None => {
+            if let Some(color) = color {
+                crate::wayland::shell_helper::set_cursor_color(&color);
+            }
+            // Hide stays on its singleton path so saturation cannot reject it.
+            if matches!(cmd, OverlayCommand::SetEnabled(false)) {
+                crate::wayland::shell_helper::hide_cursor();
+            }
         }
-        OverlayCommand::SetSessionLabel(label) if semantic => {
-            crate::wayland::shell_helper::set_session_label(
-                cursor_overlay::sanitize_session_label(label)
-                    .as_deref()
-                    .unwrap_or(""),
-            );
-        }
-        OverlayCommand::SetEnabled(false) => crate::wayland::shell_helper::hide_cursor(),
-        _ => {}
     }
 }
 
@@ -2990,6 +3025,78 @@ mod tests {
         );
         assert_eq!(wayland_arrival_budget(1.0e12), Duration::from_secs(8));
         assert_eq!(wayland_arrival_budget(-5.0), Duration::from_secs(3));
+    }
+
+    #[test]
+    fn shell_helper_updates_map_each_command_to_one_helper_call() {
+        use cursor_overlay::{DeliveryModifier, TargetModifier};
+        let owned = |method: &'static str, args: &[&str]| {
+            Some((method, args.iter().map(|arg| (*arg).to_owned()).collect()))
+        };
+        let begin = OverlayCommand::BeginAction {
+            action: CursorAction::Click,
+            delivery: Some(DeliveryModifier::Foreground),
+            target: Some(TargetModifier::Pixel),
+        };
+        let bare_begin = OverlayCommand::BeginAction {
+            action: CursorAction::Click,
+            delivery: None,
+            target: None,
+        };
+        let end = OverlayCommand::EndAction(CursorAction::Click);
+        let label = OverlayCommand::SetSessionLabel("session".into());
+        let pulse = OverlayCommand::ClickPulse { x: 30.9, y: 40.0 };
+        let snap = OverlayCommand::SnapTo {
+            x: 10.0,
+            y: 20.0,
+            heading_radians: None,
+        };
+        let click = CursorAction::Click.as_str();
+        let foreground = DeliveryModifier::Foreground.as_str();
+        let pixel = TargetModifier::Pixel.as_str();
+
+        assert_eq!(
+            shell_helper_update(&snap, true),
+            owned("MoveCursor", &["10", "20"])
+        );
+        assert_eq!(
+            shell_helper_update(&pulse, true),
+            owned("ClickPulse", &["30", "40"])
+        );
+        assert_eq!(
+            shell_helper_update(&begin, true),
+            owned("SetCursorState", &[click, foreground, pixel, "true"])
+        );
+        assert_eq!(
+            shell_helper_update(&bare_begin, true),
+            owned("SetCursorState", &[click, "", "", "true"])
+        );
+        assert_eq!(
+            shell_helper_update(&end, true),
+            owned("SetCursorState", &[click, "", "", "false"])
+        );
+        assert_eq!(
+            shell_helper_update(&label, true),
+            owned("SetSessionLabel", &["session"])
+        );
+
+        // The legacy helper only moves; a pulse is a plain movement there.
+        assert_eq!(
+            shell_helper_update(&pulse, false),
+            owned("MoveCursor", &["30", "40"])
+        );
+        for command in [&begin, &end, &label] {
+            assert_eq!(shell_helper_update(command, false), None);
+        }
+        // Hide and other state stay off the paired path.
+        assert_eq!(
+            shell_helper_update(&OverlayCommand::SetEnabled(false), true),
+            None
+        );
+        assert_eq!(
+            shell_helper_update(&OverlayCommand::SetPressed(true), true),
+            None
+        );
     }
 
     #[test]

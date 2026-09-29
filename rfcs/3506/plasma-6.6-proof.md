@@ -1,6 +1,62 @@
 # Plasma 6.6 foreground feasibility proof
 
-Status: **Plasma 6.6 execution outstanding; live 6.7.5 counterexample recorded**.
+Status: **Plasma 6.6.4 executed; post-confirmation input leaked to B.**
+
+## Completed isolated 6.6.4 run
+
+The existing sidecar was built inside a QEMU/KVM Kubuntu guest (8 GiB,
+4 vCPU), from `2b99a150d00aa35ded968b251901b6dee1ce3504`, with the
+separately applied helper/Driver patches. Running KWin and Plasma were
+6.6.4, Qt 6.10.2, guest UID 1000, Wayland `wayland-0`. Helper, fixture,
+portal and libei transport shared the guest session. No host helper was
+installed and no production source was changed; RFC remains `review`.
+The existing supported scripting and portal calls below were used unchanged.
+The runner gained `--binary`, `--helper-name`, `--ungated` and a stale-generation
+case; those sidecar-only changes are included in this PR.
+
+| Case                             | Result                                                                            | Evidence           | Limitation                                                                    |
+| -------------------------------- | --------------------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------------------- |
+| Initial attempts                 | Portal readiness timeout; zero emission and A/B events                            | Operations 1–4     | Harness exit 0 is not delivery                                                |
+| A, without worker gates          | A received 1 press/release; B zero                                                | Operation 5; video | Ordinary delivery, not race safety                                            |
+| B, without worker gates          | B received 1 press/release; A zero                                                | Operation 6; video | Ordinary delivery, not race safety                                            |
+| Precheck focus takeover          | `closed/stale/inactive target`; zero emission and events                          | Operation 7        | Deterministic precheck gate                                                   |
+| Helper reload / stale generation | Same KWin owner, new generation; `owner/generation changed`; zero emission/events | Operation 8        | Reload revocation, not every lifetime transition                              |
+| Worker reply lost                | A received one pair; result `unknown; never retry`                                | Operation 9        | Not outer SDK reply loss                                                      |
+| Replay of operation 9            | Exclusive ledger refused before Driver construction                               | `replay-9.log`     | Parent ledger, not daemon-wide deduplication                                  |
+| Background                       | Exact code `background_unavailable`; zero submission/emission/events              | Operation 10       | Separate exact-mode request not run: existing harness exposes background only |
+| Postcheck focus takeover         | **A zero, B received one pair intended for A**                                    | Operation 11       | Deterministic postcheck gate; no video of this case                           |
+
+[Machine-readable evidence](evidence/plasma-6.6.4.json) retains all operations,
+activation observations, guest monotonic timing, versions and artifact hashes.
+Ungated check-to-emission spans were 15.119 and 15.367 microseconds.
+The forced postcheck takeover span was 12.893644 ms. These are measured
+client-side spans, not safety thresholds; flush is not application receipt.
+
+The original QEMU framebuffer recording completed cleanly: 500 s, 2500 frames,
+full decoding without errors. Inspected frames at 400 s and 495 s show both
+independent counters at A=1/1, B=1/1. A four-second control clip was inspected
+before input. The final cropped, silent video is retained locally at
+`/home/netbos/Documents/GitHub/cua-evidence/3506/plasma66-env/plasma-6.6.4-AB.webm`
+for GitHub attachment. It covers operations 1–6 only: recording had already
+ended before operations 7–11; no second recorder was started. Do not describe
+it as visual proof of the focus-race counterexample. All fixture journals
+were copied to the host before guest shutdown. Failed attempts are retained.
+
+The focused Rust overlay test compiled and failed the same assertion,
+`started.elapsed() >= ARRIVAL_WAIT_CAP`, in both the prototype and clean
+base `93f7afc89a09e7f9d39da22990e26036a74adfbd`. Each ran one test
+with `portal-input`, the same RUSTFLAGS and `--exact --test-threads=1`;
+both returned 101. This isolates the observed failure from the sidecar patch;
+it does not make the full library green. No full suite was repeated.
+
+Unrun: separate exact-mode request, pointer/drag/hotkeys, live AX smoke,
+outer SDK acknowledgement loss, and comprehensive desktop/session revocation.
+Production input remains disabled. The remainder records the earlier
+source review and requirements; its prior outstanding/read-only status is
+superseded by the measured run above, not by a passing safety proof.
+
+## Earlier source review and procedure
+
 The [host result](host-6.7.5-result.md) supplies additive identity and isolated
 Driver prototype patches, exact API calls, event journals and timing evidence.
 It observed wrong-window input after a post-confirmation focus takeover, so it

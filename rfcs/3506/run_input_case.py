@@ -17,11 +17,18 @@ from activation_probe import observe
 
 BINARY = Path("/home/netbos/.hermes/cache/scratch/cua3506-driver/source/libs/cua-driver/rust/target/debug/examples/rfc3506")
 parser = argparse.ArgumentParser()
+parser.add_argument("--binary", type=Path, default=BINARY)
+parser.add_argument("--helper-name", default="cua_kwin_3506_proof")
+parser.add_argument("--ungated", action="store_true",
+                    help="A/B only: activate before SDK submission, without worker gate waits")
 parser.add_argument("--directory", type=Path, required=True)
 parser.add_argument("--seq", type=int, required=True)
 parser.add_argument("--case", choices=("A", "B", "inactive", "precheck_takeover", "postcheck_takeover",
-                                       "drop_ack", "expired", "closed", "background"), required=True)
+                                       "drop_ack", "expired", "closed", "background", "stale_generation"), required=True)
 args = parser.parse_args()
+if args.ungated and args.case not in ("A", "B"):
+    parser.error("ungated requires A or B")
+BINARY = args.binary
 DBusGMainLoop(set_as_default=True)
 bus = dbus.SessionBus()
 fixture_owner = json.loads((args.directory / "fixture-owner.json").read_text())
@@ -58,7 +65,7 @@ expected = {"owner": identity["owner"], "pid": pid, "token": target["token"],
             "generation": generation, "internal_id": target["internal_id"],
             "deadline_ns": time.monotonic_ns() + 60_000_000_000,
             "op_seq": args.seq, "key": "a", "drop_ack": args.case == "drop_ack",
-            "precheck_gate": str(prefix),
+            "precheck_gate": None if args.ungated else str(prefix),
             "postcheck_gate": str(postfix) if args.case == "postcheck_takeover" else None}
 mode = "--execute"
 if args.case == "expired":
@@ -67,23 +74,35 @@ if args.case == "closed":
     mode = "--execute-closed"
 if args.case == "background":
     mode = "--background-refusal"
+observations = []
+if args.ungated:
+    observations.append(observe(bus, pid, targets[label]["token"], generation))
 process = subprocess.Popen([str(BINARY), mode], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE, env=env, text=True)
 assert process.stdin is not None
 process.stdin.write(json.dumps(expected))
 process.stdin.close()
 process.stdin = None
-observations = []
 try:
     end = time.monotonic() + 40
-    while not Path(str(prefix) + ".reached").exists() and process.poll() is None:
+    while not args.ungated and not Path(str(prefix) + ".reached").exists() and process.poll() is None:
         if time.monotonic() >= end:
             raise TimeoutError("readiness_or_admission_not_reached")
         time.sleep(0.01)
-    if process.poll() is None:
+    if not args.ungated and process.poll() is None:
         # Portal readiness/consent completes before requesting activation.
         wanted = "B" if args.case in ("inactive", "precheck_takeover") else label
         observations.append(observe(bus, pid, targets[wanted]["token"], generation))
+        if args.case == "stale_generation":
+            effects = dbus.Interface(bus.get_object(identity["owner"], "/Effects"), "org.kde.kwin.Effects")
+            effects.unloadEffect(args.helper_name)
+            if not effects.loadEffect(args.helper_name):
+                raise RuntimeError("helper_reload_failed")
+            refreshed = json.loads(subprocess.check_output([str(BINARY), "--identity"], env=env, text=True))
+            if refreshed["owner"] != identity["owner"] or refreshed["snapshot"]["generation"] == generation:
+                raise RuntimeError("helper_reload_did_not_revoke_generation")
+            observations.append({"reload_ns": time.monotonic_ns(), "owner": refreshed["owner"],
+                                 "old_generation": generation, "new_generation": refreshed["snapshot"]["generation"]})
         Path(str(prefix) + ".release").touch(exist_ok=False)
         if args.case == "postcheck_takeover":
             while not Path(str(postfix) + ".reached").exists() and process.poll() is None:
@@ -120,7 +139,7 @@ while True:
     time.sleep(0.01)
 deltas = {k: {c: after["windows"][k][c] - before["windows"][k][c]
                for c in ("presses", "releases", "clicks", "button_releases")} for k in ("A", "B")}
-result = {"case": args.case, "seq": args.seq, "expected": expected,
+result = {"case": args.case, "seq": args.seq, "ungated": args.ungated, "expected": expected,
           "observations": observations, "report": report, "exit_code": process.returncode,
           "stdout": stdout, "stderr": stderr, "before": before, "after": after,
           "deltas": deltas, "completed_ns": time.monotonic_ns(), "no_retry": True}

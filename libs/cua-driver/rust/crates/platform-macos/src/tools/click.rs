@@ -1024,15 +1024,31 @@ impl Tool for ClickTool {
                         return Ok(false);
                     }
                     // AXPress acts on the whole element and carries no point;
-                    // Chrome delivers it at the element's centre. Only use it
-                    // when pressing that element is what the requested point
-                    // means. A canvas, video or other drawn surface is one AX
-                    // element with many targets inside it: decline, so the
-                    // routed pixel path (which keeps the point) handles it.
+                    // Chrome delivers it at the element's centre. That is fine
+                    // for anything that presses as a whole (a control, a text
+                    // run, a container whose own area was hit), but a drawn
+                    // surface (canvas, video, image map) is a LEAF element with
+                    // many targets inside it: pressing its centre hits a
+                    // different target than the requested point and still
+                    // reports success. Decline only that shape, so the routed
+                    // pixel path (which keeps the point) handles it.
                     if !focus_only {
                         let role = copy_string_attr(element, "AXRole").unwrap_or_default();
                         let rect = element_screen_rect(element);
-                        if !ax_press_preserves_point(&role, rect, screen_x, screen_y) {
+                        let children = copy_children(element);
+                        let is_leaf = children.is_empty();
+                        for child in children {
+                            CFRelease(child as _);
+                        }
+                        let has_control_ancestor = has_whole_element_press_ancestor(element);
+                        if !ax_press_preserves_point(
+                            &role,
+                            rect,
+                            is_leaf,
+                            has_control_ancestor,
+                            screen_x,
+                            screen_y,
+                        ) {
                             CFRelease(element as _);
                             return Ok(false);
                         }
@@ -1602,24 +1618,40 @@ const WHOLE_ELEMENT_PRESS_ROLES: &[&str] = &[
     "AXSearchField",
     "AXRow",
     "AXCell",
+    // A text run inside a clickable element: the click bubbles to the handler
+    // wherever in the run it lands.
+    "AXStaticText",
 ];
 
 /// How far from the element centre (points) a click still counts as "at the
-/// centre", the only place an AXPress on a non-control element lands.
+/// centre", the only place an AXPress lands.
 const CENTRE_SLACK_PT: f64 = 6.0;
 const CENTRE_SLACK_FRACTION: f64 = 0.1;
+
+/// How many parents to inspect for a control above the hit element.
+const ANCESTOR_DEPTH: usize = 8;
 
 /// Whether an AXPress on the element found under a pixel-addressed click keeps
 /// the point the caller asked for.
 ///
-/// AXPress carries no coordinates. For a control it does not matter (the whole
-/// control presses). For anything else (a canvas, video, image map or other
-/// drawn surface, which is the case `x, y` exists for) the press lands at the
-/// element centre, so a click aimed elsewhere on it would hit a different
-/// target and still report success. Unknown geometry on a non-control is not
-/// evidence that the point survives, so it declines as well.
-pub(crate) fn ax_press_preserves_point(role: &str, rect: Option<[f64; 4]>, x: f64, y: f64) -> bool {
-    if WHOLE_ELEMENT_PRESS_ROLES.contains(&role) {
+/// AXPress carries no coordinates, and Chrome delivers it at the element's
+/// centre. That only loses information for a DRAWN SURFACE: a leaf element (no
+/// AX children) that is not a control and has no control above it, which is
+/// what a canvas, video or image map looks like to accessibility. A control,
+/// a text run, an element inside a control (an image in a link), or a
+/// container with children (the hit-test returned the container itself, so the
+/// point is on the container's own area) presses as a whole. A drawn surface
+/// is only pressed when the point is already at its centre. Unknown geometry
+/// on a drawn surface declines: it is not evidence that the point survives.
+pub(crate) fn ax_press_preserves_point(
+    role: &str,
+    rect: Option<[f64; 4]>,
+    is_leaf: bool,
+    has_control_ancestor: bool,
+    x: f64,
+    y: f64,
+) -> bool {
+    if WHOLE_ELEMENT_PRESS_ROLES.contains(&role) || !is_leaf || has_control_ancestor {
         return true;
     }
     let Some([ex, ey, w, h]) = rect else {
@@ -1630,46 +1662,71 @@ pub(crate) fn ax_press_preserves_point(role: &str, rect: Option<[f64; 4]>, x: f6
         && (y - cy).abs() <= CENTRE_SLACK_PT.max(h * CENTRE_SLACK_FRACTION)
 }
 
+/// Whether any of the next few ancestors of `element` presses as a whole.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef`; it is not consumed.
+unsafe fn has_whole_element_press_ancestor(element: AXUIElementRef) -> bool {
+    let mut current = element;
+    let mut owned: Option<AXUIElementRef> = None;
+    let mut found = false;
+    for _ in 0..ANCESTOR_DEPTH {
+        let Some(parent) = copy_element_attr(current, "AXParent") else {
+            break;
+        };
+        if let Some(previous) = owned.take() {
+            CFRelease(previous as _);
+        }
+        owned = Some(parent);
+        let role = copy_string_attr(parent, "AXRole").unwrap_or_default();
+        if role == "AXWebArea" || role == "AXWindow" {
+            break;
+        }
+        if WHOLE_ELEMENT_PRESS_ROLES.contains(&role.as_str()) && role != "AXStaticText" {
+            found = true;
+            break;
+        }
+        current = parent;
+    }
+    if let Some(last) = owned {
+        CFRelease(last as _);
+    }
+    found
+}
+
 #[cfg(test)]
 mod ax_press_point_tests {
     use super::ax_press_preserves_point;
 
     // The live repro: a 640x260 canvas at screen (100, 200); a button drawn at
-    // its top-left corner. AXPress on the canvas lands at (420, 330).
+    // its top-left corner. AXPress on the canvas lands at (420, 330). To
+    // accessibility a canvas is a leaf with no control above it.
     const CANVAS: Option<[f64; 4]> = Some([100.0, 200.0, 640.0, 260.0]);
+
+    fn canvas(x: f64, y: f64) -> bool {
+        ax_press_preserves_point("AXImage", CANVAS, true, false, x, y)
+    }
 
     #[test]
     fn a_click_aimed_at_a_corner_of_a_canvas_is_not_an_ax_press() {
-        assert!(!ax_press_preserves_point("AXGroup", CANVAS, 176.0, 240.0));
-        assert!(!ax_press_preserves_point("AXImage", CANVAS, 176.0, 240.0));
+        assert!(!canvas(176.0, 240.0));
+        assert!(!ax_press_preserves_point(
+            "AXGroup", CANVAS, true, false, 176.0, 240.0
+        ));
     }
 
     #[test]
     fn a_click_at_the_centre_of_a_canvas_may_use_ax_press() {
-        assert!(ax_press_preserves_point("AXGroup", CANVAS, 420.0, 330.0));
+        assert!(canvas(420.0, 330.0));
     }
 
     #[test]
     fn the_centre_tolerance_is_bounded() {
         // 10% of the width is 64 pt: just inside, then just outside.
-        assert!(ax_press_preserves_point(
-            "AXGroup",
-            CANVAS,
-            420.0 + 64.0,
-            330.0
-        ));
-        assert!(!ax_press_preserves_point(
-            "AXGroup",
-            CANVAS,
-            420.0 + 65.0,
-            330.0
-        ));
-        assert!(!ax_press_preserves_point(
-            "AXGroup",
-            CANVAS,
-            420.0,
-            330.0 + 27.0
-        ));
+        assert!(canvas(420.0 + 64.0, 330.0));
+        assert!(!canvas(420.0 + 65.0, 330.0));
+        assert!(!canvas(420.0, 330.0 + 27.0));
     }
 
     #[test]
@@ -1679,26 +1736,68 @@ mod ax_press_point_tests {
         assert!(ax_press_preserves_point(
             "AXButton",
             Some([10.0, 10.0, 200.0, 50.0]),
+            true,
+            false,
             12.0,
             12.0
         ));
-        assert!(ax_press_preserves_point("AXLink", None, 5.0, 5.0));
-        assert!(ax_press_preserves_point("AXCheckBox", None, 5.0, 5.0));
+        assert!(ax_press_preserves_point(
+            "AXLink", None, true, false, 5.0, 5.0
+        ));
+        assert!(ax_press_preserves_point(
+            "AXCheckBox",
+            None,
+            true,
+            false,
+            5.0,
+            5.0
+        ));
     }
 
     #[test]
-    fn unknown_geometry_on_a_non_control_declines() {
+    fn a_clickable_container_or_text_run_still_presses_as_a_whole() {
+        // Wrong patch: decline every non-control (a clickable div, whose AX element has a text child, would then
+        // fall to the routed path, which Chrome ignored 0 of 6 times in the live probe, and stop working).
+        assert!(ax_press_preserves_point(
+            "AXGroup", CANVAS, false, false, 176.0, 240.0
+        ));
+        assert!(ax_press_preserves_point(
+            "AXStaticText",
+            Some([100.0, 100.0, 90.0, 19.0]),
+            true,
+            false,
+            105.0,
+            105.0
+        ));
+    }
+
+    #[test]
+    fn an_image_inside_a_control_presses_as_a_whole() {
+        // Wrong patch: treat every leaf image as a drawn surface (image links would stop working in the background).
+        assert!(ax_press_preserves_point(
+            "AXImage", CANVAS, true, true, 176.0, 240.0
+        ));
+    }
+
+    #[test]
+    fn unknown_geometry_on_a_drawn_surface_declines() {
         // Wrong patch: treat "no rect" as "fine" (the point is then unverified but reported delivered).
-        assert!(!ax_press_preserves_point("AXGroup", None, 420.0, 330.0));
-        assert!(!ax_press_preserves_point("", None, 0.0, 0.0));
+        assert!(!ax_press_preserves_point(
+            "AXImage", None, true, false, 420.0, 330.0
+        ));
+        assert!(!ax_press_preserves_point("", None, true, false, 0.0, 0.0));
     }
 
     #[test]
-    fn small_non_control_elements_use_the_absolute_slack() {
-        // A 20x20 clickable group: 10% would be 2 pt, so the 6 pt floor applies.
+    fn small_drawn_surfaces_use_the_absolute_slack() {
+        // A 20x20 leaf: 10% would be 2 pt, so the 6 pt floor applies.
         let small = Some([100.0, 100.0, 20.0, 20.0]);
-        assert!(ax_press_preserves_point("AXGroup", small, 116.0, 110.0));
-        assert!(!ax_press_preserves_point("AXGroup", small, 117.0, 110.0));
+        assert!(ax_press_preserves_point(
+            "AXImage", small, true, false, 116.0, 110.0
+        ));
+        assert!(!ax_press_preserves_point(
+            "AXImage", small, true, false, 117.0, 110.0
+        ));
     }
 }
 

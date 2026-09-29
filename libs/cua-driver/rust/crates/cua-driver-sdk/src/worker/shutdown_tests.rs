@@ -107,6 +107,7 @@ fn fixture_client(mode: &str, requests: &std::path::Path) -> Arc<PrivateWorkerCl
         shutdown_started: AtomicBool::new(false),
         cleanup_started: AtomicBool::new(false),
         shutdown_timeout: BUDGET,
+        fail_cleanup_spawn: AtomicBool::new(false),
     })
 }
 
@@ -453,4 +454,37 @@ fn shutdown_deadline_concurrent_calls_send_at_most_one_request() {
     assert_interrupted(first, ActionCompletion::Unknown);
     assert!(matches!(second, Err(DriverError::Shutdown)));
     assert_eq!(std::fs::read_to_string(path).unwrap(), "shutdown\n");
+}
+
+#[test]
+fn failed_cleanup_thread_still_kills_worker_before_client_drop() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = fixture_client("silent", &dir.path().join("requests"));
+    client.fail_cleanup_spawn.store(true, Ordering::Release);
+    let start = Instant::now();
+    let result = runtime().block_on(client.shutdown());
+    // The deadline and the reader timeout both try to schedule cleanup; the
+    // caller that loses that race reports the deadline instead.
+    assert!(
+        matches!(&result, Err(DriverError::Worker { reason }) if reason.contains("cleanup"))
+            || matches!(&result, Err(DriverError::ActionInterrupted { .. })),
+        "expected a cleanup or deadline error, got {result:?}"
+    );
+    assert!(!client.is_available());
+    // The client stays alive, so Drop cannot be what stops the worker. Left
+    // alone, the fixture would exit successfully by itself after 900ms.
+    let status = loop {
+        if let Some(status) = client.child.lock().unwrap().try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            start.elapsed() < LIMIT,
+            "worker kept running after cleanup-thread spawn failed"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert!(
+        !status.success(),
+        "worker exited by itself; it was not killed"
+    );
 }

@@ -171,6 +171,8 @@ pub(crate) struct PrivateWorkerClient {
     shutdown_started: AtomicBool,
     cleanup_started: AtomicBool,
     shutdown_timeout: Duration,
+    #[cfg(test)]
+    fail_cleanup_spawn: AtomicBool,
 }
 
 impl PrivateWorkerClient {
@@ -216,6 +218,8 @@ impl PrivateWorkerClient {
             shutdown_started: AtomicBool::new(false),
             cleanup_started: AtomicBool::new(false),
             shutdown_timeout: options.shutdown_timeout,
+            #[cfg(test)]
+            fail_cleanup_spawn: AtomicBool::new(false),
         });
 
         let host_bundle_id = options.host_bundle_id.clone();
@@ -405,24 +409,51 @@ impl PrivateWorkerClient {
         // The cleanup thread retains the Child through wait(), including when
         // the caller's deadline expires or its last client reference is dropped.
         // Never hold the request/pipe lock while waiting to acquire this owner.
-        if let Err(error) = std::thread::Builder::new()
-            .name("cua-private-worker-cleanup".into())
-            .spawn(move || {
-                let mut child = child
+        if let Err(error) = self.spawn_cleanup_thread(move || {
+            let mut child = child
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !matches!(child.try_wait(), Ok(Some(_))) {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }) {
+            // Every caller has already retired admission, so no later shutdown
+            // retries this. Kill the child now rather than leaving it running
+            // until the last client reference drops; Drop still reaps it.
+            // Request I/O never holds this lock across a pipe read or write,
+            // so this cannot wait behind a blocked pipe.
+            {
+                let mut child = self
+                    .child
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if !matches!(child.try_wait(), Ok(Some(_))) {
                     let _ = child.kill();
-                    let _ = child.wait();
+                    let _ = child.try_wait();
                 }
-            })
-        {
+            }
             self.cleanup_started.store(false, Ordering::Release);
             return Err(DriverError::Worker {
-                reason: format!("schedule private worker cleanup: {error}"),
+                reason: format!(
+                    "schedule private worker cleanup: {error}; the worker was killed and is reaped when the client is dropped"
+                ),
             });
         }
         Ok(())
+    }
+
+    fn spawn_cleanup_thread(&self, body: impl FnOnce() + Send + 'static) -> std::io::Result<()> {
+        #[cfg(test)]
+        if self.fail_cleanup_spawn.load(Ordering::Acquire) {
+            return Err(std::io::Error::other(
+                "injected cleanup-thread spawn failure",
+            ));
+        }
+        std::thread::Builder::new()
+            .name("cua-private-worker-cleanup".into())
+            .spawn(body)
+            .map(drop)
     }
 
     fn shutdown_sync_until(

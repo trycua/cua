@@ -244,6 +244,8 @@ jobs:
           sleep 2
           cd libs/cua-driver/examples/jev-use
           uv run python verify_mcp_tools.py
+          uv run --frozen python verify_session_isolation.py \
+            --output "$RUNNER_TEMP/jev-use-session-isolation.json"
           uv run --frozen python verify_setup.py --typescript --output-dir "$proof"
           # Visual-path fixture: Submit has no DOM button ref. Without the
           # cua-perception extension, both runners must log not_installed on
@@ -258,10 +260,22 @@ jobs:
       - name: Audit redacted E2E evidence
         run: |
           uv run python - "$RUNNER_TEMP/jev-use-mock-proof" <<'PY'
-          import json, pathlib, sys
+          import json, os, pathlib, sys
           root = pathlib.Path(sys.argv[1])
           summary = json.loads((root / "summary.json").read_text())
           assert summary["complete"] is True
+          isolation = json.loads(pathlib.Path(
+              os.environ["RUNNER_TEMP"], "jev-use-session-isolation.json"
+          ).read_text())
+          assert isolation["complete"] is True
+          assert isolation["cross_pre_mutation"]["a_to_b_refusal"] == "browser_binding_stale"
+          assert isolation["cross_pre_mutation"]["b_to_a_refusal"] == "browser_binding_stale"
+          assert isolation["cross_fresh_completion"]["cross_mutation_count"] == 0
+          assert isolation["cross_fresh_completion"]["a_to_a_verified"] is True
+          assert isolation["cross_fresh_completion"]["b_to_b_verified"] is True
+          assert isolation["session_end"]["a_ended_session_refusal"] == "session_ended"
+          assert isolation["session_end"]["a_old_authority_after_restart_refusal"] == "browser_binding_stale"
+          assert isolation["session_end"]["b_existing_target_survived_a_end"] is True
           assert summary["live_requested"] is False
           assert summary["typescript_requested"] is True
           assert len(summary["checks"]) == 2
@@ -305,6 +319,7 @@ jobs:
           path: |
             ${{ runner.temp }}/jev-use-mock-proof/summary.json
             ${{ runner.temp }}/jev-use-mock-proof/*.jsonl
+            ${{ runner.temp }}/jev-use-session-isolation.json
             ${{ runner.temp }}/jev-use-mock-proof/visual-fixture/summary.json
             ${{ runner.temp }}/jev-use-mock-proof/visual-fixture/*.jsonl
           if-no-files-found: error

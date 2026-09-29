@@ -22,16 +22,26 @@ Plasma 6.6 proof. The proof must activate the exact window selected by the
 trusted identity adapter from #3336, confirm that it is active closely enough
 to guard a bounded portal input burst, and refuse input when confirmation fails.
 The recording and exact API calls belong on #3507. This RFC remains `review`;
-the proof has not been supplied by this documentation update.
+the requested Plasma 6.6 safety proof has not been supplied.
 
 The [foreground proof procedure](3506/plasma-6.6-proof.md) records the
-source-checked API candidates, the missing token-to-window identity bridge,
+source-checked API candidates, the token-to-window identity bridge prototype,
 the required observations, and the outstanding live evidence. A focus check
 does not establish atomic target-bound delivery. Any accepted foreground
 increment must describe its measured timing and residual focus race honestly.
 AX actions and exact background refusals remain unchanged. Target-addressable
 background input is deferred until a supported primitive exists. #4034 is a
 separate KDE recording/release dependency decision.
+
+The [live KWin 6.7.5 host experiment](3506/host-6.7.5-result.md) exercised exact
+same-process selection, supported scripting activation, worker-side confirmation,
+normal Driver admission, real portal/libei input, refusal and no-replay cases.
+It **observed wrong-window delivery to sentinel B after confirming A** in the
+post-check focus-takeover case. The separately applied prototype therefore
+does not justify production enablement. The genuine recording has a separate
+limitation: both composed panes show A rather than simultaneous A/B coverage.
+Neither this different-version evidence nor a successful ordinary burst implies
+maintainer acceptance or unblocks #3972/#1982.
 
 The original, stronger target-bound design retained below would add a trusted
 KWin-side target-input capability that lets Cua Driver bind

@@ -1,15 +1,32 @@
 # Plasma 6.6 foreground feasibility proof
 
-Status: **not run; live evidence outstanding**. This is a procedure and source
+Status: **Plasma 6.6 execution outstanding; live 6.7.5 counterexample recorded**.
+The [host result](host-6.7.5-result.md) supplies additive identity and isolated
+Driver prototype patches, exact API calls, event journals and timing evidence.
+It observed wrong-window input after a post-confirmation focus takeover, so it
+is not a passing target-safety proof. Its recording also lacks visual sentinel
+coverage (both composed panes showed A). No production input was enabled.
+
+The exact-version procedure below is a procedure and source
 review for [RFC #3506](../3506-kwin-target-input.md), not certification of a
 working transport. The [2026-09-29 maintainer request](https://github.com/trycua/cua/issues/3506#issuecomment-5896356295)
 requires the recording and exact tested API calls on
 [PR #3507](https://github.com/trycua/cua/pull/3507).
 
-The preparation environment was Ubuntu 24.04 without `kwin_wayland`, `qdbus6`,
-or a live Wayland desktop. No activation, input burst, refusal timing, or native
-recording was tested there. Production code, AX actions, and exact background
-refusals are unchanged.
+The original source-review environment was Ubuntu 24.04 without a live KWin
+desktop. A separate, isolated Kubuntu 26.04 live guest is now reachable as its
+normal UID 1000 user. It runs KWin and plasmashell **6.6.4** on Wayland, with
+`kwin-wayland 4:6.6.4-0ubuntu1`, `plasma-workspace 4:6.6.4-0ubuntu2`,
+`xdg-desktop-portal-kde 6.6.4-0ubuntu1`; its RemoteDesktop portal reports
+version 2 and keyboard/pointer device mask 7. Guest D-Bus introspection shows
+`loadScript`, `unloadScript`, and `isScriptLoaded`. The official ISO SHA-256 is
+`95ce9cf68f13015b9a88bd1ef86fcf7eda77c99979fda48c69e28aa0a84f88ac`.
+These were **read-only environment checks**: no helper was built or installed
+in the guest, no synthetic fixture, consent, activation, input or recording was
+run on 6.6.4. The host's observed wrong-window portal/libei delivery makes
+repeating unsafe raw input in the guest unjustified without a new destination-
+bound primitive. Production code, AX actions and exact background refusals
+are unchanged.
 
 ## What source review establishes
 
@@ -53,7 +70,9 @@ Before an end-to-end scripting experiment, the spike must provide a reviewed,
 generation-aware bridge from the adapter-selected `(pid, token, generation)`
 to the exact live KWin object. An additive read-only token-to-UUID mapping is
 one candidate to investigate; a supported exact-token activation interface is
-another. Neither exists in this PR. Preserve `GetVersion() == 1` discovery and
+another. The separately applied [read-only prototype patch](helper-identity.patch)
+now supplies the former for the host experiment, not shipped production code.
+Preserve `GetVersion() == 1` discovery and
 do not substitute private C++ activation internals for the requested supported
 interface. A UUID manually chosen in the scripting console can test the KWin
 API in isolation, but cannot satisfy the trusted-adapter requirement.
@@ -142,14 +161,14 @@ Check the live introspection against these source-derived calls. Record any
 distro-specific difference rather than guessing a different object path or
 calling every script through a global start operation.
 
-## Guarded portal burst: still to be demonstrated
+## Guarded portal burst: prototype failed target-safety check
 
-After exact activation is demonstrated, the completed spike must connect fresh
-confirmation to the already-authorized portal input transport under normal
-Driver admission. Record the actual portal/libei calls and operation identity
-used by that implementation; this document does not invent an implemented
-`guardedBurst` method. No portal session or background-input capability is
-created by the activation calls above.
+The [separately applied host prototype](driver-prototype/README.md) connected
+fresh confirmation to the existing portal/libei transport under normal Driver
+admission, not a new `guardedBurst` method. It delivered to the wrong window
+when focus changed after confirmation. The following remain acceptance
+requirements for a different, destination-bound implementation. No portal
+session or background-input capability is created by activation alone.
 
 For each burst, capture on a common monotonic timeline: admission, exact target
 and generation validation, active-window confirmation, transport submission,
@@ -177,20 +196,21 @@ commands. A terminal recording alone cannot establish which window received
 input. Capture with an available external recorder if necessary; do not make
 the proof depend on #4034's separate Cua recording release fix.
 
-| Case                            | Required visible and machine-observed evidence                                                                                                          | Current result                   |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| Exact selection                 | Adapter token resolves to the same live UUID/PID/generation; two same-process windows remain distinguishable                                            | Not run; identity bridge missing |
-| Positive foreground canary      | Activate A from B, confirm A, send one admitted bounded burst; only A's counter changes; then explicitly select B and repeat                            | Not run                          |
-| Activation/confirmation failure | Missing/stale target, wrong active window, timeout, or lost confirmation: zero input submissions and a refusal; report any focus change separately      | Not run                          |
-| Focus takeover                  | Change focus before confirmation and again in the check-to-delivery gap; show both window counters, timing, stop behavior, and any residual misdelivery | Not run                          |
-| Lifetime change                 | Close/recreate target and unload/reload helper; old identity cannot authorize input even if PID/token or bus owner is reused                            | Not run                          |
-| Lost acknowledgement            | Dispatch once, lose the final reply, reconnect/re-resolve: partial/unknown outcome and no replay; a genuinely new admitted action is distinct           | Not run                          |
-| Scope preservation              | AX actions retain their behavior; exact/background requests retain their exact existing refusals; no fallback to unguarded global input                 | Not run                          |
+| Case                            | Required visible and machine-observed evidence                                                                                                          | Current result                                                                               |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Exact selection                 | Adapter token resolves to the same live UUID/PID/generation; two same-process windows remain distinguishable                                            | 6.7.5 only: observed with additive helper patch                                              |
+| Positive foreground canary      | Activate A from B, confirm A, send one admitted bounded burst; only A's counter changes; then explicitly select B and repeat                            | 6.7.5 only: fixture A and B each received one pair in separate operations; not a safety pass |
+| Activation/confirmation failure | Missing/stale target, wrong active window, timeout, or lost confirmation: zero input submissions and a refusal; report any focus change separately      | 6.7.5 only: activation-only refusals and precheck input refusal; not all revocations covered |
+| Focus takeover                  | Change focus before confirmation and again in the check-to-delivery gap; show both window counters, timing, stop behavior, and any residual misdelivery | 6.7.5: **postcheck leak to B**; unsafe                                                       |
+| Lifetime change                 | Close/recreate target and unload/reload helper; old identity cannot authorize input even if PID/token or bus owner is reused                            | 6.7.5 activation-only checks, no input attempted after loss                                  |
+| Lost acknowledgement            | Dispatch once, lose the final reply, reconnect/re-resolve: partial/unknown outcome and no replay; a genuinely new admitted action is distinct           | 6.7.5 worker reply dropped and parent ledger blocked replay; outer SDK reply loss untested   |
+| Scope preservation              | AX actions retain their behavior; exact/background requests retain their exact existing refusals; no fallback to unguarded global input                 | 6.7.5 background refused; AX source unchanged, no live AX smoke                              |
 
-Upload the recording and a sanitized report to #3507 with the tested commit,
+Upload a suitable recording and sanitized report to #3507 with the tested commit,
 probe source, exact API calls (including the actual burst transport), measured
 timings, fixture counts, and results for every row. Keep failed and unrun rows
 explicit. Documentation checks, a successful activation setter, and a mock test
 do not close this gate. Request the maintainer's disposition only after the
-real evidence is attached; until then the RFC stays `review` and production
-raw KWin input remains unavailable.
+real evidence is reviewed; until then the RFC stays `review` and production
+raw KWin input remains unavailable. The local host recording cannot fulfill
+the requested simultaneous A/B visual coverage: both panes showed A.

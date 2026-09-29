@@ -288,6 +288,7 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
         // logged outcome instead of a stack trace.
         await writeEvent(args.log, {
           event: 'outcome', outcome: 'unknown', phase: 'decide', step,
+          candidate_count: plan.candidates.length, expected_ids: task.expectedNext(history),
           error: 'S1ServiceError', reason: error.message.slice(0, 128),
         });
         return 'unknown';

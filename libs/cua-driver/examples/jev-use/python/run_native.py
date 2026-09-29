@@ -293,6 +293,8 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                         # with a logged outcome instead of a traceback.
                         write_event(log_path, {"event": "outcome", "outcome": "unknown",
                                                "phase": "decide", "step": step,
+                                               "candidate_count": len(plan.candidates),
+                                               "expected_ids": task.expected_next(history),
                                                "error": "S1ServiceError", "reason": str(error)[:128]})
                         return "unknown"
                 else:

@@ -750,9 +750,15 @@ fn scroll_oracle_rejects_missing_or_invalid_geometry() {
 }
 
 /// AX rows address elements as a client that shows the model only text
-/// content must: the snapshot handle comes from the text header.
+/// content must: the snapshot handle comes from the text header. macOS puts
+/// the screenshot before the text, so read the first text block, not
+/// `content[0]`.
 fn text_snapshot_id(state: &ToolResponse) -> String {
-    let header = state.text().lines().next().unwrap_or_default();
+    let header = state.raw["result"]["content"]
+        .as_array()
+        .and_then(|blocks| blocks.iter().find_map(|block| block["text"].as_str()))
+        .and_then(|text| text.lines().next())
+        .unwrap_or_default();
     let handle = header
         .split_whitespace()
         .find_map(|field| field.strip_prefix("snapshot_id="))

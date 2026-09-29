@@ -139,6 +139,18 @@ fn window_server_frame(window_id: u32) -> Option<Frame> {
     })
 }
 
+/// True when the tool targets a window in the driver's own process.
+///
+/// AX writes to same-process windows run inline on the calling thread instead
+/// of IPC to the target's main thread. `mutate_and_verify` runs on a tokio
+/// `spawn_blocking` worker, so writing `AXPosition`/`AXSize` on our own window
+/// trips AppKit's main-thread assertion and takes the daemon down (see #4323).
+/// Refusing is consistent with pre-0.30.3 behavior, which rejected these
+/// windows via the then-unconditional settable-`AXSize` check.
+fn is_self_process_target(pid: u32) -> bool {
+    pid == std::process::id()
+}
+
 fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String> {
     use crate::{
         ax::bindings::{
@@ -156,6 +168,16 @@ fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String
     let requested = Frame::from_input(input);
     if !requested.is_valid() {
         return Err("x/y must be finite and width/height must be finite positive numbers".into());
+    }
+
+    // Same-process AX writes run inline on this `spawn_blocking` worker thread,
+    // tripping AppKit's main-thread assertion (SIGTRAP, daemon down). Refuse
+    // before touching WindowServer/AX state.
+    if is_self_process_target(input.pid) {
+        return Err(format!(
+            "refusing to move window_id {window_id} in the driver's own process (pid {}): AppKit window writes must run on the main thread",
+            input.pid
+        ));
     }
 
     match crate::windows::resolve_window_owner(pid, window_id) {
@@ -475,6 +497,33 @@ mod tests {
                 }
             ),
             &SIZE_ONLY
+        );
+    }
+
+    #[test]
+    fn self_process_target_matches_only_the_driver_pid() {
+        let own = std::process::id();
+        assert!(is_self_process_target(own));
+        assert!(!is_self_process_target(own.wrapping_add(1)));
+    }
+
+    #[test]
+    fn set_window_frame_refuses_windows_in_the_driver_process() {
+        // Must fail before any WindowServer/AX access, so this runs without
+        // Accessibility permissions or a visible window.
+        let input = SetWindowFrameInput {
+            pid: std::process::id(),
+            window_id: 1,
+            x: 0.0,
+            y: 0.0,
+            width: 800.0,
+            height: 600.0,
+            session: None,
+        };
+        let error = mutate_and_verify(&input).expect_err("own-process target must be refused");
+        assert!(
+            error.contains("own process"),
+            "unexpected refusal message: {error}"
         );
     }
 

@@ -3137,7 +3137,8 @@ impl Tool for ClickTool {
                 role + label. Reach for `x, y` only when the target is a canvas / video / \
                 WebGL / custom-drawn surface that doesn't appear in the UIA tree.\n\n\
                 Two addressing modes:\n\n\
-                - `element_index` + `window_id` (from the last `get_window_state` snapshot \
+                - `element_token`, or `element_index` + `snapshot_id` + `window_id` (from the last \
+                `get_window_state` snapshot \
                 of that window) — performs the UIA Invoke pattern on the cached element via \
                 PostMessage. No cursor move, no focus steal. Requires a prior \
                 `get_window_state(pid, window_id)` in this turn; the element_index cache \
@@ -3164,7 +3165,7 @@ impl Tool for ClickTool {
                 `count: 2` posts two down/up pairs for a double-click. Pixel clicks need \
                 a visible on-screen window to anchor the coordinate conversion (errors \
                 with `pid X has no on-screen window` otherwise).\n\n\
-                Exactly one of `element_index` or (`x` AND `y`) must be provided. \
+                Exactly one element target or (`x` AND `y`) must be provided. \
                 `pid` is required for window scope and omitted for desktop scope. `window_id` is required when \
                 `element_index` is used (scopes the cache lookup). After a `zoom` call, \
                 pass `from_zoom=true` to auto-translate zoom-image coords back to \
@@ -4414,8 +4415,8 @@ impl Tool for TypeTextTool {
                 `hotkey` — they are not text.\n\n\
                 **Routing on Windows.** When the target's owning EXE or top-level window \
                 class identifies it as a XAML / WinUI3 / UWP host (modern Notepad, \
-                Calculator, Photos, Settings, etc.), the tool requires `element_index` \
-                + `window_id` and routes through UI Automation's `ValuePattern.SetValue` \
+                Calculator, Photos, Settings, etc.), the tool requires `element_token`, or \
+                `element_index` + `snapshot_id` + `window_id`, and routes through UI Automation's `ValuePattern.SetValue` \
                 — same backend as the `set_value` tool. PostMessage WM_CHAR doesn't \
                 reach those hosts (their CoreInput dispatcher only consumes events from \
                 the system input queue), so the fallback path silently dropped chars. \
@@ -5136,7 +5137,8 @@ impl Tool for PressKeyTool {
                 end, pageup, pagedown, f1-f12, plus any letter or digit. Optional `modifiers` \
                 array takes ctrl/shift/alt/win. For true combinations (ctrl+c), `hotkey` is a \
                 cleaner surface.\n\n\
-                `element_index` focuses the cached UIA element before sending the key; the \
+                `element_token`, or `element_index` + `snapshot_id`, focuses the cached UIA \
+                element before sending the key; the \
                 top-level window remains backgrounded when delivery_mode is background.".into(),
             input_schema: json!({
                 "type":"object","required":["key"],"properties":{
@@ -6044,7 +6046,8 @@ impl Tool for ScrollTool {
                 approaches reach backgrounded windows.\n\n\
                 Mapping: `by: \"page\"` → SB_PAGEDOWN/UP/LEFT/RIGHT × amount; \
                 `by: \"line\"` → SB_LINEDOWN/UP/LEFT/RIGHT × amount.\n\n\
-                Note: `element_index` is accepted for cross-platform parity but currently \
+                Note: an element target (`element_token`, or `element_index` + `snapshot_id`) \
+                is accepted for cross-platform parity but currently \
                 no-op on Windows (UIA SetFocus not wired up yet — same caveat as `press_key`).".into(),
             input_schema: json!({
                 "type":"object","required":["direction"],"properties":{
@@ -6622,7 +6625,8 @@ impl Tool for DoubleClickTool {
             // wired up — element path always falls back to a stamped pixel
             // double-click via PostMessage).
             description: "Double-click against a target pid. Two addressing modes:\n\n\
-                - `element_index` + `window_id` (from the last `get_window_state` snapshot \
+                - `element_token`, or `element_index` + `snapshot_id` + `window_id` (from the last \
+                `get_window_state` snapshot \
                 of that window) — synthesizes a stamped pixel double-click at the element's \
                 cached on-screen center via PostMessage. (Windows has no AXOpen analogue; \
                 Swift's AXOpen-first path falls through to the same pixel recipe when the \
@@ -6630,7 +6634,7 @@ impl Tool for DoubleClickTool {
                 - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG \
                 returned by `get_window_state`) — posts two WM_LBUTTONDOWN/UP pairs in \
                 quick succession to the deepest child window at that point.\n\n\
-                Exactly one of `element_index` or (`x` AND `y`) must be provided. \
+                Exactly one element target or (`x` AND `y`) must be provided. \
                 `pid` is required in both modes. `window_id` is required when \
                 `element_index` is used. The macOS-only `modifier` field is accepted for \
                 parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).".into(),
@@ -6997,7 +7001,8 @@ impl Tool for RightClickTool {
             // analogue (UIA ShowContextMenu) is not yet wired up, so element
             // path falls through to the pixel recipe at the cached center.
             description: "Right-click against a target pid. Two addressing modes:\n\n\
-                - `element_index` + `window_id` (from the last `get_window_state` snapshot \
+                - `element_token`, or `element_index` + `snapshot_id` + `window_id` (from the last \
+                `get_window_state` snapshot \
                 of that window) — posts WM_RBUTTONDOWN/UP at the element's cached on-screen \
                 center via PostMessage. (Windows has no AXShowMenu analogue wired up yet; \
                 Swift's AX-action path falls through to the same pixel recipe on non-\
@@ -7005,7 +7010,7 @@ impl Tool for RightClickTool {
                 - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG \
                 returned by `get_window_state`) — posts WM_RBUTTONDOWN/UP to the deepest \
                 child window at that point.\n\n\
-                Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` is \
+                Exactly one element target or (`x` AND `y`) must be provided. `pid` is \
                 required in both modes. `window_id` is required when `element_index` is used. \
                 `modifier` is accepted for parity (no-op on Windows — PostMessage doesn't \
                 propagate modifier-key state).".into(),

@@ -119,7 +119,7 @@ stub_tool!(
     click_m,
     ClickTool,
     "click",
-    "Click at (x, y) or on an AT-SPI element by element_index + window_id.",
+    "Click at (x, y) or on an AT-SPI element by element_token, or element_index + snapshot_id.",
     serde_json::json!({"type":"object","required":[],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema(),"x":{"type":"number"},"y":{"type":"number"},"modifier": cua_driver_core::tool_schema::modifier_schema(),"from_zoom":{"type":"boolean"}},"additionalProperties":false})
 );
 
@@ -127,7 +127,7 @@ stub_tool!(
     double_click_m,
     DoubleClickTool,
     "double_click",
-    "Double-click at (x, y) or on an AT-SPI element by element_index + window_id.",
+    "Double-click at (x, y) or on an AT-SPI element by element_token, or element_index + snapshot_id.",
     serde_json::json!({"type":"object","required":["pid"],"properties":{"session": cua_driver_core::tool_schema::session_schema(),"pid":{"type":"integer"},"x":{"type":"number"},"y":{"type":"number"},"window_id":{"type":"integer"},"element_index": cua_driver_core::tool_schema::element_index_schema()},"additionalProperties":false})
 );
 

@@ -67,9 +67,9 @@ fn def() -> &'static ToolDef {
              within the daemon transport budget. Longer synthesized routes are \
              refused before character events and return a safe chunk size; \
              one-call AX insertion remains uncapped.\n\n\
-             Optional `element_index` + `window_id` (from the last \
-             `get_window_state` snapshot) directs the write to a specific field. \
-             Without `element_index`, the write goes to the pid's currently \
+             Optional `element_token`, or `element_index` + `snapshot_id` (from the last \
+             `get_window_state` snapshot), directs the write to a specific field. \
+             Without an element target, the write goes to the pid's currently \
              focused element.\n\n\
              WEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, \
              X's compose box): AXValue is not independent proof that the \

@@ -38,8 +38,9 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "double_click".into(),
         description:
-            "Double-click at (x, y) or on an AX element identified by element_index + window_id.\n\n\
-             AX path (element_index provided): performs `AXOpen` when the element advertises it \
+            "Double-click at (x, y) or on an AX element identified by element_token, or \
+             element_index + snapshot_id (from get_window_state).\n\n\
+             AX path (element provided): performs `AXOpen` when the element advertises it \
              (Finder items, openable list rows/cells); otherwise resolves the element's on-screen \
              center and falls back to a pixel double-click there.\n\n\
              Pixel path (x, y provided): two down/up pairs ~80 ms apart at the given coordinates."
@@ -160,14 +161,13 @@ impl Tool for DoubleClickTool {
         }
 
         // ── Pixel path ───────────────────────────────────────────────────────
-        let mut cx = match args.get("x").and_then(|v| v.as_f64()) {
-            Some(v) => v,
-            None => {
-                return ToolResult::error(
-                    "Either element_index + window_id or x + y must be provided.",
-                )
-            }
-        };
+        let mut cx =
+            match args.get("x").and_then(|v| v.as_f64()) {
+                Some(v) => v,
+                None => return ToolResult::error(
+                    "Either element_token, element_index + snapshot_id, or x + y must be provided.",
+                ),
+            };
         let mut cy = match args.get("y").and_then(|v| v.as_f64()) {
             Some(v) => v,
             None => return ToolResult::error("Missing required parameter: y"),

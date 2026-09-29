@@ -267,11 +267,11 @@ Left-click against a target pid. **Prefer `element_index` over pixel coordinates
 
 Two addressing modes:
 
-- `element_index` + `window_id` (from the last `get_window_state` snapshot of that window) — performs the UIA Invoke pattern on the cached element via PostMessage. No cursor move, no focus steal. Requires a prior `get_window_state(pid, window_id)` in this turn; the element_index cache is scoped per (pid, window_id) and is replaced by the next snapshot of the same window.
+- `element_token`, or `element_index` + `snapshot_id` + `window_id` (from the last `get_window_state` snapshot of that window) — performs the UIA Invoke pattern on the cached element via PostMessage. No cursor move, no focus steal. Requires a prior `get_window_state(pid, window_id)` in this turn; the element_index cache is scoped per (pid, window_id) and is replaced by the next snapshot of the same window.
 
 - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG returned by `get_window_state`). On `delivery_mode:"background"` (the default), cua-driver FIRST does a UIA hit-test at the resolved screen position: if the deepest invokable element under that point exposes `InvokePattern`, it's invoked through the accessibility channel — same background-safe path as the `element_index` mode, no foreground swap, no visible flash. **This makes pixel clicks on UWP / WinUI3 / Win11 packaged apps work flash-free out of the box** — agents should default to `delivery_mode:"background"` even on XAML hosts whose CoreInput dispatcher drops raw PostMessage. The PostMessage(WM_LBUTTONDOWN/UP) fallback only runs when the UIA hit-test misses (canvas / video / WebGL / custom-drawn surfaces with no UIA peer), and on those targets `delivery_mode:"background"` returns a structured `background_unavailable` error if PostMessage is known to drop too — at which point you switch to `delivery_mode:"foreground"`. **Always try the default `background` click first and let that error be your signal — do NOT pass `foreground` preemptively because the target 'looks like' GTK/Chromium/etc. The driver decides when background is impossible; a guessed foreground click needlessly steals the user's focus.** `count: 2` posts two down/up pairs for a double-click. Pixel clicks need a visible on-screen window to anchor the coordinate conversion (errors with `pid X has no on-screen window` otherwise).
 
-Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` is required for window scope and omitted for desktop scope. `window_id` is required when `element_index` is used (scopes the cache lookup). After a `zoom` call, pass `from_zoom=true` to auto-translate zoom-image coords back to full-window space.
+Exactly one element target or (`x` AND `y`) must be provided. `pid` is required for window scope and omitted for desktop scope. `window_id` is required when `element_index` is used (scopes the cache lookup). After a `zoom` call, pass `from_zoom=true` to auto-translate zoom-image coords back to full-window space.
 
 Windows-only convenience: `button: "left"|"right"|"middle"` switches the mouse button (Swift exposes right-click as a separate `right_click` tool). The Swift-only `action` / `modifier` / `debug_image_out` schema fields aren't supported yet.
 
@@ -302,11 +302,11 @@ than silently changing coordinate spaces.
 
 Double-click against a target pid. Two addressing modes:
 
-- `element_index` + `window_id` (from the last `get_window_state` snapshot of that window) — synthesizes a stamped pixel double-click at the element's cached on-screen center via PostMessage. (Windows has no AXOpen analogue; Swift's AXOpen-first path falls through to the same pixel recipe when the element doesn't advertise AXOpen, so the user-visible behavior matches.)
+- `element_token`, or `element_index` + `snapshot_id` + `window_id` (from the last `get_window_state` snapshot of that window) — synthesizes a stamped pixel double-click at the element's cached on-screen center via PostMessage. (Windows has no AXOpen analogue; Swift's AXOpen-first path falls through to the same pixel recipe when the element doesn't advertise AXOpen, so the user-visible behavior matches.)
 
 - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG returned by `get_window_state`) — posts two WM_LBUTTONDOWN/UP pairs in quick succession to the deepest child window at that point.
 
-Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` is required in both modes. `window_id` is required when `element_index` is used. The macOS-only `modifier` field is accepted for parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).
+Exactly one element target or (`x` AND `y`) must be provided. `pid` is required in both modes. `window_id` is required when `element_index` is used. The macOS-only `modifier` field is accepted for parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).
 
 **Arguments:**
 
@@ -330,11 +330,11 @@ Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` is requi
 
 Right-click against a target pid. Two addressing modes:
 
-- `element_index` + `window_id` (from the last `get_window_state` snapshot of that window) — posts WM_RBUTTONDOWN/UP at the element's cached on-screen center via PostMessage. (Windows has no AXShowMenu analogue wired up yet; Swift's AX-action path falls through to the same pixel recipe on non-advertising elements, so user-visible behavior matches.)
+- `element_token`, or `element_index` + `snapshot_id` + `window_id` (from the last `get_window_state` snapshot of that window) — posts WM_RBUTTONDOWN/UP at the element's cached on-screen center via PostMessage. (Windows has no AXShowMenu analogue wired up yet; Swift's AX-action path falls through to the same pixel recipe on non-advertising elements, so user-visible behavior matches.)
 
 - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG returned by `get_window_state`) — posts WM_RBUTTONDOWN/UP to the deepest child window at that point.
 
-Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` is required in both modes. `window_id` is required when `element_index` is used. `modifier` is accepted for parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).
+Exactly one element target or (`x` AND `y`) must be provided. `pid` is required in both modes. `window_id` is required when `element_index` is used. `modifier` is accepted for parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).
 
 **Arguments:**
 
@@ -390,7 +390,7 @@ Insert text into the target pid via character-by-character PostMessage(WM_CHAR) 
 
 Special keys (Return, Escape, arrows, Tab) go through `press_key` / `hotkey` — they are not text.
 
-**Routing on Windows.** When the target's owning EXE or top-level window class identifies it as a XAML / WinUI3 / UWP host (modern Notepad, Calculator, Photos, Settings, etc.), the tool requires `element_index` + `window_id` and routes through UI Automation's `ValuePattern.SetValue` — same backend as the `set_value` tool. PostMessage WM_CHAR doesn't reach those hosts (their CoreInput dispatcher only consumes events from the system input queue), so the fallback path silently dropped chars. If you call `type_text(pid, text)` on a XAML host without `element_index`, the tool returns an actionable error pointing you at `get_window_state` first. Native ConsoleHost on Windows ARM64 is hard-refused because it can accept synthesized Unicode events without delivering them; use a process or PTY setup channel instead. Legacy Win32 apps still use the PostMessage path, preserving the no-focus-steal property.
+**Routing on Windows.** When the target's owning EXE or top-level window class identifies it as a XAML / WinUI3 / UWP host (modern Notepad, Calculator, Photos, Settings, etc.), the tool requires `element_token`, or `element_index` + `snapshot_id` + `window_id`, and routes through UI Automation's `ValuePattern.SetValue` — same backend as the `set_value` tool. PostMessage WM_CHAR doesn't reach those hosts (their CoreInput dispatcher only consumes events from the system input queue), so the fallback path silently dropped chars. If you call `type_text(pid, text)` on a XAML host without `element_index`, the tool returns an actionable error pointing you at `get_window_state` first. Native ConsoleHost on Windows ARM64 is hard-refused because it can accept synthesized Unicode events without delivering them; use a process or PTY setup channel instead. Legacy Win32 apps still use the PostMessage path, preserving the no-focus-steal property.
 
 `delay_ms` (0–200, default 30) spaces successive characters on the PostMessage path so autocomplete and IME can keep up. Ignored on the UIA path (SetValue is atomic).
 
@@ -426,7 +426,7 @@ Optional `window_id` selects a specific HWND when the pid owns more than one; wi
 
 Key vocabulary: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, plus any letter or digit. Optional `modifiers` array takes ctrl/shift/alt/win. For true combinations (ctrl+c), `hotkey` is a cleaner surface.
 
-`element_index` focuses the cached UIA element before sending the key; the top-level window remains backgrounded when delivery_mode is background.
+`element_token`, or `element_index` + `snapshot_id`, focuses the cached UIA element before sending the key; the top-level window remains backgrounded when delivery_mode is background.
 
 **Arguments:**
 
@@ -523,7 +523,7 @@ Windows transport: WM_VSCROLL / WM_HSCROLL posted to the window — the same eve
 
 Mapping: `by: "page"` → SB_PAGEDOWN/UP/LEFT/RIGHT × amount; `by: "line"` → SB_LINEDOWN/UP/LEFT/RIGHT × amount.
 
-Note: `element_index` is accepted for cross-platform parity but currently no-op on Windows (UIA SetFocus not wired up yet — same caveat as `press_key`).
+Note: an element target (`element_token`, or `element_index` + `snapshot_id`) is accepted for cross-platform parity but currently no-op on Windows (UIA SetFocus not wired up yet — same caveat as `press_key`).
 
 **Arguments:**
 

@@ -219,7 +219,7 @@ accepts it. Omit it to use the authenticated transport's implicit lifecycle sess
 
 Click against a target pid. **Prefer `element_index` over pixel coordinates** — element_index works on backgrounded / hidden windows, surfaces a stable handle, and tells you what you're clicking via the cached AT-SPI element's role + label. Reach for `x, y` only when the target is a canvas / custom-drawn surface that doesn't appear in the AT-SPI tree.
 
-Provide either (window_id + x/y) or (pid + element_index). x/y are WINDOW-LOCAL pixels of window_id (the get_window_state screenshot frame); a point outside the window is refused (point_outside_window) and every pixel result reports the resolved window_point / screen_point. Background delivery first resolves the accessible under the point and fires its action (the result says `hit: <role> "<name>" action=...`; a file / list item is selected through its container: `selected: ...`), else presses the real virtual pointer there. A click that opens a popup menu names it (`popup: {window_id, bounds}`): pass that window_id to get_window_state to index its items. element_index cache is scoped per (pid, window_id) and is replaced by the next get_window_state of the same window — re-snapshot every turn before clicking.
+Provide either (window_id + x/y) or (pid + element_token, or pid + element_index + snapshot_id). x/y are WINDOW-LOCAL pixels of window_id (the get_window_state screenshot frame); a point outside the window is refused (point_outside_window) and every pixel result reports the resolved window_point / screen_point. Background delivery first resolves the accessible under the point and fires its action (the result says `hit: <role> "<name>" action=...`; a file / list item is selected through its container: `selected: ...`), else presses the real virtual pointer there. A click that opens a popup menu names it (`popup: {window_id, bounds}`): pass that window_id to get_window_state to index its items. element_index cache is scoped per (pid, window_id) and is replaced by the next get_window_state of the same window — re-snapshot every turn before clicking.
 
 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords back to full-window space.
 
@@ -254,7 +254,7 @@ than silently changing coordinate spaces.
 
 ### `double_click`
 
-Double-click at (x,y) or an element_index (AT-SPI bounds). Background delivery on X11 sends real button events from the session's virtual master pointer (path mpx_pointer); a point covered by another application's window is refused (target_occluded), one covered by this app's own dialog is retargeted to it (retargeted_to). No focus steal. Provide either (window_id + x/y) or (pid + element_index). After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.
+Double-click at (x,y) or an element_index (AT-SPI bounds). Background delivery on X11 sends real button events from the session's virtual master pointer (path mpx_pointer); a point covered by another application's window is refused (target_occluded), one covered by this app's own dialog is retargeted to it (retargeted_to). No focus steal. Provide either (window_id + x/y) or (pid + element_token, or pid + element_index + snapshot_id). After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.
 
 **Arguments:**
 
@@ -277,7 +277,7 @@ Double-click at (x,y) or an element_index (AT-SPI bounds). Background delivery o
 
 ### `right_click`
 
-Right-click at (x,y) or an element_index (AT-SPI bounds). Background delivery on X11 sends real button events from the session's virtual master pointer (path mpx_pointer); a point covered by another application's window is refused (target_occluded), one covered by this app's own dialog is retargeted to it (retargeted_to), one outside the window is refused (point_outside_window; x/y are window-local pixels, the result reports window_point / screen_point). No focus steal. When a context menu opens, the result names it (`popup: {window_id, bounds, title}`): call get_window_state(pid, window_id=&lt;that id&gt;) to index its menu items and click them by element_index. Provide either (window_id + x/y) or (pid + element_index). After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.
+Right-click at (x,y) or an element_index (AT-SPI bounds). Background delivery on X11 sends real button events from the session's virtual master pointer (path mpx_pointer); a point covered by another application's window is refused (target_occluded), one covered by this app's own dialog is retargeted to it (retargeted_to), one outside the window is refused (point_outside_window; x/y are window-local pixels, the result reports window_point / screen_point). No focus steal. When a context menu opens, the result names it (`popup: {window_id, bounds, title}`): call get_window_state(pid, window_id=&lt;that id&gt;) to index its menu items and click them by element_index. Provide either (window_id + x/y) or (pid + element_token, or pid + element_index + snapshot_id). After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.
 
 **Arguments:**
 

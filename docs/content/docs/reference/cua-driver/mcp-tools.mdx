@@ -271,9 +271,9 @@ than silently changing coordinate spaces.
 
 ### `double_click`
 
-Double-click at (x, y) or on an AX element identified by element_index + window_id.
+Double-click at (x, y) or on an AX element identified by element_token, or element_index + snapshot_id (from get_window_state).
 
-AX path (element_index provided): performs `AXOpen` when the element advertises it (Finder items, openable list rows/cells); otherwise resolves the element's on-screen center and falls back to a pixel double-click there.
+AX path (element provided): performs `AXOpen` when the element advertises it (Finder items, openable list rows/cells); otherwise resolves the element's on-screen center and falls back to a pixel double-click there.
 
 Pixel path (x, y provided): two down/up pairs ~80 ms apart at the given coordinates.
 
@@ -297,11 +297,11 @@ Pixel path (x, y provided): two down/up pairs ~80 ms apart at the given coordina
 
 Right-click against a target pid. Two addressing modes:
 
-- `element_index` + `window_id` (from the last `get_window_state` snapshot) — performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / hidden windows, no cursor move or focus steal. Requires a prior `get_window_state(pid, window_id)` in this turn.
+- `element_token`, or `element_index` + `snapshot_id` (from the last `get_window_state` snapshot) — performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / hidden windows, no cursor move or focus steal. Requires a prior `get_window_state(pid, window_id)` in this turn.
 
 - `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted to the pid. Driver converts image-pixel → screen-point internally. `modifier` forces the CGEvent path (AX actions don't propagate modifier keys).
 
-Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` always required. `window_id` required when `element_index` is used.
+Exactly one element target or (`x` AND `y`) must be provided. `pid` always required. `window_id` required when `element_index` is used.
 
 **Arguments:**
 
@@ -362,7 +362,7 @@ than silently changing coordinate spaces.
 
 Insert text into the target pid via `AXSetAttribute(kAXSelectedText)`. Works for standard Cocoa text fields and text views. No keystrokes are synthesized — special keys (Return / Escape / arrows) go through `press_key` / `hotkey`. For Chromium / Electron inputs that don't implement `kAXSelectedText`, the tool falls back to CGEvent character synthesis automatically when the estimated route stays within the daemon transport budget. Longer synthesized routes are refused before character events and return a safe chunk size; one-call AX insertion remains uncapped.
 
-Optional `element_index` + `window_id` (from the last `get_window_state` snapshot) directs the write to a specific field. Without `element_index`, the write goes to the pid's currently focused element.
+Optional `element_token`, or `element_index` + `snapshot_id` (from the last `get_window_state` snapshot), directs the write to a specific field. Without an element target, the write goes to the pid's currently focused element.
 
 WEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, X's compose box): AXValue is not independent proof that the renderer/DOM observed an AX write or synthesized keystrokes. The driver detects this at the element level (an AXWebArea ancestor) and refuses to trust AXValue-only read-back there. Electron AX targets that are web content or cannot be proven native refuse background delivery before mutation because the AX route cannot establish exact renderer focus; use the px form or explicit foreground delivery. Other web-content paths return effect:"unverifiable" + escalation, never a false "confirmed" (a browser's own native address bar/toolbar stays trusted). For a browser TAB the reliable path is the `page` tool (drives the DOM via CDP); for an embedded web view use this tool's px form: pass x,y (no element_index) to pixel-click the field then type, in one call. NOTE: a px focus-click won't reliably open+focus a CLOSED control; AX-press to open/activate it first (works in the background), then px-type. Always confirm via the screenshot; if px-background still drops, escalate to delivery_mode:"foreground".
 
@@ -393,7 +393,7 @@ than silently changing coordinate spaces.
 ### `press_key`
 
 Press and release a single key. Follows the same `delivery_mode` ladder as click/type_text — it does NOT raise the window by default:
-• `background` (default): post to the pid WITHOUT fronting/raising — the auth-message path (Chromium-safe). With element_index it focuses that AX element first. `window_id` only targets; it does not raise.
+• `background` (default): post to the pid WITHOUT fronting/raising — the auth-message path (Chromium-safe). With element_token, or element_index + snapshot_id, it focuses that AX element first. `window_id` only targets; it does not raise.
 • `foreground`: guard and briefly front the exact window, focus an addressed AX element when supplied, send a genuine HID key transition so Chromium content, inline editors, and native menu equivalents receive it, then restore prior frontmost. Requires window_id.
 
 A key press is confirmed only when a bounded native AX value/selection read-back changes on the same control. Otherwise a successfully attempted post remains effect:"unverifiable" without implying delivery failure or recommending foreground. Key names: return, tab, escape, up/down/left/right, space, delete, home, end, pageup, pagedown, f1-f12, plus any letter or digit. Modifiers array: cmd, shift, option/alt, ctrl, fn.

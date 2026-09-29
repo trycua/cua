@@ -29,14 +29,15 @@ fn def() -> &'static ToolDef {
         name: "right_click".into(),
         description:
             "Right-click against a target pid. Two addressing modes:\n\n\
-             - `element_index` + `window_id` (from the last `get_window_state` snapshot) — \
+             - `element_token`, or `element_index` + `snapshot_id` (from the last \
+               `get_window_state` snapshot) — \
                performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / \
                hidden windows, no cursor move or focus steal. Requires a prior \
                `get_window_state(pid, window_id)` in this turn.\n\n\
              - `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted \
                to the pid. Driver converts image-pixel → screen-point internally. \
                `modifier` forces the CGEvent path (AX actions don't propagate modifier keys).\n\n\
-             Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` always \
+             Exactly one element target or (`x` AND `y`) must be provided. `pid` always \
              required. `window_id` required when `element_index` is used."
             .into(),
         input_schema: serde_json::json!({

@@ -238,6 +238,9 @@ pub struct ElementFrame {
 pub struct WindowElement {
     pub element_index: u64,
     pub role: String,
+    /// macOS only: the element's `AXSubrole` (for example `AXSearchField`),
+    /// omitted when the application publishes none. Windows and Linux do not
+    /// emit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subrole: Option<String>,
     pub depth: u32,
@@ -249,6 +252,10 @@ pub struct WindowElement {
     pub value: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_description: Option<String>,
+    /// Whether the element accepts input: `AXEnabled` on macOS, UIA
+    /// `IsEnabled` on Windows, the AT-SPI `enabled` or `sensitive` state on
+    /// Linux. On macOS a disabled control keeps its `element_index`, and some
+    /// controls read `false` only while their window is not key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -257,6 +264,10 @@ pub struct WindowElement {
     pub in_web_content: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actions: Option<Vec<String>>,
+    /// macOS only: the application's own actions, which macOS reports as a
+    /// `Name:`/`Target:`/`Selector:` envelope. `name` is the readable label,
+    /// `raw` the envelope; `click` accepts either as `action`. Windows and
+    /// Linux do not emit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_actions: Option<Vec<ElementCustomAction>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

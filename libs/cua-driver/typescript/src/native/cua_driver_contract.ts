@@ -5797,16 +5797,33 @@ const FfiConverterTypeVisualParseError = (() => {
 export type WindowElement = {
     elementIndex: bigint,
     role: string,
+    /**
+     * macOS only: the element's `AXSubrole` (for example `AXSearchField`),
+     * omitted when the application publishes none. Windows and Linux do not
+     * emit it.
+     */
     subrole?: string,
     depth: number,
     elementToken?: string,
     label?: string,
     value?: string,
     valueDescription?: string,
+    /**
+     * Whether the element accepts input: `AXEnabled` on macOS, UIA
+     * `IsEnabled` on Windows, the AT-SPI `enabled` or `sensitive` state on
+     * Linux. On macOS a disabled control keeps its `element_index`, and some
+     * controls read `false` only while their window is not key.
+     */
     enabled?: boolean,
     selected?: boolean,
     inWebContent?: boolean,
     actions?: Array<string>,
+    /**
+     * macOS only: the application's own actions, which macOS reports as a
+     * `Name:`/`Target:`/`Selector:` envelope. `name` is the readable label,
+     * `raw` the envelope; `click` accepts either as `action`. Windows and
+     * Linux do not emit it.
+     */
     customActions?: Array<ElementCustomAction>,
     parentIndex?: bigint,
     frame?: ElementFrame,

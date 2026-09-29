@@ -57,6 +57,22 @@ export const NATIVE_RESERVED: readonly Candidate[] = [
   }),
 ];
 
+// Words too common to make a control relevant to a goal (#4312).
+const RELEVANCE_STOPWORDS = new Set([
+  'the', 'and', 'then', 'once', 'per', 'step', 'stop', 'into', 'with', 'for', 'from',
+  'this', 'that', 'its', 'each', 'exactly', 'starts', 'set', 'option', 'field', 'button',
+]);
+
+function relevanceWords(text: string): Set<string> {
+  return new Set(
+    (text.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
+      (word) => word.length >= 3 && !RELEVANCE_STOPWORDS.has(word)
+    )
+  );
+}
+
+export type CapOrder = 'relevance' | 'depth_first';
+
 const VERBS: Readonly<Record<string, string>> = {
   press: 'pressed',
   toggle: 'toggled',
@@ -125,13 +141,18 @@ export type ComposeStats = Readonly<{
  * Merge source outputs in the order page, ax, visual: first source wins on a
  * duplicate ID, unallowed risk categories are removed, at most `cap`
  * executable candidates remain (the drop count is reported), and the reserved
- * candidates are appended.
+ * candidates are appended. Without `relevance`, the first `cap` in
+ * depth-first order are kept. With `relevance` (lower is more relevant), a set
+ * over the cap keeps the `cap` lowest `(relevance, position)` candidates and
+ * still presents them in depth-first order (#4312). A set within the cap is
+ * unchanged.
  */
 export function compose(
   groups: Partial<Record<(typeof SOURCE_ORDER)[number], readonly Candidate[]>>,
   allowedRisks: ReadonlySet<string>,
   reserved: readonly Candidate[] = NATIVE_RESERVED,
-  cap = MAX_EXECUTABLE_CANDIDATES
+  cap = MAX_EXECUTABLE_CANDIDATES,
+  relevance?: (candidate: Candidate) => number
 ): { candidates: Candidate[]; stats: ComposeStats } {
   const seen = new Set(reserved.map((candidate) => candidate.id));
   const merged: Candidate[] = [];
@@ -152,7 +173,18 @@ export function compose(
       merged.push(candidate);
     }
   }
-  const kept = merged.slice(0, cap);
+  let kept: Candidate[];
+  if (!relevance || merged.length <= cap) {
+    kept = merged.slice(0, cap);
+  } else {
+    const ranked = merged
+      .map((candidate, index) => ({ index, rank: relevance(candidate) }))
+      .sort((a, b) => a.rank - b.rank || a.index - b.index)
+      .slice(0, cap)
+      .map((entry) => entry.index)
+      .sort((a, b) => a - b);
+    kept = ranked.map((index) => merged[index]);
+  }
   const counts: Record<string, number> = { page: 0, ax: 0, visual: 0 };
   for (const candidate of kept) {
     if (candidate.source && candidate.source in counts) counts[candidate.source] += 1;
@@ -219,6 +251,7 @@ export type NativeTaskSpec = Readonly<{
   visualMinConfidence?: number;
   mockPreferences?: readonly string[];
   steps?: readonly TaskStep[];
+  capOrder?: CapOrder;
 }>;
 
 export class NativeTask implements Task {
@@ -243,6 +276,12 @@ export class NativeTask implements Task {
    * step that is not done yet. Empty means the request carries no progress.
    */
   readonly steps: readonly TaskStep[];
+  /**
+   * How a set over the cap is cut (#4312): 'relevance' keeps the declared
+   * steps' candidates first; 'depth_first' keeps the first `cap` in element
+   * order, as before. Both present the kept candidates in element order.
+   */
+  readonly capOrder: CapOrder;
   /** The oracle is polled after every action, so no candidate is special. */
   readonly completionCandidateIds: ReadonlySet<string> = new Set();
 
@@ -262,6 +301,10 @@ export class NativeTask implements Task {
     this.visualMinConfidence = spec.visualMinConfidence ?? 0.8;
     this.mockPreferences = spec.mockPreferences ?? [];
     this.steps = spec.steps ?? [];
+    this.capOrder = spec.capOrder ?? 'relevance';
+    if (this.capOrder !== 'relevance' && this.capOrder !== 'depth_first') {
+      throw new Error('capOrder must be relevance or depth_first');
+    }
     const unknown = [...this.allowedActions].filter((action) => !ACTION_KINDS.has(action));
     if (unknown.length) throw new Error(`unknown action kinds: ${unknown.sort().join(', ')}`);
     for (const parameter of this.parameters) {
@@ -299,6 +342,7 @@ export class NativeTask implements Task {
   private nativeCandidates(ax: NativeAccessibilitySource, foregroundIds: ReadonlySet<string>) {
     const candidates: Candidate[] = [];
     const outcomes: Record<string, string> = {};
+    const labels: Record<string, string> = {};
     for (const native of ax.controls) {
       if (!this.allowedActions.has(native.action)) continue;
       const control = ax.control(native);
@@ -317,6 +361,7 @@ export class NativeTask implements Task {
             )
           );
           outcomes[id] = `set ${label} to parameter ${parameter.name}`;
+          labels[id] = native.label;
         }
         continue;
       }
@@ -334,8 +379,9 @@ export class NativeTask implements Task {
       }
       candidates.push(ax.click(control, id, description, delivery));
       outcomes[id] = `${VERBS[native.action]} ${label}`;
+      labels[id] = native.label;
     }
-    return { candidates, outcomes };
+    return { candidates, outcomes, labels };
   }
 
   static describe(native: NativeControl, label: string): string {
@@ -380,13 +426,52 @@ export class NativeTask implements Task {
     return { candidates, outcomes };
   }
 
+  /**
+   * Rank candidates for the cap only (#4312); lower is more relevant. Tier 0
+   * performs a declared step or clicks a declared visual target; tier 1 has a
+   * label sharing a word with the goal; tier 2 is everything else. Uses only
+   * task-authored text and labels, never values.
+   */
+  relevance(labels: Readonly<Record<string, string>>): (candidate: Candidate) => number {
+    const declared = new Set([
+      ...this.steps.map((taskStep) => taskStep.candidateId),
+      ...this.visualTargets.map((target) => `visual:${slug(target)}`),
+    ]);
+    const goalWords = relevanceWords(this.goal);
+    return (candidate) => {
+      if (declared.has(candidate.id.replace(/:foreground$/, ''))) return 0;
+      for (const word of relevanceWords(labels[candidate.id] ?? '')) if (goalWords.has(word)) return 1;
+      return 2;
+    };
+  }
+
+  /**
+   * The candidate IDs that correctly advance the task now, for measurement: a
+   * declared step performed fewer times than required whose earlier steps
+   * (for a step that waits) are done. Counted from this run's own actions.
+   */
+  expectedNext(history: readonly HistoryEntry[]): string[] {
+    const counts = performedCounts(history);
+    const due: string[] = [];
+    this.steps.forEach((taskStep, index) => {
+      if ((counts[taskStep.candidateId] ?? 0) >= (taskStep.times ?? 1)) return;
+      const earlier = taskStep.afterPrevious === false ? [] : this.steps.slice(0, index);
+      if (earlier.every((step) => (counts[step.candidateId] ?? 0) >= (step.times ?? 1))) {
+        due.push(taskStep.candidateId);
+      }
+    });
+    return due;
+  }
+
   plan(sources: TaskSources): NativeStep {
     const outcomes: Record<string, string> = {};
+    let labels: Record<string, string> = {};
     let axCandidates: Candidate[] = [];
     let elements: CompactElement[] = [];
     if (sources.ax) {
       const native = this.nativeCandidates(sources.ax, sources.foregroundIds ?? new Set());
       axCandidates = native.candidates;
+      labels = native.labels;
       Object.assign(outcomes, native.outcomes);
       elements = sources.ax.controls.slice(0, MAX_ELEMENTS).map((control) => ({
         role_class: control.roleClass,
@@ -396,7 +481,13 @@ export class NativeTask implements Task {
     }
     const visual = this.visualCandidates(sources);
     Object.assign(outcomes, visual.outcomes);
-    const { candidates, stats } = compose({ ax: axCandidates, visual: visual.candidates }, this.allowedRisks);
+    const { candidates, stats } = compose(
+      { ax: axCandidates, visual: visual.candidates },
+      this.allowedRisks,
+      NATIVE_RESERVED,
+      MAX_EXECUTABLE_CANDIDATES,
+      this.capOrder === 'relevance' ? this.relevance(labels) : undefined
+    );
     for (const candidate of candidates) {
       if (candidate.tool !== null && !this.allowedActionKinds.has(candidate.tool)) {
         throw new Error(`task ${this.id} does not allow action kind ${candidate.tool}`);

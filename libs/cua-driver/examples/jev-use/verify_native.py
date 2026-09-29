@@ -12,6 +12,10 @@ itself and checks it against the task's expected end state. The runners' own
 outcome events are not the oracle. Evidence (redacted JSONL logs plus
 ``summary.json``) goes to a new ``--output-dir``. ``--capture-dir`` also
 records sanitized ``get_window_state`` fixtures before and after each run.
+``--density 12`` or ``24`` launches the AppKit or GTK3 harness with
+``CUA_<HARNESS>_TASK_DENSITY`` set, which adds benign distractor controls
+before the task controls; the harness confirms the density in its state file
+(#4312). ``measure_native.py`` turns the runner logs into an accuracy table.
 
 Build the harness first, from the repository root:
 ``libs/cua-driver/tests/fixtures/build/macos.sh --only appkit``,
@@ -49,6 +53,7 @@ class Harness(NamedTuple):
     state_env: str
     journal: bool = False  # the app posts its state to a loopback journal
     max_depth: int | None = None  # the task scope's walk depth, for --capture-dir
+    density_env: str | None = None  # opt-in distractor density (#4312)
 
 
 
@@ -58,6 +63,7 @@ HARNESSES = {
     "appkit": Harness(
         TEST_APPS / "harness-appkit/CuaTestHarness.AppKit.app", "Contents/MacOS/CuaTestHarness.AppKit",
         "CuaTestHarness AppKit", "cua.appkit_task_state_v1", "CUA_APPKIT_TASK_STATE",
+        density_env="CUA_APPKIT_TASK_DENSITY",
     ),
     "wpf": Harness(
         TEST_APPS / "harness-wpf/CuaTestHarness.Wpf.exe", "",
@@ -70,6 +76,7 @@ HARNESSES = {
     "gtk3": Harness(
         TEST_APPS / "harness-gtk3/CuaTestHarness.Gtk3", "",
         "CuaTestHarness GTK3 Tasks", "cua.gtk3_task_state_v1", "CUA_GTK3_TASK_STATE",
+        density_env="CUA_GTK3_TASK_DENSITY",
     ),
     "canvas": Harness(
         REPO / "libs/cua-driver/tests/fixtures/apps/cross-platform/visual-only-canvas/main.py", "",
@@ -78,6 +85,7 @@ HARNESSES = {
     ),
 }
 FORM_KINDS = ("choose-size", "counter", "save-note")
+DENSITIES = (12, 24)
 HARNESS_KINDS = {name: (("cancel",) if name == "canvas" else FORM_KINDS) for name in HARNESSES}
 
 # The independent end-state check for each task kind, read from the app's own file.
@@ -146,7 +154,7 @@ def start_journal(harness: Harness, state: Path) -> tuple[str, Callable[[], None
 
 
 def launch_harness(
-    harness: Harness, app: Path, state: Path
+    harness: Harness, app: Path, state: Path, density: int | None = None
 ) -> tuple[subprocess.Popen, Callable[[], None]]:
     executable = app / harness.executable if harness.executable else app
     if not executable.is_file():
@@ -158,6 +166,12 @@ def launch_harness(
     else:
         command = [str(executable)]
     env = {**os.environ, harness.state_env: str(state)}
+    if harness.density_env:
+        env.pop(harness.density_env, None)
+    if density is not None:
+        if harness.density_env is None:
+            raise SystemExit("this harness has no distractor density mode")
+        env[harness.density_env] = str(density)
     process = subprocess.Popen(command, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         wait_for_initial_state(process, state)
@@ -225,17 +239,20 @@ def capture(harness_name: str, pid: int, output: Path, label: str) -> None:
 
 def verify(
     language: str, provider: str, harness_name: str, kind: str, app: Path, output: Path, work: Path,
-    capture_dir: Path | None = None,
+    capture_dir: Path | None = None, density: int | None = None,
 ) -> dict:
     harness = HARNESSES[harness_name]
     task = f"{harness_name}-{kind}"
-    state = work / f"{language}-{provider}-{task}-state.json"
-    log = output / f"{language}-{provider}-{task}.jsonl"
-    process, close_journal = launch_harness(harness, app, state)
+    suffix = f"-d{density}" if density is not None else ""
+    state = work / f"{language}-{provider}-{task}{suffix}-state.json"
+    log = output / f"{language}-{provider}-{task}{suffix}.jsonl"
+    process, close_journal = launch_harness(harness, app, state, density)
     try:
         initial = read_state(harness, state, process.pid)
+        if initial.get("density") != density:
+            raise RuntimeError(f"harness reports density {initial.get('density')!r}, not {density!r}")
         if capture_dir is not None:
-            capture(harness_name, process.pid, capture_dir / f"{language}-{task}-initial.json", "initial")
+            capture(harness_name, process.pid, capture_dir / f"{language}-{task}{suffix}-initial.json", "initial")
         command = runner_command(language) + [
             "--task", task, "--provider", provider, "--pid", str(process.pid),
             "--state-file", str(state), "--note-text", NOTE_TEXT, "--log", str(log),
@@ -247,7 +264,7 @@ def verify(
         completed = subprocess.run(command, cwd=BASE, check=False, timeout=300)
         observed = read_state(harness, state, process.pid)
         if capture_dir is not None:
-            capture(harness_name, process.pid, capture_dir / f"{language}-{task}-after.json", "after the task")
+            capture(harness_name, process.pid, capture_dir / f"{language}-{task}{suffix}-after.json", "after the task")
     finally:
         process.kill()
         process.wait(timeout=10)
@@ -257,6 +274,8 @@ def verify(
         "language": language,
         "provider": provider,
         "task": task,
+        "density": density,
+        "distractor_actions": observed.get("distractor_actions"),
         "exit_code": completed.returncode,
         "runner_outcome": events[-1].get("outcome") if events else None,
         "initial": {key: initial.get(key) for key in ("counter", "agreed", "size", "note_saved", "selected", "action_count")},
@@ -289,12 +308,18 @@ def main() -> None:
     )
     parser.add_argument("--task", action="append", choices=sorted(EXPECTED), help="limit to task kinds")
     parser.add_argument("--capture-dir", type=Path, help="also record sanitized window-state fixtures")
+    parser.add_argument(
+        "--density", type=int, choices=DENSITIES,
+        help="add the harness's benign distractor controls (AppKit and GTK3 only)",
+    )
     parser.add_argument("--output-dir", type=Path, required=True, help="new evidence directory")
     args = parser.parse_args()
     if args.live and not os.environ.get("TYPESAFE_API_KEY", "").strip():
         if not sys.stdin.isatty():
             raise SystemExit("Human prerequisite: provision TYPESAFE_API_KEY before a live run")
         os.environ["TYPESAFE_API_KEY"] = getpass.getpass("TypeSafe API key: ").strip()
+    if args.density is not None and HARNESSES[args.harness].density_env is None:
+        parser.error(f"--harness {args.harness} has no distractor density mode")
     unsupported = sorted(set(args.task or ()) - set(HARNESS_KINDS[args.harness]))
     if unsupported:
         parser.error(f"--harness {args.harness} has no task kind {', '.join(unsupported)}")
@@ -315,6 +340,7 @@ def main() -> None:
     summary: dict = {
         "complete": False,
         "harness": args.harness,
+        "density": args.density,
         "live_requested": args.live,
         "s1_requested": args.s1,
         "typescript_requested": args.typescript,
@@ -327,7 +353,8 @@ def main() -> None:
                 for provider in providers:
                     for kind in args.task or HARNESS_KINDS[args.harness]:
                         result = verify(
-                            language, provider, args.harness, kind, app, output, Path(work), capture_dir
+                            language, provider, args.harness, kind, app, output, Path(work), capture_dir,
+                            args.density,
                         )
                         summary["checks"].append(result)
                         print(json.dumps({"event": "independently_verified", **result}), flush=True)

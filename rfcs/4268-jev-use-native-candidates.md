@@ -898,9 +898,16 @@ S1 reliability evidence for #4324 (released Driver 0.30.4, same checkpoint):
 - Live on macOS in a Lume worker, recorded: AppKit counter, save-note, and
   choose-size passed 5/5 for S1 and 5/5 for Jev in both Python and TypeScript
   (60/60 runs, 140 decisions, all correct). S1's lowest confidence per task
-  was 0.83, 0.79, and 0.65. The Windows and Linux rows were verified by the
-  offline replay only in this round.
+  was 0.83, 0.79, and 0.65.
+- Live on Windows WPF (Azure VM, interactive RDP session) and Linux GTK3
+  (Azure VM, X11 with AT-SPI), recorded, on `main` at 97c0d49c7 with Driver
+  0.30.4 from the canonical installers: counter, save-note, and choose-size
+  passed 5/5 for S1 and 5/5 for Jev in both Python and TypeScript on each
+  platform (120/120 runs, 280 decisions, all correct). S1's lowest confidence
+  per task was 0.81, 0.95, and 0.70 on both platforms. Median decide time was
+  about 0.22 s for Jev and 2.2 s for S1; median observe time was 0.09 s on
+  Linux and 0.31 s on Windows. With the macOS row, S1 and Jev now pass 5/5
+  in every native row on all three platforms.
 
-Acceptance criteria not yet met, which keep this RFC `accepted`: a live
-rerun of the WPF and GTK3 rows with `progress` to confirm S1 5/5 there,
-WinUI3 coverage, and accuracy at about 12 and 24 candidates.
+Acceptance criteria not yet met, which keep this RFC `accepted`: WinUI3
+coverage and accuracy at about 12 and 24 candidates.

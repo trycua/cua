@@ -60,7 +60,7 @@ RESULTS = ("correct", "wrong_action", "reobserve", "abstain", "error")
 BUCKETS = ("~4", "~12", "~24")
 NOTE_TEXT = "jev-use native note"
 
-Provider = Callable[[dict[str, Any], NativeTask, TaskSources, NativeStep, list], tuple[str | None, float | None, dict]]
+Provider = Callable[[dict, NativeTask, TaskSources, NativeStep, list], tuple]
 
 
 def bucket(candidate_count: int) -> str:

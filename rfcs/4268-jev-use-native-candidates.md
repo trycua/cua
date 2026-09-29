@@ -861,6 +861,15 @@ Implementation:
   says how many more times it is due. Choose-size's two steps are unordered,
   as its oracle is. The runners log an S1 service failure as an outcome, not
   a stack trace.
+- WinUI3, [#4329](https://github.com/trycua/cua/pull/4329) for
+  [#4314](https://github.com/trycua/cua/issues/4314): the WinUI3 harness gained
+  an opt-in `CUA_WINUI3_TASK_STATE` task window with the same labeled controls
+  and state file, `verify_native.py --harness winui3`, and a
+  `Windows native WinUI3 mock E2E` job on GitHub-hosted Windows. WinUI3's
+  automation peers report the same UIA control types as WPF (`Button`,
+  `CheckBox`, `RadioButton`, `Edit`, and the `TitleBar` chrome), so the Windows
+  role table needed no new row. WinUI3 also exposes its static counter label
+  as `Text`, which stays an unknown role and never becomes a candidate.
 
 Phase 3 live evidence (released Driver 0.30.2, cua-perception 0.2.1,
 `cua-s1-4b-0.2@16818868`; each run verified by the harness's own state file):
@@ -909,5 +918,16 @@ S1 reliability evidence for #4324 (released Driver 0.30.4, same checkpoint):
   Linux and 0.31 s on Windows. With the macOS row, S1 and Jev now pass 5/5
   in every native row on all three platforms.
 
-Acceptance criteria not yet met, which keep this RFC `accepted`: WinUI3
-coverage and accuracy at about 12 and 24 candidates.
+WinUI3 live evidence for #4329 (released Driver 0.30.4 from the canonical
+`install.ps1`, same checkpoint, Azure VM in an interactive RDP session, each
+run recorded and verified by the harness's own state file):
+
+- Counter, save-note, and choose-size passed 5/5 for S1 and 5/5 for Jev in both
+  Python and TypeScript (60/60 runs, 140 decisions, all correct). S1's lowest
+  confidence per task was 0.81, 0.95, and 0.70, the same as on WPF.
+- Median per-turn observe / decide / act was 421 / 203 / 46 ms for Jev and
+  422 / 4249 / 45 ms for S1. Another client shared the S1 service during the
+  run, which roughly doubled its decide time relative to the WPF run.
+
+Acceptance criteria not yet met, which keep this RFC `accepted`: accuracy at
+about 12 and 24 candidates.

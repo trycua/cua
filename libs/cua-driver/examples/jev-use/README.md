@@ -133,7 +133,9 @@ verifier serves the loopback journal the fixture publishes its state to and
 writes that state to the task's state file. Each harness rewrites that
 state file on every change, and the file is the independent oracle. On
 Windows, the title bar's System menu, Minimize, Maximize, and Close buttons
-are window chrome and never become candidates. With Cua Driver 0.30.1 or
+are window chrome and never become candidates. WinUI3 reports the same UIA control
+types as WPF, so both share the Windows role table; WinUI3's static `Text`
+labels are not candidates. With Cua Driver 0.30.1 or
 later, run from this directory:
 
 ```bash

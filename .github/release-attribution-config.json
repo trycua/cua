@@ -22,6 +22,8 @@
   "identityOverrides": {
     "antoine.bonnet@hcompany.ai": "abonneth",
     "ddupont@mit.edu": "ddupont808",
+    "dillondupont@dillons-macbook-pro-2.local": "ddupont808",
+    "dillondupont@dillons-mbp-2.localdomain": "ddupont808",
     "egnichtel@crosscode.com": "ngnichtel",
     "f@trycua.com": "f-trycua",
     "fbonacci@fbonacci-xfce-vm.b40fumexvs1ujlod2ppcyfh5qa.bx.internal.cloudapp.net": "f-trycua",
@@ -42,6 +44,6 @@
     "zane.chee.2023@scis.smu.edu.sg": "injaneity",
     "zongxin_yang@hms.harvard.edu": "z-x-yang"
   },
-  "internalHandles": ["ddupont808", "enchanted-koala", "f-trycua"],
+  "internalHandles": ["ddupont808", "enchanted-koala", "f-trycua", "srcblocks"],
   "optOutHandles": []
 }

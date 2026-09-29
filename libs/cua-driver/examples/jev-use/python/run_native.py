@@ -7,9 +7,9 @@ the closed candidate set, send a validated ``cua.jev_choice_request_v2`` to
 the chooser, dispatch the one selected element-bound action, and read the
 oracle again. The chooser only ever selects a supplied ID.
 
-Built-in tasks drive the AppKit, WPF, or GTK3 harness launched in task mode
-(``CUA_APPKIT_TASK_STATE``, ``CUA_WPF_TASK_STATE``, or ``CUA_GTK3_TASK_STATE``
-set to ``<path>``); ``verify_native.py`` launches it, runs this runner, and
+Built-in tasks drive the AppKit, WPF, WinUI3, or GTK3 harness launched in task
+mode (``CUA_APPKIT_TASK_STATE``, ``CUA_WPF_TASK_STATE``,
+``CUA_WINUI3_TASK_STATE``, or ``CUA_GTK3_TASK_STATE`` set to ``<path>``); ``verify_native.py`` launches it, runs this runner, and
 checks the state file independently.
 """
 

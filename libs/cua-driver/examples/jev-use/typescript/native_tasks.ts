@@ -3,9 +3,9 @@
  * python/native_tasks.py: a NativeTask declares goal, parameters (the only
  * source of text), window scope, allowed action kinds, opt-in risks,
  * foreground permission, step budget, and an app-owned oracle. The built-in
- * tasks drive the AppKit, WPF, and GTK3 harnesses in task mode
- * (CUA_APPKIT_TASK_STATE, CUA_WPF_TASK_STATE, CUA_GTK3_TASK_STATE), whose JSON
- * state file is the oracle.
+ * tasks drive the AppKit, WPF, WinUI3, and GTK3 harnesses in task mode
+ * (CUA_APPKIT_TASK_STATE, CUA_WPF_TASK_STATE, CUA_WINUI3_TASK_STATE,
+ * CUA_GTK3_TASK_STATE), whose JSON state file is the oracle.
  */
 import { readFile } from 'node:fs/promises';
 
@@ -548,7 +548,7 @@ export function nativeChoiceRequest(
 }
 
 // Harness tasks. The same three tasks run on every repository harness that has
-// a task mode: AppKit (macOS AX), WPF (Windows UIA), and GTK3 (Linux AT-SPI).
+// a task mode: AppKit (macOS AX), WPF and WinUI3 (Windows UIA), and GTK3 (Linux AT-SPI).
 // Each shows the same labeled controls and rewrites the same app-owned JSON
 // state file, so task semantics, candidate IDs, and mock choices are identical
 // across platforms. Only the window, the state schema, and the role table differ.
@@ -572,8 +572,9 @@ export const HARNESSES: Readonly<Record<string, HarnessSpec>> = {
     stateEnv: 'CUA_APPKIT_TASK_STATE',
     bundleId: 'com.trycua.harness.appkit',
   },
-  // WPF and GTK3 show a dedicated task window in task mode: their ordinary
-  // main windows scroll, so most controls would be off screen (and excluded).
+  // WPF, WinUI3, and GTK3 show a dedicated task window in task mode: their
+  // ordinary main windows scroll, so most controls would be off screen (and
+  // excluded).
   wpf: {
     name: 'wpf',
     platform: 'windows',
@@ -581,6 +582,14 @@ export const HARNESSES: Readonly<Record<string, HarnessSpec>> = {
     stateSchema: 'cua.wpf_task_state_v1',
     stateEnv: 'CUA_WPF_TASK_STATE',
     processName: 'CuaTestHarness.Wpf',
+  },
+  winui3: {
+    name: 'winui3',
+    platform: 'windows',
+    windowTitle: 'CuaTestHarness WinUI3 Tasks',
+    stateSchema: 'cua.winui3_task_state_v1',
+    stateEnv: 'CUA_WINUI3_TASK_STATE',
+    processName: 'CuaTestHarness.WinUI3',
   },
   gtk3: {
     name: 'gtk3',

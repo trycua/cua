@@ -43,7 +43,7 @@ test('every harness has the same three tasks', () => {
   assert.deepEqual(
     NATIVE_TASK_IDS,
     [
-      ...['appkit', 'wpf', 'gtk3'].flatMap((h) => ['counter', 'save-note', 'choose-size'].map((k) => `${h}-${k}`)),
+      ...['appkit', 'wpf', 'winui3', 'gtk3'].flatMap((h) => ['counter', 'save-note', 'choose-size'].map((k) => `${h}-${k}`)),
       'canvas-cancel',
     ]
   );
@@ -57,8 +57,11 @@ test('every harness has the same three tasks', () => {
     assert.deepEqual(task.mockPreferences, nativeTask(`appkit-${kind}`, '/tmp/none.json').mockPreferences);
   }
   assert.equal(HARNESSES.wpf.windowTitle, 'CuaTestHarness WPF Tasks');
+  assert.equal(HARNESSES.winui3.windowTitle, 'CuaTestHarness WinUI3 Tasks');
+  assert.equal(HARNESSES.winui3.stateEnv, 'CUA_WINUI3_TASK_STATE');
+  assert.equal(HARNESSES.winui3.processName, 'CuaTestHarness.WinUI3');
   assert.equal(HARNESSES.gtk3.windowTitle, 'CuaTestHarness GTK3 Tasks');
-  for (const taskId of ['wpf-reset', 'winui3-counter', 'counter', '']) {
+  for (const taskId of ['wpf-reset', 'winui3-exit', 'uwp-counter', 'counter', '']) {
     assert.throws(() => splitTaskId(taskId));
   }
   assert.throws(() => appkitTask('wpf-counter', '/tmp/none.json'));

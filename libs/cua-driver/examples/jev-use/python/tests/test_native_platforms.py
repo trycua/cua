@@ -51,7 +51,7 @@ class HarnessRegistryTest(unittest.TestCase):
         self.assertEqual(
             NATIVE_TASK_IDS,
             (
-                *(f"{h}-{k}" for h in ("appkit", "wpf", "gtk3") for k in ("counter", "save-note", "choose-size")),
+                *(f"{h}-{k}" for h in ("appkit", "wpf", "winui3", "gtk3") for k in ("counter", "save-note", "choose-size")),
                 "canvas-cancel",
             ),
         )
@@ -71,12 +71,15 @@ class HarnessRegistryTest(unittest.TestCase):
 
     def test_platforms_and_windows(self) -> None:
         self.assertEqual({h.name: h.platform for h in HARNESSES.values()},
-                         {"appkit": "macos", "wpf": "windows", "gtk3": "linux"})
+                         {"appkit": "macos", "wpf": "windows", "winui3": "windows", "gtk3": "linux"})
         self.assertEqual(HARNESSES["wpf"].window_title, "CuaTestHarness WPF Tasks")
+        self.assertEqual(HARNESSES["winui3"].window_title, "CuaTestHarness WinUI3 Tasks")
+        self.assertEqual(HARNESSES["winui3"].state_env, "CUA_WINUI3_TASK_STATE")
+        self.assertEqual(HARNESSES["winui3"].process_name, "CuaTestHarness.WinUI3")
         self.assertEqual(HARNESSES["gtk3"].window_title, "CuaTestHarness GTK3 Tasks")
 
     def test_unknown_tasks_are_rejected(self) -> None:
-        for task_id in ("wpf-reset", "winui3-counter", "counter", ""):
+        for task_id in ("wpf-reset", "winui3-exit", "uwp-counter", "counter", ""):
             with self.assertRaises(ValueError):
                 split_task_id(task_id)
         with self.assertRaises(ValueError):

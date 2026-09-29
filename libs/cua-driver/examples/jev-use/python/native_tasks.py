@@ -8,8 +8,9 @@ candidate set from the native accessibility source, plus visual regions only
 under the fallback rule, and composes them in the fixed order page, ax, visual.
 
 The built-in tasks drive the repository's harness applications in task mode:
-AppKit (``CUA_APPKIT_TASK_STATE``), WPF (``CUA_WPF_TASK_STATE``), and GTK3
-(``CUA_GTK3_TASK_STATE``), under ``libs/cua-driver/tests/fixtures/apps``.
+AppKit (``CUA_APPKIT_TASK_STATE``), WPF (``CUA_WPF_TASK_STATE``), WinUI3
+(``CUA_WINUI3_TASK_STATE``), and GTK3 (``CUA_GTK3_TASK_STATE``), under
+``libs/cua-driver/tests/fixtures/apps``.
 Their oracle is the harness's own JSON state file, which the app rewrites on
 every change; it never depends on Driver output.
 
@@ -621,7 +622,7 @@ def native_choice_request(
 # -- Harness tasks ------------------------------------------------------------
 #
 # The same three tasks run on every repository harness that has a task mode:
-# AppKit (macOS AX), WPF (Windows UIA), and GTK3 (Linux AT-SPI). Each harness
+# AppKit (macOS AX), WPF and WinUI3 (Windows UIA), and GTK3 (Linux AT-SPI). Each harness
 # shows the same labeled controls in task mode (Increment, Reset, I agree,
 # Small/Medium/Large, Note, Save note, Exit) and rewrites the same app-owned
 # JSON state file, so the task semantics, candidate IDs, and mock choices are
@@ -647,11 +648,16 @@ HARNESSES: Mapping[str, HarnessSpec] = {
         "appkit", "macos", "CuaTestHarness AppKit", "cua.appkit_task_state_v1",
         "CUA_APPKIT_TASK_STATE", bundle_id="com.trycua.harness.appkit",
     ),
-    # WPF and GTK3 show a dedicated task window in task mode: their ordinary
-    # main windows scroll, so most controls would be off screen (and excluded).
+    # WPF, WinUI3, and GTK3 show a dedicated task window in task mode: their
+    # ordinary main windows scroll, so most controls would be off screen (and
+    # excluded).
     "wpf": HarnessSpec(
         "wpf", "windows", "CuaTestHarness WPF Tasks", "cua.wpf_task_state_v1",
         "CUA_WPF_TASK_STATE", process_name="CuaTestHarness.Wpf",
+    ),
+    "winui3": HarnessSpec(
+        "winui3", "windows", "CuaTestHarness WinUI3 Tasks", "cua.winui3_task_state_v1",
+        "CUA_WINUI3_TASK_STATE", process_name="CuaTestHarness.WinUI3",
     ),
     "gtk3": HarnessSpec(
         "gtk3", "linux", "CuaTestHarness GTK3 Tasks", "cua.gtk3_task_state_v1",

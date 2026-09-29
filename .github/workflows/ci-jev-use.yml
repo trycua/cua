@@ -7,6 +7,7 @@ on:
       - "libs/cua-driver/tests/fixtures/apps/macos/appkit/**"
       - "libs/cua-driver/tests/fixtures/build/macos.sh"
       - "libs/cua-driver/tests/fixtures/apps/windows/wpf/**"
+      - "libs/cua-driver/tests/fixtures/apps/windows/winui3/**"
       - "libs/cua-driver/tests/fixtures/build/windows.ps1"
       - "libs/cua-driver/tests/fixtures/apps/linux/gtk3/**"
       - "libs/cua-driver/tests/fixtures/build/linux.sh"
@@ -25,6 +26,7 @@ on:
       - "libs/cua-driver/tests/fixtures/apps/macos/appkit/**"
       - "libs/cua-driver/tests/fixtures/build/macos.sh"
       - "libs/cua-driver/tests/fixtures/apps/windows/wpf/**"
+      - "libs/cua-driver/tests/fixtures/apps/windows/winui3/**"
       - "libs/cua-driver/tests/fixtures/build/windows.ps1"
       - "libs/cua-driver/tests/fixtures/apps/linux/gtk3/**"
       - "libs/cua-driver/tests/fixtures/build/linux.sh"
@@ -778,6 +780,130 @@ jobs:
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         with:
           name: jev-use-windows-native-wpf-mock
+          path: |
+            ${{ runner.temp }}/jev-use-native-proof/summary.json
+            ${{ runner.temp }}/jev-use-native-proof/*.jsonl
+            ${{ runner.temp }}/jev-use-native-window-state/*.json
+          if-no-files-found: error
+          retention-days: 14
+
+  # RFC #4268 (#4314): the same native tasks on the WinUI3 harness (Windows
+  # UIA through the WinUI3 XAML automation peers), built from this checkout
+  # and driven exactly like the WPF job above: released Driver from the
+  # default install.ps1, the deterministic mock provider, and the harness's
+  # own state file as the independent oracle.
+  native-winui3-windows:
+    name: Windows native WinUI3 mock E2E
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      MIN_RELEASED_DRIVER_VERSION: "0.30.1"
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: libs/cua-driver/examples/jev-use
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.15"
+          enable-cache: true
+          cache-dependency-glob: libs/cua-driver/examples/jev-use/uv.lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/examples/jev-use/package-lock.json
+      - name: Verify the interactive desktop session
+        working-directory: ${{ github.workspace }}
+        run: .\scripts\ci\windows\verify-user-session.ps1
+      - name: Install the released Driver with the canonical installer defaults
+        run: |
+          & ([scriptblock]::Create((irm https://cua.ai/driver/install.ps1))) -NoPathUpdate
+          $driver = Join-Path $env:LOCALAPPDATA "Programs\Cua\cua-driver\bin\cua-driver.exe"
+          if (-not (Test-Path -LiteralPath $driver -PathType Leaf)) { throw "installer did not create $driver" }
+          $versionOutput = (& $driver --version | Out-String).Trim()
+          Write-Host $versionOutput
+          if ($versionOutput -notmatch '(\d+\.\d+\.\d+)') { throw "cannot parse the Driver version from: $versionOutput" }
+          $resolved = [version]$Matches[1]
+          if ($resolved -lt [version]$env:MIN_RELEASED_DRIVER_VERSION) {
+            throw "canonical installer resolved Cua Driver $resolved, older than $env:MIN_RELEASED_DRIVER_VERSION"
+          }
+          Write-Host "Released Cua Driver under test: $resolved"
+          $task = Get-ScheduledTask -TaskName "cua-driver-serve" -ErrorAction Stop
+          if ($task.Principal.RunLevel -ne "Highest") { throw "cua-driver-serve autostart is not RunLevel=Highest" }
+          "CUA_DRIVER_BIN=$driver" >> $env:GITHUB_ENV
+      - name: Build the WinUI3 harness from source
+        working-directory: ${{ github.workspace }}
+        run: |
+          .\libs\cua-driver\tests\fixtures\build\windows.ps1 -Targets winui3
+          $exe = "libs\cua-driver\rust\test-apps\harness-winui3\CuaTestHarness.WinUI3.exe"
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "WinUI3 harness was not built: $exe" }
+      - name: Install locked example dependencies
+        run: |
+          uv sync --frozen
+          if ($LASTEXITCODE -ne 0) { throw "uv sync failed" }
+          npm.cmd ci --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
+      - name: Run the native tasks with both mock agents
+        run: |
+          $proof = Join-Path $env:RUNNER_TEMP "jev-use-native-proof"
+          $capture = Join-Path $env:RUNNER_TEMP "jev-use-native-window-state"
+          uv run --frozen python verify_native.py --harness winui3 --typescript --output-dir $proof --capture-dir $capture
+          if ($LASTEXITCODE -ne 0) { throw "native verification failed" }
+      - name: Audit redacted native evidence
+        run: |
+          @'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          summary = json.loads((root / "summary.json").read_text(encoding="utf-8"))
+          assert summary["complete"] is True
+          assert summary["live_requested"] is False
+          assert summary["harness"] == "winui3"
+          tasks = {"winui3-counter", "winui3-save-note", "winui3-choose-size"}
+          assert {(c["language"], c["task"]) for c in summary["checks"]} == {
+              (language, task) for language in ("python", "typescript") for task in tasks
+          }
+          for check in summary["checks"]:
+              # verify_native.py read the harness's own state file; the
+              # runners' outcome events are not the oracle.
+              assert check["verified"] is True and check["runner_outcome"] == "verified", check
+              assert check["provider"] == "mock"
+              assert check["schemas"] == ["cua.jev_choice_request_v2"], check
+              assert check["sources"] == ["ax"], check
+              # set_value has no delivery mode; every click stayed in the background.
+              assert check["delivery_modes"] in (["background"], ["background", "none"]), check
+              assert check["visual_statuses"] == ["skipped"], check
+          counter = [c for c in summary["checks"] if c["task"] == "winui3-counter"]
+          # Reset (destructive) and Exit (close_unsaved) never reach the chooser;
+          # the title bar's System, Minimize, Maximize, and Close are window chrome.
+          assert all(c["risk_excluded"] == ["close_unsaved", "destructive"] for c in counter)
+          assert all(c["observed"]["counter"] == 3 for c in counter)
+          note = [c for c in summary["checks"] if c["task"] == "winui3-save-note"]
+          assert all(c["tools"] == ["click", "set_value"] for c in note)
+          forbidden = ("typesafe_api_key", "authorization", "screenshot_png_b64", "image_base64",
+                       "element_token", "jev-use native note")
+          for path in root.iterdir():
+              if path.name == "summary.json" or path.suffix == ".jsonl":
+                  text = path.read_text(encoding="utf-8").lower()
+                  assert not any(value in text for value in forbidden), (path, [v for v in forbidden if v in text])
+          '@ | uv run --frozen python - (Join-Path $env:RUNNER_TEMP "jev-use-native-proof")
+          if ($LASTEXITCODE -ne 0) { throw "evidence audit failed" }
+      - name: Stop Driver and harness processes
+        if: always()
+        run: |
+          Get-Process cua-driver, CuaTestHarness.WinUI3 -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+      - name: Upload redacted native evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: jev-use-windows-native-winui3-mock
           path: |
             ${{ runner.temp }}/jev-use-native-proof/summary.json
             ${{ runner.temp }}/jev-use-native-proof/*.jsonl

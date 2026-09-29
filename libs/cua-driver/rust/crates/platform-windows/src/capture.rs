@@ -254,9 +254,27 @@ unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32,
     let h = geometry.height;
 
     let screen_dc = GetDC(HWND(std::ptr::null_mut())); // NULL HWND → desktop DC
+    if screen_dc.is_invalid() {
+        bail!("screen-region fallback: GetDC(NULL) returned an invalid desktop DC");
+    }
     let mem_dc = CreateCompatibleDC(screen_dc);
+    if mem_dc.is_invalid() {
+        ReleaseDC(HWND(std::ptr::null_mut()), screen_dc);
+        bail!("screen-region fallback: CreateCompatibleDC returned an invalid memory DC");
+    }
     let bitmap = CreateCompatibleBitmap(screen_dc, w, h);
+    if bitmap.is_invalid() {
+        let _ = DeleteDC(mem_dc);
+        ReleaseDC(HWND(std::ptr::null_mut()), screen_dc);
+        bail!("screen-region fallback: CreateCompatibleBitmap returned an invalid bitmap");
+    }
     let old_bitmap = SelectObject(mem_dc, bitmap);
+    if old_bitmap.is_invalid() {
+        let _ = DeleteObject(bitmap);
+        let _ = DeleteDC(mem_dc);
+        ReleaseDC(HWND(std::ptr::null_mut()), screen_dc);
+        bail!("screen-region fallback: SelectObject failed to select the capture bitmap");
+    }
 
     // Copy from physical screen coords into our memory DC at (0, 0).
     let blt_ok = BitBlt(
@@ -704,9 +722,27 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
             bail!("Could not get screen metrics");
         }
         let screen_dc = GetDC(HWND::default());
+        if screen_dc.is_invalid() {
+            bail!("GetDC(NULL) returned an invalid desktop DC");
+        }
         let mem_dc = CreateCompatibleDC(screen_dc);
+        if mem_dc.is_invalid() {
+            ReleaseDC(HWND::default(), screen_dc);
+            bail!("CreateCompatibleDC returned an invalid memory DC");
+        }
         let bitmap = CreateCompatibleBitmap(screen_dc, w, h);
+        if bitmap.is_invalid() {
+            let _ = DeleteDC(mem_dc);
+            ReleaseDC(HWND::default(), screen_dc);
+            bail!("CreateCompatibleBitmap returned an invalid bitmap");
+        }
         let old_bitmap = SelectObject(mem_dc, bitmap);
+        if old_bitmap.is_invalid() {
+            let _ = DeleteObject(bitmap);
+            let _ = DeleteDC(mem_dc);
+            ReleaseDC(HWND::default(), screen_dc);
+            bail!("SelectObject failed to select the capture bitmap");
+        }
         BitBlt(mem_dc, 0, 0, w, h, screen_dc, 0, 0, SRCCOPY)?;
         let mut bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {

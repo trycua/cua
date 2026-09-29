@@ -30,6 +30,8 @@ DO_NOTARIZE = "${{ startsWith(github.ref, 'refs/tags/cua-driver-rs-v') || inputs
 TAG_PUSH = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')"
 CAN_PUBLISH = "${{ " + TAG_PUSH + " }}"
 E2E_GATES = {"e2e-linux", "e2e-windows", "e2e-macos", "e2e-standalone-browsers"}
+# The same suites gate the stable tag push and nightly builds.
+E2E_GATE_IF = f"({TAG_PUSH}) || inputs.channel == 'nightly'"
 SIGNATURE_GATES = {"verify-macos-release-signatures", "verify-windows-release-signatures"}
 STATUS_OVERRIDES = ("always()", "failure()", "cancelled()", "!cancelled()")
 
@@ -140,7 +142,7 @@ def test_release_job_needs_signature_verification(cd: dict) -> None:
     release = cd["jobs"]["release"]
     assert {"verify-release-artifacts"} | SIGNATURE_GATES | E2E_GATES <= needs(release)
     for gate in E2E_GATES:
-        assert cd["jobs"][gate]["if"] == TAG_PUSH
+        assert cd["jobs"][gate]["if"] == E2E_GATE_IF
     assert not any(override in release["if"] for override in STATUS_OVERRIDES)
     publish = step(release, "Publish the verified Release Please draft")
     assert release["steps"].index(step(release, "Refuse to publish unverified or unnotarized artifacts")) < release["steps"].index(publish)

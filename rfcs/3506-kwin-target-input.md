@@ -3,7 +3,7 @@ title: Target-addressable KWin input delivery for KDE/Wayland
 authors:
   - netbospl
 created: 2026-09-01
-last_updated: 2026-09-29
+last_updated: 2026-09-30
 status: review
 discussion: https://github.com/trycua/cua/issues/3506
 rfc_pr: https://github.com/trycua/cua/pull/3507
@@ -21,8 +21,10 @@ conditionally permits a **foreground-only first increment**, subject to a live
 Plasma 6.6 proof. The proof must activate the exact window selected by the
 trusted identity adapter from #3336, confirm that it is active closely enough
 to guard a bounded portal input burst, and refuse input when confirmation fails.
-The recording and exact API calls belong on #3507. This RFC remains `review`;
-the requested Plasma 6.6 safety proof has not been supplied.
+The recording and exact API calls belong on #3507. This RFC remains `review`.
+The requested Plasma 6.6 proof is now supplied, but its target-safety result is
+negative and therefore does not satisfy the acceptance condition for enabling
+foreground input.
 
 The [Plasma/KWin 6.6.4 experiment](3506/plasma-6.6-proof.md) ran in an isolated
 QEMU virtual machine with KVM acceleration, booted from a Kubuntu 26.04 live
@@ -36,6 +38,16 @@ increment must describe its measured timing and residual focus race honestly.
 AX actions and exact background refusals remain unchanged. Target-addressable
 background input is deferred until a supported primitive exists. #4034 is a
 separate KDE recording/release dependency decision.
+
+The same 6.6.4 guest run also partially exercises the
+[at-most-once/replay concern raised in review](https://github.com/trycua/cua/pull/3507#issuecomment-5804705353).
+Operation 9 delivered one key pair to A, deliberately lost the worker reply,
+returned `unknown`, and then refused reuse of that operation number in the
+parent exclusive ledger. That is evidence for truthful unknown/no-retry
+handling at this boundary, but it is **not** the full requested replay proof:
+daemon-wide deduplication, replay protection across a newly constructed
+Driver/private connection, outer SDK acknowledgement loss, and the complete
+reconnect/re-resolve -> no second emission -> fresh-sequence path remain unproven.
 
 The [live KWin 6.7.5 host experiment](3506/host-6.7.5-result.md) exercised exact
 same-process selection, supported scripting activation, worker-side confirmation,
@@ -132,8 +144,9 @@ hostile native code running as the same desktop user.
 
 ## Goals
 
-- Complete the maintainer-requested Plasma 6.6 foreground feasibility proof
-  before claiming acceptance or unblocking #3972 and #1982.
+- Record and review the completed Plasma 6.6 foreground feasibility proof.
+  Its negative target-safety result does not establish acceptance or unblock
+  #3972 and #1982.
 - Distinguish guarded foreground delivery from deferred exact/background input
   in routing, evidence, and capability reporting.
 - Define a KWin target-input contract that binds a short-lived input transaction

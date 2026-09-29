@@ -1301,7 +1301,8 @@ impl Tool for ClickTool {
             }
         } else {
             ToolResult::error(
-                "Provide either (element_index + window_id) or (x + y). pid is always required.",
+                "Provide either element_token, element_index + snapshot_id (from get_window_state), \
+                 or x + y. pid is always required.",
             )
         }
     }

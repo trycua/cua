@@ -8,7 +8,13 @@ fn pid_only_pointer_call_is_refused_not_clicked_at_origin() {
     let structured = refusal.structured_content.expect("structured");
     assert_eq!(structured["code"], "invalid_arguments");
     assert_eq!(structured["effect"], "refused");
-    assert!(structured["accepted_forms"].as_array().unwrap().len() == 3);
+    let forms = structured["accepted_forms"].as_array().unwrap();
+    assert!(forms.len() == 3);
+    // A bare element_index is refused (snapshot_id_required); never offer it.
+    assert!(forms[0]
+        .as_str()
+        .unwrap()
+        .contains("element_index + snapshot_id"));
 }
 
 #[test]

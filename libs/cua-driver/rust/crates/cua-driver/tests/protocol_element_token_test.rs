@@ -79,6 +79,15 @@ fn token_accepting_tools_advertise_element_token_in_schema_and_capabilities() {
             Some("string"),
             "{tool_name} must advertise snapshot_id for safe integer targeting"
         );
+        // A client that only reads the description must not learn a bare
+        // element_index, which `snapshot_id_required` refuses.
+        let description = tool["description"].as_str().unwrap_or_default();
+        assert!(
+            !description.contains("element_index")
+                || description.contains("snapshot_id")
+                || description.contains("element_token"),
+            "{tool_name} description names element_index without snapshot_id or element_token"
+        );
 
         // (b) capabilities array includes `accessibility.element_tokens`.
         let caps: Vec<&str> = tool["capabilities"]

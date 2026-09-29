@@ -2566,7 +2566,7 @@ fn apply_foreground_report(v: &mut Value, report: &crate::input::ForegroundRepor
 /// executed at window-local (0, 0) — the top-left corner, i.e. the File menu.
 fn invalid_pointer_arguments(tool: &str, detail: &str) -> ToolResult {
     let accepted = [
-        "pid + element_index (or element_token) from get_window_state",
+        "pid + element_token, or pid + element_index + snapshot_id, from get_window_state",
         "pid/window_id + x + y (window-local pixels of window_id; coordinate_frame:\"desktop\" for screen pixels)",
         "x + y + scope:\"desktop\" (screen pixels, no pid)",
     ];
@@ -6054,7 +6054,7 @@ impl Tool for ClickTool {
                 a stable handle, and tells you what you're clicking via the cached AT-SPI \
                 element's role + label. Reach for `x, y` only when the target is a canvas / \
                 custom-drawn surface that doesn't appear in the AT-SPI tree.\n\n\
-                Provide either (window_id + x/y) or (pid + element_index). x/y are \
+                Provide either (window_id + x/y) or (pid + element_token, or pid + element_index + snapshot_id). x/y are \
                 WINDOW-LOCAL pixels of window_id (the get_window_state screenshot frame); \
                 a point outside the window is refused (point_outside_window) and every \
                 pixel result reports the resolved window_point / screen_point. Background \
@@ -6629,7 +6629,9 @@ impl Tool for ClickTool {
         }
         let xid = match args.opt_u64("window_id") {
             Some(v) => v,
-            None => return ToolResult::error("Provide either element_index or window_id + x/y."),
+            None => return ToolResult::error(
+                "Provide either element_token, element_index + snapshot_id, or window_id + x/y.",
+            ),
         };
         let desktop_frame = desktop_frame_requested(&args);
         let from_zoom = args.bool_or("from_zoom", false);
@@ -9780,7 +9782,7 @@ impl Tool for DoubleClickTool {
                 delivery on X11 sends real button events from the session's virtual master pointer \
                 (path mpx_pointer); a point covered by another application's window is refused \
                 (target_occluded), one covered by this app's own dialog is retargeted to it \
-                (retargeted_to). No focus steal. Provide either (window_id + x/y) or (pid + element_index). \
+                (retargeted_to). No focus steal. Provide either (window_id + x/y) or (pid + element_token, or pid + element_index + snapshot_id). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
@@ -9928,7 +9930,9 @@ impl Tool for DoubleClickTool {
         }
         let xid = match window_id_resolved {
             Some(v) => v,
-            None => return ToolResult::error("Provide either element_index or window_id + x/y."),
+            None => return ToolResult::error(
+                "Provide either element_token, element_index + snapshot_id, or window_id + x/y.",
+            ),
         };
         let desktop_frame = desktop_frame_requested(&args);
         let from_zoom = args.bool_or("from_zoom", false);
@@ -10068,7 +10072,7 @@ impl Tool for RightClickTool {
                 window-local pixels, the result reports window_point / screen_point). No focus \
                 steal. When a context menu opens, the result names it (`popup: {window_id, bounds, \
                 title}`): call get_window_state(pid, window_id=<that id>) to index its menu items \
-                and click them by element_index. Provide either (window_id + x/y) or (pid + element_index). \
+                and click them by element_index. Provide either (window_id + x/y) or (pid + element_token, or pid + element_index + snapshot_id). \
                 After a zoom call, pass from_zoom=true to auto-translate zoom-image coords.".into(),
             input_schema: json!({"type":"object","required":["pid"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
@@ -10217,7 +10221,9 @@ impl Tool for RightClickTool {
         }
         let xid = match window_id_resolved {
             Some(v) => v,
-            None => return ToolResult::error("Provide either element_index or window_id + x/y."),
+            None => return ToolResult::error(
+                "Provide either element_token, element_index + snapshot_id, or window_id + x/y.",
+            ),
         };
         let desktop_frame = desktop_frame_requested(&args);
         let from_zoom = args.bool_or("from_zoom", false);

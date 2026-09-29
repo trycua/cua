@@ -184,8 +184,8 @@ fn def() -> &'static ToolDef {
         description: "Press and release a single key. Follows the same `delivery_mode` ladder as click/type_text \
             — it does NOT raise the window by default:\n\
             • `background` (default): post to the pid WITHOUT fronting/raising — the \
-              auth-message path (Chromium-safe). With element_index it focuses that AX \
-              element first. `window_id` only targets; it does not raise.\n\
+              auth-message path (Chromium-safe). With element_token, or element_index + \
+              snapshot_id, it focuses that AX element first. `window_id` only targets; it does not raise.\n\
             • `foreground`: guard and briefly front the exact window, focus an addressed AX \
               element when supplied, send a genuine HID key transition so Chromium content, \
               inline editors, and native menu equivalents receive it, then restore prior \

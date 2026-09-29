@@ -378,6 +378,30 @@ impl Tool for HotkeyTool {
             }
         };
 
+        // A focus click already moved the cursor. Otherwise place a named
+        // session's cursor on the element, its remembered position, or the
+        // window centre, so a keyboard-first session stays visible.
+        if !coordinate_focus {
+            let element_center = match element_guard.clone() {
+                Some(guard) => tokio::task::spawn_blocking(move || unsafe {
+                    crate::ax::bindings::element_screen_center(
+                        guard.as_ptr() as crate::ax::bindings::AXUIElementRef
+                    )
+                })
+                .await
+                .ok()
+                .flatten(),
+                None => None,
+            };
+            super::cursor_tools::position_keyboard_cursor(
+                &self.state,
+                &args,
+                window_id,
+                element_center,
+            )
+            .await;
+        }
+
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // Hotkeys like Cmd+N, Cmd+W, Cmd+T explicitly open/close
         // windows. The NSMenu path also briefly activates the target via

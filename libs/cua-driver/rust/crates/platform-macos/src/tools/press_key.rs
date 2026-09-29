@@ -382,6 +382,30 @@ impl Tool for PressKeyTool {
             }
         };
 
+        // The px form's focus click already moved the cursor. Otherwise place
+        // a named session's cursor on the element, or its remembered position,
+        // or the window centre, so a keyboard-first session stays visible.
+        if !px_focus {
+            let element_center = match pre_focus_guard.clone() {
+                Some(guard) => tokio::task::spawn_blocking(move || unsafe {
+                    crate::ax::bindings::element_screen_center(
+                        guard.as_ptr() as crate::ax::bindings::AXUIElementRef
+                    )
+                })
+                .await
+                .ok()
+                .flatten(),
+                None => None,
+            };
+            super::cursor_tools::position_keyboard_cursor(
+                &self.state,
+                &args,
+                window_id,
+                element_center,
+            )
+            .await;
+        }
+
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // Single-key presses can fire autocomplete (Return on a search
         // box opens a results popover) or trigger menu shortcuts that

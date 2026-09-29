@@ -356,6 +356,12 @@ impl Tool for TypeTextTool {
                     .update_position(&cursor_key, screen_x, screen_y);
             }
         }
+        // Untargeted text still gives a named session visible feedback: its
+        // remembered position, or the window centre on the first action.
+        if element_guard.is_none() && !used_pixel_focus {
+            super::cursor_tools::position_keyboard_cursor(&self.state, &args, window_id, None)
+                .await;
+        }
         let text_clone = text.clone();
         let char_count = text.chars().count();
 

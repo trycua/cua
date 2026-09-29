@@ -5132,28 +5132,7 @@ fn resolve_cursor_key(args: &Value) -> String {
 /// `_session_id` is trusted lifecycle state and must behave like a public named
 /// session for cursor ownership.
 fn named_session_cursor_key(args: &Value) -> Option<String> {
-    ["session", "_session_id"].into_iter().find_map(|key| {
-        args.get(key)
-            .and_then(Value::as_str)
-            .filter(|session| !session.is_empty())
-            .map(str::to_owned)
-    })
-}
-
-fn finite_cursor_point(point: Option<(f64, f64)>) -> Option<(f64, f64)> {
-    point.filter(|(x, y)| x.is_finite() && y.is_finite())
-}
-
-fn choose_keyboard_cursor_target(
-    explicit: Option<(f64, f64)>,
-    remembered: Option<(f64, f64)>,
-    window_center: Option<(f64, f64)>,
-    current_pointer: Option<(f64, f64)>,
-) -> Option<(f64, f64)> {
-    finite_cursor_point(explicit)
-        .or_else(|| finite_cursor_point(remembered))
-        .or_else(|| finite_cursor_point(window_center))
-        .or_else(|| finite_cursor_point(current_pointer))
+    cursor_overlay::named_session_cursor_key(args)
 }
 
 fn mouse_hold_json(cursor_id: &str, hold: Option<&MouseHoldState>) -> Value {
@@ -5428,7 +5407,7 @@ async fn position_named_session_keyboard_cursor(
 
     let fallback = if named_cursor_id.is_some()
         && explicit.is_none()
-        && finite_cursor_point(remembered).is_none()
+        && cursor_overlay::keyboard_cursor_target(None, remembered, None, None).is_none()
     {
         tokio::task::spawn_blocking(move || {
             let center = keyboard_window_center(xid);
@@ -5442,7 +5421,7 @@ async fn position_named_session_keyboard_cursor(
     };
 
     let Some((sx, sy)) =
-        choose_keyboard_cursor_target(explicit, remembered, fallback.0, fallback.1)
+        cursor_overlay::keyboard_cursor_target(explicit, remembered, fallback.0, fallback.1)
     else {
         return;
     };
@@ -12595,7 +12574,9 @@ impl Tool for SetAgentCursorThemeTool {
     }
 }
 
-pub struct GetAgentCursorStateV2Tool;
+pub struct GetAgentCursorStateV2Tool {
+    state: Arc<ToolState>,
+}
 
 static CURSOR_STATE_V2_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -12626,11 +12607,19 @@ impl Tool for GetAgentCursorStateV2Tool {
         .into_iter()
         .flatten()
         .collect();
+        // The last point this session's cursor was placed at, `null` until
+        // it first moves (same registry source as macOS).
+        let position = self
+            .state
+            .cursor_registry
+            .get(&session)
+            .and_then(|cursor| cursor.x.zip(cursor.y))
+            .map(|(x, y)| json!({"x": x, "y": y}));
         ToolResult::text(format!("Agent cursor state for session '{session}'.")).with_structured(
             json!({
                 "session":session,
                 "enabled":enabled,
-                "position":null,
+                "position":position,
                 "theme":{
                     "id":theme_id,
                     "version":version,
@@ -14148,7 +14137,9 @@ pub fn build_registry_with_provider(
         state: state.clone(),
     }));
     r.register(Box::new(SetAgentCursorMotionV2Tool));
-    r.register(Box::new(GetAgentCursorStateV2Tool));
+    r.register(Box::new(GetAgentCursorStateV2Tool {
+        state: state.clone(),
+    }));
     r.register(Box::new(SetAgentCursorThemeTool {
         state: state.clone(),
     }));

@@ -283,6 +283,44 @@ class HarnessWindow(Gtk.Window):
 
 TASK_STATE_ENV = "CUA_GTK3_TASK_STATE"
 TASK_STATE_SCHEMA = "cua.gtk3_task_state_v1"
+TASK_DENSITY_ENV = "CUA_GTK3_TASK_DENSITY"
+
+# Opt-in distractor controls for measuring jev-use accuracy at larger
+# candidate sets (#4312). The labels are benign (no risky-action phrase) and
+# match the AppKit harness, so candidate IDs agree across platforms. Some are
+# unrelated to every task; some are close to a task control ("Save draft",
+# "Increase font size", "Note title", "Large icons"). Density 12 uses the first
+# entries of each list; density 24 uses all of them.
+DISTRACTOR_BUTTONS = (
+    "New folder", "Refresh", "Undo", "Redo", "Zoom in", "Zoom out", "Save draft",
+    "Increase font size", "Copy link", "Duplicate", "Rename", "Print preview", "Export PDF",
+    "Import", "Bold", "Italic", "Underline", "Align left", "Align center", "Align right",
+    "Insert table", "Insert image", "Spell check", "Word count", "Show sidebar", "Help",
+)
+DISTRACTOR_CHECKBOXES = (
+    "Show ruler", "Show previews", "Word wrap", "Auto-save", "Line numbers", "Dark mode",
+    "Show hidden files", "Sync on startup", "Compact layout", "Show status bar",
+    "Remember window size", "Check spelling as you type",
+)
+DISTRACTOR_RADIO_GROUPS = (
+    ("Light", "Dark", "System"),
+    ("List", "Grid", "Columns"),
+    ("Name", "Date", "Kind"),
+    ("Small icons", "Medium icons", "Large icons"),
+)
+DISTRACTOR_FIELDS = ("Search", "Note title")
+# density -> (buttons, checkboxes, radio groups, text fields)
+DENSITY_COUNTS = {12: (8, 3, 1, 1), 24: (26, 12, 4, 2)}
+
+
+def task_density():
+    """The opt-in distractor density: None, 12, or 24. Anything else is an error."""
+    raw = os.environ.get(TASK_DENSITY_ENV, "").strip()
+    if not raw:
+        return None
+    if raw not in ("12", "24"):
+        raise SystemExit(f"{TASK_DENSITY_ENV} must be 12 or 24, not {raw!r}")
+    return int(raw)
 
 
 class TaskWindow(Gtk.Window):
@@ -291,17 +329,20 @@ class TaskWindow(Gtk.Window):
 
     It carries the same labeled controls as the AppKit and WPF task modes
     (Increment, Reset, I agree, Small/Medium/Large, Note, Save note, Exit) in a
-    small window where every control is on screen. Accessible names are the
+    small window where every control is on screen. CUA_GTK3_TASK_DENSITY=12 or
+    24 also adds benign distractor controls before them (#4312). Accessible names are the
     visible labels here, not the aid-style names of HarnessWindow, so candidate
     IDs match across platforms. Every change atomically rewrites an app-owned
     JSON state file; the jev-use task oracle reads that file and never depends
     on Cua Driver output. Ordinary launches never create this window.
     """
 
-    def __init__(self, state_path):
+    def __init__(self, state_path, density=None):
         super().__init__(title="CuaTestHarness GTK3 Tasks")
         self.set_default_size(480, 320)
         self.state_path = state_path
+        self.density = density
+        self.distractor_actions = 0
         self.counter = 0
         self.agreed = False
         self.size = "none"
@@ -311,6 +352,10 @@ class TaskWindow(Gtk.Window):
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         root.set_border_width(16)
         self.add(root)
+        if density is not None:
+            # Before the task controls, as a toolbar and sidebar precede the
+            # content in a typical document app's depth-first order.
+            self.add_distractors(root, density)
         self.counter_label = Gtk.Label(label="counter=0", xalign=0)
         root.pack_start(self.counter_label, False, False, 0)
 
@@ -344,6 +389,46 @@ class TaskWindow(Gtk.Window):
         root.pack_start(self.button("Exit", lambda *_: Gtk.main_quit()), False, False, 0)
         self.connect("destroy", Gtk.main_quit)
         self.publish()
+
+    def add_distractors(self, root, density):
+        buttons, checkboxes, groups, fields = DENSITY_COUNTS[density]
+        grid = Gtk.Grid(column_spacing=6, row_spacing=6)
+        for index, label in enumerate(DISTRACTOR_BUTTONS[:buttons]):
+            grid.attach(self.button(label, self.on_distractor), index % 7, index // 7, 1, 1)
+        root.pack_start(grid, False, False, 0)
+        field_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        for label in DISTRACTOR_FIELDS[:fields]:
+            # An accessible name and no placeholder, like the Note field.
+            entry = aid(Gtk.Entry(), label)
+            entry.set_width_chars(18)
+            entry.connect("changed", self.on_distractor)
+            field_row.pack_start(entry, False, False, 0)
+        root.pack_start(field_row, False, False, 0)
+        checks = Gtk.Grid(column_spacing=12, row_spacing=4)
+        for index, label in enumerate(DISTRACTOR_CHECKBOXES[:checkboxes]):
+            check = Gtk.CheckButton(label=label)
+            check.connect("toggled", self.on_distractor)
+            checks.attach(check, index % 4, index // 4, 1, 1)
+        root.pack_start(checks, False, False, 0)
+        for options in DISTRACTOR_RADIO_GROUPS[:groups]:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            # A hidden member keeps every visible option unselected at launch.
+            hidden = Gtk.RadioButton(label="none")
+            row.hidden_member = hidden
+            for label in options:
+                radio = Gtk.RadioButton.new_with_label_from_widget(hidden, label)
+                radio.connect("toggled", self.on_distractor_radio)
+                row.pack_start(radio, False, False, 0)
+            root.pack_start(row, False, False, 0)
+        root.pack_start(Gtk.Separator(), False, False, 4)
+
+    def on_distractor(self, *_):
+        self.distractor_actions += 1
+        self.publish()
+
+    def on_distractor_radio(self, radio):
+        if radio.get_active():
+            self.on_distractor()
 
     @staticmethod
     def button(label, handler):
@@ -385,6 +470,9 @@ class TaskWindow(Gtk.Window):
             "size": self.size,
             "note_saved": self.saved_note,
         }
+        if self.density is not None:
+            state["density"] = self.density
+            state["distractor_actions"] = self.distractor_actions
         temporary = f"{self.state_path}.{os.getpid()}.tmp"
         with open(temporary, "w", encoding="utf-8") as stream:
             json.dump(state, stream, sort_keys=True)
@@ -393,7 +481,7 @@ class TaskWindow(Gtk.Window):
 
 def main():
     task_state = os.environ.get(TASK_STATE_ENV, "").strip()
-    win = TaskWindow(task_state) if task_state else HarnessWindow()
+    win = TaskWindow(task_state, task_density()) if task_state else HarnessWindow()
     win.show_all()
     Gtk.main()
 

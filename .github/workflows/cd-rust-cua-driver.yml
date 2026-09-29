@@ -15,7 +15,9 @@ name: "CD: Cua Driver (cross-platform)"
 # release. That tag push runs this workflow, which builds every artifact, runs
 # the canonical desktop E2E suites against the exact tag SHA, and publishes the
 # draft only when the builds, release checks, and E2E gates all pass.
-# Nightly workflow_call runs and manual dispatches build candidates only.
+# Nightly workflow_call runs build candidates and run the same E2E suites
+# against their exact source; the nightly caller publishes only when this
+# whole workflow succeeds. Manual dispatches build candidates only.
 
 on:
   workflow_call:
@@ -1142,51 +1144,54 @@ jobs:
   # the attribution preflight and run in parallel with the artifact builds.
   # Under a tag push, github.sha is the tagged commit; `release` re-verifies
   # that the published tag resolves to that same SHA. Nightly workflow_call
-  # runs inherit the caller's non-push event name and skip the gate.
+  # runs certify their exact source_ref with the same suites. A failed suite
+  # fails this reusable workflow, so the nightly caller's publish job, which
+  # needs this build to succeed, never runs. Manual build-only dispatches have
+  # no channel input and still skip the gate.
   e2e-linux:
     name: release gate / Linux E2E
     needs: release-attribution-preflight
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || inputs.channel == 'nightly'
     permissions:
       actions: read
       contents: read
     uses: ./.github/workflows/e2e-rust-linux.yml
     with:
-      ref: ${{ github.sha }}
+      ref: ${{ inputs.channel == 'nightly' && inputs.source_ref || github.sha }}
 
   e2e-windows:
     name: release gate / Windows E2E
     needs: release-attribution-preflight
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || inputs.channel == 'nightly'
     permissions:
       actions: read
       contents: read
     uses: ./.github/workflows/e2e-rust-windows.yml
     with:
-      ref: ${{ github.sha }}
+      ref: ${{ inputs.channel == 'nightly' && inputs.source_ref || github.sha }}
 
   e2e-macos:
     name: release gate / macOS hosted E2E
     needs: release-attribution-preflight
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || inputs.channel == 'nightly'
     permissions:
       actions: read
       contents: read
       pull-requests: read
     uses: ./.github/workflows/e2e-rust-macos.yml
     with:
-      source_sha: ${{ github.sha }}
+      source_sha: ${{ inputs.channel == 'nightly' && inputs.source_ref || github.sha }}
 
   e2e-standalone-browsers:
     name: release gate / standalone browser E2E
     needs: release-attribution-preflight
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cua-driver-rs-v')) || inputs.channel == 'nightly'
     permissions:
       actions: read
       contents: read
     uses: ./.github/workflows/e2e-rust-standalone-browsers.yml
     with:
-      ref: ${{ github.sha }}
+      ref: ${{ inputs.channel == 'nightly' && inputs.source_ref || github.sha }}
 
   # ── Release signature gate ──────────────────────────────────────────────────
   # Release safety (#4109): verify the exact uploaded archives the way the

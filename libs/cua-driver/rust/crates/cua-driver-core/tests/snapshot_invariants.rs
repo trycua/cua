@@ -1,4 +1,4 @@
-use cua_driver_core::element_token::{format_token, ResolvedElement, LRU_CAP_PER_PID};
+use cua_driver_core::element_token::{token_for, ResolvedElement, LRU_CAP_PER_PID};
 use cua_driver_core::snapshot_store::{
     register_runtime_store, retire_runtime_scope, SnapshotPayload, SnapshotStore,
 };
@@ -44,7 +44,7 @@ fn resolve<T: Clone + Send + Sync + 'static>(
     cache
         .resolve(
             42,
-            &serde_json::json!({ "element_token": format_token(snapshot, index) }),
+            &serde_json::json!({ "element_token": token_for(snapshot, index) }),
         )
         .map(|result| match result {
             ResolvedElement::Element {

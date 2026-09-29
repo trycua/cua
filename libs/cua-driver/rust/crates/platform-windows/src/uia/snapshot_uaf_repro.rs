@@ -29,7 +29,7 @@
 //! luck.
 
 use super::{RetainedElement, SnapshotKind, Snapshots, UiaSnapshot};
-use cua_driver_core::element_token::{format_token, ResolvedElement};
+use cua_driver_core::element_token::{token_for, ResolvedElement};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 use std::sync::mpsc;
@@ -123,7 +123,7 @@ fn acquire(cache: &Snapshots, snapshot: u32, idx: usize) -> Option<RetainedEleme
     match cache
         .resolve(
             PID as i32,
-            &serde_json::json!({ "element_token": format_token(snapshot, idx) }),
+            &serde_json::json!({ "element_token": token_for(snapshot, idx) }),
         )
         .ok()?
     {
@@ -384,7 +384,7 @@ fn recording_metadata_uses_snapshot_without_native_geometry() {
         cua_driver_core::snapshot_store::register_runtime_store(&cache);
         let ptr = make_fake(hits);
         let id = cache.publish(PID as i32, HWND, snapshot_with(vec![ptr]));
-        let args = serde_json::json!({"element_token": format_token(id, 0)});
+        let args = serde_json::json!({"element_token": token_for(id, 0)});
         assert_eq!(
             crate::recording_hooks::element_window_local_xy(PID as i64, &args, false),
             Some((HWND, None))

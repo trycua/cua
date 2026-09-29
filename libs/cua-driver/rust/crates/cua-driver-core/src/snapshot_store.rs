@@ -495,6 +495,90 @@ mod tests {
             .is_err());
     }
 
+    fn token_refusal(cache: &SnapshotStore<Payload>, pid: i32, token: &str) -> serde_json::Value {
+        cache
+            .resolve(pid, &serde_json::json!({ "element_token": token }))
+            .unwrap_err()
+            .structured_content
+            .unwrap()
+    }
+
+    #[test]
+    fn malformed_token_is_invalid_not_stale() {
+        let cache = SnapshotStore::new();
+        cache.publish(10, 1, Payload(vec![0]));
+        assert_eq!(
+            token_refusal(&cache, 10, "garbage")["refusal"]["code"],
+            "invalid_element_token"
+        );
+    }
+
+    #[test]
+    fn tokens_in_different_pids_dont_collide() {
+        let cache = SnapshotStore::new();
+        let first = cache.publish(100, 11, Payload(vec![0]));
+        cache.publish(200, 22, Payload(vec![0]));
+        assert_eq!(
+            token_refusal(&cache, 200, &token_for(first, 0))["refusal"]["code"],
+            "stale_element_token"
+        );
+    }
+
+    #[test]
+    fn stale_token_names_the_current_snapshots() {
+        let cache = SnapshotStore::new();
+        let current = cache.publish(1, 555, Payload(vec![0]));
+        let structured = token_refusal(&cache, 1, &token_for(0xdead, 0));
+        assert_eq!(structured["refusal"]["code"], "stale_element_token");
+        assert_eq!(
+            structured["current_snapshots"],
+            serde_json::json!([{ "snapshot_id": format_snapshot_id(current), "window_id": 555 }])
+        );
+    }
+
+    #[test]
+    fn clear_then_publish_starts_clean() {
+        let cache = SnapshotStore::new();
+        let first = cache.publish(1, 1, Payload(vec![0]));
+        assert_eq!(cache.clear(), 1);
+        assert_eq!(cache.clear(), 0);
+        assert_eq!(
+            token_refusal(&cache, 1, &token_for(first, 0))["refusal"]["code"],
+            "stale_element_token"
+        );
+        let second = cache.publish(1, 1, Payload(vec![0]));
+        assert!(cache
+            .resolve(
+                1,
+                &serde_json::json!({ "element_token": token_for(second, 0) })
+            )
+            .is_ok());
+    }
+
+    #[test]
+    fn missing_token_resolves_to_none() {
+        assert!(matches!(
+            SnapshotStore::<Payload>::new()
+                .resolve(1, &serde_json::json!({}))
+                .unwrap(),
+            ResolvedElement::None
+        ));
+    }
+
+    #[test]
+    fn runtime_store_discovery_is_weak_and_shared_across_calls() {
+        crate::tool::with_runtime_scope("token-discovery-test".into(), || {
+            let cache = Arc::new(SnapshotStore::<Payload>::new());
+            register_runtime_store(&cache);
+            assert!(Arc::ptr_eq(
+                &cache,
+                &current_runtime_store::<Payload>().unwrap()
+            ));
+            drop(cache);
+            assert!(current_runtime_store::<Payload>().is_none());
+        });
+    }
+
     fn refusal_code(result: ToolResult) -> String {
         result.structured_content.unwrap()["code"]
             .as_str()

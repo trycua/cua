@@ -136,7 +136,12 @@ Layouts and loaders:
   a pickle `cua-s1-forms.pt`, which `cua_s1` refuses to load by design (see
   #3977). If you pin an older revision, pass `--exclude "*.pt"`. Unpickling a
   checkpoint can run arbitrary code, so never open a `.pt` copy with
-  `torch.load` or `pickle`.
+  `torch.load` or `pickle`. The checkpoint depends on the 55-concept label
+  catalogue in `cua_s1/concepts.py`. On forms whose labels fall outside it,
+  it answers a confident `skip` instead of abstaining: 29.3% held-out
+  accuracy vs 97.5% in-distribution (#3978). See the
+  [model card](MODEL_CARD.md#checkpoint-cua-s1-form-v0) before relying on
+  `skip`.
 - The Apache-2.0 licenses on `cua-s1-4b-0.2` and `cua-s1-4b-0.1` cover only
   the adapters. The base model is governed by its own license and is
   downloaded from Qwen's repository, not redistributed by Cua.

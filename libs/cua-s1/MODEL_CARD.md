@@ -51,6 +51,29 @@ consequences; bypassing access controls, consent, rate limits, or service
 policies; treating model output or apparent task completion as proof that
 an action was correct or successful.
 
+**Limitations:** the published `cua-s1-forms` checkpoint depends on its
+labels. It keys mainly on the element (form) label matching the 55-concept
+`form_labels` vocabulary in `cua_s1/concepts.py`, and to a lesser extent on
+the document labels. Outside that vocabulary it does not abstain and does not
+return a low-confidence answer. It returns a **high-confidence `skip`**. An
+independent evaluation (#3978) measured:
+
+| Evaluation set | Accuracy | Behavior |
+| --- | --- | --- |
+| In-distribution `cua_s1.synth` episodes (3,070 decisions) | 97.5% (2,993/3,070) | Matches the training distribution |
+| Held-out forms with out-of-catalogue labels (41 decisions over 5 forms: logistics, hardware, DevOps, veterinary, and a Chinese-language form) | 29.3% (12/41) | 36 of 41 predictions were `skip`, with mean confidence 0.974 |
+
+Relabeling the same held-out forms with in-catalogue wording restored
+accuracy (11/11). Replacing only the element labels with unseen wording
+dropped it to 25%, even when every document label stayed in the catalogue.
+`check` and `click` decisions that do not depend on a document entity also
+failed on the held-out forms. An executor that treats `skip` as "nothing to
+do here" can therefore silently no-op an entire out-of-scope form. Do not
+read a high-confidence `skip` as evidence that a form is in scope or
+complete. Before acting, check element labels against the catalogue or
+verify form completion independently. These held-out figures come from a
+small external set and are not a benchmark claim.
+
 ## Checkpoint: cua-s1-4b-0.1
 
 **Base model:** a LoRA (low-rank adapter) fine-tune on top of the frozen,

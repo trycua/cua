@@ -369,7 +369,7 @@ Press a key via XSendEvent to a window. No focus steal.
 - `delivery_mode` (string, optional): Input delivery mode. 'background' (default) never activates or raises the target window. On X11 it injects via XTEST / the XInput2 master pointer (no focus steal). On Wayland it goes through libei + xdg-desktop-portal, which injects to the compositor's input focus — Wayland's security model has no per-window background targeting, so a specific non-focused window cannot be aimed at; when no libei backend is available the tool returns a structured background_unavailable error. 'foreground' is the explicit escalation: activate the target (X11 _NET_ACTIVE_WINDOW; Wayland compositor activate), inject, then restore the prior active window — a brief focus swap unless the target was already active. Matches the macOS / Windows delivery_mode surface. default: `"background"`
 - `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
 - `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
-- `key` (string, required)
+- `key` (string, required): Key name: enter/return, tab, escape, space, backspace, delete, insert, home, end, pageup, pagedown, up, down, left, right, f1-f12, or any single ASCII character.
 - `modifiers` (array of string, optional)
 - `pid` (integer, optional)
 - `scope` (string, optional): default: `"window"`

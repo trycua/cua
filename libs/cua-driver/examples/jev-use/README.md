@@ -169,8 +169,9 @@ until the step budget runs out.
 #### Measure accuracy at larger candidate sets
 
 The task-mode harnesses show only a few controls, so each step offers 4 to 7
-candidates. `CUA_APPKIT_TASK_DENSITY` or `CUA_GTK3_TASK_DENSITY` set to `12` or
-`24`, together with the task-state variable, adds benign distractor controls
+candidates. `CUA_APPKIT_TASK_DENSITY`, `CUA_WPF_TASK_DENSITY`,
+`CUA_WINUI3_TASK_DENSITY`, or `CUA_GTK3_TASK_DENSITY` set to `12` or `24`,
+together with the task-state variable, adds benign distractor controls
 (toolbar-style buttons, labeled text fields, checkboxes, and radio groups, some
 close to a task control such as "Save draft" or "Note title") before the task
 controls, which fills the set to about 12 or to the 24-candidate cap.

@@ -220,6 +220,12 @@ class DistractorLabelTest(unittest.TestCase):
         assert match, name
         return re.findall(r'"([^"]+)"', match.group(1))
 
+    @staticmethod
+    def csharp_list(source: str, name: str) -> list[str]:
+        match = re.search(rf"{name}\s*=\s*\{{(.*?)\}};", source, re.S)
+        assert match, name
+        return re.findall(r'"([^"]+)"', match.group(1))
+
     def test_labels(self) -> None:
         gtk3 = self.gtk3_lists()
         swift = (APPS / "macos/appkit/main.swift").read_text(encoding="utf-8")
@@ -232,6 +238,18 @@ class DistractorLabelTest(unittest.TestCase):
         self.assertEqual(list(gtk3["DISTRACTOR_FIELDS"]), self.swift_list(swift, "kDistractorFields"))
         self.assertIn("12: (8, 3, 1, 1), 24: (26, 12, 4, 2)", swift)
         self.assertEqual(gtk3["DENSITY_COUNTS"], {12: (8, 3, 1, 1), 24: (26, 12, 4, 2)})
+        for harness in ("wpf", "winui3"):
+            with self.subTest(harness=harness):
+                source = (APPS / f"windows/{harness}/TaskWindow.cs").read_text(encoding="utf-8")
+                self.assertEqual(list(gtk3["DISTRACTOR_BUTTONS"]), self.csharp_list(source, "DistractorButtons"))
+                self.assertEqual(list(gtk3["DISTRACTOR_CHECKBOXES"]), self.csharp_list(source, "DistractorCheckboxes"))
+                self.assertEqual(
+                    [label for group in gtk3["DISTRACTOR_RADIO_GROUPS"] for label in group],
+                    self.csharp_list(source, "DistractorRadioGroups"),
+                )
+                self.assertEqual(list(gtk3["DISTRACTOR_FIELDS"]), self.csharp_list(source, "DistractorFields"))
+                self.assertIn("[12] = (8, 3, 1, 1), [24] = (26, 12, 4, 2)", source)
+                self.assertIn(f'"CUA_{harness.upper()}_TASK_DENSITY"', source)
         labels = [
             *gtk3["DISTRACTOR_BUTTONS"], *gtk3["DISTRACTOR_CHECKBOXES"], *gtk3["DISTRACTOR_FIELDS"],
             *(label for group in gtk3["DISTRACTOR_RADIO_GROUPS"] for label in group),

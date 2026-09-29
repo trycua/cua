@@ -12,7 +12,7 @@ itself and checks it against the task's expected end state. The runners' own
 outcome events are not the oracle. Evidence (redacted JSONL logs plus
 ``summary.json``) goes to a new ``--output-dir``. ``--capture-dir`` also
 records sanitized ``get_window_state`` fixtures before and after each run.
-``--density 12`` or ``24`` launches the AppKit or GTK3 harness with
+``--density 12`` or ``24`` launches the AppKit, WPF, WinUI3, or GTK3 harness with
 ``CUA_<HARNESS>_TASK_DENSITY`` set, which adds benign distractor controls
 before the task controls; the harness confirms the density in its state file
 (#4312). ``measure_native.py`` turns the runner logs into an accuracy table.
@@ -68,10 +68,12 @@ HARNESSES = {
     "wpf": Harness(
         TEST_APPS / "harness-wpf/CuaTestHarness.Wpf.exe", "",
         "CuaTestHarness WPF Tasks", "cua.wpf_task_state_v1", "CUA_WPF_TASK_STATE",
+        density_env="CUA_WPF_TASK_DENSITY",
     ),
     "winui3": Harness(
         TEST_APPS / "harness-winui3/CuaTestHarness.WinUI3.exe", "",
         "CuaTestHarness WinUI3 Tasks", "cua.winui3_task_state_v1", "CUA_WINUI3_TASK_STATE",
+        density_env="CUA_WINUI3_TASK_DENSITY",
     ),
     "gtk3": Harness(
         TEST_APPS / "harness-gtk3/CuaTestHarness.Gtk3", "",
@@ -310,7 +312,7 @@ def main() -> None:
     parser.add_argument("--capture-dir", type=Path, help="also record sanitized window-state fixtures")
     parser.add_argument(
         "--density", type=int, choices=DENSITIES,
-        help="add the harness's benign distractor controls (AppKit and GTK3 only)",
+        help="add the harness's benign distractor controls (every harness except canvas)",
     )
     parser.add_argument("--output-dir", type=Path, required=True, help="new evidence directory")
     args = parser.parse_args()

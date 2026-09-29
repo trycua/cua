@@ -803,6 +803,25 @@ jobs:
                   assert not any(value in text for value in forbidden), (path, [v for v in forbidden if v in text])
           '@ | uv run --frozen python - (Join-Path $env:RUNNER_TEMP "jev-use-native-proof")
           if ($LASTEXITCODE -ne 0) { throw "evidence audit failed" }
+      # #4312: the opt-in distractor density fills the set past the 24-action
+      # cap; the relevance cap must still offer every declared task step.
+      - name: Run the native tasks at distractor density 24 with the mock agent
+        run: |
+          $density = Join-Path $env:RUNNER_TEMP "jev-use-native-density"
+          $capture = Join-Path $env:RUNNER_TEMP "jev-use-native-density-window-state"
+          uv run --frozen python verify_native.py --harness wpf --density 24 --output-dir $density --capture-dir $capture
+          if ($LASTEXITCODE -ne 0) { throw "native density verification failed" }
+          @'
+          import json, pathlib, sys
+          summary = json.loads((pathlib.Path(sys.argv[1]) / "summary.json").read_text(encoding="utf-8"))
+          assert summary["complete"] is True and summary["density"] == 24 and summary["harness"] == "wpf"
+          assert {c["task"] for c in summary["checks"]} == {"wpf-counter", "wpf-save-note", "wpf-choose-size"}
+          for check in summary["checks"]:
+              assert check["verified"] is True and check["runner_outcome"] == "verified", check
+              assert check["density"] == 24 and check["distractor_actions"] == 0, check
+              assert check["max_candidates"] == 26, check  # 24 actions + reobserve + abstain
+          '@ | uv run --frozen python - $density
+          if ($LASTEXITCODE -ne 0) { throw "density evidence audit failed" }
       - name: Stop Driver and harness processes
         if: always()
         run: |
@@ -816,6 +835,9 @@ jobs:
             ${{ runner.temp }}/jev-use-native-proof/summary.json
             ${{ runner.temp }}/jev-use-native-proof/*.jsonl
             ${{ runner.temp }}/jev-use-native-window-state/*.json
+            ${{ runner.temp }}/jev-use-native-density/summary.json
+            ${{ runner.temp }}/jev-use-native-density/*.jsonl
+            ${{ runner.temp }}/jev-use-native-density-window-state/*.json
           if-no-files-found: error
           retention-days: 14
 
@@ -927,6 +949,25 @@ jobs:
                   assert not any(value in text for value in forbidden), (path, [v for v in forbidden if v in text])
           '@ | uv run --frozen python - (Join-Path $env:RUNNER_TEMP "jev-use-native-proof")
           if ($LASTEXITCODE -ne 0) { throw "evidence audit failed" }
+      # #4312: the opt-in distractor density fills the set past the 24-action
+      # cap; the relevance cap must still offer every declared task step.
+      - name: Run the native tasks at distractor density 24 with the mock agent
+        run: |
+          $density = Join-Path $env:RUNNER_TEMP "jev-use-native-density"
+          $capture = Join-Path $env:RUNNER_TEMP "jev-use-native-density-window-state"
+          uv run --frozen python verify_native.py --harness winui3 --density 24 --output-dir $density --capture-dir $capture
+          if ($LASTEXITCODE -ne 0) { throw "native density verification failed" }
+          @'
+          import json, pathlib, sys
+          summary = json.loads((pathlib.Path(sys.argv[1]) / "summary.json").read_text(encoding="utf-8"))
+          assert summary["complete"] is True and summary["density"] == 24 and summary["harness"] == "winui3"
+          assert {c["task"] for c in summary["checks"]} == {"winui3-counter", "winui3-save-note", "winui3-choose-size"}
+          for check in summary["checks"]:
+              assert check["verified"] is True and check["runner_outcome"] == "verified", check
+              assert check["density"] == 24 and check["distractor_actions"] == 0, check
+              assert check["max_candidates"] == 26, check  # 24 actions + reobserve + abstain
+          '@ | uv run --frozen python - $density
+          if ($LASTEXITCODE -ne 0) { throw "density evidence audit failed" }
       - name: Stop Driver and harness processes
         if: always()
         run: |
@@ -940,6 +981,9 @@ jobs:
             ${{ runner.temp }}/jev-use-native-proof/summary.json
             ${{ runner.temp }}/jev-use-native-proof/*.jsonl
             ${{ runner.temp }}/jev-use-native-window-state/*.json
+            ${{ runner.temp }}/jev-use-native-density/summary.json
+            ${{ runner.temp }}/jev-use-native-density/*.jsonl
+            ${{ runner.temp }}/jev-use-native-density-window-state/*.json
           if-no-files-found: error
           retention-days: 14
 

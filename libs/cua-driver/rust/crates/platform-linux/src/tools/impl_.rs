@@ -10347,6 +10347,24 @@ impl Tool for RightClickTool {
 
 // ── drag ─────────────────────────────────────────────────────────────────────
 
+/// Typed refusal for a modified drag on native Wayland. The Wayland pointer
+/// routes (virtual pointer, libei, and the nested cua-compositor socket) do not
+/// hold keyboard modifier state across a pointer gesture, so the drag is
+/// refused before any input is dispatched rather than degraded to an
+/// unmodified drag. The stable `code` lets callers branch without parsing text.
+fn wayland_modified_drag_refusal() -> ToolResult {
+    const DETAIL: &str = "the pointer route cannot carry keyboard modifier state";
+    ToolResult::error(format!(
+        "modified drags are unavailable on native Wayland: {DETAIL}"
+    ))
+    .with_structured(json!({
+        "code": "modified_pointer_unavailable",
+        "effect": "refused",
+        "verified": false,
+        "detail": DETAIL,
+    }))
+}
+
 pub struct DragTool {
     state: Arc<ToolState>,
 }
@@ -10416,9 +10434,7 @@ impl Tool for DragTool {
             let modifiers = input.modifier.unwrap_or_default();
             let wayland = crate::wayland::wayland_input_enabled();
             if wayland && !modifiers.is_empty() {
-                return ToolResult::error(
-                    "modified drags are unavailable on native Wayland: the pointer route cannot carry keyboard modifier state",
-                );
+                return wayland_modified_drag_refusal();
             }
             let path = if wayland { "wayland_desktop" } else { "xtest" };
             let result = tokio::task::spawn_blocking(move || {
@@ -10479,9 +10495,7 @@ impl Tool for DragTool {
         let isolated_background = isolated_hyprland_background(delivery);
         let native_refusal = if !isolated_background {
             if crate::wayland::wayland_input_enabled() && !modifiers.is_empty() {
-                return ToolResult::error(
-                    "modified drags are unavailable on native Wayland: the pointer route cannot carry keyboard modifier state",
-                );
+                return wayland_modified_drag_refusal();
             }
             if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
                 return refusal;

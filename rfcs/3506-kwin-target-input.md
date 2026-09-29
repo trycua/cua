@@ -24,9 +24,13 @@ to guard a bounded portal input burst, and refuse input when confirmation fails.
 The recording and exact API calls belong on #3507. This RFC remains `review`;
 the requested Plasma 6.6 safety proof has not been supplied.
 
-The [foreground proof procedure](3506/plasma-6.6-proof.md) records the
-source-checked API candidates, the token-to-window identity bridge prototype,
-the required observations, and the outstanding live evidence. A focus check
+The [Plasma/KWin 6.6.4 experiment](3506/plasma-6.6-proof.md) ran in an isolated
+QEMU virtual machine with KVM acceleration, booted from a Kubuntu 26.04 live
+ISO (4 vCPUs, 8 GiB RAM), not in Docker. It reproduced wrong-window delivery
+after confirmation during a forced focus takeover. The report records the
+API calls, identity bridge, operation journals, and reproduction procedure.
+Its retained video covers ordinary operations 1–6 only, not the postcheck
+counterexample, and still needs public attachment. A focus check
 does not establish atomic target-bound delivery. Any accepted foreground
 increment must describe its measured timing and residual focus race honestly.
 AX actions and exact background refusals remain unchanged. Target-addressable

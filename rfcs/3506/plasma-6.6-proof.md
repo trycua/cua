@@ -4,8 +4,9 @@ Status: **Plasma 6.6.4 executed; post-confirmation input leaked to B.**
 
 ## Completed isolated 6.6.4 run
 
-The existing sidecar was built inside a QEMU/KVM Kubuntu guest (8 GiB,
-4 vCPU), from `2b99a150d00aa35ded968b251901b6dee1ce3504`, with the
+The existing sidecar was built inside a QEMU virtual machine with KVM
+acceleration, booted from a Kubuntu 26.04 live ISO (8 GiB, 4 vCPUs), from
+`2b99a150d00aa35ded968b251901b6dee1ce3504`, with the
 separately applied helper/Driver patches. Running KWin and Plasma were
 6.6.4, Qt 6.10.2, guest UID 1000, Wayland `wayland-0`. Helper, fixture,
 portal and libei transport shared the guest session. No host helper was
@@ -13,6 +14,11 @@ installed and no production source was changed; RFC remains `review`.
 The existing supported scripting and portal calls below were used unchanged.
 The runner gained `--binary`, `--helper-name`, `--ungated` and a stale-generation
 case; those sidecar-only changes are included in this PR.
+
+This experiment did not run in Docker. The earlier CachyOS host experiment
+used Plasma/KWin 6.7.5 and is documented [separately](host-6.7.5-result.md).
+The guest's live root overlay was RAM-only; the retained work disk preserves
+sources, binaries and journals, not a ready-to-resume desktop session.
 
 | Case                             | Result                                                                            | Evidence           | Limitation                                          |
 | -------------------------------- | --------------------------------------------------------------------------------- | ------------------ | --------------------------------------------------- |

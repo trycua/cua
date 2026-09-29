@@ -32,6 +32,23 @@ sources, binaries and journals, not a ready-to-resume desktop session.
 | Background                       | Exact code `background_unavailable`; zero submission/emission/events              | Operation 10       | Background delivery, not a third mode               |
 | Postcheck focus takeover         | **A zero, B received one pair intended for A**                                    | Operation 11       | Deterministic postcheck gate; no video of this case |
 
+### Relation to the at-most-once/replay review concern
+
+Operation 9 is the part of this run that bears on the
+[maintainer's acknowledgement-loss/replay concern](https://github.com/trycua/cua/pull/3507#issuecomment-5804705353).
+The worker emitted one press/release pair to A, its final reply was deliberately
+lost, and the caller returned `unknown` rather than a zero-dispatch refusal.
+The parent exclusive ledger then refused reuse of operation 9 before Driver
+construction, so this uncertain mutation was not emitted a second time.
+
+This is **partial validation only**. It does not prove daemon-wide durable
+deduplication, replay protection across a newly constructed Driver/private
+connection, actual loss of the outer SDK acknowledgement, or the complete
+requested sequence of reconnect/re-resolve the same target, prove no second
+emission, then admit a genuinely new operation with a fresh sequence. Those
+remain implementation/acceptance gaps and must not be inferred from the
+operation-9 result.
+
 [Machine-readable evidence](evidence/plasma-6.6.4.json) retains all operations,
 activation observations, guest monotonic timing, versions and artifact hashes.
 Ungated check-to-emission spans were 15.119 and 15.367 microseconds.

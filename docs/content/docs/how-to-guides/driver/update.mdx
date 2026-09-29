@@ -46,6 +46,35 @@ in `error`. A saved stable/nightly preference is ignored and left unchanged.
 The vendor update and channel instructions that follow apply to installations
 not managed by pacman.
 
+## Before updating to token-only element targeting
+
+Releases that include [#3873](https://github.com/trycua/cua/pull/3873) address
+accessibility elements only by `element_token`. Update scripts, agents, and
+wrappers that act on elements before you update:
+
+1. Pass `element_token` instead of `element_index` or `snapshot_id`. Read it
+   from `structuredContent.elements[].element_token` in the latest
+   `get_window_state` result and send it with the window's `pid`. The token
+   names its window, so `window_id` is optional; a different `window_id` is
+   refused with `conflicting_element_target`. `get_window_state` still returns
+   `element_index` and `snapshot_id` for display and correlation.
+2. Remove arguments that a tool does not advertise. Tools with closed input
+   schemas now refuse unknown argument names with `invalid_arguments`
+   (`<tool>: unknown argument <name>`) instead of ignoring them. This includes
+   `element_index` and `snapshot_id` on action tools.
+3. Read a window before you use window-relative pixels. Pixel actions and
+   `zoom` against a window target return `screenshot_context_missing` until
+   the same session has read that window with a screenshot; Driver no longer
+   assumes native pixels. `from_zoom` coordinates return `zoom_context_missing`
+   once a newer read replaces the zoomed snapshot. Coordinates for a desktop
+   target are unaffected.
+4. Re-read after a stale token. Each `get_window_state` call replaces the
+   previous snapshot of that window and lists the ids it replaced in
+   `invalidated_snapshot_ids`. An older token, or a token from another Driver
+   runtime, is refused with `stale_element_token`, which lists the process's
+   current snapshots. Earlier releases reported a token from another runtime
+   as `generation_mismatch`.
+
 ## Before updating from 0.12.x to 0.13.0
 
 The installer command, CLI/MCP connection flow, tool names, and Python and

@@ -161,7 +161,7 @@ native `do_action` acknowledgement alone is not task completion.
 
 ## AT-SPI needs the session bus (headless / containers / `runuser`)
 
-AT-SPI — the accessibility tree behind `get_window_state`, element-indexed
+AT-SPI — the accessibility tree behind `get_window_state`, `element_token`
 clicks, and focus-free `type_text` — lives **entirely on the desktop
 session's D-Bus**. cua-driver reaches it via `DBUS_SESSION_BUS_ADDRESS`. When
 the daemon is started _inside_ a normal desktop login that variable is already

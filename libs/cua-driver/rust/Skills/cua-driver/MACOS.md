@@ -231,7 +231,7 @@ editor state.
      tell the user to run `cua-driver permissions grant` and approve it.
    - If Screen Recording is `false`, continue only when the task can be
      completed and verified from the AX tree. Call `get_window_state` with
-     `include_screenshot:false` and use element-indexed AX actions. Do not use
+     `include_screenshot:false` and use `element_token` AX actions. Do not use
      screenshots, pixel coordinates, or pixel-based verification.
    - If the task materially needs pixels, stop and ask the user to run
      `cua-driver permissions grant`. That command explains and deliberately
@@ -297,7 +297,7 @@ breadth Windows and Linux already exposed (`type_text` / `press_key` /
 no raise, no focus steal. `"foreground"` briefly fronts the owning app,
 acts, then restores the prior frontmost — the explicit last resort for a
 surface that only accepts events while frontmost (the canvas/viewport/game
-case below). Unmodified element-indexed (AX) actions remain background-capable
+case below). Unmodified `element_token` (AX) actions remain background-capable
 and hold the no-foreground contract without the flag.
 
 A foreground window-scoped **pixel** `click`, `double_click`, or
@@ -505,7 +505,7 @@ starting point for new browser workflows.
 | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | macOS system-alert beep on `press_key` with no visible change | Target window is minimized; Return / Space / Tab commits don't establish real renderer focus on minimized windows | AX-click a clickable equivalent (Go button, Submit button, checkbox) instead of pressing the key; see "Keyboard commits on minimized windows" under the Browser section                                                             |
 | `Accessibility permission not granted`                        | TCC not granted                                                                                                   | Stop; tell user to grant in System Settings                                                                                                                                                                                         |
-| `Screen Recording permission not granted`                     | TCC not granted for capture                                                                                       | Screenshots and pixel actions are unavailable. If the task is AX-completable, use `get_window_state({include_screenshot:false})` and element-indexed actions; otherwise stop and ask the user to run `cua-driver permissions grant` |
+| `Screen Recording permission not granted`                     | TCC not granted for capture                                                                                       | Screenshots and pixel actions are unavailable. If the task is AX-completable, use `get_window_state({include_screenshot:false})` and `element_token` actions; otherwise stop and ask the user to run `cua-driver permissions grant` |
 
 ## Example end-to-end task (macOS)
 

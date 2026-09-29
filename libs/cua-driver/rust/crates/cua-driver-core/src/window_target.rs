@@ -357,6 +357,32 @@ fn note_resolved_window(mut result: ToolResult, candidate: &WindowTargetCandidat
     result
 }
 
+/// Normalize a front-to-back enumeration position into the shared
+/// `list_windows` `z_index`: higher values are closer to the front, the
+/// frontmost of `total` windows is `total - 1`, and the backmost is `0`.
+///
+/// macOS `CGWindowListCopyWindowInfo` and Windows `EnumWindows` enumerate
+/// front to back. X11 EWMH stacking lists are already bottom to top, so the
+/// X11 adapter uses its enumeration index directly and reports the same values.
+pub fn z_index_from_front_to_back(total: usize, position: usize) -> usize {
+    total.saturating_sub(1).saturating_sub(position)
+}
+
+#[cfg(test)]
+mod z_index_tests {
+    use super::z_index_from_front_to_back;
+
+    #[test]
+    fn front_to_back_order_normalizes_to_zero_based_higher_is_frontmost() {
+        let indices: Vec<_> = (0..3)
+            .map(|position| z_index_from_front_to_back(3, position))
+            .collect();
+        assert_eq!(indices, vec![2, 1, 0]);
+        assert_eq!(z_index_from_front_to_back(0, 0), 0);
+        assert_eq!(z_index_from_front_to_back(3, 7), 0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

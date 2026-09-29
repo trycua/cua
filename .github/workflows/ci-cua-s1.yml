@@ -17,9 +17,14 @@ permissions:
 
 jobs:
   test:
-    name: Lint, test, and train smoke
+    name: Lint, test, and train smoke (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep in sync with requires-python and the classifiers in pyproject.toml.
+        python-version: ["3.11", "3.12", "3.13"]
     env:
       CUA_TELEMETRY_ENABLED: "false"
       HF_DATASETS_OFFLINE: "1"
@@ -38,17 +43,19 @@ jobs:
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-dependency-glob: libs/cua-s1/python/uv.lock
 
       - name: Install test dependencies
-        run: uv sync --frozen --extra pdf --group test
+        run: |
+          uv lock --check
+          uv sync --frozen --extra pdf --group test
 
       - name: Check formatting and lint
         run: |
-          uv run --frozen ruff format --check src tests ../evals ../training
-          uv run --frozen ruff check src tests ../evals ../training
+          uv run --frozen ruff format --check src tests ../evals ../training ../ci
+          uv run --frozen ruff check src tests ../evals ../training ../ci
 
       - name: Check package imports
         run: |
@@ -118,3 +125,66 @@ jobs:
           second_document = json.loads((root / "second/config.json").read_text(encoding="utf-8"))
           assert first_document == second_document
           PY
+
+      - name: Check four-b inference dependencies
+        run: |
+          uv sync --frozen --extra four-b --group test
+          uv run --frozen --extra four-b --group test python - <<'PY'
+          import torchvision
+          import transformers
+          from peft import PeftModel
+          from transformers import (
+              AutoModelForCausalLM,
+              AutoModelForImageTextToText,
+              AutoProcessor,
+              AutoTokenizer,
+          )
+          from transformers.models.qwen3_5 import modeling_qwen3_5
+          from transformers.utils import is_torchvision_available
+
+          assert transformers.__version__.startswith("5.")
+          assert is_torchvision_available()
+          assert all((torchvision, PeftModel, modeling_qwen3_5, AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor, AutoTokenizer))
+          PY
+          uv run --frozen --extra four-b --group test pytest -q tests/test_four_b.py
+
+  macos-unit:
+    # Apple silicon is the primary local inference platform for Cua-S1-4B
+    # (S1_DEVICE=mps). This job covers the offline unit suite and the four-b
+    # dependency resolution on macOS arm64; it does not download weights.
+    name: macOS unit (Python 3.12)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      CUA_TELEMETRY_ENABLED: "false"
+      HF_DATASETS_OFFLINE: "1"
+      HF_HUB_OFFLINE: "1"
+      PYTHONHASHSEED: "0"
+      TRANSFORMERS_OFFLINE: "1"
+      WANDB_MODE: disabled
+    defaults:
+      run:
+        working-directory: libs/cua-s1/python
+
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: libs/cua-s1/python/uv.lock
+
+      - name: Run unit tests with the four-b inference extra
+        run: |
+          uv sync --frozen --extra four-b --extra pdf --group test
+          uv run --frozen --extra four-b --extra pdf --group test python - <<'PY'
+          import torch
+          import transformers
+
+          assert transformers.__version__.startswith("5.")
+          print("torch", torch.__version__, "mps built:", torch.backends.mps.is_built())
+          PY
+          uv run --frozen --extra four-b --extra pdf --group test pytest -q

@@ -118,6 +118,18 @@ fn corrective_mutations(requested: Frame, observed: Frame) -> &'static [FrameMut
     }
 }
 
+// A window whose size cannot be set, such as Calculator's, can still be moved. Writing the
+// size only when it changes keeps AXSize out of the request, so such a window only needs a
+// settable AXPosition.
+fn initial_mutations(requested: Frame, current: Frame) -> &'static [FrameMutation] {
+    const TOLERANCE: f64 = 2.0;
+    if requested.size_approximately_eq(current, TOLERANCE) {
+        &POSITION_ONLY
+    } else {
+        &FRAME_MUTATION_ORDER
+    }
+}
+
 fn window_server_frame(window_id: u32) -> Option<Frame> {
     crate::windows::window_bounds_by_id(window_id).map(|bounds| Frame {
         x: bounds.x,
@@ -179,16 +191,22 @@ fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String
 
         let result = if let Some(target) = target {
             AXUIElementSetMessagingTimeout(target, 2.0);
+            let before = window_server_frame(window_id);
+            let mutations = before.map_or(&FRAME_MUTATION_ORDER[..], |before| {
+                initial_mutations(requested, before)
+            });
             if !is_attribute_settable(target, "AXPosition") {
                 Err(format!(
                     "window_id {window_id} does not expose a settable AXPosition"
                 ))
-            } else if !is_attribute_settable(target, "AXSize") {
+            } else if mutations.contains(&FrameMutation::Size)
+                && !is_attribute_settable(target, "AXSize")
+            {
                 Err(format!(
                     "window_id {window_id} does not expose a settable AXSize"
                 ))
             } else {
-                let before = window_server_frame(window_id).ok_or_else(|| {
+                let before = before.ok_or_else(|| {
                     format!(
                         "could not read the current WindowServer frame of window_id {window_id}"
                     )
@@ -220,7 +238,7 @@ fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String
                         }
                         errors
                     };
-                    mutation_errors.extend(apply_mutations(&FRAME_MUTATION_ORDER));
+                    mutation_errors.extend(apply_mutations(mutations));
 
                     let mut observed = None;
                     for attempt in 0..20 {
@@ -394,6 +412,37 @@ mod tests {
         assert_eq!(
             FRAME_MUTATION_ORDER,
             [FrameMutation::Position, FrameMutation::Size]
+        );
+    }
+
+    #[test]
+    fn initial_pass_writes_the_size_only_when_it_changes() {
+        let current = Frame {
+            x: 414.0,
+            y: 560.0,
+            width: 230.0,
+            height: 408.0,
+        };
+        assert_eq!(
+            initial_mutations(
+                Frame {
+                    x: 454.0,
+                    y: 600.0,
+                    ..current
+                },
+                current
+            ),
+            &POSITION_ONLY
+        );
+        assert_eq!(
+            initial_mutations(
+                Frame {
+                    width: 500.0,
+                    ..current
+                },
+                current
+            ),
+            &FRAME_MUTATION_ORDER
         );
     }
 

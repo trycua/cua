@@ -943,13 +943,9 @@ mod tests {
 
     #[test]
     fn capture_without_display_degrades_to_none() {
-        let prior = std::env::var_os("DISPLAY");
-        std::env::set_var("DISPLAY", ":9999999");
+        let display = crate::test_env::unreachable_x11_display();
         let snapshot = FocusSnapshot::capture();
-        match prior {
-            Some(v) => std::env::set_var("DISPLAY", v),
-            None => std::env::remove_var("DISPLAY"),
-        }
+        drop(display);
         assert!(snapshot.is_none());
     }
 }

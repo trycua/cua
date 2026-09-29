@@ -188,6 +188,22 @@ struct PerceptionState {
     cancellation_notify: Notify,
 }
 
+impl PerceptionState {
+    fn shutdown_now(&self) {
+        self.cancellation_epoch.fetch_add(1, Ordering::AcqRel);
+        self.cancellation_notify.notify_waiters();
+        self.drop_idle_worker();
+    }
+
+    /// Drop the warm worker only when no request currently owns it. An
+    /// in-flight request keeps its worker and finishes normally.
+    fn drop_idle_worker(&self) {
+        if let Ok(mut worker) = self.worker.try_lock() {
+            worker.take();
+        }
+    }
+}
+
 impl Drop for PerceptionState {
     fn drop(&mut self) {
         self.worker.get_mut().take();
@@ -259,13 +275,14 @@ impl PerceptionClient {
         self.config.is_some()
     }
 
+    /// The verified worker configuration, when an extension is installed.
+    pub fn worker_config(&self) -> Option<&PerceptionWorkerConfig> {
+        self.config.as_deref()
+    }
+
     /// Cancel any in-flight request and synchronously drop an idle worker.
     pub fn shutdown_now(&self) {
-        self.state.cancellation_epoch.fetch_add(1, Ordering::AcqRel);
-        self.state.cancellation_notify.notify_waiters();
-        if let Ok(mut worker) = self.state.worker.try_lock() {
-            worker.take();
-        }
+        self.state.shutdown_now();
     }
 
     /// Launch one worker process and issue exactly one parse. Failures are
@@ -417,6 +434,169 @@ impl PerceptionClient {
             policy.shutdown_timeout,
         );
         Ok(result)
+    }
+}
+
+/// Cheap change detection plus full verification for an installed worker.
+///
+/// A live Driver consults the fingerprint before every parse and calls
+/// [`resolve`](Self::resolve) only when it changes, so install, update, and
+/// removal take effect without a restart while full verification still runs
+/// for every newly observed installation state.
+pub trait PerceptionClientResolver: Send + Sync + 'static {
+    /// Return a token that changes whenever install, update, or removal could
+    /// change the resolved client. This must be cheap: it runs on every parse
+    /// and must not hash payloads.
+    fn fingerprint(&self) -> String;
+
+    /// Fully verify the installed extension and build its client. A missing or
+    /// unusable installation yields [`PerceptionClient::unavailable`].
+    fn resolve(&self) -> PerceptionClient;
+}
+
+/// The perception client a registered `parse_visual_regions` tool uses.
+///
+/// A fixed handle always returns the same client. A live handle re-resolves
+/// its client whenever the resolver's fingerprint changes. Replacing a client
+/// never cancels a request already running on it: that request holds its own
+/// reference and finishes against the version it started with, after which
+/// the replaced worker is released.
+#[derive(Clone)]
+pub struct PerceptionClientHandle {
+    source: Arc<PerceptionClientSource>,
+}
+
+enum PerceptionClientSource {
+    Fixed(PerceptionClient),
+    Live(LivePerceptionClient),
+}
+
+struct LivePerceptionClient {
+    resolver: Arc<dyn PerceptionClientResolver>,
+    /// Serializes full verification so concurrent parses verify one change once.
+    resolving: std::sync::Mutex<()>,
+    state: std::sync::Mutex<LivePerceptionState>,
+}
+
+#[derive(Default)]
+struct LivePerceptionState {
+    current: Option<(String, PerceptionClient)>,
+    /// Replaced clients that may still serve an in-flight request, retained
+    /// weakly so a session end can still cancel that request.
+    retired: Vec<std::sync::Weak<PerceptionState>>,
+}
+
+impl PerceptionClientHandle {
+    pub fn fixed(client: PerceptionClient) -> Self {
+        Self {
+            source: Arc::new(PerceptionClientSource::Fixed(client)),
+        }
+    }
+
+    pub fn live(resolver: Arc<dyn PerceptionClientResolver>) -> Self {
+        Self {
+            source: Arc::new(PerceptionClientSource::Live(LivePerceptionClient {
+                resolver,
+                resolving: std::sync::Mutex::new(()),
+                state: std::sync::Mutex::new(LivePerceptionState::default()),
+            })),
+        }
+    }
+
+    /// Return the client for the currently installed extension. A live handle
+    /// may perform blocking verification, so async callers use
+    /// [`current`](Self::current).
+    pub fn current_blocking(&self) -> PerceptionClient {
+        match self.source.as_ref() {
+            PerceptionClientSource::Fixed(client) => client.clone(),
+            PerceptionClientSource::Live(live) => live.current(),
+        }
+    }
+
+    /// Return the client for the currently installed extension, running any
+    /// required verification off the async executor.
+    pub async fn current(&self) -> PerceptionClient {
+        match self.source.as_ref() {
+            PerceptionClientSource::Fixed(client) => client.clone(),
+            PerceptionClientSource::Live(_) => {
+                let handle = self.clone();
+                tokio::task::spawn_blocking(move || handle.current_blocking())
+                    .await
+                    .unwrap_or_else(|error| {
+                        tracing::warn!("perception client resolution task failed: {error}");
+                        PerceptionClient::unavailable()
+                    })
+            }
+        }
+    }
+
+    /// Cancel in-flight requests and drop idle workers for the current client
+    /// and for any replaced client still serving a request.
+    pub fn shutdown_now(&self) {
+        match self.source.as_ref() {
+            PerceptionClientSource::Fixed(client) => client.shutdown_now(),
+            PerceptionClientSource::Live(live) => {
+                let mut state = live.lock_state();
+                if let Some((_, client)) = &state.current {
+                    client.shutdown_now();
+                }
+                state.retired.retain(|retired| match retired.upgrade() {
+                    Some(retired) => {
+                        retired.shutdown_now();
+                        true
+                    }
+                    None => false,
+                });
+            }
+        }
+    }
+}
+
+impl From<PerceptionClient> for PerceptionClientHandle {
+    fn from(client: PerceptionClient) -> Self {
+        Self::fixed(client)
+    }
+}
+
+impl LivePerceptionClient {
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, LivePerceptionState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn cached(&self, fingerprint: &str) -> Option<PerceptionClient> {
+        self.lock_state()
+            .current
+            .as_ref()
+            .filter(|(cached, _)| cached == fingerprint)
+            .map(|(_, client)| client.clone())
+    }
+
+    fn current(&self) -> PerceptionClient {
+        let fingerprint = self.resolver.fingerprint();
+        if let Some(client) = self.cached(&fingerprint) {
+            return client;
+        }
+        let _resolving = self
+            .resolving
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Another caller may have verified this state while we waited.
+        let fingerprint = self.resolver.fingerprint();
+        if let Some(client) = self.cached(&fingerprint) {
+            return client;
+        }
+        // The fingerprint is sampled before verification, so a change racing
+        // with resolution is observed again by the next request.
+        let client = self.resolver.resolve();
+        let mut state = self.lock_state();
+        if let Some((_, replaced)) = state.current.replace((fingerprint, client.clone())) {
+            replaced.state.drop_idle_worker();
+            state.retired.retain(|retired| retired.strong_count() > 0);
+            state.retired.push(Arc::downgrade(&replaced.state));
+        }
+        client
     }
 }
 
@@ -1049,7 +1229,11 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     fn with_fixture_interpreter(script: &str) -> String {
-        let interpreter = fixture_python_interpreter();
+        // The sandbox grants exec on the canonical interpreter only, and it
+        // cannot read a symlink along a configured path (for example a hosted
+        // runner's `/Applications/Xcode.app -> Xcode_<version>.app`), so the
+        // shebang must name the resolved file.
+        let interpreter = std::fs::canonicalize(fixture_python_interpreter()).unwrap();
         script.replacen(
             "#!/usr/bin/env python3",
             &format!("#!{}", interpreter.display()),
@@ -1094,6 +1278,8 @@ request = read_frame()
 if counter:
     with open(counter, 'a', encoding='utf-8') as handle:
         handle.write('parse\n')
+if mode == 'slow':
+    time.sleep(1.0)
 if mode == 'hang':
     time.sleep(60)
 elif mode == 'crash':
@@ -1846,6 +2032,73 @@ write_frame({'protocol':'cua-perception/1','request_id':request['request_id'],'s
             .unwrap();
         assert_eq!(result["runtime"], "fixture");
         assert_eq!(std::fs::read_to_string(counter).unwrap(), "parse\n");
+    }
+
+    struct FixtureResolver(std::sync::Mutex<(String, PerceptionClient)>);
+
+    impl PerceptionClientResolver for FixtureResolver {
+        fn fingerprint(&self) -> String {
+            self.0.lock().unwrap().0.clone()
+        }
+
+        fn resolve(&self) -> PerceptionClient {
+            self.0.lock().unwrap().1.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn live_handle_replacement_does_not_break_an_in_flight_parse() {
+        let counter_directory = tempfile::tempdir().unwrap();
+        let counter = counter_directory.path().join("count");
+        let (directory, worker) = fixture_worker("slow", Some(&counter));
+        let installed = client(&directory, worker, Duration::from_secs(10), 1024 * 1024);
+        let resolver = Arc::new(FixtureResolver(std::sync::Mutex::new((
+            "v1".to_owned(),
+            installed,
+        ))));
+        let handle = PerceptionClientHandle::live(resolver.clone());
+
+        let in_flight = {
+            let handle = handle.clone();
+            tokio::spawn(async move {
+                handle
+                    .current()
+                    .await
+                    .parse(
+                        "capture-test",
+                        2,
+                        2,
+                        &[1, 2, 3, 4],
+                        &PerceptionCancellation::default(),
+                    )
+                    .await
+            })
+        };
+        for _ in 0..500 {
+            if std::fs::read_to_string(&counter).is_ok_and(|calls| calls.contains("parse")) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(counter.exists(), "the first parse must reach the worker");
+
+        *resolver.0.lock().unwrap() = ("removed".to_owned(), PerceptionClient::unavailable());
+        let replaced = handle
+            .current()
+            .await
+            .parse(
+                "capture-test",
+                2,
+                2,
+                &[1, 2, 3, 4],
+                &PerceptionCancellation::default(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(replaced.code, VisualParseErrorCode::NotInstalled);
+
+        let result = in_flight.await.unwrap().unwrap();
+        assert_eq!(result["runtime"], "fixture");
     }
 
     #[tokio::test]

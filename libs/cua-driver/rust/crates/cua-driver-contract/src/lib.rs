@@ -8,6 +8,7 @@
 //! typed inputs/results and versioned declarations used by the live runtime
 //! and to generate experimental client SDKs.
 
+use schemars::{generate::SchemaSettings, transform::RecursiveTransform, Schema};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -24,6 +25,24 @@ mod verification;
 mod visual;
 mod windows;
 pub use windows::*;
+
+pub(crate) fn schema_settings() -> SchemaSettings {
+    SchemaSettings::draft2020_12()
+        .with(|settings| {
+            settings.meta_schema = None;
+            settings.inline_subschemas = true;
+        })
+        .with_transform(RecursiveTransform(drop_schemars_numeric_format))
+}
+
+fn drop_schemars_numeric_format(schema: &mut Schema) {
+    if matches!(
+        schema.get("format").and_then(Value::as_str),
+        Some("uint32" | "uint64" | "double")
+    ) {
+        schema.remove("format");
+    }
+}
 
 pub use cursor::{
     classify_cursor_semantics, CursorAction, CursorDelivery, CursorPlayback, CursorReducedMotion,
@@ -44,13 +63,13 @@ pub use outputs::{
     refusal_envelope_schema, ActionDelivery, ActionDeliveryMode, ActionEffect, ActionError,
     ActionEscalation, ActionEscalationReason, ActionEscalationTarget, ActionEvidence,
     ActionEvidenceKind, ActionResult, ActionResultValidationError, ActionRoute,
-    ClipboardReadOutput, ClipboardWriteOutput, CursorMotionOutput, CursorPointOutput,
-    CursorPositionOutput, CursorThemeOutput, CursorVisualOutput, DesktopStateOutput,
-    EffectiveScope, EndSessionOutput, GetAgentCursorStateOutput, ListSessionsOutput,
-    ScreenSizeOutput, SessionClientKindOutput, SessionLifecycleState, SessionOutput,
-    SessionStateOutput, SessionTransportOutput, SetAgentCursorEnabledOutput,
-    SetAgentCursorMotionOutput, SetAgentCursorThemeOutput, StartSessionOutput, ToolOutput,
-    TOOL_INVOCATION_FAILED_CODE,
+    AgentOverlayCapture, AgentOverlayCaptureStatus, ClipboardReadOutput, ClipboardWriteOutput,
+    CursorMotionOutput, CursorPointOutput, CursorPositionOutput, CursorThemeOutput,
+    CursorVisualOutput, DesktopStateOutput, EffectiveScope, EndSessionOutput,
+    GetAgentCursorStateOutput, ListSessionsOutput, ScreenSizeOutput, SessionClientKindOutput,
+    SessionLifecycleState, SessionOutput, SessionStateOutput, SessionTransportOutput,
+    SetAgentCursorEnabledOutput, SetAgentCursorMotionOutput, SetAgentCursorThemeOutput,
+    StartSessionOutput, ToolOutput, TOOL_INVOCATION_FAILED_CODE,
 };
 pub use verification::{
     BoundsExpectation, ElementPredicate, ElementSelector, PredicateOutcome, StatePredicate,
@@ -334,6 +353,72 @@ pub fn validate_success_output(name: &str, value: Value) -> Result<bool, String>
 mod tests {
     use super::*;
 
+    #[derive(Serialize, Deserialize)]
+    struct NumericFormatFixture;
+
+    impl schemars::JsonSchema for NumericFormatFixture {
+        fn schema_name() -> std::borrow::Cow<'static, str> {
+            "NumericFormatFixture".into()
+        }
+
+        fn json_schema(_: &mut schemars::SchemaGenerator) -> Schema {
+            schemars::json_schema!({
+                "type": "object",
+                "properties": {
+                    "count": {"type": "integer", "format": "uint32"},
+                    "frame": {"type": "integer", "format": "uint64"},
+                    "ratio": {"type": "number", "format": "double"},
+                    "created_at": {"type": "string", "format": "date-time"},
+                    "format": {"type": "string"},
+                    "annotation": {
+                        "const": {"format": "uint32"},
+                        "default": {"format": "uint64"},
+                        "examples": [{"format": "double"}]
+                    }
+                },
+                "required": ["format"]
+            })
+        }
+    }
+
+    impl ToolInput for NumericFormatFixture {
+        const TOOL_NAME: &'static str = "numeric_format_fixture";
+    }
+
+    impl ToolOutput for NumericFormatFixture {}
+
+    #[test]
+    fn input_and_output_schemas_drop_only_schemars_numeric_formats() {
+        let schemas = [
+            <NumericFormatFixture as ToolInput>::input_schema(),
+            <NumericFormatFixture as ToolOutput>::output_schema(),
+        ];
+
+        for schema in schemas {
+            for property in ["count", "frame", "ratio"] {
+                assert!(schema["properties"][property].get("format").is_none());
+            }
+            assert_eq!(schema["properties"]["created_at"]["format"], "date-time");
+            assert_eq!(
+                schema["properties"]["format"],
+                serde_json::json!({"type": "string"})
+            );
+            assert_eq!(schema["required"], serde_json::json!(["format"]));
+            assert_eq!(
+                schema["properties"]["annotation"]["const"],
+                serde_json::json!({"format": "uint32"})
+            );
+            assert_eq!(
+                schema["properties"]["annotation"]["default"],
+                serde_json::json!({"format": "uint64"})
+            );
+            assert_eq!(
+                schema["properties"]["annotation"]["examples"],
+                serde_json::json!([{"format": "double"}])
+            );
+        }
+    }
+
     #[test]
     fn manifest_is_sorted_and_versioned() {
         let manifest = manifest();
@@ -409,8 +494,15 @@ mod tests {
         );
         assert_eq!(
             contract.input_schema["properties"]["expect"]["items"]["properties"]["element"]
-                ["properties"]["exists"]["enum"],
-            serde_json::json!([true])
+                ["properties"]["exists"]["type"],
+            serde_json::json!("boolean")
+        );
+        assert!(
+            contract.input_schema["properties"]["expect"]["items"]["properties"]["element"]
+                ["properties"]["exists"]
+                .get("enum")
+                .is_none(),
+            "verify_state element.exists should not specify enum (must remain plain boolean for Gemini function-calling compatibility)"
         );
     }
 
@@ -451,6 +543,10 @@ mod tests {
             .join(" ");
         assert!(description.starts_with(MULTI_CALL_SESSION_DESCRIPTION));
         assert!(description.contains("never selects capture modality or authorization"));
+
+        assert!(MULTI_CALL_SESSION_DESCRIPTION.contains("prefer a short public session label"));
+        assert!(MULTI_CALL_SESSION_DESCRIPTION.contains("repeat it on every call that accepts it"));
+        assert!(MULTI_CALL_SESSION_DESCRIPTION.contains("implicit lifecycle session"));
     }
 
     #[test]
@@ -460,6 +556,22 @@ mod tests {
             assert!(
                 tool.success_output_schema.is_some(),
                 "{} has no success output schema",
+                tool.name
+            );
+        }
+    }
+
+    #[test]
+    fn delivery_mode_capability_matches_the_typed_input_schema() {
+        for tool in manifest().tools {
+            assert_eq!(
+                tool.input_schema
+                    .pointer("/properties/delivery_mode")
+                    .is_some(),
+                tool.capabilities
+                    .iter()
+                    .any(|capability| capability == "input.delivery_mode"),
+                "{} typed contract delivery_mode schema/capability mismatch",
                 tool.name
             );
         }

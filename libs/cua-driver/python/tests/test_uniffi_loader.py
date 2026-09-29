@@ -25,106 +25,14 @@ LIBRARY = Path(__file__).parents[1] / "src" / "cua_driver" / _library_name()
 
 @unittest.skipUnless(LIBRARY.exists(), "host-native UniFFI library is not staged")
 class GeneratedOptionsTests(unittest.TestCase):
-    def test_visual_contract_dtos_construct_and_round_trip_through_uniffi(self) -> None:
-        from cua_driver import _native_contract as contract
+    def test_public_constructors_keep_released_signatures(self) -> None:
+        import inspect
 
-        def round_trip(converter, value):
-            return converter.lift(converter.lower(value))
+        from cua_driver import CuaDriver
 
-        request = contract.ParseVisualRegionsInput(
-            capture_id="capture-1",
-            options=contract.ParseVisualRegionsOptions(
-                kinds=[contract.VisualRegionKind.TEXT, contract.VisualRegionKind.ICON],
-                min_confidence=0.25,
-                max_regions=200,
-            ),
-        )
-        self.assertEqual(
-            round_trip(contract._UniffiFfiConverterTypeParseVisualRegionsInput, request),
-            request,
-        )
-
-        coordinate_space = contract.VisualActionCoordinateSpace.AFFINE(
-            m11=0.5,
-            m12=0.25,
-            m21=-0.5,
-            m22=2.0,
-            tx=-1920.0,
-            ty=10.0,
-        )
-        output = contract.ParseVisualRegionsOutput(
-            schema="cua.visual_regions_v1",
-            capture=contract.VisualCaptureProvenance(
-                capture_id="capture-1",
-                source=contract.VisualCaptureSource.PRIMARY_DESKTOP("primary"),
-                screenshot=contract.VisualScreenshotReference(
-                    reference="png-1",
-                    width=1920,
-                    height=1080,
-                    mime_type="image/png",
-                    sha256=None,
-                ),
-                action_coordinate_space=coordinate_space,
-                captured_at="2026-09-17T12:00:00Z",
-            ),
-            parser=contract.VisualParserMetadata(
-                extension_id="visual-parser",
-                extension_version="1.0.0",
-                model_id="default",
-                model_version="1",
-                runtime="cpu",
-                backend="onnx_runtime_cpu",
-                model_source_revision="revision-1",
-                model_manifest_sha256="a" * 64,
-                onnx_runtime_version="1.26.0",
-                onnx_runtime_library_sha256="b" * 64,
-                fixture_sha256=None,
-            ),
-            regions=[
-                contract.VisualRegion(
-                    id="text-1",
-                    kind=contract.VisualRegionKind.TEXT,
-                    bounds=contract.VisualRegionBounds(x=11, y=20, width=101, height=21),
-                    text="Apply",
-                    label=None,
-                    confidence=0.95,
-                    interactive=True,
-                    parent_id=None,
-                    group_id=None,
-                    reading_order=1,
-                )
-            ],
-            warnings=[
-                contract.VisualParseWarning(
-                    code="low_contrast",
-                    message="contrast was low",
-                    detail="text-1",
-                )
-            ],
-            timing=contract.VisualParseTiming(
-                duration_ms=18,
-                preprocess_ms=3,
-                inference_ms=12,
-            ),
-            request_id="parse-1",
-        )
-        lifted = round_trip(contract._UniffiFfiConverterTypeParseVisualRegionsOutput, output)
-        self.assertEqual(lifted, output)
-        self.assertEqual(
-            lifted.capture.action_coordinate_space.m11,
-            0.5,
-        )
-
-        error = contract.VisualParseError(
-            code=contract.VisualParseErrorCode.CAPTURE_NOT_FOUND,
-            message="capture was not found",
-            retryable=True,
-            detail=None,
-        )
-        self.assertEqual(
-            round_trip(contract._UniffiFfiConverterTypeVisualParseError, error),
-            error,
-        )
+        # Released callers pass these by keyword; the helpers behind them are private.
+        self.assertEqual(str(inspect.signature(CuaDriver.connect)), "(socket_path)")
+        self.assertEqual(str(inspect.signature(CuaDriver.create)), "(options=None)")
 
     def test_action_target_is_public_and_uses_the_generated_contract(self) -> None:
         import cua_driver

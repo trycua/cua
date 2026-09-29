@@ -358,7 +358,7 @@ jobs:
             --payload-root perception-input \
             --executed-evidence executed-verification.json \
             --output perception-candidate \
-            --key-id cua-extension-ed25519-2026-01 \
+            --key-id cua-extension-ed25519-2026-09 \
             --catalog-version "$CATALOG_VERSION" \
             --expires-unix "$EXPIRES_UNIX"
           python3 .github/scripts/perception_release.py \

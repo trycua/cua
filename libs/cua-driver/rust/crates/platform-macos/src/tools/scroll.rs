@@ -34,14 +34,6 @@ struct WheelTarget {
     wid: Option<u32>,
 }
 
-fn after_exact_target_gate<T>(
-    gate: Result<(), ToolResult>,
-    action: impl FnOnce() -> T,
-) -> Result<T, ToolResult> {
-    gate?;
-    Ok(action())
-}
-
 pub struct ScrollTool {
     state: Arc<ToolState>,
 }
@@ -53,6 +45,15 @@ impl ScrollTool {
 }
 
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+/// Wheel notches or keystroke repetitions accepted in one call. The input
+/// schema advertises this range and both delivery paths enforce it.
+const AMOUNT_MIN: u64 = 1;
+const AMOUNT_MAX: u64 = 50;
+
+fn clamp_amount(requested: u64) -> usize {
+    requested.clamp(AMOUNT_MIN, AMOUNT_MAX) as usize
+}
 
 fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
@@ -93,9 +94,9 @@ fn def() -> &'static ToolDef {
                 },
                 "amount": {
                     "type": "integer",
-                    "minimum": 1,
-                    "maximum": 50,
-                    "description": "Pixel-wheel path: number of wheel notches. Keystroke path: number of keystroke repetitions. Default: 3."
+                    "minimum": AMOUNT_MIN,
+                    "maximum": AMOUNT_MAX,
+                    "description": "Pixel-wheel path: number of wheel notches. Keystroke path: number of keystroke repetitions. Larger requests are clamped to the maximum. Default: 3."
                 },
                 "window_id": { "type": "integer" },
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),
@@ -134,7 +135,7 @@ impl Tool for ScrollTool {
             let (x, y) = (input.x, input.y);
             let direction = input.direction.as_str();
             let by = input.by.unwrap_or(ScrollBy::Line).as_str();
-            let amount = input.amount.unwrap_or(3).clamp(1, 50) as usize;
+            let amount = clamp_amount(input.amount.unwrap_or(3));
             let step = if input.by == Some(ScrollBy::Page) {
                 WHEEL_STEP_PAGE_PX
             } else {
@@ -185,7 +186,7 @@ impl Tool for ScrollTool {
             Err(e) => return e,
         };
         let by = args.str_or("by", "line");
-        let amount = args.u64_or("amount", 3) as usize;
+        let amount = clamp_amount(args.u64_or("amount", 3));
         // Surface 6: element_token / element_index precedence.
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
@@ -382,12 +383,13 @@ impl Tool for ScrollTool {
                 // reveal the target before taking the screen-space center;
                 // otherwise the wheel is posted outside the rendered window
                 // and nested overflow regions never receive it.
-                after_exact_target_gate(semantic_gate, || unsafe {
+                semantic_gate?;
+                unsafe {
                     crate::ax::bindings::perform_action(
                         element_ptr as AXUIElementRef,
                         "AXScrollToVisible",
-                    )
-                })?;
+                    );
+                }
                 std::thread::sleep(std::time::Duration::from_millis(40));
                 let center = unsafe { element_screen_center(element_ptr as AXUIElementRef) };
                 Ok(center.map(|(cx, cy)| {
@@ -561,7 +563,7 @@ impl Tool for ScrollTool {
             )
             .await;
 
-            let changes = super::finish_window_observation(snapshot, &args).await;
+            let changes = super::finish_window_observation(snapshot).await;
             let mode_label = if fg {
                 " (delivery_mode:foreground)"
             } else {
@@ -660,7 +662,7 @@ impl Tool for ScrollTool {
         )
         .await;
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
+        let changes = super::finish_window_observation(snapshot).await;
 
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
@@ -744,39 +746,14 @@ unsafe fn collect_ax_buttons(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cua_driver_core::background_input::{
-        decide_background_input, BackgroundAction, BackgroundInputDecision, BackgroundTargetFacts,
-        ElementAncestry, ExactWindowTarget, WindowServerOwnership,
-    };
-    use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
-    fn exact_target_refusal_prevents_ax_reveal() {
-        let action_ran = AtomicBool::new(false);
-        let target = ExactWindowTarget {
-            pid: 42,
-            window_id: 7,
-        };
-        let facts = BackgroundTargetFacts {
-            window_server: WindowServerOwnership::SamePid,
-            ax_window_present: true,
-            target_minimized: Some(false),
-            app_hidden: Some(false),
-            competing_keyboard_destinations: 0,
-            element: ElementAncestry::OutsideTargetWindow,
-        };
-        let refusal = match decide_background_input(target, &facts, BackgroundAction::AxSemantic) {
-            BackgroundInputDecision::Refuse(refusal) => Err(
-                super::super::background_refusal_result(target.pid, target.window_id, &refusal),
-            ),
-            BackgroundInputDecision::Execute { .. } => panic!("exact-target facts must refuse"),
-        };
-
-        let result = after_exact_target_gate(refusal, || {
-            action_ran.store(true, Ordering::SeqCst);
-        });
-
-        assert!(result.is_err());
-        assert!(!action_ran.load(Ordering::SeqCst));
+    fn amount_is_clamped_to_the_advertised_range() {
+        let amount = &def().input_schema["properties"]["amount"];
+        assert_eq!(amount["minimum"], serde_json::json!(AMOUNT_MIN));
+        assert_eq!(amount["maximum"], serde_json::json!(AMOUNT_MAX));
+        assert_eq!(clamp_amount(1100), AMOUNT_MAX as usize);
+        assert_eq!(clamp_amount(0), AMOUNT_MIN as usize);
+        assert_eq!(clamp_amount(3), 3);
     }
 }

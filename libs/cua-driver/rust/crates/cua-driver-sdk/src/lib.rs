@@ -53,22 +53,28 @@ use runtime::RuntimeOptions;
 use service_session::ServiceSessionClient;
 use worker::{ActionCompletion, PrivateWorkerClient};
 
-type PerceptionClientProvider = fn() -> cua_driver_core::perception_client::PerceptionClient;
-static PERCEPTION_CLIENT_PROVIDER: OnceLock<PerceptionClientProvider> = OnceLock::new();
+static PERCEPTION_CLIENT_RESOLVER: OnceLock<
+    Arc<dyn cua_driver_core::perception_client::PerceptionClientResolver>,
+> = OnceLock::new();
 
 /// Configure the binary-owned resolver for optional installed perception.
-/// Language SDKs without a binary host retain the typed unavailable tool.
+/// Every runtime consults it per `parse_visual_regions` request, so extension
+/// install, update, and removal take effect on a running Driver. Language SDKs
+/// without a binary host retain the typed unavailable tool.
 #[doc(hidden)]
-pub fn configure_perception_client_provider(provider: PerceptionClientProvider) {
-    let _ = PERCEPTION_CLIENT_PROVIDER.set(provider);
+pub fn configure_perception_client_resolver(
+    resolver: Arc<dyn cua_driver_core::perception_client::PerceptionClientResolver>,
+) {
+    let _ = PERCEPTION_CLIENT_RESOLVER.set(resolver);
 }
 
-pub(crate) fn configured_perception_client() -> cua_driver_core::perception_client::PerceptionClient
-{
-    PERCEPTION_CLIENT_PROVIDER
-        .get()
-        .map(|provider| provider())
-        .unwrap_or_else(cua_driver_core::perception_client::PerceptionClient::unavailable)
+pub(crate) fn configured_perception_client(
+) -> cua_driver_core::perception_client::PerceptionClientHandle {
+    use cua_driver_core::perception_client::{PerceptionClient, PerceptionClientHandle};
+    PERCEPTION_CLIENT_RESOLVER.get().map_or_else(
+        || PerceptionClientHandle::fixed(PerceptionClient::unavailable()),
+        |resolver| PerceptionClientHandle::live(resolver.clone()),
+    )
 }
 
 fn host_sessions_json_for_prefix(runtime_prefix: &str) -> Value {
@@ -1995,6 +2001,7 @@ fn normalize_result(tool: &str, raw: Value) -> Result<ToolResult, DriverError> {
 uniffi::setup_scaffolding!("cua_driver_sdk");
 
 #[cfg(test)]
+#[path = "tests/snapshot_lifecycle.rs"]
 mod snapshot_lifecycle_tests;
 
 #[cfg(test)]

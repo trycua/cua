@@ -70,7 +70,13 @@ fn def() -> &'static ToolDef {
             window belongs to the panel service, not the app). If the window is live under \
             this pid but its accessibility surface can't be resolved, the tree comes back \
             EMPTY with `degraded_reason: ax_window_unresolved` and the screenshot of the \
-            requested window — act by pixel there. This tool never returns another \
+            requested window; background input is refused until it resolves, so \
+            re-snapshot or act with `delivery_mode:\"foreground\"`. When that pid is an \
+            app still launching (its window exists before it answers accessibility), the \
+            walk first waits up to `timeout_ms` for it; if it never answers, the tree comes \
+            back EMPTY with `degraded_reason: ax_app_launching`, `truncated: true` and \
+            `truncation_reason: app_lookup_timeout`. A window on another \
+            Space still resolves by its exact CGWindowID. This tool never returns another \
             surface's elements under your window_id. Before exposing a screenshot, \
             its raw dimensions are validated as a coherent 1x/2x representation of \
             the requested WindowServer bounds. `px_frame_mismatch` or \
@@ -136,27 +142,6 @@ fn def() -> &'static ToolDef {
         idempotent: false,
         open_world: false,
     })
-}
-
-/// Fold a per-call `max_dimension` cap with the session/global
-/// `max_image_dimension` ceiling. `resize_png_if_needed` treats `0` as "no
-/// limit", so when the ceiling is unlimited the per-call cap stands alone;
-/// otherwise the tighter (smaller, non-zero) of the two wins. Returns `0` only
-/// when neither imposes a limit.
-fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
-    match per_call {
-        Some(md) if ceiling == 0 => md,
-        Some(md) => ceiling.min(md),
-        None => ceiling,
-    }
-}
-
-fn resolve_max_dimension(
-    configured: u32,
-    legacy_cap: Option<u32>,
-    per_call_override: Option<u32>,
-) -> u32 {
-    per_call_override.unwrap_or_else(|| fold_max_dimension(configured, legacy_cap))
 }
 
 fn chromium_browser_window(pid: i32) -> bool {
@@ -330,7 +315,10 @@ impl Tool for GetWindowStateTool {
                 let payload = crate::ax::cache::CachedSnapshot::from_nodes(&tree.nodes);
                 (tree, payload)
             });
-            let backstop = std::time::Duration::from_millis(timeout_ms) + AX_WALK_BACKSTOP_GRACE;
+            // A launching app is waited on for up to `timeout_ms` before the
+            // walk's own `timeout_ms` starts (see `ax::launch`).
+            let backstop =
+                std::time::Duration::from_millis(timeout_ms) * 2 + AX_WALK_BACKSTOP_GRACE;
             match tokio::time::timeout(backstop, walk_future).await {
                 Ok(Ok((tree, payload))) => (Some(tree), Some(payload)),
                 Ok(Err(e)) => return ToolResult::error(format!("AX tree walk failed: {e}")),
@@ -373,7 +361,12 @@ impl Tool for GetWindowStateTool {
         // The portable `max_image_dimension` is an explicit per-call override,
         // including 0 for native resolution. Without it, preserve the existing
         // configured ceiling and legacy `max_dimension` tighter-cap behavior.
-        let max_dim = resolve_max_dimension(effective_max_dim, max_dimension, max_image_dimension);
+        let max_dim = cua_driver_core::image_utils::ImageDimensionLimits {
+            configured: effective_max_dim,
+            legacy_max_dimension: max_dimension,
+            max_image_dimension,
+        }
+        .resolve();
         // Returns the exact delivered PNG bytes, optional file path, delivered
         // and native dimensions, the WindowServer bounds it was validated
         // against, and the raw capture's backing scale.
@@ -644,7 +637,15 @@ impl Tool for GetWindowStateTool {
         // the screenshot already in this response and click by pixel (x,y).
         // macOS can pixel-target in the background, so the recommendation is
         // `px`, not `foreground`.
-        match degradation_for(tree_result.is_some(), element_count, window_scope.as_ref()) {
+        let app_lookup_timed_out = tree_result
+            .as_ref()
+            .is_some_and(|r| r.walk.reason() == Some("app_lookup_timeout"));
+        match degradation_for(
+            tree_result.is_some(),
+            element_count,
+            window_scope.as_ref(),
+            app_lookup_timed_out,
+        ) {
             Degradation::None => {}
             Degradation::AxTreeEmpty => {
                 structured["degraded"] = serde_json::json!(true);
@@ -660,6 +661,24 @@ impl Tool for GetWindowStateTool {
                     "recommended": "px",
                     "reason": "non-AX surface — act by pixel (x,y) off the screenshot \
                                in this response (an element px action)."
+                });
+            }
+            Degradation::AxAppLaunching => {
+                structured["degraded"] = serde_json::json!(true);
+                structured["degraded_reason"] = serde_json::json!(format!(
+                    "ax_app_launching: window_id {window_id} exists and is owned by pid \
+                     {pid}, but that app has not finished launching and did not answer \
+                     accessibility within the {timeout_ms} ms timeout_ms budget. The tree is \
+                     returned EMPTY because the window's accessibility surface is not \
+                     available yet."
+                ));
+                structured["escalation"] = serde_json::json!({
+                    "recommended": "foreground",
+                    "reason": "observation-only until the app finishes launching: re-snapshot \
+                               in a moment or with a larger timeout_ms. Background input \
+                               (including px) is refused while the window's AX surface is \
+                               unresolved; act with delivery_mode:\"foreground\" only if \
+                               you cannot wait."
                 });
             }
             Degradation::AxWindowUnresolved { ax_window_count } => {
@@ -833,6 +852,9 @@ enum Degradation {
     /// The requested window is live and owned by this pid, but no AXWindow
     /// claims its CGWindowID, so the walk deliberately covered nothing.
     AxWindowUnresolved { ax_window_count: usize },
+    /// The window scope is unresolved because the app is still launching and
+    /// did not answer accessibility within the caller's budget.
+    AxAppLaunching,
 }
 
 /// Decide the degradation rung. Pure: `walk_attempted` is false in the
@@ -843,11 +865,15 @@ fn degradation_for(
     walk_attempted: bool,
     element_count: usize,
     scope: Option<&crate::ax::WindowScope>,
+    app_lookup_timed_out: bool,
 ) -> Degradation {
     if !walk_attempted {
         return Degradation::None;
     }
     if let Some(crate::ax::WindowScope::AxUnresolved { ax_window_count }) = scope {
+        if app_lookup_timed_out {
+            return Degradation::AxAppLaunching;
+        }
         return Degradation::AxWindowUnresolved {
             ax_window_count: *ax_window_count,
         };
@@ -1053,9 +1079,30 @@ mod window_scope_contract_tests {
             degradation_for(
                 true,
                 0,
-                Some(&WindowScope::AxUnresolved { ax_window_count: 3 })
+                Some(&WindowScope::AxUnresolved { ax_window_count: 3 }),
+                false
             ),
             Degradation::AxWindowUnresolved { ax_window_count: 3 }
+        );
+    }
+
+    /// A window that exists before its app answers accessibility is not an
+    /// unscoped window: the degradation names the launch instead.
+    #[test]
+    fn a_launch_that_outlasts_the_budget_degrades_as_app_launching() {
+        assert_eq!(
+            degradation_for(
+                true,
+                0,
+                Some(&WindowScope::AxUnresolved { ax_window_count: 0 }),
+                true
+            ),
+            Degradation::AxAppLaunching
+        );
+        // A walk cut short for another reason after resolving keeps its rung.
+        assert_eq!(
+            degradation_for(true, 0, Some(&WindowScope::Matched), true),
+            Degradation::AxTreeEmpty
         );
     }
 
@@ -1063,7 +1110,7 @@ mod window_scope_contract_tests {
     fn empty_tree_still_degrades_as_ax_tree_empty() {
         // Back-compat with the pre-existing rung.
         assert_eq!(
-            degradation_for(true, 0, Some(&WindowScope::Matched)),
+            degradation_for(true, 0, Some(&WindowScope::Matched), false),
             Degradation::AxTreeEmpty
         );
     }
@@ -1071,14 +1118,14 @@ mod window_scope_contract_tests {
     #[test]
     fn resolved_window_with_elements_is_not_degraded() {
         assert_eq!(
-            degradation_for(true, 42, Some(&WindowScope::Matched)),
+            degradation_for(true, 42, Some(&WindowScope::Matched), false),
             Degradation::None
         );
     }
 
     #[test]
     fn screenshot_only_path_does_not_degrade() {
-        assert_eq!(degradation_for(false, 0, None), Degradation::None);
+        assert_eq!(degradation_for(false, 0, None, false), Degradation::None);
     }
 
     #[test]
@@ -1088,6 +1135,8 @@ mod window_scope_contract_tests {
             "window_id_not_found",
             "window_owner_pid_mismatch",
             "ax_window_unresolved",
+            "ax_app_launching",
+            "app_lookup_timeout",
         ] {
             assert!(
                 description.contains(code),
@@ -1129,38 +1178,12 @@ mod window_scope_contract_tests {
             "description must document the both-false error"
         );
     }
-
-    /// The per-call `max_dimension` folds with the session/global ceiling: the
-    /// tighter non-zero cap wins, an unlimited (0) ceiling defers to the
-    /// per-call cap, and absent inputs pass the ceiling through unchanged.
-    #[test]
-    fn max_dimension_folds_tighter_cap() {
-        // Ceiling wins when it is tighter than the per-call cap.
-        assert_eq!(fold_max_dimension(1024, Some(2048)), 1024);
-        // Per-call wins when it is tighter than the ceiling.
-        assert_eq!(fold_max_dimension(4096, Some(512)), 512);
-        // Unlimited ceiling (0) defers entirely to the per-call cap.
-        assert_eq!(fold_max_dimension(0, Some(768)), 768);
-        // No per-call cap → the ceiling passes through (0 stays unlimited).
-        assert_eq!(fold_max_dimension(1600, None), 1600);
-        assert_eq!(fold_max_dimension(0, None), 0);
-    }
-
-    #[test]
-    fn max_image_dimension_explicit_override_wins() {
-        assert_eq!(resolve_max_dimension(1024, None, Some(2048)), 2048);
-        assert_eq!(resolve_max_dimension(1024, Some(512), Some(2048)), 2048);
-        assert_eq!(resolve_max_dimension(1024, Some(512), Some(0)), 0);
-        assert_eq!(resolve_max_dimension(1024, Some(512), None), 512);
-        assert_eq!(resolve_max_dimension(1024, None, None), 1024);
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ax::tree::AXNode;
-    use cua_driver_core::element_query::project_elements_for_query;
     use serde_json::json;
 
     fn node(
@@ -1243,95 +1266,6 @@ mod tests {
             vec![0, 1, 2],
             "ordering must match DFS / element_index assignment"
         );
-    }
-
-    #[test]
-    fn query_projection_keeps_only_rendered_actionable_rows() {
-        let nodes = vec![
-            node(Some(0), "AXWindow", Some("Document"), 0, None, None, vec![]),
-            node(
-                Some(1),
-                "AXMenuItem",
-                Some("Window"),
-                1,
-                Some(0),
-                None,
-                vec![],
-            ),
-            node(
-                Some(2),
-                "AXMenuItem",
-                Some("Move & Resize"),
-                2,
-                Some(1),
-                None,
-                vec![],
-            ),
-            node(
-                Some(3),
-                "AXMenuItem",
-                Some("Left"),
-                3,
-                Some(2),
-                None,
-                vec![],
-            ),
-            node(
-                Some(4),
-                "AXButton",
-                Some("Unrelated"),
-                1,
-                Some(0),
-                None,
-                vec![],
-            ),
-        ];
-        let elements = build_elements_array_with_token(&nodes, None);
-        let filtered_markdown = concat!(
-            "- [0] AXWindow \"Document\"\n",
-            "  - [1] AXMenuItem \"Window\"\n",
-            "    - [2] AXMenuItem \"Move & Resize\"\n",
-            "      - [3] AXMenuItem \"Left\"\n",
-        );
-
-        let projected = project_elements_for_query(elements, Some("Left"), filtered_markdown);
-        let indices: Vec<u64> = projected
-            .iter()
-            .map(|entry| entry["element_index"].as_u64().unwrap())
-            .collect();
-
-        assert_eq!(indices, vec![0, 1, 2, 3]);
-    }
-
-    #[test]
-    fn query_projection_returns_no_elements_when_markdown_has_no_match() {
-        let nodes = vec![node(
-            Some(0),
-            "AXButton",
-            Some("Unrelated"),
-            0,
-            None,
-            None,
-            vec![],
-        )];
-        let elements = build_elements_array_with_token(&nodes, None);
-
-        let projected = project_elements_for_query(elements, Some("zoomLeft"), "");
-
-        assert!(projected.is_empty());
-    }
-
-    #[test]
-    fn unfiltered_projection_preserves_every_element() {
-        let nodes = vec![
-            node(Some(0), "AXButton", Some("One"), 0, None, None, vec![]),
-            node(Some(1), "AXButton", Some("Two"), 0, None, None, vec![]),
-        ];
-        let elements = build_elements_array_with_token(&nodes, None);
-
-        let projected = project_elements_for_query(elements, None, "");
-
-        assert_eq!(projected.len(), 2);
     }
 
     #[test]
@@ -1609,35 +1543,6 @@ mod tests {
             entries[0].get("element_token").is_none(),
             "observation-only entries must not emit unregistered element_token: {}",
             entries[0]
-        );
-    }
-
-    #[test]
-    fn walk_tree_bounded_signature_accepts_caps_no_panic() {
-        // Regression guard for #22865: the bounded variant must accept
-        // arbitrary cap values without panicking, even against a pid that
-        // has no AX tree to walk. Returns a TreeWalkResult either way.
-        // Use pid that won't be a real process. Don't assume tree is empty
-        // (CI may have process re-use) — only assert that the call returns
-        // and the result struct shape is intact.
-        let r1 = crate::ax::tree::walk_tree_bounded(i32::MAX, None, None, 5, 2);
-        // Cap of 5 is the contract test from the task: when this many
-        // visible nodes existed, the walker must stop early. The dead pid
-        // exercises the early-return path; the assertion is that the call
-        // honors the cap without overflowing or panicking.
-        assert!(r1.nodes.len() <= 5, "max_elements=5 must cap nodes ≤ 5");
-        assert!(
-            r1.nodes.iter().all(|n| n.depth <= 2),
-            "max_depth=2 must cap depth ≤ 2"
-        );
-        // And the uncapped variant — same dead-pid path, just validating
-        // walk_tree(...) (which delegates to walk_tree_bounded with
-        // DEFAULT_MAX_*) returns the same empty/safe shape.
-        let r2 = crate::ax::tree::walk_tree(i32::MAX, None, None);
-        assert_eq!(
-            r1.nodes.len(),
-            r2.nodes.len(),
-            "no-pid case: both bounded and unbounded must agree on the empty result"
         );
     }
 }

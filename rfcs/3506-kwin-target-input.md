@@ -3,7 +3,7 @@ title: Target-addressable KWin input delivery for KDE/Wayland
 authors:
   - netbospl
 created: 2026-09-01
-last_updated: 2026-09-25
+last_updated: 2026-09-29
 status: review
 discussion: https://github.com/trycua/cua/issues/3506
 rfc_pr: https://github.com/trycua/cua/pull/3507
@@ -16,7 +16,25 @@ superseded_by:
 
 ## Summary
 
-Add a trusted KWin-side target-input capability that lets Cua Driver bind
+The [maintainer decision of 2026-09-29](https://github.com/trycua/cua/issues/3506#issuecomment-5896356295)
+conditionally permits a **foreground-only first increment**, subject to a live
+Plasma 6.6 proof. The proof must activate the exact window selected by the
+trusted identity adapter from #3336, confirm that it is active closely enough
+to guard a bounded portal input burst, and refuse input when confirmation fails.
+The recording and exact API calls belong on #3507. This RFC remains `review`;
+the proof has not been supplied by this documentation update.
+
+The [foreground proof procedure](3506/plasma-6.6-proof.md) records the
+source-checked API candidates, the missing token-to-window identity bridge,
+the required observations, and the outstanding live evidence. A focus check
+does not establish atomic target-bound delivery. Any accepted foreground
+increment must describe its measured timing and residual focus race honestly.
+AX actions and exact background refusals remain unchanged. Target-addressable
+background input is deferred until a supported primitive exists. #4034 is a
+separate KDE recording/release dependency decision.
+
+The original, stronger target-bound design retained below would add a trusted
+KWin-side target-input capability that lets Cua Driver bind
 pointer and keyboard delivery to one freshly verified KDE/KWin window while
 preserving the Driver's existing per-action permission, policy, resource, and
 lifecycle admission. Before dispatch, failure to establish these invariants
@@ -25,7 +43,8 @@ acknowledgement requires a partial/unknown result that preserves any acknowledge
 progress. The operation must never be replayed, including after reconnect or
 target re-resolution, and must never fall back to global portal/libei input.
 
-This RFC is intentionally gated on two proofs before product implementation:
+That deferred target-bound design is gated on two proofs before product
+implementation:
 
 1. Plasma 6/KWin must expose a supported integration point that can bind the
    mutation itself to an exact target rather than merely activate a window; and
@@ -38,8 +57,32 @@ standalone signer. Same-desktop-account transport follows the project's
 trusted-local model and is not claimed to sandbox hostile same-user native code.
 
 If the target-binding or Driver-owned policy path cannot be established with
-supported KWin/desktop APIs, KDE raw target-addressed input remains refused and
-the implementation does not proceed.
+supported KWin/desktop APIs, exact target-addressed input remains refused.
+The narrower foreground feasibility review does not depend on finding a
+background primitive, but still requires normal Driver admission and its own
+live evidence before acceptance or production implementation.
+
+### Scope of the conditional foreground increment
+
+- **Common requirements:** trusted exact identity, normal per-action admission,
+  generation/lifecycle invalidation, bounded work, truthful delivery results,
+  and at-most-once dispatch apply to both designs.
+- **Foreground-only candidate:** activation and confirmation may guard an
+  explicitly selected foreground portal path only if the live proof supports
+  it and the maintainer records acceptance. Failure never switches to an
+  unguarded portal/libei path. Selecting an exact/background KWin route never
+  downgrades to the foreground candidate.
+- **Deferred exact-target design:** the delivery-time target binding, certified
+  surface-tree isolation, target-bound cleanup, and mutation transport in the
+  numbered proposal below remain requirements for that stronger capability.
+  They are not claims about what scripting plus portal input provides.
+
+For either path, a failure is an input refusal only when zero input dispatch is
+known. Report activation/focus changes separately even if no input was sent.
+Once input may have started, preserve partial/unknown delivery and never replay.
+An operation whose focus-loss or held-state cleanup behavior cannot meet its
+accepted contract stays disabled. A keyboard canary does not certify pointer,
+drag, hotkey, or multi-frame typing support.
 
 ## Motivation
 
@@ -64,8 +107,9 @@ permission, manifest, managed/user policy, resource, and lifecycle checks.
 Verifying that the helper belongs to KWin proves server identity; it does not
 prove that a mutation request passed through Driver admission.
 
-KDE therefore needs both target binding and a Driver-owned mutation path. The
-safety claim is stronger than "the intended window was focused shortly before
+Exact target-addressed KDE input therefore needs both target binding and a
+Driver-owned mutation path. The safety claim is stronger than "the intended
+window was focused shortly before
 input": the compositor-side path must associate each accepted event with the
 exact verified target and current helper/KWin generation, while the Driver
 performs normal action admission before dispatch. Under the accepted trusted-
@@ -74,6 +118,10 @@ hostile native code running as the same desktop user.
 
 ## Goals
 
+- Complete the maintainer-requested Plasma 6.6 foreground feasibility proof
+  before claiming acceptance or unblocking #3972 and #1982.
+- Distinguish guarded foreground delivery from deferred exact/background input
+  in routing, evidence, and capability reporting.
 - Define a KWin target-input contract that binds a short-lived input transaction
   to one exact verified window identity.
 - Preserve and extend the current trusted helper-owner, PID, UID, window-token,
@@ -199,6 +247,10 @@ the helper entirely, including read-only discovery. A capability rollout must
 therefore avoid describing such a bump as automatically additive.
 
 ## Proposal
+
+The numbered sections retain the deferred exact-target design. The conditional
+foreground scope above and its linked proof procedure govern the first
+feasibility increment; no supported background primitive is presumed to exist.
 
 ### 1. Feasibility gate: supported KWin target-binding primitive
 
@@ -613,13 +665,18 @@ evidence in this RFC is recorded.
 
 ### Activate then use global portal/libei
 
-Rejected. Focus can change after activation or verification and before
-compositor-side delivery. Post-event checks cannot undo an event delivered to
-another application.
+Rejected as exact target-bound delivery or as a fallback. Focus can change after
+activation or verification and before compositor-side delivery. Post-event
+checks cannot undo an event delivered to
+another application. The 2026-09-29 decision separately permits investigating
+a guarded, foreground-only first increment; acceptance requires the requested
+recording, API calls, timing/failure evidence, and a recorded maintainer decision.
 
 ### Recheck focus before every libei command or add sleeps
 
-Rejected. This narrows a timing window but does not remove it.
+Rejected as proof of atomic target binding. This narrows a timing window but
+does not remove it. Measure the foreground candidate's actual check-to-dispatch
+gap and focus-change behavior; sleeps are not an acceptance oracle.
 
 ### Expose target mutation directly on the session bus to same-UID callers
 
@@ -727,8 +784,22 @@ counters that cannot reconstruct user input.
 
 ## Implementation plan
 
-Implementation begins only after this RFC is accepted according to the Cua RFC
-process.
+Production implementation begins only after this RFC is accepted according to
+the Cua RFC process. The requested foreground feasibility experiment may run
+during review; it does not enable production input.
+
+### First increment under review: foreground feasibility on Plasma 6.6
+
+Follow the [proof procedure](3506/plasma-6.6-proof.md). Resolve the trusted
+token-to-KWin-window bridge, demonstrate exact activation and active-window
+confirmation, then measure a bounded portal burst with refusal and no-replay
+evidence. Attach the real recording and exact tested calls to #3507. Keep AX
+actions and exact background refusals unchanged. Do not mark #3972 or #1982
+unblocked until the proof is accepted, or couple this work to #4034's separate
+PipeWire release-build dependency.
+
+The target-bound increments below are deferred design work, not prerequisites
+for demonstrating the narrower foreground candidate or authorization to ship it.
 
 ### Increment 0: feasibility and transport-ownership spike
 
@@ -792,6 +863,11 @@ These increments may be separate PRs when that keeps review focused. Each
 implementation PR must link this RFC and issue #3506.
 
 ## Test and acceptance plan
+
+The [foreground proof matrix](3506/plasma-6.6-proof.md#live-recording-and-acceptance-matrix)
+is the immediate review gate. The tests below remain the stronger exact-target
+acceptance plan; common identity, admission, result, and no-replay requirements
+also apply to any accepted foreground implementation.
 
 ### Contract and compatibility tests
 
@@ -921,6 +997,10 @@ SHA.
 
 ## Related work
 
+- #3336 provides the trusted KWin identity adapter used by the proof.
+- #3972 and #1982 are conditionally unblocked by an accepted foreground proof.
+- #4034 tracks KDE recording separately; its release-build PipeWire dependency
+  is not resolved by this RFC or a foreground input demonstration.
 - #2283 tracks exact existing-profile browser setup across Wayland compositors.
 - #2194 tracks trustworthy Wayland cursor-preservation evidence.
 
@@ -929,6 +1009,12 @@ policy-path and exact-target decision.
 
 ## Unresolved questions
 
+- Can the supported Plasma 6.6 scripting/D-Bus APIs activate the exact trusted
+  adapter target and confirm it closely enough to guard a foreground portal
+  burst? The live recording, refusal cases, and measured timing are outstanding.
+- How will the adapter's opaque token be resolved to the same live KWin object
+  for scripting without title/PID/geometry heuristics? The v1 helper does not
+  expose its internal UUID mapping or a generation-aware activation method.
 - Which supported KWin extension/plugin API, if any, can implement exact
   target-bound delivery on Plasma 6 without relying on private unstable
   internals?
@@ -957,7 +1043,17 @@ policy-path and exact-target decision.
 
 ## Decision record
 
-Pending maintainer review. The accepted shared-policy and trusted-local baseline
+On 2026-09-29, the maintainer [recorded conditional direction](https://github.com/trycua/cua/issues/3506#issuecomment-5896356295):
+the safety/no-replay contract is agreed in principle, but the RFC stays in
+`review` pending a live Plasma 6.6 foreground proof with a recording and exact
+API calls on #3507. If the proof holds, a foreground-only increment may proceed;
+AX actions and exact background refusals stay as they are. Target-addressable
+background input remains out of scope until a supported primitive exists.
+#4034 remains a separate decision.
+
+This revision supplies source analysis and an evidence procedure, **not a live
+proof or an acceptance decision**. The accepted shared-policy and trusted-local
+baseline
 from #3550/#3551 applies to this RFC unless maintainers record a KWin-specific
 exception. The decision summary in issue #3506 must record the chosen KWin
 primitive, mutation transport/ownership model, compatibility strategy,

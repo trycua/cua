@@ -14,9 +14,14 @@
       {
         "id": "fixture-text-1",
         "kind": "text",
-        "bounds": { "x": 0, "y": 0, "width": 1, "height": 1 },
+        "bounds": {
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1
+        },
         "text": "fixture",
-        "confidence": 1.0,
+        "confidence": 1,
         "interactive": false
       }
     ],
@@ -24,7 +29,7 @@
     "identity": {
       "extension": {
         "id": "cua-perception",
-        "version": "0.2.0"
+        "version": "0.2.1"
       },
       "backend": "deterministic_fixture",
       "fixture_sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460"

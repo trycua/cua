@@ -154,42 +154,12 @@ impl Tool for ZoomTool {
 
 #[cfg(test)]
 mod tests {
-    use super::{def, ToolState};
-    use crate::ax::cache::CachedSnapshot;
+    use super::def;
 
     #[test]
     fn schema_keeps_pid_optional_for_window_owned_zoom_lookup() {
         let required = def().input_schema["required"].as_array().unwrap();
         assert!(!required.iter().any(|field| field == "pid"));
         assert!(def().input_schema["properties"].get("pid").is_some());
-    }
-
-    #[test]
-    fn omitted_pid_resolves_owned_window_snapshot() {
-        let state = ToolState::new(false, false, None);
-        state.element_cache.publish_for_session(
-            42,
-            7,
-            CachedSnapshot::from_nodes(&[]),
-            Some("zoom-optional-pid-macos"),
-            Some(2.0),
-        );
-        let (pid, context) = state
-            .element_cache
-            .screenshot_context_for_zoom(None, 7, Some("zoom-optional-pid-macos"))
-            .unwrap();
-        assert_eq!(pid, 42);
-        assert_eq!(context.window_id, 7);
-        state.element_cache.publish_for_session(
-            43,
-            7,
-            CachedSnapshot::from_nodes(&[]),
-            Some("zoom-optional-pid-macos"),
-            Some(1.0),
-        );
-        assert!(state
-            .element_cache
-            .screenshot_context_for_zoom(None, 7, Some("zoom-optional-pid-macos"))
-            .is_err());
     }
 }

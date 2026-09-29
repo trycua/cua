@@ -57,6 +57,16 @@ def macos_arm64_header() -> bytes:
 
 
 class ArtifactToolingTests(unittest.TestCase):
+    def test_runtime_notice_members_sit_beside_each_pinned_runtime_library(self) -> None:
+        lock = json.loads(assemble_bundle.LOCK_PATH.read_text(encoding="utf-8"))
+        for target, target_lock in lock["onnx_runtime"]["targets"].items():
+            members = assemble_bundle.runtime_notice_members(target_lock)
+            root = target_lock["archive_member"].split("/lib/", 1)[0]
+            self.assertEqual(members, {
+                f"{root}/LICENSE": "onnxruntime-LICENSE.txt",
+                f"{root}/ThirdPartyNotices.txt": "onnxruntime-ThirdPartyNotices.txt",
+            }, target)
+
     def test_conversion_recipe_pins_input_exporter_sources_command_and_no_patches(self) -> None:
         lock = json.loads(LOCK_PATH.read_text())
         recipe = json.loads((CRATE_DIR / "models/conversion-recipe.json").read_text())
@@ -324,8 +334,10 @@ class ArtifactToolingTests(unittest.TestCase):
             )
             events = []
 
-            def fake_extract_runtime(_lock, _target, _cache, destination):
+            def fake_extract_runtime(_lock, _target, _cache, destination, licenses):
                 write(destination, b"runtime")
+                write(licenses / "onnxruntime-LICENSE.txt", b"MIT License\n")
+                write(licenses / "onnxruntime-ThirdPartyNotices.txt", b"notices\n")
 
             def fake_corresponding_source(_repo, _revision, destination):
                 write(destination, b"source")
@@ -350,6 +362,19 @@ class ArtifactToolingTests(unittest.TestCase):
                     if item["kind"] == "supplied-verification-report"
                 }
                 self.assertEqual(set(reports), {"health", "self-test", "real-parse"})
+                notices = {
+                    item["path"]: item["license"]["spdx"]
+                    for item in manifest["artifacts"]
+                    if item["kind"] == "notice" and item["path"].startswith("licenses/")
+                }
+                self.assertEqual(notices, {
+                    "licenses/AGPL-3.0-only.txt": "AGPL-3.0-only",
+                    "licenses/Apache-2.0.txt": "Apache-2.0",
+                    "licenses/onnxruntime-LICENSE.txt": "MIT",
+                    "licenses/onnxruntime-ThirdPartyNotices.txt": "MIT",
+                })
+                for path in notices:
+                    self.assertTrue((bundle / path).is_file(), path)
                 for role, entry in reports.items():
                     report = bundle / entry["path"]
                     self.assertEqual(entry["sha256"], sha256(report), role)

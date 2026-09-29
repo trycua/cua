@@ -300,13 +300,24 @@ surface that only accepts events while frontmost (the canvas/viewport/game
 case below). Unmodified element-indexed (AX) actions remain background-capable
 and hold the no-foreground contract without the flag.
 
+A foreground window-scoped **pixel** `click`, `double_click`, or
+`right_click` (`x`/`y` with `window_id`) is delivered like a desktop-scope click, not through the per-pid path: Cua Driver
+activates the exact window (refusing with `foreground_unavailable` when that
+window never becomes focused), moves the hardware pointer to the mapped
+screen point, and posts through the HID event tap. The pointer stays at the
+target afterward, matching Windows `SendInput` and X11 XTest foreground
+clicks, and the prior frontmost app is restored. The result reports
+`route: "global_input"` and says the pointer moved.
+
 Modified clicks are the deliberate exception: pass
 `delivery_mode:"foreground"` and a concrete `window_id`. macOS applications
 can discard PID-routed modifier state after initially publishing a transient
 selection, so Cua Driver refuses that background combination. The foreground
-rung holds physical HID modifier keys around the click, restores the hardware
-cursor and prior foreground app, and confirms list-like selection changes with
-a stable AX readback.
+rung holds physical HID modifier keys around the click, restores the prior
+foreground app, and confirms list-like selection changes with a stable AX
+readback. Element-addressed modified clicks also restore the hardware cursor;
+pixel modified clicks leave it at the target like other foreground pixel
+clicks.
 
 macOS-specific residuals worth knowing (the rest of the capture/dispatch/
 addressing params are a shared cross-platform contract — see `SKILL.md` →
@@ -349,6 +360,17 @@ The working pattern:
 There is no backgrounded path that reaches these apps today.
 
 ### Known pixel-click limits
+
+- **Toolkits that read the hardware pointer (Tk, some Java and game
+  toolkits)** derive a click's location from the real pointer position, not
+  from the delivered event. Background delivery never moves the pointer, so a
+  background pixel click lands wherever the pointer happens to be. When the
+  target maps a Tk library or Python's `_tkinter`, a background window pixel
+  click returns `background_unavailable` with `reason:
+  "pointer_reading_toolkit"`. Other pointer-reading apps cannot be detected
+  cheaply; their background result stays "not driver-verified" and says the
+  pointer was not moved. Retry with `delivery_mode:"foreground"`, which moves
+  the pointer first.
 
 - **Chromium `<video>` play/pause**: pixel click is often rejected
   by HTML5's click-to-play handler on some builds. Use keyboard

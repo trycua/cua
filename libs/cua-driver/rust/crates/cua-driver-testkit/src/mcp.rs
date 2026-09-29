@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::daemon::TestDaemon;
 use crate::driver::{BehaviorRecording, Driver};
-use crate::paths::driver_binary;
+use crate::paths::{driver_binary, ensure_driver_binary};
 use crate::reaper::{spawn_in_job, ChildReaper};
 use crate::response::ToolResponse;
 use crate::CALL_TIMEOUT;
@@ -64,6 +64,7 @@ impl McpDriver {
     /// Spawn the driver, start the stdout reader thread, and `initialize`.
     /// Returns `None` (with a skip message) if the binary isn't built — the
     /// caller's test should early-return so an un-built binary skips, not fails.
+    /// `CUA_TEST_REQUIRE_DRIVER_BIN=1` makes a missing binary panic instead.
     pub fn spawn() -> Option<Self> {
         Self::spawn_internal(&[], &[], None, false, true)
     }
@@ -172,8 +173,7 @@ impl McpDriver {
                 ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
             ]);
         }
-        if !bin.exists() {
-            eprintln!("[testkit] driver binary not built at {bin:?} — skipping");
+        if !ensure_driver_binary(&bin) {
             return None;
         }
 
@@ -205,12 +205,13 @@ impl McpDriver {
             .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false");
         if let Some(daemon) = &daemon {
             cmd.args(["mcp", "--socket", &daemon.socket]);
+            daemon.apply_state_root(&mut cmd);
         } else {
+            // Proxies to an externally owned daemon deliberately keep the
+            // host's per-user state; the external daemon owns that state.
             cmd.args(args);
         }
-        for (key, value) in &daemon_env {
-            cmd.env(key, value);
-        }
+        crate::host_state::apply_env(&mut cmd, None, &daemon_env);
         let mut driver = spawn_in_job(&mut cmd)
             .inspect_err(|e| eprintln!("[testkit] driver spawn failed: {e}"))
             .ok()?;
@@ -298,6 +299,13 @@ impl McpDriver {
             false,
             true,
         )
+    }
+
+    /// Isolated per-user state root (`HOME`, XDG/AppData directories) given to
+    /// the test-owned daemon, or `None` for external-daemon proxies and spawns
+    /// that passed [`crate::SHARE_HOST_STATE`].
+    pub fn state_root(&self) -> Option<&std::path::Path> {
+        self._daemon.as_ref().and_then(TestDaemon::state_root)
     }
 
     fn initialize(&mut self) {

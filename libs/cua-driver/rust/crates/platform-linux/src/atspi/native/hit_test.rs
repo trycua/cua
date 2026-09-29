@@ -302,17 +302,13 @@ mod tests {
 
     #[test]
     fn no_display_is_unknown_not_an_error() {
-        let prior = std::env::var_os("DISPLAY");
-        std::env::set_var("DISPLAY", ":9999999");
         let observed = ObjectRef {
             bus: ":1.9".into(),
             path: "/org/a11y/atspi/accessible/1".into(),
         };
+        let display = crate::test_env::unreachable_x11_display();
         let ownership = point_ownership(1, 0x1234, &observed, 10, 10);
-        match prior {
-            Some(v) => std::env::set_var("DISPLAY", v),
-            None => std::env::remove_var("DISPLAY"),
-        }
+        drop(display);
         assert_eq!(ownership, PointOwnership::Unknown);
     }
 }

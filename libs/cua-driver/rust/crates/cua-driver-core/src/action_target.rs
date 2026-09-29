@@ -141,15 +141,12 @@ pub fn enforce_delivery_target(tool_name: &str, args: &Value) -> Result<(), Tool
     }
 
     let message = cua_driver_contract::ClickInput::DESKTOP_BACKGROUND_MESSAGE;
-    Err(ToolResult::error(message).with_structured(json!({
-        "code": "background_unavailable",
-        "effect": "refused",
-        "suggestion": "Retry this action with delivery_mode:\"foreground\".",
-        "escalation": {
-            "recommended": "foreground",
-            "reason": message,
-        },
-    })))
+    Err(crate::delivery::background_unavailable_result(
+        message,
+        "background_unavailable",
+        message,
+        json!({ "effect": "refused" }),
+    ))
 }
 
 #[cfg(test)]

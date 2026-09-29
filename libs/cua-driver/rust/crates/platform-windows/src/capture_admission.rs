@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use cua_driver_core::capture_runtime::{
-    CaptureActionError, CaptureActionRequest, CaptureIdParseError, CaptureLookupError,
-    CapturePublication, CaptureService, CaptureTarget, EncodedScreenshotDimensions,
-    NativeActionDimensions, ScreenshotToActionTransform,
+    CaptureActionRequest, CapturePublication, CaptureService, CaptureTarget,
+    EncodedScreenshotDimensions, NativeActionDimensions, ScreenshotToActionTransform,
 };
 use serde_json::Value;
 
@@ -64,26 +63,6 @@ pub(crate) fn round_action_point(x: f64, y: f64) -> anyhow::Result<(i32, i32)> {
         Ok(rounded as i32)
     }
     Ok((round(x)?, round(y)?))
-}
-
-pub(crate) fn admission_error_code(error: &anyhow::Error) -> &'static str {
-    if error.downcast_ref::<CaptureIdParseError>().is_some() {
-        return "capture_id_invalid";
-    }
-    match error.downcast_ref::<CaptureActionError>() {
-        Some(CaptureActionError::Lookup(CaptureLookupError::Unknown)) => "capture_not_found",
-        Some(CaptureActionError::Lookup(CaptureLookupError::Expired)) => "capture_expired",
-        Some(CaptureActionError::Lookup(CaptureLookupError::GenerationMismatch)) => {
-            "capture_generation_mismatch"
-        }
-        Some(CaptureActionError::Lookup(CaptureLookupError::TargetMismatch)) => {
-            "capture_target_mismatch"
-        }
-        Some(CaptureActionError::InvalidScreenshotPoint) => "capture_point_invalid",
-        Some(CaptureActionError::InvalidMappedPoint) => "capture_mapping_invalid",
-        Some(CaptureActionError::NativeActionFrameMismatch) => "capture_frame_mismatch",
-        None => "capture_action_refused",
-    }
 }
 
 pub(crate) struct WindowsCaptureBridge {
@@ -202,13 +181,10 @@ fn live_geometry(_target: WindowsCaptureTarget) -> anyhow::Result<CaptureGeometr
 mod tests {
     use std::sync::Arc;
 
-    use cua_driver_core::capture_runtime::CaptureService;
+    use cua_driver_core::capture_runtime::{admission_error_code, CaptureService};
     use serde_json::json;
 
-    use super::{
-        admission_error_code, round_action_point, CaptureGeometry, WindowsCaptureBridge,
-        WindowsCaptureTarget,
-    };
+    use super::{round_action_point, CaptureGeometry, WindowsCaptureBridge, WindowsCaptureTarget};
 
     fn png() -> Vec<u8> {
         cua_driver_core::image_utils::encode_rgba_to_png(&[10, 20, 30, 255], 1, 1).unwrap()
@@ -291,6 +267,26 @@ mod tests {
             "capture_target_mismatch"
         );
         assert_eq!(dispatches, 0);
+    }
+
+    #[test]
+    fn out_of_bounds_point_reports_the_shared_coordinate_code() {
+        let bridge = WindowsCaptureBridge::new(Arc::new(CaptureService::default()));
+        let target = WindowsCaptureTarget::PrimaryDesktop;
+        let capture_id = publish(&bridge, target);
+        let mut request = args();
+        request["capture_id"] = json!(capture_id);
+        let admission = bridge.admit_click_with_geometry(
+            &request,
+            target,
+            CaptureGeometry::new(1, 1, 1, 1).unwrap(),
+            5.0,
+            0.0,
+        );
+        assert_eq!(
+            admission_error_code(&admission.unwrap_err()),
+            "capture_coordinate_invalid"
+        );
     }
 
     #[test]

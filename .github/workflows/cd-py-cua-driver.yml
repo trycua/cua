@@ -51,10 +51,8 @@ jobs:
             fi
             TAG="cua-driver-rs-v$VERSION"
           else
-            # Publish dispatches run from main, so workflow_run.head_sha is the
-            # workflow revision rather than the immutable release tag. Resolve
-            # those runs from the exact metadata artifact produced by the
-            # successful release job.
+            # Resolve the version from the exact metadata artifact produced by
+            # the release job of the stable tag run that published the draft.
             if ! echo "$RUN_ID" | grep -qE '^[0-9]+$'; then
               echo "Invalid workflow run ID: $RUN_ID" >&2
               exit 1
@@ -78,9 +76,9 @@ jobs:
               VERSION="${RELEASE_VERSIONS[0]}"
               TAG="cua-driver-rs-v$VERSION"
             else
-              # Tag-triggered candidate builds do not run the release job and
-              # therefore have no release metadata artifact. Preserve the tag
-              # SHA fallback so those runs continue to skip until publication.
+              # Build-only runs skip the release job and therefore have no
+              # release metadata artifact. Fall back to the tag at the run's
+              # SHA; the published-release check below still gates publishing.
               if ! echo "$HEAD_SHA" | grep -qE '^[0-9a-f]{40}$'; then
                 echo "Invalid SHA format: $HEAD_SHA" >&2
                 exit 1

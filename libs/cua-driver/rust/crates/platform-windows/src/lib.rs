@@ -52,6 +52,23 @@ pub mod history;
 #[cfg(target_os = "windows")]
 pub mod browser_platform;
 
+// Pure isolated-browser selection decision; cfg-independent so its unit
+// tests run on any host.
+#[cfg(any(target_os = "windows", test))]
+mod browser_isolated_selection;
+
+// Pure launch-token decision and command-line quoting for isolated browsers;
+// cfg-independent so its unit tests run on any host.
+#[cfg(any(target_os = "windows", test))]
+mod browser_launch_token;
+
+#[cfg(target_os = "windows")]
+mod browser_standard_user;
+
+// De-elevated `launch_app` for an elevated Driver (#3607).
+#[cfg(target_os = "windows")]
+pub mod standard_user_launch;
+
 #[cfg(target_os = "windows")]
 mod browser_consent_ui;
 #[cfg(target_os = "windows")]

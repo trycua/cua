@@ -1,8 +1,9 @@
 # Recording and replay
 
 Record only when the user requests it. Keep the recording controls and actions
-on one persistent MCP connection; see [RUNTIME.md](RUNTIME.md). The recording
-tools do not advertise a public `session` parameter. Do not add one.
+on one persistent MCP connection; see [RUNTIME.md](RUNTIME.md). When the actions
+pass a `session` label, you may pass the same label to `start_recording`.
+`stop_recording` and `get_recording_state` do not accept `session`.
 
 ## Start, observe, stop
 
@@ -22,11 +23,18 @@ off by default; explicitly set `record_video:true` when requested. Inspect
 `video_active` and `last_error`, not just the successful tool status. Per-turn
 capture may continue even when video initialization failed.
 
-The current recorder is shared within its runtime. Manual `stop_recording`
-stops whichever recording is active, regardless of its starting session.
-Do not start over or stop another run's recording. Session-owned teardown
-does not establish concurrent recording isolation. If a recorder is already
-active, coordinate with its owner rather than taking it over.
+A recording keeps only its owner's actions. With a `session` label, it keeps
+that session's calls. Without one, it keeps every call on the connection that
+started it, including calls that pass a `session` label. Calls from other
+connections, including one-shot `cua-driver <tool>` processes, and
+`start_session` / `end_session` write no turns. A recording started with CLI
+`cua-driver recording start` has no owning session and records every
+session's actions.
+
+There is still one recorder per runtime. Manual `stop_recording` stops
+whichever recording is active, regardless of its starting session. Do not
+start over or stop another run's recording. If a recorder is already active,
+coordinate with its owner rather than taking it over.
 
 Stop and inspect `last_video_path` before ending the connection. A disconnect
 can tear down owned recording; a runtime restart loses in-memory state.
@@ -54,7 +62,17 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
 
 - `before_state.json` and `after_state.json` — application accessibility
   state immediately before and after the action. They carry the same
-  `tree_markdown` and `element_count` shape as `get_window_state`.
+  `tree_markdown` and `element_count` shape as `get_window_state`. Each walk
+  is bounded by `start_recording`'s `state_timeout_ms` (default 1000, like
+  `get_window_state`'s `timeout_ms`). A walk that runs out of time keeps the
+  partial tree, and `evidence.json` marks that phase `truncated` with
+  `truncation_reason`, `nodes_visited`, `nodes_pending`, and `timeout_ms`. If
+  an accessibility provider stops answering, the turn continues without
+  state and records `state_capture_timeout`. For an action refused before
+  dispatch, such as a click with an unknown or expired `capture_id`, the
+  state walk is skipped and the state is recorded as `not_applicable` with
+  the classification `action_refused_before_dispatch`. Pass
+  `include_accessibility_tree: false` to record without state.
 - `before.png` and `after.png` — target-window images immediately before
   and after the action. Window capture remains scoped to the target when
   another window covers it.

@@ -8,20 +8,25 @@
 
 pub mod badge_glyphs;
 pub mod bezier;
+pub mod capture_exclusion;
 pub mod capture_utils;
 pub mod motion;
 pub mod path_planner;
+pub mod render_map;
 pub mod render_state;
 pub mod session_badge;
 pub mod theme;
 pub mod theme_artifact;
-pub mod util;
 pub mod z_order;
 
 pub use badge_glyphs::{BadgeChip, BadgeGlyph};
 pub use bezier::CubicBezier;
 pub use motion::{MotionConfig, Spring};
 pub use path_planner::{PathPlanner, PathState, PlannedPath};
+pub use render_map::{
+    keyed_config, seed_position, CursorMap, MsgOutcome, RenderEntry, RenderMap, ScreenFrame,
+    DEFAULT_CURSOR_KEY, SEED_OFFSET,
+};
 pub use render_state::{
     paint_cursor, render_frame, FocusRect, RenderStateCore, SESSION_BADGE_FADE_SECS,
     SESSION_BADGE_HOLD_SECS,
@@ -326,6 +331,10 @@ pub enum OverlayMsg {
     /// This deliberately does not recreate a cursor; the next command does so
     /// lazily after the successful `start_session` boundary.
     Revive(CursorKey),
+    /// No state change: wakes a parked render loop so it services an
+    /// out-of-band request (such as hiding for a Driver desktop capture)
+    /// without waiting for its next maintenance tick.
+    Wake,
 }
 
 /// Commands sent from MCP tool handlers to the overlay's render thread.
@@ -374,18 +383,42 @@ pub enum OverlayCommand {
     ShowFocusRect(Option<[f64; 4]>),
 }
 
+/// Distance, in points, between a cursor's pointer point and its anchor.
+///
+/// `RenderStateCore::pos` is the anchor that path motion, the session badge,
+/// and platform damage regions follow. The theme hotspot is drawn at the
+/// pointer point, `POINTER_ANCHOR_OFFSET` points from the anchor opposite the
+/// heading, so a cursor anchored by [`anchor_for_pointer`] draws its tip on
+/// the requested coordinate at every heading and backing scale.
+pub const POINTER_ANCHOR_OFFSET: f64 = 16.0;
+
+/// Anchor that places a cursor's hotspot on `(x, y)` at `heading`.
+pub fn anchor_for_pointer(x: f64, y: f64, heading: f64) -> (f64, f64) {
+    (
+        x + heading.cos() * POINTER_ANCHOR_OFFSET,
+        y + heading.sin() * POINTER_ANCHOR_OFFSET,
+    )
+}
+
+/// Pointer point, where the theme hotspot is drawn, for an anchor at `heading`.
+pub fn pointer_for_anchor(x: f64, y: f64, heading: f64) -> (f64, f64) {
+    (
+        x - heading.cos() * POINTER_ANCHOR_OFFSET,
+        y - heading.sin() * POINTER_ANCHOR_OFFSET,
+    )
+}
+
 /// Build the shared overlay command for one native pointer position.
 ///
-/// Native drag implementations report the actual event coordinate while the
-/// cursor artwork is centred 16 points down-right so its tip lands on that
-/// coordinate. Keeping this transform here prevents platform-specific drag
-/// loops from drifting apart.
+/// Native drag implementations report the actual event coordinate. Anchoring
+/// it here keeps the theme hotspot on that coordinate and prevents
+/// platform-specific drag loops from drifting apart.
 pub fn track_pointer_command(x: f64, y: f64) -> OverlayCommand {
-    const CLICK_OFFSET: f64 = 16.0;
     let heading = std::f64::consts::FRAC_PI_4;
+    let (x, y) = anchor_for_pointer(x, y, heading);
     OverlayCommand::SnapTo {
-        x: x + heading.cos() * CLICK_OFFSET,
-        y: y + heading.sin() * CLICK_OFFSET,
+        x,
+        y,
         heading_radians: Some(heading),
     }
 }
@@ -435,20 +468,6 @@ mod pointer_tracking_tests {
         assert!(sibling.get());
         drop(sibling_guard);
         assert!(!sibling.get());
-    }
-
-    #[test]
-    fn tracked_artwork_keeps_its_tip_on_the_native_pointer() {
-        let OverlayCommand::SnapTo {
-            x,
-            y,
-            heading_radians: Some(heading),
-        } = track_pointer_command(120.0, 80.0)
-        else {
-            panic!("pointer tracking must produce an anchored snap");
-        };
-        assert!((x - (120.0 + heading.cos() * 16.0)).abs() < f64::EPSILON);
-        assert!((y - (80.0 + heading.sin() * 16.0)).abs() < f64::EPSILON);
     }
 
     #[test]

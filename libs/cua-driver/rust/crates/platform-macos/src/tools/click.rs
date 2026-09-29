@@ -1023,6 +1023,20 @@ impl Tool for ClickTool {
                         CFRelease(element as _);
                         return Ok(false);
                     }
+                    // AXPress acts on the whole element and carries no point;
+                    // Chrome delivers it at the element's centre. Only use it
+                    // when pressing that element is what the requested point
+                    // means. A canvas, video or other drawn surface is one AX
+                    // element with many targets inside it: decline, so the
+                    // routed pixel path (which keeps the point) handles it.
+                    if !focus_only {
+                        let role = copy_string_attr(element, "AXRole").unwrap_or_default();
+                        let rect = element_screen_rect(element);
+                        if !ax_press_preserves_point(&role, rect, screen_x, screen_y) {
+                            CFRelease(element as _);
+                            return Ok(false);
+                        }
+                    }
                     let delivered = if focus_only {
                         crate::input::ax_actions::focus_element(element as usize).is_ok()
                     } else {
@@ -1567,6 +1581,125 @@ fn perform_ax_click(
     let _ = window_id; // used by caller context
 
     Ok((summary, needs_webkit_delay, suspected_noop, false, false))
+}
+
+/// Roles whose AXPress/focus acts on the element as a whole, wherever inside
+/// it the requested point falls, so pressing the element is equivalent to
+/// clicking the point.
+const WHOLE_ELEMENT_PRESS_ROLES: &[&str] = &[
+    "AXButton",
+    "AXLink",
+    "AXCheckBox",
+    "AXRadioButton",
+    "AXMenuItem",
+    "AXMenuBarItem",
+    "AXMenuButton",
+    "AXPopUpButton",
+    "AXDisclosureTriangle",
+    "AXComboBox",
+    "AXTextField",
+    "AXTextArea",
+    "AXSearchField",
+    "AXRow",
+    "AXCell",
+];
+
+/// How far from the element centre (points) a click still counts as "at the
+/// centre", the only place an AXPress on a non-control element lands.
+const CENTRE_SLACK_PT: f64 = 6.0;
+const CENTRE_SLACK_FRACTION: f64 = 0.1;
+
+/// Whether an AXPress on the element found under a pixel-addressed click keeps
+/// the point the caller asked for.
+///
+/// AXPress carries no coordinates. For a control it does not matter (the whole
+/// control presses). For anything else (a canvas, video, image map or other
+/// drawn surface, which is the case `x, y` exists for) the press lands at the
+/// element centre, so a click aimed elsewhere on it would hit a different
+/// target and still report success. Unknown geometry on a non-control is not
+/// evidence that the point survives, so it declines as well.
+pub(crate) fn ax_press_preserves_point(role: &str, rect: Option<[f64; 4]>, x: f64, y: f64) -> bool {
+    if WHOLE_ELEMENT_PRESS_ROLES.contains(&role) {
+        return true;
+    }
+    let Some([ex, ey, w, h]) = rect else {
+        return false;
+    };
+    let (cx, cy) = (ex + w / 2.0, ey + h / 2.0);
+    (x - cx).abs() <= CENTRE_SLACK_PT.max(w * CENTRE_SLACK_FRACTION)
+        && (y - cy).abs() <= CENTRE_SLACK_PT.max(h * CENTRE_SLACK_FRACTION)
+}
+
+#[cfg(test)]
+mod ax_press_point_tests {
+    use super::ax_press_preserves_point;
+
+    // The live repro: a 640x260 canvas at screen (100, 200); a button drawn at
+    // its top-left corner. AXPress on the canvas lands at (420, 330).
+    const CANVAS: Option<[f64; 4]> = Some([100.0, 200.0, 640.0, 260.0]);
+
+    #[test]
+    fn a_click_aimed_at_a_corner_of_a_canvas_is_not_an_ax_press() {
+        assert!(!ax_press_preserves_point("AXGroup", CANVAS, 176.0, 240.0));
+        assert!(!ax_press_preserves_point("AXImage", CANVAS, 176.0, 240.0));
+    }
+
+    #[test]
+    fn a_click_at_the_centre_of_a_canvas_may_use_ax_press() {
+        assert!(ax_press_preserves_point("AXGroup", CANVAS, 420.0, 330.0));
+    }
+
+    #[test]
+    fn the_centre_tolerance_is_bounded() {
+        // 10% of the width is 64 pt: just inside, then just outside.
+        assert!(ax_press_preserves_point(
+            "AXGroup",
+            CANVAS,
+            420.0 + 64.0,
+            330.0
+        ));
+        assert!(!ax_press_preserves_point(
+            "AXGroup",
+            CANVAS,
+            420.0 + 65.0,
+            330.0
+        ));
+        assert!(!ax_press_preserves_point(
+            "AXGroup",
+            CANVAS,
+            420.0,
+            330.0 + 27.0
+        ));
+    }
+
+    #[test]
+    fn a_control_presses_as_a_whole_wherever_the_point_is() {
+        // Wrong patch: apply the centre rule to buttons too (an off-centre click on a real
+        // button would stop pressing it in the background).
+        assert!(ax_press_preserves_point(
+            "AXButton",
+            Some([10.0, 10.0, 200.0, 50.0]),
+            12.0,
+            12.0
+        ));
+        assert!(ax_press_preserves_point("AXLink", None, 5.0, 5.0));
+        assert!(ax_press_preserves_point("AXCheckBox", None, 5.0, 5.0));
+    }
+
+    #[test]
+    fn unknown_geometry_on_a_non_control_declines() {
+        // Wrong patch: treat "no rect" as "fine" (the point is then unverified but reported delivered).
+        assert!(!ax_press_preserves_point("AXGroup", None, 420.0, 330.0));
+        assert!(!ax_press_preserves_point("", None, 0.0, 0.0));
+    }
+
+    #[test]
+    fn small_non_control_elements_use_the_absolute_slack() {
+        // A 20x20 clickable group: 10% would be 2 pt, so the 6 pt floor applies.
+        let small = Some([100.0, 100.0, 20.0, 20.0]);
+        assert!(ax_press_preserves_point("AXGroup", small, 116.0, 110.0));
+        assert!(!ax_press_preserves_point("AXGroup", small, 117.0, 110.0));
+    }
 }
 
 #[cfg(test)]

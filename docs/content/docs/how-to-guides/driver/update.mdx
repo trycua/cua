@@ -61,7 +61,9 @@ wrappers that act on elements before you update:
 2. Remove arguments that a tool does not advertise. Tools with closed input
    schemas now refuse unknown argument names with `invalid_arguments`
    (`<tool>: unknown argument <name>`) instead of ignoring them. This includes
-   `element_index` and `snapshot_id` on action tools.
+   `element_index` and `snapshot_id` on action tools, and `from_zoom` on the
+   Windows `type_text`, `press_key`, and `hotkey` tools, which Windows read
+   without advertising. Pass window coordinates or an `element_token` there.
 3. Read a window before you use window-relative pixels. Pixel actions and
    `zoom` against a window target return `screenshot_context_missing` until
    the same session has read that window with a screenshot; Driver no longer
@@ -74,6 +76,11 @@ wrappers that act on elements before you update:
    runtime, is refused with `stale_element_token`, which lists the process's
    current snapshots. Earlier releases reported a token from another runtime
    as `generation_mismatch`.
+
+Each one-shot `cua-driver call` without a `session` label runs in its own
+disposable session, and that session's snapshots are retired when the call
+returns. Pass the same `session` label to the read and to the actions that use
+its tokens or pixels.
 
 ## Before updating from 0.12.x to 0.13.0
 

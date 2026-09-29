@@ -4,7 +4,7 @@ authors:
   - f-trycua
 created: 2026-09-17
 last_updated: 2026-09-29
-status: accepted
+status: completed
 discussion: https://github.com/trycua/cua/issues/3931
 rfc_pr: https://github.com/trycua/cua/pull/3934
 implementation:
@@ -826,8 +826,8 @@ request merge, release, or deployment.
 
 ## Implementation status
 
-Recorded on 2026-09-29. The status stays `accepted` because one exit gate in
-the test and acceptance plan has no recorded evidence.
+Recorded on 2026-09-29. All exit gates in the test and acceptance plan have
+recorded evidence.
 
 Shipped:
 
@@ -854,14 +854,15 @@ Shipped:
 - [x] Public documentation no longer describes either component as a preview
       (#4190, #4325).
 
-Open:
-
-- [ ] Item 13 of the implementation plan: live-Jev source videos on macOS,
-      Windows, and Linux X11 from the exact final candidate, using the
-      released signed extension, plus one evidence-linked combined reel. The
-      live Jev runs recorded in #4190 cover Linux X11 and Windows only, and the
-      earlier demo evidence used pre-release review candidates with the mock
-      chooser.
-      Set `status: completed` after that evidence is recorded, or after a
-      maintainer decision in #3931 records why the gate no longer applies.
+- [x] Item 13 of the implementation plan: live-Jev source videos on macOS,
+      Windows, and Linux X11 with the released signed extension
+      (`cua-perception-v0.2.1`, `publisher-verified`), recorded during the
+      RFC 4268 Phase 3 matrix on `main` `3937539c0` with released Cua Driver
+      0.30.2 (#4298, #4301). Each clip runs the `canvas-cancel` task on the
+      visual-only canvas: live Jev picks one bounded candidate ID, Driver sends
+      one capture-bound click, and the fixture's own journal is the
+      independent postcondition. Live Jev passed 10/10 per platform (Python
+      and TypeScript). All three clips and a combined reel were fully decoded
+      without errors and inspected. The videos are kept with the maintainer
+      as private evidence and aren't published.
 

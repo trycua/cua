@@ -8,6 +8,10 @@ Examples:
     python -m agent.cli openai/computer-use-preview
     python -m agent.cli anthropic/claude-sonnet-4-5-20250929
     python -m agent.cli omniparser+anthropic/claude-sonnet-4-5-20250929
+    python -m agent.cli orcarouter/auto
+    python -m agent.cli --connect-orcarouter
+    python -m agent.cli --list-orcarouter-models
+    python -m agent.cli --orcarouter-api-key sk-orca-...
 """
 
 try:
@@ -39,6 +43,93 @@ except ImportError:
 
 # Load environment variables
 dotenv.load_dotenv()
+
+from .orcarouter import (  # noqa: E402 - dotenv must run before the provider reads origins
+    install_orcarouter_provider,
+    is_orcarouter_model,
+)
+
+
+def connect_orcarouter(provider: Any, *, no_browser: bool) -> bool:
+    """Run the PKCE connect flow through the provider's credential seam.
+
+    Without ``no_browser`` a loopback listener receives the redirect on this
+    machine. With ``no_browser`` the out-of-band flow is used, which is what a
+    container, SSH session or headless host needs.
+    """
+    from .orcarouter import (
+        OrcaRouterAuthError,
+        connect,
+        connect_via_out_of_band,
+        format_granted_scope_warning,
+    )
+
+    def show(url: str) -> None:
+        print_colored("Open this URL to authorize Cua Agent:", dim=True)
+        print_colored(url, Colors.CYAN)
+
+    try:
+        if no_browser:
+            credential = connect_via_out_of_band(
+                auth_base_url=provider.auth_base_url,
+                read_code=lambda: input("OrcaRouter code: "),
+                on_url=show,
+                open_browser=lambda _url: False,
+            )
+            provider.pkce_store.save(credential)
+        else:
+            credential = connect(
+                auth_base_url=provider.auth_base_url,
+                store=provider.pkce_store,
+                on_url=show,
+            )
+    except OrcaRouterAuthError as error:
+        print_colored(f"❌ OrcaRouter connect failed: {error}", Colors.RED, bold=True)
+        print_colored("The previously stored key, if any, was left untouched.", dim=True)
+        return False
+
+    provider.begin_generation()
+    print_colored(
+        f"✅ Connected to OrcaRouter ({provider.status().masked}).", Colors.GREEN, bold=True
+    )
+    warning = format_granted_scope_warning(credential)
+    if warning:
+        print_colored(f"⚠️  {warning}", Colors.YELLOW)
+    print_colored(
+        "Manage or revoke this access at " "https://www.orcarouter.ai/console/authorized-apps",
+        dim=True,
+    )
+    return True
+
+
+def list_orcarouter_models(provider: Any, *, capability: str, modalities: tuple[str, ...]) -> bool:
+    """Print the capability-filtered OrcaRouter catalog."""
+    result = provider.load_catalog(capability=capability, required_input_modalities=modalities)
+    if result.degraded:
+        print_colored(
+            f"⚠️  Live discovery unavailable ({result.degraded_reason}); showing "
+            f"{'last known-good' if result.from_cache else 'verified fallback'} models.",
+            Colors.YELLOW,
+        )
+    if not result.models:
+        print_colored("No models matched this capability filter.", Colors.YELLOW)
+        return False
+    for model in result.models:
+        details = []
+        if model.context_length:
+            details.append(f"ctx {model.context_length}")
+        if model.input_modalities:
+            details.append("/".join(model.input_modalities))
+        if model.reasoning_efforts:
+            details.append("reasoning: " + ",".join(model.reasoning_efforts))
+        suffix = f"  [{' | '.join(details)}]" if details else ""
+        print(f"  orcarouter/{model.id}{suffix}")
+    print_colored(
+        f"{len(result.models)} model(s), capability={capability}, "
+        f"source={'live' if result.origin == 'live' else 'fallback'}",
+        dim=True,
+    )
+    return True
 
 
 # Color codes for terminal output
@@ -240,7 +331,13 @@ Examples:
 
     parser.add_argument(
         "model",
-        help="Model string (e.g., 'openai/computer-use-preview', 'anthropic/claude-sonnet-4-5-20250929')",
+        nargs="?",
+        default=None,
+        help=(
+            "Model string (e.g., 'openai/computer-use-preview', "
+            "'orcarouter/auto'). Optional when an OrcaRouter management flag such "
+            "as --connect-orcarouter or --list-orcarouter-models is used."
+        ),
     )
 
     parser.add_argument(
@@ -311,7 +408,115 @@ Examples:
         help="API base URL override for the model provider (passed to ComputerAgent)",
     )
 
+    # OrcaRouter authentication and catalog
+    parser.add_argument(
+        "--orcarouter-api-key",
+        dest="orcarouter_api_key",
+        type=str,
+        help=(
+            "OrcaRouter API key (sk-orca-...). Stored in the project's .env as "
+            "ORCA_KEY and reused until OrcaRouter revokes it."
+        ),
+    )
+    parser.add_argument(
+        "--connect-orcarouter",
+        action="store_true",
+        help=(
+            "Connect with OrcaRouter (OAuth 2.0 + PKCE). Uses a loopback redirect "
+            "on this machine, or a pasted out-of-band code with --no-browser."
+        ),
+    )
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help=(
+            "Do not open a browser during --connect-orcarouter; print the URL and "
+            "read the out-of-band code from stdin."
+        ),
+    )
+    parser.add_argument(
+        "--clear-orcarouter-key",
+        action="store_true",
+        help="Remove the stored OrcaRouter credential.",
+    )
+    parser.add_argument(
+        "--list-orcarouter-models",
+        action="store_true",
+        help=("List the models the configured OrcaRouter credential can call, then exit."),
+    )
+    parser.add_argument(
+        "--orcarouter-capability",
+        dest="orcarouter_capability",
+        choices=["chat", "embedding", "image", "video", "rerank"],
+        default="chat",
+        help="Capability filter for --list-orcarouter-models (default: chat).",
+    )
+    parser.add_argument(
+        "--orcarouter-multimodal",
+        dest="orcarouter_multimodal",
+        choices=["image", "audio", "video"],
+        action="append",
+        help=(
+            "Require the listed input modality from --list-orcarouter-models. "
+            "Models that do not declare it are excluded."
+        ),
+    )
+
     args = parser.parse_args()
+
+    # == OrcaRouter: authentication and model catalog ==
+    # Both authentication choices land in the same credential seam, so
+    # everything below (`ORCA_KEY`) is identical either way.
+    orcarouter = install_orcarouter_provider()
+    if args.clear_orcarouter_key:
+        removed = orcarouter.clear_credential()
+        print_colored(
+            (
+                "Removed the stored OrcaRouter credential."
+                if removed
+                else "No OrcaRouter credential was stored."
+            ),
+            dim=True,
+        )
+        if not args.model:
+            return
+    if args.orcarouter_api_key:
+        status = orcarouter.store_api_key(args.orcarouter_api_key)
+        print_colored(f"Stored the OrcaRouter API key ({status.masked}).", dim=True)
+    if args.connect_orcarouter:
+        if not connect_orcarouter(orcarouter, no_browser=args.no_browser):
+            sys.exit(1)
+    if args.list_orcarouter_models:
+        if not list_orcarouter_models(
+            orcarouter,
+            capability=args.orcarouter_capability,
+            modalities=tuple(args.orcarouter_multimodal or ()),
+        ):
+            sys.exit(1)
+        return
+    if args.model and is_orcarouter_model(args.model):
+        status = orcarouter.status()
+        if status.needs_reauth:
+            print_colored(f"❌ {orcarouter.reauth_message()}", Colors.RED, bold=True)
+            sys.exit(1)
+        if status.source is None:
+            print_colored("No OrcaRouter credential is configured.", dim=True)
+            print_colored("Choose one of:", dim=True)
+            print_colored(
+                "  cua-agent orcarouter/auto --orcarouter-api-key sk-orca-...   "
+                "(paste an existing key)",
+                dim=True,
+            )
+            print_colored(
+                "  cua-agent orcarouter/auto --connect-orcarouter              "
+                "(browser authorization)",
+                dim=True,
+            )
+            print_colored(
+                "Get a key at https://www.orcarouter.ai/console/authorized-apps",
+                dim=True,
+            )
+            sys.exit(1)
 
     # Check for required environment variables
     container_name = os.getenv("CUA_CONTAINER_NAME")
@@ -363,6 +568,14 @@ Examples:
     except ImportError as e:
         print_colored(f"❌ Import error: {e}", Colors.RED, bold=True)
         print_colored("Make sure agent and computer libraries are installed.", Colors.YELLOW)
+        sys.exit(1)
+
+    if not args.model:
+        print_colored(
+            "❌ A model string is required to start a chat "
+            "(e.g. orcarouter/auto, openai/computer-use-preview).",
+            Colors.RED,
+        )
         sys.exit(1)
 
     # Resolve provider -> os_type, provider_type, api key requirement

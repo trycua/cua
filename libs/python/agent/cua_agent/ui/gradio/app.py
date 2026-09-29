@@ -71,6 +71,9 @@ def load_settings() -> Dict[str, Any]:
 def save_settings(settings: Dict[str, Any]):
     """Saves settings to the JSON file."""
     settings.pop("provider_api_key", None)
+    # Never persist OrcaRouter secret material: the key lives in .env (gitignored,
+    # written by the connect flow or the API-key field) or in the environment.
+    settings.pop("orcarouter_api_key", None)
     try:
         with open(SETTINGS_FILE, "w") as f:
             json.dump(settings, f, indent=4)
@@ -132,6 +135,12 @@ MODEL_MAPPINGS = {
     },
 }
 
+# OrcaRouter is a named provider, not a custom OpenAI-compatible base URL: the
+# model control is a live catalog dropdown (see `orcarouter_ui`), so there is no
+# free-text model string to map here.
+ORCAROUTER_LOOP = "ORCAROUTER"
+ORCAROUTER_DEFAULT_MODEL = "orcarouter/auto"
+
 
 def get_model_string(model_name: str, loop_provider: str) -> str:
     """Determine the agent model string based on the input."""
@@ -139,6 +148,10 @@ def get_model_string(model_name: str, loop_provider: str) -> str:
         return "custom_oaicompat"
     elif model_name == "Custom model (ollama)":
         return "custom_ollama"
+    elif loop_provider == ORCAROUTER_LOOP or model_name.startswith("orcarouter/"):
+        # The dropdown already carries vendor/model with the OrcaRouter prefix
+        # intact; the catalog is the only source of these ids.
+        return model_name if model_name.startswith("orcarouter/") else ORCAROUTER_DEFAULT_MODEL
     elif loop_provider == "OMNI-OLLAMA" or model_name.startswith("OMNI: Ollama "):
         if model_name.startswith("OMNI: Ollama "):
             ollama_model = model_name.split("OMNI: Ollama ", 1)[1]

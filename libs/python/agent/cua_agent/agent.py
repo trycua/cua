@@ -46,6 +46,15 @@ from .callbacks import (
 )
 from .computers import AsyncComputerHandler, is_agent_computer, make_computer_handler
 from .decorators import find_agent_config
+from .orcarouter import (
+    ModelCatalog,
+    OrcaRouterCredential,
+    OrcaRouterProvider,
+    get_default_provider,
+    install_orcarouter_provider,
+    is_orcarouter_model,
+    strip_orcarouter_prefix,
+)
 from .responses import (
     make_tool_error_item,
     replace_failed_computer_calls_with_function_calls,
@@ -372,6 +381,25 @@ class ComputerAgent:
             {"provider": "azure_ml", "custom_handler": azure_ml_adapter},
         ]
         litellm.suppress_debug_info = True
+
+        # == OrcaRouter provider ==
+        # Registered as a first-class named provider. Both authentication
+        # choices (pasted API key, OAuth 2.0 + PKCE connect) resolve to the same
+        # durable API key, so nothing below needs to know which one was used.
+        self.orcarouter: Optional[OrcaRouterProvider] = None
+        if is_orcarouter_model(model):
+            self.orcarouter = install_orcarouter_provider()
+            credential = self.orcarouter.resolve_credential()
+            if credential is not None:
+                self.orcarouter.begin_generation()
+            if api_key is not None:
+                self.orcarouter.api_key_provider.store(
+                    OrcaRouterCredential(api_key=str(api_key), source="api_key")
+                )
+                self.orcarouter.begin_generation()
+            if api_base is not None:
+                self.orcarouter.api_base_url = str(api_base)
+                self.orcarouter.catalog = ModelCatalog(api_base_url=self.orcarouter.api_base_url)
 
         # == Initialize computer agent ==
 

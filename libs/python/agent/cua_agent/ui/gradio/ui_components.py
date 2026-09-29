@@ -14,6 +14,7 @@ import gradio as gr
 from gradio.components.chatbot import MetadataDict
 
 from .app import (
+    ORCAROUTER_LOOP,
     create_agent,
     get_model_string,
     get_ollama_models,
@@ -22,13 +23,38 @@ from .app import (
     load_settings,
     save_settings,
 )
+from .orcarouter_ui import TASK_MODALITIES, build_orcarouter_panel
 
 # Global messages array to maintain conversation history
 global_messages = []
 
 
-def create_gradio_ui() -> gr.Blocks:
+def create_orcarouter_runtime() -> tuple[Any, Any]:
+    """Create the OrcaRouter provider and the UI login session.
+
+    Kept separate so embedding hosts and tests can supply their own provider
+    (with a fake catalog or a fake auth server) without touching the UI code.
+    """
+    from ...orcarouter import (
+        OrcaRouterConnectSession,
+        install_orcarouter_provider,
+        is_still_compatible,
+    )
+
+    provider = install_orcarouter_provider()
+    session = OrcaRouterConnectSession(provider=provider)
+    return provider, session
+
+
+def create_gradio_ui(
+    orcarouter_provider: Optional[Any] = None,
+    orcarouter_session: Optional[Any] = None,
+) -> gr.Blocks:
     """Create a Gradio UI for the Computer-Use Agent."""
+    from ...orcarouter import is_still_compatible
+
+    if orcarouter_provider is None or orcarouter_session is None:
+        orcarouter_provider, orcarouter_session = create_orcarouter_runtime()
 
     # Load settings
     saved_settings = load_settings()
@@ -208,12 +234,14 @@ if __name__ == "__main__":
             # Left column for settings
             with gr.Column(scale=1):
                 # Logo
-                gr.HTML("""
+                gr.HTML(
+                    """
                     <div style="display: flex; justify-content: center; margin-bottom: 0.5em">
                         <img alt="Cua Logo" style="width: 80px;"
                              src="https://github.com/trycua/cua/blob/main/img/logo_white.png?raw=true" />
                     </div>
-                    """)
+                    """
+                )
 
                 # Python code accordion
                 with gr.Accordion("Python Code", open=False):
@@ -276,10 +304,18 @@ if __name__ == "__main__":
 
                 with gr.Accordion("Agent Configuration", open=True):
                     agent_loop = gr.Dropdown(
-                        choices=["OPENAI", "ANTHROPIC", "OMNI", "UITARS"],
+                        choices=["OPENAI", "ANTHROPIC", "OMNI", "UITARS", ORCAROUTER_LOOP],
                         label="Agent Loop",
                         value=initial_loop,
                         info="Select the agent loop provider",
+                    )
+
+                    # OrcaRouter is a first-class provider: its own panel with both
+                    # authentication choices and a live-catalog model dropdown.
+                    orcarouter_panel = build_orcarouter_panel(
+                        orcarouter_provider,
+                        orcarouter_session,
+                        initial_model=saved_settings.get("orcarouter_model") or None,
                     )
 
                     # Model selection dropdowns
@@ -394,6 +430,7 @@ if __name__ == "__main__":
                         anthropic_model=None,
                         omni_model=None,
                         uitars_model=None,
+                        orcarouter_model=None,
                     ):
                         loop = loop or agent_loop.value
 
@@ -406,11 +443,14 @@ if __name__ == "__main__":
                             model_value = omni_model
                         elif loop == "UITARS" and uitars_model:
                             model_value = uitars_model
+                        elif loop == ORCAROUTER_LOOP and orcarouter_model:
+                            model_value = orcarouter_model
 
                         openai_visible = loop == "OPENAI"
                         anthropic_visible = loop == "ANTHROPIC"
                         omni_visible = loop == "OMNI"
                         uitars_visible = loop == "UITARS"
+                        orcarouter_visible = loop == ORCAROUTER_LOOP
 
                         show_openai_key = not has_openai_key and (
                             loop == "OPENAI"
@@ -448,6 +488,7 @@ if __name__ == "__main__":
                             gr.update(visible=is_custom_openai_api),
                             gr.update(visible=is_custom_openai_api),
                             gr.update(value=model_choice_value),
+                            gr.update(visible=orcarouter_visible),
                         ]
 
                     # Custom model inputs
@@ -505,6 +546,7 @@ if __name__ == "__main__":
                         uitars_model_choice,
                         openai_model_choice,
                         anthropic_model_choice,
+                        orcarouter_panel["model_dropdown"],
                     ]:
                         dropdown.change(
                             fn=update_ui,
@@ -514,6 +556,7 @@ if __name__ == "__main__":
                                 anthropic_model_choice,
                                 omni_model_choice,
                                 uitars_model_choice,
+                                orcarouter_panel["model_dropdown"],
                             ],
                             outputs=[
                                 openai_model_choice,
@@ -526,6 +569,23 @@ if __name__ == "__main__":
                                 provider_base_url,
                                 provider_api_key,
                                 model_choice,
+                                orcarouter_panel["panel"],
+                            ],
+                            queue=False,
+                        ).then(
+                            # Selecting the OrcaRouter loop immediately fills the
+                            # model list from the catalog; the control is never
+                            # left empty or free text.
+                            fn=orcarouter_panel["sync_catalog"],
+                            inputs=[
+                                agent_loop,
+                                orcarouter_panel["task_choice"],
+                                orcarouter_panel["modality_choice"],
+                                orcarouter_panel["model_dropdown"],
+                            ],
+                            outputs=[
+                                orcarouter_panel["model_dropdown"],
+                                orcarouter_panel["catalog_status"],
                             ],
                             queue=False,
                         )
@@ -605,6 +665,7 @@ if __name__ == "__main__":
                     anthropic_model_value,
                     omni_model_value,
                     uitars_model_value,
+                    orcarouter_model_value,
                     custom_model_value,
                     agent_loop_choice,
                     save_traj,
@@ -618,6 +679,7 @@ if __name__ == "__main__":
                     container_name="",
                     cua_cloud_api_key="",
                     max_budget_value=None,
+                    orcarouter_modalities=None,
                 ):
                     if not history:
                         yield history
@@ -635,6 +697,20 @@ if __name__ == "__main__":
                         model_choice_value = omni_model_value
                     elif agent_loop_choice == "UITARS":
                         model_choice_value = uitars_model_value
+                    elif agent_loop_choice == ORCAROUTER_LOOP:
+                        model_choice_value = orcarouter_model_value
+                        if not model_choice_value:
+                            history.append(
+                                gr.ChatMessage(
+                                    role="assistant",
+                                    content=(
+                                        "Select an OrcaRouter model first. The list comes "
+                                        "from the live OrcaRouter catalog."
+                                    ),
+                                )
+                            )
+                            yield history
+                            return
                     else:
                         model_choice_value = "No models available"
 
@@ -651,6 +727,38 @@ if __name__ == "__main__":
                         model_string_to_analyze = model_choice_value
 
                     try:
+                        # Second-layer guard only. The dropdown is already filtered by
+                        # capability, so an incompatible model cannot normally be
+                        # selected; this stops a stale value from reaching the API.
+                        if agent_loop_choice == ORCAROUTER_LOOP and orcarouter_model_value:
+                            required = tuple(
+                                modality
+                                for label, mods in TASK_MODALITIES.items()
+                                if label in (orcarouter_modalities or [])
+                                for modality in mods
+                            )
+                            if required and not is_still_compatible(
+                                orcarouter_model_value,
+                                orcarouter_provider.load_catalog(
+                                    capability="chat",
+                                    required_input_modalities=required,
+                                ).models,
+                                capability="chat",
+                                required_input_modalities=required,
+                            ):
+                                history.append(
+                                    gr.ChatMessage(
+                                        role="assistant",
+                                        content=(
+                                            f"`{orcarouter_model_value}` does not declare "
+                                            f"{'/'.join(required)} input. Pick a compatible "
+                                            "OrcaRouter model."
+                                        ),
+                                    )
+                                )
+                                yield history
+                                return
+
                         # Get the model string
                         model_string = get_model_string(model_string_to_analyze, agent_loop_choice)
 
@@ -673,6 +781,12 @@ if __name__ == "__main__":
                             "computer_os": computer_os,
                             "computer_provider": computer_provider,
                             "container_name": container_name,
+                            # Only the model id is persisted; the credential is in .env.
+                            "orcarouter_model": (
+                                orcarouter_model_value
+                                if agent_loop_choice == ORCAROUTER_LOOP
+                                else None
+                            ),
                         }
                         save_settings(current_settings)
 
@@ -798,6 +912,7 @@ if __name__ == "__main__":
                         anthropic_model_choice,
                         omni_model_choice,
                         uitars_model_choice,
+                        orcarouter_panel["model_dropdown"],
                         custom_model,
                         agent_loop,
                         save_trajectory,
@@ -811,6 +926,7 @@ if __name__ == "__main__":
                         container_name,
                         cua_cloud_api_key,
                         max_budget,
+                        orcarouter_panel["modality_choice"],
                     ],
                     outputs=[chatbot_history],
                     queue=True,
@@ -842,12 +958,16 @@ if __name__ == "__main__":
                     container_name,
                     cua_cloud_api_key,
                     max_budget_val,
+                    orcarouter_model_val=None,
                 ):
                     messages = []
                     if chat_history:
                         for msg in chat_history:
                             if isinstance(msg, dict) and msg.get("role") == "user":
                                 messages.append(msg.get("content", ""))
+
+                    if agent_loop == ORCAROUTER_LOOP and orcarouter_model_val:
+                        model_choice_val = orcarouter_model_val
 
                     return generate_python_code(
                         agent_loop,
@@ -875,6 +995,7 @@ if __name__ == "__main__":
                     container_name,
                     cua_cloud_api_key,
                     max_budget,
+                    orcarouter_panel["model_dropdown"],
                 ]:
                     component.change(
                         update_code_display,
@@ -890,6 +1011,7 @@ if __name__ == "__main__":
                             container_name,
                             cua_cloud_api_key,
                             max_budget,
+                            orcarouter_panel["model_dropdown"],
                         ],
                         outputs=[code_display],
                     )

@@ -5643,6 +5643,15 @@ fn terminal_tty_for_window(pid: u32, xid: u64) -> Option<PathBuf> {
     ttys.get(window_index).cloned()
 }
 
+/// True when `key` names the Enter key in the shared X keysym vocabulary
+/// (`key_name_to_keysym`). The terminal pty short-circuit below applies to
+/// every spelling of that physical key — `enter`, `return`, any case — so an
+/// agent following the documented key names cannot silently lose the keypress
+/// on a terminal window (terminals discard synthetic XSendEvent keys).
+fn is_enter_key(key: &str) -> bool {
+    crate::input::key_name_to_keysym(key).ok() == Some(0xFF0D)
+}
+
 /// Type into a terminal window without touching X focus. Resolves the window's
 /// pty, then borrows the emulator's master fd and writes to it (see
 /// `crate::tty`). Returns `Ok(false)` when the target isn't a terminal we can
@@ -7974,7 +7983,7 @@ impl Tool for PressKeyTool {
                     "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer"},
                     "window_id":{"type":"integer"},
-                    "key":{"type":"string"},
+                    "key":{"type":"string","description":"Key name: enter/return, tab, escape, space, backspace, delete, insert, home, end, pageup, pagedown, up, down, left, right, f1-f12, or any single ASCII character."},
                     "modifiers":{"type":"array","items":{"type":"string"}},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
                     "x":{"type":"number","description":"Pixel X — the element px action form: pixel-click there to focus, then send the key. Use when the key must go to a Chromium/Electron surface the AX path can't focus. Pass with y, no element_token. Window-local pixels by default (same convention as click); for get_desktop_state pixels pass scope:\"desktop\" (or coordinate_frame:\"desktop\")."},
@@ -8301,7 +8310,7 @@ impl Tool for PressKeyTool {
             move || -> anyhow::Result<KeyRoute> {
             if resolved_element_index.is_none()
                 && mods.is_empty()
-                && key_for_task.eq_ignore_ascii_case("enter")
+                && is_enter_key(&key_for_task)
             {
                 if inject_terminal_input(pid, xid, "\n")? {
                     return Ok(KeyRoute::Terminal);
@@ -10312,6 +10321,7 @@ impl Tool for DragTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         let cursor_id = resolve_cursor_key(&args);
+        let modifiers: Vec<String> = args.str_array("modifier");
         if args.opt_str("scope").as_deref() == Some("desktop")
             && args.get("pid").is_none()
             && args.get("window_id").is_none()
@@ -10325,7 +10335,13 @@ impl Tool for DragTool {
             let button = parse_mouse_button(input.button.unwrap_or(ClickButton::Left).as_str());
             let duration_ms = input.duration_ms.unwrap_or(500).min(10_000);
             let steps = input.steps.unwrap_or(20).clamp(1, 200) as usize;
+            let modifiers = input.modifier.unwrap_or_default();
             let wayland = crate::wayland::wayland_input_enabled();
+            if wayland && !modifiers.is_empty() {
+                return ToolResult::error(
+                    "modified drags are unavailable on native Wayland: the pointer route cannot carry keyboard modifier state",
+                );
+            }
             let path = if wayland { "wayland_desktop" } else { "xtest" };
             let result = tokio::task::spawn_blocking(move || {
                 if wayland {
@@ -10339,7 +10355,8 @@ impl Tool for DragTool {
                         button,
                     )
                 } else {
-                    crate::input::send_drag_xtest_desktop(
+                    let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                    crate::input::send_drag_xtest_desktop_with_modifiers(
                         from_x.round() as i32,
                         from_y.round() as i32,
                         to_x.round() as i32,
@@ -10347,6 +10364,7 @@ impl Tool for DragTool {
                         button,
                         duration_ms,
                         steps,
+                        &modifier_refs,
                     )
                 }
             });
@@ -10382,6 +10400,11 @@ impl Tool for DragTool {
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         let isolated_background = isolated_hyprland_background(delivery);
         let native_refusal = if !isolated_background {
+            if crate::wayland::wayland_input_enabled() && !modifiers.is_empty() {
+                return ToolResult::error(
+                    "modified drags are unavailable on native Wayland: the pointer route cannot carry keyboard modifier state",
+                );
+            }
             if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
                 return refusal;
             }
@@ -10719,8 +10742,9 @@ impl Tool for DragTool {
                 Err(e) => return ToolResult::error(format!("Task error: {e}")),
             };
             let drag_result = tokio::task::spawn_blocking(move || {
+                let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                 crate::input::with_x11_foreground(xid, 80, || {
-                    crate::input::send_drag_xtest_desktop(
+                    crate::input::send_drag_xtest_desktop_with_modifiers(
                         screen_from_x.round() as i32,
                         screen_from_y.round() as i32,
                         screen_to_x.round() as i32,
@@ -10728,6 +10752,7 @@ impl Tool for DragTool {
                         button,
                         duration_ms,
                         steps,
+                        &modifier_refs,
                     )
                 })
             });

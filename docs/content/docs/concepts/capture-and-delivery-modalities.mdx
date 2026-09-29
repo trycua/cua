@@ -13,6 +13,8 @@ Every Cua Driver action is shaped by four things: **what the agent observes**, *
 
 The accessibility tree is the ground truth for *what is clickable*: roles, labels, advertised actions, and an `element_token` handle on every actionable element. The screenshot tells you *which one*. It disambiguates repeated or empty labels and shows captions, colors, and layout the tree omits, which is common in Chromium and Electron. They come back together because each catches what the other misses.
 
+When neither the tree nor typed browser state exposes the target, the optional perception extension can parse that same screenshot into labelled regions; see [How the perception extension works](/concepts/how-the-perception-extension-works).
+
 > **Performance opt-out: `include_screenshot`.** `include_screenshot` (boolean, default `true`) is the one performance knob. The default returns both. Pass `include_screenshot: false` to skip the screen grab and get the tree only when you are re-indexing before an element ax action and do not need fresh pixels. The `ax`-versus-`px` decision still lives at action time.
 
 > **`capture_mode` is deprecated and ignored.** `get_window_state` still accepts it so old callers do not error, but both the tree and the screenshot come back regardless of what you pass. The old `ax` / `vision` / `som` / `screenshot` values all decode (`som` mapped to `ax`, `screenshot` to `vision`) but none changes what is captured. Perception is always both.

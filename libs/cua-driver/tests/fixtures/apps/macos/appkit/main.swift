@@ -16,6 +16,11 @@
 //   scroll_target  — NSScrollView with a tall body and offset label
 //   ns_menubar     — main menu item with known title (Mac-specific)
 //   exit           — NSButton terminates the app
+//   jev_use_tasks  — opt-in (CUA_APPKIT_TASK_STATE=<path>): a labeled Note
+//                    field with a Save button and Small/Medium/Large radio
+//                    buttons, plus an app-owned JSON state file rewritten on
+//                    every counter, checkbox, size, and save change. Ordinary
+//                    launches do not add these controls or write any file.
 //
 // AX identifiers (via `setAccessibilityIdentifier(_:)`) match the IDs in
 // scenarios.json. Window title is set to "CuaTestHarness AppKit" so the
@@ -54,6 +59,11 @@ let kMenuItemTitle = "Harness Test Item"
 let kSecondaryWindowTitle = "CuaTestHarness AppKit Secondary"
 let kSheetWindowTitle = "CuaTestHarness AppKit Sheet"
 let kFloatingWindowTitle = "CuaTestHarness AppKit Floating"
+let kTaskStateEnv = "CUA_APPKIT_TASK_STATE"
+let kTaskStateSchema = "cua.appkit_task_state_v1"
+let kNoteFieldAID = "txt-note"
+let kSaveNoteButtonAID = "btn-save-note"
+let kSizeOptions = ["Small", "Medium", "Large"]
 
 // MARK: - Controller
 
@@ -77,6 +87,13 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     let accelCountLabel = NSTextField(labelWithString: "accel_fired=0")
     var accelCount = 0
     var keyMonitor: Any?
+    // Opt-in jev-use task controls and their app-owned state file.
+    let taskStatePath = ProcessInfo.processInfo.environment[kTaskStateEnv]
+    let noteField = NSTextField(string: "")
+    var agreed = false
+    var size = "none"
+    var savedNote: String?
+    var taskStateSequence = 0
 
     // Pinned content size — every launch MUST produce a byte-identical window
     // so screenshot dimensions (and the hardcoded pixel coords the harness tests
@@ -105,6 +122,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         super.init()
         buildContent()
         installKeyboardMonitor()
+        writeTaskState()
     }
 
     func show() {
@@ -313,6 +331,10 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         exit.setAccessibilityIdentifier(kExitButtonAID)
         content.addArrangedSubview(exit)
 
+        if taskStatePath != nil {
+            addTaskControls(to: content)
+        }
+
         // No outer scroll-view wrap: the content is sized to fit the window
         // so the only scrollable surface is the inner scroll_target NSScrollView.
         // Otherwise scroll events delivered at window-local coords get
@@ -329,6 +351,62 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
             content.widthAnchor.constraint(equalToConstant: 700),
         ])
         window.contentView = container
+    }
+
+    /// Opt-in controls for the jev-use native tasks. They are appended below
+    /// Exit, inside the pinned window's spare height, so every control above
+    /// keeps its ordinary position and AX identity.
+    private func addTaskControls(to content: NSStackView) {
+        content.addArrangedSubview(sectionLabel("jev_use_tasks"))
+        noteField.setAccessibilityIdentifier(kNoteFieldAID)
+        // An accessibility label and no placeholder: macOS reports an empty
+        // field's placeholder as its value, which jev-use treats as unlabeled.
+        noteField.setAccessibilityLabel("Note")
+        noteField.translatesAutoresizingMaskIntoConstraints = false
+        let save = NSButton(title: "Save note", target: self, action: #selector(onSaveNote))
+        save.setAccessibilityIdentifier(kSaveNoteButtonAID)
+        let noteRow = NSStackView()
+        noteRow.orientation = .horizontal
+        noteRow.spacing = 12
+        noteRow.addArrangedSubview(noteField)
+        noteRow.addArrangedSubview(save)
+        NSLayoutConstraint.activate([noteField.widthAnchor.constraint(equalToConstant: 240)])
+        content.addArrangedSubview(noteRow)
+
+        let sizeRow = NSStackView()
+        sizeRow.orientation = .horizontal
+        sizeRow.spacing = 12
+        for title in kSizeOptions {
+            // Radio buttons that share a superview and an action form one group.
+            let radio = NSButton(radioButtonWithTitle: title, target: self,
+                                 action: #selector(onSize(_:)))
+            radio.setAccessibilityIdentifier("rad-size-\(title.lowercased())")
+            radio.state = .off
+            sizeRow.addArrangedSubview(radio)
+        }
+        content.addArrangedSubview(sizeRow)
+    }
+
+    /// Atomically rewrite the app-owned task state. The jev-use task oracle
+    /// reads this file; it never depends on Cua Driver's own observations.
+    private func writeTaskState() {
+        guard let path = taskStatePath else { return }
+        taskStateSequence += 1
+        let state: [String: Any] = [
+            "schema": kTaskStateSchema,
+            "pid": Int(ProcessInfo.processInfo.processIdentifier),
+            "seq": taskStateSequence,
+            "counter": counterValue,
+            "agreed": agreed,
+            "size": size,
+            "note_saved": savedNote.map { $0 as Any } ?? NSNull(),
+        ]
+        do {
+            let data = try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])
+            try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        } catch {
+            fputs("failed to write task state: \(error)\n", stderr)
+        }
     }
 
     private func sectionLabel(_ id: String) -> NSTextField {
@@ -368,11 +446,13 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     @objc private func onIncrement() {
         counterValue += 1
         counterLabel.stringValue = "counter=\(counterValue)"
+        writeTaskState()
     }
 
     @objc private func onReset() {
         counterValue = 0
         counterLabel.stringValue = "counter=0"
+        writeTaskState()
     }
 
     @objc private func onExit() {
@@ -390,6 +470,18 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
 
     @objc private func onCheckbox(_ sender: NSButton) {
         checkStateLabel.stringValue = "agreed=\(sender.state == .on)"
+        agreed = sender.state == .on
+        writeTaskState()
+    }
+
+    @objc private func onSaveNote() {
+        savedNote = noteField.stringValue
+        writeTaskState()
+    }
+
+    @objc private func onSize(_ sender: NSButton) {
+        size = sender.title.lowercased()
+        writeTaskState()
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
@@ -683,6 +775,14 @@ struct CuaAppKitHarness {
         }
         app.activate(ignoringOtherApps: true)
         writeBringToFrontWindowReport(main: controller.window, matrix: matrixWindows)
+        if let delay = ProcessInfo.processInfo.environment["CUA_APPKIT_LAUNCH_DELAY_MS"]
+            .flatMap(Double.init), delay > 0 {
+            // A slow launch on demand: the titled window is already registered
+            // with WindowServer, but the app has not entered its run loop, so
+            // it cannot answer accessibility yet. Cold hosted runners reach
+            // this state on their own for seconds.
+            Thread.sleep(forTimeInterval: delay / 1000)
+        }
         app.run()
         _ = matrixWindows
     }

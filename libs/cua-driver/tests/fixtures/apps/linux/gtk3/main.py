@@ -16,6 +16,9 @@
 # modality recorder's effect verifier reads (counter=, mirror=, agreed=,
 # slider_value=, last_action=, clicks=, menu_action=, scroll_offset=).
 
+import json
+import os
+
 import gi
 
 gi.require_version("Gtk", "3.0")
@@ -278,8 +281,119 @@ class HarnessWindow(Gtk.Window):
         self.popover_status.set_text("popover_open=True")
 
 
+TASK_STATE_ENV = "CUA_GTK3_TASK_STATE"
+TASK_STATE_SCHEMA = "cua.gtk3_task_state_v1"
+
+
+class TaskWindow(Gtk.Window):
+    """Opt-in jev-use task window (RFC #4268), shown instead of HarnessWindow
+    when CUA_GTK3_TASK_STATE=<path> is set.
+
+    It carries the same labeled controls as the AppKit and WPF task modes
+    (Increment, Reset, I agree, Small/Medium/Large, Note, Save note, Exit) in a
+    small window where every control is on screen. Accessible names are the
+    visible labels here, not the aid-style names of HarnessWindow, so candidate
+    IDs match across platforms. Every change atomically rewrites an app-owned
+    JSON state file; the jev-use task oracle reads that file and never depends
+    on Cua Driver output. Ordinary launches never create this window.
+    """
+
+    def __init__(self, state_path):
+        super().__init__(title="CuaTestHarness GTK3 Tasks")
+        self.set_default_size(480, 320)
+        self.state_path = state_path
+        self.counter = 0
+        self.agreed = False
+        self.size = "none"
+        self.saved_note = None
+        self.sequence = 0
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        root.set_border_width(16)
+        self.add(root)
+        self.counter_label = Gtk.Label(label="counter=0", xalign=0)
+        root.pack_start(self.counter_label, False, False, 0)
+
+        counter_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        counter_row.pack_start(self.button("Increment", self.on_increment), False, False, 0)
+        counter_row.pack_start(self.button("Reset", self.on_reset), False, False, 0)
+        root.pack_start(counter_row, False, False, 0)
+
+        agree = Gtk.CheckButton(label="I agree")
+        agree.connect("toggled", self.on_agree)
+        root.pack_start(agree, False, False, 0)
+
+        # A GTK radio group always has one active member. A hidden "none"
+        # member keeps Small/Medium/Large all unselected at launch.
+        size_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self.no_size = Gtk.RadioButton(label="none")
+        for title in ("Small", "Medium", "Large"):
+            radio = Gtk.RadioButton.new_with_label_from_widget(self.no_size, title)
+            radio.connect("toggled", self.on_size, title.lower())
+            size_row.pack_start(radio, False, False, 0)
+        root.pack_start(size_row, False, False, 0)
+
+        note_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        # An accessible name and no placeholder text, like the other harnesses.
+        self.note = aid(Gtk.Entry(), "Note")
+        self.note.set_width_chars(28)
+        note_row.pack_start(self.note, False, False, 0)
+        note_row.pack_start(self.button("Save note", self.on_save_note), False, False, 0)
+        root.pack_start(note_row, False, False, 0)
+
+        root.pack_start(self.button("Exit", lambda *_: Gtk.main_quit()), False, False, 0)
+        self.connect("destroy", Gtk.main_quit)
+        self.publish()
+
+    @staticmethod
+    def button(label, handler):
+        widget = Gtk.Button(label=label)
+        widget.set_halign(Gtk.Align.START)
+        widget.connect("clicked", handler)
+        return widget
+
+    def on_increment(self, *_):
+        self.counter += 1
+        self.publish()
+
+    def on_reset(self, *_):
+        self.counter = 0
+        self.publish()
+
+    def on_agree(self, check):
+        self.agreed = check.get_active()
+        self.publish()
+
+    def on_size(self, radio, value):
+        if radio.get_active():
+            self.size = value
+            self.publish()
+
+    def on_save_note(self, *_):
+        self.saved_note = self.note.get_text()
+        self.publish()
+
+    def publish(self):
+        self.counter_label.set_text(f"counter={self.counter}")
+        self.sequence += 1
+        state = {
+            "schema": TASK_STATE_SCHEMA,
+            "pid": os.getpid(),
+            "seq": self.sequence,
+            "counter": self.counter,
+            "agreed": self.agreed,
+            "size": self.size,
+            "note_saved": self.saved_note,
+        }
+        temporary = f"{self.state_path}.{os.getpid()}.tmp"
+        with open(temporary, "w", encoding="utf-8") as stream:
+            json.dump(state, stream, sort_keys=True)
+        os.replace(temporary, self.state_path)
+
+
 def main():
-    win = HarnessWindow()
+    task_state = os.environ.get(TASK_STATE_ENV, "").strip()
+    win = TaskWindow(task_state) if task_state else HarnessWindow()
     win.show_all()
     Gtk.main()
 

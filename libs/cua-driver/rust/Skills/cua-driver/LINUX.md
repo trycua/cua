@@ -314,8 +314,14 @@ held physical input, grabs, constraints, drag-and-drop, ambiguous primary seat
 bindings, and non-neutral keyboard modifiers. Background refusal never selects
 this route automatically. Driver expands bounded ASCII text under the exact
 US keymap; Unicode and IME remain outside its raw-input scope. Foreground
-pointer-only actions are layout-independent, but foreground keyboard actions
-still require the canonical physical US map.
+pointer-only actions are layout-independent. Foreground keyboard actions leave
+the user's Num Lock and Caps Lock untouched. They work with Num Lock on and with
+keymap options that leave every typing and modifier key unchanged, such as
+`compose:caps`. They refuse before any input under Caps Lock
+(`foreground_keyboard_caps_lock`), for a keypad key that Num Lock changes
+(`foreground_keyboard_numlock_keypad`), and for a different layout or remapped
+key (`foreground_unsupported_layout`). Ask the user to turn Caps Lock off, or
+use the equivalent non-keypad key, instead of retrying the same call.
 
 The retained bounded app evidence at source
 `f180e8828b8f31cc153e3c44eaa89a9c13c5bc68` includes instrumented Calc/Inkscape

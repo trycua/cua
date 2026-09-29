@@ -14,6 +14,7 @@ use cua_driver_core::tool::ToolRegistry;
 
 pub mod health_report;
 pub mod overlay;
+pub mod overlay_capture;
 pub mod pip;
 pub mod tools;
 

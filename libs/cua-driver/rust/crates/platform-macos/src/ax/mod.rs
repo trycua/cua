@@ -19,6 +19,7 @@
 pub mod bindings;
 pub mod enablement;
 pub mod exact_target;
+pub mod launch;
 pub mod snapshot;
 pub mod tree;
 pub mod window_scope;

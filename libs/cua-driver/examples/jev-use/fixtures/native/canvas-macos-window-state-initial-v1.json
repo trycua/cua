@@ -1,0 +1,312 @@
+{
+ "_fixture": {
+  "sanitized": "Recorded with the runner's re-observation arguments (the canvas task's max_depth 1, timeout_ms 5000). Screenshot bytes, tree_markdown, local file paths, and Driver guidance notes removed.",
+  "source": "Cua visual-only canvas fixture (tests/fixtures/apps/cross-platform/visual-only-canvas, Tk 9.0), observed by get_window_state: macOS 26.5.2 Lume VM (1x display), released Cua Driver 0.30.2. AX exposes the window, its two unlabeled window buttons, and the application menu bar."
+ },
+ "app_name": "python3.12",
+ "background_input": {
+  "exact_window": {
+   "pid": 2272,
+   "status": "matched",
+   "window_id": 190
+  },
+  "observation": {
+   "frame_freshness": "unknown",
+   "one_shot_capture": "available"
+  },
+  "routes": [
+   {
+    "route": "accessibility",
+    "status": "available"
+   },
+   {
+    "route": "window_pointer",
+    "status": "available"
+   },
+   {
+    "route": "pid_keyboard",
+    "status": "available"
+   }
+  ]
+ },
+ "capture_id": "capture_951dfc0b72bd4f26b0615a0f6706ec8f_0000000000000023",
+ "element_count": 10,
+ "elements": [
+  {
+   "actions": [
+    "AXRaise"
+   ],
+   "depth": 0,
+   "element_index": 0,
+   "element_token": "s00000024:0",
+   "frame": {
+    "h": 488.0,
+    "w": 760.0,
+    "x": 5.0,
+    "y": 35.0
+   },
+   "label": "Cua Visual-Only Canvas Fixture",
+   "role": "AXWindow",
+   "screenshot_frame": {
+    "h": 488,
+    "w": 760,
+    "x": 0,
+    "y": 0
+   }
+  },
+  {
+   "actions": [
+    "AXPress"
+   ],
+   "depth": 1,
+   "element_index": 1,
+   "element_token": "s00000024:1",
+   "enabled": true,
+   "frame": {
+    "h": 14.0,
+    "w": 12.0,
+    "x": 13.0,
+    "y": 42.0
+   },
+   "parent_index": 0,
+   "role": "AXButton",
+   "screenshot_frame": {
+    "h": 14,
+    "w": 12,
+    "x": 8,
+    "y": 7
+   }
+  },
+  {
+   "actions": [
+    "AXPress"
+   ],
+   "depth": 1,
+   "element_index": 2,
+   "element_token": "s00000024:2",
+   "enabled": true,
+   "frame": {
+    "h": 14.0,
+    "w": 12.0,
+    "x": 33.0,
+    "y": 42.0
+   },
+   "parent_index": 0,
+   "role": "AXButton",
+   "screenshot_frame": {
+    "h": 14,
+    "w": 12,
+    "x": 28,
+    "y": 7
+   }
+  },
+  {
+   "actions": [
+    "AXCancel"
+   ],
+   "depth": 0,
+   "element_index": 3,
+   "element_token": "s00000024:3",
+   "enabled": true,
+   "frame": {
+    "h": 30.0,
+    "w": 1024.0,
+    "x": 0.0,
+    "y": 0.0
+   },
+   "role": "AXMenuBar",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 1024,
+    "x": -5,
+    "y": -35
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "AXCancel",
+    "AXPress",
+    "AXPick"
+   ],
+   "depth": 1,
+   "element_index": 4,
+   "element_token": "s00000024:4",
+   "enabled": true,
+   "frame": {
+    "h": 30.0,
+    "w": 34.0,
+    "x": 10.0,
+    "y": 0.0
+   },
+   "label": "Apple",
+   "parent_index": 3,
+   "role": "AXMenuBarItem",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 34,
+    "x": 5,
+    "y": -35
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "AXCancel",
+    "AXPress",
+    "AXPick"
+   ],
+   "depth": 1,
+   "element_index": 5,
+   "element_token": "s00000024:5",
+   "enabled": true,
+   "frame": {
+    "h": 30.0,
+    "w": 93.0,
+    "x": 44.0,
+    "y": 0.0
+   },
+   "label": "python3.12",
+   "parent_index": 3,
+   "role": "AXMenuBarItem",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 93,
+    "x": 39,
+    "y": -35
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "AXCancel",
+    "AXPress",
+    "AXPick"
+   ],
+   "depth": 1,
+   "element_index": 6,
+   "element_token": "s00000024:6",
+   "enabled": true,
+   "frame": {
+    "h": 30.0,
+    "w": 42.0,
+    "x": 137.0,
+    "y": 0.0
+   },
+   "label": "File",
+   "parent_index": 3,
+   "role": "AXMenuBarItem",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 42,
+    "x": 132,
+    "y": -35
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "AXCancel",
+    "AXPress",
+    "AXPick"
+   ],
+   "depth": 1,
+   "element_index": 7,
+   "element_token": "s00000024:7",
+   "enabled": true,
+   "frame": {
+    "h": 30.0,
+    "w": 44.0,
+    "x": 179.0,
+    "y": 0.0
+   },
+   "label": "Edit",
+   "parent_index": 3,
+   "role": "AXMenuBarItem",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 44,
+    "x": 174,
+    "y": -35
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "AXCancel",
+    "AXPress",
+    "AXPick"
+   ],
+   "depth": 1,
+   "element_index": 8,
+   "element_token": "s00000024:8",
+   "enabled": true,
+   "frame": {
+    "h": 30.0,
+    "w": 69.0,
+    "x": 223.0,
+    "y": 0.0
+   },
+   "label": "Window",
+   "parent_index": 3,
+   "role": "AXMenuBarItem",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 69,
+    "x": 218,
+    "y": -35
+   },
+   "selected": false
+  },
+  {
+   "actions": [
+    "AXCancel",
+    "AXPress",
+    "AXPick"
+   ],
+   "depth": 1,
+   "element_index": 9,
+   "element_token": "s00000024:9",
+   "enabled": true,
+   "frame": {
+    "h": 30.0,
+    "w": 48.0,
+    "x": 292.0,
+    "y": 0.0
+   },
+   "label": "Help",
+   "parent_index": 3,
+   "role": "AXMenuBarItem",
+   "screenshot_frame": {
+    "h": 30,
+    "w": 48,
+    "x": 287,
+    "y": -35
+   },
+   "selected": false
+  }
+ ],
+ "elements_complete": false,
+ "nodes_pending": 0,
+ "nodes_visited": 12,
+ "pid": 2272,
+ "returned_element_count": 10,
+ "screenshot_frame_valid": true,
+ "screenshot_height": 488,
+ "screenshot_mime_type": "image/png",
+ "screenshot_scale": 1.0,
+ "screenshot_width": 760,
+ "snapshot_id": "s00000024",
+ "timeout_ms": 5000,
+ "total_element_count": 10,
+ "truncated": false,
+ "walk_elapsed_ms": 960,
+ "window_bounds": {
+  "height": 488.0,
+  "width": 760.0,
+  "x": 5.0,
+  "y": 35.0
+ },
+ "window_id": 190,
+ "window_title": "Cua Visual-Only Canvas Fixture"
+}

@@ -1644,6 +1644,7 @@ impl Tool for GetWindowStateTool {
                     }
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
+                    structured["screenshot_frame_valid"] = json!(true);
                     if let Some(ow) = orig_w {
                         if ow > 0 {
                             structured["frame_scale"] = json!(w as f64 / ow as f64);
@@ -2508,24 +2509,24 @@ fn foreground_structured(
 
 /// Fold a foreground transaction's post-check into a result: the report
 /// itself, `focus_after` at the top level, and an `evidence` item so the
-/// observation survives the public-record reduction. Focus that stayed in
-/// the target process AND a window that appeared / closed in it is
-/// `window_change` evidence and an `effect: confirmed`; focus that left the
-/// process is a suspected no-op; anything else stays unverifiable with a
-/// `native_api_result` item.
+/// observation survives the public-record reduction. A window of the target
+/// process that appeared or closed is `window_change` evidence and an
+/// `effect: confirmed` wherever the focus sits afterwards (the OK button of a
+/// dialog destroys the very window that held the focus, and closing the last
+/// window of a process leaves the focus to the window manager); a change
+/// among unattributed popups only counts while the focus stayed in the
+/// process (`ForegroundReport::window_change_confirms`). Otherwise, focus that
+/// left the process is a suspected no-op and anything else stays
+/// unverifiable with a `native_api_result` item.
 fn apply_foreground_report(v: &mut Value, report: &crate::input::ForegroundReport) {
     v["foreground"] = report.to_json();
     v["focus_after"] = json!(report.focus_after.as_str());
-    if report.focus_after == crate::input::FocusAfter::Elsewhere {
-        v["effect"] = json!("suspected_noop");
-        v["warning"] = json!(
-            "input focus left the target process before the post-check; the input \
-             may have reached another window. Verify with a screenshot."
-        );
-        return;
-    }
-    let evidence = match (&report.window_change, report.focus_kept()) {
-        (Some(change), true) => {
+    let confirming_change = report
+        .window_change
+        .as_ref()
+        .filter(|_| report.window_change_confirms());
+    let evidence = match confirming_change {
+        Some(change) => {
             v["effect"] = json!("confirmed");
             v["verified"] = json!(true);
             json!({
@@ -2533,12 +2534,23 @@ fn apply_foreground_report(v: &mut Value, report: &crate::input::ForegroundRepor
                 "detail": format!("focus_after={}; {change}", report.focus_after.as_str()),
             })
         }
-        _ => json!({
+        None if report.focus_after == crate::input::FocusAfter::Elsewhere => {
+            v["effect"] = json!("suspected_noop");
+            v["warning"] = json!(
+                "input focus left the target process before the post-check; the input \
+                 may have reached another window. Verify with a screenshot."
+            );
+            return;
+        }
+        None => json!({
             "kind": "native_api_result",
             "detail": format!(
-                "real input delivered to the activated window (focus_after={}); no window \
-                 change observed",
-                report.focus_after.as_str()
+                "real input delivered to the activated window (focus_after={}); {}",
+                report.focus_after.as_str(),
+                match &report.window_change {
+                    Some(change) => format!("{change}, not attributed to the target process"),
+                    None => "no window change observed".to_owned(),
+                }
             ),
         }),
     };
@@ -5795,7 +5807,7 @@ impl ClickTool {
                     .unwrap_or((sx.round() as i32, sy.round() as i32));
                 match result {
                     Ok(Ok(((), report))) => {
-                        let confirmed = report.focus_kept() && report.window_change.is_some();
+                        let confirmed = report.window_change_confirms();
                         let result = ToolResult::text(format!(
                             "Clicked element [{idx}] (pid {pid}) with a real pointer click \
                              (delivery_mode=foreground, focus_after={}){}{}",
@@ -11837,7 +11849,8 @@ impl Tool for GetScreenSizeTool {
                 // Shared manifest admission needs content-free display
                 // metadata even when this native desktop has no X11 DISPLAY.
                 // The adapter attests the IPC/Wayland compositor peer and
-                // refuses layouts outside its qualified 1:1 single-output frame.
+                // refuses layouts outside its qualified single-output frame.
+                // Scaled outputs report logical pixels plus the output scale.
                 return crate::wayland::hyprland::screen_size();
             }
             // X11 reports pixel dimensions; scale factor on X11 is not
@@ -11967,7 +11980,20 @@ impl Tool for GetDesktopStateTool {
             // Capture the full display at native size first. When the
             // compositor consumes logical input coordinates, normalize the
             // image below so screenshot pixels still land exactly.
-            let native_png = crate::capture::screenshot_display_bytes()?;
+            //
+            // The agent reads this image, so the Driver's own cursor and
+            // session pill are hidden around the grab (or the limitation is
+            // reported) instead of being baked over the controls it reads.
+            let (native_png, overlay_capture) =
+                cursor_overlay::capture_exclusion::capture_excluding_overlays(
+                    &crate::overlay_capture::OverlayExcluder,
+                    |hidden| {
+                        let png = crate::capture::screenshot_display_bytes()?;
+                        Ok::<_, anyhow::Error>(crate::overlay_capture::verify_hidden_capture(
+                            png, hidden,
+                        ))
+                    },
+                )?;
             let (native_w, native_h) = crate::capture::png_dimensions_pub(&native_png)?;
             // True screen size. On a pure-Wayland session (native backend
             // opted in, no X11 DISPLAY) the capture above came from the
@@ -12031,6 +12057,7 @@ impl Tool for GetDesktopStateTool {
                 written,
                 windows,
                 capture_id,
+                overlay_capture,
             ))
         })
         .await;
@@ -12046,6 +12073,7 @@ impl Tool for GetDesktopStateTool {
                 written,
                 windows,
                 capture_id,
+                overlay_capture,
             ))) => {
                 let frame_scale = if shot_w > 0 {
                     f64::from(screen_w) / f64::from(shot_w)
@@ -12065,6 +12093,7 @@ impl Tool for GetDesktopStateTool {
                     "screenshot_mime_type": "image/png",
                     "windows": windows.iter().map(window_record_json).collect::<Vec<_>>(),
                     "capture_id": capture_id,
+                    "agent_overlay_capture": overlay_capture,
                 });
                 if (frame_scale - 1.0).abs() > 0.001 {
                     // Capped: the uncapped capture is the action frame.
@@ -12075,7 +12104,7 @@ impl Tool for GetDesktopStateTool {
                     content.push(cua_driver_core::protocol::Content::image_png(b64));
                 }
                 let window_lines = desktop_window_lines(&windows, frame_scale);
-                let frame_note = if (frame_scale - 1.0).abs() > 0.001 {
+                let mut frame_note = if (frame_scale - 1.0).abs() > 0.001 {
                     format!(
                         "; x/y for scope:\"desktop\" actions are pixels of THIS screenshot \
                          (mapped ×{frame_scale:.2} back to the screen automatically)"
@@ -12083,6 +12112,10 @@ impl Tool for GetDesktopStateTool {
                 } else {
                     String::new()
                 };
+                cursor_overlay::capture_exclusion::append_summary_note(
+                    &mut frame_note,
+                    &overlay_capture,
+                );
                 if let Some(path) = written {
                     structured["screenshot_file_path"] = json!(path);
                     content.push(cua_driver_core::protocol::Content::text(format!(
@@ -13153,7 +13186,7 @@ impl Tool for KillAppTool {
             .and_then(Value::as_i64)
             .filter(|pid| *pid > 0)
             .ok_or_else(|| "kill_app requires a positive integer pid".to_owned())?;
-        let fingerprint = crate::browser_platform::LinuxBrowserPlatform
+        let fingerprint = crate::browser_platform::LinuxBrowserPlatform::default()
             .process_fingerprint(pid)
             .await
             .map_err(|error| error.message)?;
@@ -13190,18 +13223,99 @@ impl Tool for KillAppTool {
                 )
             }
         };
+        // Read the instance before signaling so the confirmation below can
+        // tell its exit from a later process that reused the pid.
+        let before = match crate::proc_fs::read_process_stat(pid_i as u32) {
+            Ok(Some(before)) => before,
+            Ok(None) => {
+                return kill_app_failure(
+                    pid_i,
+                    "process_not_found",
+                    format!("kill_app: pid {pid_i} does not exist; no signal was sent."),
+                )
+            }
+            Err(error) => {
+                return kill_app_failure(
+                    pid_i,
+                    "process_identity_unavailable",
+                    format!(
+                        "kill_app: cannot read /proc/{pid_i}/stat to verify termination: \
+                         {error}; no signal was sent."
+                    ),
+                )
+            }
+        };
         // SAFETY: libc::kill is a thin syscall wrapper, no thread-safety concerns.
         let rc = unsafe { libc::kill(pid_i, libc::SIGKILL) };
-        if rc == 0 {
-            ToolResult::text(format!("✅ Sent SIGKILL to pid {pid_i}."))
-        } else {
+        if rc != 0 {
             let err = std::io::Error::last_os_error();
-            ToolResult::error(format!(
-                "kill_app: kill(pid={pid_i}, SIGKILL) failed: {err}. \
-                 The process may not exist, or the daemon lacks permission to signal it."
-            ))
+            return kill_app_failure(
+                pid_i,
+                "signal_failed",
+                format!(
+                    "kill_app: kill(pid={pid_i}, SIGKILL) failed: {err}. \
+                     The process may not exist, or the daemon lacks permission to signal it."
+                ),
+            );
+        }
+        // An accepted signal is not an exit: a sandbox (gVisor) can accept
+        // SIGKILL for a process that keeps running. Report success only once
+        // the same instance is gone.
+        let deadline = tokio::time::Instant::now() + KILL_CONFIRM_TIMEOUT;
+        loop {
+            let now = crate::proc_fs::read_process_stat(pid_i as u32);
+            if let Some(observation) = now
+                .as_ref()
+                .ok()
+                .and_then(|now| crate::proc_fs::process_exit_observation(before, *now))
+            {
+                return ToolResult::text(format!(
+                    "✅ Terminated pid {pid_i} with SIGKILL (confirmed: {observation})."
+                ))
+                .with_structured(json!({
+                    "status": "terminated",
+                    "effect": "confirmed",
+                    "pid": pid_i,
+                    "terminated": true,
+                    "observation": observation,
+                }));
+            }
+            if tokio::time::Instant::now() >= deadline {
+                let detail = match now {
+                    Err(error) => format!("/proc/{pid_i}/stat became unreadable: {error}"),
+                    Ok(_) => format!(
+                        "the same process was still alive {} ms later",
+                        KILL_CONFIRM_TIMEOUT.as_millis()
+                    ),
+                };
+                let mut result = kill_app_failure(
+                    pid_i,
+                    "termination_unconfirmed",
+                    format!("kill_app: SIGKILL was accepted for pid {pid_i}, but {detail}."),
+                );
+                if let Some(structured) = result.structured_content.as_mut() {
+                    structured["effect"] = json!("suspected_noop");
+                }
+                return result;
+            }
+            tokio::time::sleep(KILL_CONFIRM_INTERVAL).await;
         }
     }
+}
+
+/// How long `kill_app` waits for the signaled process to exit, and how often
+/// it re-reads `/proc/<pid>/stat` meanwhile.
+const KILL_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+const KILL_CONFIRM_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+
+fn kill_app_failure(pid: i32, code: &str, message: String) -> ToolResult {
+    ToolResult::error(message.clone()).with_structured(json!({
+        "status": "failed",
+        "pid": pid,
+        "terminated": false,
+        "code": code,
+        "message": message,
+    }))
 }
 
 fn kill_app_stale_process_refusal(message: String) -> ToolResult {
@@ -13944,7 +14058,9 @@ pub fn build_registry_with_provider(
         super::page::LinuxPageBackend::new(),
     ))));
     let browser_engine = cua_driver_core::browser::BrowserEngine::new_with_runtime_services(
-        Arc::new(crate::browser_platform::LinuxBrowserPlatform),
+        Arc::new(crate::browser_platform::LinuxBrowserPlatform::new(
+            state.cursor_registry.clone(),
+        )),
         r.approval_broker(),
         r.protected_resource_ownership(),
     );

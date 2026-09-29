@@ -7,14 +7,31 @@ import sys
 from typing import Any, Mapping
 
 from jev_adapter import ProviderChoice, choose_bounded_with_typesafe
+from native_roles import ROLE_CLASSES
 
 REQUEST_SCHEMA = "cua.jev_choice_request_v1"
+# Additive over v1 (RFC #4268): per-candidate ``source``, an optional root
+# ``snapshot_id``, an optional compact ``elements`` list of native controls, and
+# an optional ``progress`` list of task steps counted from the runner's own
+# performed actions (#4313).
+REQUEST_SCHEMA_V2 = "cua.jev_choice_request_v2"
+REQUEST_SCHEMAS = (REQUEST_SCHEMA, REQUEST_SCHEMA_V2)
 RESPONSE_SCHEMA = "cua.jev_choice_v1"
 MAX_INPUT_BYTES = 65_536
 MAX_CANDIDATES = 32
 MAX_REGIONS = 100
 MAX_HISTORY = 16
+MAX_ELEMENTS = 64
+MAX_PROGRESS = 16
+MAX_PROGRESS_COUNT = 64
 ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}\Z")
+RESERVED_IDS = frozenset({"reobserve", "abstain"})
+CANDIDATE_SOURCES = frozenset({"page", "ax", "visual"})
+ELEMENT_STATES = frozenset(
+    {"enabled", "checked", "unchecked", "selected", "not_selected", "empty", "has_text"}
+)
+V1_ROOT_KEYS = frozenset({"schema", "goal", "capture_id", "regions", "history", "candidates"})
+V2_OPTIONAL_ROOT_KEYS = frozenset({"snapshot_id", "elements", "progress"})
 
 
 def _record(value: Any, message: str) -> dict[str, Any]:
@@ -36,11 +53,82 @@ def _identifier(value: Any, name: str) -> str:
     return value
 
 
+def _validate_elements(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list) or len(value) > MAX_ELEMENTS:
+        raise ValueError(f"elements must be an array of at most {MAX_ELEMENTS} items")
+    elements: list[dict[str, str]] = []
+    for raw_value in value:
+        raw = _record(raw_value, "element must be an object")
+        if set(raw) != {"role_class", "label", "state"}:
+            raise ValueError("element may contain only role_class, label, and state")
+        if raw["role_class"] not in ROLE_CLASSES:
+            raise ValueError("element role_class is not a supported role class")
+        if raw["state"] not in ELEMENT_STATES:
+            raise ValueError("element state is not a supported state")
+        elements.append(
+            {
+                "role_class": raw["role_class"],
+                "label": _bounded_string(raw["label"], "element label", 200),
+                "state": raw["state"],
+            }
+        )
+    return elements
+
+
+def _count(value: Any, name: str, minimum: int) -> int:
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or not minimum <= value <= MAX_PROGRESS_COUNT
+    ):
+        raise ValueError(f"{name} must be an integer from {minimum} to {MAX_PROGRESS_COUNT}")
+    return value
+
+
+def _validate_progress(value: Any) -> list[dict[str, Any]]:
+    """Validate task steps and how often this run has performed each one.
+
+    ``done`` is counted from the runner's own performed actions, never read
+    from the application, so ``progress`` carries no application values.
+    """
+    if not isinstance(value, list) or len(value) > MAX_PROGRESS:
+        raise ValueError(f"progress must be an array of at most {MAX_PROGRESS} items")
+    progress: list[dict[str, Any]] = []
+    for raw_value in value:
+        raw = _record(raw_value, "progress item must be an object")
+        if set(raw) != {"step", "done", "required"}:
+            raise ValueError("progress item may contain only step, done, and required")
+        progress.append(
+            {
+                "step": _bounded_string(raw["step"], "progress step", 200),
+                "done": _count(raw["done"], "progress done", 0),
+                "required": _count(raw["required"], "progress required", 1),
+            }
+        )
+    return progress
+
+
 def validate_request(value: Any) -> dict[str, Any]:
+    """Validate a ``cua.jev_choice_request_v1`` or ``_v2`` request strictly.
+
+    v1 is unchanged: exactly its six root keys and ``id``/``description``
+    candidates, so any v2 field in a v1 request is rejected. v2 may add a root
+    ``snapshot_id``, ``elements``, and ``progress`` and a per-candidate
+    ``source``; reserved candidates never carry a source.
+    """
     root = _record(value, "request must be a JSON object")
-    expected_keys = {"schema", "goal", "capture_id", "regions", "history", "candidates"}
-    if set(root) != expected_keys or root.get("schema") != REQUEST_SCHEMA:
-        raise ValueError(f"request must match {REQUEST_SCHEMA}")
+    schema = root.get("schema")
+    if schema == REQUEST_SCHEMA:
+        if set(root) != V1_ROOT_KEYS:
+            raise ValueError(f"request must match {REQUEST_SCHEMA}")
+    elif schema == REQUEST_SCHEMA_V2:
+        if not V1_ROOT_KEYS.issubset(root) or not set(root).issubset(
+            V1_ROOT_KEYS | V2_OPTIONAL_ROOT_KEYS
+        ):
+            raise ValueError(f"request must match {REQUEST_SCHEMA_V2}")
+    else:
+        raise ValueError(f"request must match {REQUEST_SCHEMA} or {REQUEST_SCHEMA_V2}")
+    v2 = schema == REQUEST_SCHEMA_V2
 
     goal = _bounded_string(root["goal"], "goal", 4_000)
     capture_id = _bounded_string(root["capture_id"], "capture_id", 256)
@@ -126,28 +214,72 @@ def validate_request(value: Any) -> dict[str, Any]:
     candidate_ids: set[str] = set()
     for raw_value in raw_candidates:
         raw = _record(raw_value, "candidate must be an object")
-        if set(raw) != {"id", "description"}:
+        keys = set(raw)
+        if v2:
+            if not {"id", "description"}.issubset(keys) or not keys.issubset(
+                {"id", "description", "source"}
+            ):
+                raise ValueError("candidate may contain only id, description, and source")
+        elif keys != {"id", "description"}:
             raise ValueError("candidate may contain only id and description")
         candidate_id = _identifier(raw["id"], "candidate id")
         if candidate_id in candidate_ids:
             raise ValueError("candidate IDs must be unique")
         candidate_ids.add(candidate_id)
-        candidates.append(
-            {
-                "id": candidate_id,
-                "description": _bounded_string(raw["description"], "description", 1_000),
-            }
-        )
-    if not {"reobserve", "abstain"}.issubset(candidate_ids):
+        candidate = {
+            "id": candidate_id,
+            "description": _bounded_string(raw["description"], "description", 1_000),
+        }
+        if "source" in raw:
+            if candidate_id in RESERVED_IDS:
+                raise ValueError("reserved candidates must not carry a source")
+            if raw["source"] not in CANDIDATE_SOURCES:
+                raise ValueError("candidate source must be page, ax, or visual")
+            candidate["source"] = raw["source"]
+        candidates.append(candidate)
+    if not RESERVED_IDS.issubset(candidate_ids):
         raise ValueError("candidates must include reobserve and abstain")
 
-    return {
+    validated: dict[str, Any] = {
+        "schema": schema,
         "goal": goal,
         "capture_id": capture_id,
         "regions": regions,
         "history": compact_history,
         "candidates": candidates,
     }
+    if v2:
+        snapshot_id = root.get("snapshot_id")
+        validated["snapshot_id"] = (
+            None if snapshot_id is None else _bounded_string(snapshot_id, "snapshot_id", 64)
+        )
+        validated["elements"] = _validate_elements(root.get("elements", []))
+        validated["progress"] = _validate_progress(root.get("progress", []))
+    return validated
+
+
+def provider_observation(validated: Mapping[str, Any]) -> dict[str, Any]:
+    """Build the observation a provider sees for a validated request.
+
+    A v1 request keeps its exact v1 observation. A v2 request adds the native
+    ``snapshot_id``, the compact ``elements``, and each candidate's ``source``,
+    plus ``progress`` when the request carries any; none of these contain
+    element tokens, values, or pixels.
+    """
+    observation: dict[str, Any] = {
+        "capture_id": validated["capture_id"],
+        "regions": validated["regions"],
+        "history": validated["history"],
+    }
+    if validated.get("schema") == REQUEST_SCHEMA_V2:
+        observation["snapshot_id"] = validated.get("snapshot_id")
+        observation["elements"] = validated.get("elements", [])
+        observation["candidate_sources"] = {
+            item["id"]: item["source"] for item in validated["candidates"] if "source" in item
+        }
+        if validated.get("progress"):
+            observation["progress"] = validated["progress"]
+    return observation
 
 
 def choose_request(
@@ -181,22 +313,14 @@ def choose_request(
                 choice = choose_bounded_with_typesafe(
                     live_client,
                     goal=validated["goal"],
-                    observation={
-                        "capture_id": validated["capture_id"],
-                        "regions": validated["regions"],
-                        "history": validated["history"],
-                    },
+                    observation=provider_observation(validated),
                     criteria=criteria,
                 )
         else:
             choice = choose_bounded_with_typesafe(
                 client,
                 goal=validated["goal"],
-                observation={
-                    "capture_id": validated["capture_id"],
-                    "regions": validated["regions"],
-                    "history": validated["history"],
-                },
+                observation=provider_observation(validated),
                 criteria=criteria,
             )
     return {

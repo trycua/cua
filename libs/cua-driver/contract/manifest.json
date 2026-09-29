@@ -118,12 +118,10 @@
                     "type": "string"
                   },
                   "pid": {
-                    "format": "uint32",
                     "minimum": 0,
                     "type": "integer"
                   },
                   "window_id": {
-                    "format": "uint64",
                     "minimum": 0,
                     "type": "integer"
                   }
@@ -176,7 +174,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -549,12 +546,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -612,7 +607,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -957,39 +951,30 @@
           "motion": {
             "properties": {
               "arc_flow": {
-                "format": "double",
                 "type": "number"
               },
               "arc_size": {
-                "format": "double",
                 "type": "number"
               },
               "dwell_after_click_ms": {
-                "format": "double",
                 "type": "number"
               },
               "end_handle": {
-                "format": "double",
                 "type": "number"
               },
               "glide_duration_ms": {
-                "format": "double",
                 "type": "number"
               },
               "idle_hide_ms": {
-                "format": "double",
                 "type": "number"
               },
               "spring": {
-                "format": "double",
                 "type": "number"
               },
               "start_handle": {
-                "format": "double",
                 "type": "number"
               },
               "turn_radius": {
-                "format": "double",
                 "type": "number"
               }
             },
@@ -1011,11 +996,9 @@
               {
                 "properties": {
                   "x": {
-                    "format": "double",
                     "type": "number"
                   },
                   "y": {
-                    "format": "double",
                     "type": "number"
                   }
                 },
@@ -1075,7 +1058,6 @@
           "visual_state": {
             "properties": {
               "frame": {
-                "format": "uint64",
                 "minimum": 0,
                 "type": "integer"
               },
@@ -1089,7 +1071,6 @@
                 "type": "string"
               },
               "preempted_count": {
-                "format": "uint64",
                 "minimum": 0,
                 "type": "integer"
               },
@@ -1246,6 +1227,46 @@
       "success_output_schema": {
         "additionalProperties": true,
         "properties": {
+          "agent_overlay_capture": {
+            "additionalProperties": false,
+            "properties": {
+              "method": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "oneOf": [
+                  {
+                    "const": "excluded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_present",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_excluded",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "display": {
             "type": "string"
           },
@@ -1394,12 +1415,10 @@
             "type": "boolean"
           },
           "expires_in_seconds": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
           "idle_seconds": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
@@ -1655,7 +1674,6 @@
             ]
           },
           "element_count": {
-            "format": "uint64",
             "minimum": 0,
             "type": [
               "integer",
@@ -1675,12 +1693,10 @@
                   ]
                 },
                 "depth": {
-                  "format": "uint32",
                   "minimum": 0,
                   "type": "integer"
                 },
                 "element_index": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -1699,19 +1715,15 @@
                 "frame": {
                   "properties": {
                     "h": {
-                      "format": "double",
                       "type": "number"
                     },
                     "w": {
-                      "format": "double",
                       "type": "number"
                     },
                     "x": {
-                      "format": "double",
                       "type": "number"
                     },
                     "y": {
-                      "format": "double",
                       "type": "number"
                     }
                   },
@@ -1739,21 +1751,18 @@
                   ]
                 },
                 "max": {
-                  "format": "double",
                   "type": [
                     "number",
                     "null"
                   ]
                 },
                 "min": {
-                  "format": "double",
                   "type": [
                     "number",
                     "null"
                   ]
                 },
                 "parent_index": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": [
                     "integer",
@@ -1801,7 +1810,6 @@
             ]
           },
           "filtered_element_count": {
-            "format": "uint64",
             "minimum": 0,
             "type": [
               "integer",
@@ -1809,12 +1817,10 @@
             ]
           },
           "pid": {
-            "format": "uint32",
             "minimum": 0,
             "type": "integer"
           },
           "returned_element_count": {
-            "format": "uint64",
             "minimum": 0,
             "type": [
               "integer",
@@ -1834,7 +1840,6 @@
             ]
           },
           "screenshot_height": {
-            "format": "uint32",
             "minimum": 0,
             "type": [
               "integer",
@@ -1848,14 +1853,12 @@
             ]
           },
           "screenshot_scale": {
-            "format": "double",
             "type": [
               "number",
               "null"
             ]
           },
           "screenshot_width": {
-            "format": "uint32",
             "minimum": 0,
             "type": [
               "integer",
@@ -1869,7 +1872,6 @@
             ]
           },
           "total_element_count": {
-            "format": "uint64",
             "minimum": 0,
             "type": [
               "integer",
@@ -1897,19 +1899,15 @@
           "window_bounds": {
             "properties": {
               "height": {
-                "format": "double",
                 "type": "number"
               },
               "width": {
-                "format": "double",
                 "type": "number"
               },
               "x": {
-                "format": "double",
                 "type": "number"
               },
               "y": {
-                "format": "double",
                 "type": "number"
               }
             },
@@ -1925,7 +1923,6 @@
             ]
           },
           "window_id": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
@@ -1995,12 +1992,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -2049,7 +2044,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -2253,7 +2247,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -2458,7 +2451,6 @@
                   "type": "string"
                 },
                 "pid": {
-                  "format": "uint32",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -2513,7 +2505,6 @@
           },
           "limit": {
             "description": "Maximum number of content-free summaries to return (default 50, max\n100). Ordinary agent transports are scoped to their own lease.",
-            "format": "uint32",
             "minimum": 0,
             "type": [
               "integer",
@@ -2554,12 +2545,10 @@
                   "type": "boolean"
                 },
                 "expires_in_seconds": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
                 "idle_seconds": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -2659,7 +2648,6 @@
         "additionalProperties": true,
         "properties": {
           "current_space_id": {
-            "format": "uint64",
             "minimum": 0,
             "type": [
               "integer",
@@ -2675,19 +2663,15 @@
                 "bounds": {
                   "properties": {
                     "height": {
-                      "format": "double",
                       "type": "number"
                     },
                     "width": {
-                      "format": "double",
                       "type": "number"
                     },
                     "x": {
-                      "format": "double",
                       "type": "number"
                     },
                     "y": {
-                      "format": "double",
                       "type": "number"
                     }
                   },
@@ -2700,7 +2684,6 @@
                   "type": "object"
                 },
                 "current_space_id": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": [
                     "integer",
@@ -2739,7 +2722,6 @@
                 },
                 "space_ids": {
                   "items": {
-                    "format": "uint64",
                     "minimum": 0,
                     "type": "integer"
                   },
@@ -2748,8 +2730,10 @@
                     "null"
                   ]
                 },
+                "title": {
+                  "type": "string"
+                },
                 "window_id": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -2827,12 +2811,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -2889,7 +2871,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -3129,27 +3110,21 @@
                         "type": "string"
                       },
                       "m11": {
-                        "format": "double",
                         "type": "number"
                       },
                       "m12": {
-                        "format": "double",
                         "type": "number"
                       },
                       "m21": {
-                        "format": "double",
                         "type": "number"
                       },
                       "m22": {
-                        "format": "double",
                         "type": "number"
                       },
                       "tx": {
-                        "format": "double",
                         "type": "number"
                       },
                       "ty": {
-                        "format": "double",
                         "type": "number"
                       }
                     },
@@ -3215,12 +3190,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -3391,7 +3364,6 @@
                   ]
                 },
                 "reading_order": {
-                  "format": "uint32",
                   "minimum": 0,
                   "type": [
                     "integer",
@@ -3428,12 +3400,10 @@
           "timing": {
             "properties": {
               "duration_ms": {
-                "format": "uint64",
                 "minimum": 0,
                 "type": "integer"
               },
               "inference_ms": {
-                "format": "uint64",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -3441,7 +3411,6 @@
                 ]
               },
               "preprocess_ms": {
-                "format": "uint64",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -3588,12 +3557,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -3642,7 +3609,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -3850,12 +3816,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -3912,7 +3876,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -4126,42 +4089,36 @@
         "additionalProperties": false,
         "properties": {
           "arc_flow": {
-            "format": "double",
             "type": [
               "number",
               "null"
             ]
           },
           "arc_size": {
-            "format": "double",
             "type": [
               "number",
               "null"
             ]
           },
           "dwell_after_click_ms": {
-            "format": "double",
             "type": [
               "number",
               "null"
             ]
           },
           "end_handle": {
-            "format": "double",
             "type": [
               "number",
               "null"
             ]
           },
           "glide_duration_ms": {
-            "format": "double",
             "type": [
               "number",
               "null"
             ]
           },
           "idle_hide_ms": {
-            "format": "double",
             "type": [
               "number",
               "null"
@@ -4171,21 +4128,18 @@
             "type": "string"
           },
           "spring": {
-            "format": "double",
             "type": [
               "number",
               "null"
             ]
           },
           "start_handle": {
-            "format": "double",
             "type": [
               "number",
               "null"
             ]
           },
           "turn_radius": {
-            "format": "double",
             "type": [
               "number",
               "null"
@@ -4203,39 +4157,30 @@
           "motion": {
             "properties": {
               "arc_flow": {
-                "format": "double",
                 "type": "number"
               },
               "arc_size": {
-                "format": "double",
                 "type": "number"
               },
               "dwell_after_click_ms": {
-                "format": "double",
                 "type": "number"
               },
               "end_handle": {
-                "format": "double",
                 "type": "number"
               },
               "glide_duration_ms": {
-                "format": "double",
                 "type": "number"
               },
               "idle_hide_ms": {
-                "format": "double",
                 "type": "number"
               },
               "spring": {
-                "format": "double",
                 "type": "number"
               },
               "start_handle": {
-                "format": "double",
                 "type": "number"
               },
               "turn_radius": {
-                "format": "double",
                 "type": "number"
               }
             },
@@ -4429,7 +4374,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -4758,12 +4702,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -4815,7 +4757,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -4996,9 +4937,6 @@
                     },
                     "exists": {
                       "description": "Assert that at least one trusted element matches the selector.\n\nElement walks are not yet exhaustive on every platform, so absence\ncannot be proven. `false` is rejected instead of returning an\nindefinitely-unknown predicate.",
-                      "enum": [
-                        true
-                      ],
                       "type": "boolean"
                     },
                     "selected": {
@@ -5138,7 +5076,6 @@
         "additionalProperties": true,
         "properties": {
           "elapsed_ms": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
@@ -5146,7 +5083,6 @@
             "items": {
               "properties": {
                 "index": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -5199,7 +5135,6 @@
             "type": "array"
           },
           "samples": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },

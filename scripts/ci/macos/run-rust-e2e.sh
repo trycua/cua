@@ -344,12 +344,14 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
       --ignored --nocapture --test-threads=1
     for appkit_test in \
     harness_appkit_smoke \
+    harness_appkit_first_snapshot_waits_for_a_launching_app \
     harness_appkit_query_projects_structured_elements \
     harness_appkit_stale_element_token_fails_closed \
     snapshot_publication::harness_appkit_pending_snapshot_cannot_retarget_token \
     harness_appkit_invoke_menu_live_path \
     harness_appkit_text_input \
     harness_appkit_element_foreground_press_key_commits_edit \
+    harness_appkit_foreground_press_key_chord_carries_its_modifiers \
     harness_appkit_modified_click_preserves_selection \
     harness_appkit_type_text_background \
     harness_appkit_scroll_foreground \
@@ -358,7 +360,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_counter_px_background \
     harness_appkit_px_background_press_key_reports_honest_delivery_truth \
     harness_appkit_exact_activation_with_agent_cursor \
-    harness_appkit_exact_activation_refuses_competing_window \
+    harness_appkit_exact_activation_ignores_competing_application_window \
     harness_appkit_foreground_single_click_has_one_ordered_native_pair \
     harness_appkit_right_click_px_foreground \
     harness_appkit_right_click_px_background \
@@ -418,7 +420,9 @@ if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
   run_test desktop-scope cargo test -p cua-driver-e2e --test desktop_scope_macos_test -- \
     --ignored --nocapture --test-threads=1
   # Runs a dedicated instance of the installed app with an isolated extension
-  # home, so the shared daemon never gains the developer-only E2E extension.
+  # home, so the shared daemon never gains the developer-only E2E extension or
+  # the published cua-perception release. The published-catalog row downloads
+  # the pinned release assets and needs python3 with tkinter.
   run_test perception-capture-loop cargo test -p cua-driver-e2e \
     --test perception_capture_loop_test -- \
     --ignored --nocapture --test-threads=1

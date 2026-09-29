@@ -21,10 +21,10 @@ class TestReleaseBumpAuthorization(unittest.TestCase):
         self.assertIn('TRIGGERING_ACTOR: ${{ github.triggering_actor }}', workflow)
         self.assertIn(
             '"f-trycua:f-trycua"|'
-            '"r33drichards:r33drichards"|'
             '"cua-release-bot[bot]:cua-release-bot[bot]")',
             workflow,
         )
+        self.assertNotIn("r33drichards", workflow)
         self.assertIn("  bump-version:\n    needs: authorize\n", workflow)
         self.assertIn(
             "    permissions:\n      contents: write\n    steps:\n",

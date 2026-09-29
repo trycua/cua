@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! Real stdio proxies and a real daemon, with selective control-channel loss.
+//! Real stdio proxies and a real daemon, with selective control-channel loss
+//! and with the idle-TTL sweep reclaiming sessions.
 //! Set CUA_PROXY_RECOVERY_IDLE_SECONDS=1200 for a long-idle diagnostic replay.
 //! This injects a known transport failure; it does not reproduce an unknown trigger.
 
@@ -117,8 +118,12 @@ struct Process(Child, #[allow(dead_code)] tempfile::TempDir);
 
 impl Process {
     fn spawn(args: &[&str]) -> Self {
+        // This isolates transport lifetime from intentional session expiry.
+        Self::spawn_with_session_ttl(args, (recovery_idle_seconds() + 60).max(300))
+    }
+
+    fn spawn_with_session_ttl(args: &[&str], session_ttl_seconds: u64) -> Self {
         let driver_home = tempfile::tempdir().expect("isolated driver state");
-        let idle_seconds = recovery_idle_seconds();
         let mut command = Command::new(env!("CARGO_BIN_EXE_cua-driver"));
         command
             .args(args)
@@ -126,10 +131,9 @@ impl Process {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
-            // This test isolates transport lifetime from intentional session expiry.
             .env(
                 "CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS",
-                (idle_seconds + 60).max(300).to_string(),
+                session_ttl_seconds.to_string(),
             )
             .env("HOME", driver_home.path())
             .env("USERPROFILE", driver_home.path())
@@ -429,4 +433,68 @@ async fn real_proxies_recover_from_control_loss_without_waiting_for_stdin() {
     fresh.call("get_session_state", json!({"session":"fresh-client"}));
     survivor.call("get_config", json!({"session":"survivor"}));
     relay_task.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn idle_reclaimed_unnamed_session_is_recreated_through_the_daemon() {
+    #[cfg(unix)]
+    let directory = tempfile::Builder::new()
+        .prefix("cua-idle-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    #[cfg(unix)]
+    let endpoint = directory.path().join("d.sock").display().to_string();
+    #[cfg(target_os = "windows")]
+    let endpoint = format!(r"\\.\pipe\cua-idle-{}-daemon", std::process::id());
+    let mut daemon = Process::spawn_with_session_ttl(
+        &[
+            "serve",
+            "--socket",
+            &endpoint,
+            "--no-overlay",
+            "--no-permissions-gate",
+            "--dangerously-bypass-approvals",
+        ],
+        1,
+    );
+    let deadline = Instant::now() + BOUND;
+    while connect(&endpoint).await.is_err() {
+        assert!(
+            daemon.0.try_wait().unwrap().is_none(),
+            "daemon exited during startup"
+        );
+        assert!(Instant::now() < deadline, "daemon readiness timeout");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let mut client = Client::spawn(&endpoint);
+    client.call("get_config", json!({}));
+    client.call("get_config", json!({"session": "named-idle"}));
+
+    // The runtime sweeps every 30 seconds; wait for it to reclaim both.
+    let deadline = Instant::now() + Duration::from_secs(75);
+    loop {
+        let listed = daemon_request(&endpoint, json!({"method": "sessions_list"})).await;
+        if listed["sessions"].as_array().is_some_and(Vec::is_empty) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "idle sweep did not end the sessions: {listed}"
+        );
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+
+    client.call("get_config", json!({}));
+    let named = client.request(
+        "tools/call",
+        json!({"name": "get_config", "arguments": {"session": "named-idle"}}),
+    );
+    assert_eq!(named["result"]["isError"], true, "{named}");
+    let text = named["result"]["content"][0]["text"].as_str().unwrap_or("");
+    assert!(
+        text.contains("start_session with session 'named-idle'"),
+        "named refusal must name its working recovery: {named}"
+    );
+    client.call("start_session", json!({"session": "named-idle"}));
+    client.call("get_config", json!({"session": "named-idle"}));
 }

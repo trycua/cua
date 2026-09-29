@@ -31,6 +31,22 @@ done
 
 case "$SUITE" in
   shared|native|capture|all) ;;
+  s1-perception)
+    # Model-backed perception decision row. It is not part of `all`: it needs
+    # the published cua-perception catalog and the pinned Cua-S1-4B weights,
+    # which only .github/workflows/ci-cua-s1-weights.yml provisions.
+    if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
+      echo "the s1-perception lane runs on X11 only" >&2
+      exit 2
+    fi
+    for required in CUA_E2E_PERCEPTION_CATALOG CUA_E2E_PERCEPTION_VERSION \
+        CUA_E2E_S1_PYTHON S1_BASE_MODEL_PATH S1_ADAPTER_PATH; do
+      if [[ -z "${!required:-}" ]]; then
+        echo "${required} is required for the s1-perception lane" >&2
+        exit 2
+      fi
+    done
+    ;;
   *) echo "unsupported internal lane: $SUITE" >&2; exit 2 ;;
 esac
 
@@ -127,6 +143,7 @@ if [[ "${BUILD_FIXTURES}" == 1 ]]; then
       fi
       ;;
     capture) FIXTURE_TARGETS="electron,gtk3" ;;
+    s1-perception) FIXTURE_TARGETS="electron" ;;
     *)
       FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri},gtk3"
       if [[ -z "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]]; then
@@ -389,10 +406,11 @@ if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
         --test perception_capture_loop_test -- \
         --ignored --nocapture --test-threads=1
   else
-    # The perception loop is certified in the canonical X11 lane. Wayland
-    # window capture and pointer routes differ per compositor and are not yet
-    # part of this row, so record the coverage gap instead of a vacuous pass.
-    limitation="The perception capture-loop row is certified on X11; Wayland compositor lanes do not run it yet."
+    # The perception loop, including the published-catalog row, is certified
+    # in the canonical X11 lane. Wayland window capture and pointer routes
+    # differ per compositor and are not yet part of these rows, so record the
+    # coverage gap instead of a vacuous pass.
+    limitation="The perception capture-loop rows (swatch contract and published cua-perception catalog) are certified on X11; Wayland compositor lanes do not run them yet."
     jq -n \
       --arg reason "${limitation}" \
       '{
@@ -406,6 +424,13 @@ if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
       }' > "${ARTIFACT_DIR}/perception-capture-loop-limitation.json"
     echo "[LIMITATION] perception-capture-loop: ${limitation}"
   fi
+fi
+
+if [[ "${SUITE}" == s1-perception ]]; then
+  run_test perception-s1-decision-loop \
+    cargo test -p cua-driver-e2e "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test perception_s1_decision_loop_test -- \
+      --ignored --nocapture --test-threads=1
 fi
 
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then

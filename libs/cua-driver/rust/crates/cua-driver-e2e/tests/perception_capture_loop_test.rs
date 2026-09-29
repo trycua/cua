@@ -2,19 +2,27 @@
 //!
 //! The documented loop is `get_window_state` (retain `capture_id`) ->
 //! `parse_visual_regions` -> one capture-bound `click` with the same
-//! `capture_id` -> reobserve. These rows drive it against the shared web
-//! harness in Electron, which every supported desktop runner builds.
+//! `capture_id` -> reobserve. Two kinds of row drive it.
 //!
-//! No published artifact or model is required. The installed extension is a
-//! deterministic, developer-only unsigned worker compiled from
-//! `support/perception_swatch_worker.rs`. It speaks the real framed worker
-//! protocol, runs inside Driver's normal worker containment, receives the exact
-//! PNG Driver retained for the capture, and derives regions from those pixels by
-//! finding the harness's solid color swatches. Model quality is covered by the
-//! cua-perception crate; these rows certify Driver's capture, parse, action
-//! binding, and single-use refusal contract on each desktop.
+//! The contract rows run against the shared web harness in Electron, which
+//! every supported desktop runner builds, and need no published artifact or
+//! model. Their installed extension is a deterministic, developer-only unsigned
+//! worker compiled from `support/perception_swatch_worker.rs`. It speaks the
+//! real framed worker protocol, runs inside Driver's normal worker containment,
+//! receives the exact PNG Driver retained for the capture, and derives regions
+//! from those pixels by finding the harness's solid color swatches. These rows
+//! certify Driver's capture, parse, action binding, and single-use refusal
+//! contract on each desktop.
 //!
-//! The fixture's loopback journal is the delivery oracle, independent of the
+//! The published-catalog row installs the released `cua-perception` extension
+//! from its signed `cua-perception-v<version>` release catalog, the documented
+//! user path, and requires `publisher-verified` trust. The released OmniParser
+//! model reads the "Cancel" label on the visual-only Tk canvas fixture, which
+//! exposes no accessibility tree, and one capture-bound click selects that
+//! card. The row downloads the pinned release assets (about 425 MB) and needs
+//! a Python with Tk.
+//!
+//! Each fixture's loopback journal is the delivery oracle, independent of the
 //! Driver response. macOS runs a dedicated instance of the installed,
 //! TCC-authorized app with an isolated extension home, so the shared daemon's
 //! state is never changed.
@@ -814,6 +822,597 @@ fn capture_bound_click_from_parsed_region_is_state_verified_and_single_use() {
     });
 }
 
+// ---------------------------------------------------------------- published
+
+/// The signed release the published-catalog row installs. The Driver verifies
+/// the catalog signature and archive digest itself; these pins also stop the
+/// row from silently certifying a replaced release asset.
+const PUBLISHED_VERSION: &str = "0.2.1";
+/// `(target, catalog SHA-256, archive SHA-256)` from the release `SHA256SUMS`.
+const PUBLISHED_ASSETS: &[(&str, &str, &str)] = &[
+    (
+        "aarch64-apple-darwin",
+        "d20c1e1cbf5d90cfa85b956100846c2c7a43c387fdc5b344d75a15f91498aa42",
+        "5fbcf59c15fc5cd8beca6ac4aa5533c34359054810aceb12c9e26d7a45e750ab",
+    ),
+    (
+        "x86_64-pc-windows-msvc",
+        "bfb2300ff9da054d522e73351f7b337ba6157ebbe30f029a95a471fc3d13a042",
+        "6709579aa3f938e8200c0a51b1abe450d4fda51b09e97517e0cb4c272b5bff37",
+    ),
+    (
+        "x86_64-unknown-linux-gnu",
+        "853759659a7a9d77aa246bc6f083c6e939a9ce92899f1acd55c80e9345e1070b",
+        "b4d76b626df9ce1a48b8036f7313412525295d0cb818d82ecbe3d9cca5fd1d08",
+    ),
+];
+/// Driver's capture lifetime (`CaptureRegistryConfig::default().ttl`).
+const CAPTURE_TTL: Duration = Duration::from_secs(60);
+/// The canvas card the row clicks. "Save" is read unreliably by OCR on 1x
+/// macOS displays; "Cancel" reads on every certified desktop.
+const CANVAS_TARGET_LABEL: &str = "Cancel";
+const CANVAS_TARGET_ID: &str = "cancel";
+
+fn file_sha256(path: &Path) -> Option<String> {
+    use std::io::Read as _;
+    let mut file = fs::File::open(path).ok()?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; 1 << 20];
+    loop {
+        let read = file.read(&mut buffer).ok()?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Some(format!("{:x}", hasher.finalize()))
+}
+
+/// Download one release asset unless a copy with the pinned digest is cached.
+fn fetch_release_asset(directory: &Path, name: &str, expected_sha256: &str) {
+    let path = directory.join(name);
+    if file_sha256(&path).as_deref() == Some(expected_sha256) {
+        eprintln!("[perception-published] cached {name}");
+        return;
+    }
+    let url = format!(
+        "https://github.com/trycua/cua/releases/download/cua-perception-v{PUBLISHED_VERSION}/{name}"
+    );
+    let partial = directory.join(format!("{name}.partial"));
+    let started = Instant::now();
+    let status = Command::new("curl")
+        .args([
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--location",
+            "--retry",
+            "4",
+            "--retry-all-errors",
+            "--output",
+        ])
+        .arg(&partial)
+        .arg(&url)
+        .stdin(Stdio::null())
+        .status()
+        .expect("run curl to download the published cua-perception release");
+    assert!(status.success(), "downloading {url} failed: {status}");
+    let actual = file_sha256(&partial).expect("hash downloaded release asset");
+    assert_eq!(
+        actual, expected_sha256,
+        "{name} from the cua-perception-v{PUBLISHED_VERSION} release does not match its pinned SHA-256"
+    );
+    fs::rename(&partial, &path).expect("move verified release asset into place");
+    eprintln!(
+        "[perception-published] downloaded {name} in {:.1}s",
+        started.elapsed().as_secs_f64()
+    );
+}
+
+/// Directory holding this target's published catalog next to its archive, the
+/// layout `extension install --catalog` expects. `CUA_E2E_PERCEPTION_CACHE_DIR`
+/// lets a runner keep the ~425 MB archive between rows.
+fn published_catalog() -> PathBuf {
+    let target = current_target();
+    let (_, catalog_sha256, archive_sha256) = PUBLISHED_ASSETS
+        .iter()
+        .find(|(candidate, _, _)| *candidate == target)
+        .unwrap_or_else(|| {
+            panic!("cua-perception-v{PUBLISHED_VERSION} publishes no archive for {target}")
+        });
+    let directory = std::env::var_os("CUA_E2E_PERCEPTION_CACHE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::temp_dir().join(format!("cua-perception-release-{PUBLISHED_VERSION}"))
+        });
+    fs::create_dir_all(&directory).expect("create published release cache");
+    let stem = format!("cua-perception-{PUBLISHED_VERSION}-{target}");
+    fetch_release_asset(&directory, &format!("{stem}.tar.gz"), archive_sha256);
+    let catalog = format!("{stem}.catalog.json");
+    fetch_release_asset(&directory, &catalog, catalog_sha256);
+    directory.join(catalog)
+}
+
+/// Install the published extension through the documented user path and
+/// require that Driver reports it as publisher-verified and healthy.
+fn install_published_extension(binary: &Path, home: &Path) -> Value {
+    let catalog = published_catalog();
+    let catalog = catalog.to_str().expect("UTF-8 catalog path");
+    let install = run_extension_command(
+        binary,
+        home,
+        &[
+            "extension",
+            "install",
+            "cua-perception",
+            "--catalog",
+            catalog,
+        ],
+    );
+    assert!(
+        install.status.success(),
+        "published extension install failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&install.stdout),
+        String::from_utf8_lossy(&install.stderr)
+    );
+    let status = run_extension_command(
+        binary,
+        home,
+        &[
+            "extension",
+            "status",
+            "cua-perception",
+            "--self-test",
+            "--json",
+        ],
+    );
+    assert!(
+        status.status.success(),
+        "extension status failed: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let status: Value = serde_json::from_slice(&status.stdout).expect("extension status JSON");
+    assert_eq!(status["installed"], true, "extension status: {status}");
+    assert_eq!(status["healthy"], true, "extension status: {status}");
+    assert_eq!(
+        status["trust"], "publisher-verified",
+        "extension status: {status}"
+    );
+    assert_eq!(
+        status["active_version"], PUBLISHED_VERSION,
+        "extension status: {status}"
+    );
+    status
+}
+
+fn canvas_fixture_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../tests/fixtures/apps/cross-platform/visual-only-canvas/main.py")
+}
+
+/// The first Python that can import Tk. `CUA_E2E_TK_PYTHON` overrides the
+/// search; otherwise Windows tries the `py` launcher and then `python`.
+fn tk_python() -> Vec<String> {
+    let mut candidates: Vec<Vec<String>> = Vec::new();
+    if let Some(python) = std::env::var_os("CUA_E2E_TK_PYTHON") {
+        candidates.push(vec![python.to_string_lossy().into_owned()]);
+    } else if cfg!(windows) {
+        candidates.push(vec!["py".into(), "-3".into()]);
+        candidates.push(vec!["python".into()]);
+    } else {
+        candidates.push(vec!["python3".into()]);
+    }
+    let mut failures = Vec::new();
+    for candidate in &candidates {
+        let probe = Command::new(&candidate[0])
+            .args(&candidate[1..])
+            .args(["-c", "import tkinter; print(tkinter.TkVersion)"])
+            .stdin(Stdio::null())
+            .output();
+        match probe {
+            Ok(output) if output.status.success() => {
+                eprintln!(
+                    "[perception-published] Tk {} from {candidate:?}",
+                    String::from_utf8_lossy(&output.stdout).trim()
+                );
+                return candidate.clone();
+            }
+            Ok(output) => failures.push(format!(
+                "{candidate:?}: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+            Err(error) => failures.push(format!("{candidate:?}: {error}")),
+        }
+    }
+    panic!(
+        "the published-catalog row needs Python with Tk for the visual-only canvas fixture \
+         (provision it or set CUA_E2E_TK_PYTHON): {failures:?}"
+    );
+}
+
+struct CanvasFixture {
+    pid: u32,
+    window_id: u64,
+    journal: FixtureJournal,
+}
+
+fn launch_canvas(driver: &mut McpDriver, label: &str) -> CanvasFixture {
+    let python = tk_python();
+    let journal = FixtureJournal::start();
+    let title = format!("Cua Visual-Only Canvas [{label}]");
+    let mut command = Command::new(&python[0]);
+    command
+        .args(&python[1..])
+        .arg(canvas_fixture_path())
+        .args(["--journal-url", journal.url(), "--title", &title])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit());
+    let child = spawn_in_job(&mut command).expect("launch the visual-only canvas fixture");
+    driver.reaper().push(child);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while journal.snapshot()["ready"].as_bool() != Some(true) {
+        assert!(
+            Instant::now() < deadline,
+            "the canvas fixture never published readiness"
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+    let state = journal.snapshot();
+    let pid = state["pid"]
+        .as_u64()
+        .filter(|pid| *pid > 0)
+        .unwrap_or_else(|| panic!("canvas fixture journal has no pid: {state}"))
+        as u32;
+    driver.reaper().track_pid(pid);
+    assert!(
+        state["selected"].is_null() && state["action_count"] == 0,
+        "canvas fixture did not start idle: {state}"
+    );
+    let (window_id, _) = driver
+        .find_window(pid as i64, &title)
+        .unwrap_or_else(|| panic!("the exact canvas fixture window for pid {pid} did not appear"));
+    CanvasFixture {
+        pid,
+        window_id,
+        journal,
+    }
+}
+
+fn capture_canvas(driver: &mut McpDriver, fixture: &CanvasFixture) -> (String, Instant) {
+    let state = driver.call(
+        "get_window_state",
+        json!({"pid": fixture.pid as i64, "window_id": fixture.window_id}),
+    );
+    let captured_at = Instant::now();
+    assert!(
+        !state.is_error(),
+        "get_window_state failed: {}",
+        state.text()
+    );
+    let capture_id = state.structured()["capture_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("window observation omitted capture_id: {}", state.text()))
+        .to_owned();
+    (capture_id, captured_at)
+}
+
+fn parse_text_regions(driver: &mut McpDriver, capture_id: &str) -> ToolResponse {
+    driver.call(
+        "parse_visual_regions",
+        json!({
+            "capture_id": capture_id,
+            "options": {"kinds": ["text"], "min_confidence": 0.3, "max_regions": 100}
+        }),
+    )
+}
+
+/// Validate a model-backed parse against its capture and the published parser.
+fn validated_published_parse(
+    parsed: &ToolResponse,
+    fixture: &CanvasFixture,
+    capture_id: &str,
+) -> Value {
+    assert!(
+        !parsed.is_error(),
+        "parse_visual_regions failed: {}; structured={}",
+        parsed.text(),
+        parsed.structured()
+    );
+    let result = parsed.structured().clone();
+    assert_eq!(result["schema"], "cua.visual_regions_v1");
+    assert_eq!(result["capture"]["capture_id"], capture_id);
+    assert_eq!(result["capture"]["source"]["kind"], "window");
+    assert_eq!(result["capture"]["source"]["pid"], fixture.pid);
+    assert_eq!(result["capture"]["source"]["window_id"], fixture.window_id);
+    assert_eq!(result["parser"]["extension_id"], "cua-perception");
+    assert_eq!(result["parser"]["extension_version"], PUBLISHED_VERSION);
+    assert_ne!(
+        result["parser"]["backend"], "deterministic_fixture",
+        "the published row must run the released model backend: {}",
+        result["parser"]
+    );
+    assert_eq!(
+        result["capture"]["action_coordinate_space"]["kind"], "screenshot_pixels",
+        "region centers are clicked in screenshot pixels: {}",
+        result["capture"]
+    );
+    result
+}
+
+fn normalized_label(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Text regions whose OCR reads exactly the target label.
+fn label_regions<'a>(parse: &'a Value, label: &str) -> Vec<&'a Value> {
+    let wanted = normalized_label(label);
+    parse["regions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|region| region["kind"] == "text")
+        .filter(|region| {
+            region["text"]
+                .as_str()
+                .is_some_and(|text| normalized_label(text) == wanted)
+        })
+        .collect()
+}
+
+fn region_texts(parse: &Value) -> Vec<String> {
+    parse["regions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|region| region["text"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// Screenshot-pixel center of a region that must lie inside its capture.
+fn region_center(parse: &Value, region: &Value) -> (f64, f64) {
+    let width = parse["capture"]["screenshot"]["width"]
+        .as_f64()
+        .expect("screenshot width");
+    let height = parse["capture"]["screenshot"]["height"]
+        .as_f64()
+        .expect("screenshot height");
+    let bounds = &region["bounds"];
+    let value = |key: &str| bounds[key].as_f64().expect("numeric region bounds");
+    let (x, y, w, h) = (value("x"), value("y"), value("width"), value("height"));
+    assert!(
+        w > 0.0 && h > 0.0 && x >= 0.0 && y >= 0.0 && x + w <= width && y + h <= height,
+        "region lies outside its {width}x{height} capture: {region}"
+    );
+    (x + w / 2.0, y + h / 2.0)
+}
+
+fn canvas_click_args(fixture: &CanvasFixture, x: f64, y: f64, capture_id: &str) -> Value {
+    json!({
+        "pid": fixture.pid as i64,
+        "window_id": fixture.window_id,
+        "x": x,
+        "y": y,
+        "capture_id": capture_id,
+        "delivery_mode": "foreground"
+    })
+}
+
+fn assert_capture_refused(response: &ToolResponse, code: &str, what: &str) {
+    assert!(
+        response.is_error(),
+        "{what} authorized a click: {}",
+        response.text()
+    );
+    assert_eq!(
+        response.structured()["code"],
+        code,
+        "{what} used an unexpected refusal: {}",
+        response.structured()
+    );
+    assert_eq!(response.structured()["effect"], "refused", "{what}");
+}
+
+fn wait_for_canvas_selection(journal: &FixtureJournal) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let state = journal.snapshot();
+        if state["selected"] == CANVAS_TARGET_ID && state["action_count"] == 1 {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn assert_canvas_selected_once(journal: &FixtureJournal, after: &str) {
+    thread::sleep(Duration::from_millis(750));
+    let state = journal.snapshot();
+    assert!(
+        state["selected"] == CANVAS_TARGET_ID && state["action_count"] == 1,
+        "{after} changed the fixture: {state}"
+    );
+}
+
+fn write_published_evidence(cell_id: &str, value: &Value) {
+    let Some(root) = std::env::var_os("CUA_E2E_RESULTS_FILE")
+        .map(PathBuf::from)
+        .and_then(|results| results.parent().map(Path::to_path_buf))
+    else {
+        return;
+    };
+    let directory = root.join("perception-published");
+    fs::create_dir_all(&directory).expect("create published-catalog evidence directory");
+    let path = directory.join(format!("{cell_id}.json"));
+    fs::write(&path, serde_json::to_vec_pretty(value).unwrap())
+        .unwrap_or_else(|error| panic!("write {path:?}: {error}"));
+}
+
+/// The released extension, installed from its signed catalog, parses a live
+/// capture of a custom-painted surface with no accessibility tree. One
+/// capture-bound click on the OCR'd "Cancel" label selects that card in the
+/// fixture's own journal. The consumed capture and an unused expired capture
+/// are refused without effect, and a fresh capture reparses.
+#[test]
+#[ignore]
+fn published_extension_parses_canvas_and_capture_bound_click_is_state_verified() {
+    let route = shared_web_route(
+        Platform::current(),
+        DisplayServer::current(),
+        "left_click",
+        Targeting::Px,
+        Delivery::Foreground,
+    )
+    .expect("foreground pixel click route");
+    let case = CaseSpec::delivered(
+        format!(
+            "{}-tk-perception-published-capture-click-px-foreground",
+            std::env::consts::OS
+        ),
+        "visual-only-canvas",
+        "tk",
+        "perception_published_capture_click",
+        Targeting::Px,
+        Delivery::Foreground,
+        Scope::Window,
+        route,
+        vec![OracleKind::FixtureState, OracleKind::Protocol],
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let home = extension_home();
+        let status = install_published_extension(&lifecycle_binary(), home.path());
+
+        let mut session = PerceptionDriver::start(&cell_id, home.path());
+        let driver = &mut session.driver;
+        *evidence = recording_evidence(driver.recording_dir());
+        let fixture = launch_canvas(driver, &cell_id);
+        let raised = driver.call(
+            "bring_to_front",
+            json!({"pid": fixture.pid as i64, "window_id": fixture.window_id}),
+        );
+        eprintln!("[perception-published] bring_to_front: {}", raised.text());
+        thread::sleep(Duration::from_millis(500));
+
+        // Start the worker on a capture that is never clicked, so it can
+        // prove expiry at the end of the row.
+        let (expiring_capture, expiring_at) = capture_canvas(driver, &fixture);
+        let warm_started = Instant::now();
+        let warm = parse_text_regions(driver, &expiring_capture);
+        validated_published_parse(&warm, &fixture, &expiring_capture);
+        let warm_parse_ms = warm_started.elapsed().as_millis() as u64;
+        driver.start_behavior_recording();
+
+        // 1. Observe and retain the native capture.
+        let (capture_id, captured_at) = capture_canvas(driver, &fixture);
+        // 2. The released model parses that exact capture.
+        let parse_started = Instant::now();
+        let parsed = parse_text_regions(driver, &capture_id);
+        let parse_ms = parse_started.elapsed().as_millis() as u64;
+        let parse = validated_published_parse(&parsed, &fixture, &capture_id);
+        let matches = label_regions(&parse, CANVAS_TARGET_LABEL);
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected exactly one OCR region reading {CANVAS_TARGET_LABEL:?}; read {:?}",
+            region_texts(&parse)
+        );
+        let region = matches[0].clone();
+        let (x, y) = region_center(&parse, &region);
+        let state = fixture.journal.snapshot();
+        assert!(
+            state["selected"].is_null() && state["action_count"] == 0,
+            "parsing must not change fixture state: {state}"
+        );
+
+        // 3. One capture-bound click derived from the parsed region.
+        let click_age = captured_at.elapsed();
+        assert!(
+            click_age < CAPTURE_TTL,
+            "the loop took {click_age:?}, beyond the {CAPTURE_TTL:?} capture lifetime"
+        );
+        let args = canvas_click_args(&fixture, x, y, &capture_id);
+        let click = driver.call("click", args.clone());
+        assert!(
+            !click.is_error(),
+            "capture-bound click failed: {}; structured={}",
+            click.text(),
+            click.structured()
+        );
+        // 4. The fixture's own journal, which Driver never reads.
+        let delivered = wait_for_canvas_selection(&fixture.journal);
+        let summary = json!({
+            "cell_id": cell_id,
+            "extension": {
+                "version": status["active_version"],
+                "trust": status["trust"],
+                "publisher_key_id": status["publisher_key_id"],
+                "catalog_version": status["catalog_version"],
+            },
+            "parser": parse["parser"],
+            "screenshot": parse["capture"]["screenshot"],
+            "regions_parsed": parse["regions"].as_array().map(Vec::len),
+            "texts": region_texts(&parse),
+            "target_region": region,
+            "click_point": {"x": x, "y": y},
+            "warm_parse_ms": warm_parse_ms,
+            "parse_ms": parse_ms,
+            "capture_age_at_click_ms": click_age.as_millis() as u64,
+            "click_route": click.action_route(),
+            "click_effect": click.action_effect(),
+            "fixture_state": fixture.journal.snapshot(),
+        });
+        write_published_evidence(&cell_id, &summary);
+        eprintln!("[perception-published] {summary}");
+        assert!(
+            delivered,
+            "the click on OCR region {CANVAS_TARGET_LABEL:?} at ({x:.0},{y:.0}) never selected \
+             the card: {}",
+            fixture.journal.snapshot()
+        );
+
+        // 5. The consumed capture is refused.
+        let reused = driver.call("click", args);
+        assert_capture_refused(&reused, "capture_not_found", "a consumed capture");
+        assert_canvas_selected_once(&fixture.journal, "a refused consumed capture");
+
+        // 6. Reobserve: a fresh capture parses under its own identity and
+        // still shows the target.
+        let (fresh_capture_id, _) = capture_canvas(driver, &fixture);
+        assert_ne!(fresh_capture_id, capture_id);
+        let reparsed = parse_text_regions(driver, &fresh_capture_id);
+        let reparse = validated_published_parse(&reparsed, &fixture, &fresh_capture_id);
+        assert!(
+            !label_regions(&reparse, CANVAS_TARGET_LABEL).is_empty(),
+            "the reobserved canvas no longer reads {CANVAS_TARGET_LABEL:?}: {:?}",
+            region_texts(&reparse)
+        );
+        eprintln!(
+            "[perception-published] reobserved {fresh_capture_id}: {:?}",
+            region_texts(&reparse)
+        );
+
+        // 7. An unused capture past its lifetime is refused.
+        let remaining = CAPTURE_TTL.saturating_sub(expiring_at.elapsed());
+        thread::sleep(remaining + Duration::from_secs(2));
+        let expired = driver.call(
+            "click",
+            canvas_click_args(&fixture, x, y, &expiring_capture),
+        );
+        assert_capture_refused(&expired, "capture_expired", "an expired capture");
+        assert_canvas_selected_once(&fixture.journal, "a refused expired capture");
+        Observation::delivered(
+            vec![OracleKind::FixtureState, OracleKind::Protocol],
+            Evidence::default(),
+        )
+    });
+}
+
 // ---------------------------------------------------------------- hermetic
 
 fn png_bytes(image: image::RgbaImage) -> Vec<u8> {
@@ -982,4 +1581,37 @@ fn swatch_extension_installs_and_parses_through_driver_containment() {
         result["regions"][0]["bounds"],
         json!({"x": 40, "y": 60, "width": 110, "height": 48})
     );
+}
+
+/// The published row clicks only an OCR region that reads exactly the target
+/// label, so the reobserved "SELECTED: CANCEL" status line never matches.
+#[test]
+fn label_regions_match_only_the_exact_ocr_label() {
+    let region = |text: &str, kind: &str| json!({"kind": kind, "text": text, "bounds": {"x": 1, "y": 1, "width": 10, "height": 10}});
+    let parse = json!({"regions": [
+        region("Save", "text"),
+        region(" cancel ", "text"),
+        region("SELECTED: CANCEL", "text"),
+        region("Cancel", "icon"),
+        region("Canceled", "text"),
+    ]});
+    let matches = label_regions(&parse, CANVAS_TARGET_LABEL);
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0]["text"], " cancel ");
+    assert_eq!(normalized_label("Can-cel!"), "cancel");
+}
+
+/// Every pinned release asset is a well-formed SHA-256 for a distinct target.
+#[test]
+fn published_release_pins_are_well_formed() {
+    let mut targets = std::collections::HashSet::new();
+    for (target, catalog, archive) in PUBLISHED_ASSETS {
+        assert!(targets.insert(*target), "duplicate pin for {target}");
+        for digest in [catalog, archive] {
+            assert_eq!(digest.len(), 64, "{target}: {digest}");
+            assert!(digest
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
+        }
+    }
 }

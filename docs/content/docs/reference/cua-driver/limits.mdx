@@ -130,6 +130,23 @@ does not imply arbitrary raw background PX delivery on Wayland.
 
 ---
 
+## Desktop captures leave out the agent cursor
+
+**Behavior:** `get_desktop_state` keeps the Driver's own agent cursor and session pill out of the PNG it returns, so a cursor resting on the control it just clicked does not cover that control's label. The on-screen cursor, external screen recorders, and the Driver's own recordings keep showing it. Every response reports the outcome in `structuredContent.agent_overlay_capture`:
+
+- `excluded`, with the native `method`;
+- `not_present`, when no overlay pixels were on screen;
+- `not_excluded`, with a `reason`, when overlay pixels may be in the image. The text summary repeats the caveat.
+
+**Platform scope:**
+
+- **macOS:** the capture uses a ScreenCaptureKit display filter that leaves out the overlay window (macOS 14 or later). The capture falls back to `screencapture`, which reports `not_excluded`.
+- **Windows:** the overlay is marked `WDA_EXCLUDEFROMCAPTURE` for the length of the capture (Windows 10 version 2004 or later). During that window, other capture tools also stop seeing the cursor. Older builds report `not_excluded`.
+- **Linux X11:** the overlay hides for the length of the root grab, so the cursor blinks off briefly. Without a compositing manager, pixels that a slow window has not repainted are replaced with the desktop that the overlay recorded under them (`method` ends in `+x11_save_under`).
+- **Linux Wayland:** the compositor draws the cursor into the output that the capture reads, and the Driver cannot leave it out. Captures report `not_excluded`.
+
+---
+
 ## Off-Space SwiftUI windows strip their AX tree
 
 **Symptom:** `get_window_state({pid, window_id})` on a window on a different Space (e.g. System Settings parked on Space 2 while on Space 1) returns a minimal tree that contains only the menu bar, or just the `AXApplication` root.

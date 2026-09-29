@@ -625,6 +625,60 @@ mod tests {
     }
 
     #[test]
+    fn recreating_an_idle_reclaimed_implicit_session_keeps_its_old_tokens_stale() {
+        use crate::session::{
+            begin_session_dispatch, evict_idle_with_prefix, register_scoped_session_end_hook,
+            SessionClientKind, SessionTransport,
+        };
+        let session = format!("snapshot-idle-implicit-{}", std::process::id());
+        let cache = Arc::new(SnapshotStore::<Payload>::new());
+        let retiring = cache.clone();
+        let _hook = register_scoped_session_end_hook(move |ended| {
+            retiring.retire_session_screenshots(ended);
+        });
+        let begin = || {
+            begin_session_dispatch(
+                &session,
+                None,
+                &session,
+                true,
+                SessionTransport::McpStdio,
+                SessionClientKind::Mcp,
+            )
+        };
+        let resolve =
+            |token: &str| cache.resolve(10, &serde_json::json!({ "element_token": token }));
+
+        let guard = begin().expect("first unnamed call starts the session");
+        let (snapshot, _) = cache
+            .publish_for_session(10, 20, Payload(vec![0, 1]), Some(&session), Some(1.0))
+            .expect("live session publishes");
+        let token = token_for(snapshot, 1);
+        drop(guard);
+        assert_eq!(
+            evict_idle_with_prefix(std::time::Duration::ZERO, &session),
+            [session.clone()]
+        );
+
+        let guard = begin().expect("next unnamed call recreates the session");
+        assert!(resolve(&token).is_err());
+        let (fresh, _) = cache
+            .publish_for_session(10, 20, Payload(vec![0, 1]), Some(&session), Some(1.0))
+            .expect("recreated session publishes again");
+        assert!(matches!(
+            resolve(&token_for(fresh, 1)).unwrap(),
+            ResolvedElement::Element {
+                window_id: 20,
+                element: 1,
+                ..
+            }
+        ));
+        drop(guard);
+        crate::session::end_session(&session);
+        crate::session::revive_session(&session);
+    }
+
+    #[test]
     fn capture_completing_after_session_end_is_not_published() {
         let cache = SnapshotStore::new();
         let session = format!("snapshot-late-capture-{}", uuid::Uuid::new_v4());

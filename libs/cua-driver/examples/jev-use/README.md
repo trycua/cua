@@ -1,6 +1,6 @@
 # jev-use with Cua Driver and TypeSafe Jev
 
-`jev-use` is a public-preview recipe that uses TypeSafe Jev to choose the next browser action
+`jev-use` is a recipe that uses TypeSafe Jev to choose the next browser action
 while Cua Driver observes the page, performs that action, and verifies the
 result. Equivalent Python and TypeScript programs run the same bounded loop.
 
@@ -16,8 +16,19 @@ The TypeSafe-specific code lives in `python/jev_adapter.py` and
 `typescript/jev_adapter.ts`, outside Driver. Both adapters send Jev the bounded
 candidate IDs and descriptions plus a compact observation. When visual regions
 are present, that observation includes their typed bounds and the exact
-`capture_id`; it never includes screenshot bytes or extension internals. A live
-answer must be one of the supplied IDs before the runner resolves it to the
+`capture_id`; it never includes screenshot bytes or extension internals. The
+observation also carries a `form` summary that the runner derives from the page
+structure and any validated visual regions. The summary reports whether the
+verification field is `empty`, holds the required token
+(`contains_required_token`), or holds `contains_other_value`. It also reports
+the Submit control: `available` for a page-structure button ref. When there is
+no ref and the capture-bound visual path is enabled, it reports `visual_only`
+for a unique validated visual Submit region, `visual_check_pending` before that
+step's visual regions are parsed, or `not_found_visually`. Without a visual path,
+it reports `not_in_page_structure`. The token itself is replaced
+with `[verification token]` in the page, outline, and visual text. `history` lists
+one `{step, selected_id, outcome}` item per earlier decision. Timings and model
+probabilities stay in the JSONL log only. A live answer must be one of the supplied IDs before the runner resolves it to the
 original immutable action.
 
 You can run the complete deterministic proof without credentials or network
@@ -44,6 +55,139 @@ through an independent `/state` endpoint. Each runner:
    validated capture-bound visual Submit region when available; and
 8. checks the fixture's `/state` endpoint instead of treating the action
    response or a screenshot as proof of success.
+
+### Candidate sources and task specs
+
+The loop separates where candidates come from from what the task needs. A
+candidate source (`python/sources.py`, `typescript/sources.ts`) finds controls
+in one observation and builds fully specified candidates for them:
+`BrowserSemanticSource` reads the `get_browser_state` snapshot and acts through
+page refs, and `VisualRegionSource` reads validated `parse_visual_regions`
+regions and acts through a capture-bound `click`. A task spec
+(`python/tasks.py`, `typescript/tasks.ts`) holds the goal, the parameters with
+the secret token marked for redaction, the step budget, the allowed Driver
+action kinds, the `form` state summary, the candidate IDs and descriptions, and
+the success oracle. The browser fixture above is `FixtureFormTask`, and its
+oracle is the fixture's `/state` endpoint. Browser requests are unchanged: the
+golden files `fixtures/jev-provider-request-golden-*-v1.json` pin the exact
+provider requests and candidate tables for the page-structure and visual
+fixtures, and browser tasks keep sending `cua.jev_choice_request_v1`.
+
+### Native desktop tasks
+
+`NativeAccessibilitySource` ([RFC #4268](../../../../rfcs/4268-jev-use-native-candidates.md))
+builds candidates from the native elements of one `get_window_state` call that
+returns the tree and the screenshot together, so element tokens and the
+`capture_id` describe the same moment. `native_roles.py` / `native_roles.ts`
+map raw macOS AX, Windows UIA, and Linux AT-SPI roles to a closed set of role
+classes (`button`, `toggle`, `checkbox`, `radio`, `popup`, `menu_item`, `link`,
+`text_input`), keyed by the same normalization as Driver's `verify_state`.
+Only enabled, on-screen, labeled, native (not `in_web_content`) elements
+become candidates; a label equal to the element's value counts as unlabeled.
+Candidate IDs come from the role class, label, and actionable-ancestor path,
+never `element_index`. At most 24 action candidates are offered, plus
+`reobserve` and `abstain`. Labels that suggest deleting, sending, purchasing,
+or closing are excluded unless the task allows that risk. Text comes only from
+task parameters. Actions are element-bound `click`, `set_value`, or
+`type_text` with background delivery first; a stale token leads to a fresh
+observation. Native steps send `cua.jev_choice_request_v2`, which adds a
+per-candidate `source` and compact value-free `elements`. A task that declares
+its required steps also sends `progress`: each step with how often this run has
+performed it, counted only from the runner's own successful actions and never
+read from the app. A step's candidate also says which earlier step must be done
+first, for example Save waits for the note to be entered.
+
+Visual regions from OmniParser are parsed, from the same `capture_id`, only
+when the tree offers nothing to act through: Driver reports `ax_tree_empty`, a
+complete tree lacks a task's declared visual target, or a non-truncated tree,
+observed again with a larger budget, holds only window roots and window chrome
+(`no_application_elements`). The last case covers custom-painted surfaces,
+for which Linux X11 returns only window metadata, Windows UIA only the title
+bar, and macOS AX only the unlabeled window buttons and the application's
+global menu bar (which on macOS are not window content). A partial tree with
+any application element never falls back. Visual targets must reach an OCR
+confidence of 0.8 unless a task opts into a lower bar; an exact, unique text
+match is required either way.
+A visual click is background first; after a structured background refusal,
+the next step offers a separate `<id>:foreground` candidate when the task
+allows foreground delivery.
+
+The same three tasks run on four repository harnesses: `<harness>-counter`
+(set the counter to 3), `<harness>-save-note` (set the Note field and save),
+and `<harness>-choose-size` (select Large and check I agree). The harness is
+`appkit` (macOS AX), `wpf` or `winui3` (Windows UIA), or `gtk3` (Linux
+AT-SPI). In task mode, each harness shows the same labeled controls, so
+candidate IDs and the mock provider's choices are identical on every platform.
+Task mode is selected with `CUA_APPKIT_TASK_STATE`, `CUA_WPF_TASK_STATE`,
+`CUA_WINUI3_TASK_STATE`, or `CUA_GTK3_TASK_STATE`. WPF, WinUI3, and GTK3 show
+a small dedicated task window.
+A fourth task, `canvas-cancel`, clicks the Cancel card on the cross-platform
+visual-only canvas fixture (a custom-painted Tk window with no accessibility
+tree), so it can only succeed through the visual fallback and needs the
+cua-perception extension. It observes only the window's top level
+(`max_depth: 1`), so macOS does not spend the walk budget in the menu bar. It
+targets Cancel because OmniParser reads the Save label inconsistently on a 1x
+macOS capture (`Save`, then `Saye`), and the exact text match then correctly
+offers no candidate. Send is a risk phrase. Run it with `verify_native.py --harness canvas`; the
+verifier serves the loopback journal the fixture publishes its state to and
+writes that state to the task's state file. Each harness rewrites that
+state file on every change, and the file is the independent oracle. On
+Windows, the title bar's System menu, Minimize, Maximize, and Close buttons
+are window chrome and never become candidates. WinUI3 reports the same UIA control
+types as WPF, so both share the Windows role table; WinUI3's static `Text`
+labels are not candidates. With Cua Driver 0.30.1 or
+later, run from this directory:
+
+```bash
+# macOS
+bash ../../tests/fixtures/build/macos.sh --only appkit
+uv run --frozen python verify_native.py --harness appkit --typescript --output-dir /tmp/jev-native-proof
+# Linux (X11 session with AT-SPI; the harness runs on the system python3 with PyGObject)
+bash ../../tests/fixtures/build/linux.sh --only gtk3
+.venv/bin/python verify_native.py --harness gtk3 --typescript --output-dir /tmp/jev-native-proof
+```
+
+```powershell
+# Windows
+..\..\tests\fixtures\build\windows.ps1 -Targets wpf
+uv run --frozen python verify_native.py --harness wpf --typescript --output-dir $env:TEMP\jev-native-proof
+# or the WinUI3 harness
+..\..\tests\fixtures\build\windows.ps1 -Targets winui3
+uv run --frozen python verify_native.py --harness winui3 --typescript --output-dir $env:TEMP\jev-native-winui3
+```
+
+`--capture-dir` also records sanitized `get_window_state` fixtures like the
+ones under `fixtures/native/`. On Linux, Cua Driver 0.30.2 and earlier report
+no `value` for a named text field
+([#4291](https://github.com/trycua/cua/issues/4291)). With those Drivers,
+`gtk3-save-note` cannot observe its own write, so it keeps offering the write
+until the step budget runs out.
+
+#### Choose with Cua-S1
+
+The native runners also accept `--provider s1`, and `verify_native.py` accepts
+`--s1`. Loading Cua-S1 takes 10 to 35 seconds, so a per-step model load would
+not fit inside Driver's 60-second capture lifetime. The runners therefore send
+each validated `cua.jev_choice_request_v2` request to an already loaded model
+behind a loopback HTTP endpoint, and read one `cua.decision_choice_v1`
+response. `CUA_S1_DECISION_URL` names that endpoint. It must be a plain
+`http://` URL on `127.0.0.1`, `localhost`, or `::1`; a model on another host is
+reached through an SSH tunnel. The runner rejects a response whose schema,
+`capture_id`, kind, selected ID, or probabilities do not match the request, and
+it resolves the selected ID to its own candidate as with every other provider.
+
+The service is not part of this example. Any server that loads the pinned
+checkpoint from [`libs/cua-s1`](../../../cua-s1/README.md), validates the
+request with `python/choose_action.py`, and answers with
+`decision_models.choose(S1DecisionModel(...), request).to_wire()` fits the
+contract. Run the service from the same revision as the runners: an older
+validator rejects a newer optional field such as `progress`, and the runner
+then stops with a logged `S1ServiceError` outcome. For example, to verify the native tasks with it:
+
+```bash
+export CUA_S1_DECISION_URL=http://127.0.0.1:8791/decide
+uv run --frozen python verify_native.py --harness appkit --typescript --s1 --output-dir /tmp/jev-native-s1
+```
 
 The MCP connection stays open across the entire loop. This preserves the
 explicit named Cua Driver session and avoids rebuilding tool state for every
@@ -86,10 +230,11 @@ export npm_config_cache="$PWD/.venv/npm-cache"
 npm ci
 ```
 
-On Windows, use a non-administrator desktop session and `npm.cmd ci` in
-PowerShell. An elevated session, including the built-in Administrator account
-that some cloud images create as the first user, makes Driver refuse the
-installed browser as writable by the current token. The managed verifier starts TypeScript through `node --import tsx`,
+On Windows, use your logged-in desktop session and `npm.cmd ci` in
+PowerShell. An elevated Driver, such as the installer's autostart on an
+administrator account or the built-in Administrator account that some cloud
+images create as the first user, launches the isolated browser with a derived
+standard-user token. The managed verifier starts TypeScript through `node --import tsx`,
 not an npm shell shim. On Linux, use a supported system browser and a desktop
 session accessible to the same user as Driver; native Wayland has separate
 compositor-specific requirements.
@@ -292,9 +437,16 @@ resets the fixture and prepares/navigates the browser; it is not side-effect-fre
 
 The managed verifier bounds each child runner to 180 seconds. Provider SDKs may
 retry network requests, so action and process limits do not guarantee a billing
-cap. `decision_ms` includes the browser snapshot as well as the provider call.
-Logs contain choices and timings, not a complete request, token-usage, or billing
-audit. The fixture tests integration rather than general agent capability.
+cap. `decision_ms` remains the backward-compatible aggregate from the start of
+the fresh semantic snapshot through validated provider choice. Step events also
+report `semantic_observe_ms`, `visual_observe_ms`,
+`candidate_build_ms`, and `provider_decision_ms`; `action_ms` remains
+separate and `total_step_ms` measures through the end of the action (or a
+reobserve decision). Lazy visual parsing is timed only when it actually runs.
+The small residual between the aggregate and named phases is local
+validation/bookkeeping, not another model or Driver call. Logs contain choices
+and timings, not a complete request, token-usage, or billing audit. The fixture
+tests integration rather than general agent capability.
 
 ## MCP, CLI, and perception boundaries
 
@@ -312,6 +464,10 @@ removes the Submit button ref so only the visual candidate can submit. The optio
 Driver internals to this example. It validates capture identity, PNG geometry,
 coordinate mapping, region IDs, bounds, content, confidence, and ambiguity
 before constructing a `click` candidate containing the exact `capture_id`.
+The coordinate mapping is `screenshot_pixels` for an identity capture or a
+finite, invertible `affine` transform otherwise (for example, a Retina window).
+The click still carries the original screenshot-pixel point; Driver applies the
+capture's mapping itself, so the example never maps a point twice.
 Visual evidence never replaces the semantic editable ref required by
 `browser_type`.
 

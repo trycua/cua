@@ -392,8 +392,10 @@ To check a published release on a Mac:
 gh release download cua-driver-rs-v0.28.2 --repo trycua/cua --dir /tmp/cua-release \
   --pattern 'cua-driver-rs-0.28.2-darwin-*.tar.gz'
 python3 .github/scripts/verify_cua_driver_release_signatures.py macos \
-  --artifacts /tmp/cua-release --version 0.28.2
+  --artifacts /tmp/cua-release --version 0.28.2 --legacy-unsigned-node-runtime
 ```
+
+Releases published before #4168 ship an unsigned `cua_driver_node_runtime.node`, so checking one of them needs `--legacy-unsigned-node-runtime`. That flag skips only the Node runtime. Release candidates are always verified without it.
 
 To check Windows, run the `windows` subcommand on a Windows machine.
 

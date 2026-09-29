@@ -30,15 +30,15 @@ function fixture(name: string): any {
   return JSON.parse(readFileSync(new URL(`../fixtures/native/${name}`, import.meta.url), 'utf8'));
 }
 
-function task(kind: string, capOrder: CapOrder = 'relevance'): NativeTask {
-  return new NativeTask({ ...nativeTask(`gtk3-${kind}`, '/tmp/none.json'), capOrder });
+function task(kind: string, capOrder: CapOrder = 'relevance', harness = 'gtk3'): NativeTask {
+  return new NativeTask({ ...nativeTask(`${harness}-${kind}`, '/tmp/none.json'), capOrder });
 }
 
-function sources(t: NativeTask, payload: any): TaskSources {
+function sources(t: NativeTask, payload: any, harness = 'gtk3'): TaskSources {
   return {
     ax: NativeAccessibilitySource.fromObservation(
       parseWindowState(payload, payload.pid, payload.window_id),
-      HARNESSES.gtk3.platform,
+      HARNESSES[harness].platform,
       { redact: t.redactText, textMethod: t.textMethod }
     ),
     visualPath: false,
@@ -67,22 +67,25 @@ test('compose keeps relevant candidates over the cap in element order', () => {
 
 test('density fixtures reproduce the golden candidate sets', () => {
   const golden = fixture('native-density-candidates-v1.json').sets;
-  for (const density of [12, 24]) {
-    const payload = fixture(`gtk3-window-state-density-${density}-v1.json`);
-    for (const kind of KINDS) {
-      for (const capOrder of ['relevance', 'depth_first'] as const) {
-        const t = task(kind, capOrder);
-        const src = sources(t, payload);
-        const plan = t.plan(src);
-        assert.deepEqual(
-          { ids: plan.candidates.map((c) => c.id), dropped: plan.stats.dropped },
-          golden[`gtk3-${kind}-d${density}-${capOrder}`],
-          `${kind} d${density} ${capOrder}`
-        );
-        const offered = new Set(plan.candidates.map((c) => c.id));
-        const present = TARGETS[kind].filter((id) => offered.has(id));
-        assert.equal(present.length, density === 24 && capOrder === 'depth_first' ? 0 : TARGETS[kind].length);
-        validateRequest(nativeChoiceRequest(t, src, plan, []));
+  assert.equal(Object.keys(golden).length, 24);
+  for (const harness of ['gtk3', 'appkit']) {
+    for (const density of [12, 24]) {
+      const payload = fixture(`${harness}-window-state-density-${density}-v1.json`);
+      for (const kind of KINDS) {
+        for (const capOrder of ['relevance', 'depth_first'] as const) {
+          const t = task(kind, capOrder, harness);
+          const src = sources(t, payload, harness);
+          const plan = t.plan(src);
+          assert.deepEqual(
+            { ids: plan.candidates.map((c) => c.id), dropped: plan.stats.dropped },
+            golden[`${harness}-${kind}-d${density}-${capOrder}`],
+            `${harness} ${kind} d${density} ${capOrder}`
+          );
+          const offered = new Set(plan.candidates.map((c) => c.id));
+          const present = TARGETS[kind].filter((id) => offered.has(id));
+          assert.equal(present.length, density === 24 && capOrder === 'depth_first' ? 0 : TARGETS[kind].length);
+          validateRequest(nativeChoiceRequest(t, src, plan, []));
+        }
       }
     }
   }

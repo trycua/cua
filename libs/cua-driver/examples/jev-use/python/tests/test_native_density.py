@@ -32,6 +32,7 @@ from tasks import TaskSources  # noqa: E402
 
 FIXTURES = EXAMPLE / "fixtures" / "native"
 APPS = EXAMPLE.parents[1] / "tests" / "fixtures" / "apps"
+DENSITY_HARNESSES = ("gtk3", "appkit")
 TARGETS = {
     "counter": {"ax:button:increment"},
     "save-note": {"ax:text_input:note:set:note", "ax:button:save-note"},
@@ -92,12 +93,17 @@ class ComposeRelevanceTest(unittest.TestCase):
 
 class DensityFixtureTest(unittest.TestCase):
     def test_sizes_and_cap(self) -> None:
-        expected_sizes = {12: {"counter": 12, "save-note": 14, "choose-size": 12}, 24: dict.fromkeys(TASK_KINDS, 26)}
-        for density, sizes in expected_sizes.items():
-            payload = load(f"gtk3-window-state-density-{density}-v1.json")
+        expected_sizes = {
+            ("gtk3", 12): {"counter": 12, "save-note": 14, "choose-size": 12},
+            ("appkit", 12): {"counter": 14, "save-note": 16, "choose-size": 12},
+            ("gtk3", 24): dict.fromkeys(TASK_KINDS, 26),
+            ("appkit", 24): dict.fromkeys(TASK_KINDS, 26),
+        }
+        for (harness, density), sizes in expected_sizes.items():
+            payload = load(f"{harness}-window-state-density-{density}-v1.json")
             for kind in TASK_KINDS:
-                with self.subTest(density=density, kind=kind):
-                    plan = plan_for("gtk3", kind, payload)
+                with self.subTest(harness=harness, density=density, kind=kind):
+                    plan = plan_for(harness, kind, payload)
                     self.assertEqual(len(plan.candidates), sizes[kind])
                     self.assertTrue(TARGETS[kind] <= {c.id for c in plan.candidates})
                     self.assertEqual(plan.stats.dropped > 0, density == 24)
@@ -105,23 +111,26 @@ class DensityFixtureTest(unittest.TestCase):
     def test_golden_sets(self) -> None:
         """The presented IDs match the golden file that the TypeScript test also checks."""
         golden = load("native-density-candidates-v1.json")["sets"]
-        for density in (12, 24):
-            payload = load(f"gtk3-window-state-density-{density}-v1.json")
-            for kind in TASK_KINDS:
-                for cap_order in ("relevance", "depth_first"):
-                    plan = plan_for("gtk3", kind, payload, cap_order=cap_order)
-                    self.assertEqual(
-                        {"ids": [c.id for c in plan.candidates], "dropped": plan.stats.dropped},
-                        golden[f"gtk3-{kind}-d{density}-{cap_order}"],
-                    )
+        self.assertEqual(len(golden), 2 * 2 * 3 * 2)
+        for harness in DENSITY_HARNESSES:
+            for density in (12, 24):
+                payload = load(f"{harness}-window-state-density-{density}-v1.json")
+                for kind in TASK_KINDS:
+                    for cap_order in ("relevance", "depth_first"):
+                        plan = plan_for(harness, kind, payload, cap_order=cap_order)
+                        self.assertEqual(
+                            {"ids": [c.id for c in plan.candidates], "dropped": plan.stats.dropped},
+                            golden[f"{harness}-{kind}-d{density}-{cap_order}"],
+                        )
 
     def test_depth_first_drops_targets_behind_distractors(self) -> None:
-        payload = load("gtk3-window-state-density-24-v1.json")
-        for kind in TASK_KINDS:
-            with self.subTest(kind=kind):
-                plan = plan_for("gtk3", kind, payload, cap_order="depth_first")
-                self.assertEqual(len(plan.candidates), MAX_EXECUTABLE_CANDIDATES + 2)
-                self.assertFalse(TARGETS[kind] & {c.id for c in plan.candidates})
+        for harness in DENSITY_HARNESSES:
+            payload = load(f"{harness}-window-state-density-24-v1.json")
+            for kind in TASK_KINDS:
+                with self.subTest(harness=harness, kind=kind):
+                    plan = plan_for(harness, kind, payload, cap_order="depth_first")
+                    self.assertEqual(len(plan.candidates), MAX_EXECUTABLE_CANDIDATES + 2)
+                    self.assertFalse(TARGETS[kind] & {c.id for c in plan.candidates})
 
     def test_cap_order_is_irrelevant_within_the_cap(self) -> None:
         fixtures = {

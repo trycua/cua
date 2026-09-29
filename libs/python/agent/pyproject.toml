@@ -37,6 +37,7 @@ qwen = [
     "Pillow>=10.0.0",
 ]
 omni = [
+    # Deprecated: cua-som is no longer maintained (AGPL-3.0).
     "cua-som>=0.1.0,<0.2.0",
 ]
 uitars = []

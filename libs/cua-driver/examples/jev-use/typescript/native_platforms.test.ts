@@ -1,6 +1,6 @@
-// Native tasks on the WPF (Windows UIA) and GTK3 (Linux AT-SPI) harnesses
-// (RFC #4268, Phase 2). Mirrors python/tests/test_native_platforms.py; the
-// fixtures are real get_window_state results recorded in CI: jev-use.
+// Native tasks on the WPF and WinUI3 (Windows UIA) and GTK3 (Linux AT-SPI)
+// harnesses (RFC #4268). Mirrors python/tests/test_native_platforms.py; the
+// fixtures are real get_window_state results recorded by verify_native.py.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
@@ -8,6 +8,7 @@ import test from 'node:test';
 import { validateRequest } from './choose_action.js';
 import { chooseMockForTask } from './jev_adapter.js';
 import { eligibleControls, parseWindowState } from './native.js';
+import { RAW_ROLES, roleClass } from './native_roles.js';
 import {
   HARNESSES,
   NATIVE_TASK_IDS,
@@ -20,7 +21,7 @@ import {
 import { NativeAccessibilitySource } from './sources.js';
 import type { TaskSources } from './tasks.js';
 
-const PLATFORM_HARNESSES = ['wpf', 'gtk3'] as const;
+const PLATFORM_HARNESSES = ['wpf', 'winui3', 'gtk3'] as const;
 
 function windowState(harness: string, name: string): any {
   const url = new URL(`../fixtures/native/${harness}-window-state-${name}-v1.json`, import.meta.url);
@@ -124,12 +125,15 @@ test('a text entry value is never a label', () => {
 });
 
 test('the Windows title bar is window chrome and GTK3 roles map', () => {
-  const wpf = eligibleControls(observe(windowState('wpf', 'initial')), 'windows');
-  assert.equal(wpf.excluded.window_chrome, 4);
-  assert.deepEqual(
-    wpf.controls.map((c) => c.label),
-    ['Increment', 'Reset', 'I agree', 'Small', 'Medium', 'Large', 'Note', 'Save note', 'Exit']
-  );
+  for (const harness of ['wpf', 'winui3']) {
+    const windows = eligibleControls(observe(windowState(harness, 'initial')), 'windows');
+    assert.equal(windows.excluded.window_chrome, 4, harness);
+    assert.deepEqual(
+      windows.controls.map((c) => c.label),
+      ['Increment', 'Reset', 'I agree', 'Small', 'Medium', 'Large', 'Note', 'Save note', 'Exit'],
+      harness
+    );
+  }
   const gtk3 = eligibleControls(observe(windowState('gtk3', 'initial')), 'linux');
   assert.deepEqual(gtk3.excluded, {});
   assert.deepEqual(
@@ -140,4 +144,28 @@ test('the Windows title bar is window chrome and GTK3 roles map', () => {
       ['text_input', 'Note'], ['button', 'Save note'], ['button', 'Exit'],
     ]
   );
+});
+
+test('WinUI3 roles map through the Windows table with no WinUI3-specific row', () => {
+  // WinUI3's automation peers report the same UIA control types as WPF. Its
+  // TextBlock appears as static Text (WPF's task window has none), which is an
+  // unknown role and never a candidate.
+  const windowsRows = new Set(Object.values(RAW_ROLES.windows).flat());
+  for (const name of ['initial', 'after-save-note', 'after-choose-size']) {
+    const roles = new Set<string>(windowState('winui3', name).elements.map((e: any) => e.role));
+    assert.deepEqual([...roles].filter((r) => !windowsRows.has(r)).sort(), ['Text', 'TitleBar'], name);
+  }
+  assert.equal(roleClass('Text', 'windows'), null);
+  const winui3 = eligibleControls(observe(windowState('winui3', 'initial')), 'windows');
+  assert.deepEqual(winui3.excluded, { unknown_role: 2, window_chrome: 4 });
+  assert.deepEqual(
+    winui3.controls.map((c) => [c.roleClass, c.label]),
+    [
+      ['button', 'Increment'], ['button', 'Reset'], ['checkbox', 'I agree'],
+      ['radio', 'Small'], ['radio', 'Medium'], ['radio', 'Large'],
+      ['text_input', 'Note'], ['button', 'Save note'], ['button', 'Exit'],
+    ]
+  );
+  const wpf = eligibleControls(observe(windowState('wpf', 'initial')), 'windows');
+  assert.deepEqual(winui3.controls.map((c) => c.id), wpf.controls.map((c) => c.id));
 });

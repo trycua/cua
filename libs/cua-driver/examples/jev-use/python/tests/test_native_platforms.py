@@ -1,7 +1,7 @@
-"""Native tasks on the WPF (Windows UIA) and GTK3 (Linux AT-SPI) harnesses (RFC #4268, Phase 2).
+"""Native tasks on the WPF and WinUI3 (Windows UIA) and GTK3 (Linux AT-SPI) harnesses (RFC #4268).
 
 The fixtures are real ``get_window_state`` results from each harness in task
-mode, recorded by ``verify_native.py --capture-dir`` in ``CI: jev-use``.
+mode, recorded by ``verify_native.py --capture-dir``.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from choose_action import validate_request
 from jev_adapter import choose_mock_for_task
 from native import NativeObservation, eligible_controls
+from native_roles import RAW_ROLES, role_class
 from native_tasks import (
     HARNESSES,
     NATIVE_TASK_IDS,
@@ -87,9 +88,9 @@ class HarnessRegistryTest(unittest.TestCase):
 
 
 class RecordedHarnessFixtureTest(unittest.TestCase):
-    """Role table and element rules against real WPF and GTK3 observations."""
+    """Role table and element rules against real WPF, WinUI3, and GTK3 observations."""
 
-    HARNESSES = ("wpf", "gtk3")
+    HARNESSES = ("wpf", "winui3", "gtk3")
 
     def test_task_controls_map_to_the_same_candidate_ids(self) -> None:
         for harness in self.HARNESSES:
@@ -159,18 +160,60 @@ class RecordedHarnessFixtureTest(unittest.TestCase):
                 self.assertNotIn("ax:text_input:note:set:note", ids)  # already holds the parameter
 
     def test_windows_title_bar_is_window_chrome(self) -> None:
-        payload = window_state("wpf", "initial")
+        for harness in ("wpf", "winui3"):
+            with self.subTest(harness=harness):
+                payload = window_state(harness, "initial")
+                observation = NativeObservation.from_window_state(
+                    payload, expected_pid=payload["pid"], expected_window_id=payload["window_id"]
+                )
+                native = eligible_controls(observation, "windows")
+                labels = [c.label for c in native.controls]
+                for chrome in ("System", "Minimize", "Maximize", "Close"):
+                    self.assertNotIn(chrome, labels)
+                self.assertEqual(native.excluded.get("window_chrome"), 4)
+                self.assertEqual(
+                    labels,
+                    ["Increment", "Reset", "I agree", "Small", "Medium", "Large", "Note", "Save note", "Exit"],
+                )
+
+    def test_winui3_roles_map_through_the_windows_table(self) -> None:
+        """WinUI3's automation peers report the same UIA control types as WPF.
+
+        No WinUI3-specific row is needed: every raw role in the recorded
+        WinUI3 trees is either a Windows role-table row or deliberately
+        excluded. WinUI3 exposes its TextBlock as static ``Text`` (WPF's task
+        window does not), which is an unknown role and never a candidate.
+        """
+        windows_rows = {raw for rows in RAW_ROLES["windows"].values() for raw in rows}
+        for name in ("initial", "after-save-note", "after-choose-size"):
+            with self.subTest(fixture=name):
+                roles = {e["role"] for e in window_state("winui3", name)["elements"]}
+                self.assertEqual(roles - windows_rows, {"Text", "TitleBar"})
+                self.assertIsNone(role_class("Text", "windows"))
+        payload = window_state("winui3", "initial")
         observation = NativeObservation.from_window_state(
             payload, expected_pid=payload["pid"], expected_window_id=payload["window_id"]
         )
         native = eligible_controls(observation, "windows")
-        labels = [c.label for c in native.controls]
-        for chrome in ("System", "Minimize", "Maximize", "Close"):
-            self.assertNotIn(chrome, labels)
-        self.assertEqual(native.excluded.get("window_chrome"), 4)
+        # The static counter label and the title bar container are unknown
+        # roles; the title bar's four buttons are window chrome.
+        self.assertEqual(native.excluded, {"unknown_role": 2, "window_chrome": 4})
         self.assertEqual(
-            labels,
-            ["Increment", "Reset", "I agree", "Small", "Medium", "Large", "Note", "Save note", "Exit"],
+            [(c.role_class, c.label) for c in native.controls],
+            [("button", "Increment"), ("button", "Reset"), ("checkbox", "I agree"),
+             ("radio", "Small"), ("radio", "Medium"), ("radio", "Large"),
+             ("text_input", "Note"), ("button", "Save note"), ("button", "Exit")],
+        )
+        self.assertEqual(
+            [c.id for c in native.controls],
+            [c.id for c in eligible_controls(
+                NativeObservation.from_window_state(
+                    window_state("wpf", "initial"),
+                    expected_pid=window_state("wpf", "initial")["pid"],
+                    expected_window_id=window_state("wpf", "initial")["window_id"],
+                ),
+                "windows",
+            ).controls],
         )
 
     def test_linux_roles_map_to_role_classes(self) -> None:

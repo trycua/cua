@@ -60,7 +60,7 @@ test('recorded canvas trees have no application elements', () => {
     assert.equal(hasApplicationElements(observed, platform), false, platform);
     assert.deepEqual(NativeAccessibilitySource.fromObservation(observed, platform).controls, [], platform);
   }
-  for (const harness of ['appkit', 'wpf', 'gtk3']) {
+  for (const harness of ['appkit', 'wpf', 'winui3', 'gtk3']) {
     assert.equal(hasApplicationElements(observe(windowState(harness)), HARNESSES[harness].platform), true, harness);
   }
   // Linux has no chrome rule, so the same title-bar buttons count as application elements.

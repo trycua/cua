@@ -849,18 +849,18 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_id_and_index_resolve_safely() {
+    fn snapshot_id_from_window_state_text_and_index_resolve_safely() {
         let cache = ElementCacheCore::new();
         let id = publish(&cache, 1, 888, 5);
+        // A text-only MCP client sees the header, not `structuredContent`.
+        let header = crate::element_token::window_state_header(888, 1, Some(id));
+        let handle = header
+            .split_whitespace()
+            .find_map(|field| field.strip_prefix("snapshot_id="))
+            .expect("window_state_header must carry snapshot_id");
+        assert_eq!(handle, crate::element_token::snapshot_handle(id));
         let result = cache
-            .resolve_element_args(
-                1,
-                Some(2),
-                None,
-                Some(&format!("s{id:08x}")),
-                Some(888),
-                "click",
-            )
+            .resolve_element_args(1, Some(2), None, Some(handle), Some(888), "click")
             .unwrap();
         assert!(matches!(
             result,

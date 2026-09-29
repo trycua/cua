@@ -749,6 +749,22 @@ fn scroll_oracle_rejects_missing_or_invalid_geometry() {
     }
 }
 
+/// AX rows address elements as a client that shows the model only text
+/// content must: the snapshot handle comes from the text header.
+fn text_snapshot_id(state: &ToolResponse) -> String {
+    let header = state.text().lines().next().unwrap_or_default();
+    let handle = header
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix("snapshot_id="))
+        .unwrap_or_else(|| panic!("get_window_state text header lacks snapshot_id: {header:?}"));
+    assert_eq!(
+        handle,
+        state.snapshot_id(),
+        "get_window_state text and structuredContent disagree on snapshot_id"
+    );
+    handle.to_owned()
+}
+
 fn action_target_args(
     fixture: &Fixture,
     state: &ToolResponse,
@@ -767,7 +783,7 @@ fn action_target_args(
         object.insert("element_index".to_owned(), serde_json::json!(index));
         object.insert(
             "snapshot_id".to_owned(),
-            serde_json::json!(state.snapshot_id()),
+            serde_json::json!(text_snapshot_id(state)),
         );
     } else {
         let origin = window_origin(fixture, state);

@@ -1407,29 +1407,6 @@ impl Tool for GetWindowStateTool {
                         .iter()
                         .filter(|n| n.element_index.is_some())
                         .count();
-                    let mut header = format!(
-                        "window_id={xid} pid={pid} elements={count} walk_ms={}\n",
-                        tr.elapsed_ms
-                    );
-                    if tr.truncated {
-                        header.push_str(&cua_driver_core::walk_budget::truncation_note(
-                            tr.truncation_reason.as_deref(),
-                            timeout_ms,
-                            tr.nodes_visited,
-                            tr.nodes_pending,
-                        ));
-                        header.push('\n');
-                    } else if !tr.bounds_complete {
-                        header.push_str(
-                            "⚠️ bounds phase ran out of time: some elements have no frame \
-                             (element_index clicks still work; pixel targeting may not). \
-                             Retry with a larger timeout_ms if you need frames.\n",
-                        );
-                    }
-                    header.push('\n');
-                    content.push(cua_driver_core::protocol::Content::text(
-                        header + &tr.tree_markdown,
-                    ));
                     structured["element_count"] = json!(count);
                     // `elements_complete` is a real claim now: a native walk that
                     // finished without hitting the deadline / node budget saw
@@ -1476,6 +1453,35 @@ impl Tool for GetWindowStateTool {
                             .zoom_registry
                             .retire_replaced(pid as i32, xid, snapshot_id);
                     }
+
+                    let mut header = format!(
+                        "{} elements={count} walk_ms={}\n",
+                        cua_driver_core::element_token::window_state_header(
+                            xid,
+                            i64::from(pid),
+                            snapshot_id,
+                        ),
+                        tr.elapsed_ms
+                    );
+                    if tr.truncated {
+                        header.push_str(&cua_driver_core::walk_budget::truncation_note(
+                            tr.truncation_reason.as_deref(),
+                            timeout_ms,
+                            tr.nodes_visited,
+                            tr.nodes_pending,
+                        ));
+                        header.push('\n');
+                    } else if !tr.bounds_complete {
+                        header.push_str(
+                            "⚠️ bounds phase ran out of time: some elements have no frame \
+                             (element_index clicks still work; pixel targeting may not). \
+                             Retry with a larger timeout_ms if you need frames.\n",
+                        );
+                    }
+                    header.push('\n');
+                    content.push(cua_driver_core::protocol::Content::text(
+                        header + &tr.tree_markdown,
+                    ));
 
                     // Structured `elements` array: one entry per actionable node.
                     // Shape: `{element_index, element_token, role, label,
@@ -1554,9 +1560,7 @@ impl Tool for GetWindowStateTool {
                     // Surface 6: snapshot id mirror for debug correlation.
                     if let Some(snapshot_id) = snapshot_id {
                         structured["snapshot_id"] =
-                            json!(cua_driver_core::element_token::token_for(snapshot_id, 0)
-                                .trim_end_matches(":0")
-                                .to_string());
+                            json!(cua_driver_core::element_token::snapshot_handle(snapshot_id));
                     }
                     structured["_note"] = json!(
                         "Prefer `elements` — `tree_markdown` will continue to work \

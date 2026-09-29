@@ -12,7 +12,24 @@ pub(crate) fn mint_snapshot_id() -> u32 {
 }
 
 pub fn token_for(snapshot_id: u32, element_index: usize) -> String {
-    format!("s{snapshot_id:08x}:{element_index}")
+    format!("{}:{element_index}", snapshot_handle(snapshot_id))
+}
+
+pub fn snapshot_handle(snapshot_id: u32) -> String {
+    format!("s{snapshot_id:08x}")
+}
+
+/// Leading fields of the `get_window_state` text content. The snapshot handle
+/// is repeated here from `structuredContent` so a client that shows the model
+/// only text can still pair it with an `element_index` from the tree.
+pub fn window_state_header(window_id: u64, pid: i64, snapshot_id: Option<u32>) -> String {
+    match snapshot_id {
+        Some(id) => format!(
+            "window_id={window_id} pid={pid} snapshot_id={}",
+            snapshot_handle(id)
+        ),
+        None => format!("window_id={window_id} pid={pid}"),
+    }
 }
 
 pub fn parse_token(token: &str) -> Option<(u32, usize)> {

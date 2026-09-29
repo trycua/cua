@@ -185,7 +185,8 @@ We welcome contributions! See our [Contributing Guidelines](CONTRIBUTING.md) for
 
 ## License
 
-MIT License — see [LICENSE](LICENSE.md) for details.
+MIT License — see [LICENSE](LICENSE.md) for details. Some subdirectories carry
+their own licence; [LICENSING.md](LICENSING.md) lists each one.
 
 Third-party components have their own licenses:
 

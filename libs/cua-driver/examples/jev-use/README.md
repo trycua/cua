@@ -91,7 +91,11 @@ or closing are excluded unless the task allows that risk. Text comes only from
 task parameters. Actions are element-bound `click`, `set_value`, or
 `type_text` with background delivery first; a stale token leads to a fresh
 observation. Native steps send `cua.jev_choice_request_v2`, which adds a
-per-candidate `source` and compact value-free `elements`.
+per-candidate `source` and compact value-free `elements`. A task that declares
+its required steps also sends `progress`: each step with how often this run has
+performed it, counted only from the runner's own successful actions and never
+read from the app. A step's candidate also says which earlier step must be done
+first, for example Save waits for the note to be entered.
 
 Visual regions from OmniParser are parsed, from the same `capture_id`, only
 when the tree offers nothing to act through: Driver reports `ax_tree_empty`, a
@@ -170,7 +174,9 @@ The service is not part of this example. Any server that loads the pinned
 checkpoint from [`libs/cua-s1`](../../../cua-s1/README.md), validates the
 request with `python/choose_action.py`, and answers with
 `decision_models.choose(S1DecisionModel(...), request).to_wire()` fits the
-contract. For example, to verify the native tasks with it:
+contract. Run the service from the same revision as the runners: an older
+validator rejects a newer optional field such as `progress`, and the runner
+then stops with a logged `S1ServiceError` outcome. For example, to verify the native tasks with it:
 
 ```bash
 export CUA_S1_DECISION_URL=http://127.0.0.1:8791/decide

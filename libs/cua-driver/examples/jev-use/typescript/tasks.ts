@@ -76,7 +76,11 @@ export function requirePage(sources: TaskSources): BrowserSemanticSource {
   return sources.page;
 }
 
-export type HistoryEntry = Readonly<{ step: number; selected_id: string; outcome: string }>;
+/**
+ * One runner history item. `performed` marks a dispatched, successful native
+ * action; it stays in the runner and is never sent to a provider.
+ */
+export type HistoryEntry = Readonly<{ step: number; selected_id: string; outcome: string; performed?: true }>;
 
 /** The interface the runner uses for every task. */
 export interface Task {

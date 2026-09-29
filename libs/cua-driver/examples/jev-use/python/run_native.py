@@ -43,7 +43,7 @@ from native_tasks import (
     native_choice_request,
     visual_fallback_reason,
 )
-from s1_service import choose_s1_service, s1_service_url
+from s1_service import S1ServiceError, choose_s1_service, s1_service_url
 from run import Driver, DriverToolError, background_refusal_code, supports_capture_bound_click
 from sources import NativeAccessibilitySource, VisualRegionSource
 from tasks import TaskSources
@@ -284,7 +284,17 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                         task, sources, plan.candidates, history
                     )
                 elif args.provider == "s1":
-                    choice, confidence, probabilities = await asyncio.to_thread(choose_s1_service, request)
+                    try:
+                        choice, confidence, probabilities = await asyncio.to_thread(
+                            choose_s1_service, request
+                        )
+                    except S1ServiceError as error:
+                        # A tied or malformed score is not an action; fail closed
+                        # with a logged outcome instead of a traceback.
+                        write_event(log_path, {"event": "outcome", "outcome": "unknown",
+                                               "phase": "decide", "step": step,
+                                               "error": "S1ServiceError", "reason": str(error)[:128]})
+                        return "unknown"
                 else:
                     choice, confidence, probabilities = await asyncio.to_thread(choose_live, request)
                 decide_ms = round((time.perf_counter() - decide_started) * 1000, 2)

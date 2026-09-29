@@ -28,7 +28,7 @@ import {
   windowStateArguments,
   type NativeTask,
 } from './native_tasks.js';
-import { chooseS1Service, s1ServiceUrl } from './s1_service.js';
+import { chooseS1Service, S1ServiceError, s1ServiceUrl } from './s1_service.js';
 import { backgroundRefusalCode, Driver, DriverToolError, supportsCaptureBoundClick } from './run.js';
 import { NativeAccessibilitySource, VisualRegionSource } from './sources.js';
 import type { HistoryEntry, Outcome, TaskSources } from './tasks.js';
@@ -274,12 +274,24 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
       validateRequest(request);
 
       const decideStarted = performance.now();
-      const decision =
-        args.provider === 'mock'
-          ? chooseMockForTask(task, sources, plan.candidates, history)
-          : args.provider === 's1'
-            ? await chooseS1Service(request)
-            : await chooseLive(request);
+      let decision: { choice: string | null; confidence: number; probabilities: Readonly<Record<string, number>> };
+      try {
+        decision =
+          args.provider === 'mock'
+            ? chooseMockForTask(task, sources, plan.candidates, history)
+            : args.provider === 's1'
+              ? await chooseS1Service(request)
+              : await chooseLive(request);
+      } catch (error) {
+        if (!(error instanceof S1ServiceError)) throw error;
+        // A tied or malformed score is not an action; fail closed with a
+        // logged outcome instead of a stack trace.
+        await writeEvent(args.log, {
+          event: 'outcome', outcome: 'unknown', phase: 'decide', step,
+          error: 'S1ServiceError', reason: error.message.slice(0, 128),
+        });
+        return 'unknown';
+      }
       const baseEvent: Record<string, unknown> = {
         event: 'step',
         step,

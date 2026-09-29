@@ -29,7 +29,13 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping
 
-from choose_action import MAX_ELEMENTS, MAX_HISTORY, REQUEST_SCHEMA_V2
+from choose_action import (
+    MAX_ELEMENTS,
+    MAX_HISTORY,
+    MAX_PROGRESS,
+    MAX_PROGRESS_COUNT,
+    REQUEST_SCHEMA_V2,
+)
 from native import (
     PARAMETER_NAME_PATTERN,
     NativeControl,
@@ -181,6 +187,36 @@ def compose(
 
 
 @dataclass(frozen=True)
+class TaskStep:
+    """One step a task requires, counted from the runner's own performed actions.
+
+    ``candidate_id`` names the candidate that performs the step; its
+    ``:foreground`` variant counts too. The description is task-authored and
+    value-free: it may name a parameter, never its value. A step with
+    ``after_previous`` must wait for every earlier step to be done.
+    """
+
+    description: str
+    candidate_id: str
+    times: int = 1
+    after_previous: bool = True
+
+
+def performed_counts(history: list[Mapping[str, Any]]) -> dict[str, int]:
+    """Count the actions this run dispatched successfully, by candidate ID.
+
+    Only history entries marked ``performed`` count: a refused, stale, or
+    reobserve step did nothing. Nothing here is read from the application.
+    """
+    counts: dict[str, int] = {}
+    for item in history:
+        if item.get("performed") is True:
+            base = str(item["selected_id"]).removesuffix(":foreground")
+            counts[base] = counts.get(base, 0) + 1
+    return counts
+
+
+@dataclass(frozen=True)
 class NativeStep:
     """One step's closed candidate set and its model-safe context."""
 
@@ -214,6 +250,11 @@ class NativeTask:
     # browser path. Exact-text uniqueness still applies at any bar.
     visual_min_confidence: float = 0.8
     mock_preferences: tuple[str, ...] = ()
+    # Ordered steps the task requires (#4313). The request reports how often
+    # this run has performed each, and a step's candidate names any earlier
+    # step that is not done yet, so a model need not infer order or count
+    # from history. Empty means the request carries no progress.
+    steps: tuple[TaskStep, ...] = ()
     # The oracle is polled after every action, so no candidate is special.
     completion_candidate_ids: frozenset[str] = field(default=frozenset(), init=False)
 
@@ -226,6 +267,11 @@ class NativeTask:
                 raise ValueError("parameter names must match [a-z][a-z0-9_]{0,7}")
         if self.max_steps < 1:
             raise ValueError("max_steps must be positive")
+        if len(self.steps) > MAX_PROGRESS:
+            raise ValueError(f"a task declares at most {MAX_PROGRESS} steps")
+        for task_step in self.steps:
+            if not 1 <= task_step.times <= MAX_PROGRESS_COUNT:
+                raise ValueError(f"step times must be from 1 to {MAX_PROGRESS_COUNT}")
 
     @property
     def allowed_action_kinds(self) -> frozenset[str]:
@@ -403,7 +449,59 @@ class NativeTask:
             text = "took no action and requested a fresh observation"
         else:
             text = outcome or "completed"
-        return {"step": step, "selected_id": candidate_id, "outcome": self.redact(text)[:128]}
+        entry: dict[str, Any] = {
+            "step": step,
+            "selected_id": candidate_id,
+            "outcome": self.redact(text)[:128],
+        }
+        if not stale and refusal is None and candidate_id not in {"reobserve", "abstain"}:
+            entry["performed"] = True  # runner-side only; never sent to a provider
+        return entry
+
+    # -- progress ---------------------------------------------------------
+
+    def progress(self, history: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        """Each declared step and how often this run has performed it."""
+        counts = performed_counts(history)
+        return [
+            {
+                "step": self.redact(task_step.description),
+                "done": min(counts.get(task_step.candidate_id, 0), MAX_PROGRESS_COUNT),
+                "required": task_step.times,
+            }
+            for task_step in self.steps
+        ]
+
+    def step_note(self, candidate_id: str, history: list[Mapping[str, Any]]) -> str:
+        """A sentence stating a candidate's place in the task's declared steps.
+
+        A step that is already done says so; a step with an earlier step not yet
+        done names that step as its precondition; a step that is due says how
+        many more times the task requires it. Other candidates get nothing.
+        """
+        base = candidate_id.removesuffix(":foreground")
+        counts = performed_counts(history)
+        for index, task_step in enumerate(self.steps):
+            if task_step.candidate_id != base:
+                continue
+            if counts.get(base, 0) >= task_step.times:
+                return (
+                    f" This run already did this the {task_step.times} time(s) the task requires."
+                )
+            pending = [
+                earlier.description
+                for earlier in (self.steps[:index] if task_step.after_previous else ())
+                if counts.get(earlier.candidate_id, 0) < earlier.times
+            ]
+            if pending:
+                return (
+                    " The task requires this only after: "
+                    + "; ".join(pending)
+                    + " (not done yet)."
+                )
+            remaining = task_step.times - counts.get(base, 0)
+            return f" The task still requires this {remaining} more time(s)."
+        return ""
 
     def reset(self) -> None:
         """The harness starts fresh for every run; there is nothing to reset."""
@@ -488,19 +586,21 @@ def native_choice_request(
     """Build the ``cua.jev_choice_request_v2`` the provider receives.
 
     It carries candidate IDs, descriptions and sources, compact value-free
-    elements, and compact history. Element tokens, values, and pixels stay in
-    the runner.
+    elements, compact history, and, for a task that declares steps, the
+    progress counted from this run's performed actions. Element tokens,
+    values, and pixels stay in the runner.
     """
     if sources.ax is None or sources.ax.observation.capture_id is None:
         raise ValueError("a native request needs an observation with a capture_id")
     observation = sources.ax.observation
     candidates = []
     for candidate in step.candidates:
-        item: dict[str, Any] = {"id": candidate.id, "description": task.redact(candidate.description)}
+        description = candidate.description + task.step_note(candidate.id, history)
+        item: dict[str, Any] = {"id": candidate.id, "description": task.redact(description)}
         if candidate.source is not None:
             item["source"] = candidate.source
         candidates.append(item)
-    return {
+    request: dict[str, Any] = {
         "schema": REQUEST_SCHEMA_V2,
         "goal": task.redact(task.goal),
         "capture_id": observation.capture_id,
@@ -513,6 +613,9 @@ def native_choice_request(
         ],
         "candidates": candidates,
     }
+    if task.steps:
+        request["progress"] = task.progress(history)
+    return request
 
 
 # -- Harness tasks ------------------------------------------------------------
@@ -686,6 +789,9 @@ def native_task(
             allow_foreground=allow_foreground,
             max_steps=COUNTER_TARGET + 3,
             mock_preferences=("ax:button:increment",),
+            steps=(
+                TaskStep('Press the button labeled "Increment"', "ax:button:increment", COUNTER_TARGET),
+            ),
         )
     if kind == "save-note":
         return NativeTask(
@@ -699,6 +805,13 @@ def native_task(
             allow_foreground=allow_foreground,
             max_steps=5,
             mock_preferences=("ax:text_input:note:set:note", "ax:button:save-note"),
+            steps=(
+                TaskStep(
+                    'Set the text field "Note" to the task parameter "note"',
+                    "ax:text_input:note:set:note",
+                ),
+                TaskStep('Press the button labeled "Save note"', "ax:button:save-note"),
+            ),
         )
     return NativeTask(
         id=task_id,
@@ -710,6 +823,11 @@ def native_task(
         allow_foreground=allow_foreground,
         max_steps=5,
         mock_preferences=("ax:radio:large", "ax:checkbox:i-agree"),
+        steps=(
+            TaskStep('Select the radio option "Large"', "ax:radio:large"),
+            # The oracle accepts either order, so neither step waits for the other.
+            TaskStep('Toggle the checkbox "I agree"', "ax:checkbox:i-agree", after_previous=False),
+        ),
     )
 
 

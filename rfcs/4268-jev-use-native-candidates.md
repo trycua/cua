@@ -3,7 +3,7 @@ title: Native accessibility candidates for jev-use decision loops
 authors:
   - f-trycua
 created: 2026-09-27
-last_updated: 2026-09-28
+last_updated: 2026-09-29
 status: accepted
 discussion: https://github.com/trycua/cua/issues/4268
 rfc_pr: https://github.com/trycua/cua/pull/4269
@@ -16,6 +16,7 @@ implementation:
   - https://github.com/trycua/cua/pull/4298
   - https://github.com/trycua/cua/pull/4301
   - https://github.com/trycua/cua/pull/4299
+  - https://github.com/trycua/cua/pull/4324
 supersedes:
 superseded_by:
 ---
@@ -562,7 +563,13 @@ to v1:
 - the root may include `snapshot_id` alongside the required `capture_id`; and
 - the root may include `elements`, a compact, redacted list of at most 64
   native elements (`role_class`, `label`, `state`). S1's text adapter renders
-  it as a genuine accessibility tree.
+  it as a genuine accessibility tree; and
+- the root may include `progress`, at most 16 task steps
+  (`step`, `done`, `required`), added by
+  [#4324](https://github.com/trycua/cua/pull/4324). `done` counts only the
+  runner's own successful actions and is never read from the application, so
+  it carries no field values. `provider_observation` adds it only when it is
+  present.
 
 The v1 schema, validators, and fixtures remain supported unchanged. A v2
 request that has no `source`, `snapshot_id`, or `elements` is semantically
@@ -846,6 +853,14 @@ Implementation:
   to Cancel.
 - Phase 4, [#4299](https://github.com/trycua/cua/pull/4299): the native
   apps guide and the `skills/jev-use` update.
+- S1 reliability, [#4324](https://github.com/trycua/cua/pull/4324) for
+  [#4313](https://github.com/trycua/cua/issues/4313): each built-in task
+  declares its ordered steps. The request's `progress` reports how often this
+  run has performed each step, and each step's candidate description names an
+  unfinished earlier step (Save waits for the note), says the step is done, or
+  says how many more times it is due. Choose-size's two steps are unordered,
+  as its oracle is. The runners log an S1 service failure as an outcome, not
+  a stack trace.
 
 Phase 3 live evidence (released Driver 0.30.2, cua-perception 0.2.1,
 `cua-s1-4b-0.2@16818868`; each run verified by the harness's own state file):
@@ -866,7 +881,26 @@ Phase 3 live evidence (released Driver 0.30.2, cua-perception 0.2.1,
   Windows.
 - The tasks produce 3–7 candidates. Jev chose correctly in 220/220 decisions
   and S1 in 211/216.
+- Cause of the S1 misses, reproduced by replaying the recorded AppKit states
+  with the failing runs' capture IDs: after two increments S1 split 0.45/0.44
+  between abstain and Increment; at the first save-note step it split
+  0.39/0.38 between setting the note and Save; and the service error was that
+  same split landing on an exact fp16 logit tie, which `choose()` refuses.
 
-Acceptance criteria not yet met, which keep this RFC `accepted`: S1 5/5 in
-every native row, WinUI3 coverage, and accuracy at about 12 and 24
-candidates.
+S1 reliability evidence for #4324 (released Driver 0.30.4, same checkpoint):
+
+- Offline replay of the AppKit, WPF, and GTK3 fixtures at eight mid-task
+  states, eight capture IDs each, plus the three recorded failing captures:
+  S1 was correct in 191/195 decisions on `main` (two abstains, one Save
+  before the note, and one tie error) and 195/195 with progress. Its lowest confidence after two increments rose
+  from 0.45 to 0.81, and at the first save-note step from 0.38 to 0.79. Jev
+  was correct in 195/195 either way.
+- Live on macOS in a Lume worker, recorded: AppKit counter, save-note, and
+  choose-size passed 5/5 for S1 and 5/5 for Jev in both Python and TypeScript
+  (60/60 runs, 140 decisions, all correct). S1's lowest confidence per task
+  was 0.83, 0.79, and 0.65. The Windows and Linux rows were verified by the
+  offline replay only in this round.
+
+Acceptance criteria not yet met, which keep this RFC `accepted`: a live
+rerun of the WPF and GTK3 rows with `progress` to confirm S1 5/5 there,
+WinUI3 coverage, and accuracy at about 12 and 24 candidates.

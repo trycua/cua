@@ -56,8 +56,10 @@ try background delivery first. If Driver refuses that, the next step offers a
 separate foreground click when the task allows it.
 
 Native requests use the `cua.jev_choice_request_v2` contract, which adds a
-`source` to each candidate (`page`, `ax`, or `visual`). Browser tasks keep
-sending `cua.jev_choice_request_v1`.
+`source` to each candidate (`page`, `ax`, or `visual`). The built-in tasks
+also send `progress`: each required step and how many times this run has
+performed it. The runner counts its own successful actions and never reads the
+count from the app. Browser tasks keep sending `cua.jev_choice_request_v1`.
 
 ## Before you start
 

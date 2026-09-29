@@ -11,7 +11,9 @@ from native_roles import ROLE_CLASSES
 
 REQUEST_SCHEMA = "cua.jev_choice_request_v1"
 # Additive over v1 (RFC #4268): per-candidate ``source``, an optional root
-# ``snapshot_id``, and an optional compact ``elements`` list of native controls.
+# ``snapshot_id``, an optional compact ``elements`` list of native controls, and
+# an optional ``progress`` list of task steps counted from the runner's own
+# performed actions (#4313).
 REQUEST_SCHEMA_V2 = "cua.jev_choice_request_v2"
 REQUEST_SCHEMAS = (REQUEST_SCHEMA, REQUEST_SCHEMA_V2)
 RESPONSE_SCHEMA = "cua.jev_choice_v1"
@@ -20,6 +22,8 @@ MAX_CANDIDATES = 32
 MAX_REGIONS = 100
 MAX_HISTORY = 16
 MAX_ELEMENTS = 64
+MAX_PROGRESS = 16
+MAX_PROGRESS_COUNT = 64
 ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}\Z")
 RESERVED_IDS = frozenset({"reobserve", "abstain"})
 CANDIDATE_SOURCES = frozenset({"page", "ax", "visual"})
@@ -27,7 +31,7 @@ ELEMENT_STATES = frozenset(
     {"enabled", "checked", "unchecked", "selected", "not_selected", "empty", "has_text"}
 )
 V1_ROOT_KEYS = frozenset({"schema", "goal", "capture_id", "regions", "history", "candidates"})
-V2_OPTIONAL_ROOT_KEYS = frozenset({"snapshot_id", "elements"})
+V2_OPTIONAL_ROOT_KEYS = frozenset({"snapshot_id", "elements", "progress"})
 
 
 def _record(value: Any, message: str) -> dict[str, Any]:
@@ -71,13 +75,46 @@ def _validate_elements(value: Any) -> list[dict[str, str]]:
     return elements
 
 
+def _count(value: Any, name: str, minimum: int) -> int:
+    if (
+        not isinstance(value, int)
+        or isinstance(value, bool)
+        or not minimum <= value <= MAX_PROGRESS_COUNT
+    ):
+        raise ValueError(f"{name} must be an integer from {minimum} to {MAX_PROGRESS_COUNT}")
+    return value
+
+
+def _validate_progress(value: Any) -> list[dict[str, Any]]:
+    """Validate task steps and how often this run has performed each one.
+
+    ``done`` is counted from the runner's own performed actions, never read
+    from the application, so ``progress`` carries no application values.
+    """
+    if not isinstance(value, list) or len(value) > MAX_PROGRESS:
+        raise ValueError(f"progress must be an array of at most {MAX_PROGRESS} items")
+    progress: list[dict[str, Any]] = []
+    for raw_value in value:
+        raw = _record(raw_value, "progress item must be an object")
+        if set(raw) != {"step", "done", "required"}:
+            raise ValueError("progress item may contain only step, done, and required")
+        progress.append(
+            {
+                "step": _bounded_string(raw["step"], "progress step", 200),
+                "done": _count(raw["done"], "progress done", 0),
+                "required": _count(raw["required"], "progress required", 1),
+            }
+        )
+    return progress
+
+
 def validate_request(value: Any) -> dict[str, Any]:
     """Validate a ``cua.jev_choice_request_v1`` or ``_v2`` request strictly.
 
     v1 is unchanged: exactly its six root keys and ``id``/``description``
     candidates, so any v2 field in a v1 request is rejected. v2 may add a root
-    ``snapshot_id`` and ``elements`` and a per-candidate ``source``; reserved
-    candidates never carry a source.
+    ``snapshot_id``, ``elements``, and ``progress`` and a per-candidate
+    ``source``; reserved candidates never carry a source.
     """
     root = _record(value, "request must be a JSON object")
     schema = root.get("schema")
@@ -217,6 +254,7 @@ def validate_request(value: Any) -> dict[str, Any]:
             None if snapshot_id is None else _bounded_string(snapshot_id, "snapshot_id", 64)
         )
         validated["elements"] = _validate_elements(root.get("elements", []))
+        validated["progress"] = _validate_progress(root.get("progress", []))
     return validated
 
 
@@ -224,8 +262,9 @@ def provider_observation(validated: Mapping[str, Any]) -> dict[str, Any]:
     """Build the observation a provider sees for a validated request.
 
     A v1 request keeps its exact v1 observation. A v2 request adds the native
-    ``snapshot_id``, the compact ``elements``, and each candidate's ``source``;
-    none of these contain element tokens, values, or pixels.
+    ``snapshot_id``, the compact ``elements``, and each candidate's ``source``,
+    plus ``progress`` when the request carries any; none of these contain
+    element tokens, values, or pixels.
     """
     observation: dict[str, Any] = {
         "capture_id": validated["capture_id"],
@@ -238,6 +277,8 @@ def provider_observation(validated: Mapping[str, Any]) -> dict[str, Any]:
         observation["candidate_sources"] = {
             item["id"]: item["source"] for item in validated["candidates"] if "source" in item
         }
+        if validated.get("progress"):
+            observation["progress"] = validated["progress"]
     return observation
 
 

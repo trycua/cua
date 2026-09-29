@@ -9,7 +9,13 @@
  */
 import { readFile } from 'node:fs/promises';
 
-import { MAX_ELEMENTS, REQUEST_SCHEMA_V2 } from './choose_action.js';
+import {
+  MAX_ELEMENTS,
+  MAX_PROGRESS,
+  MAX_PROGRESS_COUNT,
+  REQUEST_SCHEMA_V2,
+  type ProgressItem,
+} from './choose_action.js';
 import {
   PARAMETER_NAME_PATTERN,
   elementState,
@@ -159,6 +165,33 @@ export function compose(
 
 export type CompactElement = { role_class: string; label: string; state: string };
 
+/**
+ * One step a task requires, counted from the runner's own performed actions.
+ * `candidateId` names the candidate that performs the step; its `:foreground`
+ * variant counts too. The description is task-authored and value-free. A step
+ * with `afterPrevious` (the default) waits for every earlier step to be done.
+ */
+export type TaskStep = Readonly<{
+  description: string;
+  candidateId: string;
+  times?: number;
+  afterPrevious?: boolean;
+}>;
+
+/**
+ * Count the actions this run dispatched successfully, by candidate ID. Only
+ * entries marked `performed` count; nothing is read from the application.
+ */
+export function performedCounts(history: readonly HistoryEntry[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const item of history) {
+    if (item.performed !== true) continue;
+    const base = item.selected_id.replace(/:foreground$/, '');
+    counts[base] = (counts[base] ?? 0) + 1;
+  }
+  return counts;
+}
+
 export type NativeStep = Readonly<{
   candidates: Candidate[];
   stats: ComposeStats;
@@ -185,6 +218,7 @@ export type NativeTaskSpec = Readonly<{
   visualTargets?: readonly string[];
   visualMinConfidence?: number;
   mockPreferences?: readonly string[];
+  steps?: readonly TaskStep[];
 }>;
 
 export class NativeTask implements Task {
@@ -203,6 +237,12 @@ export class NativeTask implements Task {
   /** OCR confidence a visual target must reach; exact-text uniqueness still applies. */
   readonly visualMinConfidence: number;
   readonly mockPreferences: readonly string[];
+  /**
+   * Ordered steps the task requires (#4313). The request reports how often
+   * this run has performed each, and a step's candidate names any earlier
+   * step that is not done yet. Empty means the request carries no progress.
+   */
+  readonly steps: readonly TaskStep[];
   /** The oracle is polled after every action, so no candidate is special. */
   readonly completionCandidateIds: ReadonlySet<string> = new Set();
 
@@ -221,6 +261,7 @@ export class NativeTask implements Task {
     this.visualTargets = spec.visualTargets ?? [];
     this.visualMinConfidence = spec.visualMinConfidence ?? 0.8;
     this.mockPreferences = spec.mockPreferences ?? [];
+    this.steps = spec.steps ?? [];
     const unknown = [...this.allowedActions].filter((action) => !ACTION_KINDS.has(action));
     if (unknown.length) throw new Error(`unknown action kinds: ${unknown.sort().join(', ')}`);
     for (const parameter of this.parameters) {
@@ -229,6 +270,13 @@ export class NativeTask implements Task {
       }
     }
     if (!Number.isInteger(this.maxSteps) || this.maxSteps < 1) throw new Error('maxSteps must be positive');
+    if (this.steps.length > MAX_PROGRESS) throw new Error(`a task declares at most ${MAX_PROGRESS} steps`);
+    for (const taskStep of this.steps) {
+      const times = taskStep.times ?? 1;
+      if (!Number.isInteger(times) || times < 1 || times > MAX_PROGRESS_COUNT) {
+        throw new Error(`step times must be from 1 to ${MAX_PROGRESS_COUNT}`);
+      }
+    }
   }
 
   get allowedActionKinds(): ReadonlySet<string> {
@@ -378,7 +426,46 @@ export class NativeTask implements Task {
         : candidateId === 'reobserve'
           ? 'took no action and requested a fresh observation'
           : (options.outcome ?? 'completed');
-    return { step, selected_id: candidateId, outcome: (this.redact(text) as string).slice(0, 128) };
+    const performed =
+      !options.stale && refusal === undefined && candidateId !== 'reobserve' && candidateId !== 'abstain';
+    return {
+      step,
+      selected_id: candidateId,
+      outcome: (this.redact(text) as string).slice(0, 128),
+      ...(performed ? { performed: true as const } : {}),
+    };
+  }
+
+  /** Each declared step and how often this run has performed it. */
+  progress(history: readonly HistoryEntry[]): ProgressItem[] {
+    const counts = performedCounts(history);
+    return this.steps.map((taskStep) => ({
+      step: this.redact(taskStep.description) as string,
+      done: Math.min(counts[taskStep.candidateId] ?? 0, MAX_PROGRESS_COUNT),
+      required: taskStep.times ?? 1,
+    }));
+  }
+
+  /**
+   * A sentence stating a candidate's place in the task's declared steps: a
+   * done step says so; a step with an earlier step not yet done names it; a
+   * due step says how many more times the task requires it.
+   */
+  stepNote(candidateId: string, history: readonly HistoryEntry[]): string {
+    const base = candidateId.replace(/:foreground$/, '');
+    const counts = performedCounts(history);
+    const index = this.steps.findIndex((taskStep) => taskStep.candidateId === base);
+    if (index < 0) return '';
+    const taskStep = this.steps[index];
+    const times = taskStep.times ?? 1;
+    if ((counts[base] ?? 0) >= times) {
+      return ` This run already did this the ${times} time(s) the task requires.`;
+    }
+    const pending = (taskStep.afterPrevious === false ? [] : this.steps.slice(0, index))
+      .filter((earlier) => (counts[earlier.candidateId] ?? 0) < (earlier.times ?? 1))
+      .map((earlier) => earlier.description);
+    if (pending.length) return ` The task requires this only after: ${pending.join('; ')} (not done yet).`;
+    return ` The task still requires this ${times - (counts[base] ?? 0)} more time(s).`;
   }
 
   async reset(): Promise<void> {
@@ -419,7 +506,11 @@ export function visualFallbackReason(
   return undefined;
 }
 
-/** Build the cua.jev_choice_request_v2 the provider receives; no tokens, values, or pixels. */
+/**
+ * Build the cua.jev_choice_request_v2 the provider receives; no tokens,
+ * values, or pixels. A task that declares steps adds the progress counted
+ * from this run's performed actions.
+ */
 export function nativeChoiceRequest(
   task: NativeTask,
   sources: TaskSources,
@@ -449,9 +540,10 @@ export function nativeChoiceRequest(
     history: history.slice(-MAX_HISTORY).map((item) => ({ selected_id: item.selected_id, outcome: item.outcome })),
     candidates: step.candidates.map((candidate) => ({
       id: candidate.id,
-      description: task.redact(candidate.description),
+      description: task.redact(candidate.description + task.stepNote(candidate.id, history)),
       ...(candidate.source ? { source: candidate.source } : {}),
     })),
+    ...(task.steps.length ? { progress: task.progress(history) } : {}),
   };
 }
 
@@ -588,6 +680,9 @@ export function nativeTask(taskId: string, statePath: string, options: HarnessTa
       allowForeground,
       maxSteps: COUNTER_TARGET + 3,
       mockPreferences: ['ax:button:increment'],
+      steps: [
+        { description: 'Press the button labeled "Increment"', candidateId: 'ax:button:increment', times: COUNTER_TARGET },
+      ],
     });
   }
   if (kind === 'save-note') {
@@ -604,6 +699,13 @@ export function nativeTask(taskId: string, statePath: string, options: HarnessTa
       allowForeground,
       maxSteps: 5,
       mockPreferences: ['ax:text_input:note:set:note', 'ax:button:save-note'],
+      steps: [
+        {
+          description: 'Set the text field "Note" to the task parameter "note"',
+          candidateId: 'ax:text_input:note:set:note',
+        },
+        { description: 'Press the button labeled "Save note"', candidateId: 'ax:button:save-note' },
+      ],
     });
   }
   return new NativeTask({
@@ -616,6 +718,11 @@ export function nativeTask(taskId: string, statePath: string, options: HarnessTa
     allowForeground,
     maxSteps: 5,
     mockPreferences: ['ax:radio:large', 'ax:checkbox:i-agree'],
+    steps: [
+      { description: 'Select the radio option "Large"', candidateId: 'ax:radio:large' },
+      // The oracle accepts either order, so neither step waits for the other.
+      { description: 'Toggle the checkbox "I agree"', candidateId: 'ax:checkbox:i-agree', afterPrevious: false },
+    ],
   });
 }
 

@@ -156,7 +156,7 @@ fn click_at_xy_desktop_inner(
             .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(move) failed"))?;
             moved.set_flags(flags);
             moved.post(CGEventTapLocation::HID);
-            std::thread::sleep(std::time::Duration::from_millis(12));
+            std::thread::sleep(super::pacing::mouse_primer_settle());
         }
 
         for pair_index in 0..count.max(1) {
@@ -795,7 +795,7 @@ where
         click_group_id,
         MousePostMode::Both,
     );
-    std::thread::sleep(std::time::Duration::from_millis(12));
+    std::thread::sleep(super::pacing::mouse_primer_settle());
 
     // MouseDown at start.
     let down = CGEvent::new_mouse_event(source.clone(), down_type, from_pt, cg_button)

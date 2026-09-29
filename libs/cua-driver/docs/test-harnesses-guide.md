@@ -646,7 +646,7 @@ Perception tests have four owners, and each tests different code:
 | `libs/cua-driver/rust/crates/cua-perception/scripts/tests/` | Model artifact tooling and quality measurement scripts | `ci-cua-perception-release.yml` |
 | `libs/cua-driver/tests/perception-demo/` | Visual demo evidence sanitizing, caching, and envelopes | `ci-test-scripts.yml` |
 | `.github/scripts/tests/test_cua_perception_*.py`, `test_perception_release.py` | Perception release, review-trigger, and review-pipeline workflows and `.github/scripts` helpers | `ci-test-scripts.yml`, `ci-cua-perception-release.yml` |
-| `libs/cua-driver/rust/crates/cua-driver-e2e/tests/perception_capture_loop_test.rs` | Driver's desktop capture, parse, capture-bound click, and reobserve loop with a deterministic developer-only worker | Capture lane of the canonical macOS, Windows, and Linux X11 desktop E2E |
+| `libs/cua-driver/rust/crates/cua-driver-e2e/tests/perception_capture_loop_test.rs` | Driver's desktop capture, parse, capture-bound click, and reobserve loop, with a deterministic developer-only worker and with the published extension installed from its signed release catalog | Capture lane of the canonical macOS, Windows, and Linux X11 desktop E2E |
 | `libs/cua-driver/rust/crates/cua-driver-e2e/tests/perception_s1_decision_loop_test.rs` | The same loop with the published extension (OmniParser) and a resident Cua-S1-4B choosing the region, plus consumed and expired capture refusals | `s1-perception` lane of the Linux X11 runner, selected only by `ci-cua-s1-weights.yml` |
 
 Add a perception test to the directory that owns the code it exercises.

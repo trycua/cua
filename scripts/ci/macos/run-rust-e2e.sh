@@ -420,7 +420,9 @@ if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
   run_test desktop-scope cargo test -p cua-driver-e2e --test desktop_scope_macos_test -- \
     --ignored --nocapture --test-threads=1
   # Runs a dedicated instance of the installed app with an isolated extension
-  # home, so the shared daemon never gains the developer-only E2E extension.
+  # home, so the shared daemon never gains the developer-only E2E extension or
+  # the published cua-perception release. The published-catalog row downloads
+  # the pinned release assets and needs python3 with tkinter.
   run_test perception-capture-loop cargo test -p cua-driver-e2e \
     --test perception_capture_loop_test -- \
     --ignored --nocapture --test-threads=1

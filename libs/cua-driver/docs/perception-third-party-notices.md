@@ -1,10 +1,10 @@
 # Cua perception third-party notices
 
-This document describes the reviewed candidate inputs. It is not a substitute
-for the `NOTICE`, model ledger, source ledger, SBOM, and license texts shipped
-with an exact `cua-perception` artifact. If those authenticated records are
-missing or disagree with this summary, do not publish or redistribute the
-artifact.
+This document summarizes the inputs of the published `cua-perception`
+releases. It is not a substitute for the `NOTICE`, model ledger, source ledger,
+SBOM, and license texts shipped with an exact `cua-perception` artifact. If
+those authenticated records are missing or disagree with this summary, do not
+publish or redistribute the artifact.
 
 The default Cua Driver remains a separate MIT-licensed component and does not
 include the extension, model weights, or ONNX Runtime library.
@@ -92,12 +92,12 @@ Preserve the Apache-2.0 license and any notices in the assembled artifact.
 The worker loads a CPU-only ONNX Runtime dynamic library from the extension
 package. Its upstream is Microsoft's
 [`microsoft/onnxruntime`](https://github.com/microsoft/onnxruntime) project,
-which publishes ONNX Runtime under the MIT license. The reviewed candidate lock
-pins official CPU-only ONNX Runtime 1.26.0 archives for each supported target.
-Assembly must verify the selected archive and library hashes and record the
+which publishes ONNX Runtime under the MIT license. The artifact lock pins
+official CPU-only ONNX Runtime 1.26.0 archives for each supported target.
+Assembly verifies the selected archive and library hashes and records the
 exact version, target, SHA-256, license, notices, and source location in the
-artifact manifest and SBOM. These candidate records are not evidence that a
-particular runtime shipped.
+artifact manifest and SBOM. Read those records to learn which runtime a
+particular release shipped; the lock alone does not establish it.
 
 The reviewed OmniParser conversion used Python 3.12.13, PyTorch 2.8.0,
 torchvision 0.23.0, Ultralytics 8.3.199, ONNX 1.19.0, ONNX Runtime 1.22.1, opset

@@ -853,7 +853,6 @@ Shipped:
       evidence in #4190).
 - [x] Public documentation no longer describes either component as a preview
       (#4190, #4325).
-
 - [x] Item 13 of the implementation plan: live-Jev source videos on macOS,
       Windows, and Linux X11 with the released signed extension
       (`cua-perception-v0.2.1`, `publisher-verified`), recorded during the

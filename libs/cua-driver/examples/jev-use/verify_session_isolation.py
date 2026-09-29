@@ -12,15 +12,19 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+BASE = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE / "python"))
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from driver_env import driver_environment
-from run import Driver, DriverToolError, select_tab_id, wait_for_window
+from run import Driver, select_tab_id, wait_for_window
 from tasks import fixture_state, reset_fixture
 from verify_setup import fixture
 
@@ -121,18 +125,38 @@ async def _expect_refusal(
     arguments: dict[str, Any],
     expected_code: str,
 ) -> str:
-    try:
-        await driver.call(tool, arguments)
-    except DriverToolError as error:
-        if error.code != expected_code:
-            raise RuntimeError(
-                f"{tool} refused for the wrong reason: {error.code!r}; "
-                f"expected {expected_code!r}"
-            ) from error
-        return error.code
-    raise RuntimeError(
-        f"{tool} unexpectedly succeeded; expected refusal {expected_code!r}"
+    """Accept both ordinary ToolResult refusals and typed ActionResult refusals."""
+    result = await driver.session.call_tool(
+        tool,
+        {**arguments, "session": driver.label},
     )
+    structured = getattr(result, "structuredContent", None)
+    structured = structured if isinstance(structured, dict) else {}
+    refusal = structured.get("refusal")
+    refusal = refusal if isinstance(refusal, dict) else {}
+    action_error = structured.get("error")
+    action_error = action_error if isinstance(action_error, dict) else {}
+    code = (
+        structured.get("code")
+        or refusal.get("code")
+        or action_error.get("code")
+    )
+    refused = (
+        getattr(result, "isError", False)
+        or structured.get("status") == "refused"
+        or structured.get("effect") == "refused"
+        or bool(refusal)
+    )
+    if not refused:
+        raise RuntimeError(
+            f"{tool} unexpectedly succeeded; expected refusal {expected_code!r}"
+        )
+    if code != expected_code:
+        raise RuntimeError(
+            f"{tool} refused for the wrong reason: {code!r}; "
+            f"expected {expected_code!r}"
+        )
+    return str(code)
 
 
 async def _expect_foreign_refusal(

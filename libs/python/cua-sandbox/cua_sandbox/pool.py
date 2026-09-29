@@ -32,6 +32,23 @@ from fleet_sdk import (
 _T = TypeVar("_T")
 logger = logging.getLogger(__name__)
 
+# Phases the Fleet control plane never leaves. Mirrors ``is_terminal_claim_phase``
+# in ``libs/fleet/sdk/src/claims.rs``; a claim in one of these can never bind, so
+# reattaching to it only reproduces the original failure.
+_TERMINAL_CLAIM_PHASES = frozenset({"Failed", "Error", "Expired"})
+
+
+def _claim_phase(claim: Any) -> str | None:
+    """Return the Fleet phase of ``claim``, or ``None`` when it is unknown."""
+    status = getattr(claim, "status", None)
+    phase = getattr(status, "phase", None)
+    return phase if isinstance(phase, str) else None
+
+
+def _is_terminal_claim(claim: Any) -> bool:
+    """Whether ``claim`` reached a terminal phase and can no longer bind."""
+    return _claim_phase(claim) in _TERMINAL_CLAIM_PHASES
+
 
 class _ClaimResult(Generic[_T]):
     """Awaitable claim acquisition that also supports scoped cleanup."""
@@ -377,16 +394,37 @@ class Pool:
             created_claim = False
             try:
                 if name is not None:
-                    claim = next(
+                    existing = next(
                         (
-                            existing
-                            for existing in await client.list_claims(
+                            candidate
+                            for candidate in await client.list_claims(
                                 self._resource.metadata.namespace
                             )
-                            if existing.metadata.name == name
+                            if candidate.metadata.name == name
                         ),
                         None,
                     )
+                    if existing is not None and _is_terminal_claim(existing):
+                        # A terminal claim is never adoptable, so reattaching to
+                        # it would replay the same failure on every retry. Drop
+                        # just this claim, never the pool, template or namespace,
+                        # and fall through to a fresh one.
+                        logger.warning(
+                            "Replacing terminal Fleet claim %s/%s in phase %s",
+                            existing.metadata.namespace,
+                            name,
+                            _claim_phase(existing),
+                        )
+                        try:
+                            await client.delete_claim(existing)
+                        except Exception:
+                            logger.exception(
+                                "Failed to remove terminal Fleet claim %s/%s before re-claiming",
+                                existing.metadata.namespace,
+                                name,
+                            )
+                    else:
+                        claim = existing
                 if claim is None:
                     claim = await client.create_claim(
                         CreateClaimRequest(pool=self._resource, spec=spec, name=name)

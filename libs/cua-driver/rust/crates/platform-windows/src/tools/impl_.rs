@@ -1476,15 +1476,6 @@ impl Tool for GetWindowStateTool {
                         .iter()
                         .filter(|n| n.element_index.is_some())
                         .count();
-                    let mut header = format!("window_id={hwnd} pid={pid} elements={count}\n");
-                    if let Some(note) = walk.note() {
-                        header.push_str(&note);
-                        header.push('\n');
-                    }
-                    header.push('\n');
-                    content.push(cua_driver_core::protocol::Content::text(
-                        header + &tr.tree_markdown,
-                    ));
                     structured["element_count"] = json!(count);
                     // UIA currently does not expose whether a bounded walk
                     // exhausted every subtree. Keep negative existence
@@ -1510,6 +1501,23 @@ impl Tool for GetWindowStateTool {
                             .zoom_registry
                             .retire_replaced(pid as i32, hwnd, snapshot_id);
                     }
+
+                    let mut header = format!(
+                        "{} elements={count}\n",
+                        cua_driver_core::element_token::window_state_header(
+                            hwnd,
+                            i64::from(pid),
+                            snapshot_id,
+                        )
+                    );
+                    if let Some(note) = walk.note() {
+                        header.push_str(&note);
+                        header.push('\n');
+                    }
+                    header.push('\n');
+                    content.push(cua_driver_core::protocol::Content::text(
+                        header + &tr.tree_markdown,
+                    ));
 
                     // Structured `elements` array — preferred consumption
                     // path. Shape matches the cross-platform spec:
@@ -1546,9 +1554,7 @@ impl Tool for GetWindowStateTool {
                     // Surface 6: snapshot id mirror for debug correlation.
                     if let Some(snapshot_id) = snapshot_id {
                         structured["snapshot_id"] =
-                            json!(cua_driver_core::element_token::token_for(snapshot_id, 0)
-                                .trim_end_matches(":0")
-                                .to_string());
+                            json!(cua_driver_core::element_token::snapshot_handle(snapshot_id));
                     }
                     structured["_note"] = json!(
                         "Prefer `elements` — `tree_markdown` will continue to work \

@@ -478,38 +478,7 @@ impl Tool for GetWindowStateTool {
             .as_ref()
             .map(|(_, _, _, _, _, _, bounds, scale)| (bounds.clone(), *scale));
 
-        // Build response.
-        let mut content: Vec<Content> = Vec::new();
-
-        if let Some((png, ref file_path, w, h, _, _, _, _)) = screenshot.as_ref() {
-            if file_path.is_none() {
-                use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-                content.push(Content::image_png(BASE64.encode(png)));
-            }
-
-            // Summary text line (matching Swift reference format).
-            let element_count = tree_result
-                .as_ref()
-                .map(|r| r.nodes.iter().filter(|n| n.element_index.is_some()).count())
-                .unwrap_or(0);
-            let summary = if let Some(ref r) = tree_result {
-                format!(
-                    "window_id={window_id} pid={pid} size={}x{} elements={element_count}\n\n{}",
-                    w, h, r.tree_markdown
-                )
-            } else {
-                format!("window_id={window_id} pid={pid} size={}x{}", w, h)
-            };
-            content.push(Content::text(summary));
-        } else if let Some(ref r) = tree_result {
-            let element_count = r.nodes.iter().filter(|n| n.element_index.is_some()).count();
-            content.push(Content::text(format!(
-                "window_id={window_id} pid={pid} elements={element_count}\n\n{}",
-                r.tree_markdown
-            )));
-        }
-
-        if content.is_empty() {
+        if screenshot.is_none() && tree_result.is_none() {
             return ToolResult::error(
                 "No content produced (neither AX tree nor screenshot succeeded)",
             );
@@ -545,6 +514,38 @@ impl Tool for GetWindowStateTool {
                 .zoom_registry
                 .retire_replaced(pid, u64::from(window_id), snapshot_id);
         }
+
+        // Build response.
+        let mut content: Vec<Content> = Vec::new();
+        let header = cua_driver_core::element_token::window_state_header(
+            u64::from(window_id),
+            i64::from(pid),
+            snapshot_id,
+        );
+
+        if let Some((png, ref file_path, w, h, _, _, _, _)) = screenshot.as_ref() {
+            if file_path.is_none() {
+                use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+                content.push(Content::image_png(BASE64.encode(png)));
+            }
+
+            // Summary text line (matching Swift reference format).
+            let summary = if let Some(ref r) = tree_result {
+                format!(
+                    "{header} size={}x{} elements={element_count}\n\n{}",
+                    w, h, r.tree_markdown
+                )
+            } else {
+                format!("{header} size={}x{}", w, h)
+            };
+            content.push(Content::text(summary));
+        } else if let Some(ref r) = tree_result {
+            content.push(Content::text(format!(
+                "{header} elements={element_count}\n\n{}",
+                r.tree_markdown
+            )));
+        }
+
         let capture_id = match (snapshot_id, screenshot.as_ref()) {
             (Some(_), Some((png, _, width, height, native_width, native_height, _, _))) => {
                 match self.state.capture_bindings.publish_window(
@@ -624,9 +625,7 @@ impl Tool for GetWindowStateTool {
         // registered (unresolved window scope).
         if let Some(sid) = snapshot_id {
             structured["snapshot_id"] =
-                serde_json::json!(cua_driver_core::element_token::token_for(sid, 0)
-                    .trim_end_matches(":0")
-                    .to_string());
+                serde_json::json!(cua_driver_core::element_token::snapshot_handle(sid));
         }
         if let Some(capture_id) = capture_id {
             structured["capture_id"] = serde_json::json!(capture_id);

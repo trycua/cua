@@ -35,3 +35,8 @@ Observation tools retain their typed tool-specific structured payloads.
 records in `structuredContent` and can attach a PNG as image content. A
 multimodal harness interprets the image; Cua Driver does not OCR it or assign
 task meaning.
+
+The `get_window_state` text header repeats the published `snapshot_id`
+(`window_id=… pid=… snapshot_id=s…`), so a model whose client shows it only
+text content can pair it with an `element_index` from the tree. Programs should
+still read `snapshot_id` and `element_token` from `structuredContent`.

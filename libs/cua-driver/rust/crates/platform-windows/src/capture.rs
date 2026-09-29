@@ -531,7 +531,7 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
 
     let pw_ok = PrintWindow(hwnd, mem_dc, PW_RENDERFULLCONTENT);
     if !pw_ok.as_bool() {
-        BitBlt(mem_dc, 0, 0, w, h, screen_dc, 0, 0, SRCCOPY)?;
+        let blt_result = BitBlt(mem_dc, 0, 0, w, h, screen_dc, 0, 0, SRCCOPY);
     }
 
     // Compute the DWM-extended-frame bounds. On Win10+ the OS draws an
@@ -771,6 +771,9 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
         let _ = DeleteObject(bitmap);
         let _ = DeleteDC(mem_dc);
         ReleaseDC(HWND::default(), screen_dc);
+        if let Err(error) = blt_result {
+            bail!("desktop capture: BitBlt failed: {error}");
+        }
         if ok == 0 {
             bail!("GetDIBits returned 0");
         }

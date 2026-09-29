@@ -116,6 +116,15 @@ does not imply arbitrary raw background PX delivery on Wayland.
   When automating Blender or a native game, best-effort background delivery does not apply: these apps must be foregrounded to receive clicks, so do this only when the user is not actively working on the machine.
 </Callout>
 
+### A canvas in a browser tab
+
+A `<canvas>` (or WebGL surface) in Chrome is one accessibility element with many drawn targets inside it, so a background pixel `click({pid, window_id, x, y})` has two failure shapes:
+
+- **Wrong target (fixed):** earlier versions resolved the element under the point and sent `AXPress`. `AXPress` carries no point and Chrome delivers it at the element's centre, so a click aimed at one drawn button pressed whichever was at the centre and reported `route: accessibility`, `effect: unverifiable`. The AX press is now used only for a control, or when the point is at the element's centre.
+- **No target (limit):** the click then takes the PID-routed path. Measured on a Chrome canvas page with two drawn buttons, Chrome did not act on the routed event at all (the page's own click log stayed empty) while the result still read `route: synthetic_events`, `effect: unverifiable`.
+
+Either way, treat a background pixel click on a canvas as unconfirmed and check the page. To land the click at the point, use `delivery_mode: "foreground"`: it activates the window, moves the pointer and posts through the HID tap (the same repro logged `pressed corner` at the aimed point).
+
 ---
 
 ## Off-Space windows keep background input and hide the agent cursor

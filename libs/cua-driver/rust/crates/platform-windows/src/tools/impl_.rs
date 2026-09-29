@@ -3132,9 +3132,10 @@ impl Tool for ClickTool {
         CLICK_DEF.get_or_init(|| ToolDef {
             name: "click".into(),
             // Description matches Swift `ClickTool.swift` semantics (left-click
-            // primitive with two addressing modes — element_index via UIA, or
+            // primitive with two addressing modes — element_token via UIA, or
             // window-local pixel coords via PostMessage).  Windows-only schema
-            // extras (`button`, no `modifier`/`action`/`debug_image_out`) apply here.
+            // extras (`button`; `action` limited to "expand"; no
+            // `debug_image_out`) apply here.
             description: "Left-click against a target pid. **Prefer `element_token` over \
                 pixel coordinates** — element_token works on backgrounded / minimized / \
                 hidden / off-desktop windows, surfaces a stable handle that survives \
@@ -3174,14 +3175,17 @@ impl Tool for ClickTool {
                 full-window space.\n\n\
                 Windows-only convenience: `button: \"left\"|\"right\"|\"middle\"` switches \
                 the mouse button (Swift exposes right-click as a separate `right_click` \
-                tool). The Swift-only `action` / `modifier` / `debug_image_out` schema \
-                fields aren't supported yet.".into(),
+                tool). `action: \"expand\"` on an `element_token` opens the element \
+                through UIA ExpandCollapsePattern (the dropdown half of an MSAA split \
+                button); other actions use the default invoke. `debug_image_out` isn't \
+                supported yet.".into(),
             input_schema: json!({
                 "type":"object","properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer","description":"Target process ID for window scope. Omit with scope=desktop for screen-absolute coordinates from get_desktop_state."},
                     "window_id":{"type":"integer","description":"HWND of the target window. Omit when element_token is supplied (the token carries it)."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                    "action":{"type":"string","description":"Accessibility action for an element_token target. \"expand\" opens the element through UIA ExpandCollapsePattern, or clicks the dropdown half of an MSAA split button. Omit for the default invoke."},
                     "capture_id":{"type":"string","minLength":1,"description":"Optional ID from get_window_state or get_desktop_state. When present, x and y are admitted against that exact capture and the ID is consumed before native dispatch."},
                     "x":{"type":"number","description":"X in window-local screenshot pixels — same space as the PNG get_window_state returns. Must be provided together with y."},
                     "y":{"type":"number","description":"Y in window-local screenshot pixels. Must be provided together with x."},

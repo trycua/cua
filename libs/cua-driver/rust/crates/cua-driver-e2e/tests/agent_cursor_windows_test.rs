@@ -49,7 +49,6 @@ fn agent_cursor_overlay_obeys_untargeted_and_targeted_z_order() {
         bring_to_front(&mut driver, target);
         driver.start_behavior_recording();
         let (x, y) = window_center(target.native_id);
-        let cursor_id = "windows-agent-cursor-e2e";
         let foreground_before = unsafe { GetForegroundWindow() };
         assert_eq!(foreground_before.0 as u64, target.native_id);
         let real_cursor_before = real_cursor_position();
@@ -65,12 +64,11 @@ fn agent_cursor_overlay_obeys_untargeted_and_targeted_z_order() {
         for (tool, arguments) in [
             (
                 "set_agent_cursor_enabled",
-                serde_json::json!({"enabled": true, "cursor_id": cursor_id}),
+                serde_json::json!({"enabled": true}),
             ),
             (
                 "set_agent_cursor_motion",
                 serde_json::json!({
-                    "cursor_id": cursor_id,
                     "glide_duration_ms": 100,
                     "idle_hide_ms": 0
                 }),
@@ -79,8 +77,7 @@ fn agent_cursor_overlay_obeys_untargeted_and_targeted_z_order() {
                 "move_cursor",
                 serde_json::json!({
                     "x": x,
-                    "y": y,
-                    "cursor_id": cursor_id
+                    "y": y
                 }),
             ),
         ] {
@@ -224,8 +221,7 @@ fn agent_cursor_overlay_obeys_untargeted_and_targeted_z_order() {
                 "pid": target.pid,
                 "window_id": target.native_id,
                 "element_token": target_state.element_token(button_index),
-                "delivery_mode": "background",
-                "cursor_id": cursor_id
+                "delivery_mode": "background"
             }),
         );
         assert!(
@@ -262,7 +258,7 @@ fn agent_cursor_overlay_obeys_untargeted_and_targeted_z_order() {
 
         let disabled = driver.call(
             "set_agent_cursor_enabled",
-            serde_json::json!({"enabled": false, "cursor_id": cursor_id}),
+            serde_json::json!({"enabled": false}),
         );
         assert!(
             !disabled.is_error(),
@@ -313,18 +309,16 @@ fn agent_cursor_move_does_not_leak_input() {
         );
         let x = screen.structured()["width"].as_f64().unwrap_or(0.0) / 2.0;
         let y = screen.structured()["height"].as_f64().unwrap_or(0.0) / 2.0;
-        let cursor_id = "windows-agent-cursor-no-input-leak";
         let (_, passed) = sentinel
             .observe_desktop(|| {
                 for (tool, arguments) in [
                     (
                         "set_agent_cursor_enabled",
-                        serde_json::json!({"enabled": true, "cursor_id": cursor_id}),
+                        serde_json::json!({"enabled": true}),
                     ),
                     (
                         "set_agent_cursor_motion",
                         serde_json::json!({
-                            "cursor_id": cursor_id,
                             "glide_duration_ms": 100,
                             "idle_hide_ms": 0
                         }),
@@ -333,8 +327,7 @@ fn agent_cursor_move_does_not_leak_input() {
                         "move_cursor",
                         serde_json::json!({
                             "x": x,
-                            "y": y,
-                            "cursor_id": cursor_id
+                            "y": y
                         }),
                     ),
                 ] {

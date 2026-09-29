@@ -285,10 +285,11 @@ Two addressing modes:
 
 Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` is required for window scope and omitted for desktop scope. After a `zoom` call, pass `from_zoom=true` to auto-translate zoom-image coords back to full-window space.
 
-Windows-only convenience: `button: "left"|"right"|"middle"` switches the mouse button (Swift exposes right-click as a separate `right_click` tool). The Swift-only `action` / `modifier` / `debug_image_out` schema fields aren't supported yet.
+Windows-only convenience: `button: "left"|"right"|"middle"` switches the mouse button (Swift exposes right-click as a separate `right_click` tool). `action: "expand"` on an `element_token` opens the element through UIA ExpandCollapsePattern (the dropdown half of an MSAA split button); other actions use the default invoke. `debug_image_out` isn't supported yet.
 
 **Arguments:**
 
+- `action` (string, optional): Accessibility action for an element_token target. "expand" opens the element through UIA ExpandCollapsePattern, or clicks the dropdown half of an MSAA split button. Omit for the default invoke.
 - `button` (string, optional): Mouse button. Default "left".
 - `capture_id` (string, optional): Optional ID from get_window_state or get_desktop_state. When present, x and y are admitted against that exact capture and the ID is consumed before native dispatch.
 - `count` (integer, optional): Click count — 1 (single), 2 (double), 3 (triple). Default 1. range: 1–3

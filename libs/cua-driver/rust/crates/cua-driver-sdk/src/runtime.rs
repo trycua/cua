@@ -234,7 +234,7 @@ impl DriverRuntime {
         cua_driver_core::session::forget_suspended_runtime_scope(
             &self.compatibility_context.runtime_scope_key(),
         );
-        cua_driver_core::element_cache::retire_runtime_scope(
+        cua_driver_core::snapshot_store::retire_runtime_scope(
             &self.compatibility_context.runtime_scope_key(),
         );
         let recording = self.registry.recording.clone();
@@ -456,7 +456,7 @@ impl Drop for DriverRuntime {
         cua_driver_core::session::revoke_sessions_with_prefix(&runtime_prefix);
         cua_driver_core::session::forget_ended_sessions_with_prefix(&runtime_prefix);
         cua_driver_core::session::forget_suspended_runtime_scope(&runtime_scope);
-        cua_driver_core::element_cache::retire_runtime_scope(&runtime_scope);
+        cua_driver_core::snapshot_store::retire_runtime_scope(&runtime_scope);
         // Explicit `shutdown()` drains work and finalizes recordings. Drop is
         // runtime-scoped and non-blocking so a retained binding cannot affect
         // another generation.
@@ -739,6 +739,31 @@ mod tests {
             RuntimeOptions::embedded_with_ceiling(false, ceiling, PermissionMode::Standard, None);
         options.authorization_host = Some(Arc::new(TestProtectedHost));
         options
+    }
+
+    #[test]
+    fn every_registered_tool_schema_matches_the_dispatch_argument_check() {
+        let registry = build_registry(&RuntimeOptions::embedded(false));
+        // These schemas declare `additionalProperties: true`.
+        let open = [
+            "get_browser_state",
+            "browser_prepare",
+            "browser_navigate",
+            "browser_click",
+            "browser_type",
+            "browser_dialog",
+            "browser_set_input_files",
+            "browser_download",
+            "browser_pointer",
+            "start_session",
+            "escalate_session",
+            "get_session",
+            "list_sessions",
+            "get_session_state",
+            "end_session",
+        ];
+        let violations = registry.input_conformance_violations(&open);
+        assert!(violations.is_empty(), "{violations:#?}");
     }
 
     #[test]

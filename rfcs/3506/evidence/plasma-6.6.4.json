@@ -1571,11 +1571,6 @@
     "sha256": "eee4b5ba67f11872832fc73a04ee4c583495b5db6a7a12fbec501046a7bfe41c",
     "coverage": "operations 1-6 only; counters A=1/1 B=1/1 inspected at 400s and495s; no video of cases7-11"
   },
-  "unrun": [
-    "separate exact delivery request (harness exposes background only)",
-    "pointer/hotkey/drag",
-    "outer SDK acknowledgement loss",
-    "live AX smoke"
-  ],
+  "unrun": ["pointer/hotkey/drag", "outer SDK acknowledgement loss", "live AX smoke"],
   "production_enabled": false
 }

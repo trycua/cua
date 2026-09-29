@@ -143,11 +143,9 @@ The lost-ack test covers the worker reply, not the latter. Separate-process
 windows were not exercised; same-process exact selection was. Pointer testing
 and additional raw-input experiments stopped after the observed keyboard leak.
 AX source and unit contracts remain unchanged; no separate live AX smoke is
-claimed. An isolated Plasma/KWin 6.6.4 Wayland guest was subsequently verified
-read-only (package versions, portal properties and scripting introspection),
-but no helper, synthetic input, or recording was run there. The observed
-global-delivery leak does not become safer by changing the compositor version;
-exact-version input proof requires a different target-bound primitive.
+claimed. The subsequent isolated Plasma/KWin 6.6.4 input run also found a
+post-confirmation leak; see the separate [6.6.4 result](plasma-6.6-proof.md).
+This section remains the historical 6.7.5 result, not the guest's status.
 
 ## Verification and cleanup
 

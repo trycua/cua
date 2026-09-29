@@ -69,7 +69,7 @@ The canonical call is:
 }
 ```
 
-The trusted expectation is armed out-of-band in the same process and is **not** caller-supplied authority in tool arguments. Only that exact single key/window foreground form is experimental. Modifiers, element/pixel-focus forms and mismatching foreground expectations reject. Background/exact delivery and every other tool remain on their original paths. There is no global-input fallback, activation request, wtype call, AX action, or extra readiness round trip in this branch.
+The trusted expectation is armed out-of-band in the same process and is **not** caller-supplied authority in tool arguments. Only that exact single key/window foreground form is experimental. Modifiers, element/pixel-focus forms and mismatching foreground expectations reject. Background delivery and every other tool remain on their original paths. There is no global-input fallback, activation request, wtype call, AX action, or extra readiness round trip in this branch.
 
 Output JSON contains `sdk_submission_ns`, `caller_ack_ns`, `operation` (`op_seq`, `submission_ns`, `may_start`, `emission_ns`, `worker_ack_ns`), canonical SDK `result`, and `no_retry:true`. All timestamps are CLOCK_MONOTONIC ns. `emission_ns` is immediately before the first reis key request; `worker_ack_ns` is after successful client flush, **not compositor receipt or app delivery**. Zero means that stage was not observed. The SDK may replace successful platform structured content with its normal ActionResult, so the separately retained operation report is authoritative for instrumentation. Successful output is `effect:unverifiable`, not confirmed application effect. Loss/error after `may_start` is unknown and non-retryable.
 

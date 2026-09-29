@@ -14,17 +14,17 @@ The existing supported scripting and portal calls below were used unchanged.
 The runner gained `--binary`, `--helper-name`, `--ungated` and a stale-generation
 case; those sidecar-only changes are included in this PR.
 
-| Case                             | Result                                                                            | Evidence           | Limitation                                                                    |
-| -------------------------------- | --------------------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------------------- |
-| Initial attempts                 | Portal readiness timeout; zero emission and A/B events                            | Operations 1–4     | Harness exit 0 is not delivery                                                |
-| A, without worker gates          | A received 1 press/release; B zero                                                | Operation 5; video | Ordinary delivery, not race safety                                            |
-| B, without worker gates          | B received 1 press/release; A zero                                                | Operation 6; video | Ordinary delivery, not race safety                                            |
-| Precheck focus takeover          | `closed/stale/inactive target`; zero emission and events                          | Operation 7        | Deterministic precheck gate                                                   |
-| Helper reload / stale generation | Same KWin owner, new generation; `owner/generation changed`; zero emission/events | Operation 8        | Reload revocation, not every lifetime transition                              |
-| Worker reply lost                | A received one pair; result `unknown; never retry`                                | Operation 9        | Not outer SDK reply loss                                                      |
-| Replay of operation 9            | Exclusive ledger refused before Driver construction                               | `replay-9.log`     | Parent ledger, not daemon-wide deduplication                                  |
-| Background                       | Exact code `background_unavailable`; zero submission/emission/events              | Operation 10       | Separate exact-mode request not run: existing harness exposes background only |
-| Postcheck focus takeover         | **A zero, B received one pair intended for A**                                    | Operation 11       | Deterministic postcheck gate; no video of this case                           |
+| Case                             | Result                                                                            | Evidence           | Limitation                                          |
+| -------------------------------- | --------------------------------------------------------------------------------- | ------------------ | --------------------------------------------------- |
+| Initial attempts                 | Portal readiness timeout; zero emission and A/B events                            | Operations 1–4     | Harness exit 0 is not delivery                      |
+| A, without worker gates          | A received 1 press/release; B zero                                                | Operation 5; video | Ordinary delivery, not race safety                  |
+| B, without worker gates          | B received 1 press/release; A zero                                                | Operation 6; video | Ordinary delivery, not race safety                  |
+| Precheck focus takeover          | `closed/stale/inactive target`; zero emission and events                          | Operation 7        | Deterministic precheck gate                         |
+| Helper reload / stale generation | Same KWin owner, new generation; `owner/generation changed`; zero emission/events | Operation 8        | Reload revocation, not every lifetime transition    |
+| Worker reply lost                | A received one pair; result `unknown; never retry`                                | Operation 9        | Not outer SDK reply loss                            |
+| Replay of operation 9            | Exclusive ledger refused before Driver construction                               | `replay-9.log`     | Parent ledger, not daemon-wide deduplication        |
+| Background                       | Exact code `background_unavailable`; zero submission/emission/events              | Operation 10       | Background delivery, not a third mode               |
+| Postcheck focus takeover         | **A zero, B received one pair intended for A**                                    | Operation 11       | Deterministic postcheck gate; no video of this case |
 
 [Machine-readable evidence](evidence/plasma-6.6.4.json) retains all operations,
 activation observations, guest monotonic timing, versions and artifact hashes.
@@ -46,16 +46,132 @@ The focused Rust overlay test compiled and failed the same assertion,
 `started.elapsed() >= ARRIVAL_WAIT_CAP`, in both the prototype and clean
 base `93f7afc89a09e7f9d39da22990e26036a74adfbd`. Each ran one test
 with `portal-input`, the same RUSTFLAGS and `--exact --test-threads=1`;
-both returned 101. This isolates the observed failure from the sidecar patch;
-it does not make the full library green. No full suite was repeated.
+both returned 101. The same assertion also occurs on the clean baseline;
+this does not establish its root cause or exclude every patch interaction.
+It does not make the full library green. No full suite was repeated.
 
-Unrun: separate exact-mode request, pointer/drag/hotkeys, live AX smoke,
+Unrun: pointer/drag/hotkeys, live AX smoke,
 outer SDK acknowledgement loss, and comprehensive desktop/session revocation.
-Production input remains disabled. The remainder records the earlier
-source review and requirements; its prior outstanding/read-only status is
-superseded by the measured run above, not by a passing safety proof.
+Production input remains disabled. `InputDeliveryMode` has only
+[`Foreground` and `Background`](../../libs/cua-driver/rust/crates/cua-driver-contract/src/inputs.rs#L608-L611).
+Exact identity is the request's `ActionTarget::Window { pid, window_id }`,
+not a delivery mode. The exercised request is
+`CuaDriver::press_key(PressKeyInput)` in
+[`sdk_harness.rs`](driver-prototype/sdk_harness.rs#L8-L11), with the
+compile-only foreground field carried by the sidecar patch; the background
+case changes that field before the same SDK call. There is no separate
+`exact` enum value or additional exact-mode experiment owed here.
 
-## Earlier source review and procedure
+## Reproduction and provenance
+
+### Historical execution (not commands to rerun with the consumed IDs)
+
+Source archive: `2b99a150d00aa35ded968b251901b6dee1ce3504`.
+Driver patch base: `93f7afc89a09e7f9d39da22990e26036a74adfbd`.
+Runner additions are published at `df0bbcef078fa30341bad0f2836de5ff73213190`;
+the guest runner used those changes before that documentation commit.
+SHA-256:
+
+| Artifact                              | SHA-256                                                            |
+| ------------------------------------- | ------------------------------------------------------------------ |
+| `helper-identity.patch`               | `a7ba8d55b85dae206e8d57b74b53f1259ae86a921e203960922fd9ee17e88b82` |
+| `driver-prototype/driver.patch`       | `3994b717302a799f1f032c313415f1f037f605be5524985151cf3ae270378b95` |
+| Guest `target/debug/examples/rfc3506` | `060ccc4edf639560d4bcfe4b36ca1051e0347e01d1b38136e3747994adc41d59` |
+| Guest helper module                   | `d1a04b96a2597ed7b771ea2abb24b9cfe076376b7d9fc4781773995620fd3540` |
+
+Packages recorded: `kwin-wayland`/`kwin-dev` `4:6.6.4-0ubuntu1`,
+`plasma-workspace` `4:6.6.4-0ubuntu2`, `qt6-base-dev` `6.10.2+dfsg-7`,
+`xdg-desktop-portal-kde` `6.6.4-0ubuntu1`, `xdg-desktop-portal`
+`1.21.1+ds-1ubuntu3`, `pipewire` `1.6.2-1ubuntu1.2`.
+Build/runtime dependencies: CMake, C++20 compiler, ECM, Qt6/KF6/KWin
+development packages, Rust/Cargo, clang/libclang, pkg-config, GLib/GTK3,
+AT-SPI, PAM/X11/Wayland development libraries; fixture/runner use
+`python3-dbus`, `python3-gi`, `gir1.2-gtk-3.0`. Package logs record the
+distro Rust/Cargo 1.93 packages; exact `rustc -Vv` output was not retained.
+Do not substitute a different compositor ABI or silently upgrade it.
+
+Guest desktop wrapper `/work/desktop.sh` exported these values, not host
+session variables:
+
+```sh
+export XDG_RUNTIME_DIR=/run/user/1000
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+export WAYLAND_DISPLAY=wayland-0
+export XDG_CURRENT_DESKTOP=KDE XDG_SESSION_TYPE=wayland
+export QT_QPA_PLATFORM=wayland GDK_BACKEND=wayland TMPDIR=/work/tmp
+```
+
+Historically executed runner invocations (in that guest's synthetic fixture
+session, with portal consent handled there):
+
+```sh
+runner=/work/cua/rfcs/3506/run_input_case.py
+binary=/work/cua/libs/cua-driver/rust/target/debug/examples/rfc3506
+sh /work/desktop.sh python3 "$runner" --binary "$binary" --helper-name cua_kwin_target_helper --directory /work/evidence --seq 5 --case A --ungated
+sh /work/desktop.sh python3 "$runner" --binary "$binary" --helper-name cua_kwin_target_helper --directory /work/evidence --seq 6 --case B --ungated
+sh /work/desktop.sh python3 "$runner" --binary "$binary" --helper-name cua_kwin_target_helper --directory /work/evidence --seq 7 --case precheck_takeover
+sh /work/desktop.sh python3 "$runner" --binary "$binary" --helper-name cua_kwin_target_helper --directory /work/evidence --seq 11 --case postcheck_takeover
+```
+
+Cases 8/9/10 used the same arguments with `stale_generation`, `drop_ack`,
+and `background` respectively. All actual expectations, activation observations,
+monotonic emission/flush and fixture receipt records are in the linked JSON.
+The recording is QEMU framebuffer capture, not a movie synthesized from logs.
+The fault cases have no correlated film because they happened after it ended.
+
+### Proposed reproduction in a restored isolated guest (not executed here)
+
+The retained QEMU launch script boots a live ISO, not an installed guest root.
+The ISO SHA-256 is
+`95ce9cf68f13015b9a88bd1ef86fcf7eda77c99979fda48c69e28aa0a84f88ac`.
+Recreating lost guest provisioning is prerequisite work, not a verified
+one-command resume. Inside an already restored 6.6.4 session, create a fresh
+source archive directory; never trust `prepare.py`'s existing `Cargo.toml`
+cache as proof of its source SHA. Apply both published patches to that archive,
+then use the following source-derived build commands (the original helper
+configure command was not retained verbatim). The proposed checkout
+`/work/review/cua` must contain the published commits. Archive `df0bbcef` to
+include the runner additions; its production Driver/helper sources have no
+diff from the tested `2b99a150d`. Do not overwrite the retained `/work/cua`:
+
+```sh
+mkdir /work/repro
+mkdir /work/repro/cua
+git -C /work/review/cua archive df0bbcef078fa30341bad0f2836de5ff73213190 | tar -x -C /work/repro/cua
+cd /work/repro/cua
+git apply --check rfcs/3506/helper-identity.patch
+git apply rfcs/3506/helper-identity.patch
+git apply --check rfcs/3506/driver-prototype/driver.patch
+git apply rfcs/3506/driver-prototype/driver.patch
+cmake -S libs/cua-driver/kwin-target-helper -B /work/helper-repro -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib/x86_64-linux-gnu
+cmake --build /work/helper-repro --parallel 4
+sudo cmake --install /work/helper-repro
+cp rfcs/3506/driver-prototype/sdk_harness.rs libs/cua-driver/rust/crates/cua-driver-sdk/examples/rfc3506.rs
+cd libs/cua-driver/rust
+RUSTFLAGS='--cfg cua3506_prototype --check-cfg=cfg(cua3506_prototype)' cargo build -p cua-driver-sdk --features portal-input --example rfc3506
+```
+
+Only inside the guest: load the module through
+`qdbus6 org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect cua_kwin_target_helper`,
+check `GetVersion == 1`, and run the binary's `--identity` trust checks.
+Start `python3 /work/repro/cua/rfcs/3506/fixture.py --directory /work/evidence-followup`
+through the desktop wrapper, arrange A/B side by side, and start an actual
+framebuffer recording before input. Use a new directory and fresh operation
+IDs greater than 11 (derive them from all retained journals), then the same
+runner forms above with `runner=/work/repro/cua/rfcs/3506/run_input_case.py`,
+`binary=/work/repro/cua/libs/cua-driver/rust/target/debug/examples/rfc3506`
+and `--directory /work/evidence-followup`. Approve the guest portal explicitly; do not reuse a host
+portal or bypass owner/UID/generation validation. Record frame monotonic
+timestamps and operation timestamps in the same guest/host clock mapping,
+inspect the takeover/receipt moment, copy journals/video out before shutdown,
+and stop at the first wrong-window delivery. Never replay an uncertain ID.
+
+The existing video is attachment-ready but **not public evidence until uploaded**.
+Single manual step: drag `plasma-6.6.4-AB.webm` from the retained
+`plasma66-env` directory into the edit box of the existing PR comment, let
+GitHub insert its uploaded URL, retain the operations 1–6-only caption, and save.
+
+## Earlier source review
 
 The [host result](host-6.7.5-result.md) supplies additive identity and isolated
 Driver prototype patches, exact API calls, event journals and timing evidence.
@@ -69,20 +185,14 @@ working transport. The [2026-09-29 maintainer request](https://github.com/trycua
 requires the recording and exact tested API calls on
 [PR #3507](https://github.com/trycua/cua/pull/3507).
 
-The original source-review environment was Ubuntu 24.04 without a live KWin
-desktop. A separate, isolated Kubuntu 26.04 live guest is now reachable as its
-normal UID 1000 user. It runs KWin and plasmashell **6.6.4** on Wayland, with
-`kwin-wayland 4:6.6.4-0ubuntu1`, `plasma-workspace 4:6.6.4-0ubuntu2`,
-`xdg-desktop-portal-kde 6.6.4-0ubuntu1`; its RemoteDesktop portal reports
-version 2 and keyboard/pointer device mask 7. Guest D-Bus introspection shows
-`loadScript`, `unloadScript`, and `isScriptLoaded`. The official ISO SHA-256 is
-`95ce9cf68f13015b9a88bd1ef86fcf7eda77c99979fda48c69e28aa0a84f88ac`.
-These were **read-only environment checks**: no helper was built or installed
-in the guest, no synthetic fixture, consent, activation, input or recording was
-run on 6.6.4. The host's observed wrong-window portal/libei delivery makes
-repeating unsafe raw input in the guest unjustified without a new destination-
-bound primitive. Production code, AX actions and exact background refusals
-are unchanged.
+Earlier Ubuntu source review and initial guest introspection preceded the
+completed input experiment above. The guest is now stopped; its live root
+overlay was RAM-only, while the attached `/work` disk retains sources,
+binaries and journals. A supplementary short fault-case video was not made:
+the guest SSH endpoint refuses connections and restoring its lost SSH,
+runtime dependencies and helper installation would require reprovisioning.
+The retained work disk is not a saved running desktop. No new guest was
+created and no host input was sent to work around this limitation.
 
 ## What source review establishes
 
@@ -109,7 +219,7 @@ The signal must be observed before requesting activation; an already-active
 target may not cause a new signal. Re-read the exact live object before each
 burst rather than treating an earlier notification as durable authority.
 
-## First blocker: preserve the adapter identity
+## Identity bridge used by this experiment
 
 The current [Cua helper](../../libs/cua-driver/kwin-target-helper/kwin_target_helper.cpp)
 maps `KWin::Window::internalId()` to a monotonically allocated numeric `token`
@@ -122,12 +232,10 @@ Consequently, the token is not a UUID, X11 window ID, or index into
 `workspace.windowList()`. Matching title, app ID, geometry, or PID alone does
 not complete the requested proof, especially for two windows of one process.
 
-Before an end-to-end scripting experiment, the spike must provide a reviewed,
-generation-aware bridge from the adapter-selected `(pid, token, generation)`
-to the exact live KWin object. An additive read-only token-to-UUID mapping is
-one candidate to investigate; a supported exact-token activation interface is
-another. The separately applied [read-only prototype patch](helper-identity.patch)
-now supplies the former for the host experiment, not shipped production code.
+The separately applied [read-only prototype patch](helper-identity.patch)
+provided a generation-aware token-to-UUID bridge for both the host and guest
+experiments, not shipped production code. It resolves the adapter-selected
+`(pid, token, generation)` to the exact live KWin object.
 Preserve `GetVersion() == 1` discovery and
 do not substitute private C++ activation internals for the requested supported
 interface. A UUID manually chosen in the scripting console can test the KWin
@@ -138,7 +246,7 @@ KWin process. The bridge must also reject old tokens across unload/reload,
 window destruction/replacement, and generation changes. Stop the proof at this
 gate if exact identity cannot be established.
 
-## Exact calls to exercise on the test desktop
+## Supported API calls used by the probe
 
 Use a disposable Plasma 6.6 Wayland session (Kubuntu 26.04 is acceptable), two
 synthetic fixture windows with independent key/click counters, and the helper
@@ -243,30 +351,10 @@ separately before proposing those operations. Any observed non-target delivery
 must be reported as a failed case, never hidden behind a later successful focus
 check or relabeled as a zero-dispatch refusal.
 
-## Live recording and acceptance matrix
+## Review boundary
 
-Record the desktop and correlate it with synthetic fixture event counters and
-dispatch traces. The recording must identify the actual OS, Plasma/KWin/Qt
-versions, Wayland session, helper build, Driver/probe commit, fixture, and exact
-commands. A terminal recording alone cannot establish which window received
-input. Capture with an available external recorder if necessary; do not make
-the proof depend on #4034's separate Cua recording release fix.
-
-| Case                            | Required visible and machine-observed evidence                                                                                                          | Current result                                                                               |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Exact selection                 | Adapter token resolves to the same live UUID/PID/generation; two same-process windows remain distinguishable                                            | 6.7.5 only: observed with additive helper patch                                              |
-| Positive foreground canary      | Activate A from B, confirm A, send one admitted bounded burst; only A's counter changes; then explicitly select B and repeat                            | 6.7.5 only: fixture A and B each received one pair in separate operations; not a safety pass |
-| Activation/confirmation failure | Missing/stale target, wrong active window, timeout, or lost confirmation: zero input submissions and a refusal; report any focus change separately      | 6.7.5 only: activation-only refusals and precheck input refusal; not all revocations covered |
-| Focus takeover                  | Change focus before confirmation and again in the check-to-delivery gap; show both window counters, timing, stop behavior, and any residual misdelivery | 6.7.5: **postcheck leak to B**; unsafe                                                       |
-| Lifetime change                 | Close/recreate target and unload/reload helper; old identity cannot authorize input even if PID/token or bus owner is reused                            | 6.7.5 activation-only checks, no input attempted after loss                                  |
-| Lost acknowledgement            | Dispatch once, lose the final reply, reconnect/re-resolve: partial/unknown outcome and no replay; a genuinely new admitted action is distinct           | 6.7.5 worker reply dropped and parent ledger blocked replay; outer SDK reply loss untested   |
-| Scope preservation              | AX actions retain their behavior; exact/background requests retain their exact existing refusals; no fallback to unguarded global input                 | 6.7.5 background refused; AX source unchanged, no live AX smoke                              |
-
-Upload a suitable recording and sanitized report to #3507 with the tested commit,
-probe source, exact API calls (including the actual burst transport), measured
-timings, fixture counts, and results for every row. Keep failed and unrun rows
-explicit. Documentation checks, a successful activation setter, and a mock test
-do not close this gate. Request the maintainer's disposition only after the
-real evidence is reviewed; until then the RFC stays `review` and production
-raw KWin input remains unavailable. The local host recording cannot fulfill
-the requested simultaneous A/B visual coverage: both panes showed A.
+Use the completed result table at the top, not an obsolete host-only matrix.
+The genuine A/B video still needs manual GitHub attachment and does not show
+the postcheck fault. Machine-readable operation 11 is the counterexample
+evidence presently available in Git. Maintainer disposition is pending;
+RFC stays `review` and production raw KWin input remains unavailable.

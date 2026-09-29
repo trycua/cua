@@ -15,7 +15,6 @@ pub mod mouse;
 pub mod pointer_toolkit;
 pub mod skylight;
 
-pub use ax_actions::perform_ax_action;
 pub use interactive::{
     GesturePhase, InteractiveDeliveryMode, InteractiveInputBatch, InteractiveInputConfig,
     InteractiveInputError, InteractiveInputEvent, InteractiveInputReceipt, InteractiveInputSession,

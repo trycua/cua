@@ -324,6 +324,15 @@
     }
    },
    {
+    "id": "key_window_control",
+    "kind": "key_window_button",
+    "description": "NSButton enabled only while its window is key, like a toolbar search field. Tests the element_disabled refusal and its foreground escalation while another app is frontmost.",
+    "controls": {
+     "button_aid": "btn-key-only",
+     "pressed_label_aid": "lbl-key-only"
+    }
+   },
+   {
     "id": "text_body",
     "kind": "static_text",
     "description": "NSTextField (label mode) with a shared marker. Tests get_window_state text extraction from a Cocoa label.",

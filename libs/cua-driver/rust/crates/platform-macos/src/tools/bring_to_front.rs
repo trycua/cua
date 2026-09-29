@@ -187,6 +187,21 @@ fn front_window_of_process_on_target_display(
         .map(|window| window.window_id)
 }
 
+/// `pid`'s front window on the display holding `window_id`, resolved as
+/// `observe_exact_window` resolves it; `None` when `window_id` is not a
+/// visible ordinary window.
+pub(super) fn process_front_window_on_display(pid: i32, window_id: u32) -> Option<WindowInfo> {
+    let mut windows = crate::windows::visible_windows();
+    windows.retain(|window| !crate::cursor::overlay::is_overlay_window(window.window_id));
+    let front = front_window_of_process_on_target_display(
+        &windows,
+        &active_display_bounds(),
+        pid,
+        window_id,
+    )?;
+    windows.into_iter().find(|window| window.window_id == front)
+}
+
 fn observe_exact_window(pid: i32, window_id: u32) -> ExactWindowObservation {
     let mut windows = crate::windows::visible_windows();
     windows.retain(|window| !crate::cursor::overlay::is_overlay_window(window.window_id));

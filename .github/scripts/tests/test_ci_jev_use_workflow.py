@@ -154,6 +154,27 @@ def test_native_wpf_job_uses_released_driver_default_install_and_source_harness(
     assert "cua.jev_choice_request_v2" in native
 
 
+def test_native_winui3_job_uses_released_driver_default_install_and_source_harness() -> None:
+    """RFC #4268 (#4314): native tasks on the WinUI3 harness (Windows UIA)."""
+    jobs = load()["jobs"]
+    assert jobs["native-winui3-windows"]["runs-on"].startswith("windows-")
+    native = job_text("native-winui3-windows")
+    assert "https://cua.ai/driver/install.ps1" in native
+    assert "cargo build" not in native
+    assert 'MIN_RELEASED_DRIVER_VERSION: "0.30.1"' in native
+    assert '$task.Principal.RunLevel -ne "Highest"' in native
+    assert "-NoAutostart" not in native
+    assert "verify-user-session.ps1" in native
+    assert "tests\\fixtures\\build\\windows.ps1 -Targets winui3" in native
+    assert "verify_native.py --harness winui3 --typescript" in native
+    assert "--live" not in native
+    assert 'check["verified"] is True' in native
+    assert "cua.jev_choice_request_v2" in native
+    triggers = load()[True]
+    for event in ("pull_request", "push"):
+        assert "libs/cua-driver/tests/fixtures/apps/windows/winui3/**" in triggers[event]["paths"]
+
+
 def test_native_gtk3_job_uses_released_driver_and_x11_stack() -> None:
     """RFC #4268 Phase 2: native tasks on the GTK3 harness (Linux AT-SPI)."""
     jobs = load()["jobs"]

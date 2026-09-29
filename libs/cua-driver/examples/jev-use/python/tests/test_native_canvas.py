@@ -85,7 +85,7 @@ class ApplicationElementsTest(unittest.TestCase):
                 self.assertEqual(ax.controls, ())
 
     def test_recorded_harness_trees_have_application_elements(self) -> None:
-        for harness in ("appkit", "wpf", "gtk3"):
+        for harness in ("appkit", "wpf", "winui3", "gtk3"):
             with self.subTest(harness=harness):
                 self.assertTrue(has_application_elements(observation(harness), HARNESSES[harness].platform))
 

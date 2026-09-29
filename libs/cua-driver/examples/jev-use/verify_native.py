@@ -1,7 +1,7 @@
 """Verify the native jev-use tasks against a repository harness (RFC #4268).
 
-``--harness`` selects the AppKit (macOS), WPF (Windows), or GTK3 (Linux)
-harness, or the cross-platform visual-only ``canvas`` fixture, which has no
+``--harness`` selects the AppKit (macOS), WPF or WinUI3 (Windows), or GTK3
+(Linux) harness, or the cross-platform visual-only ``canvas`` fixture, which has no
 accessibility tree and proves the OmniParser fallback (it needs the
 cua-perception extension). The canvas publishes its state to a loopback
 journal that this script serves; each published state is written to the task
@@ -15,7 +15,8 @@ records sanitized ``get_window_state`` fixtures before and after each run.
 
 Build the harness first, from the repository root:
 ``libs/cua-driver/tests/fixtures/build/macos.sh --only appkit``,
-``libs/cua-driver/tests/fixtures/build/windows.ps1 -Targets wpf``, or
+``libs/cua-driver/tests/fixtures/build/windows.ps1 -Targets wpf`` (or
+``-Targets winui3``), or
 ``libs/cua-driver/tests/fixtures/build/linux.sh --only gtk3``.
 """
 
@@ -61,6 +62,10 @@ HARNESSES = {
     "wpf": Harness(
         TEST_APPS / "harness-wpf/CuaTestHarness.Wpf.exe", "",
         "CuaTestHarness WPF Tasks", "cua.wpf_task_state_v1", "CUA_WPF_TASK_STATE",
+    ),
+    "winui3": Harness(
+        TEST_APPS / "harness-winui3/CuaTestHarness.WinUI3.exe", "",
+        "CuaTestHarness WinUI3 Tasks", "cua.winui3_task_state_v1", "CUA_WINUI3_TASK_STATE",
     ),
     "gtk3": Harness(
         TEST_APPS / "harness-gtk3/CuaTestHarness.Gtk3", "",

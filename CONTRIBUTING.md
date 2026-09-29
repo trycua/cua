@@ -81,6 +81,14 @@ GitHub issue form. Longer proposals and diagrams remain in this repository under
 5. Run the formatters and linters owned by the changed component.
 6. Open a focused pull request that explains behavior, validation, and known gaps.
 
+### Contributor License Agreement
+
+Before a pull request can be merged, its author must accept the
+[Contributor License Agreement](CLA.md) once. The **CI: CLA** check comments on
+your first pull request with instructions; reply with the sentence it gives you
+to sign. The agreement applies to your later contributions, and you keep
+ownership of your work. Maintainers and automation accounts are exempt.
+
 ### Agent-Assisted Contributions
 
 Agent-assisted pull requests are welcome and are held to the same standard as

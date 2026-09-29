@@ -12535,7 +12535,9 @@ impl Tool for SetAgentCursorThemeTool {
     }
 }
 
-pub struct GetAgentCursorStateV2Tool;
+pub struct GetAgentCursorStateV2Tool {
+    state: Arc<ToolState>,
+}
 
 static CURSOR_STATE_V2_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
@@ -12566,11 +12568,19 @@ impl Tool for GetAgentCursorStateV2Tool {
         .into_iter()
         .flatten()
         .collect();
+        // The last point this session's cursor was placed at, `null` until
+        // it first moves (same registry source as macOS).
+        let position = self
+            .state
+            .cursor_registry
+            .get(&session)
+            .and_then(|cursor| cursor.x.zip(cursor.y))
+            .map(|(x, y)| json!({"x": x, "y": y}));
         ToolResult::text(format!("Agent cursor state for session '{session}'.")).with_structured(
             json!({
                 "session":session,
                 "enabled":enabled,
-                "position":null,
+                "position":position,
                 "theme":{
                     "id":theme_id,
                     "version":version,
@@ -14088,7 +14098,9 @@ pub fn build_registry_with_provider(
         state: state.clone(),
     }));
     r.register(Box::new(SetAgentCursorMotionV2Tool));
-    r.register(Box::new(GetAgentCursorStateV2Tool));
+    r.register(Box::new(GetAgentCursorStateV2Tool {
+        state: state.clone(),
+    }));
     r.register(Box::new(SetAgentCursorThemeTool {
         state: state.clone(),
     }));

@@ -115,20 +115,37 @@ async def _prepare(driver: Driver, url: str) -> BrowserBinding:
     )
 
 
+async def _expect_refusal(
+    driver: Driver,
+    tool: str,
+    arguments: dict[str, Any],
+    expected_code: str,
+) -> str:
+    try:
+        await driver.call(tool, arguments)
+    except DriverToolError as error:
+        if error.code != expected_code:
+            raise RuntimeError(
+                f"{tool} refused for the wrong reason: {error.code!r}; "
+                f"expected {expected_code!r}"
+            ) from error
+        return error.code
+    raise RuntimeError(
+        f"{tool} unexpectedly succeeded; expected refusal {expected_code!r}"
+    )
+
+
 async def _expect_foreign_refusal(
     foreign_driver: Driver,
     tool: str,
     arguments: dict[str, Any],
 ) -> str:
-    try:
-        await foreign_driver.call(tool, arguments)
-    except DriverToolError as error:
-        if error.code != "browser_binding_stale":
-            raise RuntimeError(
-                f"{tool} refused for the wrong reason: {error.code!r}"
-            ) from error
-        return error.code
-    raise RuntimeError(f"{tool} unexpectedly accepted a foreign session capability")
+    return await _expect_refusal(
+        foreign_driver,
+        tool,
+        arguments,
+        "browser_binding_stale",
+    )
 
 
 def _type_args(binding: BrowserBinding, ref: str, text: str) -> dict[str, Any]:
@@ -275,15 +292,33 @@ async def run(output: Path) -> dict[str, Any]:
                     if ended.get("active") is not False:
                         raise RuntimeError(f"session A did not end: {ended}")
 
-                    old_a_refusal = await _expect_foreign_refusal(
+                    ended_a_refusal = await _expect_refusal(
+                        driver_a,
+                        "browser_click",
+                        _click_args(a, a.submit_ref),
+                        "session_ended",
+                    )
+                    if fixture_state(url_a) != {"submitted": None}:
+                        raise RuntimeError("ended session A replayed its old completion")
+
+                    # Re-open the same public label as a new lifecycle episode.
+                    # The dispatch gate should now admit the session, but the
+                    # old browser target/tab/ref namespace must still be gone.
+                    restarted = await driver_a.call("start_session", {})
+                    a_ended = False
+                    if restarted.get("active") is not True:
+                        raise RuntimeError(f"session A did not restart: {restarted}")
+                    old_a_capability_refusal = await _expect_foreign_refusal(
                         driver_a,
                         "browser_click",
                         _click_args(a, a.submit_ref),
                     )
                     if fixture_state(url_a) != {"submitted": None}:
-                        raise RuntimeError("ended session A replayed its old completion")
+                        raise RuntimeError(
+                            "restarted session A inherited its old browser authority"
+                        )
 
-                    # Reuse B's existing target after A teardown, not a newly
+                    # Reuse B's existing target after A teardown/restart, not a newly
                     # prepared browser. This is the isolation property.
                     reset_fixture(url_b)
                     await driver_b.call(
@@ -302,7 +337,8 @@ async def run(output: Path) -> dict[str, Any]:
                         raise RuntimeError("ending A invalidated B's still-live browser authority")
 
                     summary["session_end"] = {
-                        "a_old_authority_refusal": old_a_refusal,
+                        "a_ended_session_refusal": ended_a_refusal,
+                        "a_old_authority_after_restart_refusal": old_a_capability_refusal,
                         "a_old_journal_unchanged": True,
                         "b_existing_target_survived_a_end": True,
                     }

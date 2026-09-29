@@ -273,7 +273,8 @@ jobs:
           assert isolation["cross_fresh_completion"]["cross_mutation_count"] == 0
           assert isolation["cross_fresh_completion"]["a_to_a_verified"] is True
           assert isolation["cross_fresh_completion"]["b_to_b_verified"] is True
-          assert isolation["session_end"]["a_old_authority_refusal"] == "browser_binding_stale"
+          assert isolation["session_end"]["a_ended_session_refusal"] == "session_ended"
+          assert isolation["session_end"]["a_old_authority_after_restart_refusal"] == "browser_binding_stale"
           assert isolation["session_end"]["b_existing_target_survived_a_end"] is True
           assert summary["live_requested"] is False
           assert summary["typescript_requested"] is True

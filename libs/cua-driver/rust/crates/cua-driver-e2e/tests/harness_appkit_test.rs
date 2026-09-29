@@ -1145,6 +1145,47 @@ fn harness_appkit_set_value_commits_the_edit() {
     );
 }
 
+/// `AXSelectedTextRange` is measured in UTF-16 units, so a value holding a
+/// non-BMP character is longer there than its character count. The retype
+/// route has to select all of it, or the typed value lands in front of the
+/// unselected tail and the app commits `zedB`.
+#[test]
+#[ignore]
+fn harness_appkit_set_value_replaces_a_non_bmp_value_whole() {
+    run_background_case(
+        "set_value_non_bmp",
+        DriverRoute::MacosCgEventPid,
+        |pid, wid, driver| {
+            for value in ["\u{1F600}AB", "zed"] {
+                let before = snapshot_elements(driver, pid, wid);
+                let set = driver.call(
+                    "set_value",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "element_token": element_token_by_id(&before, "txt-input"),
+                        "value": value
+                    }),
+                );
+                assert!(!set.is_error(), "set_value {value:?} failed: {}", set.text());
+                assert_eq!(
+                    set.structured()["committed"],
+                    serde_json::json!("committed"),
+                    "set_value {value:?} did not replace the whole value: {}",
+                    set.raw
+                );
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            let after = snapshot_elements(driver, pid, wid);
+            assert!(
+                after.tree_text().contains("\"committed=zed\""),
+                "the app did not commit exactly the replacement:\n{}",
+                after.tree_text()
+            );
+        },
+    );
+}
+
 #[test]
 #[ignore]
 fn harness_appkit_element_foreground_press_key_commits_edit() {

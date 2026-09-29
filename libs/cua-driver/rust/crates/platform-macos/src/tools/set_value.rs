@@ -769,7 +769,7 @@ fn retype_blocking(
         );
     }
 
-    let existing = before.as_deref().unwrap_or_default().chars().count();
+    let existing = before.as_deref().map_or(0, |value| value.encode_utf16().count());
     if existing > 0 && !select_all_text(element, existing) {
         anyhow::bail!(
             "[{element_index}] {role} refused both an AXSelectedTextRange selection and an \
@@ -841,8 +841,8 @@ fn retype_blocking(
 /// Select the control's whole value so the first keystroke replaces it.
 /// A control that refuses a selection write still accepts an `AXValue` clear;
 /// without one of the two, typing would append to the current value.
-fn select_all_text(element: AXUIElementRef, length: usize) -> bool {
-    if unsafe { set_range_attr(element, "AXSelectedTextRange", 0, length as isize) }
+fn select_all_text(element: AXUIElementRef, utf16_length: usize) -> bool {
+    if unsafe { set_range_attr(element, "AXSelectedTextRange", 0, utf16_length as isize) }
         == kAXErrorSuccess
     {
         return true;

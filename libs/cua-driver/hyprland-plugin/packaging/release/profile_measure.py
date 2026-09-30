@@ -71,9 +71,9 @@ def measure(profile_id, kit_version, package_release, source, archive, cxx):
 
 
 def reuse_decision(reviewed, candidate):
-    """Compare two profiles. Qualification is reusable only for identical profile bytes.
+    """Compare profile inputs; this does not compare package or evidence bytes.
 
-    "reuse": identical reviewed profile; the same kit and package bytes keep their evidence.
+    "profile-unchanged": identical profile data; independently verify package bytes and evidence.
     "relabel-rebuild": only schema, profile_id, kit_version or package_release differ; the
     package bytes change, so the affected evidence is repeated.
     "rebuild": source, architecture, compositor, headers, compiler or ABI runtime differ.
@@ -84,7 +84,7 @@ def reuse_decision(reviewed, candidate):
     if reasons:
         return "rebuild", reasons
     reasons = [f"{name} differs" for name in LABELS if reviewed[name] != candidate[name]]
-    return ("relabel-rebuild", reasons) if reasons else ("reuse", [])
+    return ("relabel-rebuild", reasons) if reasons else ("profile-unchanged", [])
 
 
 def load(path):
@@ -119,8 +119,8 @@ def main():
             print(f"Wrote candidate {args.output}; review it. It is not native certification.")
         else:
             verdict, reasons = reuse_decision(load(args.reviewed), load(args.candidate))
-            print(json.dumps({"verdict": verdict, "reasons": reasons}))
-            sys.exit(0 if verdict == "reuse" else 2)
+            print(json.dumps({"verdict": verdict, "reasons": reasons, "qualification_verified": False}))
+            sys.exit(0 if verdict == "profile-unchanged" else 2)
     except (ValueError, KeyError, TypeError, OSError, tarfile.TarError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"error: {error}\n")
 

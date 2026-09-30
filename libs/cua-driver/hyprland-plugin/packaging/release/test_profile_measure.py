@@ -74,7 +74,7 @@ class MeasureTest(fixtures.ProfileTest):
 
     def test_reuse_rules(self):
         reviewed = verify.validate_profile(copy.deepcopy(self.profile))
-        self.assertEqual(measure.reuse_decision(reviewed, copy.deepcopy(reviewed)), ("reuse", []))
+        self.assertEqual(measure.reuse_decision(reviewed, copy.deepcopy(reviewed)), ("profile-unchanged", []))
         relabeled = copy.deepcopy(reviewed)
         relabeled["package_release"] = 3
         self.assertEqual(measure.reuse_decision(reviewed, relabeled), ("relabel-rebuild", ["package_release differs"]))

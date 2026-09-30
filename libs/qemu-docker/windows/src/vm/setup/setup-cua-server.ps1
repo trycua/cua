@@ -141,7 +141,7 @@ function Start-Server {
     & uv add --directory `$ProjectDir cua-computer-server "cua-agent[all]" 2>&1 | Out-File -FilePath `$LogFile -Append
 
     Write-Output "Starting Cua Computer Server on port 5000..." | Out-File -FilePath `$LogFile -Append
-    & uv run --directory `$ProjectDir python -m computer_server --port 5000 2>&1 | Out-File -FilePath `$LogFile -Append
+    & uv run --directory `$ProjectDir python -m computer_server --host 0.0.0.0 --port 5000 2>&1 | Out-File -FilePath `$LogFile -Append
     return `$LASTEXITCODE
 }
 

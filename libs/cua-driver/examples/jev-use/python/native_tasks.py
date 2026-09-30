@@ -288,6 +288,7 @@ class NativeTask:
     # order, as before. Both present the kept candidates in element order.
     cap_order: Literal["relevance", "depth_first"] = "relevance"
     # The oracle is polled after every action, so no candidate is special.
+    intermediate_effect: Callable[[str, Mapping[str, Any] | None, Mapping[str, Any]], bool | None] | None = None
     completion_candidate_ids: frozenset[str] = field(default=frozenset(), init=False)
 
     def __post_init__(self) -> None:
@@ -793,6 +794,65 @@ def _canvas_check(state: Mapping[str, Any]) -> Check:
     return "pending"
 
 
+def has_declared_steps_remaining(
+    task: NativeTask,
+    history: list[Mapping[str, Any]] | None,
+) -> bool:
+    """Return True if declared steps remain to be performed according to history.
+
+    Only entries marked performed count (stale/refused/reobserve do not count).
+    If the task declares no steps or history is None, returns False.
+    """
+    if not task.steps or history is None:
+        return False
+    counts = performed_counts(history)
+    return any(counts.get(task_step.candidate_id, 0) < task_step.times for task_step in task.steps)
+
+
+def _counter_intermediate_effect(
+    candidate_id: str,
+    pre_oracle: Mapping[str, Any] | None,
+    current_oracle: Mapping[str, Any],
+) -> bool | None:
+    if candidate_id == "ax:button:increment":
+        if pre_oracle is None:
+            return False
+        pre_counter = pre_oracle.get("counter")
+        curr_counter = current_oracle.get("counter")
+        if type(pre_counter) is int and type(curr_counter) is int:
+            return curr_counter == pre_counter + 1
+        return False
+    return None
+
+
+def _choose_size_intermediate_effect(
+    candidate_id: str,
+    pre_oracle: Mapping[str, Any] | None,
+    current_oracle: Mapping[str, Any],
+) -> bool | None:
+    if candidate_id == "ax:radio:large":
+        return current_oracle.get("size") == TARGET_SIZE
+    return None
+
+
+def check_intermediate_effect(
+    task: NativeTask,
+    candidate_id: str | None,
+    pre_oracle: Mapping[str, Any] | None,
+    current_oracle: Mapping[str, Any],
+) -> bool | None:
+    """Return whether candidate_id produced its expected intermediate app effect.
+
+    Returns:
+        True: supported intermediate action whose expected effect is satisfied.
+        False: supported intermediate action whose expected effect has not yet appeared.
+        None: action/task has no supported intermediate oracle predicate (retains full polling).
+    """
+    if candidate_id is None or task.intermediate_effect is None:
+        return None
+    return task.intermediate_effect(candidate_id, pre_oracle, current_oracle)
+
+
 def harness_task_ids(harness: str) -> tuple[str, ...]:
     return tuple(f"{harness}-{kind}" for kind in TASK_KINDS)
 
@@ -880,6 +940,7 @@ def native_task(
             steps=(
                 TaskStep('Press the button labeled "Increment"', "ax:button:increment", COUNTER_TARGET),
             ),
+            intermediate_effect=_counter_intermediate_effect,
         )
     if kind == "save-note":
         return NativeTask(
@@ -916,6 +977,7 @@ def native_task(
             # The oracle accepts either order, so neither step waits for the other.
             TaskStep('Toggle the checkbox "I agree"', "ax:checkbox:i-agree", after_previous=False),
         ),
+        intermediate_effect=_choose_size_intermediate_effect,
     )
 
 

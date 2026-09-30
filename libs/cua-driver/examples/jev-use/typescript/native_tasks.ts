@@ -252,7 +252,14 @@ export type NativeTaskSpec = Readonly<{
   mockPreferences?: readonly string[];
   steps?: readonly TaskStep[];
   capOrder?: CapOrder;
+  intermediateEffect?: IntermediateEffectPredicate | null;
 }>;
+
+export type IntermediateEffectPredicate = (
+  candidateId: string,
+  preOracle: Record<string, unknown> | null | undefined,
+  currentOracle: Record<string, unknown>,
+) => boolean | null;
 
 export class NativeTask implements Task {
   readonly id: string;
@@ -282,6 +289,7 @@ export class NativeTask implements Task {
    * order, as before. Both present the kept candidates in element order.
    */
   readonly capOrder: CapOrder;
+  readonly intermediateEffect?: IntermediateEffectPredicate | null;
   /** The oracle is polled after every action, so no candidate is special. */
   readonly completionCandidateIds: ReadonlySet<string> = new Set();
 
@@ -302,6 +310,7 @@ export class NativeTask implements Task {
     this.mockPreferences = spec.mockPreferences ?? [];
     this.steps = spec.steps ?? [];
     this.capOrder = spec.capOrder ?? 'relevance';
+    this.intermediateEffect = spec.intermediateEffect ?? null;
     if (this.capOrder !== 'relevance' && this.capOrder !== 'depth_first') {
       throw new Error('capOrder must be relevance or depth_first');
     }
@@ -783,6 +792,7 @@ export function nativeTask(taskId: string, statePath: string, options: HarnessTa
       steps: [
         { description: 'Press the button labeled "Increment"', candidateId: 'ax:button:increment', times: COUNTER_TARGET },
       ],
+      intermediateEffect: counterIntermediateEffect,
     });
   }
   if (kind === 'save-note') {
@@ -823,7 +833,72 @@ export function nativeTask(taskId: string, statePath: string, options: HarnessTa
       // The oracle accepts either order, so neither step waits for the other.
       { description: 'Toggle the checkbox "I agree"', candidateId: 'ax:checkbox:i-agree', afterPrevious: false },
     ],
+    intermediateEffect: chooseSizeIntermediateEffect,
   });
+}
+
+export const TARGET_SIZE = 'large';
+
+export function hasDeclaredStepsRemaining(
+  task: NativeTask,
+  history?: readonly HistoryEntry[] | null,
+): boolean {
+  if (!task.steps || task.steps.length === 0 || !history) return false;
+  const counts = performedCounts(history);
+  return task.steps.some((step) => (counts[step.candidateId] ?? 0) < (step.times ?? 1));
+}
+
+function counterIntermediateEffect(
+  candidateId: string,
+  preOracle: Record<string, unknown> | null | undefined,
+  currentOracle: Record<string, unknown>,
+): boolean | null {
+  if (candidateId === 'ax:button:increment') {
+    if (!preOracle) return false;
+    const preCounter = preOracle.counter;
+    const currCounter = currentOracle.counter;
+    if (
+      typeof preCounter === 'number' &&
+      typeof currCounter === 'number' &&
+      Number.isInteger(preCounter) &&
+      Number.isInteger(currCounter) &&
+      Number.isFinite(preCounter) &&
+      Number.isFinite(currCounter)
+    ) {
+      return currCounter === preCounter + 1;
+    }
+    return false;
+  }
+  return null;
+}
+
+function chooseSizeIntermediateEffect(
+  candidateId: string,
+  preOracle: Record<string, unknown> | null | undefined,
+  currentOracle: Record<string, unknown>,
+): boolean | null {
+  if (candidateId === 'ax:radio:large') {
+    return currentOracle.size === TARGET_SIZE;
+  }
+  return null;
+}
+
+/**
+ * Return whether candidateId produced its expected intermediate app effect.
+ *
+ * Returns:
+ *   true: supported intermediate action whose expected effect is satisfied.
+ *   false: supported intermediate action whose expected effect has not yet appeared.
+ *   null: action has no supported intermediate oracle predicate (retains full polling).
+ */
+export function checkIntermediateEffect(
+  task: NativeTask,
+  candidateId: string | null | undefined,
+  preOracle: Record<string, unknown> | null | undefined,
+  currentOracle: Record<string, unknown>,
+): boolean | null {
+  if (!candidateId || !task.intermediateEffect) return null;
+  return task.intermediateEffect(candidateId, preOracle, currentOracle);
 }
 
 /** Build one AppKit harness task (kept for Phase 1 callers). */

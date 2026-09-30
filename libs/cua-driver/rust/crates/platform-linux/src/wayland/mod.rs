@@ -16,6 +16,7 @@ pub mod hyprland;
 pub mod hyprland_capture;
 mod hyprland_compatibility;
 pub mod hyprland_input;
+pub mod kwin_capture;
 pub mod kwin_helper;
 pub mod niri;
 pub use niri::keyboard::call_budget as niri_keyboard_budget;
@@ -1267,6 +1268,9 @@ pub fn screenshot_dispatch_with_pid(xid: u64, pid: u32) -> anyhow::Result<Vec<u8
 }
 
 fn screenshot_dispatch_for_pid(xid: u64, pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
+    if is_wayland() && kwin_capture::knows_window(xid) {
+        return kwin_capture::capture(xid, pid);
+    }
     if is_wayland() && hyprland::is_session() {
         return hyprland::capture(xid, pid).map_err(|error| {
             tracing::debug!("Hyprland target capture refused: {error:#}");
@@ -4092,6 +4096,10 @@ pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
         // Do not probe unrelated compositor protocols for every preview frame.
         if let Some(ws) = shell_helper::list_windows(filter_pid) {
             return listed_windows(ws);
+        }
+        match kwin_capture::list_windows() {
+            Ok(ws) => return listed_windows(apply_pid_filter(ws, filter_pid)),
+            Err(error) => tracing::debug!("KWin window enumeration unavailable: {error:#}"),
         }
         if let Some(ws) = kwin_helper::list_window_infos() {
             return listed_windows(apply_pid_filter(ws, filter_pid));

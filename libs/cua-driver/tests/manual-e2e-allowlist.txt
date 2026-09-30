@@ -16,6 +16,7 @@ hyprland_foreground_test::foreground_action_refused_while_independent_virtual_po
 hyprland_foreground_test::foreground_drag_focus_loss_does_not_release_into_successor | Manual native-Hyprland gate: needs a live Hyprland compositor with the Cua plugin; RFC 3550 drag focus-loss safety
 hyprland_foreground_test::foreground_drag_focus_loss_does_not_release_into_same_client_sibling | Manual native-Hyprland gate: needs a live Hyprland compositor with the Cua plugin; RFC 3550 drag focus-loss safety
 hyprland_native_observation_test::native_window_capture_and_background_ax_keep_exact_identity | Manual native-Hyprland gate: needs a live Hyprland compositor; exact-identity capture and owner-mismatch refusals
+kwin_native_capture_test::same_pid_same_title_windows_capture_exact_surfaces_without_a_helper | Manual native-KWin capture gate: needs a KWin Wayland session and Python GTK3; opens two fullscreen color fixtures to prove same-PID/title and occluded-window identity
 
 # Optional external-app suite: the canonical Windows image has no LibreOffice.
 harness_libreoffice_test::harness_lo_vcl_font_color_expand_opens_picker | Optional Windows suite that needs LibreOffice Writer installed; under review in the lane-3 prune (#4094)

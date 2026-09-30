@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import re
-import time
 from ctypes import POINTER, byref, c_void_p
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
@@ -1188,7 +1187,7 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             dy = (y - start_y) / steps
             for i in range(steps):
                 self.mouse.position = (int(start_x + dx * (i + 1)), int(start_y + dy * (i + 1)))
-                time.sleep(duration / steps)
+                await asyncio.sleep(duration / steps)
             # Release
             self.mouse.release(btn)
             return {"success": True}
@@ -1226,7 +1225,7 @@ class MacOSAutomationHandler(BaseAutomationHandler):
             step_duration = duration / (len(path) - 1) if len(path) > 1 else duration
             for x, y in path[1:]:
                 self.mouse.position = (x, y)
-                time.sleep(step_duration)
+                await asyncio.sleep(step_duration)
             self.mouse.release(btn)
             return {"success": True}
         except Exception as e:

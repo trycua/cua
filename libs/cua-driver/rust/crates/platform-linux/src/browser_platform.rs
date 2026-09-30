@@ -304,6 +304,7 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
         BrowserProduct::GoogleChrome => ".config/google-chrome",
         BrowserProduct::MicrosoftEdge => ".config/microsoft-edge",
         BrowserProduct::Chromium => ".config/chromium",
+        BrowserProduct::Brave => ".config/BraveSoftware/Brave-Browser",
         _ => return None,
     };
     Some(home.join(relative))

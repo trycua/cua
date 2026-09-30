@@ -22,6 +22,15 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
     BrowserRefusal::new(code, message)
 }
 
+/// Products whose remote-debugging checkbox can ignore AXPress, so a single
+/// foreground-assisted click on the exact control is allowed as a fallback.
+fn uses_trusted_checkbox_fallback(product: BrowserProduct) -> bool {
+    matches!(
+        product,
+        BrowserProduct::MicrosoftEdge | BrowserProduct::Brave
+    )
+}
+
 fn field_equals(node: &AXNode, expected: &str) -> bool {
     [
         node.title.as_deref(),
@@ -1015,7 +1024,7 @@ impl SetupUiHandle {
                                 } else {
                                     Some(false)
                                 }
-                            } else if self.descriptor.product == BrowserProduct::MicrosoftEdge
+                            } else if uses_trusted_checkbox_fallback(self.descriptor.product)
                                 && !trusted_fallback_attempted
                             {
                                 let center =
@@ -1612,7 +1621,7 @@ fn set_remote_debugging(
                             continue;
                         }
 
-                        if descriptor.product == BrowserProduct::MicrosoftEdge
+                        if uses_trusted_checkbox_fallback(descriptor.product)
                             && !handle.trusted_checkbox_fallback_attempted
                         {
                             let center =
@@ -1805,6 +1814,22 @@ mod tests {
 
     fn chrome() -> &'static BrowserSetupDescriptor {
         existing_profile_setup_descriptor(BrowserProduct::GoogleChrome).unwrap()
+    }
+
+    #[test]
+    fn trusted_checkbox_fallback_is_limited_to_edge_and_brave() {
+        assert!(uses_trusted_checkbox_fallback(
+            BrowserProduct::MicrosoftEdge
+        ));
+        assert!(uses_trusted_checkbox_fallback(BrowserProduct::Brave));
+        for product in [
+            BrowserProduct::GoogleChrome,
+            BrowserProduct::Chromium,
+            BrowserProduct::Vivaldi,
+            BrowserProduct::Other,
+        ] {
+            assert!(!uses_trusted_checkbox_fallback(product));
+        }
     }
 
     fn node(role: &str, title: Option<&str>, value: Option<&str>, actions: &[&str]) -> AXNode {

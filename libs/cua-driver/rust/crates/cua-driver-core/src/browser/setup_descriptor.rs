@@ -33,8 +33,13 @@ const EDGE_TITLES: &[&str] = &[
     "Inspect with Microsoft Edge DevTools",
     "Inspect with Edge DevTools",
 ];
+const BRAVE_TITLES: &[&str] = &[
+    "Inspect with Chrome Developer Tools",
+    "Inspect with Brave Developer Tools",
+];
 const CHROME_TAB_CLOSE_LABELS: &[&str] = &["Close"];
 const EDGE_TAB_CLOSE_LABELS: &[&str] = &["Close tab"];
+const BRAVE_TAB_CLOSE_LABELS: &[&str] = &["Close", "Close tab"];
 
 const CHROME: BrowserSetupDescriptor = BrowserSetupDescriptor {
     product: BrowserProduct::GoogleChrome,
@@ -66,6 +71,16 @@ const EDGE: BrowserSetupDescriptor = BrowserSetupDescriptor {
     tab_close_labels: EDGE_TAB_CLOSE_LABELS,
 };
 
+const BRAVE: BrowserSetupDescriptor = BrowserSetupDescriptor {
+    product: BrowserProduct::Brave,
+    product_name: "Brave",
+    setup_url: "brave://inspect/#remote-debugging",
+    page_titles: BRAVE_TITLES,
+    page_heading: "Remote debugging",
+    checkbox_label: "Allow remote debugging for this browser instance",
+    tab_close_labels: BRAVE_TAB_CLOSE_LABELS,
+};
+
 pub fn existing_profile_setup_descriptor(
     product: BrowserProduct,
 ) -> Option<&'static BrowserSetupDescriptor> {
@@ -73,6 +88,7 @@ pub fn existing_profile_setup_descriptor(
         BrowserProduct::GoogleChrome => Some(&CHROME),
         BrowserProduct::Chromium => Some(&CHROMIUM),
         BrowserProduct::MicrosoftEdge => Some(&EDGE),
+        BrowserProduct::Brave => Some(&BRAVE),
         _ => None,
     }
 }
@@ -101,8 +117,19 @@ mod tests {
                 .product,
             BrowserProduct::Chromium
         );
+        let brave = existing_profile_setup_descriptor(BrowserProduct::Brave).unwrap();
+        assert_eq!(brave.product, BrowserProduct::Brave);
+        assert_eq!(brave.setup_url, "brave://inspect/#remote-debugging");
+        assert!(brave
+            .page_titles
+            .contains(&"Inspect with Chrome Developer Tools"));
+        assert_eq!(brave.page_heading, "Remote debugging");
+        assert_eq!(
+            brave.checkbox_label,
+            "Allow remote debugging for this browser instance"
+        );
+        assert!(brave.tab_close_labels.contains(&"Close"));
         for product in [
-            BrowserProduct::Brave,
             BrowserProduct::Firefox,
             BrowserProduct::Safari,
             BrowserProduct::Electron,

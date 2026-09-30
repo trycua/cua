@@ -2436,6 +2436,22 @@ fn desktop_to_window_local(xid: u64, x: f64, y: f64) -> anyhow::Result<(f64, f64
     Ok((x - ox, y - oy))
 }
 
+async fn desktop_input_frame() -> Result<crate::wayland::DesktopInputFrame, ToolResult> {
+    match tokio::task::spawn_blocking(|| {
+        if crate::wayland::wayland_input_enabled() {
+            crate::wayland::DesktopInputFrame::current()
+        } else {
+            Ok(crate::wayland::DesktopInputFrame::default())
+        }
+    })
+    .await
+    {
+        Ok(Ok(frame)) => Ok(frame),
+        Ok(Err(error)) => Err(ToolResult::error(error.to_string())),
+        Err(error) => Err(ToolResult::error(format!("Task error: {error}"))),
+    }
+}
+
 /// Upper bound for one foreground input transaction: focus confirmation plus
 /// the injection itself. Typing sleeps per character, so scale with `chars`.
 fn foreground_budget(chars: usize) -> std::time::Duration {
@@ -5313,7 +5329,7 @@ async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
         return;
     }
     let pos = crate::overlay::current_position_for(cursor_id);
-    if pos.0 < 0.0 && pos.1 < 0.0 {
+    if !pos.0.is_finite() || !pos.1.is_finite() {
         crate::overlay::send_command_for(
             cursor_id.to_owned(),
             cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
@@ -6173,12 +6189,23 @@ impl Tool for ClickTool {
             };
             let sx = action_x.round() as i32;
             let sy = action_y.round() as i32;
+            let frame = match desktop_input_frame().await {
+                Ok(frame) => frame,
+                Err(refusal) => return refusal,
+            };
+            let (overlay_x, overlay_y) = frame.to_layout(sx, sy);
             // Glide the agent-cursor overlay to the click point first (the macOS
             // / Windows desktop paths already do this). Without it the overlay
             // sits idle elsewhere while only the real pointer warps, so a viewer
             // sees the cursor "click somewhere else."
-            reveal_pointer_action_for(&self.state, &cursor_id, f64::from(sx), f64::from(sy), true)
-                .await;
+            reveal_pointer_action_for(
+                &self.state,
+                &cursor_id,
+                f64::from(overlay_x),
+                f64::from(overlay_y),
+                true,
+            )
+            .await;
             let r = tokio::task::spawn_blocking(move || {
                 if crate::wayland::wayland_input_enabled() {
                     if !modifiers.is_empty() {
@@ -6187,7 +6214,7 @@ impl Tool for ClickTool {
                              the virtual-pointer route cannot carry keyboard modifier state"
                         );
                     }
-                    crate::wayland::click_desktop(sx, sy, n as u32, button)
+                    crate::wayland::click_desktop_in_frame(&frame, sx, sy, n as u32, button)
                 } else {
                     let modifier_refs: Vec<&str> = modifiers.iter().map(String::as_str).collect();
                     crate::input::send_click_xtest_desktop_with_modifiers(
@@ -9261,19 +9288,24 @@ impl Tool for ScrollTool {
             let display = direction.clone();
             let wayland = crate::wayland::wayland_input_enabled();
             let path = if wayland { "wayland_desktop" } else { "xtest" };
+            let frame = match desktop_input_frame().await {
+                Ok(frame) => frame,
+                Err(refusal) => return refusal,
+            };
+            let (overlay_x, overlay_y) = frame.to_layout(x, y);
             if named_session_cursor_key(&args).is_some() {
                 reveal_pointer_action_for(
                     &self.state,
                     &cursor_id,
-                    f64::from(x),
-                    f64::from(y),
+                    f64::from(overlay_x),
+                    f64::from(overlay_y),
                     false,
                 )
                 .await;
             }
             let result = tokio::task::spawn_blocking(move || {
                 if wayland {
-                    crate::wayland::scroll_desktop(x, y, &direction, amount as u32)
+                    crate::wayland::scroll_desktop_in_frame(&frame, x, y, &direction, amount as u32)
                 } else {
                     crate::input::send_scroll_xtest_desktop(x, y, &direction, amount)
                 }
@@ -10412,10 +10444,19 @@ impl Tool for DragTool {
             let duration_ms = input.duration_ms.unwrap_or(500).min(10_000);
             let steps = input.steps.unwrap_or(20).clamp(1, 200) as usize;
             let wayland = crate::wayland::wayland_input_enabled();
+            let frame = match desktop_input_frame().await {
+                Ok(frame) => frame,
+                Err(refusal) => return refusal,
+            };
+            let overlay_from = frame.to_layout(from_x.round() as i32, from_y.round() as i32);
+            let overlay_to = frame.to_layout(to_x.round() as i32, to_y.round() as i32);
+            let overlay_from = (f64::from(overlay_from.0), f64::from(overlay_from.1));
+            let overlay_to = (f64::from(overlay_to.0), f64::from(overlay_to.1));
             let path = if wayland { "wayland_desktop" } else { "xtest" };
             let result = tokio::task::spawn_blocking(move || {
                 if wayland {
-                    crate::wayland::drag_desktop(
+                    crate::wayland::drag_desktop_in_frame(
+                        &frame,
                         from_x.round() as i32,
                         from_y.round() as i32,
                         to_x.round() as i32,
@@ -10438,8 +10479,8 @@ impl Tool for DragTool {
             });
             let visual_drag = track_overlay_drag_for(
                 cursor_id.clone(),
-                (from_x, from_y),
-                (to_x, to_y),
+                overlay_from,
+                overlay_to,
                 duration_ms,
                 steps,
             );
@@ -10447,7 +10488,7 @@ impl Tool for DragTool {
             if matches!(&result, Ok(Ok(()))) {
                 self.state
                     .cursor_registry
-                    .update_position(&cursor_id, to_x, to_y);
+                    .update_position(&cursor_id, overlay_to.0, overlay_to.1);
             }
             return match result {
                 Ok(Ok(())) => ToolResult::text("Dragged on the desktop.").with_structured(
@@ -11935,26 +11976,24 @@ impl Tool for GetScreenSizeTool {
                 // Shared manifest admission needs content-free display
                 // metadata even when this native desktop has no X11 DISPLAY.
                 // The adapter attests the IPC/Wayland compositor peer and
-                // refuses layouts outside its qualified single-output frame.
-                // Scaled outputs report logical pixels plus the output scale.
-                return crate::wayland::hyprland::screen_size();
+                // refuses layouts outside its qualified desktop frame. Size
+                // and monitor details are derived from the same IPC reply.
+                return crate::wayland::hyprland::screen_report()
+                    .map(|(w, h, scale, monitors)| (w, h, scale, Some(monitors)));
             }
             // X11 reports pixel dimensions; scale factor on X11 is not
             // well-defined per-monitor, so report 1.0 (matches DPI-unaware
             // assumption). Other Wayland compositors retain their existing
             // limitation; do not infer native metadata support there.
             let (w, h) = x11_screen_size()?;
-            Ok::<(u32, u32, f64), anyhow::Error>((w, h, 1.0))
+            Ok::<_, anyhow::Error>((w, h, 1.0, None))
         })
         .await;
         match result {
-            Ok(Ok((w, h, scale)))
-                if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() =>
-            {
+            Ok(Ok((w, h, scale, Some(monitors)))) => {
                 // Tell the agent which monitors are actually on: the desktop
                 // frame covers powered monitors only and changes as they turn
                 // on or off, so re-read it after any display change.
-                let monitors = crate::wayland::hyprland::monitor_report().unwrap_or(json!([]));
                 let describe = |m: &Value| {
                     let name = m["name"].as_str().unwrap_or("?");
                     match (
@@ -11984,7 +12023,7 @@ impl Tool for GetScreenSizeTool {
                 }))
             }
             // Matches Swift text format 1:1.
-            Ok(Ok((w, h, scale))) => {
+            Ok(Ok((w, h, scale, None))) => {
                 ToolResult::text(format!("✅ Main display: {w}x{h} points @ {scale}x"))
                     .with_structured(json!({ "width": w, "height": h, "scale_factor": scale }))
             }
@@ -12098,6 +12137,12 @@ impl Tool for GetDesktopStateTool {
         let capture_service = self.state.capture_service.clone();
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            let desktop_frame =
+                if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
+                    Some(crate::wayland::hyprland::desktop_frame()?)
+                } else {
+                    None
+                };
             // Capture the full display at native size first. When the
             // compositor consumes logical input coordinates, normalize the
             // image below so screenshot pixels still land exactly.
@@ -12125,7 +12170,9 @@ impl Tool for GetDesktopStateTool {
             // abort the tool even though the screenshot already succeeded.
             // Only fall back to the X11 root-window geometry off Wayland, so
             // the X11 / XWayland path is unchanged. See #2017 / Sway testing.
-            let (screen_w, screen_h) = if crate::wayland::is_wayland() {
+            let (screen_w, screen_h) = if let Some(frame) = &desktop_frame {
+                (frame.width, frame.height)
+            } else if crate::wayland::is_wayland() {
                 crate::capture_action_frame::desktop_action_dimensions((native_w, native_h))?
             } else {
                 x11_screen_size()?
@@ -12161,6 +12208,13 @@ impl Tool for GetDesktopStateTool {
             let mut windows = crate::wayland::list_windows_dispatch(None);
             windows
                 .retain(|w| w.is_on_screen && w.pid.map_or(false, crate::proc_fs::is_process_live));
+            if let Some(frame) = &desktop_frame {
+                anyhow::ensure!(
+                    *frame == crate::wayland::hyprland::desktop_frame()?,
+                    "Hyprland desktop layout changed during capture; capture the desktop again"
+                );
+                rebase_desktop_windows(&mut windows, frame);
+            }
             let capture_id = crate::capture_action_frame::publish_desktop(
                 &capture_service,
                 &capture_args,
@@ -12260,6 +12314,15 @@ impl Tool for GetDesktopStateTool {
     }
 }
 
+fn rebase_desktop_windows(
+    windows: &mut [crate::x11::WindowInfo],
+    frame: &crate::wayland::hyprland::DesktopFrame,
+) {
+    for window in windows {
+        (window.x, window.y) = frame.from_layout(window.x, window.y);
+    }
+}
+
 /// Text block naming every visible window with the `pid` / `window_id` pair
 /// that every other tool takes, so the model's first action targets a real
 /// process instead of guessing.
@@ -12333,10 +12396,16 @@ impl Tool for GetCursorPositionTool {
                 Ok(crate::wayland::hyprland::desktop_frame()?.from_layout(x, y))
             })
             .await;
-            if let Ok(Ok((x, y))) = position {
-                return ToolResult::text(format!("✅ Cursor at ({x}, {y}) in the desktop frame"))
-                    .with_structured(json!({ "x": x, "y": y, "source": "compositor" }));
-            }
+            return match position {
+                Ok(Ok((x, y))) => {
+                    ToolResult::text(format!("✅ Cursor at ({x}, {y}) in the desktop frame"))
+                        .with_structured(json!({ "x": x, "y": y, "source": "compositor" }))
+                }
+                Ok(Err(error)) => {
+                    ToolResult::error(format!("Hyprland cursor position unavailable: {error}"))
+                }
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
+            };
         }
         // Native Wayland: there's no protocol for clients to query the real
         // global cursor position. Fall back to the synthetic registry that

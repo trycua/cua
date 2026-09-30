@@ -432,10 +432,15 @@ fn screen_size_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<(u32, u32,
 /// that need to know which displays are actually on. Sizes and positions are
 /// desktop-frame (logical) pixels; positions are `None` for monitors outside
 /// the frame (standby). Mirrors are omitted: they repeat another output.
-pub fn monitor_report() -> Result<serde_json::Value> {
-    let monitors: Vec<DisplayMonitor> = query("j/monitors")?;
+pub fn screen_report() -> Result<(u32, u32, f64, serde_json::Value)> {
+    screen_report_from_monitors(query("j/monitors")?)
+}
+
+fn screen_report_from_monitors(
+    monitors: Vec<DisplayMonitor>,
+) -> Result<(u32, u32, f64, serde_json::Value)> {
     let frame = desktop_frame_from_monitors(monitors.clone())?;
-    Ok(serde_json::Value::Array(
+    let report = serde_json::Value::Array(
         monitors
             .iter()
             .filter(|m| m.in_layout())
@@ -453,12 +458,49 @@ pub fn monitor_report() -> Result<serde_json::Value> {
                 })
             })
             .collect(),
-    ))
+    );
+    Ok((frame.width, frame.height, frame.scale, report))
 }
 
 /// Current desktop frame spanning every powered output.
 pub fn desktop_frame() -> Result<DesktopFrame> {
     desktop_frame_from_monitors(query("j/monitors")?)
+}
+
+/// One qualified coordinate snapshot for a desktop input operation. The
+/// visible frame and virtual-pointer extent deliberately have different DPMS
+/// policies, but must be derived from the same monitor reply.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DesktopInputFrame {
+    pub frame: DesktopFrame,
+    pub pointer_space: (i32, i32, u32, u32),
+}
+
+pub fn desktop_input_frame() -> Result<DesktopInputFrame> {
+    desktop_input_frame_from_monitors(query("j/monitors")?)
+}
+
+fn desktop_input_frame_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<DesktopInputFrame> {
+    let frame = desktop_frame_from_monitors(monitors.clone())?;
+    let pointer_space = pointer_layout_from_monitors(monitors)?;
+    Ok(DesktopInputFrame {
+        frame,
+        pointer_space,
+    })
+}
+
+impl DesktopInputFrame {
+    pub fn ensure_current(&self) -> Result<()> {
+        self.ensure_matches(&desktop_input_frame()?)
+    }
+
+    fn ensure_matches(&self, current: &Self) -> Result<()> {
+        anyhow::ensure!(
+            self == current,
+            "Hyprland desktop layout changed before input; capture the desktop again"
+        );
+        Ok(())
+    }
 }
 
 fn desktop_frame_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<DesktopFrame> {
@@ -541,7 +583,16 @@ fn pointer_layout_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<(i32, i
     let mut outputs = Vec::new();
     for monitor in monitors.iter().filter(|m| m.in_layout()) {
         if monitor.transform != 0 {
-            bail!("Hyprland pointer layout requires unrotated outputs");
+            bail!(
+                "Hyprland pointer layout requires unrotated outputs: {} has transform {}{}",
+                monitor.name,
+                monitor.transform,
+                if monitor.dpms_status {
+                    ""
+                } else {
+                    ", in standby"
+                }
+            );
         }
         outputs.push(frame_output(monitor)?);
     }
@@ -567,14 +618,21 @@ pub fn cursor_position() -> Result<(i32, i32)> {
 /// offset. Areas no powered output covers stay black. The image is exactly
 /// the desktop frame.
 pub fn composite_desktop_capture() -> Option<Result<Vec<u8>>> {
-    let monitors: Vec<DisplayMonitor> = match query("j/monitors") {
+    composite_desktop_capture_from_monitors(query("j/monitors"))
+}
+
+fn composite_desktop_capture_from_monitors(
+    monitors: Result<Vec<DisplayMonitor>>,
+) -> Option<Result<Vec<u8>>> {
+    let monitors = match monitors {
         Ok(monitors) => monitors,
         Err(error) => {
-            tracing::debug!("Hyprland desktop capture keeps the generic path: {error:#}");
-            return None;
+            // An unknown layout cannot prove that the generic first-output
+            // capture represents the desktop. Fail closed instead of stretching it.
+            return Some(Err(error));
         }
     };
-    if monitors.len() <= 1 {
+    if monitors.len() == 1 {
         return None;
     }
     Some(desktop_frame_from_monitors(monitors).and_then(|frame| {
@@ -1228,6 +1286,77 @@ mod tests {
         let mut monitor = display_monitor();
         (monitor.name, monitor.x, monitor.y) = (name.to_string(), x, y);
         monitor
+    }
+
+    #[test]
+    fn desktop_input_rejects_rotated_standby_before_dispatch() {
+        let mut standby = monitor_at("DP-2", 0, 0);
+        standby.dpms_status = false;
+        standby.transform = 1;
+        let monitors = vec![monitor_at("DP-1", -1920, 0), standby];
+        // Observation is still valid, but the absolute input layout is not.
+        assert!(desktop_frame_from_monitors(monitors.clone()).is_ok());
+        let error = desktop_input_frame_from_monitors(monitors).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Hyprland pointer layout requires unrotated outputs: DP-2 has transform 1, in standby"
+        );
+    }
+
+    #[test]
+    fn input_snapshot_rejects_same_size_powered_output_swap() {
+        let mut left = monitor_at("left", -1920, 0);
+        let mut right = monitor_at("right", 0, 0);
+        right.dpms_status = false;
+        let before = desktop_input_frame_from_monitors(vec![left.clone(), right.clone()]).unwrap();
+        left.dpms_status = false;
+        right.dpms_status = true;
+        let after = desktop_input_frame_from_monitors(vec![left, right]).unwrap();
+        assert_eq!(
+            (before.frame.width, before.frame.height),
+            (after.frame.width, after.frame.height)
+        );
+        assert_eq!(before.pointer_space, after.pointer_space);
+        assert_eq!(before.frame.to_layout(100, 100), (-1820, 100));
+        assert_eq!(after.frame.to_layout(100, 100), (100, 100));
+        assert_eq!(
+            before.ensure_matches(&after).unwrap_err().to_string(),
+            "Hyprland desktop layout changed before input; capture the desktop again"
+        );
+        before.ensure_matches(&before).unwrap();
+    }
+
+    #[test]
+    fn screen_report_keeps_dimensions_and_monitor_positions_on_one_frame() {
+        let mut standby = monitor_at("standby", -1920, 0);
+        standby.dpms_status = false;
+        let (w, h, scale, report) =
+            screen_report_from_monitors(vec![standby, monitor_at("active", 0, -1080)]).unwrap();
+        assert_eq!((w, h, scale), (1920, 1080, 1.0));
+        assert_eq!(report[0]["powered"], false);
+        assert!(report[0]["frame_x"].is_null());
+        assert_eq!(report[1]["frame_x"], 0);
+        assert_eq!(report[1]["frame_y"], 0);
+        assert_eq!(report[1]["width"], w);
+        assert_eq!(report[1]["height"], h);
+    }
+
+    #[test]
+    fn unknown_or_empty_capture_layout_cannot_use_first_output_fallback() {
+        let failure = composite_desktop_capture_from_monitors(Err(anyhow::anyhow!(
+            "monitor IPC unavailable"
+        )))
+        .expect("unknown layout must not request generic capture")
+        .unwrap_err();
+        assert_eq!(failure.to_string(), "monitor IPC unavailable");
+        let empty = composite_desktop_capture_from_monitors(Ok(vec![]))
+            .expect("empty layout must not request generic capture")
+            .unwrap_err();
+        assert_eq!(
+            empty.to_string(),
+            "Hyprland has no powered output: every monitor is disabled or in DPMS standby"
+        );
+        assert!(composite_desktop_capture_from_monitors(Ok(vec![display_monitor()])).is_none());
     }
 
     #[test]

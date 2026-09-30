@@ -43,6 +43,10 @@ use std::sync::Arc;
 pub const SESSION_BADGE_HOLD_SECS: f64 = 2.0;
 pub const SESSION_BADGE_FADE_SECS: f64 = 0.4;
 
+/// Not a desktop coordinate: every finite point, including (-200, -200),
+/// can belong to a monitor. Never use coordinate thresholds for placement.
+pub const UNPLACED_POS: (f64, f64) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+
 /// Platform-agnostic render state shared by macOS / Windows / Linux overlays.
 ///
 /// Each platform wraps this in its own struct that adds OS-specific fields
@@ -105,9 +109,7 @@ pub struct RenderStateCore {
 
 impl RenderStateCore {
     /// Build the core from a launch-time CursorConfig.
-    /// `pos` starts at the off-screen sentinel `(-200, -200)` to indicate
-    /// "never placed on screen yet" — the click path uses this to detect
-    /// first-placement and snap rather than animate.
+    /// `pos` starts at [`UNPLACED_POS`] until the first target is known.
     pub fn new(cfg: CursorConfig) -> Self {
         let motion = cfg.motion.clone();
         let visual = CursorVisualState {
@@ -131,7 +133,7 @@ impl RenderStateCore {
             visual,
             theme,
             theme_fallback,
-            pos: (-200.0, -200.0),
+            pos: UNPLACED_POS,
             heading: std::f64::consts::FRAC_PI_4,
             path: None,
             dist: 0.0,
@@ -152,10 +154,16 @@ impl RenderStateCore {
         }
     }
 
+    /// Whether a real desktop point has been assigned. Negative coordinates
+    /// are valid on monitors left of or above the layout origin.
+    pub fn is_placed(&self) -> bool {
+        self.pos.0.is_finite() && self.pos.1.is_finite()
+    }
+
     /// Whether the cursor currently paints pixels: user-visible, placed on
-    /// screen (not the `(-200, -200)` sentinel), and not fully idle-faded.
+    /// screen, and not fully idle-faded.
     pub fn is_revealed(&self) -> bool {
-        self.visible && self.pos.0 >= -100.0 && self.idle_alpha >= 0.004
+        self.visible && self.is_placed() && self.idle_alpha >= 0.004
     }
 
     /// Whether a revealed cursor keeps changing pixels while it rests.
@@ -197,7 +205,7 @@ impl RenderStateCore {
     pub fn idle_fade_in_progress(&self) -> bool {
         self.motion.idle_hide_ms > 0.0
             && self.visible
-            && self.pos.0 >= -100.0
+            && self.is_placed()
             && self.idle_secs >= self.motion.idle_hide_ms / 1000.0
             && self.idle_alpha >= 0.004
     }
@@ -225,7 +233,7 @@ impl RenderStateCore {
     /// the fade has already started.
     pub fn idle_fade_wait(&self) -> Option<std::time::Duration> {
         if !self.visible
-            || self.pos.0 < -100.0
+            || !self.is_placed()
             || self.motion.idle_hide_ms <= 0.0
             || self.path.is_some()
             || self.spring.is_some()
@@ -621,10 +629,9 @@ impl RenderStateCore {
     /// for variants the platform must handle itself (e.g. macOS's
     /// `ShowFocusRect`).
     ///
-    /// `move_to_snap_sentinel` controls macOS-only behaviour: when `true`,
-    /// `MoveTo` snaps `self.pos` to the offset target if the cursor is
-    /// still at the off-screen sentinel (`pos.0 < -50.0`).  Windows/Linux
-    /// pass `false` here.
+    /// The legacy `move_to_snap_sentinel` argument is retained for callers.
+    /// An unplaced cursor always snaps to a real target before planning;
+    /// platform render maps may seed a real nearby position to animate in.
     ///
     /// `click_pulse_sentinel_only` likewise controls macOS-only behaviour:
     /// when `true`, `ClickPulse` only updates `self.pos` if the cursor is
@@ -634,7 +641,7 @@ impl RenderStateCore {
     pub fn apply_command_base(
         &mut self,
         cmd: OverlayCommand,
-        move_to_snap_sentinel: bool,
+        _move_to_snap_sentinel: bool,
         click_pulse_sentinel_only: bool,
     ) -> bool {
         match cmd {
@@ -650,9 +657,8 @@ impl RenderStateCore {
                 let turn_radius = self.motion.turn_radius;
                 let (tx, ty) = crate::anchor_for_pointer(x, y, end_heading_radians);
 
-                // macOS-only: if the cursor is still at the initial off-screen
-                // sentinel, snap it to the offset target so the path starts on-screen.
-                if move_to_snap_sentinel && self.pos.0 < -50.0 {
+                // Never feed the non-coordinate sentinel to the path planner.
+                if !self.is_placed() {
                     self.pos = (tx, ty);
                 }
                 let (x0, y0) = self.pos;
@@ -714,7 +720,7 @@ impl RenderStateCore {
                 // that the cursor stays where the animation landed. Windows
                 // and Linux always snap. Both anchor the click point so the
                 // hotspot stays on it instead of jumping by the anchor offset.
-                if !click_pulse_sentinel_only || self.pos.0 < -50.0 {
+                if !click_pulse_sentinel_only || !self.is_placed() {
                     self.pos = crate::anchor_for_pointer(x, y, self.heading);
                 }
                 self.click_t = Some(0.0);
@@ -889,7 +895,7 @@ pub fn paint_cursor(
 ) {
     if !core.visible
         || core.pinned_target_off_workspace
-        || core.pos.0 < -100.0
+        || !core.is_placed()
         || core.idle_alpha < 0.004
     {
         return;
@@ -1367,6 +1373,46 @@ mod backing_scale_tests {
         let mut pm = tiny_skia::Pixmap::new(pm_size, pm_size).unwrap();
         paint_cursor(&mut pm, &core, 0.0, 0.0, None, backing_scale);
         pm
+    }
+
+    #[test]
+    fn negative_desktop_points_are_placed_and_render_like_positive_points() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        assert!(!core.is_placed());
+        let mut unplaced = tiny_skia::Pixmap::new(128, 128).unwrap();
+        paint_cursor(&mut unplaced, &core, -264.0, -264.0, None, 1.0);
+        assert_eq!(visible_pixel_count(&unplaced), 0);
+
+        for (x, y) in [(-200.0, -200.0), (-3820.0, 20.0), (20.0, -980.0)] {
+            core.pos = (x, y);
+            assert!(core.is_revealed());
+            let mut negative = tiny_skia::Pixmap::new(128, 128).unwrap();
+            paint_cursor(&mut negative, &core, x - 64.0, y - 64.0, None, 1.0);
+            assert!(visible_pixel_count(&negative) > 0);
+            core.pos = (64.0, 64.0);
+            let mut positive = tiny_skia::Pixmap::new(128, 128).unwrap();
+            paint_cursor(&mut positive, &core, 0.0, 0.0, None, 1.0);
+            assert_eq!(negative.data(), positive.data());
+        }
+    }
+
+    #[test]
+    fn first_move_never_plans_from_the_unplaced_position() {
+        for macos in [false, true] {
+            let mut core = RenderStateCore::new(CursorConfig::default());
+            core.apply_command_base(
+                OverlayCommand::MoveTo {
+                    x: -300.0,
+                    y: -200.0,
+                    end_heading_radians: 0.0,
+                },
+                macos,
+                macos,
+            );
+            assert!(core.is_placed());
+            core.tick_motion(0.016);
+            assert!(core.is_placed());
+        }
     }
 
     #[test]

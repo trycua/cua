@@ -459,7 +459,7 @@ pub fn is_visible_for_session(key: &str) -> bool {
                     rs.core.cfg.enabled
                         && rs.core.visible
                         && rs.core.idle_alpha >= 0.004
-                        && rs.core.pos.0 >= -100.0
+                        && rs.core.is_placed()
                 })
         })
         .unwrap_or(false)
@@ -478,7 +478,7 @@ pub fn current_position_for(key: &str) -> (f64, f64) {
                 .and_then(|m| m.cursors.get(key))
                 .map(|rs| rs.core.pos)
         })
-        .unwrap_or((-200.0, -200.0))
+        .unwrap_or(cursor_overlay::UNPLACED_POS)
 }
 
 pub fn current_motion_for(key: &str) -> cursor_overlay::MotionConfig {
@@ -536,7 +536,7 @@ pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
     let should_animate = {
         let guard = RENDER.lock().unwrap();
         match guard.as_ref().and_then(|m| m.cursors.get(&key)) {
-            Some(rs) if rs.core.cfg.enabled && rs.core.visible && rs.core.pos.0 > -50.0 => true,
+            Some(rs) if rs.core.cfg.enabled && rs.core.visible && rs.core.is_placed() => true,
             _ => false,
         }
     };
@@ -2165,7 +2165,7 @@ fn cursor_tile_bounds(
     screen_width: u32,
     screen_height: u32,
 ) -> Option<X11TileBounds> {
-    if !core.visible || core.pos.0 < -100.0 || core.idle_alpha < 0.004 {
+    if !core.visible || !core.is_placed() || core.idle_alpha < 0.004 {
         return None;
     }
 

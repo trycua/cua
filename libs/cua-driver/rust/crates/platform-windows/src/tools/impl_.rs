@@ -232,7 +232,7 @@ fn screen_to_bitmap(hwnd: u64, sx: i32, sy: i32) -> (i32, i32) {
 /// glide to finish before returning.  No-op when the overlay is not enabled.
 ///
 /// On the very first call the cursor is at the off-screen initial position
-/// (-200, -200).  Animating from there would cause a jarring off-screen fly-in,
+/// at the unplaced sentinel. Animating from there would cause an off-screen fly-in,
 /// so we snap to the target with a ClickPulse first and skip the glide wait.
 ///
 /// For all subsequent calls this defers to
@@ -252,7 +252,7 @@ async fn overlay_glide_to(key: &str, sx: f64, sy: f64) {
         return;
     }
     let pos = crate::overlay::current_position(key);
-    if pos.0 < 0.0 && pos.1 < 0.0 {
+    if !pos.0.is_finite() || !pos.1.is_finite() {
         // Snap to target on first use; no animation to wait for.
         crate::overlay::send_command(
             key.to_owned(),

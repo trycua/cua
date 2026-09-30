@@ -29,7 +29,7 @@ pub use render_map::{
 };
 pub use render_state::{
     paint_cursor, render_frame, FocusRect, RenderStateCore, SESSION_BADGE_FADE_SECS,
-    SESSION_BADGE_HOLD_SECS,
+    SESSION_BADGE_HOLD_SECS, UNPLACED_POS,
 };
 pub use session_badge::{
     paint_session_badge, sanitize_session_label, session_badge_extents, session_badge_layout,

@@ -303,7 +303,7 @@ impl<S: RenderEntry, P> RenderMap<S, P> {
             return false;
         };
         let core = cursor.core_mut();
-        if !(core.cfg.enabled && core.pos.0 < -50.0) {
+        if !(core.cfg.enabled && !core.is_placed()) {
             return false;
         }
         core.pos = seed_position(target_x, target_y, frame);

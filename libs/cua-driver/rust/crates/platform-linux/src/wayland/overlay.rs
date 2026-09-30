@@ -477,7 +477,7 @@ fn visible_cores_for_output<'a>(
         .iter()
         .filter(|(_, core)| {
             core.visible
-                && core.pos.0 >= -100.0
+                && core.is_placed()
                 && core.idle_alpha >= 0.004
                 && select_output(layouts, core.pos.0, core.pos.1)
                     .is_some_and(|selected| selected.id == output_id)
@@ -825,7 +825,7 @@ fn tick_all_cores(cores: &mut CursorMap<RenderStateCore>, dt: f64) {
 /// gated on a shown, placed cursor: a hidden cursor's motion is quiesced by
 /// [`quiesce_hidden`] and never repaints a layer surface.
 fn needs_frame_tick(core: &RenderStateCore) -> bool {
-    core.visible && core.pos.0 >= -100.0 && core.needs_frame_tick()
+    core.visible && core.is_placed() && core.needs_frame_tick()
 }
 
 fn quiesce_hidden(core: &mut RenderStateCore) {
@@ -863,7 +863,7 @@ fn redraw(
         .render
         .cursors
         .values()
-        .filter(|core| core.visible && core.pos.0 >= -100.0 && core.idle_alpha >= 0.004)
+        .filter(|core| core.visible && core.is_placed() && core.idle_alpha >= 0.004)
         .map(|core| core.pos);
     let (selected, targets) = frame_plan(
         &layouts,
@@ -1372,6 +1372,20 @@ mod tests {
         ]
     }
 
+    #[test]
+    fn placed_cursor_on_left_monitor_is_selected_visible_and_animated() {
+        let mut core = positioned_core();
+        core.pos = (-600.0, 100.0);
+        assert!(needs_frame_tick(&core));
+        let layouts = three_monitor_layout();
+        let mut cores = CursorMap::new();
+        cores.insert("left".to_owned(), core);
+        assert_eq!(visible_cores_for_output(&cores, &layouts, 3).len(), 1);
+        assert!(visible_cores_for_output(&cores, &layouts, 1).is_empty());
+        cores.get_mut("left").unwrap().pos = cursor_overlay::UNPLACED_POS;
+        assert!(visible_cores_for_output(&cores, &layouts, 3).is_empty());
+    }
+
     fn initialized(layouts: &[OutputLayout]) -> HashSet<u32> {
         layouts.iter().map(|layout| layout.id).collect()
     }
@@ -1761,7 +1775,7 @@ mod tests {
         ));
         let core = state.render.cursors.get("session-a").unwrap();
         assert_eq!(core.session_label.as_deref(), Some("Synthetic session"));
-        assert!(core.pos.0 < -50.0);
+        assert!(!core.is_placed());
         assert!(state.outputs.is_empty());
         assert!(matches!(
             rx.try_recv(),

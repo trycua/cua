@@ -1302,13 +1302,35 @@ pub(crate) fn pointer_abs(
     )
 }
 
-/// Hyprland: convert a desktop-frame point (from `get_desktop_state`) to
-/// layout coordinates. Other compositors keep the frame at the layout origin.
-fn desktop_to_layout(x: i32, y: i32) -> anyhow::Result<(i32, i32)> {
-    if is_wayland() && hyprland::is_session() {
-        return Ok(hyprland::desktop_frame()?.to_layout(x, y));
+/// Coordinates shared by the real input and the agent overlay for one
+/// desktop operation. Other compositors keep their existing origin/extent.
+#[derive(Clone, Default)]
+pub struct DesktopInputFrame {
+    hyprland: Option<hyprland::DesktopInputFrame>,
+}
+
+impl DesktopInputFrame {
+    pub fn current() -> anyhow::Result<Self> {
+        let hyprland = if is_wayland() && hyprland::is_session() && !is_inject_mode() {
+            Some(hyprland::desktop_input_frame()?)
+        } else {
+            None
+        };
+        Ok(Self { hyprland })
     }
-    Ok((x, y))
+
+    pub fn to_layout(&self, x: i32, y: i32) -> (i32, i32) {
+        self.hyprland
+            .as_ref()
+            .map_or((x, y), |snapshot| snapshot.frame.to_layout(x, y))
+    }
+
+    fn ensure_current(&self) -> anyhow::Result<()> {
+        if let Some(snapshot) = &self.hyprland {
+            snapshot.ensure_current()?;
+        }
+        Ok(())
+    }
 }
 
 /// Logical desktop frame published by a compositor adapter whose geometry is
@@ -1327,20 +1349,18 @@ pub(crate) fn compositor_logical_frame() -> Option<anyhow::Result<(u32, u32)>> {
 /// caller's coordinate frame. Hyprland maps absolute motion across the
 /// bounding box of every enabled output's logical rectangle, not just the
 /// first `wl_output`; a scaled output's `wl_output` mode is physical and
-/// would land every motion at `1 / scale` of its target. Layouts the Hyprland
-/// adapter cannot qualify (rotated outputs) keep the first output's mode
-/// until that adapter publishes a layout for them.
-fn virtual_pointer_space(output_mode: (u32, u32)) -> (i32, i32, u32, u32) {
-    let layout = hyprland::is_session()
-        .then(|| {
-            hyprland::pointer_layout()
-                .map_err(|error| {
-                    tracing::debug!("virtual pointer keeps the wl_output mode extent: {error:#}")
-                })
-                .ok()
-        })
-        .flatten();
-    select_virtual_pointer_space(output_mode, layout)
+/// would land every motion at `1 / scale` of its target. Unqualified Hyprland
+/// layouts are refused; other compositors keep their existing mode extent.
+fn virtual_pointer_space(output_mode: (u32, u32)) -> anyhow::Result<(i32, i32, u32, u32)> {
+    // Once Hyprland identifies the compositor, an unqualified layout must
+    // never fall back to a physical first-output extent: that emits input at
+    // another point, especially when an unsupported output is in standby.
+    let layout = if hyprland::is_session() {
+        Some(hyprland::pointer_layout()?)
+    } else {
+        None
+    };
+    Ok(select_virtual_pointer_space(output_mode, layout))
 }
 
 fn select_virtual_pointer_space(
@@ -1358,6 +1378,13 @@ fn select_virtual_pointer_space(
 /// pointer event in *output* coordinates and rely on the activated toplevel
 /// covering the centre.
 pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<VptrSession> {
+    open_vptr_session_in_frame(activate_window_id, None)
+}
+
+fn open_vptr_session_in_frame(
+    activate_window_id: Option<u64>,
+    desktop: Option<&DesktopInputFrame>,
+) -> anyhow::Result<VptrSession> {
     let conn = Connection::connect_to_env()?;
     let mut queue = conn.new_event_queue::<State>();
     let qh = queue.handle();
@@ -1409,6 +1436,12 @@ pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<Vptr
         anyhow::anyhow!("compositor exposed no wl_seat for virtual-pointer input")
     })?;
 
+    let (origin_x, origin_y, output_w, output_h) =
+        match desktop.and_then(|frame| frame.hyprland.as_ref()) {
+            Some(snapshot) => snapshot.pointer_space,
+            None => virtual_pointer_space((state.output_w, state.output_h))?,
+        };
+
     if let Some(id) = activate_window_id {
         let handle = matching_handle(&state, id)
             .ok_or_else(|| anyhow::anyhow!("no native Wayland toplevel for window_id {id}"))?;
@@ -1417,8 +1450,6 @@ pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<Vptr
     }
 
     let vptr = mgr.create_virtual_pointer(Some(&seat), &qh, ());
-    let (origin_x, origin_y, output_w, output_h) =
-        virtual_pointer_space((state.output_w, state.output_h));
     Ok(VptrSession {
         conn,
         queue,
@@ -1614,7 +1645,7 @@ fn event_time_ms() -> u32 {
 /// to discriminate single vs. double clicks.
 pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
     with_libei_fallback(
-        || click_vptr(Some(window_id), x, y, count, button),
+        || click_vptr(Some(window_id), x, y, count, button, None),
         || {
             libei_wait_pointer_ready()?;
             activate_window_for_input(window_id)?;
@@ -1632,7 +1663,7 @@ pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::
 #[cfg(feature = "portal-input")]
 pub fn click_focused(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
     with_libei_fallback(
-        || click_vptr(None, x, y, count, button),
+        || click_vptr(None, x, y, count, button, None),
         || {
             libei_wait_pointer_ready()?;
             if let Some((pid, window_id)) = current_foreground_target() {
@@ -1645,21 +1676,34 @@ pub fn click_focused(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<(
 
 #[cfg(not(feature = "portal-input"))]
 pub fn click_focused(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
-    click_vptr(None, x, y, count, button)
+    click_vptr(None, x, y, count, button, None)
 }
 
 /// Click a desktop-absolute point without selecting or activating a toplevel.
 /// This is the Wayland peer of an XTest root-window click and is used only by
 /// the explicit desktop capture scope.
 pub fn click_desktop(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+    click_desktop_in_frame(&DesktopInputFrame::current()?, x, y, count, button)
+}
+
+pub fn click_desktop_in_frame(
+    frame: &DesktopInputFrame,
+    x: i32,
+    y: i32,
+    count: u32,
+    button: u8,
+) -> anyhow::Result<()> {
     if is_inject_mode() {
         let btn = evdev_button(button as u32);
         return inject_send(&[format!("d {x} {y} {} {btn}", count.max(1))]);
     }
-    let (x, y) = desktop_to_layout(x, y)?;
+    let (x, y) = frame.to_layout(x, y);
     with_libei_fallback(
-        || click_vptr(None, x, y, count, button),
-        || libei_click(x, y, count, button),
+        || click_vptr(None, x, y, count, button, Some(frame)),
+        || {
+            frame.ensure_current()?;
+            libei_click(x, y, count, button)
+        },
     )
 }
 
@@ -1671,9 +1715,13 @@ fn click_vptr(
     y: i32,
     count: u32,
     button: u8,
+    desktop: Option<&DesktopInputFrame>,
 ) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(window_id)?;
+    let mut sess = open_vptr_session_in_frame(window_id, desktop)?;
     std::thread::sleep(std::time::Duration::from_millis(40));
+    if let Some(frame) = desktop {
+        frame.ensure_current()?;
+    }
     let (w, h) = (sess.output_w, sess.output_h);
     let (px, py) = if x == 0 && y == 0 && !hyprland::is_session() {
         (w / 2, h / 2)
@@ -1804,7 +1852,7 @@ pub fn scroll_at(
 ) -> anyhow::Result<()> {
     let direction = direction.to_string();
     with_libei_fallback(
-        || scroll_vptr(Some(window_id), point, &direction, amount),
+        || scroll_vptr(Some(window_id), point, &direction, amount, None),
         || {
             libei_wait_scroll_ready()?;
             activate_window_for_input(window_id)?;
@@ -1818,15 +1866,26 @@ pub fn scroll_at(
 
 /// Scroll at a desktop-absolute point without activating a named toplevel.
 pub fn scroll_desktop(x: i32, y: i32, direction: &str, amount: u32) -> anyhow::Result<()> {
+    scroll_desktop_in_frame(&DesktopInputFrame::current()?, x, y, direction, amount)
+}
+
+pub fn scroll_desktop_in_frame(
+    frame: &DesktopInputFrame,
+    x: i32,
+    y: i32,
+    direction: &str,
+    amount: u32,
+) -> anyhow::Result<()> {
     if is_inject_mode() {
         return inject_scroll_desktop(x, y, direction, amount);
     }
-    let (x, y) = desktop_to_layout(x, y)?;
+    let (x, y) = frame.to_layout(x, y);
     let direction = direction.to_string();
     with_libei_fallback(
-        || scroll_vptr(None, Some((x, y)), &direction, amount),
+        || scroll_vptr(None, Some((x, y)), &direction, amount, Some(frame)),
         || {
             libei_wait_scroll_ready()?;
+            frame.ensure_current()?;
             libei_move_absolute(x, y)?;
             libei_scroll(&direction, amount)
         },
@@ -1839,8 +1898,12 @@ fn scroll_vptr(
     point: Option<(i32, i32)>,
     direction: &str,
     amount: u32,
+    desktop: Option<&DesktopInputFrame>,
 ) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(window_id)?;
+    let mut sess = open_vptr_session_in_frame(window_id, desktop)?;
+    if let Some(frame) = desktop {
+        frame.ensure_current()?;
+    }
     if let Some((x, y)) = point {
         let (px, py) = sess.abs(x, y);
         sess.vptr
@@ -1910,20 +1973,35 @@ pub fn last_synth_cursor_pos() -> Option<(i32, i32)> {
 /// the synthetic-cursor registry so `last_synth_cursor_pos` can report it.
 pub fn move_cursor_absolute(window_id: Option<u64>, x: i32, y: i32) -> anyhow::Result<()> {
     with_libei_fallback(
-        || move_cursor_absolute_vptr(window_id, x, y),
+        || move_cursor_absolute_vptr(window_id, x, y, None),
         || libei_move_absolute(x, y),
     )
 }
 
 /// Warp the cursor to a desktop-frame point (the `get_desktop_state` frame).
 pub fn move_cursor_desktop(x: i32, y: i32) -> anyhow::Result<()> {
-    let (x, y) = desktop_to_layout(x, y)?;
-    move_cursor_absolute(None, x, y)
+    let frame = DesktopInputFrame::current()?;
+    let (x, y) = frame.to_layout(x, y);
+    with_libei_fallback(
+        || move_cursor_absolute_vptr(None, x, y, Some(&frame)),
+        || {
+            frame.ensure_current()?;
+            libei_move_absolute(x, y)
+        },
+    )
 }
 
 /// wlroots virtual-pointer implementation of [`move_cursor_absolute`].
-fn move_cursor_absolute_vptr(window_id: Option<u64>, x: i32, y: i32) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(window_id)?;
+fn move_cursor_absolute_vptr(
+    window_id: Option<u64>,
+    x: i32,
+    y: i32,
+    desktop: Option<&DesktopInputFrame>,
+) -> anyhow::Result<()> {
+    let mut sess = open_vptr_session_in_frame(window_id, desktop)?;
+    if let Some(frame) = desktop {
+        frame.ensure_current()?;
+    }
     let (w, h) = (sess.output_w, sess.output_h);
     let (px, py) = sess.abs(x, y);
     sess.vptr.motion_absolute(event_time_ms(), px, py, w, h);
@@ -1951,7 +2029,18 @@ pub fn drag(
     button: u8,
 ) -> anyhow::Result<()> {
     with_libei_fallback(
-        || drag_vptr(Some(window_id), from_x, from_y, to_x, to_y, steps, button),
+        || {
+            drag_vptr(
+                Some(window_id),
+                from_x,
+                from_y,
+                to_x,
+                to_y,
+                steps,
+                button,
+                None,
+            )
+        },
         || {
             libei_wait_pointer_ready()?;
             activate_window_for_input(window_id)?;
@@ -1970,12 +2059,36 @@ pub fn drag_desktop(
     duration_ms: u64,
     button: u8,
 ) -> anyhow::Result<()> {
-    let (from_x, from_y) = desktop_to_layout(from_x, from_y)?;
-    let (to_x, to_y) = desktop_to_layout(to_x, to_y)?;
+    drag_desktop_in_frame(
+        &DesktopInputFrame::current()?,
+        from_x,
+        from_y,
+        to_x,
+        to_y,
+        steps,
+        duration_ms,
+        button,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn drag_desktop_in_frame(
+    frame: &DesktopInputFrame,
+    from_x: i32,
+    from_y: i32,
+    to_x: i32,
+    to_y: i32,
+    steps: u32,
+    duration_ms: u64,
+    button: u8,
+) -> anyhow::Result<()> {
+    let (from_x, from_y) = frame.to_layout(from_x, from_y);
+    let (to_x, to_y) = frame.to_layout(to_x, to_y);
     with_libei_fallback(
-        || drag_vptr(None, from_x, from_y, to_x, to_y, steps, button),
+        || drag_vptr(None, from_x, from_y, to_x, to_y, steps, button, Some(frame)),
         || {
             libei_wait_pointer_ready()?;
+            frame.ensure_current()?;
             libei_drag(from_x, from_y, to_x, to_y, steps, duration_ms, button)
         },
     )
@@ -1991,9 +2104,13 @@ fn drag_vptr(
     to_y: i32,
     steps: u32,
     button: u8,
+    desktop: Option<&DesktopInputFrame>,
 ) -> anyhow::Result<()> {
-    let mut sess = open_vptr_session(window_id)?;
+    let mut sess = open_vptr_session_in_frame(window_id, desktop)?;
     std::thread::sleep(std::time::Duration::from_millis(40));
+    if let Some(frame) = desktop {
+        frame.ensure_current()?;
+    }
     let (w, h) = (sess.output_w, sess.output_h);
     let btn = evdev_pointer_button(button);
     let (origin_x, origin_y) = (sess.origin_x, sess.origin_y);

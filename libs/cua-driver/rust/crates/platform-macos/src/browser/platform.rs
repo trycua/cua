@@ -1606,14 +1606,95 @@ mod tests {
         assert_eq!(parse_loopback_lsof_ports(input), vec![9222, 9444]);
     }
 
-    #[test]
-    fn lsof_parser_surfaces_inherited_and_owned_listeners_sorted() {
-        // #4342: a spawned browser inherits its host's listening descriptor,
-        // so one pid owns two loopback listeners. Both must surface (sorted) —
-        // first-answer-wins scanning then picked the host endpoint, which is
-        // why discover_owned_endpoint prefers the DevToolsActivePort endpoint.
-        let input = "n127.0.0.1:60703\nn127.0.0.1:60638\n";
-        assert_eq!(parse_loopback_lsof_ports(input), vec![60638, 60703]);
+    #[tokio::test]
+    async fn owned_discovery_prefers_profile_endpoint_over_inherited_listener() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::process::CommandExt;
+
+        struct ChildGuard(std::process::Child);
+        impl Drop for ChildGuard {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        // Both descriptors are inherited by the child, reproducing an embedded
+        // host's listener alongside the browser's own listener. Give the host
+        // the lower port so listener-order discovery chooses the wrong endpoint.
+        let first = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let second = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let (host, owned) =
+            if first.local_addr().unwrap().port() < second.local_addr().unwrap().port() {
+                (first, second)
+            } else {
+                (second, first)
+            };
+        let host_port = host.local_addr().unwrap().port();
+        let owned_port = owned.local_addr().unwrap().port();
+        let profile = tempfile::tempdir().unwrap();
+        let active_port = profile.path().join("DevToolsActivePort");
+        std::fs::write(
+            &active_port,
+            format!("{owned_port}\n/devtools/browser/owned\n"),
+        )
+        .unwrap();
+        let descriptors = [host.as_raw_fd(), owned.as_raw_fd()];
+        let mut command = std::process::Command::new("/bin/sh");
+        command
+            .args(["-c", "read -r line", "endpoint-fixture"])
+            .arg(format!("--user-data-dir={}", profile.path().display()))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        // Only the forked child loses CLOEXEC; the parent's descriptors remain
+        // private to this test. The shell waits on its pipe without a GUI.
+        unsafe {
+            command.pre_exec(move || {
+                for fd in descriptors {
+                    if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                Ok(())
+            });
+        }
+        let child = ChildGuard(command.spawn().unwrap());
+        let pid = i64::from(child.0.id());
+        assert_eq!(
+            loopback_ports_for_pid(pid).await.unwrap(),
+            vec![host_port, owned_port],
+            "fixture must actually inherit both native listeners"
+        );
+        host.set_nonblocking(true).unwrap();
+        let host = tokio::net::TcpListener::from_std(host).unwrap();
+        let host_url = format!("ws://127.0.0.1:{host_port}/devtools/browser/host");
+        let body = serde_json::json!({"webSocketDebuggerUrl": host_url}).to_string();
+        let server = tokio::spawn(async move {
+            while let Ok((mut stream, _)) = host.accept().await {
+                let mut request = [0; 4096];
+                let _ = stream.read(&mut request).await;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        let platform = MacOsBrowserPlatform::new(Arc::new(crate::cursor::CursorRegistry::new()));
+        let endpoint = platform
+            .discover_owned_endpoint(pid)
+            .await
+            .unwrap()
+            .unwrap();
+        // Stop the task even if an assertion below fails.
+        server.abort();
+        assert_eq!(
+            endpoint.ws_url,
+            format!("ws://127.0.0.1:{owned_port}/devtools/browser/owned")
+        );
+        assert_eq!(endpoint.transport, EndpointTransport::DevToolsActivePort);
+        assert_eq!(endpoint.ownership.owner_pid, pid);
     }
 
     #[test]

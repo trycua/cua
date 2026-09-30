@@ -3,6 +3,7 @@
 import copy
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -92,6 +93,11 @@ class MeasureTest(fixtures.ProfileTest):
         invalid["compiler"]["sha256"] = "short"
         with self.assertRaisesRegex(ValueError, "lowercase SHA-256"):
             measure.reuse_decision(self.profile, invalid)
+
+    def test_measure_refuses_loader_override(self):
+        with mock.patch.dict(os.environ, {"LD_LIBRARY_PATH": "/synthetic"}):
+            with self.assertRaisesRegex(ValueError, "dynamic-loader"):
+                self.run_measure()
 
 
 if __name__ == "__main__":

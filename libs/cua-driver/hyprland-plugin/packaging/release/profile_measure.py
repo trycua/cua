@@ -8,6 +8,7 @@ only measures the native environment and refuses a source that does not match.
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -41,6 +42,8 @@ def owner_versions(paths):
 def measure(profile_id, kit_version, package_release, source, archive, cxx):
     """Return a candidate schema-2 profile measured from this host."""
     verify.require(set(source) == set(SOURCE_FIELDS), "source must name " + ", ".join(SOURCE_FIELDS))
+    verify.require(not any(key.startswith("LD_") for key in os.environ),
+                   "clear dynamic-loader LD_* overrides before measuring")
     verify.require(verify.platform.system() == "Linux" and verify.platform.machine() == "x86_64", "requires Linux x86_64")
     verify.require(cxx.is_absolute() and cxx.is_file(), "C++ compiler must be an existing absolute path")
     libraries = compositor_libraries()
@@ -120,7 +123,7 @@ def main():
         else:
             verdict, reasons = reuse_decision(load(args.reviewed), load(args.candidate))
             print(json.dumps({"verdict": verdict, "reasons": reasons, "qualification_verified": False}))
-            sys.exit(0 if verdict == "profile-unchanged" else 2)
+            sys.exit(0 if verdict == "profile-unchanged" else 3)
     except (ValueError, KeyError, TypeError, OSError, tarfile.TarError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"error: {error}\n")
 

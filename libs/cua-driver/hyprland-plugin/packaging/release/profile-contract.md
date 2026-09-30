@@ -116,6 +116,9 @@ python3 profile_measure.py reuse --reviewed reviewed-profile.json \
 ```
 
 The comparison reports `profile-unchanged`, `relabel-rebuild`, or `rebuild`.
+Run `measure` on the target host immediately before comparing it; `reuse` is
+only an offline data comparison, not a host check. It exits 3 for a required
+rebuild, 2 for invalid CLI usage, and 1 for validation errors.
 Even `profile-unchanged` compares only profile data: separately verify unchanged
 tooling, kit, module and package bytes and the applicable qualification evidence.
 The JSON always reports `qualification_verified: false`. A changed package

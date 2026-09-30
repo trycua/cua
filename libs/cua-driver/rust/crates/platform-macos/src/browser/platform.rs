@@ -1934,6 +1934,22 @@ mod tests {
     }
 
     #[test]
+    fn default_user_data_dir_covers_existing_profile_products() {
+        for product in [
+            BrowserProduct::GoogleChrome,
+            BrowserProduct::Chromium,
+            BrowserProduct::MicrosoftEdge,
+            BrowserProduct::Brave,
+        ] {
+            assert!(
+                existing_profile_setup_descriptor(product).is_some()
+                    == default_user_data_dir(product).is_some(),
+                "{product:?}: setup descriptor and profile root must be supported together"
+            );
+        }
+    }
+
+    #[test]
     fn lsof_parser_accepts_only_loopback_listeners() {
         let input = "n127.0.0.1:9222\nn*:9333\nn[::1]:9444\nn0.0.0.0:9555\n";
         assert_eq!(parse_loopback_lsof_ports(input), vec![9222, 9444]);

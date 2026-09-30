@@ -2430,6 +2430,10 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
         spec.name
     );
     execute_case(prepare_isolated_case(&spec.name), |evidence| {
+        // Pid-free launch selects the system Chrome/Edge installation. Use
+        // Helium's existing PID to prove isolated launch of this exact product.
+        let seed = (spec.name == "helium")
+            .then(|| launch_unprepared_browser(spec, &format!("{scenario}-seed")));
         let target_server = BrowserFixtureServer::start(&standalone_fixture_html());
         let driver_profiles = driver_profile_root();
         let profiles_before = profile_entries(&driver_profiles);
@@ -2446,6 +2450,7 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
             serde_json::json!({
                 "session": session,
                 "allow_launch": true,
+                "pid": seed.as_ref().map(|fixture| fixture.pid as i64),
                 "profile": {"mode": "isolated_new"},
             }),
         );

@@ -1718,7 +1718,7 @@ mod tests {
         let host = tokio::net::TcpListener::from_std(host).unwrap();
         let host_url = format!("ws://127.0.0.1:{host_port}/devtools/browser/host");
         let response_url = if case == "non_loopback" {
-            "ws://example.invalid/devtools/browser/host".to_owned()
+            format!("ws://example.invalid:{host_port}/devtools/browser/host")
         } else {
             host_url.clone()
         };

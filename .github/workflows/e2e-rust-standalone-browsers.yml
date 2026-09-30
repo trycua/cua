@@ -61,7 +61,7 @@ jobs:
           - label: Linux X11
             os: ubuntu-latest
             artifact: rust-browser-linux-x11
-            products: chrome
+            products: chrome,helium
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
@@ -108,6 +108,15 @@ jobs:
           # disposable hosted image to that same production trust contract.
           sudo chown root:root /opt /opt/google /opt/google/chrome "$chrome_payload"
           sudo chmod go-w /opt /opt/google /opt/google/chrome "$chrome_payload"
+      - name: Install pinned Helium on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 --output /tmp/helium.deb \
+            https://github.com/imputnet/helium-linux/releases/download/0.18.1.1/helium-bin_0.18.1.1-1_amd64.deb
+          echo 'c85c270cc5eca756c1a48fab2c4d414b83345c5a7e4b78601e1decdb3ed84805  /tmp/helium.deb' | sha256sum --check
+          sudo apt-get install -y /tmp/helium.deb
+          dpkg-query -W helium-bin
       - name: Build source driver on Windows
         if: runner.os == 'Windows'
         shell: pwsh

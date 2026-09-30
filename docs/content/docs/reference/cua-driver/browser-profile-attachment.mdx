@@ -190,8 +190,9 @@ The browser-setup route is implemented for Google Chrome and Microsoft Edge on
 macOS and Windows. Chrome and Edge have product-specific acceptance evidence
 on Linux X11. Chrome is also accepted on GNOME Wayland, and Chromium is
 accepted alongside Chrome and Edge on the validated native-Wayland Sway lane.
-Helium is recognized as a distinct Chromium-family product on Linux, resolves
-its default profile from `~/.config/net.imput.helium`, and can attach when that
+Helium is recognized as a distinct Chromium-family product on Linux and macOS, resolves
+its default profile from `~/.config/net.imput.helium` on Linux or
+`~/Library/Application Support/net.imput.helium` on macOS, and can attach when that
 profile already exposes a uniquely PID-owned `DevToolsActivePort` endpoint.
 Automated setup is not enabled for Helium until its branded internal page has
 product-specific acceptance evidence; a profile without an existing endpoint

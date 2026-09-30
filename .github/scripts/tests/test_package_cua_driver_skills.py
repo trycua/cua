@@ -34,6 +34,7 @@ def test_release_archive_contains_complete_hashed_manifest(tmp_path: Path) -> No
     assert manifest["source"] == {"kind": "release", "git_commit": commit}
     assert [entry["path"] for entry in manifest["files"]] == ["README.md", "SKILL.md"]
     assert manifest["files"][0]["sha256"] == hashlib.sha256(b"read me").hexdigest()
+    assert manifest["files"][0]["size_bytes"] == len(b"read me")
     with tarfile.open(archive, "r:gz") as bundle:
         names = sorted(bundle.getnames())
         assert "cua-driver-rs-v1.2.3-skills/skill-pack.json" in names

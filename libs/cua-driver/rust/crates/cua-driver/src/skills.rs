@@ -136,6 +136,7 @@ impl std::fmt::Display for SourceKind {
 #[serde(deny_unknown_fields)]
 struct SkillPackFile {
     path: String,
+    size_bytes: u64,
     sha256: String,
 }
 
@@ -913,7 +914,12 @@ fn parse_resolved_commit(body: &str) -> Result<String> {
 }
 
 fn copy_local_into(source: &Path, dest: &Path, git_commit: Option<String>) -> Result<()> {
-    if !source.is_dir() {
+    let source_metadata = fs::symlink_metadata(source)
+        .with_context(|| format!("inspect local skill source {}", source.display()))?;
+    if source_metadata.file_type().is_symlink() {
+        bail!("local skill source is a symlink: {}", source.display());
+    }
+    if !source_metadata.is_dir() {
         bail!(
             "local skill source is not a directory: {}",
             source.display()
@@ -1040,6 +1046,21 @@ fn extract_tar_gz(bytes: &[u8], dest: &Path) -> Result<()> {
     for entry in archive.entries()? {
         let mut entry = entry?;
         let path = entry.path()?.into_owned();
+        if path.is_absolute()
+            || path.to_string_lossy().contains('\\')
+            || path
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            bail!("skill archive contains unsafe path {}", path.display());
+        }
+        let entry_type = entry.header().entry_type();
+        if !entry_type.is_file() && !entry_type.is_dir() {
+            bail!(
+                "skill archive contains unsupported non-file entry {}",
+                path.display()
+            );
+        }
         let mut components = path.components();
         if components.next().is_none() {
             continue; // empty entry
@@ -1075,8 +1096,16 @@ fn write_generated_manifest(
     let files = collect_payload_files(directory)?
         .into_iter()
         .map(|path| {
-            let hash = sha256_file(&directory.join(&path))?;
-            Ok(SkillPackFile { path, sha256: hash })
+            let file_path = directory.join(&path);
+            let size_bytes = fs::metadata(&file_path)
+                .with_context(|| format!("read metadata for {}", file_path.display()))?
+                .len();
+            let hash = sha256_file(&file_path)?;
+            Ok(SkillPackFile {
+                path,
+                size_bytes,
+                sha256: hash,
+            })
         })
         .collect::<Result<Vec<_>>>()?;
     let manifest = SkillPackManifest {
@@ -1226,7 +1255,7 @@ fn audit_pack(directory: &Path, manifest: Option<&SkillPackManifest>) -> Integri
     let expected = manifest
         .files
         .iter()
-        .map(|file| (file.path.clone(), file.sha256.clone()))
+        .map(|file| (file.path.clone(), file))
         .collect::<BTreeMap<_, _>>();
     let actual = match collect_payload_files(directory) {
         Ok(files) => files.into_iter().collect::<BTreeSet<_>>(),
@@ -1248,9 +1277,18 @@ fn audit_pack(directory: &Path, manifest: Option<&SkillPackManifest>) -> Integri
         .collect::<Vec<_>>();
     let modified = expected_paths
         .intersection(&actual)
-        .filter_map(|path| match sha256_file(&directory.join(path)) {
-            Ok(hash) if expected.get(path) == Some(&hash) => None,
-            _ => Some(path.clone()),
+        .filter_map(|relative| {
+            let expected_file = expected.get(relative)?;
+            let path = directory.join(relative);
+            match (fs::metadata(&path), sha256_file(&path)) {
+                (Ok(metadata), Ok(hash))
+                    if metadata.len() == expected_file.size_bytes
+                        && hash == expected_file.sha256 =>
+                {
+                    None
+                }
+                _ => Some(relative.clone()),
+            }
         })
         .collect();
     IntegrityReport {
@@ -2238,6 +2276,44 @@ mod tests {
     }
 
     #[test]
+    fn extraction_rejects_parent_traversal_paths() {
+        let bytes = build_tarball(&[("../outside.txt", b"must not escape")]);
+        let root = tempdir().unwrap();
+        let dest = root.path().join("pack");
+        std::fs::create_dir(&dest).unwrap();
+
+        assert!(extract_tar_gz(&bytes, &dest).is_err());
+        assert!(!root.path().join("outside.txt").exists());
+    }
+
+    #[test]
+    fn extraction_rejects_symlink_entries() {
+        let mut compressed = Vec::new();
+        {
+            let encoder =
+                flate2::write::GzEncoder::new(&mut compressed, flate2::Compression::default());
+            let mut archive = tar::Builder::new(encoder);
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Symlink);
+            header.set_link_name("../outside.txt").unwrap();
+            header.set_size(0);
+            header.set_mode(0o777);
+            header.set_cksum();
+            archive
+                .append_data(&mut header, "cua-driver-rs-v1.2.3-skills/link", &[][..])
+                .unwrap();
+            archive.finish().unwrap();
+        }
+
+        let root = tempdir().unwrap();
+        let dest = root.path().join("pack");
+        std::fs::create_dir(&dest).unwrap();
+
+        assert!(extract_tar_gz(&compressed, &dest).is_err());
+        assert!(!root.path().join("outside.txt").exists());
+    }
+
+    #[test]
     fn extraction_keeps_complete_archive_for_pre_filter_validation() {
         // Integrity is checked against the complete source manifest before
         // host-only filtering derives the installed manifest.
@@ -2383,7 +2459,60 @@ mod tests {
         let manifest = load_manifest(destination.path()).unwrap();
         assert_eq!(manifest.source.kind, SourceKind::Local);
         assert_eq!(manifest.source.git_commit.as_deref(), Some(commit.as_str()));
+        assert_eq!(
+            manifest
+                .files
+                .iter()
+                .find(|file| file.path == "README.md")
+                .unwrap()
+                .size_bytes,
+            "local".len() as u64
+        );
         assert!(audit_pack(destination.path(), Some(&manifest)).is_valid());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn explicit_local_source_rejects_symlinked_roots_and_files() {
+        use std::os::unix::fs::symlink;
+
+        let source = tempdir().unwrap();
+        std::fs::write(
+            source.path().join("SKILL.md"),
+            format!("---\nversion: {}\n---\n", env!("CARGO_PKG_VERSION")),
+        )
+        .unwrap();
+        let outside = tempdir().unwrap();
+        std::fs::write(outside.path().join("private.md"), "outside").unwrap();
+        symlink(
+            outside.path().join("private.md"),
+            source.path().join("linked.md"),
+        )
+        .unwrap();
+
+        let destination = tempdir().unwrap();
+        assert!(copy_local_into(source.path(), destination.path(), None).is_err());
+
+        let linked_root = outside.path().join("source-link");
+        symlink(source.path(), &linked_root).unwrap();
+        assert!(copy_local_into(&linked_root, destination.path(), None).is_err());
+    }
+
+    #[test]
+    fn audit_detects_size_mismatch_even_when_content_hash_matches() {
+        let pack = tempdir().unwrap();
+        write_valid_pack(pack.path(), "valid");
+        let mut manifest = load_manifest(pack.path()).unwrap();
+        let file = manifest
+            .files
+            .iter_mut()
+            .find(|file| file.path == "README.md")
+            .unwrap();
+        file.size_bytes += 1;
+        super::write_manifest(pack.path(), &manifest).unwrap();
+
+        let report = audit_pack(pack.path(), Some(&manifest));
+        assert_eq!(report.modified, vec!["README.md"]);
     }
 
     #[test]
@@ -2392,7 +2521,7 @@ mod tests {
         write_valid_pack(pack.path(), "original");
         let manifest = load_manifest(pack.path()).unwrap();
 
-        std::fs::write(pack.path().join("README.md"), "modified").unwrap();
+        std::fs::write(pack.path().join("README.md"), "short").unwrap();
         std::fs::remove_file(pack.path().join("SKILL.md")).unwrap();
         std::fs::write(pack.path().join("OBSOLETE.md"), "old").unwrap();
         let report = audit_pack(pack.path(), Some(&manifest));

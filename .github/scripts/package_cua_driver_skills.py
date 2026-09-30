@@ -61,6 +61,8 @@ def build_archive(
     source_kind: str,
     git_commit: str | None,
 ) -> dict[str, object]:
+    if source.is_symlink():
+        raise ValueError(f"skill source is a symlink: {source}")
     source = source.resolve()
     if not source.is_dir():
         raise ValueError(f"skill source is not a directory: {source}")
@@ -86,6 +88,7 @@ def build_archive(
         "files": [
             {
                 "path": path.relative_to(source).as_posix(),
+                "size_bytes": path.stat().st_size,
                 "sha256": sha256(path),
             }
             for path in files

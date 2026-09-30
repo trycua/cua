@@ -97,6 +97,11 @@ rollback-safe activation. `skills status` reports the installed and running
 versions, source provenance, compatibility, and any missing, extra, or modified
 files.
 
+Each manifest entry records the relative path, byte size, and SHA-256 hash.
+These checks compare the files with the selected source manifest (a versioned
+release, an immutable `main` commit, or the explicit local checkout); they do
+not authenticate the publisher or provide digital signatures.
+
 Direct installation keeps only the current host's OS guide by default. Pass `--all-platforms` when the same skill directory must cover macOS, Windows, and Linux:
 
 ```bash

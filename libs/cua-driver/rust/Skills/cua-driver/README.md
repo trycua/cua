@@ -124,8 +124,10 @@ Run `cua-driver skills status` to compare the installed and running versions,
 inspect source provenance, and list missing, extra/obsolete, or modified files.
 The installed `skill-pack.json` uses schema version 1 and records the skill
 version, exact compatible driver version, source kind, optional immutable Git
-commit, and a sorted list of payload paths with SHA-256 hashes. The manifest
-itself is metadata and is not included in its recursive payload hash list.
+commit, and a sorted list of payload paths with byte sizes and SHA-256 hashes.
+The manifest itself is metadata and is not included in its recursive payload
+list. These values check content against the selected source manifest; they do
+not authenticate the publisher or provide digital signatures.
 
 Keep standalone and embedded identity rules from
 `MACOS.md` and `EMBEDDING.md`; launching a raw binary is not a substitute for

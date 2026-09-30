@@ -23,7 +23,8 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Mapping
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -39,14 +40,16 @@ from native_tasks import (
     NATIVE_TASK_IDS,
     NativeTask,
     OracleError,
+    check_intermediate_effect,
+    has_declared_steps_remaining,
     native_task,
     native_choice_request,
     visual_fallback_reason,
 )
+from tasks import Outcome, TaskSources
 from s1_service import S1ServiceError, choose_s1_service, s1_service_url
 from run import Driver, DriverToolError, background_refusal_code, supports_capture_bound_click
 from sources import NativeAccessibilitySource, VisualRegionSource
-from tasks import TaskSources
 
 STALE_TOKEN_CODES = frozenset({"stale_element_token"})
 # A partial or truncated tree is observed once more with this walk budget.
@@ -227,14 +230,46 @@ def assert_in_scope(candidate: Candidate, pid: int, window_id: int) -> None:
         raise RuntimeError("candidate addresses a window outside the task scope")
 
 
-async def poll_oracle(task: NativeTask, steps: int) -> str:
-    outcome = "unknown"
+@dataclass(frozen=True)
+class PollResult:
+    """Result of polling an oracle after action dispatch."""
+
+    outcome: Outcome
+    status: str
+    can_continue: bool
+
+
+async def poll_oracle(
+    task: NativeTask,
+    steps: int,
+    *,
+    candidate: Candidate | None = None,
+    pre_oracle: Mapping[str, Any] | None = None,
+    history: list[Mapping[str, Any]] | None = None,
+) -> PollResult:
+    candidate_id = candidate.id if candidate is not None else None
+    outcome: Outcome = "unknown"
+    is_supported = False
+    has_remaining = has_declared_steps_remaining(task, history)
+
     for _ in range(20):
-        outcome = task.classify(task.read_oracle(), steps=steps)
+        current_oracle = task.read_oracle()
+        outcome = task.classify(current_oracle, steps=steps)
         if outcome in {"verified", "refuted"}:
-            return outcome
+            return PollResult(outcome, status=outcome, can_continue=False)
+
+        if has_remaining and outcome == "unknown":
+            effect = check_intermediate_effect(task, candidate_id, pre_oracle, current_oracle)
+            if effect is True:
+                return PollResult("unknown", status="intermediate_witnessed", can_continue=True)
+            if effect is False:
+                is_supported = True
+
         await asyncio.sleep(0.1)
-    return outcome
+
+    if is_supported:
+        return PollResult(outcome, status="intermediate_timeout", can_continue=False)
+    return PollResult(outcome, status="continuation", can_continue=True)
 
 
 async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
@@ -337,6 +372,7 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                     write_event(log_path, {**base_event, "event": "outcome", "outcome": "abstained"})
                     return "abstained"
 
+                pre_oracle = task.read_oracle()
                 act_started = time.perf_counter()
                 try:
                     assert candidate.tool is not None
@@ -368,10 +404,19 @@ async def run_task(args: argparse.Namespace, task: NativeTask) -> str:
                 )
                 write_event(log_path, {**base_event, "tool": candidate.tool, "act_ms": act_ms,
                                        "delivery_mode": candidate.arguments.get("delivery_mode")})
-                outcome = await poll_oracle(task, step)
-                if outcome in {"verified", "refuted"}:
-                    write_event(log_path, {"event": "outcome", "outcome": outcome, "step": step})
-                    return outcome
+                poll_result = await poll_oracle(task, step, candidate=candidate, pre_oracle=pre_oracle, history=history)
+                if poll_result.outcome in {"verified", "refuted"}:
+                    write_event(log_path, {"event": "outcome", "outcome": poll_result.outcome, "step": step})
+                    return poll_result.outcome
+                if not poll_result.can_continue:
+                    write_event(log_path, {
+                        "event": "outcome",
+                        "outcome": poll_result.outcome,
+                        "step": step,
+                        "phase": "verification",
+                        "reason": poll_result.status,
+                    })
+                    return poll_result.outcome
 
             outcome = task.classify(task.read_oracle(), steps=task.max_steps)
             write_event(log_path, {"event": "outcome", "outcome": outcome, "step": task.max_steps})

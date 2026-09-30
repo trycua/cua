@@ -26,6 +26,8 @@ import {
   nativeChoiceRequest,
   visualFallbackReason,
   windowStateArguments,
+  checkIntermediateEffect,
+  hasDeclaredStepsRemaining,
   type NativeTask,
 } from './native_tasks.js';
 import { chooseS1Service, S1ServiceError, s1ServiceUrl } from './s1_service.js';
@@ -227,14 +229,48 @@ async function chooseLive(request: Record<string, unknown>) {
   return { choice: result.selectedId, confidence: result.confidence, probabilities: result.probabilities };
 }
 
-async function pollOracle(task: NativeTask, steps: number): Promise<Outcome> {
+export interface PollResult {
+  readonly outcome: Outcome;
+  readonly status: 'verified' | 'refuted' | 'intermediate_witnessed' | 'continuation' | 'intermediate_timeout';
+  readonly canContinue: boolean;
+}
+
+export async function pollOracle(
+  task: NativeTask,
+  steps: number,
+  candidate?: Candidate | null,
+  preOracle?: Record<string, unknown> | null,
+  history?: readonly HistoryEntry[] | null,
+): Promise<PollResult> {
+  const candidateId = candidate ? candidate.id : null;
   let outcome: Outcome = 'unknown';
+  let isSupported = false;
+  const hasRemaining = hasDeclaredStepsRemaining(task, history);
+
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    outcome = task.classify(await task.readOracle(), steps);
-    if (outcome === 'verified' || outcome === 'refuted') return outcome;
+    const currentOracle = await task.readOracle();
+    outcome = task.classify(currentOracle, steps);
+    if (outcome === 'verified' || outcome === 'refuted') {
+      return { outcome, status: outcome, canContinue: false };
+    }
+
+    if (hasRemaining && outcome === 'unknown') {
+      const effect = checkIntermediateEffect(task, candidateId, preOracle, currentOracle);
+      if (effect === true) {
+        return { outcome: 'unknown', status: 'intermediate_witnessed', canContinue: true };
+      }
+      if (effect === false) {
+        isSupported = true;
+      }
+    }
+
     await sleep(100);
   }
-  return outcome;
+
+  if (isSupported) {
+    return { outcome, status: 'intermediate_timeout', canContinue: false };
+  }
+  return { outcome, status: 'continuation', canContinue: true };
 }
 
 export async function runTask(args: Arguments, task: NativeTask): Promise<Outcome> {
@@ -329,6 +365,7 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
         await writeEvent(args.log, { ...baseEvent, event: 'outcome', outcome: 'abstained' });
         return 'abstained';
       }
+      const preOracle = await task.readOracle();
       const actStarted = performance.now();
       try {
         await driver.call(candidate.tool!, { ...candidate.arguments });
@@ -361,10 +398,20 @@ export async function runTask(args: Arguments, task: NativeTask): Promise<Outcom
         ...baseEvent, tool: candidate.tool, act_ms: actMs,
         delivery_mode: candidate.arguments.delivery_mode ?? null,
       });
-      const outcome = await pollOracle(task, step);
-      if (outcome === 'verified' || outcome === 'refuted') {
-        await writeEvent(args.log, { event: 'outcome', outcome, step });
-        return outcome;
+      const pollResult = await pollOracle(task, step, candidate, preOracle, history);
+      if (pollResult.outcome === 'verified' || pollResult.outcome === 'refuted') {
+        await writeEvent(args.log, { event: 'outcome', outcome: pollResult.outcome, step });
+        return pollResult.outcome;
+      }
+      if (!pollResult.canContinue) {
+        await writeEvent(args.log, {
+          event: 'outcome',
+          outcome: pollResult.outcome,
+          step,
+          phase: 'verification',
+          reason: pollResult.status,
+        });
+        return pollResult.outcome;
       }
     }
     const outcome = task.classify(await task.readOracle(), task.maxSteps);

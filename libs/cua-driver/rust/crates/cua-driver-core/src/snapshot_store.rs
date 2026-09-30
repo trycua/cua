@@ -293,6 +293,15 @@ impl<S: SnapshotPayload> SnapshotStore<S> {
             .map(|entry| entry.window_id)
     }
 
+    /// Whether this runtime has already published a snapshot for the window.
+    pub fn contains_window(&self, pid: i32, window_id: u64) -> bool {
+        self.inner
+            .lock()
+            .unwrap()
+            .get(&pid)
+            .is_some_and(|lane| lane.iter().any(|entry| entry.window_id == window_id))
+    }
+
     pub fn resolve(
         &self,
         pid: i32,
@@ -493,6 +502,20 @@ mod tests {
         assert!(cache
             .resolve(9, &serde_json::json!({ "element_token": token_for(id, 5) }))
             .is_err());
+    }
+
+    #[test]
+    fn contains_window_tracks_publication_and_removal() {
+        let cache = SnapshotStore::new();
+        assert!(!cache.contains_window(9, 99));
+
+        cache.publish(9, 99, Payload(vec![1]));
+        assert!(cache.contains_window(9, 99));
+        assert!(!cache.contains_window(9, 100));
+        assert!(!cache.contains_window(10, 99));
+
+        cache.remove(9, 99);
+        assert!(!cache.contains_window(9, 99));
     }
 
     fn token_refusal(cache: &SnapshotStore<Payload>, pid: i32, token: &str) -> serde_json::Value {

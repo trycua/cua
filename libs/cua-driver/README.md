@@ -5,6 +5,38 @@ Background computer-use driver for any agents. Speaks MCP over stdio; drives nat
 See [MCP protocol and skills](docs/mcp-protocol-and-skills.md) for the modern
 stdio profile, legacy compatibility, bundled skill resources, and HTTP limits.
 
+## Optional visual perception
+
+The default MIT-licensed Driver works without model artifacts. An explicitly
+installed `cua-perception` extension can parse one retained native window or
+desktop screenshot into model-neutral text and icon regions. Capture and input
+authority remain in Driver, and a region-derived pixel click must carry the
+same one-use `capture_id` as the observation.
+
+See the [extension and runtime contract](docs/perception-extension.md) for
+installation, failure, capture, and action boundaries.
+
+> [!WARNING]
+> The extension is not MIT licensed. Its OmniParser icon detector is
+> AGPL-3.0-only. Installing the extension does not change the Driver's MIT
+> license. However, redistributing the extension, or offering it to users over a
+> network, can require you to provide the AGPL corresponding source. If your
+> organization does not accept AGPL components, do not install the extension.
+> Read the [third-party notices and precautions](docs/perception-third-party-notices.md)
+> before you install, redistribute, or host it.
+
+For offline inspection of an existing PNG, the CLI also provides a local-only
+mode:
+
+```bash
+cua-driver perception parse --image /tmp/window.png --capture /tmp/capture.json --json
+```
+
+This mode never registers the file as a Driver capture and its output cannot
+authorize a Driver action. Its required JSON mode returns failures as
+`{"ok":false,"error":{"code":"...","message":"...","retryable":false}}`;
+see the extension contract for the stable codes.
+
 **[Documentation](https://cua.ai/docs/cua-driver)** - Installation, guides, and API reference.
 
 ## Integration surfaces
@@ -73,11 +105,12 @@ reference](https://cua.ai/docs/reference/cua-driver/permission-modes).
 | `contract/`                     | Experimental generated SDK contract and fixtures                       |
 | `typescript/`                   | Generated TypeScript SDK                                               |
 | `tests/fixtures/`               | Source-built GUI harness apps and shared fixtures                      |
-| `rust/crates/cua-driver/tests/` | Rust integration tests for the driver and GUI harnesses                |
+| `rust/crates/cua-driver/tests/` | Hermetic Rust integration tests for the driver                         |
+| `rust/crates/cua-driver-e2e/tests/` | Desktop E2E suites for the GUI harnesses                       |
 | `scripts/`                      | Install, uninstall, local build, and VM sync helpers                   |
 | `docs/`                         | Small repo-local specs that are not part of the hosted docs site       |
 
-Start with `rust/README.md`, `rust/crates/cua-driver/tests/README.md`, and
+Start with `rust/README.md`, `rust/crates/cua-driver-e2e/tests/README.md`, and
 `tests/fixtures/README.md` when changing driver behavior or tests.
 
 The contract-first SDK architecture is documented in

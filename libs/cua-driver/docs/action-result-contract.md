@@ -19,11 +19,17 @@ Every successful action returns a closed `structuredContent` object:
   "effect": "confirmed",
   "route": "accessibility",
   "delivery": {"mode": "background"},
-  "evidence": [{"kind": "value_readback"}]
+  "evidence": [{"kind": "value_readback", "detail": "value read back as 42"}],
+  "summary": "Set value to 42 on spin button 'Width' (delivery_mode=background, path=x11_atspi)"
 }
 ```
 
-`effect` and `route` are required.
+`effect` and `route` are required. `summary` repeats the result's text
+content (resolved `window_point` / `screen_point`, the element hit, popups
+that opened and the call that targets them, focus outcome, retargeting) so a
+client that hands the model only `structuredContent` still sees everything a
+raw MCP client reads from `content`. `evidence[].detail` is the readback the
+evidence rests on. A `refused` result adds `error: {code, hint}`.
 
 | Field | Values |
 | --- | --- |
@@ -31,6 +37,9 @@ Every successful action returns a closed `structuredContent` object:
 | `route` | `accessibility`, `synthetic_events`, `global_input`, `dom`, `trusted_input` |
 | `delivery.mode` | `background`, `foreground`, `not_applicable`, `unknown` |
 | `evidence[].kind` | `value_readback`, `window_change` |
+| `evidence[].detail` | optional human readback behind the evidence |
+| `summary` | optional; the result text, verbatim |
+| `error.code` / `error.hint` | only with `effect: refused` |
 | `escalation.target` | `pixel`, `foreground`, `page`, `session` |
 | `escalation.reason` | `route_unavailable`, `delivery_failed`, `effect_unconfirmed`, `suspected_noop`, `permission_required` |
 
@@ -45,15 +54,17 @@ The action-result tools are:
 Other mutating tools such as application launch, window activation, browser
 navigation, dialogs, uploads, and downloads retain their own typed results.
 
-The contract is deliberately closed. It does not echo selectors, coordinates,
-scope, targets, platform transport names, diagnostic pointers, or the old
-`verified` boolean.
+The contract is deliberately closed. It does not echo selectors, request
+coordinates, scope, targets, platform transport names, diagnostic pointers, or
+the old `verified` boolean as fields; `summary` is prose for the agent, not a
+machine-readable echo of the request.
 
 The invariants are:
 
 - `confirmed` has publishable readback or window-change evidence;
 - `partial` has `delivery.delivered_count`;
-- `refused` has neither delivery nor evidence.
+- `refused` has neither delivery nor evidence;
+- `error` appears only on `refused`.
 
 ## Window target resolution
 

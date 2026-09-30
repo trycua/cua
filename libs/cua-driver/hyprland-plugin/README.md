@@ -29,7 +29,7 @@ The candidate remains experimental and unreleased. A source version of
 validation results. Acceptance requires the unchanged complete Linux canonical
 runner on native Hyprland and separate bounded qualified-app proof. See the
 [shared admission boundary](protocol/host-authority-boundary.md) and
-[production proof preparation](tests/production-proof.md) for the native
+[production proof preparation](docs/production-proof.md) for the native
 testing, packaging, and release requirements.
 
 Bounded instrumented app proof and an uninstrumented smoke are retained from
@@ -51,16 +51,16 @@ This branch also contains a separate, opt-in
 [isolated-input compatibility experiment](protocol/input-experiment.md).
 It is not enabled by the normal build or package. Its test-only operator
 boundary and resident-module unload workaround are not a production contract.
-See the [input experiment validation](tests/input-validation.md) for the exact
+See the [input experiment validation](docs/input-validation.md) for the exact
 single-seat artifacts and the [concurrent real-app
-validation](tests/realapp-validation.md) for two-lane Calc/Inkscape evidence,
+validation](docs/realapp-validation.md) for two-lane Calc/Inkscape evidence,
 event-level primary-cursor measurement, and Cancel/Stop results. Those
 historical candidates needed app restarts after plugin reload. The candidate
 keeps seats across config toggles and requires a desktop restart for plugin
 replacement; that lifecycle requires native acceptance evidence. This experiment
 does not establish production hot-reload support.
 
-The [desktop-state safety record](tests/desktop-state-validation.md) covers
+The [desktop-state safety record](docs/desktop-state-validation.md) covers
 matched fault-only controls and background drags during target movement,
 resizing, destruction, real session lock, and display-off. It documents the
 tested artifacts and remaining gates, not production certification.
@@ -145,6 +145,20 @@ The portable driver remains available without this plugin.
 must check its compositor epoch, protocol version, advertised capabilities,
 socket path, discovery-only state, and ABI identity before connecting. A loaded
 module alone is not evidence that target discovery or mutation is available.
+
+The opt-in v3 build also reports two keyboard fields, whether or not input is
+enabled, so an installer can tell an updated module from an older one still
+loaded in the running compositor before it enables input:
+
+- `keyboard_layout_independent: true`: the agent seats use their own canonical
+  keymap, and foreground pointer-only actions do not depend on the physical
+  keyboard layout.
+- `foreground_numlock_compatible: true`: foreground keyboard actions keep the
+  human keyboard's Num Lock and admit a key only when it means the same thing
+  under it. Caps Lock, and keypad keys that Num Lock changes, refuse explicitly.
+
+Neither field says that the current physical keymap qualifies for foreground
+typing; each foreground key is still checked when it is sent.
 
 The local transport is also disabled by default. To exercise negotiation in a
 disposable session, set the following and reload the configuration after the

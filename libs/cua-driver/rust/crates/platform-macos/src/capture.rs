@@ -22,8 +22,11 @@
 //!
 //! ## Display capture
 //!
-//! `screencapture -x <file>` still captures the full main display (unchanged
-//! in this slice).
+//! `screencapture -x <file>` captures the full main display. The agent-facing
+//! desktop capture instead uses a ScreenCaptureKit display filter that leaves
+//! the Driver's cursor overlay window out
+//! ([`screenshot_display_bytes_excluding_overlay`]); `screencapture` remains
+//! its fallback and reports that it could not exclude the overlay.
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use std::collections::HashMap;
@@ -521,18 +524,28 @@ fn build_window_capture_plan(
 ///
 /// https://developer.apple.com/documentation/screencapturekit/scscreenshotmanager
 fn capture_window_from_plan(window_id: u32, plan: &WindowCapturePlan) -> anyhow::Result<Vec<u8>> {
-    use screencapturekit::screenshot_manager::{CGImageExt, SCScreenshotManager};
+    use screencapturekit::screenshot_manager::SCScreenshotManager;
 
     let image = SCScreenshotManager::capture_image(&plan.filter, &plan.config).map_err(|e| {
         anyhow::anyhow!("SCScreenshotManager::capture_image failed for window {window_id}: {e}")
     })?;
+
+    cgimage_to_png(&image, &format!("window {window_id}"))
+}
+
+/// Encode a ScreenCaptureKit `CGImage` as PNG after checking its geometry.
+fn cgimage_to_png(
+    image: &screencapturekit::screenshot_manager::CGImage,
+    label: &str,
+) -> anyhow::Result<Vec<u8>> {
+    use screencapturekit::screenshot_manager::CGImageExt;
 
     let w = checked_image_dim(image.width(), "CGImage width")?;
     let h = checked_image_dim(image.height(), "CGImage height")?;
 
     let rgba = image
         .rgba_data()
-        .map_err(|e| anyhow::anyhow!("CGImage::rgba_data failed for window {window_id}: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("CGImage::rgba_data failed for {label}: {e}"))?;
 
     let expected_len = (w as u64)
         .checked_mul(h as u64)
@@ -540,7 +553,7 @@ fn capture_window_from_plan(window_id: u32, plan: &WindowCapturePlan) -> anyhow:
         .ok_or_else(|| anyhow::anyhow!("RGBA byte length overflow for {w}x{h}"))?;
     if rgba.len() as u64 != expected_len {
         anyhow::bail!(
-            "CGImage RGBA length {} != {w}*{h}*4 ({expected_len}) for window {window_id}",
+            "CGImage RGBA length {} != {w}*{h}*4 ({expected_len}) for {label}",
             rgba.len()
         );
     }
@@ -772,6 +785,141 @@ pub fn screenshot_display_bytes() -> anyhow::Result<Vec<u8>> {
         anyhow::bail!("screencapture produced empty output for main display");
     }
     Ok(bytes)
+}
+
+/// Name reported in `agent_overlay_capture.method` for the macOS mechanism.
+pub const OVERLAY_EXCLUSION_METHOD: &str = "screencapturekit_excluding_windows";
+
+/// Display captures run on their own single ScreenCaptureKit worker so a
+/// window capture in flight never forces the agent's desktop capture onto the
+/// fallback that cannot exclude the overlay.
+const DISPLAY_CAPTURE_NATIVE_TIMEOUT: Duration = Duration::from_secs(5);
+
+fn display_capture_gate() -> &'static NativeCaptureGate {
+    static GATE: NativeCaptureGate = NativeCaptureGate::new();
+    &GATE
+}
+
+/// macOS adapter of `cursor_overlay::capture_exclusion`: nothing is hidden on
+/// screen; the capture itself leaves the overlay window out through a
+/// ScreenCaptureKit display filter, so the cursor never flickers for the user
+/// and external recorders keep seeing it.
+struct OverlayExcluder;
+
+impl cursor_overlay::capture_exclusion::OverlayCaptureExcluder for OverlayExcluder {
+    type Hidden = u32;
+
+    fn exclude(&self) -> cursor_overlay::capture_exclusion::ExclusionStart<u32> {
+        use cursor_overlay::capture_exclusion::ExclusionStart;
+        match crate::cursor::overlay::overlay_window_id() {
+            Some(window_id) if crate::cursor::overlay::overlay_may_show_pixels() => {
+                ExclusionStart::Excluded {
+                    method: OVERLAY_EXCLUSION_METHOD,
+                    hidden: window_id,
+                }
+            }
+            // No overlay window, or nothing painted in it: the plain display
+            // capture has no overlay pixels to leave out.
+            _ => ExclusionStart::NotPresent,
+        }
+    }
+
+    fn restore(&self, _window_id: u32) {}
+}
+
+/// Capture the main display for the agent with the Driver's cursor overlay
+/// window left out, and report how that went.
+///
+/// `screencapture` cannot leave a window out, so it is only used when the
+/// overlay shows nothing, or as a fallback that reports `not_excluded`.
+pub fn screenshot_display_bytes_excluding_overlay() -> anyhow::Result<(
+    Vec<u8>,
+    cursor_overlay::capture_exclusion::AgentOverlayCapture,
+)> {
+    use cursor_overlay::capture_exclusion::{capture_excluding_overlays, ResidualCheck};
+    capture_excluding_overlays(&OverlayExcluder, |overlay| {
+        let Some(&overlay_window_id) = overlay else {
+            return Ok((screenshot_display_bytes()?, ResidualCheck::Clean));
+        };
+        match run_native_capture_worker(
+            display_capture_gate(),
+            DISPLAY_CAPTURE_NATIVE_TIMEOUT,
+            move || screenshot_main_display_sck_excluding(overlay_window_id),
+        ) {
+            Ok(bytes) => Ok((bytes, ResidualCheck::Clean)),
+            Err(error) => {
+                tracing::warn!(
+                    "ScreenCaptureKit display capture without the overlay failed: {error:#}"
+                );
+                let bytes = screenshot_display_bytes()?;
+                Ok((
+                    bytes,
+                    ResidualCheck::Residual {
+                        reason: format!(
+                            "ScreenCaptureKit could not capture the display without the \
+                             overlay window ({error:#}); the screencapture fallback includes \
+                             every on-screen window"
+                        ),
+                    },
+                ))
+            }
+        }
+    })
+}
+
+/// Main display at native pixel size through ScreenCaptureKit, with one
+/// window (the overlay) excluded. Requires macOS 14 for
+/// `SCScreenshotManager`.
+fn screenshot_main_display_sck_excluding(excluded_window_id: u32) -> anyhow::Result<Vec<u8>> {
+    use core_graphics::display::CGMainDisplayID;
+    use screencapturekit::prelude::{SCContentFilter, SCShareableContent, SCStreamConfiguration};
+    use screencapturekit::screenshot_manager::SCScreenshotManager;
+
+    let content = SCShareableContent::get()
+        .map_err(|e| anyhow::anyhow!("SCShareableContent::get failed: {e}"))?;
+    // SAFETY: CGMainDisplayID takes no arguments and only reads WindowServer state.
+    let main_display_id = unsafe { CGMainDisplayID() };
+    let display = content
+        .displays()
+        .into_iter()
+        .find(|display| display.display_id() == main_display_id)
+        .ok_or_else(|| {
+            anyhow::anyhow!("ScreenCaptureKit does not list the main display {main_display_id}")
+        })?;
+    let windows = content.windows();
+    let excluded = windows
+        .iter()
+        .find(|window| window.window_id() == excluded_window_id)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "ScreenCaptureKit does not list the overlay window {excluded_window_id}"
+            )
+        })?;
+
+    let mut filter = SCContentFilter::create()
+        .with_display(&display)
+        .with_excluding_windows(&[excluded])
+        .build();
+    // `screencapture` includes the menu bar; keep the same image.
+    filter.set_include_menu_bar(true);
+
+    let scale = f64::from(filter.point_pixel_scale());
+    let rect = filter.content_rect();
+    let (width_pts, height_pts) = if content_rect_usable(rect) {
+        (rect.size.width, rect.size.height)
+    } else {
+        let frame = display.frame();
+        (frame.size.width, frame.size.height)
+    };
+    let config = SCStreamConfiguration::new()
+        .with_width(rounded_pixel_dim(width_pts * scale, "width")?)
+        .with_height(rounded_pixel_dim(height_pts * scale, "height")?)
+        // `screencapture -x` leaves the hardware pointer out too.
+        .with_shows_cursor(false);
+
+    let image = SCScreenshotManager::capture_image(&filter, &config)
+        .map_err(|e| anyhow::anyhow!("SCScreenshotManager::capture_image failed: {e}"))?;
+    cgimage_to_png(&image, "main display")
 }
 
 /// Capture the main display and return (base64-encoded PNG, width, height).

@@ -18,6 +18,8 @@ LOCAL_APP="/Applications/CuaDriverLocal.app"
 INSTALLED_BIN="${HOME}/.local/bin/cua-driver-local"
 LOCAL_PLIST="${HOME}/Library/LaunchAgents/com.trycua.cua-driver-local.plist"
 CUA_E2E_MACOS_DAEMON_SOCKET="${CUA_E2E_MACOS_DAEMON_SOCKET:-${HOME}/Library/Caches/cua-driver-local/cua-driver-local.sock}"
+SCREEN_CAPTURE_APPROVALS="${HOME}/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist"
+SCREEN_CAPTURE_CLIENT="com.trycua.driver.local"
 # A run-owned Cargo namespace keeps a certification build off the seed image's
 # and any other commit's target state without deleting a shared cache.
 CARGO_TARGET_ROOT="${CUA_E2E_CARGO_TARGET_ROOT:-${HOME}/Library/Caches/cua-driver-e2e/cargo-target}"
@@ -27,6 +29,8 @@ RETRY_INTERNAL_LANE=shared
 RETRY_ATTEMPTS_LIMIT=3
 # How long to wait for a daemon mode transition, in one-second polls.
 DAEMON_MODE_WAIT_ATTEMPTS="${CUA_E2E_DAEMON_WAIT_ATTEMPTS:-10}"
+KEYCHAIN_COMMAND_TIMEOUT_SECONDS=5
+KEYCHAIN_COMMAND_KILL_GRACE_SECONDS=1
 # Lanes whose failure is attributable to one typed matrix cell that an exact
 # single-cell rerun can reproduce. The embedded-browser lane is excluded on
 # purpose: filtering to one of its cells leaves the shared web-action lane with
@@ -42,7 +46,7 @@ RETRYABLE_LANES=(
 
 usage() {
   cat <<'EOF'
-Usage: run-all.sh [--no-build] [--standalone-browser]
+Usage: run-all.sh [--no-build]
                   [--retry-cell <cell-id> [--retry-harness <harness>]
                    [--retry-attempts <1-3>] [--retry-only]]
 
@@ -50,8 +54,8 @@ Run the canonical cua-driver macOS GUI E2E matrix in a disposable clone of
 the maintainer Lume golden image. Start this command from Terminal in the VM's
 logged-in desktop session, not over SSH.
 
---standalone-browser also runs the optional installed Chrome/Edge browser-tool
-matrix after the canonical repo-local harness matrix.
+Every complete run also executes the installed Chrome/Edge browser-tool matrix
+after the canonical repo-local harness matrix.
 
 --retry-cell authorizes exactly one bounded retry selection. After a failing
 full matrix the runner retries that single cell only when it was the matrix's
@@ -67,7 +71,6 @@ unrestricted worker daemon first.
 EOF
 }
 
-RUN_STANDALONE_BROWSER=0
 NO_BUILD=0
 RETRY_CELL=""
 RETRY_HARNESS=""
@@ -75,7 +78,6 @@ RETRY_ATTEMPTS=""
 RETRY_ONLY=0
 
 parse_arguments() {
-  RUN_STANDALONE_BROWSER=0
   NO_BUILD=0
   RETRY_CELL=""
   RETRY_HARNESS=""
@@ -84,7 +86,10 @@ parse_arguments() {
   while (($#)); do
     case "$1" in
       --no-build) NO_BUILD=1 ;;
-      --standalone-browser) RUN_STANDALONE_BROWSER=1 ;;
+      --standalone-browser)
+        echo "--standalone-browser was removed; every complete run includes the standalone browser matrix" >&2
+        return 2
+        ;;
       --retry-only) RETRY_ONLY=1 ;;
       --retry-cell=*) RETRY_CELL="${1#*=}" ;;
       --retry-harness=*) RETRY_HARNESS="${1#*=}" ;;
@@ -144,10 +149,6 @@ validate_arguments() {
     echo "--retry-attempts must be between 1 and ${RETRY_ATTEMPTS_LIMIT}" >&2
     return 2
   fi
-  if [[ "${RETRY_ONLY}" == 1 && "${RUN_STANDALONE_BROWSER}" == 1 ]]; then
-    echo "--retry-only cannot be combined with --standalone-browser" >&2
-    return 2
-  fi
 
   if [[ "${RETRY_CELL}" == macos-swiftui-* ]]; then
     if [[ -n "${RETRY_HARNESS}" && "${RETRY_HARNESS}" != swiftui ]]; then
@@ -187,28 +188,158 @@ output_contains() {
   [[ "${CAPTURED_OUTPUT}" == *"${needle}"* ]]
 }
 
+run_bounded_command() {
+  command -v python3 >/dev/null 2>&1 || {
+    echo "Missing golden-image dependency: python3" >&2
+    return 127
+  }
+  python3 - "${KEYCHAIN_COMMAND_TIMEOUT_SECONDS}" \
+      "${KEYCHAIN_COMMAND_KILL_GRACE_SECONDS}" "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+timeout = float(sys.argv[1])
+kill_grace = float(sys.argv[2])
+try:
+    process = subprocess.Popen(sys.argv[3:], start_new_session=True)
+except OSError as error:
+    print(f"failed to start bounded command {sys.argv[3]}: {error}", file=sys.stderr)
+    raise SystemExit(127)
+try:
+    raise SystemExit(process.wait(timeout=timeout))
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        raise SystemExit(process.wait())
+    try:
+        process.wait(timeout=kill_grace)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+    raise SystemExit(124)
+PY
+}
+
+probe_signing_keychain() {
+  local keychain="$1"
+  local signing_identity="${CUA_E2E_SIGNING_IDENTITY:-${SIGNING_CN}}"
+  local probe_dir probe_binary status=0
+  probe_dir="$(mktemp -d \
+    "${TMPDIR:-/tmp}/cua-signing-keychain-probe.XXXXXX")" || return 1
+  probe_binary="${probe_dir}/probe"
+  cp /usr/bin/true "${probe_binary}" || status=$?
+  if ((status == 0)); then
+    run_bounded_command codesign --force --timestamp=none \
+      --sign "${signing_identity}" \
+      --keychain "${keychain}" "${probe_binary}" || status=$?
+  fi
+  if ((status == 0)); then
+    run_bounded_command codesign --verify --strict "${probe_binary}" || status=$?
+  fi
+  rm -f "${probe_binary}"
+  rmdir "${probe_dir}" 2>/dev/null || true
+  return "${status}"
+}
+
+probe_login_keychain() {
+  local keychain="$1"
+  local service="cua-driver-keychain-probe-${$}-${RANDOM}"
+  local account="cua-driver-keychain-probe"
+  local probe_value="${service}"
+  local observed_value="" status=0 cleanup_status=0
+
+  if run_bounded_command security add-generic-password -a "${account}" \
+      -s "${service}" -w "${probe_value}" "${keychain}"; then
+    :
+  else
+    status=$?
+  fi
+  if ((status == 0)); then
+    observed_value="$(run_bounded_command security find-generic-password \
+      -a "${account}" -s "${service}" -w "${keychain}")" || status=$?
+    if ((status == 0)) && [[ "${observed_value}" != "${probe_value}" ]]; then
+      status=1
+    fi
+  fi
+  run_bounded_command security delete-generic-password -a "${account}" \
+    -s "${service}" "${keychain}" >/dev/null || cleanup_status=$?
+  if ((cleanup_status != 0)); then
+    echo "Login keychain probe cleanup failed; retrying the bounded delete once" >&2
+    cleanup_status=0
+    run_bounded_command security delete-generic-password -a "${account}" \
+      -s "${service}" "${keychain}" >/dev/null || cleanup_status=$?
+  fi
+  if ((cleanup_status != 0)); then
+    echo "Login keychain probe cleanup failed after two bounded delete attempts; temporary item ${service} may remain" >&2
+    status=${cleanup_status}
+  fi
+  observed_value=""
+  probe_value=""
+  return "${status}"
+}
+
+prepare_keychain() {
+  local label="$1"
+  local keychain="$2"
+  local provided_password="$3"
+  local probe_kind="$4"
+  local keychain_password="${provided_password}"
+
+  if [[ -z "${keychain_password}" && -t 0 ]]; then
+    read -r -s -p "${label} password: " keychain_password
+    printf '\n'
+  fi
+  if [[ -n "${keychain_password}" ]]; then
+    if ! run_bounded_command security unlock-keychain -p \
+        "${keychain_password}" "${keychain}"; then
+      echo "${label} could not be unlocked within the bounded operation" >&2
+      return 2
+    fi
+  else
+    case "${probe_kind}" in
+      signing)
+        if ! probe_signing_keychain "${keychain}"; then
+          echo "${label} did not permit the bounded signing and verification probe" >&2
+          return 2
+        fi
+        ;;
+      login)
+        if ! probe_login_keychain "${keychain}"; then
+          echo "${label} did not permit the bounded add/read/delete probe" >&2
+          return 2
+        fi
+        ;;
+      *)
+        echo "Unknown keychain probe kind: ${probe_kind}" >&2
+        return 2
+        ;;
+    esac
+  fi
+  keychain_password=""
+}
+
 unlock_required_keychains() {
-  local keychain_password="${CUA_E2E_SIGNING_KEYCHAIN_PASSWORD:-}"
+  local provided_password="${CUA_E2E_SIGNING_KEYCHAIN_PASSWORD:-}"
   unset CUA_E2E_SIGNING_KEYCHAIN_PASSWORD
 
-  echo "[SIGNING] Unlocking the golden image's dedicated signing keychain"
-  if [[ -n "${keychain_password}" ]]; then
-    security unlock-keychain -p "${keychain_password}" "${SIGNING_KEYCHAIN}"
-  else
-    security unlock-keychain "${SIGNING_KEYCHAIN}"
-  fi
+  echo "[SIGNING] Preparing the golden image's dedicated signing keychain"
+  prepare_keychain "Dedicated signing keychain" "${SIGNING_KEYCHAIN}" \
+    "${provided_password}" signing
 
   if [[ ! -f "${LOGIN_KEYCHAIN}" ]]; then
     echo "Missing console user's login Keychain: ${LOGIN_KEYCHAIN}" >&2
     return 2
   fi
-  echo "[HISTORY] Unlocking the login Keychain for encrypted computer history"
-  if [[ -n "${keychain_password}" ]]; then
-    security unlock-keychain -p "${keychain_password}" "${LOGIN_KEYCHAIN}"
-  else
-    security unlock-keychain "${LOGIN_KEYCHAIN}"
-  fi
-  keychain_password=""
+  echo "[HISTORY] Preparing the login Keychain for encrypted computer history"
+  prepare_keychain "Login keychain" "${LOGIN_KEYCHAIN}" \
+    "${provided_password}" login
+  provided_password=""
 }
 
 json_string_array() {
@@ -256,6 +387,26 @@ preserve_previous_artifacts() {
   mv "${ARTIFACT_DIR}" "${destination}"
   mkdir -p "${ARTIFACT_DIR}"
   echo "[EVIDENCE] Preserved the previous certification run at ${destination}"
+}
+
+setup_screen_capture_approval() {
+  local evidence_file="${ARTIFACT_DIR}/screen-capture-approval.txt"
+  echo "[CAPTURE] Suppressing the app-specific private-window-picker reminder"
+  mkdir -p "$(dirname "${SCREEN_CAPTURE_APPROVALS}")"
+  defaults write "${SCREEN_CAPTURE_APPROVALS}" "${SCREEN_CAPTURE_CLIENT}" -dict \
+    kScreenCaptureApprovalLastAlerted -date "3024-01-01 00:00:00 +0000" \
+    kScreenCaptureApprovalLastUsed -date "3024-01-01 00:00:00 +0000"
+  killall -HUP replayd >/dev/null 2>&1 || true
+  defaults read "${SCREEN_CAPTURE_APPROVALS}" "${SCREEN_CAPTURE_CLIENT}" \
+    > "${evidence_file}"
+  grep -Fq "kScreenCaptureApprovalLastAlerted" "${evidence_file}" || {
+    echo "The app-specific screen capture reminder approval was not stored" >&2
+    return 1
+  }
+  grep -Fq "kScreenCaptureApprovalLastUsed" "${evidence_file}" || {
+    echo "The app-specific screen capture last-used approval was not stored" >&2
+    return 1
+  }
 }
 
 RESTORE_STANDARD_DAEMON=0
@@ -564,7 +715,7 @@ run_computer_history_gate() {
   echo "[HISTORY] Recording one packaged action before daemon restart"
   (
     cd "${RUST_ROOT}"
-    cargo test -p cua-driver --release --test "${test_binary}" \
+    cargo test -p cua-driver-e2e --release --test "${test_binary}" \
       history_records_agent_action_before_restart -- \
       --ignored --exact --nocapture --test-threads=1
   ) 2>&1 | tee "${ARTIFACT_DIR}/history-before-restart.log"
@@ -573,7 +724,7 @@ run_computer_history_gate() {
   restart_unrestricted_daemon
   (
     cd "${RUST_ROOT}"
-    cargo test -p cua-driver --release --test "${test_binary}" \
+    cargo test -p cua-driver-e2e --release --test "${test_binary}" \
       history_reopens_after_restart_and_cryptographically_purges -- \
       --ignored --exact --nocapture --test-threads=1
   ) 2>&1 | tee "${ARTIFACT_DIR}/history-after-restart.log"
@@ -738,6 +889,11 @@ fi
   echo "The Lume macOS runner must run in a macOS guest" >&2
   exit 2
 }
+MODEL="$(/usr/sbin/sysctl -n hw.model 2>/dev/null || true)"
+if [[ "${MODEL}" != VirtualMac* ]]; then
+  echo "The Lume macOS runner requires a VirtualMac guest, got: ${MODEL:-unknown}" >&2
+  exit 2
+fi
 if [[ -n "${SSH_CONNECTION:-}" || -n "${SSH_TTY:-}" ]]; then
   echo "Run this command from Terminal in the VM display so fixtures inherit the GUI login session" >&2
   exit 2
@@ -761,7 +917,7 @@ if [[ "${SIP_STATUS}" != *"System Integrity Protection status: disabled."* ]]; t
   exit 2
 fi
 
-for command_name in cargo codesign ffmpeg ffprobe jq node npm osascript security xcrun; do
+for command_name in cargo codesign ffmpeg ffprobe jq node npm osascript python3 security xcrun; do
   command -v "${command_name}" >/dev/null 2>&1 || {
     echo "Missing golden-image dependency: ${command_name}" >&2
     exit 2
@@ -815,6 +971,7 @@ export CUA_E2E_FRESH_FIXTURE_STATE=1
 preserve_previous_artifacts "${RUN_ID}"
 printf '%s\n' "${SIP_STATUS}" > "${ARTIFACT_DIR}/sip-status.txt"
 printf '%s\n' "${SOURCE_SHA}" > "${ARTIFACT_DIR}/requested-source-sha.txt"
+printf '%s\n' "${RUN_ID}" > "${ARTIFACT_DIR}/run-id.txt"
 {
   sw_vers
   printf 'console_user:\t%s\n' "${CONSOLE_USER}"
@@ -855,6 +1012,7 @@ if ! grep -Fq "certificate leaf" "${ARTIFACT_DIR}/codesign-requirement.txt"; the
   echo "CuaDriverLocal.app is not signed with the golden image's stable certificate identity" >&2
   exit 1
 fi
+setup_screen_capture_approval
 
 export CUA_E2E_INSTALLED_DRIVER_BIN="${INSTALLED_BIN}"
 export CUA_E2E_MACOS_DAEMON_SOCKET
@@ -943,23 +1101,32 @@ elif [[ -n "${RETRY_CELL}" ]]; then
   echo "[RETRY] The full matrix passed; no retry of ${RETRY_CELL} was needed"
 fi
 
-if [[ "${RUN_STANDALONE_BROWSER}" == 1 ]]; then
-  echo "[E2E] Running the optional standalone browser matrix"
-  BROWSER_ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos-standalone-browser"
-  if [[ -d "${BROWSER_ARTIFACT_DIR}" ]] \
-      && [[ -n "$(find "${BROWSER_ARTIFACT_DIR}" -mindepth 1 -print -quit)" ]]; then
-    BROWSER_ARTIFACT_ARCHIVE="$(mktemp -d "${TMPDIR:-/tmp}/cua-macos-browser-e2e.XXXXXX")"
-    mv "${BROWSER_ARTIFACT_DIR}" "${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
-    echo "Previous standalone-browser evidence preserved at ${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
-  fi
-  ensure_unrestricted_daemon
-  set +e
-  CUA_E2E_ARTIFACT_DIR="${BROWSER_ARTIFACT_DIR}" \
-    "${REPO_ROOT}/scripts/ci/run-rust-standalone-browser-e2e.sh"
-  BROWSER_STATUS=$?
-  set -e
-
-  if [[ "${BROWSER_STATUS}" != 0 ]]; then
-    exit "${BROWSER_STATUS}"
-  fi
+echo "[E2E] Running the standalone browser matrix"
+BROWSER_ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos-standalone-browser"
+if [[ -d "${BROWSER_ARTIFACT_DIR}" ]] \
+    && [[ -n "$(find "${BROWSER_ARTIFACT_DIR}" -mindepth 1 -print -quit)" ]]; then
+  BROWSER_ARTIFACT_ARCHIVE="$(mktemp -d "${TMPDIR:-/tmp}/cua-macos-browser-e2e.XXXXXX")"
+  mv "${BROWSER_ARTIFACT_DIR}" "${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
+  echo "Previous standalone-browser evidence preserved at ${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
 fi
+ensure_unrestricted_daemon
+set +e
+CUA_E2E_ARTIFACT_DIR="${BROWSER_ARTIFACT_DIR}" \
+  "${REPO_ROOT}/scripts/ci/run-rust-standalone-browser-e2e.sh"
+BROWSER_STATUS=$?
+set -e
+
+if [[ "${BROWSER_STATUS}" != 0 ]]; then
+  exit "${BROWSER_STATUS}"
+fi
+
+jq -n \
+  --arg schema 'cua-driver/macos-lume-direct-result@v1' \
+  --arg source_sha "${SOURCE_SHA}" \
+  --arg run_id "${RUN_ID}" \
+  --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  '{schema: $schema, source_sha: $source_sha, run_id: $run_id,
+    completed_at: $completed_at, standalone_browser: true,
+    passed: true}' > "${ARTIFACT_DIR}/direct-result.json"
+
+echo "macOS direct Lume run passed: ${RUN_ID}"

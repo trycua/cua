@@ -2,7 +2,7 @@ use cua_driver_core::action_record::{
     ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
 };
 use cua_driver_core::recording::{
-    set_ax_snapshot_fn, set_element_bounds_fn, set_screenshot_fn, RecordingSession,
+    set_ax_snapshot_fn, set_element_bounds_fn, set_screenshot_fn, RecordingCaller, RecordingSession,
 };
 use serde_json::{json, Value};
 
@@ -21,8 +21,7 @@ fn macos_semantic_activation_without_a_point_preserves_truth_without_a_marker() 
     let args = json!({
         "pid": 32166,
         "window_id": 2467,
-        "element_index": 12,
-        "snapshot_id": "s00000232",
+        "element_token": "s00000001:12",
         "action": "press",
         "delivery_mode": "foreground"
     });
@@ -34,7 +33,9 @@ fn macos_semantic_activation_without_a_point_preserves_truth_without_a_marker() 
     .actual_delivery(ActualDelivery::Foreground)
     .build()
     .unwrap();
-    let pending = recording.begin_turn("click", &args, 0).unwrap();
+    let pending = recording
+        .begin_turn("click", &args, 0, RecordingCaller::default())
+        .unwrap();
     recording.finish_turn_with_outcome(pending, "Performed AXPress", Some(&action), false);
     recording.stop_owner(None).unwrap();
 

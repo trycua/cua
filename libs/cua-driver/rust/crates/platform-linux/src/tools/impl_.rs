@@ -1009,6 +1009,8 @@ impl Tool for GetWindowStateTool {
                 with [element_index N] in the markdown and as `element_index` in \
                 the structured array; pass each element's `element_token` to \
                 `click`, `type_text`, `set_value`, etc.\n\n\
+                Accessibility snapshots replace element tokens for the same (pid, window_id). \
+                Screenshot-only previews on the same session preserve those tokens.\n\n\
                 PREFERRED CONSUMERS read `structuredContent.elements` (one entry \
                 per indexed row with `element_index`, `role`, `label`, `value`, \
                 `enabled`, `selected`, `actions` (names of AT-SPI actions exposed \
@@ -1607,7 +1609,13 @@ impl Tool for GetWindowStateTool {
                 }
 
                 if !observation_only && !published_snapshot && screenshot_scale.is_some() {
-                    if let Some((_, replaced)) = state.snapshots.publish_for_session(
+                    let publish_snapshot = if want_tree {
+                        crate::atspi::snapshot::Snapshots::publish_for_session
+                    } else {
+                        crate::atspi::snapshot::Snapshots::publish_capture_for_session
+                    };
+                    if let Some((_, replaced)) = publish_snapshot(
+                        &state.snapshots,
                         pid as i32,
                         xid,
                         crate::atspi::snapshot::AtspiSnapshot::from_nodes(&[]),

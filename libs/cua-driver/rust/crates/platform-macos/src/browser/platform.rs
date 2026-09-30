@@ -438,6 +438,14 @@ fn user_data_dir_from_arguments(
     args: &[Vec<u8>],
     default: Option<PathBuf>,
 ) -> Result<Option<PathBuf>, BrowserRefusal> {
+    user_data_dir_from_arguments_with_relative_fallback(args, default, false)
+}
+
+fn user_data_dir_from_arguments_with_relative_fallback(
+    args: &[Vec<u8>],
+    default: Option<PathBuf>,
+    allow_relative_fallback: bool,
+) -> Result<Option<PathBuf>, BrowserRefusal> {
     use std::os::unix::ffi::OsStringExt;
 
     let mut directories = Vec::new();
@@ -457,6 +465,7 @@ fn user_data_dir_from_arguments(
     match directories.as_slice() {
         [] => Ok(default),
         [path] if path.is_absolute() => Ok(Some(path.clone())),
+        [_] if allow_relative_fallback => Ok(None),
         [_] => Err(refusal(
             BrowserRefusalCode::BrowserRouteUnavailable,
             "the browser uses a relative --user-data-dir that cannot be attested without its launch working directory",
@@ -471,10 +480,19 @@ fn user_data_dir_from_arguments(
 async fn user_data_dir_for_pid(
     pid: i64,
     product: BrowserProduct,
+    allow_relative_fallback: bool,
 ) -> Result<Option<PathBuf>, BrowserRefusal> {
     tokio::task::spawn_blocking(move || {
         let args = process_arguments(pid)?;
-        user_data_dir_from_arguments(&args, default_user_data_dir(product))
+        if allow_relative_fallback {
+            user_data_dir_from_arguments_with_relative_fallback(
+                &args,
+                default_user_data_dir(product),
+                true,
+            )
+        } else {
+            user_data_dir_from_arguments(&args, default_user_data_dir(product))
+        }
     })
     .await
     .map_err(|error| {
@@ -589,11 +607,20 @@ async fn active_port_endpoint(
     pid: i64,
     product: BrowserProduct,
 ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+    active_port_endpoint_with_relative_fallback(pid, product, false).await
+}
+
+async fn active_port_endpoint_with_relative_fallback(
+    pid: i64,
+    product: BrowserProduct,
+    allow_relative_fallback: bool,
+) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
     // The Chrome 144+ existing-profile bridge deliberately returns 404 for
     // legacy /json discovery. Its exact browser WebSocket path is instead
     // published in the exact user-data root's DevToolsActivePort file. argv
     // comes from KERN_PROCARGS2 rather than lossy `ps` text.
-    let Some(user_data_dir) = user_data_dir_for_pid(pid, product).await? else {
+    let Some(user_data_dir) = user_data_dir_for_pid(pid, product, allow_relative_fallback).await?
+    else {
         return Ok(None);
     };
     let text = match tokio::fs::read_to_string(user_data_dir.join("DevToolsActivePort")).await {
@@ -928,7 +955,13 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         // against the expected WebSocket URL then fails for the whole retry
         // window (see #4342). Listener discovery below remains the fallback.
         let classification = self.classify_browser(pid).await?;
-        if let Some(endpoint) = active_port_endpoint(pid, classification.product_kind).await? {
+        // A relative profile cannot be located from argv alone. Only this
+        // owned-app route may fall back to independently PID-proven listeners;
+        // existing-profile consent routes retain strict path attestation.
+        if let Some(endpoint) =
+            active_port_endpoint_with_relative_fallback(pid, classification.product_kind, true)
+                .await?
+        {
             return Ok(Some(endpoint));
         }
         for port in loopback_ports_for_pid(pid).await? {
@@ -1606,8 +1639,7 @@ mod tests {
         assert_eq!(parse_loopback_lsof_ports(input), vec![9222, 9444]);
     }
 
-    #[tokio::test]
-    async fn owned_discovery_prefers_profile_endpoint_over_inherited_listener() {
+    async fn assert_owned_discovery_profile_case(case: &str) {
         use std::os::fd::AsRawFd;
         use std::os::unix::process::CommandExt;
 
@@ -1639,14 +1671,30 @@ mod tests {
             format!("{owned_port}\n/devtools/browser/owned\n"),
         )
         .unwrap();
+        match case {
+            "missing_file" | "non_loopback" => std::fs::remove_file(&active_port).unwrap(),
+            "malformed" => std::fs::write(&active_port, "not-a-port\n").unwrap(),
+            _ => {}
+        }
         let descriptors = [host.as_raw_fd(), owned.as_raw_fd()];
         let mut command = std::process::Command::new("/bin/sh");
         command
             .args(["-c", "read -r line", "endpoint-fixture"])
-            .arg(format!("--user-data-dir={}", profile.path().display()))
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        match case {
+            "relative" => {
+                command.arg("--user-data-dir=relative-profile");
+            }
+            "absent_profile" => {}
+            "conflicting" => {
+                command.args(["--user-data-dir=/tmp/one", "--user-data-dir=/tmp/two"]);
+            }
+            _ => {
+                command.arg(format!("--user-data-dir={}", profile.path().display()));
+            }
+        }
         // Only the forked child loses CLOEXEC; the parent's descriptors remain
         // private to this test. The shell waits on its pipe without a GUI.
         unsafe {
@@ -1669,7 +1717,12 @@ mod tests {
         host.set_nonblocking(true).unwrap();
         let host = tokio::net::TcpListener::from_std(host).unwrap();
         let host_url = format!("ws://127.0.0.1:{host_port}/devtools/browser/host");
-        let body = serde_json::json!({"webSocketDebuggerUrl": host_url}).to_string();
+        let response_url = if case == "non_loopback" {
+            "ws://example.invalid/devtools/browser/host".to_owned()
+        } else {
+            host_url.clone()
+        };
+        let body = serde_json::json!({"webSocketDebuggerUrl": response_url}).to_string();
         let server = tokio::spawn(async move {
             while let Ok((mut stream, _)) = host.accept().await {
                 let mut request = [0; 4096];
@@ -1682,19 +1735,89 @@ mod tests {
             }
         });
         let platform = MacOsBrowserPlatform::new(Arc::new(crate::cursor::CursorRegistry::new()));
-        let endpoint = platform
-            .discover_owned_endpoint(pid)
-            .await
-            .unwrap()
-            .unwrap();
-        // Stop the task even if an assertion below fails.
+        let endpoint = platform.discover_owned_endpoint(pid).await;
+        if case == "relative" {
+            assert_eq!(
+                platform
+                    .discover_existing_profile_endpoint(pid)
+                    .await
+                    .unwrap_err()
+                    .code,
+                BrowserRefusalCode::BrowserRouteUnavailable,
+            );
+            assert_eq!(
+                platform
+                    .reprove_existing_profile_endpoint(pid, &host_url)
+                    .await
+                    .unwrap_err()
+                    .code,
+                BrowserRefusalCode::BrowserRouteUnavailable,
+            );
+        }
+        if case == "absolute" {
+            assert!(platform
+                .discover_spawned_endpoint(pid, &host_url)
+                .await
+                .unwrap()
+                .is_none());
+        }
         server.abort();
-        assert_eq!(
-            endpoint.ws_url,
-            format!("ws://127.0.0.1:{owned_port}/devtools/browser/owned")
-        );
-        assert_eq!(endpoint.transport, EndpointTransport::DevToolsActivePort);
-        assert_eq!(endpoint.ownership.owner_pid, pid);
+        match case {
+            "conflicting" => assert_eq!(
+                endpoint.unwrap_err().code,
+                BrowserRefusalCode::BrowserBindingAmbiguous
+            ),
+            "malformed" => assert_eq!(
+                endpoint.unwrap_err().code,
+                BrowserRefusalCode::BrowserEndpointOwnerMismatch
+            ),
+            "non_loopback" => assert!(endpoint.unwrap().is_none()),
+            _ => {
+                let endpoint = endpoint.unwrap().unwrap();
+                let expected = if case == "absolute" {
+                    format!("ws://127.0.0.1:{owned_port}/devtools/browser/owned")
+                } else {
+                    host_url
+                };
+                assert_eq!(endpoint.ws_url, expected);
+                assert_eq!(
+                    endpoint.transport,
+                    if case == "absolute" {
+                        EndpointTransport::DevToolsActivePort
+                    } else {
+                        EndpointTransport::LegacyJsonVersion
+                    }
+                );
+                assert_eq!(endpoint.ownership.owner_pid, pid);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn owned_discovery_prefers_profile_endpoint_over_inherited_listener() {
+        assert_owned_discovery_profile_case("absolute").await;
+    }
+
+    #[tokio::test]
+    async fn owned_discovery_relative_profile_keeps_listener_fallback_and_consent_strict() {
+        assert_owned_discovery_profile_case("relative").await;
+    }
+
+    #[tokio::test]
+    async fn owned_discovery_missing_profile_or_file_keeps_listener_fallback() {
+        assert_owned_discovery_profile_case("absent_profile").await;
+        assert_owned_discovery_profile_case("missing_file").await;
+    }
+
+    #[tokio::test]
+    async fn owned_discovery_rejects_conflicting_profiles_and_malformed_port_file() {
+        assert_owned_discovery_profile_case("conflicting").await;
+        assert_owned_discovery_profile_case("malformed").await;
+    }
+
+    #[tokio::test]
+    async fn owned_discovery_rejects_non_loopback_fallback() {
+        assert_owned_discovery_profile_case("non_loopback").await;
     }
 
     #[test]

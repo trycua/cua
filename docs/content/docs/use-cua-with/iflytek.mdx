@@ -1,0 +1,77 @@
+---
+title: iFlytek Spark
+description: Use iFlytek Spark-X2.5 with Cua Driver through Claude Code and the Astron Token Plan.
+icon: Sparkles
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+iFlytek serves Spark-X2.5 through the Astron Token Plan, which exposes both an Anthropic-compatible
+and an OpenAI-compatible API. Configure the harness to use Spark-X2.5, then connect that same
+harness to Cua Driver over MCP.
+
+| Start here when…                    | Recommended path                                                                                                                                                                                        |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| You use Claude Code                 | Follow iFlytek's [Token Plan setup](https://www.xfyun.cn/doc/spark/TokenPlan.html), then connect Claude Code to Cua Driver through the [text-only filter](#connect-a-text-only-model) below              |
+| You use another MCP-capable harness | Configure the Token Plan's OpenAI-compatible endpoint from the same [setup guide](https://www.xfyun.cn/doc/spark/TokenPlan.html), then [add Cua Driver over MCP](/how-to-guides/driver/connect-your-agent#generic-mcp-json) |
+
+Cua Driver supplies desktop state and actions. The harness owns the Spark-X2.5 connection, reasoning
+loop, and tool selection.
+
+## Connect a text-only model
+
+Spark-X2.5 does not accept image input. The Token Plan rejects any request that carries an image,
+including a screenshot inside a tool result, with `400 invalid request`. `get_window_state` returns a
+screenshot by default, and once that screenshot is in the conversation history every later request
+fails the same way.
+
+Spark-X2.5 can still operate applications through the accessibility tree. Run Cua Driver behind the
+[MCP schema filter](/how-to-guides/driver/run-with-local-model#install-the-mcp-schema-filter) with
+`--text-only`. The filter requests `get_window_state` without a screenshot, replaces any remaining
+image content with a short text note, and copies the `snapshot_id` into the text so the model can
+pass it with `element_index`.
+
+Create `spark-cua-mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "cua-computer-use": {
+      "command": "cua-mcp-filter",
+      "args": [
+        "--text-only",
+        "--allow",
+        "launch_app,list_windows,get_window_state,click,type_text,press_key,hotkey"
+      ]
+    }
+  }
+}
+```
+
+Leave pixel-only tools such as `screenshot` and `zoom` out of the allowlist. Their results would be
+reduced to the omission note. On Windows, set `command` to `python` and pass the path of the
+downloaded `cua-mcp-filter.py` as the first argument.
+
+With Claude Code configured for the Token Plan, launch it with only the filtered server:
+
+```bash
+claude \
+  --bare \
+  --strict-mcp-config \
+  --mcp-config ./spark-cua-mcp.json \
+  --tools "" \
+  --model spark-x2.5
+```
+
+<Callout type="info" title="Tested configuration">
+  Claude Code 2.1.284, Cua Driver 0.30.4 on Windows 11, and `spark-x2.5` through the Token Plan's
+  Anthropic-compatible endpoint. The model found Windows Calculator with `list_windows`, cleared it,
+  entered a calculation through element clicks, and confirmed the displayed result from a fresh
+  `get_window_state`. Without `--text-only`, the same run failed with `400 invalid request` as soon as a
+  screenshot reached the model. This is a tested configuration rather than a compatibility claim
+  for every application.
+</Callout>
+
+Text-only operation depends on the application's accessibility tree. When a target exposes no usable
+elements, such as a canvas, video, or custom-drawn surface, use a vision model that the Token Plan
+also serves, or another multimodal provider, instead.

@@ -24,7 +24,10 @@ binary alone does not acquire these capabilities. Install through the host's
 normal packaging and permission mechanism; do not disable KWin permission
 checks. Restrictions vary by KWin version and sandbox. The capture interface
 must return `windowId` metadata; older implementations without that identity
-proof are refused. Native validation used KWin 6.7.4.
+proof are refused. This adapter currently requires Plasma window-management
+protocol version 17 or newer, including its UUID stacking-order request. Older
+protocol versions retain discovery fallbacks; they are not qualified for native
+capture by this adapter. Native validation used KWin 6.7.4.
 
 If Plasma window management is unavailable, discovery retains the existing
 helper/AT-SPI fallbacks. Those fallback IDs are not KWin UUIDs and do not become

@@ -25,6 +25,7 @@ for color in [(1, 0, 0), (0, 0, 1)]:
 def command(source, condition):
     line = sys.stdin.readline().strip()
     if line == 'close-first': windows[0].destroy()
+    elif line == 'raise-first': windows[0].present()
     elif line == 'minimize-second': windows[1].iconify()
     elif line == 'resize-second': windows[1].unfullscreen(); windows[1].resize(400, 240)
     elif line == 'quit': Gtk.main_quit(); return False
@@ -117,6 +118,37 @@ fn same_pid_same_title_windows_capture_exact_surfaces_without_a_helper() {
     assert!(colors.contains(&[0, 0, 255, 255]), "{colors:?}");
     for (window, color) in windows.iter().zip(&colors) {
         assert_eq!(capture(&mut driver, pid, window), *color);
+    }
+    // Bringing the previously covered red sibling forward must update the
+    // compositor rank without changing either driver window ID.
+    let red = colors
+        .iter()
+        .position(|color| color == &[255, 0, 0, 255])
+        .unwrap();
+    let blue = 1 - red;
+    writeln!(input, "raise-first").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let response = driver.call("list_windows", json!({"pid": pid}));
+        let refreshed = response.structured()["windows"].as_array().unwrap();
+        let ranks: Vec<_> = windows
+            .iter()
+            .map(|window| {
+                refreshed
+                    .iter()
+                    .find(|fresh| fresh["window_id"] == window["window_id"])
+                    .and_then(|fresh| fresh["z_index"].as_u64())
+            })
+            .collect();
+        if matches!((ranks[red], ranks[blue]), (Some(red), Some(blue)) if red > blue) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "fixture stacking: {}",
+            response.text()
+        );
+        std::thread::sleep(Duration::from_millis(100));
     }
     let wrong_owner = driver.call("get_window_state", json!({
         "pid": std::process::id(), "window_id": windows[0]["window_id"], "include_accessibility_tree": false,

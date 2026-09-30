@@ -10,6 +10,9 @@ use wayland_client::{protocol::{wl_callback, wl_registry}, Connection, Dispatch,
 use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_window_management::{
     self as management, OrgKdePlasmaWindowManagement,
 };
+use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_stacking_order::{
+    self as stacking, OrgKdePlasmaStackingOrder,
+};
 use zbus::zvariant::{Fd, OwnedValue};
 
 use crate::x11::WindowInfo;
@@ -23,6 +26,8 @@ type Properties = HashMap<String, OwnedValue>;
 struct Windows {
     manager: Option<OrgKdePlasmaWindowManagement>,
     uuids: Vec<String>,
+    stacking: Vec<String>,
+    stacking_done: bool,
     roundtrips: u32,
 }
 
@@ -76,7 +81,24 @@ impl Dispatch<OrgKdePlasmaWindowManagement, ()> for Windows {
     }
 }
 
-fn window_uuids() -> anyhow::Result<Vec<String>> {
+impl Dispatch<OrgKdePlasmaStackingOrder, ()> for Windows {
+    fn event(
+        state: &mut Self,
+        _: &OrgKdePlasmaStackingOrder,
+        event: stacking::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            stacking::Event::Window { uuid } => state.stacking.push(uuid),
+            stacking::Event::Done => state.stacking_done = true,
+            _ => {}
+        }
+    }
+}
+
+fn window_snapshot() -> anyhow::Result<(Vec<String>, Vec<String>)> {
     let connection = Connection::connect_to_env()?;
     let mut queue = connection.new_event_queue::<Windows>();
     connection.display().get_registry(&queue.handle(), ());
@@ -102,9 +124,21 @@ fn window_uuids() -> anyhow::Result<Vec<String>> {
         "KWin windows",
         |state| state.roundtrips == 2,
     )?;
+    state
+        .manager
+        .as_ref()
+        .unwrap()
+        .get_stacking_order(&queue.handle(), ());
+    super::hyprland_capture::dispatch_until(
+        &mut queue,
+        &mut state,
+        deadline,
+        "KWin stacking order",
+        |state| state.stacking_done,
+    )?;
     state.uuids.sort();
     state.uuids.dedup();
-    Ok(state.uuids)
+    Ok((state.uuids, state.stacking))
 }
 
 #[derive(Default)]
@@ -220,8 +254,19 @@ fn coordinate(properties: &Properties, name: &str) -> anyhow::Result<f64> {
         .with_context(|| format!("KWin returned invalid {name}"))
 }
 
+fn on_current_activity(activities: &[String], current_activity: Option<&str>) -> bool {
+    activities.is_empty()
+        || current_activity
+            .is_some_and(|current| activities.iter().any(|activity| activity == current))
+}
+
+fn stacking_index(stacking: &[String], uuid: &str) -> Option<usize> {
+    // KWin exports the stack bottom-to-top. Unknown/new windows have no proven rank.
+    stacking.iter().position(|window| window == uuid)
+}
+
 pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
-    let uuids = window_uuids()?;
+    let (uuids, stacking) = window_snapshot()?;
     run(async move {
         let connection = zbus::Connection::session().await?;
         let owner = owner(&connection).await?;
@@ -235,6 +280,7 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
         .get_property::<String>("current")
         .await?;
         let mut windows = Vec::new();
+        let mut current_activity: Option<String> = None;
         for uuid in uuids {
             let properties = info(&connection, &owner, &uuid).await?;
             if properties.is_empty() {
@@ -258,6 +304,25 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
                     .context("KWin omitted desktops")?
                     .try_clone()?,
             )?;
+            // KWin omits activities when built without Activity support.
+            let activities = properties
+                .get("activities")
+                .map(|value| Vec::<String>::try_from(value.try_clone()?))
+                .transpose()?
+                .unwrap_or_default();
+            if !activities.is_empty() && current_activity.is_none() {
+                current_activity = Some(
+                    zbus::Proxy::new(
+                        &connection,
+                        "org.kde.ActivityManager",
+                        "/ActivityManager/Activities",
+                        "org.kde.ActivityManager.Activities",
+                    )
+                    .await?
+                    .call("CurrentActivity", &())
+                    .await?,
+                );
+            }
             let minimized = bool::try_from(
                 properties
                     .get("minimized")
@@ -274,8 +339,9 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
                 is_on_screen: !minimized
                     && width > 0
                     && height > 0
-                    && (desktops.is_empty() || desktops.contains(&desktop)),
-                z_index: None,
+                    && (desktops.is_empty() || desktops.contains(&desktop))
+                    && on_current_activity(&activities, current_activity.as_deref()),
+                z_index: stacking_index(&stacking, &uuid),
                 x: coordinate(&properties, "x")?.round() as i32,
                 y: coordinate(&properties, "y")?.round() as i32,
                 width,
@@ -420,6 +486,24 @@ fn decode(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn activity_visibility_requires_membership_unless_on_all_activities() {
+        let activities = vec!["work".to_owned()];
+        assert!(on_current_activity(&[], None));
+        assert!(on_current_activity(&[], Some("personal")));
+        assert!(on_current_activity(&activities, Some("work")));
+        assert!(!on_current_activity(&activities, Some("personal")));
+        assert!(!on_current_activity(&activities, None));
+    }
+
+    #[test]
+    fn compositor_stacking_rank_does_not_follow_uuid_order() {
+        let stack = vec!["z-covered".to_owned(), "a-frontmost".to_owned()];
+        assert_eq!(stacking_index(&stack, "z-covered"), Some(0));
+        assert_eq!(stacking_index(&stack, "a-frontmost"), Some(1));
+        assert_eq!(stacking_index(&stack, "new-window"), None);
+    }
 
     #[test]
     fn qt_property_types_are_validated_before_use() {

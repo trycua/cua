@@ -373,6 +373,7 @@ fn ui_automation_probe() -> Probe {
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn ui_automation_probe_from(result: Result<(), String>, degraded: bool) -> Probe {
     match result {
         Ok(()) => Probe::ok("UI Automation", "CoCreateInstance(CUIAutomation) succeeded"),

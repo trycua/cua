@@ -65,7 +65,8 @@ The shared producer fix in candidate
 refused-before-dispatch; the validator is unchanged. That exact candidate passes
 the complete native Hyprland Linux runner, including final video validation:
 90 delivered, 42 expected refusals, zero failed or skipped cases. The complete
-hosted X11 gate also passes. Windows and macOS verification remain in progress.
+hosted X11 and Windows gates also pass. Hosted macOS passes as supplemental
+evidence; the canonical Lume gate remains in progress.
 Final manual foreground safety passes 3/3 and native observation passes 1/1
 with behavioral video after the fixture windows are arranged without overlap.
 Focused XWayland geometry on
@@ -120,9 +121,13 @@ Full reboot verification passes on kernel `7.2.7-arch1-1`: a new boot identity,
 fresh compositor activation, matching ABI, enabled input, and the consumer
 verifier all pass. The post-reboot production smoke also passes on published
 Driver 0.31.0, including semantic readback and the saved two-pixel SVG translation.
-These bounded checks do not replace the complete matrix on the updated runtime.
-Old package proof is not silently transferred. Published-source packages and the repaired Driver candidate remain
-separately identified.
+The complete unchanged Linux runner also passes on the updated Mesa and kernel
+with exact candidate `e20386e4551c791c66a61e7e4693909cfdda430a`: 90 delivered,
+42 expected refusals, zero failures, and zero skips. Final video validation
+passes. The retained private evidence archive has SHA-256
+`34518c7cfc25653d299611e22763e3ceb473cb3a588aea58b725fafde76a6269`.
+Published-source package smoke and candidate Driver matrix results remain
+separately identified; neither changes the source contained in the package.
 
 ## Remaining gates
 
@@ -153,7 +158,6 @@ published release asset.
   Canonical hosted Linux and Windows pass; hosted macOS is supplemental only.
 - Fault evidence is limited to the cases stated above; it is not arbitrary
   application or physical-hardware certification.
-- Current-profile complete canonical evidence on the updated Mesa and kernel.
 - Bind any published kit/package to the exact passing evidence.
 - Omarchy-owned downstream acceptance and package promotion.
 

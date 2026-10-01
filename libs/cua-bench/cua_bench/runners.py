@@ -6,9 +6,11 @@ interactive environments, using the core gym interface (make, reset, step, evalu
 
 import asyncio
 import fnmatch
+import json
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -43,6 +45,19 @@ class BenchmarkResult:
 
 
 @dataclass
+class BenchmarkRunConfig:
+    """Configuration captured with benchmark artifacts for replay/debugging."""
+
+    dataset_path: str
+    split: str = "train"
+    max_steps: int = 100
+    max_parallel: int = 4
+    oracle: bool = False
+    max_variants: Optional[int] = None
+    task_filter: Optional[str] = None
+
+
+@dataclass
 class TaskResult:
     """Result of a single task execution.
 
@@ -61,6 +76,70 @@ class TaskResult:
     reward: float
     steps: int
     error: Optional[str] = None
+
+
+def build_benchmark_manifest(
+    result: BenchmarkResult,
+    config: BenchmarkRunConfig,
+    *,
+    started_at: Optional[str] = None,
+    completed_at: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a replay-friendly manifest for a benchmark result."""
+    failed_tasks = [task for task in result.task_results if not task.get("success", False)]
+    manifest = {
+        "schema_version": 1,
+        "run_id": result.run_id,
+        "manifest_created_at": _utc_now(),
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "config": asdict(config),
+        "summary": {
+            "total_tasks": result.total_tasks,
+            "success_count": result.success_count,
+            "failed_count": result.failed_count,
+            "avg_reward": result.avg_reward,
+            "duration_seconds": result.duration_seconds,
+        },
+        "tasks": result.task_results,
+        "failed_tasks": failed_tasks,
+        "replay": {
+            "command": _build_replay_command(config),
+        },
+    }
+    return manifest
+
+
+def write_benchmark_artifacts(
+    result: BenchmarkResult,
+    output_dir: Path | str,
+    config: BenchmarkRunConfig,
+    *,
+    started_at: Optional[str] = None,
+    completed_at: Optional[str] = None,
+) -> Tuple[Path, Path]:
+    """Write manifest and failure index artifacts for a benchmark run.
+
+    The files are intentionally plain JSON so failed computer-use runs can be
+    shared, diffed, and replayed without parsing terminal logs.
+    """
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    manifest = build_benchmark_manifest(
+        result,
+        config,
+        started_at=started_at,
+        completed_at=completed_at,
+    )
+    manifest_path = output_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+    failures_path = output_path / "failures.jsonl"
+    with failures_path.open("w", encoding="utf-8") as f:
+        for task in manifest["failed_tasks"]:
+            f.write(json.dumps(task, sort_keys=True) + "\n")
+
+    return manifest_path, failures_path
 
 
 async def run_single_task(
@@ -179,6 +258,7 @@ async def run_benchmark(
     max_variants: Optional[int] = None,
     task_filter: Optional[str] = None,
     split: str = "train",
+    output_dir: Optional[Path | str] = None,
 ) -> BenchmarkResult:
     """Run a benchmark on a dataset using the gym interface.
 
@@ -195,6 +275,7 @@ async def run_benchmark(
         max_variants: Maximum variants per task (optional)
         task_filter: Glob pattern to filter tasks (optional)
         split: Dataset split (default: "train")
+        output_dir: Optional directory to write manifest.json and failures.jsonl
 
     Returns:
         BenchmarkResult with run statistics and task results
@@ -223,6 +304,7 @@ async def run_benchmark(
         )
     """
     start_time = time.time()
+    started_at = _utc_now()
 
     # Validate dataset path
     if not dataset_path.exists():
@@ -323,7 +405,7 @@ async def run_benchmark(
     avg_reward = sum(rewards) / len(rewards) if rewards else 0.0
     duration_seconds = time.time() - start_time
 
-    return BenchmarkResult(
+    benchmark_result = BenchmarkResult(
         run_id=run_id,
         task_results=task_results,
         total_tasks=len(task_results),
@@ -331,7 +413,45 @@ async def run_benchmark(
         failed_count=failed_count,
         avg_reward=avg_reward,
         duration_seconds=duration_seconds,
+        output_dir=str(output_dir) if output_dir else None,
     )
+    if output_dir:
+        write_benchmark_artifacts(
+            benchmark_result,
+            output_dir,
+            BenchmarkRunConfig(
+                dataset_path=str(dataset_path),
+                split=split,
+                max_steps=max_steps,
+                max_parallel=max_parallel,
+                oracle=oracle,
+                max_variants=max_variants,
+                task_filter=task_filter,
+            ),
+            started_at=started_at,
+            completed_at=_utc_now(),
+        )
+
+    return benchmark_result
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _build_replay_command(config: BenchmarkRunConfig) -> List[str]:
+    command = ["cb", "run", "dataset", config.dataset_path]
+    if config.oracle:
+        command.append("--oracle")
+    if config.split != "train":
+        command.extend(["--split", config.split])
+    if config.task_filter:
+        command.extend(["--task-filter", config.task_filter])
+    if config.max_variants is not None:
+        command.extend(["--max-variants", str(config.max_variants)])
+    command.extend(["--max-steps", str(config.max_steps)])
+    command.extend(["--max-parallel", str(config.max_parallel)])
+    return command
 
 
 async def run_interactive(

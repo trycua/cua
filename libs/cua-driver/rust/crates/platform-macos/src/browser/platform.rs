@@ -434,13 +434,6 @@ fn process_arguments(pid: i64) -> Result<Vec<Vec<u8>>, BrowserRefusal> {
     Ok(args)
 }
 
-fn user_data_dir_from_arguments(
-    args: &[Vec<u8>],
-    default: Option<PathBuf>,
-) -> Result<Option<PathBuf>, BrowserRefusal> {
-    user_data_dir_from_arguments_with_relative_fallback(args, default, false)
-}
-
 fn user_data_dir_from_arguments_with_relative_fallback(
     args: &[Vec<u8>],
     default: Option<PathBuf>,
@@ -1830,8 +1823,12 @@ mod tests {
         let custom = std::env::temp_dir().join("cua browser profile with spaces");
         let arg = format!("--user-data-dir={}", custom.display()).into_bytes();
         assert_eq!(
-            user_data_dir_from_arguments(&[b"/Applications/Chrome".to_vec(), arg], None)
-                .expect("one absolute custom profile"),
+            user_data_dir_from_arguments_with_relative_fallback(
+                &[b"/Applications/Chrome".to_vec(), arg],
+                None,
+                false
+            )
+            .expect("one absolute custom profile"),
             Some(custom)
         );
     }
@@ -1840,20 +1837,22 @@ mod tests {
     fn user_data_dir_parser_does_not_treat_a_path_as_authority() {
         let default = PathBuf::from("/tmp/default-browser-data");
         assert_eq!(
-            user_data_dir_from_arguments(
+            user_data_dir_from_arguments_with_relative_fallback(
                 &[b"/Applications/Chrome".to_vec()],
-                Some(default.clone())
+                Some(default.clone()),
+                false
             )
             .expect("default path"),
             Some(default)
         );
-        assert!(user_data_dir_from_arguments(
+        assert!(user_data_dir_from_arguments_with_relative_fallback(
             &[
                 b"/Applications/Chrome".to_vec(),
                 b"--user-data-dir=/tmp/one".to_vec(),
                 b"--user-data-dir=/tmp/two".to_vec(),
             ],
             None,
+            false,
         )
         .is_err());
     }

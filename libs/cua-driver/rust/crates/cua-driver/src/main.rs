@@ -722,11 +722,13 @@ fn main() {
 
             // Keep the main thread alive for the daemon.
             //
-            // PiP needs the AppKit main run loop to process the
-            // dispatch_async_f calls that push frames into NSImageView;
-            // park main in NSApplication.run() when --experimental-pip is
-            // on. Otherwise just join the serve thread so the process
-            // stays up as long as the daemon does.
+            // The agent-cursor overlay and PiP both need the AppKit main run
+            // loop. The overlay's loop is NSApplication.run() plus the cursor
+            // command consumer, so it also drains the dispatch_async_f calls
+            // that create the PiP window and push its frames. Run it whenever
+            // the cursor is enabled; PiP's own loop alone would leave cursor
+            // commands unconsumed. Without either, just join the serve thread
+            // so the process stays up as long as the daemon does.
             if cursor_cfg.enabled {
                 platform_macos::cursor::overlay::run_on_main_thread();
                 let _ = serve_handle.join();

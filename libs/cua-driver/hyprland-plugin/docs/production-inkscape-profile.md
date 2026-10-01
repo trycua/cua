@@ -158,7 +158,11 @@ record, changed file, stalled event loop, unknown wire record, or exceeded limit
 fails qualification. Raw begin/end journal and wire evidence are retained.
 
 Baseline wire evidence must show one primary pointer and keyboard on the same
-surface, a held left button, and no held keyboard keys/modifiers. During the
+surface, a held left button, no held keyboard keys, no depressed or latched
+modifiers, and layout group zero. A stable locked-modifier mask is retained as
+baseline state without interpreting its keymap-defined bits. Every keyboard
+event during the interval, including a lock change and return, still fails.
+During the
 parked interval, an exact same-position `wl_pointer.motion` notification on the
 same primary object may pass only with unchanged focus, held input, and
 foreground interaction. Retain and count these duplicates; they do not certify

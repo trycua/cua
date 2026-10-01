@@ -1,15 +1,31 @@
 name: "CI: SPDX Headers"
 
-# Verifies that every cua-driver source file carries an SPDX-License-Identifier
-# header. Currently warn-only (continue-on-error: true) while we stamp the
-# existing tree in a separate sweep PR; will be flipped to enforcing once the
-# tree is clean. See scripts/spdx-headers.py for the applier and the runbook.
+# Two checks. The `fsl` job (enforcing) verifies that every source file in an
+# FSL-1.1-MIT package carries `SPDX-License-Identifier: FSL-1.1-MIT` (see
+# LICENSING.md). The `check` job verifies that every cua-driver source file
+# carries an SPDX-License-Identifier header; it is warn-only
+# (continue-on-error: true) while we stamp the existing tree in a separate
+# sweep PR, and will be flipped to enforcing once the tree is clean. See
+# scripts/spdx-headers.py for the applier and the runbook.
 
 on:
   pull_request:
     paths:
       - "libs/cua-driver/**/*.swift"
       - "libs/cua-driver/**/*.rs"
+      - "**/LICENSE"
+      - "apps/**"
+      - "libs/cua/**"
+      - "libs/cua-spacesd/**"
+      - "libs/spaces-sdk-swift/**"
+      - "libs/spaces-app-swift/**"
+      - "libs/python/cua-sandbox/**"
+      - "libs/python/cua-sandbox-apps/**"
+      - "libs/cua-bench/**"
+      - "libs/cua-bench-rl/**"
+      - "examples/streaming/**"
+      - "samples/**"
+      - "tests/e2e/**"
       - "scripts/spdx-headers.py"
       - ".github/workflows/ci-spdx-headers.yml"
   push:
@@ -19,7 +35,21 @@ on:
       - "libs/cua-driver/**/*.rs"
       - "scripts/spdx-headers.py"
 
+permissions:
+  contents: read
+
 jobs:
+  fsl:
+    name: Check FSL SPDX headers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check FSL SPDX headers
+        # Stamp new files with: python3 scripts/spdx-headers.py --fsl
+        run: python3 scripts/spdx-headers.py --fsl --check
+
   check:
     name: Check SPDX headers (warn-only)
     runs-on: ubuntu-latest

@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CUA Media Viewer</title>
+  <style>
+    :root { color-scheme: dark; font: 14px/1.4 ui-sans-serif, system-ui, sans-serif; }
+    body { margin: 0; background: #111318; color: #e8eaf0; }
+    main { display: grid; grid-template-columns: minmax(250px, 340px) 1fr; min-height: 100vh; }
+    aside { padding: 18px; border-right: 1px solid #30343d; background: #181b21; }
+    section { display: grid; place-items: center; padding: 20px; overflow: auto; }
+    label { display: block; margin: 10px 0 4px; color: #aeb4c0; }
+    input, button, textarea { box-sizing: border-box; width: 100%; border: 1px solid #3a404b; border-radius: 7px; background: #232730; color: inherit; padding: 8px 10px; }
+    button { margin-top: 8px; cursor: pointer; background: #315dcb; border-color: #4776e8; }
+    button.secondary { background: #292e38; border-color: #3a404b; }
+    canvas { max-width: 100%; max-height: calc(100vh - 40px); background: #050608; box-shadow: 0 10px 40px #0009; cursor: crosshair; outline: none; }
+    textarea { min-height: 150px; resize: vertical; font: 12px/1.35 ui-monospace, monospace; }
+    #status, #stats { margin: 12px 0; color: #8fb0ff; overflow-wrap: anywhere; }
+    #stats { color: #aeb4c0; font: 12px/1.35 ui-monospace, monospace; white-space: pre; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    @media (max-width: 760px) { main { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid #30343d; } }
+  </style>
+</head>
+<body>
+<main>
+  <aside>
+    <label for="url">Media URL (from StreamService.OpenMedia: ws(s)://host:3211 + ws_path)</label>
+    <input id="url" placeholder="ws://127.0.0.1:3211/media?ticket=…">
+    <button id="connect">Connect</button>
+    <div id="status">Disconnected</div>
+    <div class="row">
+      <button id="keyframe" class="secondary">Request keyframe</button>
+      <button id="mute" class="secondary">Audio: off</button>
+    </div>
+    <button id="state" class="secondary">Get window state</button>
+    <label for="text">Type text (interactive input)</label>
+    <input id="text" placeholder="Text to type">
+    <button id="type" class="secondary">Send text</button>
+    <div id="stats"></div>
+    <label for="events">Events</label>
+    <textarea id="events" readonly></textarea>
+  </aside>
+  <section><canvas id="video" width="960" height="540" tabindex="0"></canvas></section>
+</main>
+<script>
+// rcdp wire v2 viewer (libs/cua/proto/MEDIA.md).
+//
+// The server speaks first after the ticketed upgrade: hello, session_opened,
+// then one audio_config per audio track. Control frames are JSON text
+// {"type", "payload"}; video is a length-prefixed binary packet (JSON
+// descriptor + Annex B / BGRA / PNG payload); audio is a binary RAU2 packet.
+// H.264 decodes with WebCodecs; BGRA and PNG are fallbacks. Opus decodes with
+// WebCodecs AudioDecoder; PCM plays directly. Both go through a small jitter
+// buffer on the AudioContext clock.
+(() => {
+  const $ = id => document.getElementById(id);
+  const canvas = $('video');
+  const context = canvas.getContext('2d', { alpha: false });
+  const text = new TextDecoder();
+  let socket;
+  let session = null;               // session_opened payload
+  let geometry = { width_px: 1, height_px: 1, scale_factor: 1 };
+  let geometryEpoch = 0;
+  let codecEpoch = -1;
+  let lastSequence = 0;
+  let videoDecoder = null;
+  let awaitingKeyframe = true;
+  let lastKeyframeRequest = 0;
+  const sequenceByTimestamp = new Map();
+  let inputSequence = Math.floor(Math.random() * 1e9) + 1;
+  const counters = { frames: 0, bytes: 0, audioPackets: 0, audioLost: 0, decodeErrors: 0 };
+
+  const params = new URLSearchParams(location.search);
+  $('url').value = params.get('media') || '';
+
+  const log = value => {
+    const line = typeof value === 'string' ? value : JSON.stringify(value);
+    $('events').value = `${line}\n${$('events').value}`.slice(0, 16000);
+  };
+  const status = value => { $('status').textContent = value; };
+  const send = (type, payload) => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify(payload === undefined ? { type } : { type, payload }));
+  };
+  const sessionId = () => (session ? session.session_id : '');
+
+  function requestKeyframe() {
+    const now = performance.now();
+    if (now - lastKeyframeRequest < 1000) return;   // at most one per second
+    lastKeyframeRequest = now;
+    send('request_keyframe', { session_id: sessionId() });
+  }
+
+  // ---------------------------------------------------------------- video
+  function codecString(bytes) {
+    for (let offset = 0; offset + 5 < bytes.length; offset++) {
+      let header = -1;
+      if (bytes[offset] === 0 && bytes[offset + 1] === 0 && bytes[offset + 2] === 1) header = offset + 3;
+      else if (bytes[offset] === 0 && bytes[offset + 1] === 0 && bytes[offset + 2] === 0 && bytes[offset + 3] === 1) header = offset + 4;
+      if (header >= 0 && (bytes[header] & 0x1f) === 7 && header + 3 < bytes.length) {
+        return `avc1.${[bytes[header + 1], bytes[header + 2], bytes[header + 3]]
+          .map(value => value.toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+      }
+    }
+    throw new Error('H.264 keyframe without SPS');
+  }
+
+  function configureDecoder(epoch, keyframe) {
+    if (!('VideoDecoder' in window)) throw new Error('This browser has no WebCodecs VideoDecoder; open the session with BGRA or PNG');
+    if (videoDecoder && videoDecoder.state !== 'closed') videoDecoder.close();
+    videoDecoder = new VideoDecoder({
+      output(frame) {
+        if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
+          canvas.width = frame.displayWidth;
+          canvas.height = frame.displayHeight;
+        }
+        context.drawImage(frame, 0, 0);
+        const sequence = sequenceByTimestamp.get(frame.timestamp);
+        sequenceByTimestamp.delete(frame.timestamp);
+        frame.close();
+        if (sequence !== undefined) {
+          send('frame_ack', { session_id: sessionId(), sequence, decode_queue: videoDecoder.decodeQueueSize });
+        }
+      },
+      error(error) {
+        counters.decodeErrors++;
+        status(`Decoder error: ${error.message}`);
+        codecEpoch = -1;            // reconfigure on the next keyframe
+        awaitingKeyframe = true;
+        requestKeyframe();
+      }
+    });
+    videoDecoder.configure({ codec: codecString(keyframe), optimizeForLatency: true, hardwareAcceleration: 'no-preference' });
+    codecEpoch = epoch;
+    awaitingKeyframe = true;
+  }
+
+  async function handleVideo(descriptor, bytes) {
+    if (descriptor.session_id !== sessionId()) return;
+    counters.frames++;
+    counters.bytes += bytes.byteLength;
+    if (descriptor.codec === 'png') {
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+      canvas.width = descriptor.width_px; canvas.height = descriptor.height_px;
+      context.drawImage(bitmap, 0, 0); bitmap.close();
+      lastSequence = descriptor.sequence;
+      return;
+    }
+    if (descriptor.codec === 'bgra') {
+      const rgba = new Uint8ClampedArray(bytes.byteLength);
+      for (let offset = 0; offset < bytes.byteLength; offset += 4) {
+        rgba[offset] = bytes[offset + 2]; rgba[offset + 1] = bytes[offset + 1];
+        rgba[offset + 2] = bytes[offset]; rgba[offset + 3] = 255;
+      }
+      canvas.width = descriptor.width_px; canvas.height = descriptor.height_px;
+      context.putImageData(new ImageData(rgba, descriptor.width_px, descriptor.height_px), 0, 0);
+      lastSequence = descriptor.sequence;
+      return;
+    }
+    if (descriptor.codec !== 'h264') return;
+    if (descriptor.codec_epoch !== codecEpoch) {
+      if (!descriptor.keyframe) { requestKeyframe(); return; }
+      configureDecoder(descriptor.codec_epoch, bytes);
+    }
+    // Sequences start anywhere; a gap means frames were replaced upstream.
+    if (lastSequence && descriptor.sequence > lastSequence + 1 && !descriptor.keyframe) awaitingKeyframe = true;
+    if (awaitingKeyframe && !descriptor.keyframe) { requestKeyframe(); return; }
+    if (videoDecoder.decodeQueueSize > 4 && !descriptor.keyframe) {   // decoder overload
+      awaitingKeyframe = true; requestKeyframe(); return;
+    }
+    if (descriptor.keyframe) awaitingKeyframe = false;
+    lastSequence = descriptor.sequence;
+    sequenceByTimestamp.set(descriptor.capture_timestamp_us, descriptor.sequence);
+    if (sequenceByTimestamp.size > 256) sequenceByTimestamp.delete(sequenceByTimestamp.keys().next().value);
+    videoDecoder.decode(new EncodedVideoChunk({
+      type: descriptor.keyframe ? 'key' : 'delta',
+      timestamp: descriptor.capture_timestamp_us,
+      data: bytes
+    }));
+  }
+
+  // ---------------------------------------------------------------- audio
+  let audioContext = null;
+  let audioEnabled = false;
+  const tracks = new Map();   // track_id -> { config, decoder, playAt, lastSequence }
+  const JITTER_TARGET = 0.04; // seconds (MEDIA.md: 20-60 ms)
+
+  function ensureAudioContext() {
+    if (!audioContext) audioContext = new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' });
+    if (audioContext.state === 'suspended') audioContext.resume();
+  }
+
+  function schedule(track, channels, sampleRate) {
+    if (!audioEnabled || !audioContext) return;
+    const frames = channels[0].length;
+    const buffer = audioContext.createBuffer(channels.length, frames, sampleRate);
+    channels.forEach((samples, channel) => buffer.copyToChannel(samples, channel));
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioContext.destination);
+    const now = audioContext.currentTime;
+    // Late or first packet: re-anchor at now + target; never play late audio.
+    if (track.playAt < now || track.playAt > now + 0.3) track.playAt = now + JITTER_TARGET;
+    source.start(track.playAt);
+    track.playAt += frames / sampleRate;
+  }
+
+  function audioConfig(config) {
+    const previous = tracks.get(config.track_id);
+    if (previous && previous.decoder && previous.decoder.state !== 'closed') previous.decoder.close();
+    const track = { config, decoder: null, playAt: 0, lastSequence: null };
+    if (config.codec === 'opus' && 'AudioDecoder' in window) {
+      track.decoder = new AudioDecoder({
+        output(data) {
+          const channels = [];
+          for (let channel = 0; channel < data.numberOfChannels; channel++) {
+            const samples = new Float32Array(data.numberOfFrames);
+            data.copyTo(samples, { planeIndex: channel, format: 'f32-planar' });
+            channels.push(samples);
+          }
+          schedule(track, channels, data.sampleRate);
+          data.close();
+        },
+        error(error) { log(`audio decoder: ${error.message}`); }
+      });
+      track.decoder.configure({ codec: 'opus', sampleRate: config.sample_rate_hz, numberOfChannels: config.channels });
+    }
+    tracks.set(config.track_id, track);
+  }
+
+  function handleAudio(buffer) {
+    const view = new DataView(buffer);
+    if (view.byteLength < 24 || view.getUint8(4) !== 2) return;
+    const trackId = view.getUint16(6, false);
+    const sequence = view.getUint32(8, false);
+    const pts = Number(view.getBigUint64(12, false));
+    const epoch = view.getUint8(22);
+    const track = tracks.get(trackId);
+    if (!track || track.config.config_epoch !== epoch) return;
+    counters.audioPackets++;
+    if (track.lastSequence !== null && ((sequence - track.lastSequence) >>> 0) > 1) {
+      counters.audioLost += ((sequence - track.lastSequence) >>> 0) - 1;
+    }
+    track.lastSequence = sequence;
+    const payload = new Uint8Array(buffer, 24);
+    if (track.config.codec === 'pcm_s16le') {
+      const count = track.config.channels;
+      const frames = payload.byteLength / 2 / count;
+      const samples = new DataView(buffer, 24);
+      const channels = Array.from({ length: count }, () => new Float32Array(frames));
+      for (let frame = 0; frame < frames; frame++) {
+        for (let channel = 0; channel < count; channel++) {
+          channels[channel][frame] = samples.getInt16((frame * count + channel) * 2, true) / 32768;
+        }
+      }
+      schedule(track, channels, track.config.sample_rate_hz);
+    } else if (track.decoder) {
+      track.decoder.decode(new EncodedAudioChunk({ type: 'key', timestamp: pts, data: payload }));
+    }
+  }
+
+  // ---------------------------------------------------------------- control
+  function handleControl(message) {
+    const { type, payload } = message;
+    if (type === 'hello') {
+      log(`hello: wire v${payload.selected_version} [${payload.capabilities.join(', ')}]`);
+    } else if (type === 'session_opened') {
+      session = payload;
+      geometry = payload.geometry;
+      geometryEpoch = payload.geometry_epoch;
+      codecEpoch = -1; lastSequence = 0; awaitingKeyframe = true;
+      const target = payload.target.kind === 'display' ? `display ${payload.target.display_id}` : `window ${payload.target.handle}`;
+      status(`Streaming ${target} (${payload.codec}, policy ${payload.policy})`);
+    } else if (type === 'audio_config') {
+      audioConfig(payload);
+      log(`audio track ${payload.track_id}: ${payload.codec} ${payload.sample_rate_hz} Hz x${payload.channels}`);
+    } else if (type === 'lifecycle') {
+      if (payload.event.kind === 'geometry_changed') {
+        geometry = payload.event.geometry;
+        geometryEpoch = payload.event.geometry_epoch;
+      }
+      if (payload.event.kind === 'closed') status('Target closed');
+      log(message);
+    } else if (type === 'error') {
+      if (payload.code === 'input_sequence_gap' && payload.expected_sequence) inputSequence = payload.expected_sequence;
+      log(message);
+    } else if (type === 'stats') {
+      $('stats').textContent =
+        `frames since attach ${payload.frames_since_attach}  keyframes ${payload.keyframes_sent}\n` +
+        `dropped ${payload.frames_dropped}  idle ${payload.target_idle}  age ${payload.last_frame_age_ms ?? '-'} ms\n` +
+        `encoder ${payload.encoder ?? '-'} @ ${payload.encoder_bitrate_kbps ?? '-'} kbps, ${payload.effective_max_fps} fps\n` +
+        `ack rtt ${payload.ack_rtt_ms ? payload.ack_rtt_ms.toFixed(1) : '-'} ms  audio ${counters.audioPackets} pkts, ${counters.audioLost} lost`;
+    } else if (type !== 'interactive_input_acknowledgement' && type !== 'pong') {
+      log(message);
+    }
+  }
+
+  function handleBinary(buffer) {
+    const bytes = new Uint8Array(buffer);
+    if (bytes[0] === 0x52 && bytes[1] === 0x41 && bytes[2] === 0x55 && bytes[3] === 0x32) { handleAudio(buffer); return; }
+    const view = new DataView(buffer);
+    const headerLength = view.getUint32(0, false);
+    const payloadLength = view.getUint32(4, false);
+    if (8 + headerLength + payloadLength !== view.byteLength) throw new Error('invalid binary lengths');
+    const header = JSON.parse(text.decode(new Uint8Array(buffer, 8, headerLength)));
+    if (header.direction !== 'video') return;
+    handleVideo(header.message, new Uint8Array(buffer, 8 + headerLength, payloadLength))
+      .catch(error => { status(error.message); log(error.stack || error.message); });
+  }
+
+  // ---------------------------------------------------------------- input
+  let pending = [];
+  function queueInput(event) {
+    pending.push(event);
+    if (pending.length === 1) queueMicrotask(flushInput);
+  }
+  function flushInput() {
+    if (!pending.length || !session) { pending = []; return; }
+    const events = pending.splice(0, 256);
+    send('interactive_input', { session_id: sessionId(), first_sequence: inputSequence, events });
+    inputSequence += events.length;
+  }
+  const normalized = event => {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x_normalized: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+      y_normalized: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height))
+    };
+  };
+  const modifiers = event => [
+    event.shiftKey && 'shift', event.ctrlKey && 'control', event.altKey && 'option', event.metaKey && 'command'
+  ].filter(Boolean);
+  const buttons = ['left', 'middle', 'right'];
+  let lastMove = 0;
+  canvas.addEventListener('pointermove', event => {
+    const now = performance.now();
+    if (now - lastMove < 16) return;
+    lastMove = now;
+    queueInput({ kind: 'pointer', phase: 'move', button: null, ...normalized(event), modifiers: modifiers(event) });
+  });
+  canvas.addEventListener('pointerdown', event => {
+    canvas.focus();
+    queueInput({ kind: 'pointer', phase: 'down', button: buttons[event.button] || 'left', ...normalized(event), modifiers: modifiers(event) });
+  });
+  canvas.addEventListener('pointerup', event => {
+    queueInput({ kind: 'pointer', phase: 'up', button: buttons[event.button] || 'left', ...normalized(event), modifiers: modifiers(event) });
+  });
+  canvas.addEventListener('contextmenu', event => event.preventDefault());
+  canvas.addEventListener('wheel', event => {
+    event.preventDefault();
+    queueInput({
+      kind: 'scroll', ...normalized(event), delta_x: event.deltaX, delta_y: event.deltaY,
+      phase: 'none', momentum_phase: 'none', precise: event.deltaMode === 0
+    });
+  }, { passive: false });
+  const keyName = event => (event.key.length === 1 ? event.key.toLowerCase() : event.key.toLowerCase());
+  canvas.addEventListener('keydown', event => {
+    event.preventDefault();
+    if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      queueInput({ kind: 'text_commit', text: event.key });
+    } else {
+      queueInput({ kind: 'key', key: keyName(event), state: 'down', modifiers: modifiers(event), repeat: event.repeat });
+    }
+  });
+  canvas.addEventListener('keyup', event => {
+    event.preventDefault();
+    if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) return;
+    queueInput({ kind: 'key', key: keyName(event), state: 'up', modifiers: modifiers(event), repeat: false });
+  });
+
+  // ---------------------------------------------------------------- wiring
+  let statsTimer = null;
+  $('connect').onclick = () => {
+    if (socket) socket.close();
+    session = null;
+    status('Connecting…');
+    // The ticket authenticates the upgrade; offering rcdp.v2 lets the
+    // server confirm the wire version.
+    socket = new WebSocket($('url').value, ['rcdp.v2']);
+    socket.binaryType = 'arraybuffer';
+    socket.onopen = () => status('Attached; waiting for hello…');
+    socket.onmessage = event => {
+      try {
+        if (typeof event.data === 'string') handleControl(JSON.parse(event.data));
+        else handleBinary(event.data);
+      } catch (error) {
+        status(error.message);
+        log(error.stack || error.message);
+      }
+    };
+    socket.onclose = event => {
+      clearInterval(statsTimer);
+      const reasons = { 4401: 'ticket invalid or token rotated', 4404: 'session closed', 4408: 'idle timeout', 4410: 'target gone', 4429: 'too many sockets' };
+      status(`Disconnected (${event.code}${reasons[event.code] ? `: ${reasons[event.code]}` : ''})`);
+    };
+    socket.onerror = () => status('WebSocket error (401: bad or expired ticket, 410: session closed)');
+    clearInterval(statsTimer);
+    statsTimer = setInterval(() => send('get_stats', { session_id: sessionId() }), 2000);
+  };
+  $('keyframe').onclick = () => { lastKeyframeRequest = 0; requestKeyframe(); };
+  $('mute').onclick = () => {
+    audioEnabled = !audioEnabled;
+    if (audioEnabled) ensureAudioContext();   // needs this user gesture
+    $('mute').textContent = `Audio: ${audioEnabled ? 'on' : 'off'}`;
+  };
+  $('state').onclick = () => send('get_window_state', { session_id: sessionId() });
+  $('type').onclick = () => {
+    if ($('text').value) queueInput({ kind: 'text_commit', text: $('text').value });
+  };
+  if (params.get('media')) $('connect').click();
+})();
+</script>
+</body>
+</html>

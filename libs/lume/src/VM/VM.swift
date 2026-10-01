@@ -165,7 +165,9 @@ class VM {
             ipAddress: ipAddress,
             sshAvailable: sshAvailable,
             locationName: vmDirContext.storage ?? "home",
-            networkMode: vmDirContext.config.networkMode.description
+            networkMode: vmDirContext.config.networkMode.description,
+            machineIdentifier: vmDirContext.config.machineIdentifier?.base64EncodedString(),
+            macAddress: macAddress
         )
     }
 

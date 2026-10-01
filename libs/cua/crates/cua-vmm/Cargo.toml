@@ -1,0 +1,47 @@
+[package]
+name = "cua-vmm"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/trycua/cua"
+description = "Local sandbox runtimes for the cua SDK: Lume, QEMU and OCI containers (gVisor)."
+
+[features]
+default = ["lume", "qemu", "container", "vnc"]
+lume = ["dep:reqwest"]
+# Agentless screenshots over a VMM's VNC endpoint (`vnc::capture_png`).
+vnc = ["dep:vnc", "dep:png"]
+qemu = []
+container = ["dep:bollard", "dep:bytes"]
+
+[dependencies]
+# Scratch file for the disk-architecture probe (qemu-img dd).
+tempfile = "3"
+async-trait = "0.1"
+base64 = "0.22"
+bollard = { version = "0.21", optional = true }
+bytes = { version = "1", optional = true }
+futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1"
+filetime = "0.2"
+# RFB client for `vnc::capture_png` (MIT OR Apache-2.0).
+vnc = { package = "vnc-rs", version = "0.6", optional = true }
+png = { version = "0.18", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+# Opt-in QEMU test: the SDK client checks the guest accepts the delivered token.
+cua-spacesd-client = { path = "../cua-spacesd-client" }
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }

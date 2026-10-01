@@ -188,6 +188,15 @@ output_contains() {
   [[ "${CAPTURED_OUTPUT}" == *"${needle}"* ]]
 }
 
+require_golden_image_dependencies() {
+  for command_name in cargo codesign ffmpeg ffprobe jq node npm osascript python3 security xcrun; do
+    command -v "${command_name}" >/dev/null 2>&1 || {
+      echo "Missing golden-image dependency: ${command_name}" >&2
+      return 2
+    }
+  done
+}
+
 run_bounded_command() {
   command -v python3 >/dev/null 2>&1 || {
     echo "Missing golden-image dependency: python3" >&2
@@ -917,12 +926,7 @@ if [[ "${SIP_STATUS}" != *"System Integrity Protection status: disabled."* ]]; t
   exit 2
 fi
 
-for command_name in cargo codesign ffmpeg ffprobe jq node npm osascript python3 security xcrun; do
-  command -v "${command_name}" >/dev/null 2>&1 || {
-    echo "Missing golden-image dependency: ${command_name}" >&2
-    exit 2
-  }
-done
+require_golden_image_dependencies || exit $?
 
 if [[ ! -f "${SIGNING_KEYCHAIN}" ]]; then
   echo "Missing golden-image signing keychain: ${SIGNING_KEYCHAIN}" >&2

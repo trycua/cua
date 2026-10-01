@@ -168,6 +168,7 @@ const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// Resolve the post-action observation bounds from raw host values against
 /// the macOS defaults. Pure; `cua_driver_core::window_observation` owns the
 /// parsing and clamping rules shared with the Linux adapter.
+#[cfg(test)]
 fn observation_bounds_from(
     timeout_raw: Option<&str>,
     poll_raw: Option<&str>,
@@ -239,12 +240,17 @@ impl WindowChangeDetector {
         suppress_focus: bool,
         allowed_pid: Option<i32>,
     ) -> Snapshot {
-        let window_ids: HashSet<u32> = windows::visible_windows()
-            .into_iter()
-            .filter(|w| w.layer == 0)
-            .map(|w| w.window_id)
-            .collect();
+        let window_ids: HashSet<u32> = host_windows().into_iter().map(|w| w.window_id).collect();
+        Self::capture_from(window_ids, prior_front, suppress_focus, allowed_pid)
+    }
 
+    /// `capture` over an already-read window set.
+    fn capture_from(
+        window_ids: HashSet<u32>,
+        prior_front: Option<i32>,
+        suppress_focus: bool,
+        allowed_pid: Option<i32>,
+    ) -> Snapshot {
         // Arm wildcard suppression — covers snapshot → detect window.
         // restore_to = caller-captured frontmost; target = wildcard
         // (any other pid). If there's no frontmost (rare — screensaver,
@@ -302,11 +308,21 @@ impl Snapshot {
     /// (and its wildcard suppression lease) immediately without reading
     /// the window list again.
     pub(crate) fn detect_bounded(self, bounds: WindowObservationBounds) -> Changes {
+        self.detect_bounded_with(bounds, observe_host)
+    }
+
+    /// `detect_bounded` over an explicit observer of the current layer-0
+    /// windows and frontmost pid.
+    fn detect_bounded_with(
+        self,
+        bounds: WindowObservationBounds,
+        observe: impl FnMut() -> (Vec<WindowInfo>, Option<i32>),
+    ) -> Changes {
         if bounds.skips_observation() {
             drop(self);
             return Changes::not_polled();
         }
-        self.detect_with(bounds.timeout, bounds.poll)
+        self.detect_with(bounds.timeout, bounds.poll, observe)
     }
 
     /// Async wrapper around `detect()` — runs the synchronous poll
@@ -322,20 +338,21 @@ impl Snapshot {
     }
 
     /// Same as `detect()` but with configurable timing.
-    fn detect_with(self, timeout: Duration, poll_interval: Duration) -> Changes {
+    fn detect_with(
+        self,
+        timeout: Duration,
+        poll_interval: Duration,
+        mut observe: impl FnMut() -> (Vec<WindowInfo>, Option<i32>),
+    ) -> Changes {
         let deadline = Instant::now() + timeout;
         loop {
             std::thread::sleep(poll_interval);
 
-            let current: Vec<WindowInfo> = windows::visible_windows()
-                .into_iter()
-                .filter(|w| w.layer == 0)
-                .collect();
+            let (current, current_front) = observe();
             // Keep the live detector and the pure regression tests on the same
             // diff path so daemon-window filtering cannot drift between them.
             let (new_windows, _closed) = Self::diff(&self.window_ids, &current);
 
-            let current_front = apps::frontmost_pid();
             let foreground_changed = match (self.front_pid, current_front) {
                 (Some(orig), Some(cur)) => orig != cur,
                 _ => false,
@@ -385,6 +402,19 @@ impl Snapshot {
             .collect();
         (opened, closed)
     }
+}
+
+/// The host's visible layer-0 windows.
+fn host_windows() -> Vec<WindowInfo> {
+    windows::visible_windows()
+        .into_iter()
+        .filter(|w| w.layer == 0)
+        .collect()
+}
+
+/// One live observation for the poll loop: layer-0 windows and the frontmost pid.
+fn observe_host() -> (Vec<WindowInfo>, Option<i32>) {
+    (host_windows(), apps::frontmost_pid())
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -571,13 +601,14 @@ mod tests {
     }
 
     /// A zero timeout returns immediately with no change instead of
-    /// sleeping a poll interval. Reads the window list once (in
-    /// `snapshot`) and sends no input.
+    /// sleeping a poll interval, and never observes the host again.
     #[test]
     fn zero_timeout_detect_returns_without_polling() {
-        let snap = WindowChangeDetector::snapshot(None);
+        let snap = WindowChangeDetector::capture_from(HashSet::new(), None, false, None);
         let started = Instant::now();
-        let changes = snap.detect_bounded(observation_bounds_from(Some("0"), None));
+        let changes = snap.detect_bounded_with(observation_bounds_from(Some("0"), None), || {
+            panic!("a zero timeout must not observe the host")
+        });
         assert!(started.elapsed() < DEFAULT_POLL_INTERVAL);
         assert!(!changes.polled);
         assert!(!changes.needs_restore());
@@ -589,25 +620,59 @@ mod tests {
     /// reads as a quiet one.
     #[test]
     fn a_poll_that_ran_is_polled_even_when_it_times_out() {
-        let snap = WindowChangeDetector::snapshot(None);
-        let changes = snap.detect_bounded(observation_bounds_from(Some("30"), Some("10")));
+        let snap = WindowChangeDetector::capture_from(HashSet::from([1]), Some(7), false, None);
+        let mut observations = 0;
+        let changes =
+            snap.detect_bounded_with(observation_bounds_from(Some("30"), Some("10")), || {
+                observations += 1;
+                (vec![win(1, 7, "App", "Main")], Some(7))
+            });
         assert!(changes.polled);
+        assert!(observations >= 1);
+        assert!(changes.new_windows.is_empty());
+        assert!(!changes.foreground_changed);
     }
 
-    /// Regression: `snapshot(prior_front)` must store the caller's
-    /// captured front pid verbatim (rather than re-reading it inside
-    /// the function and racing with concurrent activations).
+    /// A poll reports a newly opened window and a foreground change as soon
+    /// as it observes them.
+    #[test]
+    fn a_poll_reports_new_windows_and_foreground_changes() {
+        let snap = WindowChangeDetector::capture_from(HashSet::from([1]), Some(7), false, None);
+        let changes =
+            snap.detect_bounded_with(observation_bounds_from(Some("1000"), Some("1")), || {
+                (
+                    vec![win(1, 7, "App", "Main"), win(2, 8, "Other", "Popup")],
+                    Some(8),
+                )
+            });
+        assert!(changes.polled);
+        assert!(changes.foreground_changed);
+        assert_eq!(
+            changes
+                .new_windows
+                .iter()
+                .map(|w| w.window_id)
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+    }
+
+    /// Regression: the snapshot must store the caller's captured front pid
+    /// verbatim (rather than re-reading it inside the function and racing
+    /// with concurrent activations).
     #[test]
     fn snapshot_stores_caller_prior_front() {
         // Use an obviously bogus pid so we'd notice if the impl silently
-        // fell back to the live frontmost on this test runner.
+        // fell back to a live frontmost read.
         let bogus_prior = Some(424242_i32);
-        let snap = WindowChangeDetector::snapshot(bogus_prior);
+        let snap = WindowChangeDetector::capture_from(HashSet::new(), bogus_prior, false, None);
         assert_eq!(snap.front_pid(), bogus_prior);
 
-        // None must round-trip too — and must skip the lease without
-        // panicking (no frontmost to restore to).
-        let snap_none = WindowChangeDetector::snapshot(None);
+        let snap_none = WindowChangeDetector::capture_from(HashSet::new(), None, true, None);
         assert_eq!(snap_none.front_pid(), None);
+        assert!(
+            snap_none._lease.is_none(),
+            "no frontmost pid means no lease"
+        );
     }
 }

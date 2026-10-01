@@ -248,17 +248,16 @@ impl Tool for TypeTextTool {
         // AX write only (exact element, no CGEvent fallback), or a structured
         // refusal. delivery_mode:"foreground" stays the caller's explicit
         // last resort and is not gated here.
-        let (_mutation_lease, keyboard_policy) =
-            if !delivery_mode.is_foreground() && window_id.is_some() {
-                let wid = window_id.expect("checked above");
-                let gate_element_ptr = element_guard.as_ref().map(|(g, _)| g.as_ptr() as usize);
+        let (_mutation_lease, keyboard_policy) = match window_id {
+            Some(wid) if !delivery_mode.is_foreground() => {
+                let gate_element_ptr = element_guard.as_ref().map(|(g, _)| g.as_ptr());
                 match background_keyboard_policy(pid, wid, gate_element_ptr).await {
                     Ok((lease, policy)) => (Some(lease), policy),
                     Err(refusal_result) => return refusal_result,
                 }
-            } else {
-                (None, BackgroundKeyboardPolicy::Allowed)
-            };
+            }
+            _ => (None, BackgroundKeyboardPolicy::Allowed),
+        };
 
         // ── px form: focus by pixel-click, then type into the focused element ──
         // Pass x,y (no element_token) for an *element px action*: pixel-click the
@@ -377,9 +376,11 @@ impl Tool for TypeTextTool {
                         element_ptr,
                         delay_ms,
                         is_terminal_target,
-                        delivery_mode,
-                        window_id,
-                        blocking_policy,
+                        KeyboardRoute {
+                            delivery_mode,
+                            window_id,
+                            keyboard_policy: blocking_policy,
+                        },
                     )
                 })
                 .await
@@ -1139,6 +1140,14 @@ fn await_typed_delivery(
     }
 }
 
+/// How `type_text_blocking` may deliver: the requested mode, the addressed
+/// window, and the background keyboard policy decided for it.
+struct KeyboardRoute {
+    delivery_mode: super::DeliveryMode,
+    window_id: Option<u32>,
+    keyboard_policy: BackgroundKeyboardPolicy,
+}
+
 /// Best-effort-background ladder for `type_text`.
 ///
 /// - `delivery_mode == Background` (default): AX insert → read-back; on a
@@ -1155,14 +1164,37 @@ fn type_text_blocking(
     element_ptr_and_idx: Option<(usize, Option<usize>)>,
     delay_ms: u64,
     is_terminal_target: bool,
-    delivery_mode: super::DeliveryMode,
-    window_id: Option<u32>,
-    keyboard_policy: BackgroundKeyboardPolicy,
+    route: KeyboardRoute,
 ) -> anyhow::Result<TypeTextDelivery> {
+    let KeyboardRoute {
+        delivery_mode,
+        window_id,
+        keyboard_policy,
+    } = route;
     // Original field value before any rung drives read-back verification only.
     // An unreadable value is not evidence that the field is empty — and for a
     // window-addressed request it must come from the exact target window,
     // never a same-process sibling.
+    // A background terminal insert has no semantic AX rung: when the
+    // exact-target decision restricted this request to semantic-only, there is
+    // nothing safe to run, and an over-budget synthesis cannot start. Both
+    // refusals need no read of the target, so they come before any AX call.
+    if is_terminal_target && !delivery_mode.is_foreground() {
+        if let BackgroundKeyboardPolicy::SemanticOnly(refusal) = &keyboard_policy {
+            return Ok(TypeTextDelivery::Refused(refusal.clone()));
+        }
+        if let Some(refusal) = synthesis_preflight(
+            TextDeliveryRoute::UnicodeSynthesis,
+            text.chars().count(),
+            delay_ms,
+        ) {
+            return Ok(TypeTextDelivery::SynthesisRefused {
+                path: PATH_KEY_EVENTS,
+                refusal,
+                ax_attempt: AxAttempt::NotAttempted,
+            });
+        }
+    }
     let before = read_axvalue_bound(pid, element_ptr_and_idx, window_id);
 
     // --- Foreground rung: explicit agent request (skip AX/background ladder). ---
@@ -1265,23 +1297,8 @@ fn type_text_blocking(
 
     // --- Background rung 0: terminal emulator → CGEvent only (AX is dropped). ---
     if is_terminal_target {
-        // A terminal insert has no semantic AX rung: when the exact-target
-        // decision restricted this request to semantic-only, there is nothing
-        // safe to run — refuse before posting anything.
-        if let BackgroundKeyboardPolicy::SemanticOnly(refusal) = keyboard_policy {
-            return Ok(TypeTextDelivery::Refused(refusal));
-        }
-        if let Some(refusal) = synthesis_preflight(
-            TextDeliveryRoute::UnicodeSynthesis,
-            text.chars().count(),
-            delay_ms,
-        ) {
-            return Ok(TypeTextDelivery::SynthesisRefused {
-                path: PATH_KEY_EVENTS,
-                refusal,
-                ax_attempt: AxAttempt::NotAttempted,
-            });
-        }
+        // The semantic-only and synthesis-budget refusals already ran before
+        // the read-back above.
         tracing::debug!(
             "type_text: pid {pid} is a terminal emulator; skipping AX value-set, \
              using CGEvent key-event synthesis"
@@ -1435,9 +1452,11 @@ mod tests {
             None,
             0,
             /*is_terminal_target=*/ true,
-            super::super::DeliveryMode::Background,
-            Some(7),
-            BackgroundKeyboardPolicy::SemanticOnly(refusal.clone()),
+            KeyboardRoute {
+                delivery_mode: super::super::DeliveryMode::Background,
+                window_id: Some(7),
+                keyboard_policy: BackgroundKeyboardPolicy::SemanticOnly(refusal.clone()),
+            },
         );
         match r {
             Ok(TypeTextDelivery::Refused(returned)) => assert_eq!(returned, refusal),
@@ -1454,9 +1473,11 @@ mod tests {
             None,
             0,
             /*is_terminal_target=*/ true,
-            super::super::DeliveryMode::Background,
-            None,
-            BackgroundKeyboardPolicy::Allowed,
+            KeyboardRoute {
+                delivery_mode: super::super::DeliveryMode::Background,
+                window_id: None,
+                keyboard_policy: BackgroundKeyboardPolicy::Allowed,
+            },
         )
         .expect("preflight refusal must not attempt the invalid pid");
         let TypeTextDelivery::SynthesisRefused {

@@ -1,0 +1,22 @@
+[package]
+name = "cua-icon-cache"
+description = "App icons cached once for every cua UI: an in-memory LRU over an on-disk cache under $CUA_HOME/cache/icons, keyed by a stable app identity, with single-flight fetches, short-lived negative results and batched lookups."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+cua-home.workspace = true
+hex.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
+sha2.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }

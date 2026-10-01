@@ -146,6 +146,8 @@ pub fn is_descriptor_exhaustion(error: &std::io::Error) -> bool {
 /// `(soft, hard)`. Returns `None` when the limit cannot be read; callers
 /// must treat a missing snapshot as unknown rather than as healthy.
 #[cfg(unix)]
+// `rlim_t` is not u64 on every target.
+#[allow(clippy::unnecessary_cast)]
 pub fn descriptor_limit_snapshot() -> Option<(u64, u64)> {
     let mut limits = std::mem::MaybeUninit::<libc::rlimit>::uninit();
     if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, limits.as_mut_ptr()) } != 0 {

@@ -1,0 +1,409 @@
+{
+  "flow": "keyvault-approve-deny",
+  "frames": [
+    {
+      "sidebar": {
+        "categories": [
+          "All:4",
+          "Waiting:2",
+          "Access:3",
+          "Recent"
+        ],
+        "sites": [
+          "accounts.example-idp.test (1)",
+          "github.example.test (2) waiting",
+          "Slack (1)"
+        ]
+      }
+    },
+    {
+      "page": {
+        "disabled": false,
+        "disabledBanner": null,
+        "killSwitchVisible": true,
+        "logStatus": "Log verified",
+        "pendingCount": 2,
+        "protection": [
+          "Touch ID: Asked by the Cua daemon to widen access",
+          "Unlock: Mac login",
+          "Secure Enclave: Not used: needs a provisioning-signed build",
+          "This app: Verified as Cua",
+          "Cua daemon: Signature verified"
+        ],
+        "ready": true,
+        "revokeAll": false
+      }
+    },
+    {
+      "frame": {
+        "access": [],
+        "empty": null,
+        "pending": [],
+        "recent": [],
+        "sites": [
+          "accounts.example-idp.test [off]: ada@example.test off locked <asks:Asks every time>",
+          "github.example.test [off]: ada@example.test off <pending:Waiting: com.example.koalabot; pending:Waiting: com.example.koalabot> | bob@example.test off <pending:Waiting: com.example.koalabot>",
+          "Slack [on]: Example Workspace on <delivered:In dev-2, wiped in 30 min; granted:com.example.koalabot → dev-2, 10 min; rule:Rule: com.example.koalabot → any Space>"
+        ],
+        "title": "All"
+      },
+      "list": {
+        "category": "all",
+        "kind": "category"
+      }
+    },
+    {
+      "frame": {
+        "access": [],
+        "empty": null,
+        "pending": [
+          "com.example.koalabot (ad hoc, untrusted) github.example.test (2 accounts) → aurora for 15 min",
+          "com.example.koalabot (ad hoc, untrusted) github.example.test, linear.example.test (not imported) → aurora for 15 min"
+        ],
+        "recent": [],
+        "sites": [],
+        "title": "Waiting"
+      },
+      "list": {
+        "category": "waiting",
+        "kind": "category"
+      }
+    },
+    {
+      "frame": {
+        "access": [
+          "com.example.koalabot → dev-2 / Slack (whole app session) · 10 min [Revoke]",
+          "Rule: com.example.koalabot → any Space / Slack (whole app session) [Remove]",
+          "Copy in dev-2 / wiped in 30 min [Wipe]"
+        ],
+        "empty": null,
+        "pending": [],
+        "recent": [],
+        "sites": [],
+        "title": "Access"
+      },
+      "list": {
+        "category": "access",
+        "kind": "category"
+      }
+    },
+    {
+      "frame": {
+        "access": [],
+        "empty": null,
+        "pending": [],
+        "recent": [
+          "Keyvault turned off Cua (info) now",
+          "Refused github.example.test (Chrome, Default) → dev-9 (deny) now",
+          "Approved Slack (whole app session) → dev-2 (ok) 1 min ago",
+          "Asked Slack (whole app session) (info) 2 min ago"
+        ],
+        "sites": [],
+        "title": "Recent"
+      },
+      "list": {
+        "category": "recent",
+        "kind": "category"
+      }
+    },
+    {
+      "frame": {
+        "access": [],
+        "empty": null,
+        "pending": [],
+        "recent": [],
+        "sites": [
+          "github.example.test [off]: ada@example.test off <pending:Waiting: com.example.koalabot; pending:Waiting: com.example.koalabot> | bob@example.test off <pending:Waiting: com.example.koalabot>"
+        ],
+        "title": "github.example.test"
+      },
+      "list": {
+        "key": "chrome:github.example.test",
+        "kind": "site"
+      }
+    },
+    {
+      "action": "open",
+      "approval": "req-1",
+      "frame": {
+        "approveLabel": "Approve",
+        "badge": "ad hoc, untrusted",
+        "blockedReason": null,
+        "canApprove": false,
+        "claims": [
+          "Calls itself \"OpenKoalaBots\" (unverified)",
+          "Says: \"open the pull request\" (unverified)"
+        ],
+        "rows": [
+          "[ ] github.example.test ada@example.test",
+          "[ ] github.example.test bob@example.test"
+        ],
+        "title": "Allow com.example.koalabot?"
+      }
+    },
+    {
+      "action": {
+        "key": "gh-bob",
+        "type": "toggle"
+      },
+      "approval": "req-1",
+      "frame": {
+        "approveLabel": "Approve 1 item",
+        "badge": "ad hoc, untrusted",
+        "blockedReason": null,
+        "canApprove": true,
+        "claims": [
+          "Calls itself \"OpenKoalaBots\" (unverified)",
+          "Says: \"open the pull request\" (unverified)"
+        ],
+        "rows": [
+          "[ ] github.example.test ada@example.test",
+          "[x] github.example.test bob@example.test"
+        ],
+        "title": "Allow com.example.koalabot?"
+      }
+    },
+    {
+      "action": {
+        "key": "nope",
+        "type": "toggle"
+      },
+      "approval": "req-1",
+      "frame": {
+        "approveLabel": "Approve 1 item",
+        "badge": "ad hoc, untrusted",
+        "blockedReason": null,
+        "canApprove": true,
+        "claims": [
+          "Calls itself \"OpenKoalaBots\" (unverified)",
+          "Says: \"open the pull request\" (unverified)"
+        ],
+        "rows": [
+          "[ ] github.example.test ada@example.test",
+          "[x] github.example.test bob@example.test"
+        ],
+        "title": "Allow com.example.koalabot?"
+      }
+    },
+    {
+      "action": {
+        "type": "select-all"
+      },
+      "approval": "req-1",
+      "frame": {
+        "approveLabel": "Approve 2 items",
+        "badge": "ad hoc, untrusted",
+        "blockedReason": null,
+        "canApprove": true,
+        "claims": [
+          "Calls itself \"OpenKoalaBots\" (unverified)",
+          "Says: \"open the pull request\" (unverified)"
+        ],
+        "rows": [
+          "[x] github.example.test ada@example.test",
+          "[x] github.example.test bob@example.test"
+        ],
+        "title": "Allow com.example.koalabot?"
+      }
+    },
+    {
+      "action": {
+        "key": "gh-ada",
+        "type": "toggle"
+      },
+      "approval": "req-1",
+      "frame": {
+        "approveLabel": "Approve 1 item",
+        "badge": "ad hoc, untrusted",
+        "blockedReason": null,
+        "canApprove": true,
+        "claims": [
+          "Calls itself \"OpenKoalaBots\" (unverified)",
+          "Says: \"open the pull request\" (unverified)"
+        ],
+        "rows": [
+          "[ ] github.example.test ada@example.test",
+          "[x] github.example.test bob@example.test"
+        ],
+        "title": "Allow com.example.koalabot?"
+      }
+    },
+    {
+      "approval": "req-1",
+      "approveCommand": {
+        "items": [
+          "gh-bob"
+        ],
+        "requestId": "req-1",
+        "type": "approve"
+      }
+    },
+    {
+      "action": "open",
+      "approval": "req-2",
+      "frame": {
+        "approveLabel": "Approve",
+        "badge": "ad hoc, untrusted",
+        "blockedReason": null,
+        "canApprove": false,
+        "claims": [
+          "Says: \"check the build\" (unverified)"
+        ],
+        "rows": [
+          "[ ] github.example.test ada@example.test",
+          "[ ] linear.example.test Not imported yet"
+        ],
+        "title": "Allow com.example.koalabot?"
+      }
+    },
+    {
+      "action": {
+        "key": "gh-ada",
+        "type": "toggle"
+      },
+      "approval": "req-2",
+      "frame": {
+        "approveLabel": "Approve 1 item",
+        "badge": "ad hoc, untrusted",
+        "blockedReason": "This request imports new items; select all or deny.",
+        "canApprove": false,
+        "claims": [
+          "Says: \"check the build\" (unverified)"
+        ],
+        "rows": [
+          "[x] github.example.test ada@example.test",
+          "[ ] linear.example.test Not imported yet"
+        ],
+        "title": "Allow com.example.koalabot?"
+      }
+    },
+    {
+      "action": {
+        "key": "import:0",
+        "type": "toggle"
+      },
+      "approval": "req-2",
+      "frame": {
+        "approveLabel": "Approve 2 items",
+        "badge": "ad hoc, untrusted",
+        "blockedReason": null,
+        "canApprove": true,
+        "claims": [
+          "Says: \"check the build\" (unverified)"
+        ],
+        "rows": [
+          "[x] github.example.test ada@example.test",
+          "[x] linear.example.test Not imported yet"
+        ],
+        "title": "Allow com.example.koalabot?"
+      }
+    },
+    {
+      "action": {
+        "type": "clear"
+      },
+      "approval": "req-2",
+      "frame": {
+        "approveLabel": "Approve",
+        "badge": "ad hoc, untrusted",
+        "blockedReason": null,
+        "canApprove": false,
+        "claims": [
+          "Says: \"check the build\" (unverified)"
+        ],
+        "rows": [
+          "[ ] github.example.test ada@example.test",
+          "[ ] linear.example.test Not imported yet"
+        ],
+        "title": "Allow com.example.koalabot?"
+      }
+    },
+    {
+      "approval": "req-2",
+      "approveCommand": null
+    },
+    {
+      "denyCommand": {
+        "requestId": "req-2",
+        "type": "deny"
+      }
+    },
+    {
+      "siteDetail": {
+        "enabled": true,
+        "state": "off",
+        "switch": true
+      },
+      "siteToggle": {
+        "itemIds": [
+          "gh-ada",
+          "gh-bob"
+        ],
+        "type": "set-unattended",
+        "unattended": true
+      }
+    },
+    {
+      "page": {
+        "disabled": true,
+        "disabledBanner": "Keyvault is off. Nothing can be teleported.",
+        "killSwitchVisible": true,
+        "logStatus": "Log verified",
+        "pendingCount": 2,
+        "protection": [
+          "Touch ID: Asked by the Cua daemon to widen access",
+          "Unlock: Mac login",
+          "Secure Enclave: Not used: needs a provisioning-signed build",
+          "This app: Verified as Cua",
+          "Cua daemon: Signature verified"
+        ],
+        "ready": true,
+        "revokeAll": false
+      }
+    },
+    {
+      "approveCommand": null,
+      "disabledApproval": {
+        "approveLabel": "Approve 2 items",
+        "badge": "ad hoc, untrusted",
+        "blockedReason": "Keyvault is off. Turn it on to approve.",
+        "canApprove": false,
+        "claims": [
+          "Calls itself \"OpenKoalaBots\" (unverified)",
+          "Says: \"open the pull request\" (unverified)"
+        ],
+        "rows": [
+          "[x] github.example.test ada@example.test",
+          "[x] github.example.test bob@example.test"
+        ],
+        "title": "Allow com.example.koalabot?"
+      }
+    },
+    {
+      "badges": [
+        "All:-",
+        "Waiting:2",
+        "Access:-",
+        "Recent:-"
+      ],
+      "killSwitchHelp": [
+        "Stops every teleport, import and approval",
+        "Turning it back on asks for Touch ID"
+      ],
+      "labels": [
+        "deny: Deny",
+        "review: Review…",
+        "cancel: Cancel",
+        "setUp: Set up Keyvault",
+        "unlock: Unlock",
+        "revokeAll: Revoke all",
+        "confirmNote: Touch ID confirms in the Cua daemon.",
+        "protectionTitle: Protection",
+        "accountsTitle: Accounts",
+        "appLabel: App",
+        "everyAccount: Every account unattended"
+      ],
+      "recoveryKey": "Recovery key, shown once: ABCD-EFGH"
+    }
+  ]
+}

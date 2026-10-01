@@ -1,7 +1,7 @@
 # cua-sandbox-apps
 
 Universal app catalog and installer pipeline for CUA sandboxes.
-Gym-Anything-style environment generation: discover software, create
+Environment generation: discover software, create
 install/launch scripts, then verify with screenshots in a sandbox.
 
 ## Usage

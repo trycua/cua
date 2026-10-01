@@ -1,0 +1,131 @@
+{
+  "schema": "cua.transcript.jsonui/2",
+  "cast": "claude-bash-error",
+  "instant": "permission-question",
+  "source": {
+    "cli": "claude",
+    "cliVersion": "2.1.278 (Claude Code)",
+    "layoutProfile": "claude-code/2.x",
+    "frameTimeMs": 24636,
+    "alternateScreen": true,
+    "unsupportedSequences": 0
+  },
+  "elements": [
+    {
+      "type": "rawText",
+      "provenance": "unrecognised",
+      "region": {
+        "firstRow": 0,
+        "lastRow": 5
+      },
+      "lines": [
+        "",
+        "▗ ▗   ▖ ▖  Claude Code v2.1.278",
+        "           Opus 5 (1M context) with low effort · Claude Max",
+        "  ▘▘ ▝▝    /private/tmp/cua-cast-sandbox",
+        "",
+        ""
+      ]
+    },
+    {
+      "type": "userMessage",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 6,
+        "lastRow": 6
+      },
+      "text": "Run the shell command cat /definitely/not/here.txt and tell me the exact error."
+    },
+    {
+      "type": "agentMessage",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 8,
+        "lastRow": 8
+      },
+      "markdown": "Cat a nonexistent file",
+      "text": "Cat a nonexistent file"
+    },
+    {
+      "type": "toolCall",
+      "provenance": "inferred",
+      "region": {
+        "firstRow": 9,
+        "lastRow": 9
+      },
+      "name": "Bash",
+      "argumentSummary": "cat /definitely/not/here.txt",
+      "status": "running",
+      "statusProvenance": "inferred",
+      "resultLines": [],
+      "collapsed": false
+    },
+    {
+      "type": "rawText",
+      "provenance": "unrecognised",
+      "region": {
+        "firstRow": 10,
+        "lastRow": 17
+      },
+      "lines": [
+        "",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────",
+        " Bash command",
+        " Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" below",
+        "",
+        "   cat /definitely/not/here.txt",
+        "   Cat a nonexistent file",
+        ""
+      ]
+    },
+    {
+      "type": "question",
+      "provenance": "observed",
+      "region": {
+        "firstRow": 18,
+        "lastRow": 22
+      },
+      "prompt": "Do you want to proceed?",
+      "options": [
+        {
+          "key": "1",
+          "label": "Yes"
+        },
+        {
+          "key": "2",
+          "label": "Yes, allow reading from /definitely/not from this project"
+        },
+        {
+          "key": "3",
+          "label": "Yes, and switch to auto mode · auto mode handles these prompts for you"
+        },
+        {
+          "key": "4",
+          "label": "No"
+        }
+      ],
+      "selectedIndex": 0
+    },
+    {
+      "type": "rawText",
+      "provenance": "unrecognised",
+      "region": {
+        "firstRow": 23,
+        "lastRow": 33
+      },
+      "lines": [
+        "",
+        " Esc to cancel · Tab to amend",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    }
+  ]
+}

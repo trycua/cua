@@ -1,0 +1,149 @@
+{
+  "name": "create-resources",
+  "about": "The Resources step: kind, architecture (emulated off this Mac's platform), the disk (a slider where the guest grows it) with the download and the room left where it is written, a Space that does not fit blocking Continue, the cloud tile refusing a pick while it is coming soon (its lines, sliders and price are unit-tested), the local sliders (local is free), and a grown macOS disk in the plan.",
+  "env": {
+    "defaultLocation": "local",
+    "cloudAvailable": true,
+    "localAvailable": true,
+    "localReason": null,
+    "localBackends": null,
+    "maxCpus": 8,
+    "hostArch": "arm64",
+    "storage": {
+      "reserveBytes": 5368709120,
+      "lume": {
+        "availableBytes": 227633266688,
+        "totalBytes": 536870912000,
+        "name": "Macintosh HD"
+      },
+      "qemu": {
+        "availableBytes": 227633266688,
+        "totalBytes": 536870912000,
+        "name": "Macintosh HD"
+      },
+      "container": {
+        "availableBytes": 3221225472,
+        "totalBytes": 107374182400,
+        "name": "Colima"
+      },
+      "pulled": [
+        "ghcr.io/trycua/linux:24.04-slim"
+      ]
+    },
+    "cloudPricing": {
+      "vcpuHourUsd": 0.044625,
+      "memoryGibHourUsd": 0.0223125
+    }
+  },
+  "wizard": [
+    {
+      "type": "next"
+    },
+    {
+      "type": "back"
+    },
+    {
+      "type": "choose-image",
+      "ref": "ghcr.io/trycua/linux:24.04-slim"
+    },
+    {
+      "type": "next"
+    },
+    {
+      "type": "back"
+    },
+    {
+      "type": "choose-image",
+      "ref": "ghcr.io/trycua/linux:24.04-disk"
+    },
+    {
+      "type": "next"
+    },
+    {
+      "type": "set-disk",
+      "diskGb": 64
+    },
+    {
+      "type": "set-disk",
+      "diskGb": 2
+    },
+    {
+      "type": "back"
+    },
+    {
+      "type": "choose-image",
+      "ref": "ghcr.io/trycua/omarchy:edge"
+    },
+    {
+      "type": "next"
+    },
+    {
+      "type": "back"
+    },
+    {
+      "type": "set-placement",
+      "placement": "cloud"
+    },
+    {
+      "type": "next"
+    },
+    {
+      "type": "set-cpus",
+      "cpus": 4
+    },
+    {
+      "type": "set-memory",
+      "memoryGb": 64
+    },
+    {
+      "type": "set-cpus",
+      "cpus": 20
+    },
+    {
+      "type": "back"
+    },
+    {
+      "type": "choose-os",
+      "os": "windows"
+    },
+    {
+      "type": "set-placement",
+      "placement": "local"
+    },
+    {
+      "type": "next"
+    },
+    {
+      "type": "back"
+    },
+    {
+      "type": "choose-os",
+      "os": "macos"
+    },
+    {
+      "type": "next"
+    },
+    {
+      "type": "set-disk",
+      "diskGb": 200
+    },
+    {
+      "type": "reset-disk"
+    },
+    {
+      "type": "set-disk",
+      "diskGb": 200
+    },
+    {
+      "type": "next"
+    },
+    {
+      "type": "next"
+    }
+  ],
+  "createError": "not enough disk space",
+  "rows": [],
+  "now": 0,
+  "roster": [],
+  "query": ""
+}

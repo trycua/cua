@@ -900,6 +900,7 @@ pub mod macos {
         }
 
         #[test]
+        #[ignore = "host desktop: reads the real windows, frontmost app and cursor; run by scripts/ci/macos/run-rust-e2e.sh"]
         fn native_snapshot_reads_desktop_without_a_target() {
             let snapshot = MacosObserver::new()
                 .snapshot(TargetWindow {
@@ -1108,10 +1109,6 @@ pub mod linux {
                 leaked_input_events: Vec::new(),
             })
         }
-    }
-
-    pub(crate) fn hyprland_client_address(pid: u32) -> Result<String, ObserverError> {
-        super::hyprland::client_address(TargetWindow { pid, native_id: 0 })
     }
 
     pub(crate) fn hyprland_target_address(target: TargetWindow) -> Result<String, ObserverError> {
@@ -1360,10 +1357,7 @@ pub mod linux {
             .map_err(|error| ObserverError::new(format!("invalid GetRects JSON: {error}")))
     }
 
-    fn gnome_target<'a>(
-        windows: &'a [GnomeWindow],
-        target: TargetWindow,
-    ) -> Option<&'a GnomeWindow> {
+    fn gnome_target(windows: &[GnomeWindow], target: TargetWindow) -> Option<&GnomeWindow> {
         let matching = windows.iter().filter(|window| window.pid == target.pid);
         matching
             .clone()

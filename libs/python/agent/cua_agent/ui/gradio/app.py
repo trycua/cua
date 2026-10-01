@@ -30,12 +30,8 @@ import gradio as gr
 
 # Import from agent package
 from cua_agent import ComputerAgent
+from cua_agent.computers.sandbox import LazySandboxComputerHandler, open_sandbox
 from cua_agent.types import AgentResponse, Messages
-
-try:
-    from computer import Computer
-except ImportError:
-    Computer = None  # type: ignore[assignment,misc]
 from gradio.components.chatbot import MetadataDict
 
 # Global variables
@@ -179,22 +175,13 @@ def create_computer_instance(
     provider_type: str = "lume",
     name: Optional[str] = None,
     api_key: Optional[str] = None,
-) -> Computer:
-    """Create or get the global Computer instance."""
+) -> LazySandboxComputerHandler:
+    """Create or get the global cua-sandbox computer handler (opened on first use)."""
     global global_computer
     if global_computer is None:
-        if provider_type == "localhost":
-            global_computer = Computer(
-                verbosity=verbosity, os_type=os_type, use_host_computer_server=True
-            )
-        else:
-            global_computer = Computer(
-                verbosity=verbosity,
-                os_type=os_type,
-                provider_type=provider_type,
-                name=name if name else "",
-                api_key=api_key,
-            )
+        global_computer = LazySandboxComputerHandler(
+            lambda: open_sandbox(provider_type, os_type=os_type, name=name, api_key=api_key)
+        )
     return global_computer
 
 

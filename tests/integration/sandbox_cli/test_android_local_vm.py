@@ -2,7 +2,7 @@
 
     cua sb launch android:14 --local --json
     # parse name from JSON output, connect with SDK, run assertions
-    cua sb delete <name> --local
+    cua sb delete --force <name> --local
 
 Mirrors tests/integration/sandbox_sdk/test_android_local_vm.py but exercises the CLI
 launch path and persistent state tracking instead of Sandbox.ephemeral().
@@ -62,7 +62,7 @@ async def test_android_local_vm():
 
             await sb.mobile.home()
     finally:
-        _cua("sb", "delete", name, "--local")
+        _cua("sb", "delete", "--force", name, "--local")
         assert name not in _ls_names(), f"'{name}' still in `cua sb ls --all` after delete"
 
 
@@ -84,7 +84,7 @@ async def main():
             await sb.mobile.home()
             print("Tap + home: OK")
     finally:
-        _cua("sb", "delete", name, "--local")
+        _cua("sb", "delete", "--force", name, "--local")
 
 
 if __name__ == "__main__":

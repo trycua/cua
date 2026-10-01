@@ -1,0 +1,93 @@
+---
+title: Publish a Fleet image
+description: Which runtime boots a cloud image, and how to build, push and reference your own image with cua image build.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A cloud sandbox boots an OCI artifact from a registry: the same reference you
+run locally. The runtime follows the artifact:
+
+| Artifact | Cloud runtime | Local runtime |
+| --- | --- | --- |
+| Container rootfs (any OCI image) | `gvisor` pod | Docker or Podman, gVisor when installed |
+| containerDisk (qcow2 at `/disk/disk.img`) | `kubevirt` VM | QEMU |
+| macOS (Lume) | Not offered | Lume |
+
+The canonical images publish both forms (`linux:24.04` and `linux:24.04-disk`)
+and one resolver picks the one a runtime needs, pinned by digest. Set the
+runtime yourself with `runtime="kubevirt"` (or `kind="vm"`) or `--runtime`; the
+SDK rejects a pairing the image cannot run (`InvalidPlacement`) before it
+creates anything.
+
+- The cloud runs amd64, so the image needs an amd64 variant.
+- Managed capacity is keyed by image digest and shape: two images never share
+  replicas. Pin a digest when every sandbox must boot the same content.
+- A Windows containerDisk needs `os_type="windows"` (EFI firmware).
+
+For small changes (packages, files, env), add layers to an `Image`
+([Choose and build an image](/cua-sdk/guides/images)). Build and publish your
+own image for a VM disk, a pinned artifact your team shares, or while cloud
+builds from layers are not available. This uses the `cua` 0.2.0 CLI.
+
+## 1. Describe the image
+
+`cua image build` takes an `images.cua.ai/v1alpha1` Image resource. Layer types
+are `apt_install`, `pip_install`, `uv_install`, `app_install` and `run`; `env`
+and `ports` are recorded in the image. Keep secrets out of it.
+
+```json title="image.json" test="config" id="json-config" schema="cua-image"
+{
+  "apiVersion": "images.cua.ai/v1alpha1",
+  "kind": "Image",
+  "metadata": { "name": "my-workspace", "namespace": "my-workspace" },
+  "spec": {
+    "recipe": {
+      "osType": "linux",
+      "distro": "ubuntu",
+      "version": "24.04",
+      "kind": "vm",
+      "layers": [
+        { "type": "apt_install", "packages": ["curl", "git"] },
+        { "type": "run", "command": "mkdir -p /opt/app" }
+      ],
+      "env": { "APP_ENV": "production" },
+      "ports": [8080]
+    }
+  }
+}
+```
+
+## 2. Build and push
+
+```bash test="cli-shape" id="cua-image-build"
+# containerDisk for VMs: KubeVirt and local QEMU (boots the base VM, applies layers over SSH)
+cua image build image.json --base vm:ghcr.io/trycua/linux:24.04-disk \
+  --push ghcr.io/<you>/my-workspace:1.0-disk
+
+# rootfs for containers: gVisor in the cloud, Docker locally
+cua image build image.json --base container:ghcr.io/trycua/linux:24.04 \
+  --push ghcr.io/<you>/my-workspace:1.0
+```
+
+The build prints `<reference>@sha256:<digest>`. It produces an image for the
+host architecture, so build cloud images on an x86_64 host. Registry
+credentials come from `CUA_REGISTRY_USERNAME` / `CUA_REGISTRY_PASSWORD`,
+`GITHUB_TOKEN` for `ghcr.io`, or your Docker config.
+
+<Callout type="warn">
+  The cloud must be able to pull the image. A new GHCR package is private; make
+  it public or pass a [registry secret](/cua-sdk/guides/images#private-registries).
+  A pushed image carries everything on its disk.
+</Callout>
+
+## 3. Reference it
+
+```bash test="cli-shape" id="cua-sb-create"
+cua sb create ghcr.io/<you>/my-workspace:1.0 --name ws                 # local container
+cua sb create ghcr.io/<you>/my-workspace:1.0 --on cloud --name ws-cloud
+```
+
+In code, pass the digest to `Image.from_registry(...)`.
+`cua image create --file image.json` submits the same resource for a remote
+build where the deployment supports it.

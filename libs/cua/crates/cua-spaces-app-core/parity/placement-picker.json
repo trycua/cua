@@ -1,0 +1,54 @@
+{
+  "name": "placement-picker",
+  "about": "New Space's Run on menu: This Mac, then your machines that provide Spaces (a Mac mini on the relay with two of four Spaces and its two macOS VMs in use, a Linux box added by its Tailscale address, an offline studio), then, with the Your cloud experiment, your connected cloud. Disabled entries say why (offline, at its limit, not a Mac); choosing one sets the create's on (local, host:<machine>, aws). Turning Your cloud off while AWS is chosen goes back to this Mac and leaves AWS connected; a machine that leaves the list does the same.",
+  "env": {
+    "defaultLocation": "local",
+    "cloudAvailable": false,
+    "localAvailable": true,
+    "localReason": null,
+    "localBackends": ["docker", "lume"],
+    "maxCpus": 8,
+    "hostArch": "arm64",
+    "storage": null,
+    "cloudPricing": null,
+    "experiments": {},
+    "hosts": [
+      {
+        "id": "m-mini", "name": "Mac mini", "via": "relay", "online": true, "os": "macos",
+        "limits": [
+          { "resource": "spaces", "used": 2, "limit": 4, "reason": "" },
+          { "resource": "macos_vms", "used": 2, "limit": 2, "reason": "Apple's macOS license allows two macOS VMs per Mac" }
+        ]
+      },
+      { "id": "lab", "name": "lab", "via": "direct", "online": true, "os": "linux", "limits": [] },
+      { "id": "m-studio", "name": "Studio", "via": "relay", "online": false, "os": "", "limits": [] }
+    ],
+    "clouds": [
+      {
+        "name": "aws", "title": "AWS", "label": "AWS · us-west-2", "isDefault": false, "ttlHours": 2,
+        "offers": [
+          { "image": "linux", "kind": "container", "supported": true, "machineType": "t4g.medium", "usdPerHour": 0.0368 },
+          { "image": "macos", "kind": "vm", "supported": false, "reason": "macOS on AWS needs EC2 Mac (24 h minimum); not offered." }
+        ]
+      }
+    ]
+  },
+  "steps": [
+    { "step": "this Mac and your machines, no cloud without the experiment" },
+    { "step": "an offline machine cannot be chosen", "wizard": { "type": "choose-placement", "on": "host:m-studio" } },
+    { "step": "a hidden cloud cannot be chosen", "wizard": { "type": "choose-placement", "on": "aws" } },
+    { "step": "the Mac mini on the relay", "wizard": { "type": "choose-placement", "on": "host:m-mini" } },
+    { "step": "macOS: the Mac mini is at its limit, the Linux box is not a Mac", "wizard": { "type": "choose-os", "os": "macos" } },
+    { "step": "Linux again", "wizard": { "type": "choose-os", "os": "linux" } },
+    { "step": "the Linux box over Tailscale", "wizard": { "type": "choose-placement", "on": "host:lab" } },
+    { "step": "with Your cloud, AWS after your machines", "env": { "experiments": { "yourCloud": true } } },
+    { "step": "AWS", "wizard": { "type": "choose-placement", "on": "aws" } },
+    { "step": "Your cloud off: this Mac again, AWS still connected", "env": { "experiments": {} } },
+    { "step": "the Mac mini again", "wizard": { "type": "choose-placement", "on": "host:m-mini" } },
+    { "step": "resources: its own size, no price", "wizard": { "type": "next" } },
+    { "step": "options", "wizard": { "type": "next" } },
+    { "step": "summary: runs on the Mac mini", "wizard": { "type": "next" } },
+    { "step": "the Mac mini leaves the list: this Mac again", "env": { "hosts": [] } },
+    { "step": "this Mac", "wizard": { "type": "choose-placement", "on": "local" } }
+  ]
+}

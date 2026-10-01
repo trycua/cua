@@ -19,6 +19,8 @@ class TestResolveReleasePleaseRequest(unittest.TestCase):
             "libs/cua-driver": "0.9.0",
             "libs/lume": "0.4.7",
             "libs/python/cua-sandbox": "0.4.3",
+            "libs/cua-spacesd": "0.1.0",
+            "libs/cua": "0.2.0",
         }
 
     def test_resolves_each_component_path(self) -> None:
@@ -36,6 +38,16 @@ class TestResolveReleasePleaseRequest(unittest.TestCase):
         self.assertEqual(sandbox["current_version"], "0.4.3")
         self.assertIsNone(sandbox["release_as"])
         self.assertIsNone(driver["release_as"])
+
+    def test_resolves_spacesd(self) -> None:
+        request = MODULE.resolve_request(self.manifest, "cua-spacesd", "minor")
+        self.assertEqual(request["path"], "libs/cua-spacesd")
+        self.assertEqual(request["release_as"], "0.2.0")
+
+    def test_resolves_cua_sdk(self) -> None:
+        request = MODULE.resolve_request(self.manifest, "cua-sdk", "patch")
+        self.assertEqual(request["path"], "libs/cua")
+        self.assertEqual(request["release_as"], "0.2.1")
 
     def test_calculates_patch_minor_and_major_versions(self) -> None:
         self.assertEqual(MODULE.bump_version("0.9.0", "patch"), "0.9.1")

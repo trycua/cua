@@ -30,7 +30,7 @@ class OperatorNormalizerCallback(AsyncCallbackHandler):
                 continue
 
             # rename mouse click actions to "click"
-            for mouse_btn in ["left", "right", "wheel", "back", "forward"]:
+            for mouse_btn in ["left", "right", "middle", "wheel", "back", "forward"]:
                 if action.get("type", "") == f"{mouse_btn}_click":
                     action["type"] = "click"
                     action["button"] = mouse_btn
@@ -86,19 +86,21 @@ class OperatorNormalizerCallback(AsyncCallbackHandler):
                     action["keys"] = keys.replace("-", "+").split("+") if len(keys) > 1 else [keys]
             required_keys_by_type = {
                 # OpenAI actions
-                "click": ["type", "button", "x", "y"],
-                "double_click": ["type", "x", "y"],
+                # modifier: optional held modifier key (e.g. ctrl+click), used by Yutori n1.5
+                "click": ["type", "button", "x", "y", "modifier"],
+                "double_click": ["type", "x", "y", "modifier"],
                 "drag": ["type", "path"],
                 "keypress": ["type", "keys"],
                 "move": ["type", "x", "y"],
                 "screenshot": ["type"],
                 "scroll": ["type", "scroll_x", "scroll_y", "x", "y"],
                 "type": ["type", "text"],
-                "wait": ["type"],
+                # time: optional duration in seconds, used by FARA and Yutori n1.5
+                "wait": ["type", "time"],
                 # Anthropic actions
                 "left_mouse_down": ["type", "x", "y"],
                 "left_mouse_up": ["type", "x", "y"],
-                "triple_click": ["type", "button", "x", "y"],
+                "triple_click": ["type", "button", "x", "y", "modifier"],
             }
             keep = required_keys_by_type.get(action_type or "")
             if keep:

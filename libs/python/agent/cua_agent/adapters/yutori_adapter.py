@@ -19,9 +19,15 @@ class YutoriAdapter(CustomLLM):
         self.api_key = api_key or os.environ.get("YUTORI_API_KEY")
 
     def _normalize_model(self, model: str) -> str:
-        """Strip the yutori/ prefix to get the bare model name."""
+        """Strip the yutori/ prefix and pin bare model names to their -latest alias.
+
+        The Yutori API only accepts versioned model names (e.g. "n1.5-latest",
+        "n1.5-20260428") and rejects bare names like "n1.5".
+        """
         if model.startswith("yutori/"):
-            return model[len("yutori/") :]
+            model = model[len("yutori/") :]
+        if "-" not in model:
+            model = f"{model}-latest"
         return model
 
     def _resolve_api_key(self, kwargs: dict | None = None) -> str:
@@ -48,7 +54,7 @@ class YutoriAdapter(CustomLLM):
         params = {
             "model": f"openai/{model}",
             "messages": kwargs.get("messages", []),
-            "api_base": self.base_url,
+            "api_base": kwargs.get("api_base") or self.base_url,
             "api_key": api_key,
             "extra_headers": extra_headers,
             "stream": False,
@@ -60,16 +66,21 @@ class YutoriAdapter(CustomLLM):
         if "tool_choice" in kwargs:
             params["tool_choice"] = kwargs["tool_choice"]
 
-        # Forward optional generation params
+        # Forward optional generation params. extra_body carries Yutori-specific
+        # request fields (tool_set, disable_tools, json_schema, prev_request_id).
         for key in (
             "temperature",
             "top_p",
             "max_completion_tokens",
-            "max_tokens",
             "response_format",
+            "extra_body",
         ):
             if key in kwargs:
                 params[key] = kwargs[key]
+
+        # The Yutori API rejects max_tokens; it requires max_completion_tokens.
+        if "max_tokens" in kwargs and "max_completion_tokens" not in params:
+            params["max_completion_tokens"] = kwargs["max_tokens"]
 
         if "optional_params" in kwargs:
             protected_keys = {"api_key", "extra_headers", "model", "api_base", "stream"}
@@ -93,7 +104,7 @@ class YutoriAdapter(CustomLLM):
         return response
 
     def streaming(self, *args, **kwargs) -> Iterator[GenericStreamingChunk]:
-        raise NotImplementedError("Yutori n1 does not support streaming.")
+        raise NotImplementedError("Yutori Navigator models do not support streaming.")
 
     async def astreaming(self, *args, **kwargs) -> AsyncIterator[GenericStreamingChunk]:
-        raise NotImplementedError("Yutori n1 does not support streaming.")
+        raise NotImplementedError("Yutori Navigator models do not support streaming.")

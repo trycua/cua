@@ -111,6 +111,9 @@ async def main():
             # == Omniparser + Any LLM ==
             # model="omniparser+..."
             # model="omniparser+anthropic/claude-opus-4-20250514",
+            # == Yutori Navigator (browser-only; requires YUTORI_API_KEY) ==
+            # model="yutori/n1.5-latest",
+            # model="yutori/n1.5-20260428",
             tools=[computer],
             only_n_most_recent_images=3,
             verbosity=logging.INFO,

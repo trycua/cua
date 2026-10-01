@@ -169,7 +169,25 @@ class BrowserManager:
             y = params.get("y")
             if x is None or y is None:
                 return {"success": False, "error": "x and y parameters are required"}
-            await self.page.mouse.click(x, y)
+            button = params.get("button", "left")
+            click_count = params.get("click_count", 1)
+            # Playwright modifier key names, e.g. ["Control"] for ctrl+click
+            modifiers = params.get("modifiers") or []
+            for modifier in modifiers:
+                await self.page.keyboard.down(modifier)
+            try:
+                await self.page.mouse.click(x, y, button=button, click_count=click_count)
+            finally:
+                for modifier in reversed(modifiers):
+                    await self.page.keyboard.up(modifier)
+            return {"success": True}
+
+        elif cmd == "dblclick":
+            x = params.get("x")
+            y = params.get("y")
+            if x is None or y is None:
+                return {"success": False, "error": "x and y parameters are required"}
+            await self.page.mouse.dblclick(x, y)
             return {"success": True}
 
         elif cmd == "type":
@@ -214,6 +232,17 @@ class BrowserManager:
         elif cmd == "go_forward":
             await self.page.go_forward()
             return {"success": True, "url": self.page.url}
+
+        elif cmd == "refresh":
+            await self.page.reload(wait_until="domcontentloaded", timeout=30000)
+            return {"success": True, "url": self.page.url}
+
+        elif cmd == "evaluate":
+            expression = params.get("expression")
+            if not expression:
+                return {"success": False, "error": "expression parameter is required"}
+            result = await self.page.evaluate(expression)
+            return {"success": True, "result": result}
 
         else:
             return {"success": False, "error": f"Unknown command: {cmd}"}

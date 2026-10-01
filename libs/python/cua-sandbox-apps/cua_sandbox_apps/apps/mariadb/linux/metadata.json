@@ -1,0 +1,8 @@
+{
+  "binary_path": "/usr/sbin/mysqld",
+  "binary_name": "mysqld",
+  "display_name": "MariaDB database server (metapackage depending on the latest version)",
+  "desktop_entry": null,
+  "icon_paths": [],
+  "version": "10.6.23-MariaDB-0ubuntu0.22.04.1"
+}

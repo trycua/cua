@@ -1,0 +1,5 @@
+[bindings.python]
+cdylib_name = "cua_driver_sdk"
+
+[bindings.python.external_packages]
+cua_driver_contract = "cua_driver._native_contract"

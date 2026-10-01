@@ -1,0 +1,1336 @@
+//! UIA-based enumeration of top-level windows.
+//!
+//! Walks the UI Automation tree from the desktop root and returns one entry
+//! per top-level interactable window. UIA surfaces modern containers (WebView2
+//! hosts, packaged-UWP frames, browser windows whose chrome lives inside a
+//! container HWND) with their real title and bounds — which `EnumWindows`
+//! either misses or returns with a misleading parent HWND.
+//!
+//! The result is shape-compatible with `crate::win32::windows::WindowInfo`
+//! (returned as `WindowInfo` directly) so the existing pipeline that consumes
+//! `list_windows` output keeps working unchanged. Each record's `hwnd` is the
+//! UIA element's `NativeWindowHandle` — i.e. an honest Win32 HWND that downstream
+//! code can pass to `GetWindowRect`, `PostMessage`, etc.
+
+// We pattern-match against `UIA_*ControlTypeId` constants from the `windows`
+// crate, which use mixed case we can't rename. The lint's suggested rewrite
+// (UIA_BUTTON_CONTROL_TYPE_ID) would silently shadow the external constant
+// with a fresh local binding and break the match. Mirrors overlay.rs:12.
+#![allow(non_upper_case_globals)]
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, OnceLock};
+use std::thread;
+use std::time::Duration;
+
+use cua_driver_core::single_flight::SingleFlight;
+
+use anyhow::{bail, Context};
+use windows::core::{Interface, BSTR};
+use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::Graphics::Dwm::{
+    DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+};
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
+};
+use windows::Win32::UI::Accessibility::{
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
+    IUIAutomationTogglePattern, TreeScope_Children, TreeScope_Subtree,
+    UIA_AcceleratorKeyPropertyId, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
+    UIA_HyperlinkControlTypeId, UIA_InvokePatternId, UIA_ListItemControlTypeId,
+    UIA_MenuItemControlTypeId, UIA_RadioButtonControlTypeId, UIA_SplitButtonControlTypeId,
+    UIA_TabItemControlTypeId, UIA_TogglePatternId, UIA_TreeItemControlTypeId, UIA_CONTROLTYPE_ID,
+    UIA_PROPERTY_ID,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetAncestor, GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+    IsIconic, IsWindow, IsWindowVisible, GA_ROOT,
+};
+
+use crate::win32::windows::WindowInfo;
+
+/// HRESULT for "COM already initialized in another mode on this thread."
+/// Returned by `CoInitializeEx` when something else (a previous call in the
+/// same task, or a library on the same OS thread) picked a different
+/// apartment. Safe to ignore — COM is up either way.
+const RPC_E_CHANGED_MODE: i32 = -2147417850; // 0x80010106
+/// Desktop child enumeration: one wedged provider must not stall list_windows.
+const DESKTOP_CALL_TIMEOUT: Duration = Duration::from_secs(2);
+/// Subtree scans: keep the pre-existing interactive operation budget.
+const SUBTREE_OP_TIMEOUT: Duration = Duration::from_secs(4);
+/// Health probes can tolerate the same budget without delaying window listing.
+const HEALTH_PROBE_TIMEOUT: Duration = SUBTREE_OP_TIMEOUT;
+
+enum UiaDeadlineError {
+    Timeout,
+    Busy,
+    Unavailable,
+}
+
+/// Process-wide gate for blocking UIA calls.
+///
+/// Windows offers no safe way to cancel a COM provider call in another thread.
+/// The gate therefore remains owned by a timed-out worker until that worker
+/// actually returns. Retries fail fast instead of stranding more threads, then
+/// resume as soon as the provider call returns (no cooldown).
+fn uia_single_flight() -> &'static Arc<SingleFlight> {
+    static GATE: OnceLock<Arc<SingleFlight>> = OnceLock::new();
+    GATE.get_or_init(|| Arc::new(SingleFlight::new(Duration::ZERO)))
+}
+
+/// Run `f` on a dedicated thread under `gate`. `f` receives the flag that is
+/// set when the caller's deadline fires, so it can skip side effects the
+/// caller will no longer observe.
+fn run_uia_single_flight<T, F>(
+    gate: &Arc<SingleFlight>,
+    stage: &'static str,
+    timeout: Duration,
+    fallback: &'static str,
+    f: F,
+) -> Result<T, UiaDeadlineError>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
+{
+    let Some(permit) = gate.try_acquire() else {
+        tracing::debug!(
+            target: "uia_windows_enum",
+            "UIA {stage} skipped while another provider call is in flight"
+        );
+        return Err(UiaDeadlineError::Busy);
+    };
+
+    let (tx, rx) = mpsc::channel();
+    let cancelled = permit.timeout_flag();
+    let worker_cancelled = permit.timeout_flag();
+    let spawn = thread::Builder::new()
+        .name(format!("cua-uia-{stage}"))
+        .spawn(move || {
+            let _permit = permit;
+            let result = f(worker_cancelled);
+            let _ = tx.send(result);
+        });
+
+    if let Err(e) = spawn {
+        // The unspawned closure, and with it the permit, is already dropped,
+        // which reopened the gate.
+        tracing::warn!(target: "uia_windows_enum", "failed to spawn UIA {stage} thread: {e}");
+        return Err(UiaDeadlineError::Unavailable);
+    }
+
+    match rx.recv_timeout(timeout) {
+        Ok(result) => Ok(result),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            cancelled.store(true, Ordering::Release);
+            tracing::warn!(
+                target: "uia_windows_enum",
+                "UIA {stage} exceeded {}ms; falling back to {fallback}; no other UIA worker will start until this provider call returns",
+                timeout.as_millis()
+            );
+            Err(UiaDeadlineError::Timeout)
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            tracing::warn!(target: "uia_windows_enum", "UIA {stage} thread exited without a result");
+            Err(UiaDeadlineError::Unavailable)
+        }
+    }
+}
+
+fn run_uia_with_deadline<T, F>(
+    stage: &'static str,
+    timeout: Duration,
+    fallback: &'static str,
+    f: F,
+) -> Result<T, UiaDeadlineError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    run_uia_with_deadline_cancelable(stage, timeout, fallback, |_| f())
+}
+
+fn run_uia_with_deadline_cancelable<T, F>(
+    stage: &'static str,
+    timeout: Duration,
+    fallback: &'static str,
+    f: F,
+) -> Result<T, UiaDeadlineError>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<AtomicBool>) -> T + Send + 'static,
+{
+    run_uia_single_flight(uia_single_flight(), stage, timeout, fallback, f)
+}
+
+struct ComInit {
+    needs_uninit: bool,
+}
+
+impl ComInit {
+    fn new() -> Self {
+        let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        if hr.is_err() && hr.0 != RPC_E_CHANGED_MODE {
+            tracing::debug!(target: "uia_windows_enum", "CoInitializeEx returned {hr:?}");
+        }
+        Self {
+            needs_uninit: hr.is_ok(),
+        }
+    }
+}
+
+impl Drop for ComInit {
+    fn drop(&mut self) {
+        if self.needs_uninit {
+            unsafe { CoUninitialize() };
+        }
+    }
+}
+
+/// Build an IUIAutomation instance after COM is initialized.
+fn get_uia() -> Option<IUIAutomation> {
+    match unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) } {
+        Ok(a) => Some(a),
+        Err(e) => {
+            tracing::warn!(target: "uia_windows_enum", "CoCreateInstance(CUIAutomation) failed: {e}");
+            None
+        }
+    }
+}
+
+/// Enumerate top-level windows visible to UI Automation.
+///
+/// Returns one `WindowInfo` per non-offscreen child of the UIA desktop root
+/// whose `NativeWindowHandle` is non-null and resolves to a window with a
+/// non-empty title. Windows whose HWND is zero (pure UIA virtual elements,
+/// rare) are skipped because the rest of the driver pipeline keys off HWND.
+///
+/// Returns an empty vec on any UIA failure — callers should treat UIA as a
+/// best-effort source and union with `EnumWindows`.
+pub fn enumerate_top_level_windows() -> Vec<WindowInfo> {
+    match run_uia_with_deadline(
+        "desktop enumeration",
+        DESKTOP_CALL_TIMEOUT,
+        "Win32-only window list",
+        enumerate_top_level_windows_unbounded,
+    ) {
+        Ok(windows) => windows,
+        Err(UiaDeadlineError::Timeout | UiaDeadlineError::Busy | UiaDeadlineError::Unavailable) => {
+            Vec::new()
+        }
+    }
+}
+
+fn enumerate_top_level_windows_unbounded() -> Vec<WindowInfo> {
+    // Keep this first so COM interfaces drop before CoUninitialize.
+    let _com = ComInit::new();
+    let uia = match get_uia() {
+        Some(u) => u,
+        None => return Vec::new(),
+    };
+
+    unsafe {
+        let root = match uia.GetRootElement() {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::debug!(target: "uia_windows_enum", "GetRootElement failed: {e}");
+                return Vec::new();
+            }
+        };
+        let condition = match uia.CreateTrueCondition() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::debug!(target: "uia_windows_enum", "CreateTrueCondition failed: {e}");
+                return Vec::new();
+            }
+        };
+        let children = match root.FindAll(TreeScope_Children, &condition) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::debug!(target: "uia_windows_enum", "FindAll(Children) failed: {e}");
+                return Vec::new();
+            }
+        };
+
+        let count = children.Length().unwrap_or(0);
+        let mut out: Vec<WindowInfo> = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            let elem = match children.GetElement(i) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            if let Some(info) = window_info_from_uia_element(&elem) {
+                out.push(info);
+            }
+        }
+        out
+    }
+}
+
+/// Exercise the real desktop enumeration call shape for `cua-driver doctor`
+/// without allowing health checks to bypass the process-wide single-flight
+/// bound used by window and interaction tools.
+pub(crate) fn probe_desktop_availability() -> Result<(), String> {
+    match run_uia_with_deadline(
+        "health probe",
+        HEALTH_PROBE_TIMEOUT,
+        "Win32-only window tools",
+        probe_desktop_availability_unbounded,
+    ) {
+        Ok(result) => result,
+        Err(UiaDeadlineError::Timeout) => Err(format!(
+            "UI Automation desktop enumeration exceeded {}ms; a UIA provider may be hung. Window tools will fall back to Win32-only enumeration until it recovers.",
+            HEALTH_PROBE_TIMEOUT.as_millis()
+        )),
+        Err(UiaDeadlineError::Busy) => Err(
+            "UI Automation is busy with an earlier timed-out provider call; window tools are temporarily using Win32-only enumeration."
+                .to_owned(),
+        ),
+        Err(UiaDeadlineError::Unavailable) => {
+            Err("UI Automation health worker is unavailable".to_owned())
+        }
+    }
+}
+
+fn probe_desktop_availability_unbounded() -> Result<(), String> {
+    // Declared first so UIA interfaces are released before COM is uninitialized.
+    let _com = ComInit::new();
+    let automation =
+        get_uia().ok_or_else(|| "CoCreateInstance(CUIAutomation) failed".to_owned())?;
+    unsafe {
+        let root = automation
+            .GetRootElement()
+            .map_err(|e| format!("GetRootElement: {e}"))?;
+        let condition = automation
+            .CreateTrueCondition()
+            .map_err(|e| format!("CreateTrueCondition: {e}"))?;
+        let _children = root
+            .FindAll(TreeScope_Children, &condition)
+            .map_err(|e| format!("FindAll(TreeScope_Children): {e}"))?;
+    }
+    Ok(())
+}
+
+/// Hit-test screen point `(sx, sy)` against the UIA subtree rooted at
+/// `hwnd` and fire `Invoke` on the deepest descendant whose bounding
+/// rect contains the point AND which supports `InvokePattern`. Returns
+/// `true` iff such an element was found and `Invoke()` succeeded.
+///
+/// Why a windowed walk and not desktop-wide `ElementFromPoint`:
+///
+/// 1. Z-order — if the desktop's topmost element at `(sx, sy)` is some
+///    other window (a terminal, a chrome window covering the target),
+///    `ElementFromPoint` returns *that* element, not anything inside
+///    `hwnd`. The (x, y) caller already knows the intended HWND; we
+///    should trust it.
+///
+/// 2. UWP / packaged-app hosting — `ApplicationFrameHost.exe` is the
+///    outer host process; the actual UWP content lives in a separate
+///    process (e.g. `CalculatorApp.exe`). `ElementFromPoint` has been
+///    observed returning the frame's outer Pane (no `InvokePattern`)
+///    instead of descending into the cross-process child. Rooting the
+///    search at the frame's UIA element and walking with
+///    `TreeScope_Subtree` does cross that boundary.
+///
+/// 3. Vision-mode contract — the agent screenshotted a specific window
+///    and is addressing pixels of that window. We respect that
+///    intent: the click goes to that window's tree, period.
+///
+/// Used by the click tool's `(x, y)` path as the **no-focus-steal**
+/// route for UWP / WebView2 / packaged-app targets, where
+/// `PostMessage(WM_LBUTTONDOWN)` silently no-ops because UWP routes
+/// input through `Windows.UI.Input` rather than the HWND message
+/// queue. Callers fall back to PostMessage only after a completed miss
+/// (e.g. plain Win32 native controls with no UIA InvokePattern at
+/// the hit point, or apps with no useful UIA tree at all).
+///
+/// Implementation: `ElementFromHandle(hwnd)` resolves the root,
+/// `FindAll(TreeScope_Subtree, TrueCondition)` enumerates the
+/// subtree (including the root, so single-element windows are still
+/// hit-testable), and we pick the smallest-area element whose
+/// `CurrentBoundingRectangle` contains the point AND which exposes
+/// `InvokePattern`. Smallest-area approximates "deepest" without
+/// having to track tree depth explicitly.
+/// Returns `true` when the element's control type has a *coord-independent*
+/// primary action — i.e. a UIA `Invoke()` on it does something semantically
+/// equivalent to "click the element" regardless of where inside its bounding
+/// rectangle the click was requested.
+///
+/// Used by the `x, y` click path to decide whether to take the UIA Invoke
+/// route or fall through to PostMessage with the literal coords. The split
+/// matters for canvases, panes, and custom-drawn surfaces where Invoke would
+/// fire `mousedown` at the element centre — losing the caller's pixel
+/// precision (see #1621).
+fn is_coord_independent_action(elem: &IUIAutomationElement) -> windows::core::Result<bool> {
+    let ct: UIA_CONTROLTYPE_ID = unsafe { elem.CurrentControlType() }?;
+    Ok(matches!(
+        ct,
+        UIA_ButtonControlTypeId
+            | UIA_MenuItemControlTypeId
+            | UIA_HyperlinkControlTypeId
+            | UIA_TabItemControlTypeId
+            | UIA_ListItemControlTypeId
+            | UIA_CheckBoxControlTypeId
+            | UIA_RadioButtonControlTypeId
+            | UIA_SplitButtonControlTypeId
+            | UIA_TreeItemControlTypeId
+    ))
+}
+
+fn point_pattern_available<T>(
+    result: windows::core::Result<T>,
+) -> Result<bool, PointInvokeOutcome> {
+    match result {
+        Ok(_) => Ok(true),
+        // GetCurrentPattern returns a null interface for an unsupported pattern;
+        // windows-rs 0.58 represents that successful null result as Error::empty().
+        Err(error)
+            if error.code().is_ok()
+                || error.code() == windows::Win32::Foundation::E_NOINTERFACE
+                || error.code().0 as u32
+                    == windows::Win32::UI::Accessibility::UIA_E_NOTSUPPORTED =>
+        {
+            Ok(false)
+        }
+        Err(_) => Err(PointInvokeOutcome::Unavailable),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PointInvokeOutcome {
+    Invoked,
+    Miss,
+    Busy,
+    Timeout,
+    Unavailable,
+}
+
+impl PointInvokeOutcome {
+    fn from_worker(result: Result<Self, UiaDeadlineError>) -> Self {
+        match result {
+            Ok(outcome) => outcome,
+            Err(UiaDeadlineError::Busy) => Self::Busy,
+            Err(UiaDeadlineError::Timeout) => Self::Timeout,
+            Err(UiaDeadlineError::Unavailable) => Self::Unavailable,
+        }
+    }
+}
+
+pub(crate) fn try_invoke_in_window_at_point(hwnd: isize, sx: i32, sy: i32) -> PointInvokeOutcome {
+    PointInvokeOutcome::from_worker(run_uia_with_deadline_cancelable(
+        "window hit-test invoke",
+        SUBTREE_OP_TIMEOUT,
+        "an unknown-effect error without another input attempt",
+        move |cancelled| try_invoke_in_window_at_point_unbounded(hwnd, sx, sy, &cancelled),
+    ))
+}
+
+fn try_invoke_in_window_at_point_unbounded(
+    hwnd: isize,
+    sx: i32,
+    sy: i32,
+    cancelled: &AtomicBool,
+) -> PointInvokeOutcome {
+    use PointInvokeOutcome::{Invoked, Miss, Timeout, Unavailable};
+    // Keep this first so COM interfaces drop before CoUninitialize.
+    let _com = ComInit::new();
+    if hwnd == 0 {
+        return Unavailable;
+    }
+    let uia = match get_uia() {
+        Some(u) => u,
+        None => return Unavailable,
+    };
+    unsafe {
+        let root = match uia.ElementFromHandle(HWND(hwnd as *mut _)) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::debug!(target: "click", "ElementFromHandle(0x{hwnd:x}) failed: {e}");
+                return Unavailable;
+            }
+        };
+        let cond = match uia.CreateTrueCondition() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::debug!(target: "click", "CreateTrueCondition failed: {e}");
+                return Unavailable;
+            }
+        };
+        let arr = match root.FindAll(TreeScope_Subtree, &cond) {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::debug!(target: "click", "FindAll(Subtree) on 0x{hwnd:x} failed: {e}");
+                return Unavailable;
+            }
+        };
+        let n = match arr.Length() {
+            Ok(n) => n,
+            Err(_) => return Unavailable,
+        };
+        let mut best: Option<(IUIAutomationElement, i64)> = None;
+        for i in 0..n {
+            let elem = match arr.GetElement(i) {
+                Ok(e) => e,
+                Err(_) => return Unavailable,
+            };
+            let rect = match elem.CurrentBoundingRectangle() {
+                Ok(r) => r,
+                Err(_) => return Unavailable,
+            };
+            if sx < rect.left || sx > rect.right || sy < rect.top || sy > rect.bottom {
+                continue;
+            }
+            // Accept elements that support EITHER InvokePattern OR
+            // ExpandCollapsePattern. Qt menu-bar items advertise both —
+            // Invoke does nothing on them, only Expand opens the submenu.
+            // (See FreeCAD finding 2026-05-21: clicking File menu via Invoke
+            // returned ✅ but the menu never opened.)
+            let has_invoke =
+                match point_pattern_available(elem.GetCurrentPattern(UIA_InvokePatternId)) {
+                    Ok(available) => available,
+                    Err(outcome) => return outcome,
+                };
+            let has_expand =
+                match point_pattern_available(elem.GetCurrentPattern(
+                    windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
+                )) {
+                    Ok(available) => available,
+                    Err(outcome) => return outcome,
+                };
+            if !has_invoke && !has_expand {
+                continue;
+            }
+            // For coordinate-addressed clicks, only accept elements whose
+            // control type has a *coord-independent* primary action. UIA
+            // `Invoke()` fires the element's default action at its centre,
+            // ignoring the requested (sx, sy). For container surfaces
+            // (Pane, Image, Custom, Document, Group, etc.) that means the
+            // caller's pixel precision is silently lost — see #1621, where
+            // `click(canvas, x=110, y=677)` reported success but actually
+            // fired the canvas's `mousedown` at its centre (152, 77).
+            // Buttons / MenuItems / Hyperlinks / TabItems / ListItems /
+            // CheckBoxes / RadioButtons / SplitButtons / TreeItems all
+            // have a single primary action whose location is the element
+            // itself — Invoke is the right path for those. Everything
+            // else falls through to PostMessage with the literal coords.
+            match is_coord_independent_action(&elem) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(_) => return Unavailable,
+            }
+            let w = (rect.right - rect.left).max(0) as i64;
+            let h = (rect.bottom - rect.top).max(0) as i64;
+            let area = w.saturating_mul(h);
+            match &best {
+                None => best = Some((elem, area)),
+                Some((_, prev)) if area < *prev => best = Some((elem, area)),
+                _ => {}
+            }
+        }
+        let (winner, _) = match best {
+            Some(b) => b,
+            None => {
+                tracing::debug!(
+                    target: "click",
+                    "no Invoke/ExpandCollapse descendant of 0x{hwnd:x} contains screen ({sx},{sy}) (scanned {n} elems)"
+                );
+                return Miss;
+            }
+        };
+        if cancelled.load(Ordering::Acquire) {
+            tracing::debug!(target: "click", "UIA hit-test invoke cancelled before activation");
+            return Timeout;
+        }
+        // Pattern preference for menu items: when both Invoke AND
+        // ExpandCollapse are advertised, the element is almost always a
+        // top-level MenuItem whose intended click behaviour is "open the
+        // submenu" — Invoke would be a no-op. Prefer ExpandCollapse.Expand
+        // in that case. Pure-Invoke leaves (buttons, links, etc.) go
+        // through Invoke as before.
+        let winner_has_expand = match point_pattern_available(
+            winner
+                .GetCurrentPattern(windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId),
+        ) {
+            Ok(available) => available,
+            Err(outcome) => return outcome,
+        };
+        if cancelled.load(Ordering::Acquire) {
+            return Timeout;
+        }
+        // UWP foreground-steal bypass: gate the entire activation block on
+        // `is_xaml_host_hwnd(hwnd)`. For non-XAML hosts the closure is a
+        // straight passthrough.
+        crate::uia::fg_bypass::run_with_uwp_bypass(hwnd, || {
+            if cancelled.load(Ordering::Acquire) {
+                return Timeout;
+            }
+            if winner_has_expand {
+                // A failed activation may already have taken effect. Do not replay it.
+                if let Ok(pat) = winner.GetCurrentPattern(
+                    windows::Win32::UI::Accessibility::UIA_ExpandCollapsePatternId,
+                ) {
+                    if let Ok(ec) = pat
+                        .cast::<windows::Win32::UI::Accessibility::IUIAutomationExpandCollapsePattern>()
+                    {
+                        if cancelled.load(Ordering::Acquire) {
+                            return Timeout;
+                        }
+                        return if ec.Expand().is_ok() { Invoked } else { Unavailable };
+                    }
+                }
+                return Unavailable;
+            }
+            let pattern = match winner.GetCurrentPattern(UIA_InvokePatternId) {
+                Ok(p) => p,
+                Err(_) => return Unavailable,
+            };
+            let inv: IUIAutomationInvokePattern = match pattern.cast() {
+                Ok(i) => i,
+                Err(_) => return Unavailable,
+            };
+            if cancelled.load(Ordering::Acquire) {
+                return Timeout;
+            }
+            match inv.Invoke() {
+                Ok(()) => Invoked,
+                Err(e) => {
+                    tracing::debug!(target: "click", "UIA Invoke (windowed) at ({sx},{sy}) failed: {e}");
+                    Unavailable
+                }
+            }
+        })
+    }
+}
+
+/// Find a descendant of `hwnd` whose UIA `AcceleratorKey` property matches
+/// `combo` (e.g. `ctrl+s`) and fire its `InvokePattern`.
+///
+/// Modern XAML / WinUI / UWP apps ignore posted WM_KEYDOWN/WM_KEYUP messages;
+/// their keyboard accelerators are surfaced through UI Automation instead.
+/// This helper keeps that routing narrow by requiring an advertised
+/// AcceleratorKey match before invoking anything.
+pub fn try_invoke_accelerator_in_window(hwnd: isize, combo: &str) -> anyhow::Result<(bool, usize)> {
+    let combo = combo.to_owned();
+    run_uia_with_deadline_cancelable(
+        "accelerator invoke",
+        SUBTREE_OP_TIMEOUT,
+        "keyboard message delivery",
+        move |cancelled| try_invoke_accelerator_in_window_unbounded(hwnd, &combo, &cancelled),
+    )
+    .unwrap_or_else(|_| {
+        Err(anyhow::anyhow!(
+            "UIA accelerator scan exceeded {}ms; a UIA provider in the target app is likely unresponsive",
+            SUBTREE_OP_TIMEOUT.as_millis()
+        ))
+    })
+}
+
+fn try_invoke_accelerator_in_window_unbounded(
+    hwnd: isize,
+    combo: &str,
+    cancelled: &AtomicBool,
+) -> anyhow::Result<(bool, usize)> {
+    // Keep this first so COM interfaces drop before CoUninitialize.
+    let _com = ComInit::new();
+    if hwnd == 0 {
+        bail!("invalid target hwnd 0");
+    }
+    let target = canonical_accelerator(combo)
+        .ok_or_else(|| anyhow::anyhow!("invalid accelerator combo `{combo}`"))?;
+    let uia = get_uia().ok_or_else(|| anyhow::anyhow!("UI Automation is unavailable"))?;
+
+    unsafe {
+        let root = uia
+            .ElementFromHandle(HWND(hwnd as *mut _))
+            .with_context(|| format!("ElementFromHandle(0x{hwnd:x}) failed"))?;
+        let cond = uia
+            .CreateTrueCondition()
+            .context("CreateTrueCondition failed")?;
+        let arr = root
+            .FindAll(TreeScope_Subtree, &cond)
+            .with_context(|| format!("FindAll(TreeScope_Subtree) on 0x{hwnd:x} failed"))?;
+        let count = arr.Length().unwrap_or(0);
+        let mut matched_failure: Option<String> = None;
+
+        for i in 0..count {
+            let elem = match arr.GetElement(i) {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::debug!(
+                        target: "uia_windows_enum",
+                        "GetElement({i}) failed while scanning accelerator {combo}: {e}"
+                    );
+                    continue;
+                }
+            };
+            // Primary match: the UIA AcceleratorKey property — the conventional
+            // place a WinUI / XAML control advertises its shortcut.
+            let mut accelerator: Option<String> =
+                read_current_bstr(&elem, UIA_AcceleratorKeyPropertyId);
+            // Fallback match: many shipping XAML apps (e.g. modern Notepad)
+            // don't set AcceleratorKey at all and instead encode the shortcut
+            // in the visible element name as a parenthetical hint like
+            // "Bold (Ctrl+B)". Scan the Name property for that pattern so
+            // toolbar buttons remain reachable via hotkey.
+            if accelerator.is_none() {
+                if let Some(name) =
+                    read_current_bstr(&elem, windows::Win32::UI::Accessibility::UIA_NamePropertyId)
+                {
+                    if let Some(extracted) = extract_shortcut_from_name(&name) {
+                        accelerator = Some(extracted);
+                    }
+                }
+            }
+            let accelerator = match accelerator {
+                Some(a) => a,
+                None => continue,
+            };
+            let Some(candidate) = canonical_accelerator(&accelerator) else {
+                continue;
+            };
+            if candidate != target {
+                continue;
+            }
+
+            if cancelled.load(Ordering::Acquire) {
+                tracing::debug!(
+                    target: "uia_windows_enum",
+                    "UIA accelerator invoke cancelled before activation"
+                );
+                return Ok((false, count as usize));
+            }
+            // Pattern fallback chain. Different XAML controls expose
+            // different "activation" patterns: a Save button uses Invoke, a
+            // Bold toggle uses Toggle, a list item uses SelectionItem. Try
+            // Invoke first (the conventional shortcut handler), then Toggle
+            // (Bold/Italic/etc.). The Notepad toolbar in particular has Bold
+            // as a TogglePattern button — calling .Invoke on it returns the
+            // misleading "operation completed successfully (0x00000000)"
+            // error because Invoke isn't supported on the element.
+            match try_invoke_via_patterns(&elem, hwnd, cancelled) {
+                Ok(true) => return Ok((true, count as usize)),
+                Ok(false) => {
+                    matched_failure = Some(format!(
+                        "matched AcceleratorKey `{accelerator}`, but the element exposes \
+                         neither InvokePattern nor TogglePattern"
+                    ));
+                }
+                Err(e) => {
+                    matched_failure = Some(format!(
+                        "matched AcceleratorKey `{accelerator}`, but Invoke / Toggle failed: {e}"
+                    ));
+                }
+            }
+        }
+
+        if let Some(reason) = matched_failure {
+            bail!("{reason}");
+        }
+        Ok((false, count as usize))
+    }
+}
+
+fn read_current_bstr(
+    element: &IUIAutomationElement,
+    property_id: UIA_PROPERTY_ID,
+) -> Option<String> {
+    unsafe {
+        let variant = element.GetCurrentPropertyValue(property_id).ok()?;
+        if variant.as_raw().Anonymous.Anonymous.vt == 8 {
+            let bstr = BSTR::from_raw(variant.as_raw().Anonymous.Anonymous.Anonymous.bstrVal);
+            let s = bstr.to_string();
+            std::mem::forget(bstr);
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_owned())
+            }
+        } else {
+            None
+        }
+    }
+}
+
+fn canonical_accelerator(value: &str) -> Option<String> {
+    let mut modifiers: Vec<String> = Vec::new();
+    let mut keys: Vec<String> = Vec::new();
+
+    for raw in value.split('+') {
+        let token = canonical_accelerator_token(raw);
+        if token.is_empty() {
+            continue;
+        }
+        if accelerator_modifier_rank(&token).is_some() {
+            modifiers.push(token);
+        } else {
+            keys.push(token);
+        }
+    }
+
+    if keys.is_empty() {
+        return None;
+    }
+
+    modifiers.sort_by_key(|m| accelerator_modifier_rank(m).unwrap_or(usize::MAX));
+    modifiers.dedup();
+    modifiers.extend(keys);
+    Some(modifiers.join("+"))
+}
+
+fn canonical_accelerator_token(value: &str) -> String {
+    if value == " " {
+        return "space".to_owned();
+    }
+    let compact = value.trim().to_ascii_lowercase().replace([' ', '-'], "");
+    match compact.as_str() {
+        "control" => "ctrl".to_owned(),
+        "windows" | "window" | "meta" | "cmd" | "command" => "win".to_owned(),
+        "return" => "enter".to_owned(),
+        "esc" => "escape".to_owned(),
+        "del" => "delete".to_owned(),
+        "ins" => "insert".to_owned(),
+        "pgup" => "pageup".to_owned(),
+        "pgdn" => "pagedown".to_owned(),
+        "spacebar" => "space".to_owned(),
+        _ => compact,
+    }
+}
+
+fn accelerator_modifier_rank(value: &str) -> Option<usize> {
+    match value {
+        "ctrl" => Some(0),
+        "shift" => Some(1),
+        "alt" => Some(2),
+        "win" => Some(3),
+        _ => None,
+    }
+}
+
+/// Try to "activate" a UIA element via the conventional patterns in priority
+/// order: InvokePattern (for buttons / menu items that fire an action), then
+/// TogglePattern (for Bold / Italic / etc. that flip a binary state).
+///
+/// `host_hwnd` is the top-level HWND containing the element; it gates the
+/// UWP foreground-steal bypass (see `crate::uia::fg_bypass`). Pass `0` if
+/// unknown — the bypass becomes a no-op and Invoke/Toggle run unwrapped.
+///
+/// Returns `Ok(true)` if a pattern was found AND its Invoke/Toggle call
+/// succeeded. `Ok(false)` means the element exposes neither pattern (caller
+/// should surface an actionable error). `Err` means a pattern was found but
+/// its call failed (caller should surface the underlying error).
+unsafe fn try_invoke_via_patterns(
+    elem: &IUIAutomationElement,
+    host_hwnd: isize,
+    cancelled: &AtomicBool,
+) -> anyhow::Result<bool> {
+    // Invoke first — that's what most accelerator-targeted controls advertise.
+    if let Ok(pattern) = elem.GetCurrentPattern(UIA_InvokePatternId) {
+        if let Ok(inv) = pattern.cast::<IUIAutomationInvokePattern>() {
+            if cancelled.load(Ordering::Acquire) {
+                return Ok(false);
+            }
+            return crate::uia::fg_bypass::run_with_uwp_bypass(host_hwnd, || {
+                if cancelled.load(Ordering::Acquire) {
+                    return Ok(false);
+                }
+                inv.Invoke()
+                    .map(|()| true)
+                    .map_err(|e| anyhow::anyhow!("InvokePattern.Invoke: {e}"))
+            });
+        }
+    }
+    // Toggle next — Bold/Italic/Underline-style toolbar buttons sit here.
+    if let Ok(pattern) = elem.GetCurrentPattern(UIA_TogglePatternId) {
+        if let Ok(tog) = pattern.cast::<IUIAutomationTogglePattern>() {
+            if cancelled.load(Ordering::Acquire) {
+                return Ok(false);
+            }
+            return crate::uia::fg_bypass::run_with_uwp_bypass(host_hwnd, || {
+                if cancelled.load(Ordering::Acquire) {
+                    return Ok(false);
+                }
+                tog.Toggle()
+                    .map(|()| true)
+                    .map_err(|e| anyhow::anyhow!("TogglePattern.Toggle: {e}"))
+            });
+        }
+    }
+    Ok(false)
+}
+
+/// Extract a shortcut hint from a UIA element name like `"Bold (Ctrl+B)"`,
+/// `"Italic (Ctrl+I)"`, `"Save (Ctrl+S)"` — modern XAML apps (notably modern
+/// Notepad) don't set `AcceleratorKey` but encode the shortcut in the visible
+/// name. Returns the parenthesized accelerator string if one is present and
+/// contains a modifier-like token; otherwise `None`.
+fn extract_shortcut_from_name(name: &str) -> Option<String> {
+    let open = name.rfind('(')?;
+    let close = name[open..].find(')')?;
+    let inner = name[open + 1..open + close].trim();
+    if inner.is_empty() {
+        return None;
+    }
+    // Require at least one modifier-like token to avoid matching arbitrary
+    // parentheticals (e.g. "(2)" or "(beta)").
+    let has_modifier = inner.split('+').any(|tok| {
+        let t = tok.trim().to_ascii_lowercase();
+        matches!(
+            t.as_str(),
+            "ctrl" | "control" | "shift" | "alt" | "win" | "windows" | "meta" | "cmd" | "command"
+        )
+    });
+    if has_modifier {
+        Some(inner.to_owned())
+    } else {
+        None
+    }
+}
+
+/// Build a `WindowInfo` from a single UIA child element of the desktop root.
+/// Returns `None` if the element doesn't correspond to a real, on-screen,
+/// non-empty-titled HWND.
+unsafe fn window_info_from_uia_element(elem: &IUIAutomationElement) -> Option<WindowInfo> {
+    // NativeWindowHandle is an i32-sized handle in UIA; cast to HWND.
+    let raw = elem.CurrentNativeWindowHandle().ok()?;
+    if raw.0.is_null() {
+        return None;
+    }
+    let hwnd = HWND(raw.0);
+
+    // UIA is authoritative about whether the provider considers the element
+    // off-screen. An unknown value is tolerated for normal UIA geometry, but
+    // the Win32 fallback below requires an explicit `false`.
+    let is_offscreen = elem.CurrentIsOffscreen().ok().map(|flag| flag.as_bool());
+    if let Some(true) = is_offscreen {
+        return None;
+    }
+
+    let prefer_win32_bounds = !elem
+        .CurrentBoundingRectangle()
+        .ok()
+        .is_some_and(rect_is_valid);
+
+    if !IsWindow(hwnd).as_bool() {
+        return None;
+    }
+
+    // A UIA desktop child must still resolve to the same top-level HWND.
+    // Reject child/inherited handles before reading any identity or geometry.
+    if GetAncestor(hwnd, GA_ROOT) != hwnd {
+        return None;
+    }
+
+    // Resolve pid via the standard Win32 path. We deliberately do not trust
+    // the UIA ProcessId property here because the rest of the driver indexes
+    // windows by (hwnd, pid) tuples obtained from `GetWindowThreadProcessId`,
+    // and we want bit-identical agreement.
+    let mut pid: u32 = 0;
+    let thread_id = GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    if thread_id == 0 || pid == 0 {
+        return None;
+    }
+
+    if prefer_win32_bounds {
+        // The element came from this process's UIA desktop root, which already
+        // constrains it to the caller's desktop and session. For the exceptional
+        // Win32 path, also require an explicitly on-screen, capturable window.
+        if is_offscreen != Some(false)
+            || !IsWindowVisible(hwnd).as_bool()
+            || IsIconic(hwnd).as_bool()
+            || window_is_cloaked(hwnd)
+        {
+            return None;
+        }
+        let uia_pid = elem.CurrentProcessId().ok()?;
+        if uia_pid <= 0 || uia_pid as u32 != pid {
+            return None;
+        }
+    }
+
+    let (x, y, width, height) = window_bounds(hwnd, prefer_win32_bounds)?;
+
+    if prefer_win32_bounds {
+        // Re-read both sides of the identity after geometry lookup so a stale
+        // or reused HWND cannot be accepted as the original UIA window.
+        let mut pid_after = 0u32;
+        let thread_after = GetWindowThreadProcessId(hwnd, Some(&mut pid_after));
+        if !IsWindow(hwnd).as_bool()
+            || elem.CurrentNativeWindowHandle().ok() != Some(hwnd)
+            || elem
+                .CurrentProcessId()
+                .ok()
+                .is_none_or(|candidate| candidate <= 0 || candidate as u32 != pid)
+            || thread_after != thread_id
+            || pid_after != pid
+        {
+            return None;
+        }
+    }
+
+    // Title — prefer Win32 GetWindowTextW for parity with the EnumWindows path.
+    // UIA's `CurrentName` sometimes returns the AX-friendly label (e.g. the
+    // tab title) instead of the OS-level window caption, which would diverge
+    // from any caller already keyed on the GetWindowText value.
+    let title_len = GetWindowTextLengthW(hwnd);
+    if title_len == 0 {
+        return None;
+    }
+    let mut buf = vec![0u16; (title_len + 1) as usize];
+    GetWindowTextW(hwnd, &mut buf);
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    let title = String::from_utf16_lossy(&buf[..len]);
+    if title.trim().is_empty() {
+        return None;
+    }
+
+    Some(WindowInfo {
+        hwnd: hwnd.0 as u64,
+        pid,
+        title,
+        x,
+        y,
+        width,
+        height,
+        is_on_screen: true,
+        minimized: false,
+    })
+}
+
+fn rect_is_valid(rect: RECT) -> bool {
+    rect.right > rect.left && rect.bottom > rect.top
+}
+
+fn window_is_cloaked(hwnd: HWND) -> bool {
+    let mut cloaked = 0u32;
+    unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            &mut cloaked as *mut u32 as *mut _,
+            std::mem::size_of::<u32>() as u32,
+        )
+        .is_err()
+            || cloaked != 0
+    }
+}
+
+fn select_window_rect(
+    prefer_win32: bool,
+    dwm_rect: Option<RECT>,
+    win32_rect: Option<RECT>,
+) -> Option<RECT> {
+    if prefer_win32 {
+        win32_rect.filter(|rect| rect_is_valid(*rect))
+    } else {
+        dwm_rect
+            .filter(|rect| rect_is_valid(*rect))
+            .or_else(|| win32_rect.filter(|rect| rect_is_valid(*rect)))
+    }
+}
+
+/// Bounds via DWM extended frame (excludes drop-shadow on W11) with
+/// `GetWindowRect` fallback. Invalid UIA geometry prefers the latter directly.
+/// The driver is Per-Monitor V2 aware, so both sources use physical pixels.
+fn window_bounds(hwnd: HWND, prefer_win32: bool) -> Option<(i32, i32, i32, i32)> {
+    unsafe {
+        let mut dwm_rect = RECT::default();
+        let dwm_rect = DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut dwm_rect as *mut RECT as *mut _,
+            std::mem::size_of::<RECT>() as u32,
+        )
+        .ok()
+        .map(|()| dwm_rect);
+
+        // API success does not guarantee usable geometry. This is the actual
+        // source-selection rule: invalid DWM data falls through to Win32 too.
+        let need_win32 = prefer_win32 || dwm_rect.is_none_or(|rect| !rect_is_valid(rect));
+        let mut win32_rect = RECT::default();
+        let win32_rect = need_win32
+            .then(|| {
+                GetWindowRect(hwnd, &mut win32_rect)
+                    .ok()
+                    .map(|()| win32_rect)
+            })
+            .flatten();
+
+        let rect = select_window_rect(prefer_win32, dwm_rect, win32_rect)?;
+        Some((
+            rect.left,
+            rect.top,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use std::time::Instant;
+    use windows::Win32::Foundation::RECT;
+
+    #[test]
+    fn point_invoke_preserves_worker_outcomes() {
+        for outcome in [PointInvokeOutcome::Invoked, PointInvokeOutcome::Miss] {
+            assert_eq!(PointInvokeOutcome::from_worker(Ok(outcome)), outcome);
+        }
+        for (error, expected) in [
+            (UiaDeadlineError::Busy, PointInvokeOutcome::Busy),
+            (UiaDeadlineError::Timeout, PointInvokeOutcome::Timeout),
+            (
+                UiaDeadlineError::Unavailable,
+                PointInvokeOutcome::Unavailable,
+            ),
+        ] {
+            assert_eq!(PointInvokeOutcome::from_worker(Err(error)), expected);
+        }
+    }
+
+    #[test]
+    fn point_patterns_distinguish_unsupported_from_provider_failure() {
+        use windows::core::{Error, HRESULT};
+        use windows::Win32::Foundation::{E_FAIL, E_NOINTERFACE, E_POINTER};
+        assert_eq!(point_pattern_available(Ok(())), Ok(true));
+        assert_eq!(
+            point_pattern_available::<()>(Err(Error::empty())),
+            Ok(false)
+        );
+        for code in [E_NOINTERFACE, HRESULT(0x80040204u32 as i32)] {
+            assert_eq!(
+                point_pattern_available::<()>(Err(Error::from_hresult(code))),
+                Ok(false)
+            );
+        }
+        for code in [E_FAIL, E_POINTER] {
+            assert_eq!(
+                point_pattern_available::<()>(Err(Error::from_hresult(code))),
+                Err(PointInvokeOutcome::Unavailable),
+            );
+        }
+    }
+
+    fn rect() -> RECT {
+        RECT {
+            left: 200,
+            top: 52,
+            right: 1400,
+            bottom: 852,
+        }
+    }
+
+    #[test]
+    fn invalid_uia_bounds_prefer_the_reported_win32_rect() {
+        let win32 = rect();
+        assert_eq!(select_window_rect(true, None, Some(win32)), Some(win32));
+    }
+
+    #[test]
+    fn normal_windows_keep_valid_dwm_geometry() {
+        let dwm = rect();
+        let mut win32 = dwm;
+        win32.left -= 8;
+        assert_eq!(select_window_rect(false, Some(dwm), Some(win32)), Some(dwm));
+    }
+
+    #[test]
+    fn invalid_dwm_geometry_falls_through_and_invalid_win32_fails_closed() {
+        let empty = RECT::default();
+        let win32 = rect();
+        assert_eq!(
+            select_window_rect(false, Some(empty), Some(win32)),
+            Some(win32)
+        );
+        assert!(select_window_rect(true, Some(win32), Some(empty)).is_none());
+    }
+
+    #[test]
+    fn wedged_provider_has_bounded_worker_growth_and_recovers_immediately() {
+        let gate = Arc::new(SingleFlight::new(Duration::ZERO));
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let starts = Arc::new(AtomicUsize::new(0));
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+        let side_effects = Arc::new(AtomicUsize::new(0));
+
+        let first_start = Instant::now();
+        let result =
+            run_uia_single_flight(&gate, "test wedge", Duration::from_millis(20), "test", {
+                let starts = Arc::clone(&starts);
+                let active = Arc::clone(&active);
+                let max_active = Arc::clone(&max_active);
+                let side_effects = Arc::clone(&side_effects);
+                move |cancelled| {
+                    starts.fetch_add(1, Ordering::AcqRel);
+                    let current = active.fetch_add(1, Ordering::AcqRel) + 1;
+                    max_active.fetch_max(current, Ordering::AcqRel);
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    if !cancelled.load(Ordering::Acquire) {
+                        side_effects.fetch_add(1, Ordering::AcqRel);
+                    }
+                    active.fetch_sub(1, Ordering::AcqRel);
+                }
+            });
+        assert!(matches!(result, Err(UiaDeadlineError::Timeout)));
+        assert_eq!(
+            PointInvokeOutcome::from_worker(result.map(|()| PointInvokeOutcome::Miss)),
+            PointInvokeOutcome::Timeout,
+        );
+        assert!(first_start.elapsed() < Duration::from_millis(500));
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        let retries_start = Instant::now();
+        for _ in 0..100 {
+            let starts = Arc::clone(&starts);
+            let retry = run_uia_single_flight(
+                &gate,
+                "test retry",
+                Duration::from_secs(1),
+                "test",
+                move |_| {
+                    starts.fetch_add(1, Ordering::AcqRel);
+                },
+            );
+            assert!(matches!(retry, Err(UiaDeadlineError::Busy)));
+            assert_eq!(
+                PointInvokeOutcome::from_worker(retry.map(|()| PointInvokeOutcome::Miss)),
+                PointInvokeOutcome::Busy,
+            );
+        }
+        assert!(retries_start.elapsed() < Duration::from_millis(500));
+        assert_eq!(starts.load(Ordering::Acquire), 1);
+        assert_eq!(max_active.load(Ordering::Acquire), 1);
+
+        release_tx.send(()).unwrap();
+        let recovery_deadline = Instant::now() + Duration::from_secs(1);
+        while gate.is_in_flight() && Instant::now() < recovery_deadline {
+            thread::yield_now();
+        }
+        assert!(!gate.is_in_flight());
+        assert_eq!(side_effects.load(Ordering::Acquire), 0);
+
+        let recovered =
+            run_uia_single_flight(&gate, "test recovery", Duration::from_secs(1), "test", {
+                let starts = Arc::clone(&starts);
+                let active = Arc::clone(&active);
+                let max_active = Arc::clone(&max_active);
+                move |_| {
+                    starts.fetch_add(1, Ordering::AcqRel);
+                    let current = active.fetch_add(1, Ordering::AcqRel) + 1;
+                    max_active.fetch_max(current, Ordering::AcqRel);
+                    active.fetch_sub(1, Ordering::AcqRel);
+                    42
+                }
+            });
+        assert!(matches!(recovered, Ok(42)));
+        assert_eq!(starts.load(Ordering::Acquire), 2);
+        assert_eq!(max_active.load(Ordering::Acquire), 1);
+    }
+}
+
+/// Hit chain (nearest first), each node's bounds `[x, y, w, h]`, and whether
+/// the hit is inside a `Document`.
+pub(crate) type PointShapeChain = (
+    Vec<crate::pointer_shape_map::UiaHitNode>,
+    Vec<Option<[f64; 4]>>,
+    bool,
+);
+
+/// Budget for the presence hit-test's UIA work. Short: a hover cursor that
+/// misses its deadline just falls back to the arrow.
+const POINT_SHAPE_TIMEOUT: Duration = Duration::from_millis(150);
+/// How far up to look for an enclosing `Document` from page text.
+const POINT_SHAPE_DOCUMENT_DEPTH: usize = 16;
+
+/// The element under screen point `(sx, sy)` and up to three generic
+/// ancestors, as [`crate::pointer_shape_map::UiaHitNode`]s, plus whether the
+/// hit sits inside a `Document` and each node's bounding rectangle
+/// (`[x, y, w, h]`).
+///
+/// Uses desktop-wide `ElementFromPoint`, which is the right question here
+/// ("what is under the pointer", whatever window it belongs to). Where it
+/// stops at an outer host pane (UWP frames, see
+/// [`try_invoke_in_window_at_point`]), the answer degrades to the arrow.
+/// `None` when UIA is unavailable, busy with another call, or over budget.
+pub(crate) fn point_shape_chain(sx: i32, sy: i32) -> Option<PointShapeChain> {
+    run_uia_with_deadline(
+        "pointer shape hit-test",
+        POINT_SHAPE_TIMEOUT,
+        "the arrow",
+        move || point_shape_chain_unbounded(sx, sy),
+    )
+    .ok()
+    .flatten()
+}
+
+fn point_shape_chain_unbounded(sx: i32, sy: i32) -> Option<PointShapeChain> {
+    use crate::pointer_shape_map::{control_type, is_generic_control, UiaHitNode};
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::Accessibility::{
+        IUIAutomationValuePattern, UIA_TextPatternId, UIA_ValuePatternId,
+    };
+
+    // Keep this first so COM interfaces drop before CoUninitialize.
+    let _com = ComInit::new();
+    let uia = get_uia()?;
+    unsafe {
+        let hit = uia.ElementFromPoint(POINT { x: sx, y: sy }).ok()?;
+        let walker = uia.ControlViewWalker().ok()?;
+        let node_of = |e: &IUIAutomationElement| -> UiaHitNode {
+            let control_type = e.CurrentControlType().map(|c| c.0).unwrap_or(0);
+            let value_read_only = e
+                .GetCurrentPattern(UIA_ValuePatternId)
+                .and_then(|p| p.cast::<IUIAutomationValuePattern>())
+                .and_then(|p| p.CurrentIsReadOnly())
+                .ok()
+                .map(|b| b.as_bool());
+            let text_pattern = matches!(control_type, control_type::DOCUMENT | control_type::EDIT)
+                && e.GetCurrentPattern(UIA_TextPatternId).is_ok();
+            UiaHitNode {
+                control_type,
+                enabled: e.CurrentIsEnabled().ok().map(|b| b.as_bool()),
+                value_read_only,
+                text_pattern,
+            }
+        };
+        let rect_of = |e: &IUIAutomationElement| -> Option<[f64; 4]> {
+            let r = e.CurrentBoundingRectangle().ok()?;
+            let (w, h) = (r.right - r.left, r.bottom - r.top);
+            (w > 0 && h > 0).then_some([r.left as f64, r.top as f64, w as f64, h as f64])
+        };
+
+        let mut elements = vec![hit];
+        let mut chain = vec![node_of(&elements[0])];
+        while elements.len() < 4 && is_generic_control(chain[chain.len() - 1].control_type) {
+            let Ok(parent) = walker.GetParentElement(&elements[elements.len() - 1]) else {
+                break;
+            };
+            chain.push(node_of(&parent));
+            elements.push(parent);
+        }
+        let in_document = chain[0].control_type == control_type::TEXT && {
+            let mut found = chain
+                .iter()
+                .any(|n| n.control_type == control_type::DOCUMENT);
+            let mut current = elements[elements.len() - 1].clone();
+            let mut depth = elements.len();
+            while !found && depth < POINT_SHAPE_DOCUMENT_DEPTH {
+                let Ok(parent) = walker.GetParentElement(&current) else {
+                    break;
+                };
+                found =
+                    parent.CurrentControlType().map(|c| c.0).unwrap_or(0) == control_type::DOCUMENT;
+                current = parent;
+                depth += 1;
+            }
+            found
+        };
+        let rects = elements.iter().map(rect_of).collect();
+        Some((chain, rects, in_document))
+    }
+}

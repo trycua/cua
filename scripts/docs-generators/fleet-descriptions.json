@@ -1,0 +1,92 @@
+{
+  "_comment": "Public descriptions for Fleet reference fields whose source text is missing or describes Fleet internals. The sources are the read-only libs/fleet mirror (CRD doc comments in sdk-schema, swag annotations in backend), so they cannot be edited here; fix them upstream in trycua/cloud and delete the entry. fleet.ts fails when a key no longer names a field.",
+  "crd": {
+    "OSGymSandboxWarmPool": {
+      "spec.autoscaling": "Claim-driven autoscaling. When set, Fleet sizes the pool from its live claims (Pending and Bound) and owns `spec.replicas`: a Pending claim grows the pool, deleting claims shrinks it. Absent: `spec.replicas` is a static size.",
+      "spec.autoscaling.initialPoolSize": "Warm head start: `spec.replicas` starts here when the pool is created, so the first claims bind without a cold start. It then follows claim demand, never below `minPoolSize`.",
+      "spec.autoscaling.maxPoolSize": "Most sandboxes the pool scales to.",
+      "spec.autoscaling.minPoolSize": "Fewest warm sandboxes kept while autoscaling. `0` lets the pool scale to zero when there are no claims.",
+      "spec.replicas": "Warm sandboxes to keep ready. With `autoscaling`, Fleet sets it.",
+      "spec.sandboxTemplateRef": "The template the pool's sandboxes run.",
+      "status.replicas": "Sandboxes the pool currently owns.",
+      "status.readyReplicas": "Sandboxes ready to be claimed."
+    },
+    "OSGymSandboxClaim": {
+      "spec.bindDeadline": "Seconds the claim may stay Pending before it is marked Failed (Fleet's default and the SDK's value: 900). A Pending claim is what grows an autoscaled pool, so leave room for a cold boot.",
+      "spec.lifecycle": "When the claim expires and what happens to its sandbox.",
+      "spec.lifecycle.autoRenew": "Set by Fleet on claims it renews itself. Leave it `false`.",
+      "spec.lifecycle.shutdownPolicy": "`Retain`: when the claim is deleted, the sandbox returns to the pool and restarts clean. `Delete`: the sandbox is destroyed and the pool creates a new one.",
+      "spec.lifecycle.shutdownTime": "Absolute UTC expiry (RFC 3339). Fleet deletes the claim, and releases its sandbox, once it passes. Renew by patching it forward.",
+      "spec.sandboxTemplateRef": "The template of the pool to claim from.",
+      "spec.warmpool": "Where to take a sandbox from: `default` (the pool running the template), `none`, or a pool name.",
+      "status.conditions": "Kubernetes conditions of the claim.",
+      "status.conditions[].lastTransitionTime": "When the condition last changed (RFC 3339).",
+      "status.conditions[].message": "Human-readable detail.",
+      "status.conditions[].reason": "Machine-readable reason.",
+      "status.conditions[].status": "`True`, `False` or `Unknown`.",
+      "status.conditions[].type": "Condition type.",
+      "status.phase": "`Pending`, `Bound` or `Failed`.",
+      "status.sandbox": "The bound sandbox.",
+      "status.sandbox.name": "Name of the bound sandbox.",
+      "status.sandbox.service": "In-cluster DNS name of the sandbox's Service."
+    },
+    "OSGymSandboxTemplate": {
+      "spec.vmTemplate": "What each sandbox runs.",
+      "spec.vmTemplate.command": "`gvisor` and `macos` only: entrypoint of the sandbox container, overriding the image's.",
+      "spec.vmTemplate.containerDiskImage": "The image: a containerDisk for `kubevirt`, a container image for `gvisor` and `macos`.",
+      "spec.vmTemplate.cpuCores": "Virtual CPUs per sandbox.",
+      "spec.vmTemplate.firmware": "VM firmware for `kubevirt`: `efi` for UEFI-only images such as Windows, `bios` for the Linux images.",
+      "spec.vmTemplate.imagePullPolicy": "`gvisor` and `macos` only: when to pull the image (default `IfNotPresent`).",
+      "spec.vmTemplate.imagePullSecret": "Secret in the pool's namespace with registry credentials for a private image. Omit it for a public image.",
+      "spec.vmTemplate.memory": "Memory per sandbox, as a Kubernetes quantity such as `8Gi`.",
+      "spec.vmTemplate.nestedVirtualization": "Expose hardware virtualization (KVM) inside the VM.",
+      "spec.vmTemplate.nodeSelector": "`gvisor` and `macos` only: node selector of the sandbox pod. Fleet's default fits the runtime.",
+      "spec.vmTemplate.oidc": "Workload identity: Fleet puts an OIDC access token for your account at `/var/run/cua/oidc/token` in the guest and keeps it fresh, so the workload can federate into AWS (`sts:AssumeRoleWithWebIdentity`) or any other provider that trusts the token.",
+      "spec.vmTemplate.oidc.awsRegion": "AWS region for AWS SDK calls in the guest.",
+      "spec.vmTemplate.oidc.awsRoleArn": "When set, the guest's AWS SDK assumes this role with the token (environment and `~/.aws/config` are set up).",
+      "spec.vmTemplate.oidc.credentialsSecret": "Secret in the pool's namespace holding the client credentials (`client_id`, `client_secret`) that mint the token.",
+      "spec.vmTemplate.oidc.refreshIntervalSeconds": "How often the guest refreshes the token (half its one-hour lifetime by default).",
+      "spec.vmTemplate.oidc.tokenUrl": "Token endpoint that mints the workload token.",
+      "spec.vmTemplate.probes": "Kubernetes `readinessProbe` and `livenessProbe` for the VM, so a sandbox counts as ready only when the guest serves.",
+      "spec.vmTemplate.runtime": "`kubevirt`: each sandbox is a VM booted from `containerDiskImage`. `gvisor`: a gVisor container of the image. `macos`: a macOS sandbox. For `gvisor` and `macos`, `firmware`, `cpuCores` and `memory` are advisory.",
+      "spec.vmTemplate.runtimeClassName": "`gvisor` and `macos` only: RuntimeClass of the sandbox pod. Fleet's default fits the runtime.",
+      "spec.vmTemplate.services": "Ports each sandbox publishes, as a Service named `<sandbox>-<name>`. Reach them through service URLs.",
+      "spec.vmTemplate.services[].protocol": "`TCP` or `UDP`.",
+      "spec.vmTemplate.services[].targetPort": "Port in the sandbox.",
+      "spec.vmTemplate.tolerations": "`gvisor` and `macos` only: tolerations of the sandbox pod. Fleet's default fits the runtime."
+    },
+    "OSGymSandbox": {
+      "status.phase": "`Pending`, `Ready` or `Terminating`.",
+      "status.ready": "Whether the sandbox is ready.",
+      "status.resetIssuedAt": "When Fleet began restarting the sandbox to return it to its pool.",
+      "status.resetVmiUid": "Identifies the VM instance that restart replaces.",
+      "status.runtime": "Runtime that provisioned the sandbox: `macos`, `gvisor`, or empty for `kubevirt`.",
+      "status.service": "In-cluster DNS name of the sandbox's Service.",
+      "status.vmName": "Name of the sandbox's VM (`kubevirt`)."
+    }
+  },
+  "swagger": {
+    "handlers.CreateSignedServiceURLRequest": {
+      "claim": "The claim that holds the sandbox.",
+      "expiresInSeconds": "Lifetime of the URL, in seconds.",
+      "label": "A label for the URL, at most 120 UTF-8 bytes.",
+      "logicalService": "The service as the template names it, for example `env`.",
+      "sandbox": "The sandbox name (`status.sandbox.name` of the claim).",
+      "service": "The sandbox's Service: `<sandbox>-<logicalService>`."
+    },
+    "handlers.CreateNamespaceRequest": {
+      "name": "Namespace name: a DNS label."
+    },
+    "handlers.CreateUserKeyRequest": {
+      "name": "A name for the key.",
+      "scope": "Namespaces the key is limited to."
+    },
+    "handlers.CreateUserKeyResponse": {
+      "client_id": "OAuth client ID.",
+      "client_secret": "OAuth client secret. Returned once; it cannot be read again.",
+      "name": "The key's name.",
+      "scope": "Namespaces the key is limited to.",
+      "token_url": "Token endpoint for the client-credentials grant."
+    }
+  }
+}

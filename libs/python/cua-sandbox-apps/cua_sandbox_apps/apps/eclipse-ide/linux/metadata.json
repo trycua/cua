@@ -1,0 +1,14 @@
+{
+  "binary_path": "/home/cua/.local/opt/eclipse-ide/eclipse/eclipse",
+  "binary_name": "eclipse",
+  "display_name": "Eclipse IDE for Java Developers",
+  "desktop_entry": "",
+  "icon_paths": [
+    "/home/cua/.local/opt/eclipse-ide/eclipse/plugins/org.eclipse.platform_4.34.0.v20241120-1800/splash.png",
+    "/home/cua/.local/opt/eclipse-ide/eclipse/plugins/org.eclipse.platform_4.34.0.v20241120-1800/icons/etool16/cheatsheet_view@2x.png",
+    "/home/cua/.local/opt/eclipse-ide/eclipse/plugins/org.eclipse.epp.package.common_4.34.0.20241128-0756/splash.bmp",
+    "/home/cua/.local/opt/eclipse-ide/eclipse/plugins/org.eclipse.platform_4.34.0.v20241120-1800/icons/etool16/cheatsheet_view.png",
+    "/home/cua/.local/opt/eclipse-ide/eclipse/plugins/org.eclipse.epp.package.common_4.34.0.20241128-0756/icons/star.png"
+  ],
+  "version": "4.34.0"
+}

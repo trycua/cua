@@ -1,0 +1,8 @@
+{
+  "binary_path": "/opt/godot/godot",
+  "binary_name": "godot",
+  "display_name": "Godot Engine",
+  "desktop_entry": null,
+  "icon_paths": [],
+  "version": "4.3.stable.official.77dcf97d8"
+}

@@ -1,0 +1,33 @@
+{
+  "id": "raneto",
+  "name": "Raneto",
+  "description": "A markdown-based knowledgebase system built on Node.js for creating beautiful documentation sites. No database required, versioned with Git, featuring full-text search, built-in editor, and customizable themes.",
+  "website": "https://raneto.com",
+  "icon_url": "https://raneto.com/images/logo.png",
+  "categories": [
+    "Knowledge Base",
+    "Documentation"
+  ],
+  "tags": [
+    "markdown",
+    "knowledge-base",
+    "documentation",
+    "node.js",
+    "git",
+    "open-source",
+    "self-hosted"
+  ],
+  "os_support": [
+    "linux",
+    "macos",
+    "windows"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/ryanlelek/Raneto",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {},
+  "download_url": "https://github.com/ryanlelek/Raneto/releases",
+  "app_type": "standalone"
+}

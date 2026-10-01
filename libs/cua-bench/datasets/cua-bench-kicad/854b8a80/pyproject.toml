@@ -1,0 +1,15 @@
+[project]
+name = "cua-bench-kicad-854b8a80-env"
+version = "0.1.0"
+license = "MIT"
+authors = [
+    { name = "Snorkel AI" },
+    { name = "Cua" }
+]
+requires-python = ">=3.11"
+
+[tool.cua-bench]
+description = "Design a transistor-based astable multivibrator circuit. Use two BF457 NPN transistors. For the timing network, use two 10kΩ base resistors and two 10µF electrolytic capacitors. Each collector should drive an LED through a 330Ω current-limiting resistor."
+difficulty = "easy"
+category = "eda"
+tags = ["kicad", "schematic", "eda"]

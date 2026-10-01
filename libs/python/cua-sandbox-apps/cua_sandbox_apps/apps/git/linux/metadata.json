@@ -1,0 +1,13 @@
+{
+  "binary_path": "/usr/bin/git",
+  "binary_name": "git",
+  "display_name": "fast, scalable, distributed revision control system",
+  "desktop_entry": null,
+  "icon_paths": [
+    "/usr/share/icons/elementary-xfce/emblems/symbolic/emblem-git-modified-symbolic.svg",
+    "/usr/share/icons/elementary-xfce/emblems/symbolic/emblem-git-new-symbolic.svg",
+    "/usr/share/icons/elementary-xfce/emblems/16/emblem-git-modified.png",
+    "/usr/share/icons/elementary-xfce/emblems/16/emblem-git-new.png"
+  ],
+  "version": "2.34.1"
+}

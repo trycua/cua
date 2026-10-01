@@ -1,0 +1,57 @@
+[package]
+name = "cua-volume"
+description = "Cua Volume: one versioned, S3-compatible drive per account shared by every Space and agent (public/, agents/<agent>/, spaces/<space>/), with default access rules, audited grants, a secret scanner and agent-home sync."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license = "FSL-1.1-MIT"
+repository.workspace = true
+publish = false
+
+[features]
+default = []
+# The S3-compatible backend (AWS S3, Cloudflare R2, MinIO) through the
+# official AWS SDK for Rust, and the Cua cloud credential vendor.
+s3 = ["dep:aws-sdk-s3", "dep:aws-credential-types", "dep:aws-smithy-types", "dep:reqwest"]
+# The localhost NFSv3 server macOS mounts natively (no kernel or system
+# extension), through nfsserve (BSD-3-Clause).
+nfs = ["dep:nfsserve"]
+# FUSE on Linux (fuser, MIT; no libfuse, mounts through fusermount3).
+fuse = ["dep:fuser"]
+
+[dependencies]
+cua-home.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+rand.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["fs", "sync", "rt", "macros", "time"] }
+regex = "1"
+aws-sdk-s3 = { version = "1.150", default-features = false, features = ["rt-tokio", "default-https-client", "behavior-version-latest"], optional = true }
+aws-credential-types = { version = "1.3", optional = true }
+aws-smithy-types = { version = "1.8", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "json"], optional = true }
+nfsserve = { version = "0.11", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+fuser = { version = "0.18", default-features = false, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }
+
+[[example]]
+name = "nfs_serve"
+required-features = ["nfs"]
+
+[[example]]
+name = "drive_bench"
+required-features = ["s3", "nfs"]

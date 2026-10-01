@@ -1,0 +1,45 @@
+{
+  "initialize": {
+    "jsonrpc": "2.0",
+    "protocol_version": "2025-06-18",
+    "capability_keys": [
+      "tools"
+    ],
+    "server_name": "cua-driver",
+    "server_version_format": "semver"
+  },
+  "tools_list": {
+    "schema_version": "1",
+    "capability_version": "1",
+    "required_tools": [
+      "list_apps",
+      "list_windows",
+      "get_window_state",
+      "launch_app",
+      "click",
+      "type_text",
+      "press_key"
+    ],
+    "selected_tool_fields": {
+      "click": [
+        "name",
+        "description",
+        "inputSchema",
+        "annotations",
+        "capabilities",
+        "risk"
+      ]
+    }
+  },
+  "unknown_method_error": {
+    "code": -32601,
+    "message": "Unknown method: compatibility/unknown"
+  },
+  "tool_call": {
+    "required_result_fields": [
+      "content",
+      "isError",
+      "structuredContent"
+    ]
+  }
+}

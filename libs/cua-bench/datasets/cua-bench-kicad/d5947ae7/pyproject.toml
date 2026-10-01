@@ -1,0 +1,15 @@
+[project]
+name = "cua-bench-kicad-d5947ae7-env"
+version = "0.1.0"
+license = "MIT"
+authors = [
+    { name = "Snorkel AI" },
+    { name = "Cua" }
+]
+requires-python = ">=3.11"
+
+[tool.cua-bench]
+description = "Revise the 5V fixed-output LM2596S-5 buck converter shown in the attached schematic to improve stability and transient performance by strengthening both input and output filtering while keeping the overall topology unchanged. Add a 100 nF ceramic capacitor for improved high-frequency output noise suppression and include a 10 µF ceramic capacitor to enhance input decoupling during switching events. Increase the output bulk capacitance from 220 µF to 470 µF to improve load transient response and energy buffering capability. All other components and connections remain unchanged."
+difficulty = "medium"
+category = "eda"
+tags = ["kicad", "schematic", "eda"]

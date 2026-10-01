@@ -1,0 +1,20 @@
+{
+  "include": ["**/*.py"],
+  "exclude": [
+    "**/node_modules/**",
+    "**/__pycache__/**",
+    "**/.*/**",
+    "**/venv/**",
+    "**/.venv/**",
+    "**/dist/**",
+    "**/build/**",
+    ".pdm-build/**",
+    "**/.git/**",
+    "logs/**",
+    "screenshots/**"
+  ],
+  "typeCheckingMode": "basic",
+  "useLibraryCodeForTypes": true,
+  "reportMissingImports": false,
+  "reportMissingModuleSource": false
+}

@@ -1,0 +1,40 @@
+{
+  "id": "emacs",
+  "name": "GNU Emacs",
+  "description": "An extensible, customizable, self-documenting real-time display editor with over 10,000 built-in commands. GNU Emacs is one of the oldest free and open source projects still under active development, featuring powerful automation capabilities through macros and Lisp scripting.",
+  "website": "https://www.gnu.org/software/emacs",
+  "icon_url": "https://www.gnu.org/software/emacs/images/emacs.png",
+  "categories": [
+    "Code Editor",
+    "Text Editor"
+  ],
+  "tags": [
+    "GNU",
+    "GPL",
+    "Extensible",
+    "Lisp",
+    "Free Software",
+    "Cross-Platform",
+    "Customizable"
+  ],
+  "os_support": [
+    "linux",
+    "macos",
+    "windows"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "git://git.sv.gnu.org/emacs.git",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "emacs",
+    "snap": "emacs",
+    "flatpak": "org.gnu.emacs",
+    "brew": "emacs",
+    "choco": "emacs",
+    "winget": "GNU.Emacs"
+  },
+  "download_url": "https://www.gnu.org/software/emacs/download.html",
+  "app_type": "standalone"
+}

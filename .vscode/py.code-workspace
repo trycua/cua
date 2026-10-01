@@ -1,0 +1,117 @@
+{
+    "folders": [
+        {
+            "name": "cua-root",
+            "path": ".."
+        },
+        {
+            "name": "agent",
+            "path": "../libs/python/agent"
+        },
+        {
+            "name": "som",
+            "path": "../libs/python/som"
+        },
+        {
+            "name": "core",
+            "path": "../libs/python/core"
+        }
+    ],
+    "settings": {
+        "files.exclude": {
+            "**/.git": true,
+            "**/.svn": true,
+            "**/.hg": true,
+            "**/CVS": true,
+            "**/.DS_Store": true,
+            "**/__pycache__": true,
+            "**/.pytest_cache": true,
+            "**/*.pyc": true
+        },
+        "python.testing.pytestEnabled": true,
+        "python.testing.unittestEnabled": false,
+        "python.testing.nosetestsEnabled": false,
+        "python.testing.pytestArgs": [
+            "libs"
+        ],
+        "python.analysis.extraPaths": [
+            "${workspaceFolder:cua-root}/libs/python/core",
+            "${workspaceFolder:cua-root}/libs/python/agent",
+            "${workspaceFolder:cua-root}/libs/python/som",
+            "${workspaceFolder:cua-root}/.vscode/typings"
+        ],
+        "python.envFile": "${workspaceFolder:cua-root}/.env",
+        "python.defaultInterpreterPath": "${workspaceFolder:cua-root}/.venv/bin/python",
+        "python.analysis.diagnosticMode": "workspace",
+        "python.analysis.typeCheckingMode": "basic",
+        "python.analysis.autoSearchPaths": true,
+        "python.analysis.stubPath": "${workspaceFolder:cua-root}/.vscode/typings",
+        "python.analysis.indexing": false,
+        "python.analysis.exclude": [
+            "**/node_modules/**",
+            "**/__pycache__/**",
+            "**/.*/**",
+            "**/venv/**",
+            "**/.venv/**", 
+            "**/dist/**",
+            "**/build/**",
+            ".pdm-build/**",
+            "**/.git/**",
+            "logs/**",
+            "screenshots/**"
+        ],
+        "python.analysis.packageIndexDepths": [
+            {
+                "name": "agent",
+                "depth": 2
+            },
+            {
+                "name": "som",
+                "depth": 2
+            },
+            {
+                "name": "core",
+                "depth": 2
+            }
+        ],
+        "python.autoComplete.extraPaths": [
+            "${workspaceFolder:cua-root}/libs/python/core",
+            "${workspaceFolder:cua-root}/libs/python/agent",
+            "${workspaceFolder:cua-root}/libs/python/som"
+        ],
+        "python.languageServer": "None",
+        "[python]": {
+            "editor.formatOnSave": true,
+            "editor.defaultFormatter": "ms-python.black-formatter",
+            "editor.codeActionsOnSave": {
+                "source.organizeImports": "explicit"
+            }
+        }
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "Build Dependencies",
+                "type": "shell",
+                "command": "${workspaceFolder}/scripts/build.sh",
+                "presentation": {
+                    "reveal": "always",
+                    "panel": "new",
+                    "clear": true
+                },
+                "group": {
+                    "kind": "build",
+                    "isDefault": true
+                },
+                "options": {
+                    "shell": {
+                        "executable": "/bin/bash",
+                        "args": ["-l", "-c"]
+                    }
+                },
+                "problemMatcher": []
+            }
+        ]
+    }
+}

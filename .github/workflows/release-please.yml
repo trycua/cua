@@ -1,0 +1,304 @@
+name: "Release: Prepare component releases"
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      component:
+        description: "Component to prepare (automatic checks all components)"
+        required: true
+        type: choice
+        default: automatic
+        options:
+          - automatic
+          - cua-perception
+          - cua-driver-rs
+          - lume
+          - sandbox
+          - cua-spacesd
+          - cua-sdk
+          - cua-spaces
+      bump:
+        description: "Version bump for the selected component"
+        required: true
+        type: choice
+        default: automatic
+        options:
+          - automatic
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-please-main
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate release GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Reject an ambiguous manual release request
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.component == 'automatic' &&
+          inputs.bump != 'automatic'
+        run: |
+          echo "::error::Select cua-perception, cua-driver-rs, lume, sandbox, cua-spacesd, cua-sdk or cua-spaces when forcing a bump type."
+          exit 1
+
+      - name: Reject manifest tags outside main history
+        run: python3 .github/scripts/validate_release_please_tags.py --target HEAD
+
+      - name: Resolve targeted release request
+        id: request
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.component != 'automatic'
+        run: |
+          REQUEST=$(python3 .github/scripts/resolve_release_please_request.py \
+            --manifest .release-please-manifest.json \
+            --component "${{ inputs.component }}" \
+            --bump "${{ inputs.bump }}")
+          echo "path=$(jq -r .path <<<"$REQUEST")" >> "$GITHUB_OUTPUT"
+          echo "current_version=$(jq -r .current_version <<<"$REQUEST")" >> "$GITHUB_OUTPUT"
+          echo "release_as=$(jq -r '.release_as // ""' <<<"$REQUEST")" >> "$GITHUB_OUTPUT"
+
+      - name: Anchor a merged Perception version with a lightweight tag
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BEFORE_SHA: ${{ github.event.before }}
+          VERSION_PATH: libs/cua-driver/rust/crates/cua-perception/VERSION
+        # The tag push starts cd-cua-perception.yml, which publishes the
+        # release. A missed tag heals on the next main push.
+        run: bash .github/scripts/anchor_perception_release_tag.sh
+
+      # Release Please aborts every release PR while a merged release PR is
+      # still labeled `autorelease: pending`. Perception skips GitHub releases,
+      # so Release Please never relabels it; do that once its tag is anchored.
+      - name: Mark tagged Perception release pull requests
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: python3 .github/scripts/mark_perception_release_prs_tagged.py
+
+      # release-please-action v4.4.1, embedding release-please 17.3.0.
+      - name: Open or update automatic release pull requests
+        id: release-auto
+        if: >-
+          github.event_name == 'push' ||
+          (inputs.component == 'automatic' && inputs.bump == 'automatic')
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Open or update the targeted release pull request
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.component != 'automatic'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          NPM_CONFIG_IGNORE_SCRIPTS: "true"
+          RELEASE_PATH: ${{ steps.request.outputs.path }}
+          RELEASE_AS: ${{ steps.request.outputs.release_as }}
+        run: |
+          set -euo pipefail
+          EXPECTED_INTEGRITY='sha512-dB7HsFUpAvU1Wj9RGCINUz8Zi2qQDZiGbDEEVnJ7baNfJmk5XdYhuUFL6RcuDGjReGhp1gzY8Tc2g7vHlM4zpg=='
+          ACTUAL_INTEGRITY=$(npm view release-please@17.3.0 dist.integrity)
+          if [[ "$ACTUAL_INTEGRITY" != "$EXPECTED_INTEGRITY" ]]; then
+            echo "::error::release-please@17.3.0 integrity mismatch"
+            exit 1
+          fi
+
+          ARGS=(
+            release-pr
+            "--token=$GH_TOKEN"
+            "--repo-url=$GITHUB_REPOSITORY"
+            "--target-branch=${{ github.event.repository.default_branch }}"
+            "--config-file=release-please-config.json"
+            "--manifest-file=.release-please-manifest.json"
+            "--path=$RELEASE_PATH"
+          )
+          if [[ -n "$RELEASE_AS" ]]; then
+            ARGS+=("--release-as=$RELEASE_AS")
+          fi
+          npx --yes release-please@17.3.0 "${ARGS[@]}"
+
+      - name: Synchronize generated files on release pull requests
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          while read -r number; do
+            PR=$(gh pr view "$number" --json headRefName,headRepositoryOwner,files)
+            DRIVER=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/cua-driver/rust/VERSION")')
+            PERCEPTION=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/cua-driver/rust/crates/cua-perception/VERSION")')
+            LUME=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/lume/VERSION")')
+            SANDBOX=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/python/cua-sandbox/VERSION")')
+            SPACESD=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/cua-spacesd/VERSION")')
+            SDK=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/cua/VERSION")')
+            if [[ "$DRIVER" != "true" && "$PERCEPTION" != "true" && "$LUME" != "true" && \
+                  "$SANDBOX" != "true" && "$SPACESD" != "true" && "$SDK" != "true" ]]; then
+              continue
+            fi
+
+            OWNER=$(echo "$PR" | jq -r '.headRepositoryOwner.login')
+            BRANCH=$(echo "$PR" | jq -r '.headRefName')
+            if [[ "$OWNER" != "${GITHUB_REPOSITORY%/*}" || "$BRANCH" != release-please--branches--* ]]; then
+              echo "Skipping non-release PR #$number; no branch code will run"
+              continue
+            fi
+
+            # Release Please can update an existing branch that predates the
+            # current workflow. Refresh it, then replay only this trusted bot
+            # branch onto main so validation uses the current release tooling.
+            git fetch origin "+refs/heads/main:refs/remotes/origin/main"
+            git fetch origin "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH"
+            REMOTE_HEAD=$(git rev-parse "origin/$BRANCH")
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+            git config user.name "trycua-release[bot]"
+            git config user.email "trycua-release[bot]@users.noreply.github.com"
+            if ! git rebase origin/main; then
+              mapfile -t CONFLICTS < <(git diff --name-only --diff-filter=U)
+              if [[ "${#CONFLICTS[@]}" -ne 1 || \
+                    "${CONFLICTS[0]}" != ".release-please-manifest.json" ]]; then
+                git rebase --abort
+                echo "::error::Release branch has conflicts beyond the shared manifest"
+                exit 1
+              fi
+
+              # Each component release PR rewrites the shared manifest from
+              # its original base. Keep main's versions for other components
+              # and carry forward only the version(s) owned by this PR.
+              git show origin/main:.release-please-manifest.json \
+                > "$RUNNER_TEMP/main-release-manifest.json"
+              git show "origin/$BRANCH:.release-please-manifest.json" \
+                > "$RUNNER_TEMP/branch-release-manifest.json"
+              COMPONENT_ARGS=()
+              if [[ "$DRIVER" == "true" ]]; then
+                COMPONENT_ARGS+=(--component cua-driver-rs)
+              fi
+              if [[ "$PERCEPTION" == "true" ]]; then
+                COMPONENT_ARGS+=(--component cua-perception)
+              fi
+              if [[ "$LUME" == "true" ]]; then
+                COMPONENT_ARGS+=(--component lume)
+              fi
+              if [[ "$SANDBOX" == "true" ]]; then
+                COMPONENT_ARGS+=(--component sandbox)
+              fi
+              if [[ "$SPACESD" == "true" ]]; then
+                COMPONENT_ARGS+=(--component cua-spacesd)
+              fi
+              if [[ "$SDK" == "true" ]]; then
+                COMPONENT_ARGS+=(--component cua-sdk)
+              fi
+              python3 .github/scripts/merge_release_please_manifests.py \
+                --main "$RUNNER_TEMP/main-release-manifest.json" \
+                --release "$RUNNER_TEMP/branch-release-manifest.json" \
+                "${COMPONENT_ARGS[@]}" \
+                > .release-please-manifest.json
+              git add .release-please-manifest.json
+              if ! GIT_EDITOR=true git rebase --continue; then
+                git rebase --abort
+                echo "::error::Release branch still conflicts after manifest reconciliation"
+                exit 1
+              fi
+            fi
+            if [[ "$PERCEPTION" == "true" ]]; then
+              PERCEPTION_VERSION=$(tr -d '[:space:]' < \
+                libs/cua-driver/rust/crates/cua-perception/VERSION)
+              cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \
+                -p cua-perception --precise "$PERCEPTION_VERSION"
+              python3 .github/scripts/validate_release_versions.py --product perception
+              git add libs/cua-driver/rust/Cargo.lock
+              COMMIT_MESSAGE="chore(cua-perception): synchronize release lockfile"
+            elif [[ "$DRIVER" == "true" ]]; then
+              DRIVER_VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/VERSION)
+              cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \
+                -p cua-driver --precise "$DRIVER_VERSION"
+              python3 .github/scripts/sync_driver_release_docs.py
+              python3 .github/scripts/validate_release_versions.py --product driver
+              git add libs/cua-driver/rust/Cargo.lock \
+                docs/content/docs/cua-driver/reference
+              COMMIT_MESSAGE="chore(cua-driver-rs): synchronize generated release files"
+            elif [[ "$LUME" == "true" ]]; then
+              python3 .github/scripts/sync_lume_release_docs.py
+              python3 .github/scripts/validate_release_versions.py --product lume
+              git add docs/content/docs/lume/reference
+              COMMIT_MESSAGE="chore(lume): synchronize release documentation"
+            elif [[ "$SPACESD" == "true" ]]; then
+              # Release Please bumps the workspace version in Cargo.toml; the
+              # lockfiles (the workspace and the standalone e2e workspaces
+              # that lock its crates by path) follow without upgrading deps.
+              for manifest in libs/cua-spacesd/Cargo.toml libs/cua-spacesd/tests/*/Cargo.toml; do
+                cargo metadata --format-version 1 --manifest-path "$manifest" > /dev/null
+              done
+              python3 .github/scripts/validate_release_versions.py --product spacesd
+              git add libs/cua-spacesd/Cargo.lock libs/cua-spacesd/tests/*/Cargo.lock
+              COMMIT_MESSAGE="chore(cua-spacesd): synchronize release lockfiles"
+            elif [[ "$SDK" == "true" ]]; then
+              # Release Please bumps VERSION, pyproject, __init__, package.json
+              # and package-lock.json together; only validation runs here.
+              python3 .github/scripts/validate_release_versions.py --product sdk
+              COMMIT_MESSAGE="chore(cua-sdk): synchronize release metadata"
+            else
+              python3 .github/scripts/validate_release_versions.py --product sandbox
+              # The Sandbox reference records the package version, so regenerate
+              # it with the release version. Lifecycle scripts stay disabled
+              # because this step holds the release app token.
+              npx --yes pnpm@9.0.4 --dir docs install --frozen-lockfile --ignore-scripts
+              node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library sandbox
+              git add docs/content/docs/cua-sdk/reference/runtime-support.mdx \
+                docs/content/docs/cua-sdk/reference/os-image-catalog.mdx \
+                docs/content/docs/cua-sdk/reference/image-software.mdx
+              COMMIT_MESSAGE="chore(sandbox): synchronize release metadata"
+            fi
+            if git diff --cached --quiet; then
+              echo "Generated files already match release PR #$number"
+            else
+              git commit -m "$COMMIT_MESSAGE"
+            fi
+            if [[ "$(git rev-parse HEAD)" != "$REMOTE_HEAD" ]]; then
+              git push --force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD" \
+                origin "HEAD:refs/heads/$BRANCH"
+            fi
+          # Look up each component's release branch directly. An unfiltered
+          # list returns only the newest 100 open pull requests, and the search
+          # index can miss a release PR that Release Please opened moments ago.
+          done < <(jq -r '.packages[].component' release-please-config.json |
+            while read -r component; do
+              gh pr list --state open --base main \
+                --head "release-please--branches--main--components--$component" \
+                --json number --jq '.[].number'
+            done)
+
+      - name: Verify repository release versions
+        run: python3 .github/scripts/validate_release_versions.py --product all

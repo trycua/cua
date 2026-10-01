@@ -1,0 +1,8 @@
+{
+  "binary_path": "/usr/bin/gawk",
+  "binary_name": "gawk",
+  "display_name": "GNU Awk",
+  "desktop_entry": null,
+  "icon_paths": [],
+  "version": "5.1.0"
+}

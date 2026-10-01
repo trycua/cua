@@ -1,0 +1,13 @@
+{
+  "binary_path": "/usr/bin/gitlab-ctl",
+  "binary_name": "gitlab-ctl",
+  "display_name": "GitLab Community Edition (including NGINX, Postgres, Redis)",
+  "desktop_entry": null,
+  "icon_paths": [
+    "/opt/gitlab/embedded/lib/python3.12/idlelib/Icons/idle.ico",
+    "/opt/gitlab/embedded/lib/python3.12/idlelib/Icons/idle_16.png",
+    "/opt/gitlab/embedded/lib/python3.12/idlelib/Icons/idle_256.png",
+    "/opt/gitlab/embedded/lib/python3.12/idlelib/Icons/idle_48.png"
+  ],
+  "version": "18.10.3-ce.0"
+}

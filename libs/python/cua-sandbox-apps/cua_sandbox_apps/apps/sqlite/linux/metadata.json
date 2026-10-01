@@ -1,0 +1,17 @@
+{
+  "binary_path": "/usr/bin/sqlite3",
+  "binary_name": "sqlite3",
+  "display_name": "Command line interface for SQLite 3",
+  "desktop_entry": null,
+  "icon_paths": [
+    "/usr/share/icons/Humanity/mimes/128/libreoffice-oasis-database.svg",
+    "/usr/share/icons/Humanity/mimes/256/libreoffice-oasis-database.svg",
+    "/usr/share/icons/Humanity/mimes/32/libreoffice-oasis-database.svg",
+    "/usr/share/icons/Humanity/mimes/48/text-x-sql.svg",
+    "/usr/share/icons/elementary-xfce/apps/22/office-database.png",
+    "/usr/share/icons/elementary-xfce/apps/32/office-database.png",
+    "/usr/share/icons/elementary-xfce/apps/64/office-database.png",
+    "/usr/share/icons/elementary-xfce/mimes/22/text-x-sql.png"
+  ],
+  "version": "3.37.2"
+}

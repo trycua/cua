@@ -1,0 +1,24 @@
+# Placeholder so the empty MacOS/ directory is tracked in git.
+#
+# This is the source-of-truth skeleton for /Applications/CuaDriver.app.
+# It deliberately lives under `scripts/CuaDriverBundle/` (NOT a
+# `.app` suffix) so macOS LaunchServices on developer machines does
+# not index it as a second installed app with the `com.trycua.driver`
+# bundle id. With the previous `scripts/CuaDriver.app/` shape, every
+# `cargo run` from inside the repo would surface a "ghost CuaDriver"
+# entry in System Settings → Privacy & Security pointing at the empty
+# skeleton path.
+#
+# At build / install time the cua-driver release binary (universal
+# macOS slice — arm64 + x86_64 lipo'd together) is copied into this
+# directory as `cua-driver`. The Info.plist's CFBundleExecutable
+# points at that name.
+#
+# See:
+#   - .github/workflows/cd-rust-cua-driver.yml  (copies the skeleton's
+#     Contents/ into the release tarball at CD time and adds the
+#     universal binary)
+#   - libs/cua-driver/scripts/install.sh        (downloads the
+#     resulting tarball, extracts it to /Applications/CuaDriver.app,
+#     and creates the ~/.local/bin/cua-driver symlink pointing into
+#     the bundle)

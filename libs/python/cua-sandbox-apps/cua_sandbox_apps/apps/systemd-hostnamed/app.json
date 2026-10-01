@@ -1,0 +1,33 @@
+{
+  "id": "systemd-hostnamed",
+  "name": "systemd-hostnamed",
+  "description": "A systemd system service that provides a D-Bus interface for setting the system hostname, machine ID, and other hostname-related settings. It manages persistent hostname configuration and allows applications to query or modify the system's hostname, pretty hostname, icon name, and chassis type through a standardized D-Bus API.",
+  "website": "https://www.freedesktop.org/software/systemd/man/systemd-hostnamed.service.html",
+  "icon_url": "",
+  "categories": [
+    "Hostname Management",
+    "System Administration",
+    "System Services"
+  ],
+  "tags": [
+    "dbus",
+    "hostname",
+    "systemd",
+    "linux",
+    "system-service",
+    "network-configuration"
+  ],
+  "os_support": [
+    "linux"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/systemd/systemd",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "systemd"
+  },
+  "download_url": "https://github.com/systemd/systemd/releases",
+  "app_type": "standalone"
+}

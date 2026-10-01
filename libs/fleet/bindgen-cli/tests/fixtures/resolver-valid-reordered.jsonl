@@ -1,0 +1,5 @@
+{"reason":"compiler-message","package_id":"dependency 0.1.0","message":{"rendered":"diagnostic before"}}
+{"filenames":["/tmp/wrong/libcyclops_sdk.so"],"target":{"crate_types":["cdylib"],"name":"cyclops_sdk"},"package_id":"wrong 0.1.0","reason":"compiler-artifact"}
+{"message":{"rendered":"diagnostic between"},"reason":"compiler-message","package_id":"dependency 0.1.0"}
+{"target":{"name":"cyclops_sdk","crate_types":["lib","cdylib"]},"reason":"compiler-artifact","filenames":["/tmp/exact/libcyclops_sdk.rlib","/tmp/exact/libcyclops_sdk\u002eso"],"package_id":"exact 0.1.0"}
+{"reason":"build-finished","success":true}

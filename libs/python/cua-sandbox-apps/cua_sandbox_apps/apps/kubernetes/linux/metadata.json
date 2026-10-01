@@ -1,0 +1,8 @@
+{
+  "binary_path": "/usr/bin/kubectl",
+  "binary_name": "kubectl",
+  "display_name": "Command-line utility for interacting with a Kubernetes cluster",
+  "desktop_entry": null,
+  "icon_paths": [],
+  "version": "v1.35.3"
+}

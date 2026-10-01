@@ -1,0 +1,13 @@
+{
+  "folders": [
+    {
+      "name": "libs-ts",
+      "path": "../libs/typescript"
+    }
+  ],
+  "extensions": {
+    "recommendations": [
+      "esbenp.prettier-vscode"
+    ]
+  }
+}

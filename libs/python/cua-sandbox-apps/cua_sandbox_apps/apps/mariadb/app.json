@@ -1,0 +1,39 @@
+{
+  "id": "mariadb",
+  "name": "MariaDB",
+  "description": "MariaDB Server is an open-source relational database system and a drop-in replacement for MySQL. Created by the original developers of MySQL, it offers enhanced performance, stability, and openness with a pluggable architecture, advanced clustering with Galera Cluster, and additional storage engines.",
+  "website": "https://mariadb.org",
+  "icon_url": "https://mariadb.org/wp-content/themes/twentynineteen-child/icons/mariadb_org_rgb_h.svg",
+  "categories": [
+    "Database"
+  ],
+  "tags": [
+    "sql",
+    "relational-database",
+    "open-source",
+    "mysql-compatible",
+    "drop-in-replacement",
+    "enterprise-ready",
+    "gpl-licensed",
+    "cross-platform",
+    "clustering",
+    "high-availability"
+  ],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/MariaDB/server",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "mariadb-server",
+    "brew": "mariadb",
+    "dnf": "mariadb-server",
+    "yum": "mariadb-server"
+  },
+  "download_url": "https://mariadb.org/download"
+}

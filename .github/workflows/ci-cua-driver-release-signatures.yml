@@ -1,0 +1,58 @@
+name: "CI: Cua Driver release signature gate"
+
+# Proves the release signature gate in both directions against real published
+# assets: 0.28.2 (notarized) must pass, and 0.28.3 (published with an unsigned
+# macOS app, see #4109, now withdrawn) must be rejected on macOS. Its Windows
+# binaries are Authenticode-signed, so Windows must pass for both.
+#
+# 0.28.2 predates #4168 and ships an unsigned cua_driver_node_runtime.node, so
+# it passes only in legacy mode, and the strict gate that candidate archives
+# face must reject it.
+
+on:
+  pull_request:
+    paths:
+      - ".github/scripts/verify_cua_driver_release_signatures.py"
+      - ".github/scripts/expect_verification_result.sh"
+      - ".github/workflows/cua-driver-release-signatures.yml"
+      - ".github/workflows/ci-cua-driver-release-signatures.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-driver-release-signatures-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  signed-release:
+    name: signed 0.28.2 passes
+    uses: ./.github/workflows/cua-driver-release-signatures.yml
+    with:
+      version: "0.28.2"
+      source: release
+      # Cua Driver releases are published on trycua/cua; forks have none.
+      release_repository: trycua/cua
+      legacy_unsigned_node_runtime: true
+
+  unsigned-node-runtime:
+    name: unsigned 0.28.2 Node runtime is rejected
+    uses: ./.github/workflows/cua-driver-release-signatures.yml
+    with:
+      version: "0.28.2"
+      source: release
+      release_repository: trycua/cua
+      verify_windows: false
+      expect_macos: fail
+
+  unsigned-release:
+    name: unsigned 0.28.3 is rejected
+    uses: ./.github/workflows/cua-driver-release-signatures.yml
+    with:
+      version: "0.28.3"
+      source: release
+      # Cua Driver releases are published on trycua/cua; forks have none.
+      release_repository: trycua/cua
+      expect_macos: fail
+      expect_windows: pass

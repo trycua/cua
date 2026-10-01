@@ -1,0 +1,41 @@
+{
+  "id": "openshot",
+  "name": "OpenShot",
+  "description": "Free and open-source, non-linear video editor for Linux, Mac, and Windows. Create and edit videos with unlimited tracks, drag-and-drop timeline, real-time video transitions, 3D animated titles with Blender integration, audio mixing, digital effects, and support for up to 16K resolution rendering.",
+  "website": "https://www.openshot.org/",
+  "icon_url": "https://raw.githubusercontent.com/OpenShot/openshot-qt/master/xdg/openshot-qt.svg",
+  "categories": [
+    "Video Editing"
+  ],
+  "tags": [
+    "video",
+    "editing",
+    "non-linear",
+    "NLE",
+    "open-source",
+    "cross-platform",
+    "GPL",
+    "free"
+  ],
+  "os_support": [
+    "linux",
+    "macos",
+    "windows"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/OpenShot/openshot-qt",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "app_type": "standalone",
+  "package_managers": {
+    "apt": "openshot-qt",
+    "snap": "openshot-qt",
+    "flatpak": "org.openshot.OpenShot",
+    "brew": "openshot-video-editor",
+    "winget": "OpenShot.OpenShot",
+    "choco": "openshot"
+  },
+  "download_url": "https://github.com/OpenShot/openshot-qt/releases",
+  "hallucinated": false
+}

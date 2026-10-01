@@ -1,0 +1,48 @@
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[project]
+name = "cua-core"
+version = "0.3.2"
+description = "Core functionality for Cua including telemetry and shared utilities"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "TryCua", email = "gh@trycua.com" }
+]
+dependencies = [
+    "posthog>=3.20.0",
+]
+requires-python = ">=3.11,<3.14"
+
+[project.optional-dependencies]
+# OpenTelemetry for operational metrics (Four Golden Signals)
+otel = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
+]
+# All telemetry features
+telemetry = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
+]
+
+[tool.pdm]
+distribution = true
+
+[tool.pdm.build]
+includes = ["cua_core/"]
+source-includes = ["tests/", "README.md", "LICENSE"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = "test_*.py"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+]

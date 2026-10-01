@@ -1,0 +1,67 @@
+name: "CI: cua CLI GitHub WIF token"
+
+# Checks that `cua wif-token github` (Rust CLI) returns a GitHub Actions
+# OIDC token with the Fleets audience. The file name is kept from the
+# former Python CLI.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua/crates/cua-cli/**"
+      - ".github/workflows/ci-py-cli-wif-token.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-cli-wif-token
+      - name: Build the cua CLI
+        working-directory: libs/cua
+        env:
+          CARGO_BUILD_JOBS: "4"
+        run: cargo build --locked -p cua-cli
+      - name: Validate GitHub WIF token claims
+        shell: bash
+        run: |
+          set -euo pipefail
+          FLEETS_TOKEN="$(libs/cua/target/debug/cua wif-token github)"
+          export FLEETS_TOKEN
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+
+          parts = os.environ["FLEETS_TOKEN"].split(".")
+          if len(parts) != 3:
+              raise SystemExit("GitHub returned a non-JWT token")
+          payload = parts[1] + "=" * (-len(parts[1]) % 4)
+          claims = json.loads(base64.urlsafe_b64decode(payload))
+          if claims.get("iss") != "https://token.actions.githubusercontent.com":
+              raise SystemExit("unexpected issuer")
+          aud = claims.get("aud")
+          if aud != "fleets" and not (isinstance(aud, list) and "fleets" in aud):
+              raise SystemExit("unexpected audience")
+          PY
+          unset FLEETS_TOKEN

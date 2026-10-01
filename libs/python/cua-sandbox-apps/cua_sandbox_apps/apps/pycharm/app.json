@@ -1,0 +1,40 @@
+{
+  "id": "pycharm",
+  "name": "PyCharm",
+  "description": "A professional integrated development environment (IDE) for Python development. PyCharm provides intelligent code completion, debugging, testing, and refactoring tools for web, data science, and AI/ML projects. Available in both free Community Edition and paid Professional Edition with advanced features.",
+  "website": "https://www.jetbrains.com/pycharm",
+  "icon_url": "https://www.jetbrains.com/favicon.ico",
+  "categories": [
+    "IDE"
+  ],
+  "tags": [
+    "python",
+    "ide",
+    "development",
+    "debugger",
+    "code-editor",
+    "jetbrains",
+    "django",
+    "flask",
+    "data-science",
+    "ai-ml",
+    "jupyter",
+    "web-development"
+  ],
+  "os_support": [
+    "linux",
+    "macos",
+    "windows"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/JetBrains/intellij-community",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "snap": "pycharm",
+    "brew": "pycharm-pro"
+  },
+  "download_url": "https://www.jetbrains.com/pycharm/download/",
+  "app_type": "standalone"
+}

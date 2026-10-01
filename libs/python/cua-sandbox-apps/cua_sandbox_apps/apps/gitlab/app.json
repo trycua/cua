@@ -1,0 +1,45 @@
+{
+  "id": "gitlab",
+  "name": "GitLab",
+  "description": "An AI-powered DevSecOps platform that provides end-to-end software development capabilities including version control, CI/CD, issue tracking, code review, and integrated security scanning.",
+  "website": "https://gitlab.com",
+  "icon_url": "https://about.gitlab.com/images/press/logo/png/gitlab-icon-rgb.png",
+  "categories": [
+    "DevOps Platform",
+    "Source Control",
+    "CI/CD",
+    "DevSecOps"
+  ],
+  "tags": [
+    "git",
+    "version-control",
+    "ci-cd",
+    "code-review",
+    "security-scanning",
+    "project-management",
+    "issue-tracking",
+    "collaboration",
+    "kubernetes",
+    "docker",
+    "agile"
+  ],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://gitlab.com/gitlab-org/gitlab",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "gitlab-ee",
+    "snap": null,
+    "flatpak": null,
+    "brew": "gitlab-runner",
+    "choco": null,
+    "winget": null
+  },
+  "download_url": "https://about.gitlab.com/install/"
+}

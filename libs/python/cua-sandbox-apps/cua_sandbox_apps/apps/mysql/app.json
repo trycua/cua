@@ -1,0 +1,36 @@
+{
+  "id": "mysql",
+  "name": "MySQL",
+  "description": "MySQL is the world's most popular open source relational database management system. It is widely used in web applications, enterprise systems, and embedded solutions. MySQL Community Edition is free and open source, while Enterprise Edition provides advanced features, management tools, and professional support.",
+  "website": "https://www.mysql.com",
+  "icon_url": "https://www.mysql.com/common/logos/logo-mysql-170x100.png",
+  "categories": [
+    "Database"
+  ],
+  "tags": [
+    "database",
+    "sql",
+    "relational",
+    "open-source",
+    "server",
+    "data-management",
+    "web"
+  ],
+  "os_support": [
+    "linux",
+    "macos",
+    "windows"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/mysql/mysql-server",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "mysql-server",
+    "snap": "mysql",
+    "brew": "mysql"
+  },
+  "download_url": "https://dev.mysql.com/downloads/",
+  "app_type": "standalone"
+}

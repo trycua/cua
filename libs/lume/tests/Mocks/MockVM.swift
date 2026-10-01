@@ -1,0 +1,46 @@
+import Foundation
+
+@testable import lume
+
+@MainActor
+class MockVM: VM {
+    private var mockIsRunning = false
+
+    override func getOSType() -> String {
+        return "mock-os"
+    }
+
+    override func setup(
+        ipswPath: String, cpuCount: Int, memorySize: UInt64, diskSize: UInt64, display: String
+    ) async throws {
+        // Mock setup implementation
+        vmDirContext.config.setCpuCount(cpuCount)
+        vmDirContext.config.setMemorySize(memorySize)
+        vmDirContext.config.setDiskSize(diskSize)
+        vmDirContext.config.setMacAddress("00:11:22:33:44:55")
+        try vmDirContext.saveConfig()
+    }
+
+    override func run(
+        displayMode: DisplayMode = .vnc, sharedDirectories: [SharedDirectory], mount: Path?,
+        vncPort: Int = 0, vncPassword: String? = nil, recoveryMode: Bool = false,
+        usbMassStoragePaths: [Path]? = nil, additionalDiskPaths: [Path]? = nil,
+        networkMode: NetworkMode? = nil, clipboard: Bool = false,
+        vncPolicy: VNCPolicy = .enabled
+    ) async throws {
+        mockIsRunning = true
+        try await super.run(
+            displayMode: displayMode, sharedDirectories: sharedDirectories, mount: mount,
+            vncPort: vncPort, vncPassword: vncPassword, recoveryMode: recoveryMode,
+            usbMassStoragePaths: usbMassStoragePaths,
+            additionalDiskPaths: additionalDiskPaths,
+            networkMode: networkMode, clipboard: clipboard,
+            vncPolicy: vncPolicy
+        )
+    }
+
+    override func stop(force: Bool, timeout: TimeInterval) async throws {
+        mockIsRunning = false
+        try await super.stop(force: force, timeout: timeout)
+    }
+}

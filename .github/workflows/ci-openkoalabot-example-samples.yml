@@ -1,0 +1,111 @@
+name: "CI: openkoalabot-example (TypeScript and Swift)"
+
+# The Spaces guides (docs/content/docs/spaces/guides/) show excerpts of these
+# samples; the docs linter checks
+# each excerpt is byte-identical to its `#region docs:<id>` in the source, and
+# this workflow builds and tests the sources. The Rust/Tauri sample has its own
+# workflow (ci-openkoalabot-example-tauri.yml). Tests are hermetic (fixtures, temp
+# homes); nothing touches host apps.
+
+on:
+  pull_request:
+    paths:
+      - "samples/openkoalabot-example-ts/**"
+      - "samples/openkoalabot-example-swift/**"
+      - "libs/cua/**"
+      - "libs/spaces-sdk-swift/**"
+      - "libs/spaces-app-swift/**"
+      - "docs/content/docs/spaces/guides/**"
+      - "docs/content/docs/spaces/examples/**"
+      - ".github/workflows/ci-openkoalabot-example-samples.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-openkoalabot-example-samples-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "4"
+
+jobs:
+  typescript:
+    name: openkoalabot-example-ts (npm test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: openkoalabot-example-ts
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config libx11-dev libxkbcommon-dev \
+            libwayland-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev \
+            libxrandr-dev libxi-dev libudev-dev
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Build the cua SDK (native and wasm) and @trycua/cua
+        run: |
+          (cd libs/cua && cargo build --locked --release -p cua-sdk)
+          cd libs/cua/typescript
+          npm ci
+          node ../scripts/stage-uniffi-library.mjs --only=node
+          npm run build
+          command -v wasm-pack >/dev/null || curl -fsSL https://rustwasm.github.io/wasm-pack/installer/init.sh | sh -s -- -f
+          command -v wasm-bindgen >/dev/null || cargo install --locked wasm-bindgen-cli --version 0.2.126
+          npm run build:browser
+      - name: Test the sample
+        working-directory: samples/openkoalabot-example-ts
+        run: |
+          npm ci
+          npm test
+          npm run typecheck
+          npm run build:web
+
+  swift:
+    name: openkoalabot-example-swift (swift test)
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: openkoalabot-example-swift
+      - name: Build and stage the cua SDK for Swift
+        run: |
+          (cd libs/cua && cargo build --locked --release -p cua-sdk)
+          node libs/cua/scripts/stage-uniffi-library.mjs --only=swift
+      - name: Test the sample
+        run: samples/openkoalabot-example-swift/scripts/test.sh

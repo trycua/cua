@@ -1,0 +1,12 @@
+{
+  "binary_path": "/opt/pgadmin4/venv/bin/pgadmin4",
+  "binary_name": "pgadmin4",
+  "display_name": "pgAdmin 4",
+  "desktop_entry": null,
+  "icon_paths": [
+    "/opt/pgadmin4/venv/lib/python3.12/site-packages/pgadmin4/docs/en_US/theme/pgadmin4/static/favicon.ico",
+    "/opt/pgadmin4/venv/lib/python3.12/site-packages/pgadmin4/docs/en_US/images/logo-right-128.png",
+    "/opt/pgadmin4/venv/lib/python3.12/site-packages/pgadmin4/docs/en_US/images/logo-128.png"
+  ],
+  "version": "9.14"
+}

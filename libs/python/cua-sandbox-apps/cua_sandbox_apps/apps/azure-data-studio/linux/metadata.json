@@ -1,0 +1,10 @@
+{
+  "binary_path": "/usr/bin/azuredatastudio",
+  "binary_name": "azuredatastudio",
+  "display_name": "Azure Data Studio",
+  "desktop_entry": "/usr/share/applications/azuredatastudio.desktop",
+  "icon_paths": [
+    "/usr/share/pixmaps/com.azuredatastudio.png"
+  ],
+  "version": "1.52.0-1749833751"
+}

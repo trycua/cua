@@ -1,0 +1,10 @@
+{
+  "binary_path": "/usr/bin/code",
+  "binary_name": "code",
+  "display_name": "Visual Studio Code",
+  "desktop_entry": "/usr/share/applications/code.desktop",
+  "icon_paths": [
+    "/usr/share/pixmaps/vscode.png"
+  ],
+  "version": "1.115.0"
+}

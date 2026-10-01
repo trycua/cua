@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CUA Driver Gesture Panels (test_page.html companion)</title>
+<style>
+body { font-family: -apple-system, sans-serif; padding: 30px; background: #f0f0f0; }
+h2 { margin: 20px 0 8px; font-size: 16px; color: #555; }
+.section { background: white; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+.status { font-size: 14px; margin-top: 6px; color: #333; font-family: monospace; }
+#hotkey-focus { font-size: 16px; padding: 10px; width: 360px; border: 1px solid #ccc; border-radius: 4px; }
+#coord-area { position: relative; width: 240px; height: 240px; background: #fafafa; border: 1px solid #ccc; cursor: crosshair; }
+#coord-target { position: absolute; left: 60px; top: 60px; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: #1a73e8; }
+#drag-source { width: 80px; height: 80px; background: #1a73e8; color: white; display: flex; align-items: center; justify-content: center; cursor: grab; user-select: none; border-radius: 6px; }
+#drag-target { width: 120px; height: 120px; background: #fafafa; border: 2px dashed #999; margin-top: 12px; display: flex; align-items: center; justify-content: center; color: #999; }
+#drag-target.over { background: #e3f2fd; border-color: #1a73e8; }
+#scroll-area { width: 360px; height: 150px; overflow-y: scroll; border: 1px solid #ccc; padding: 8px; background: white; }
+#scroll-inner { height: 1200px; background: linear-gradient(180deg, #fff 0%, #1a73e8 100%); }
+</style>
+</head>
+<body>
+
+<div class="section">
+  <h2>Hotkey / modifier-state probe</h2>
+  <p style="font-size:13px;color:#666;margin:0 0 8px">
+    Focus this field, then send <code>hotkey ["ctrl","s"]</code>. The status line must report
+    <code>ctrl=true key=s</code>. PostMessage-only paths report <code>ctrl=false</code> because
+    the OS modifier state is never updated. SendInput-routed hotkeys report <code>ctrl=true</code>.
+  </p>
+  <input type="text" id="hotkey-focus" placeholder="Focus here, then send a hotkey...">
+  <div id="hotkey-status" class="status">hotkey: (no key seen)</div>
+</div>
+
+<div class="section">
+  <h2>Pixel-coordinate pinpoint</h2>
+  <p style="font-size:13px;color:#666;margin:0 0 8px">
+    Click on the blue dot at (60, 60) inside the box. Status shows the absolute viewport
+    pixel and the offset from the target center — &lt;2px is a passing precision test.
+  </p>
+  <div id="coord-area">
+    <div id="coord-target"></div>
+  </div>
+  <div id="coord-status" class="status">coord: (no click)</div>
+</div>
+
+<div class="section">
+  <h2>Drag and drop</h2>
+  <p style="font-size:13px;color:#666;margin:0 0 8px">
+    Drag the blue square into the dashed target. Status must show all three events:
+    <code>dragstart → dragover → drop</code> with the source label.
+  </p>
+  <div id="drag-source" draggable="true">DRAG ME</div>
+  <div id="drag-target">drop here</div>
+  <div id="drag-status" class="status">drag: (no events)</div>
+</div>
+
+<div class="section">
+  <h2>Scroll</h2>
+  <p style="font-size:13px;color:#666;margin:0 0 8px">
+    Scroll this container with the <code>scroll</code> tool. Status shows the current
+    <code>scrollTop</code> in pixels.
+  </p>
+  <div id="scroll-area">
+    <div id="scroll-inner">scroll me</div>
+  </div>
+  <div id="scroll-status" class="status">scroll: 0</div>
+</div>
+
+<script>
+// Hotkey / modifier-state probe ---------------------------------------------
+document.getElementById('hotkey-focus').addEventListener('keydown', function(e) {
+  var parts = [
+    'key=' + e.key,
+    'code=' + e.code,
+    'ctrl=' + e.ctrlKey,
+    'alt=' + e.altKey,
+    'shift=' + e.shiftKey,
+    'meta=' + e.metaKey
+  ];
+  document.getElementById('hotkey-status').textContent = 'hotkey: ' + parts.join(' ');
+  window._lastHotkey = { key: e.key, code: e.code, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey };
+  // Prevent browser from acting on common chords during the test.
+  if (e.ctrlKey || e.metaKey) e.preventDefault();
+});
+
+// Pixel-coordinate pinpoint -------------------------------------------------
+document.getElementById('coord-area').addEventListener('click', function(e) {
+  var rect = e.currentTarget.getBoundingClientRect();
+  var x = Math.round(e.clientX - rect.left);
+  var y = Math.round(e.clientY - rect.top);
+  var dx = x - 60, dy = y - 60;
+  var dist = Math.sqrt(dx*dx + dy*dy).toFixed(1);
+  document.getElementById('coord-status').textContent = 'coord: (' + x + ',' + y + ') dist=' + dist + 'px';
+  window._lastCoord = { x: x, y: y, dist: parseFloat(dist) };
+});
+
+// Drag and drop -------------------------------------------------------------
+var dragEvents = [];
+var src = document.getElementById('drag-source');
+var tgt = document.getElementById('drag-target');
+src.addEventListener('dragstart', function(e) {
+  dragEvents.push('dragstart');
+  e.dataTransfer.setData('text/plain', 'DRAG ME');
+  document.getElementById('drag-status').textContent = 'drag: ' + dragEvents.join(' → ');
+});
+tgt.addEventListener('dragover', function(e) {
+  e.preventDefault();
+  if (dragEvents[dragEvents.length-1] !== 'dragover') dragEvents.push('dragover');
+  tgt.classList.add('over');
+  document.getElementById('drag-status').textContent = 'drag: ' + dragEvents.join(' → ');
+});
+tgt.addEventListener('dragleave', function() { tgt.classList.remove('over'); });
+tgt.addEventListener('drop', function(e) {
+  e.preventDefault();
+  dragEvents.push('drop');
+  tgt.classList.remove('over');
+  var payload = e.dataTransfer.getData('text/plain');
+  document.getElementById('drag-status').textContent = 'drag: ' + dragEvents.join(' → ') + ' payload=' + payload;
+  window._lastDrag = { events: dragEvents.slice(), payload: payload };
+});
+
+// Scroll --------------------------------------------------------------------
+document.getElementById('scroll-area').addEventListener('scroll', function(e) {
+  var st = e.currentTarget.scrollTop;
+  document.getElementById('scroll-status').textContent = 'scroll: ' + st;
+  window._lastScroll = st;
+});
+
+// Expose for cua-driver get_window_state polling --------------------------
+window.getGesturePanelState = function() {
+  return JSON.stringify({
+    hotkey: window._lastHotkey || null,
+    coord:  window._lastCoord  || null,
+    drag:   window._lastDrag   || null,
+    scroll: typeof window._lastScroll === 'number' ? window._lastScroll : null,
+  });
+};
+</script>
+</body>
+</html>

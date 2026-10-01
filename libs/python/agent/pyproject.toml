@@ -1,0 +1,134 @@
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[project]
+name = "cua-agent"
+version = "0.9.0"
+description = "Cua (Computer Use) Agent for AI-driven computer interaction"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "TryCua", email = "gh@trycua.com" }
+]
+dependencies = [
+    "httpx>=0.27.0",
+    "aiohttp>=3.9.3",
+    "anyio>=4.4.1",
+    "typing-extensions>=4.12.2",
+    "pydantic>=2.6.4",
+    "rich>=13.7.1",
+    "python-dotenv>=1.0.1",
+    "cua-core>=0.3.0,<0.4.0",
+    "certifi>=2024.2.2",
+    "litellm==1.86.2",
+    "Pillow>=10.0.0"
+]
+requires-python = ">=3.11,<3.14"
+
+[project.optional-dependencies]
+computer = [
+    "cua-sandbox>=0.8.0,<0.10.0",
+]
+openai = []
+anthropic = []
+qwen = [
+    "qwen-vl-utils",
+    "qwen-agent",
+    "Pillow>=10.0.0",
+]
+# No `omni` extra: cua-som is deprecated, unmaintained and AGPL-3.0, and this
+# package is MIT. The omniparser loop still runs with it installed separately
+# (`pip install cua-som`).
+uitars = []
+uitars-mlx = [
+    "mlx-vlm>=0.1.27; sys_platform == 'darwin'"
+]
+uitars-hf = [
+    "accelerate",
+    "torch",
+    "transformers>=4.54.0"
+]
+glm45v-hf = [
+    "accelerate",
+    "torch",
+    "transformers>=5.0.0rc3"
+]
+opencua-hf = [
+    "accelerate",
+    "torch",
+    "transformers>=4.53.0",
+    "tiktoken>=0.11.0",
+    "blobfile>=3.0.0"
+]
+internvl-hf = [
+    "accelerate",
+    "torch",
+    "transformers>=4.55.0",
+    "einops",
+    "timm"
+]
+moondream3 = [
+    "accelerate",
+    "torch",
+    "transformers>=4.55.0"
+]
+ui = [
+    "gradio>=6.0.0",
+    "python-dotenv>=1.0.1",
+]
+cli = [
+    "yaspin>=3.1.0",
+]
+hud = [
+    "hud-python==0.4.52",
+    "fastmcp>=3.2.0,<3.3.0",
+]
+gemini = [
+    "google-genai>=1.41.0",
+]
+# API-only extras for cloud/container deployments — excludes torch/transformers/local models.
+# Supports: openai, anthropic, gemini, uitars (API mode).
+cloud = [
+    # gemini API SDK
+    "google-genai>=1.41.0",
+    # cli spinner
+    "yaspin>=3.1.0",
+    # qwen tool-call formatting (used by generic_vlm.py for API-based Qwen calls)
+    "qwen-agent",
+    "qwen-vl-utils",
+    "Pillow>=10.0.0",
+]
+all = [
+    # uitars requirements
+    "mlx-vlm>=0.1.27; sys_platform == 'darwin'",
+    "accelerate",
+    "torch",
+    "transformers>=4.55.0",
+    # internvl requirements,
+    "einops",
+    "timm",
+    # opencua requirements
+    "tiktoken>=0.11.0",
+    "blobfile>=3.0.0",
+    # ui requirements
+    "gradio>=6.0.0",
+    "python-dotenv>=1.0.1",
+    # cli requirements
+    "yaspin>=3.1.0",
+    # gemini requirements
+    "google-genai>=1.41.0",
+    # qwen requirements
+    "qwen-vl-utils",
+    "qwen-agent",
+    "Pillow>=10.0.0",
+]
+
+[tool.uv]
+constraint-dependencies = ["fastrtc>0.43.0", "mlx-audio>0.2.3"]
+
+[tool.pdm]
+distribution = true
+
+[tool.pdm.build]
+includes = ["cua_agent/"]

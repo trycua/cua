@@ -1,0 +1,30 @@
+{
+    "folders": [
+        {
+            "name": "lumier",
+            "path": "../libs/lumier"
+        },
+        {
+            "name": "lume",
+            "path": "../libs/lume"
+        }
+    ],
+    "settings": {
+        "files.exclude": {
+            "**/.git": true,
+            "**/.svn": true,
+            "**/.hg": true,
+            "**/CVS": true,
+            "**/.DS_Store": true
+        }
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+        ]
+    },
+    "launch": {
+        "configurations": [
+        ]
+    }
+} 

@@ -1,0 +1,42 @@
+{
+  "id": "metasploit",
+  "name": "Metasploit",
+  "description": "The world's most used penetration testing framework. Metasploit enables security professionals and penetration testers to verify vulnerabilities, manage security assessments, develop exploits, and execute comprehensive cybersecurity testing activities. Available as both open-source framework and commercial Pro version.",
+  "website": "https://www.metasploit.com",
+  "icon_url": "https://github.com/rapid7/metasploit-framework/blob/master/app/assets/images/metasploit-logo.png",
+  "categories": [
+    "Penetration Testing",
+    "Security Testing",
+    "Exploit Development",
+    "Vulnerability Assessment"
+  ],
+  "tags": [
+    "cybersecurity",
+    "security-framework",
+    "exploitation",
+    "network-security",
+    "red-team",
+    "open-source",
+    "exploit-development",
+    "vulnerability-scanner"
+  ],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/rapid7/metasploit-framework",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "metasploit-framework",
+    "brew": null,
+    "snap": null,
+    "flatpak": null,
+    "choco": null,
+    "winget": null
+  },
+  "download_url": "https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html"
+}

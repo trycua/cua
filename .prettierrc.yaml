@@ -1,0 +1,12 @@
+semi: true
+singleQuote: true
+trailingComma: es5
+tabWidth: 2
+printWidth: 100
+arrowParens: always
+bracketSpacing: true
+
+overrides:
+  - files: "*.{yml,yaml}"
+    options:
+      singleQuote: false

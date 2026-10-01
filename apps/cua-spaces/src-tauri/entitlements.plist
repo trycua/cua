@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Hardened runtime entitlements for notarized distribution.
+       The WKWebView JITs JavaScript, so allow-jit and allow-unsigned-executable-memory
+       are required. Library validation stays ON (red-team F3): disable-library-validation
+       would let an attacker load an unsigned dylib on the app's dlopen/RPATH search path
+       into a process that still passes the first-party code requirement, defeating the
+       "hardened runtime means no injection" premise the caller-auth story rests on.
+       Dependencies that are not Cua-team-signed (the Fleet SDK dylib, the rcdp CLI) must
+       be run as separately-signed, team-validated components or out-of-process helpers,
+       never dlopen'd into this vault-facing process. The Keyvault client lives in the
+       daemon, a separate process, not in this WKWebView host. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>

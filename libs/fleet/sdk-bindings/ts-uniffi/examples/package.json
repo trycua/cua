@@ -1,0 +1,17 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx node.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@ubjs/core": "0.31.0-3",
+    "@ubjs/node": "0.31.0-3",
+    "tsx": "latest",
+    "typescript": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest"
+  }
+}

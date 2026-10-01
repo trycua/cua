@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity
+      type="win32"
+      name="com.trycua.driver.uia"
+      version="1.0.0.0"
+      processorArchitecture="*"/>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <!--
+          uiAccess="true" gives this worker UIAccess integrity at launch, which
+          lifts UIPI for SendInput / UI Automation against AppContainer'd UWP
+          apps (Calculator, modern Notepad, Settings).
+
+          Requirements honored by AIS at launch time:
+            1. Authenticode signature                  — required (production: EV cert)
+            2. Process launched via ShellExecute       — required (CreateProcess fails)
+            3. Binary under a "secure" path OR policy  — \Program Files\, OR HKLM
+               EnableSecureUIAPaths=0 set by an admin
+
+          Dev / VM testing: a self-signed cert added to LocalMachine\Root and
+          LocalMachine\TrustedPublisher is enough; EnableSecureUIAPaths=0 lets
+          this run from %LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin\.
+          Prod: signed by Anthropic/trycua EV cert + installed under \Program Files\.
+        -->
+        <requestedExecutionLevel level="asInvoker" uiAccess="true"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">permonitorv2</dpiAwareness>
+    </windowsSettings>
+  </application>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 / Windows 11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+</assembly>

@@ -1,0 +1,123 @@
+name: Reusable NPM Package Publish Workflow
+
+on:
+  workflow_call:
+    inputs:
+      package_name:
+        description: "Name of the package (e.g., cli, computer, core)"
+        required: true
+        type: string
+      package_dir:
+        description: "Directory containing the package relative to workspace root (e.g., libs/typescript/fleet)"
+        required: true
+        type: string
+      package_manager:
+        description: "Package manager to use (pnpm or bun)"
+        required: true
+        type: string
+      version:
+        description: "Version to publish (optional - will check version diff if not provided)"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      NPM_TOKEN:
+        required: true
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    permissions:
+      id-token: write
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Use Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Setup pnpm
+        if: inputs.package_manager == 'pnpm'
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          package_json_file: ${{ inputs.package_dir }}/package.json
+
+      - name: Setup Bun
+        if: inputs.package_manager == 'bun'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+
+      - name: Verify version consistency
+        if: inputs.version != ''
+        run: |
+          EXPECTED_VERSION="${{ inputs.version }}"
+          ACTUAL_VERSION=$(node -p "require('./${{ inputs.package_dir }}/package.json').version")
+
+          if [ "$ACTUAL_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "ERROR: Version mismatch!"
+            echo "Expected version: $EXPECTED_VERSION"
+            echo "Actual version in package.json: $ACTUAL_VERSION"
+            exit 1
+          fi
+
+          echo "Version validation passed: $ACTUAL_VERSION"
+          echo "should_publish=true" >> $GITHUB_OUTPUT
+        id: verify-version
+
+      - name: Check if version changed
+        if: steps.verify-version.outputs.should_publish != 'true'
+        id: check-version
+        uses: EndBug/version-check@d17247dd94ca7b39d0b0691399be8d7c510622c9 # v2
+        with:
+          file-name: ${{ inputs.package_dir }}/package.json
+          diff-search: true
+
+      - name: Install dependencies
+        if: steps.verify-version.outputs.should_publish == 'true' || steps.check-version.outputs.changed == 'true'
+        working-directory: ./${{ inputs.package_dir }}
+        run: |
+          if [ "${{ inputs.package_manager }}" = "bun" ]; then
+            bun install --frozen-lockfile
+          else
+            pnpm install --frozen-lockfile
+          fi
+
+      - name: Build package
+        if: steps.verify-version.outputs.should_publish == 'true' || steps.check-version.outputs.changed == 'true'
+        working-directory: ./${{ inputs.package_dir }}
+        run: |
+          if [ "${{ inputs.package_manager }}" = "bun" ]; then
+            # Bun doesn't support --if-present, check if build script exists
+            if grep -q '"build"' package.json; then
+              bun run build
+            fi
+          else
+            pnpm run --if-present build
+          fi
+
+      - name: Publish to npm
+        if: steps.verify-version.outputs.should_publish == 'true' || steps.check-version.outputs.changed == 'true'
+        working-directory: ./${{ inputs.package_dir }}
+        run: |
+          if [ "${{ inputs.package_manager }}" = "pnpm" ]; then
+            # pnpm rewrites workspace protocol dependencies to registry semver ranges.
+            pnpm publish --access public --provenance --no-git-checks
+          else
+            npm publish --access public --provenance
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

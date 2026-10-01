@@ -1,0 +1,42 @@
+# Node / JS
+node_modules/
+dist/
+build/
+out/
+.next/
+*.min.js
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.env
+.env.local
+
+# Logs
+*.log
+*.tmp
+
+# VSCode / editor files
+.vscode/
+.idea/
+
+# Other generated files
+*.lock
+*.db
+*.sqlite
+pnpm-lock.yaml
+uv.lock
+
+# Auto-generated docs source
+docs/.source/
+docs/next-env.d.ts
+
+# MDX files (prettier mangles {/* */} comment syntax into {/_ _/})
+*.mdx
+
+# Git worktrees (separate branches)
+.worktrees/

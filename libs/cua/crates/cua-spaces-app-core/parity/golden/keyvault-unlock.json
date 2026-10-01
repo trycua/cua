@@ -1,0 +1,101 @@
+{
+  "flow": "keyvault-unlock",
+  "frames": [
+    {
+      "canSetup": true,
+      "canUnlock": false,
+      "case": "setup-touch-id",
+      "form": [
+        "setup with touch-id",
+        "help: Touch ID confirms. The vault key stays in your login keychain.",
+        "passphrase: -",
+        "confirm: -",
+        "submit: Set up Keyvault"
+      ],
+      "title": "No Keyvault yet",
+      "unlockFact": "Mac login"
+    },
+    {
+      "canSetup": true,
+      "canUnlock": false,
+      "case": "setup-passphrase",
+      "form": [
+        "setup with passphrase",
+        "help: 12 or more characters. The recovery key is the only other way in.",
+        "passphrase: Passphrase",
+        "confirm: Confirm passphrase",
+        "submit: Set up Keyvault"
+      ],
+      "title": "No Keyvault yet",
+      "unlockFact": "Mac login"
+    },
+    {
+      "canSetup": false,
+      "canUnlock": true,
+      "case": "unlock-touch-id",
+      "form": [
+        "unlock with touch-id",
+        "help: Unlocks with your login keychain.",
+        "passphrase: -",
+        "confirm: -",
+        "submit: Unlock"
+      ],
+      "title": "The Keyvault is locked",
+      "unlockFact": "Mac login"
+    },
+    {
+      "canSetup": false,
+      "canUnlock": true,
+      "case": "unlock-passphrase",
+      "form": [
+        "unlock with passphrase",
+        "help: Enter the Keyvault passphrase.",
+        "passphrase: Passphrase",
+        "confirm: -",
+        "submit: Unlock"
+      ],
+      "title": "The Keyvault is locked",
+      "unlockFact": "Passphrase"
+    },
+    {
+      "canSetup": false,
+      "canUnlock": false,
+      "case": "ready",
+      "form": null,
+      "title": null,
+      "unlockFact": "Passphrase"
+    },
+    {
+      "check": "setup, empty",
+      "result": "submit=false strength=- hint=-"
+    },
+    {
+      "check": "setup, too short",
+      "result": "submit=false strength=weak hint=At least 12 characters"
+    },
+    {
+      "check": "setup, repetitive",
+      "result": "submit=true strength=weak hint=Weak: a few unrelated words are stronger"
+    },
+    {
+      "check": "setup, fair, not confirmed",
+      "result": "submit=false strength=fair hint=Fair"
+    },
+    {
+      "check": "setup, strong, mismatch",
+      "result": "submit=false strength=strong hint=The passphrases don't match"
+    },
+    {
+      "check": "setup, strong, confirmed",
+      "result": "submit=true strength=strong hint=Strong"
+    },
+    {
+      "check": "unlock, empty",
+      "result": "submit=false strength=- hint=-"
+    },
+    {
+      "check": "unlock, typed",
+      "result": "submit=true strength=- hint=-"
+    }
+  ]
+}

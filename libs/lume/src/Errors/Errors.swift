@@ -1,0 +1,350 @@
+import Foundation
+
+enum HomeError: Error, LocalizedError {
+    case directoryCreationFailed(path: String)
+    case directoryAccessDenied(path: String)
+    case invalidHomeDirectory
+    case directoryAlreadyExists(path: String)
+    case homeNotFound
+    case defaultStorageNotDefined
+    case storageLocationNotFound(String)
+    case storageLocationNotADirectory(String)
+    case storageLocationNotWritable(String)
+    case invalidStorageLocation(String)
+    case cannotCreateDirectory(String)
+    case cannotGetVMsDirectory
+    case vmDirectoryNotFound(String)
+    
+    var errorDescription: String? {
+        switch self {
+        case .directoryCreationFailed(let path):
+            return "Failed to create directory at path: \(path)"
+        case .directoryAccessDenied(let path):
+            return "Access denied to directory at path: \(path)"
+        case .invalidHomeDirectory:
+            return "Invalid home directory configuration"
+        case .directoryAlreadyExists(let path):
+            return "Directory already exists at path: \(path)"
+        case .homeNotFound:
+            return "Home directory not found."
+        case .defaultStorageNotDefined:
+            return "Default storage location is not defined."
+        case .storageLocationNotFound(let path):
+            return "Storage location not found: \(path)"
+        case .storageLocationNotADirectory(let path):
+            return "Storage location is not a directory: \(path)"
+        case .storageLocationNotWritable(let path):
+            return "Storage location is not writable: \(path)"
+        case .invalidStorageLocation(let path):
+            return "Invalid storage location specified: \(path)"
+        case .cannotCreateDirectory(let path):
+            return "Cannot create directory: \(path)"
+        case .cannotGetVMsDirectory:
+            return "Cannot determine the VMs directory."
+        case .vmDirectoryNotFound(let path):
+            return "VM directory not found: \(path)"
+        }
+    }
+}
+
+enum PullError: Error, LocalizedError {
+    case invalidImageFormat
+    case tokenFetchFailed
+    case manifestFetchFailed
+    case layerDownloadFailed(String)
+    case layerVerificationFailed(expected: String, actual: String)
+    case missingPart(Int)
+    case decompressionFailed(String)
+    case reassemblyFailed(String)
+    case fileCreationFailed(String)
+    case reassemblySetupFailed(path: String, underlyingError: Error)
+    case missingUncompressedSizeAnnotation
+    case invalidMediaType
+    
+    var errorDescription: String? {
+        switch self {
+        case .invalidImageFormat:
+            return "Invalid image format. Expected format: name:tag"
+        case .tokenFetchFailed:
+            return "Failed to fetch authentication token from registry."
+        case .manifestFetchFailed:
+            return "Failed to fetch image manifest from registry."
+        case .layerDownloadFailed(let digest):
+            return "Failed to download layer: \(digest)"
+        case .layerVerificationFailed(let expected, let actual):
+            return
+                "Downloaded layer failed checksum verification (expected \(expected), got \(actual)). "
+                + "The blob was likely corrupted in transit. Retrying may help; if it persists, "
+                + "clear the lume cache and pull again."
+        case .missingPart(let partNum):
+            return "Missing required part number \(partNum) for reassembly."
+        case .decompressionFailed(let file):
+            return "Failed to decompress file: \(file)"
+        case .reassemblyFailed(let reason):
+            return "Disk image reassembly failed: \(reason)."
+        case .fileCreationFailed(let path):
+            return "Failed to create the necessary file at path: \(path)"
+        case .reassemblySetupFailed(let path, let underlyingError):
+            return "Failed to set up for reassembly at path: \(path). Underlying error: \(underlyingError.localizedDescription)"
+        case .missingUncompressedSizeAnnotation:
+            return "Could not find the required uncompressed disk size annotation in the image config.json."
+        case .invalidMediaType:
+            return "Invalid media type"
+        }
+    }
+}
+
+enum VMConfigError: CustomNSError, LocalizedError {
+    case invalidDisplayResolution(String)
+    case invalidMachineIdentifier
+    case emptyMachineIdentifier
+    case emptyHardwareModel
+    case invalidHardwareModel
+    case invalidDiskSize
+    case malformedSizeInput(String)
+    case noBridgeInterfaceFound(requested: String?, available: String)
+    
+    var errorDescription: String? {
+        switch self {
+        case .invalidDisplayResolution(let resolution):
+            return "Invalid display resolution: \(resolution)"
+        case .emptyMachineIdentifier:
+            return "Empty machine identifier"
+        case .invalidMachineIdentifier:
+            return "Invalid machine identifier"
+        case .emptyHardwareModel:
+            return "Empty hardware model"
+        case .invalidHardwareModel:
+            return "Invalid hardware model: the host does not support the hardware model"
+        case .invalidDiskSize:
+            return "Invalid disk size"
+        case .malformedSizeInput(let input):
+            return "Malformed size input: \(input)"
+        case .noBridgeInterfaceFound(let requested, let available):
+            if let requested = requested {
+                return "Bridge network interface '\(requested)' not found. Available interfaces: \(available)"
+            }
+            return "No bridge network interfaces available on this host. Available: \(available)"
+        }
+    }
+    
+    static var errorDomain: String { "VMConfigError" }
+    
+    var errorCode: Int {
+        switch self {
+        case .invalidDisplayResolution: return 1
+        case .emptyMachineIdentifier: return 2
+        case .invalidMachineIdentifier: return 3
+        case .emptyHardwareModel: return 4
+        case .invalidHardwareModel: return 5
+        case .invalidDiskSize: return 6
+        case .malformedSizeInput: return 7
+        case .noBridgeInterfaceFound: return 8
+        }
+    }
+}
+
+enum VMDirectoryError: Error, LocalizedError {
+    case configNotFound
+    case invalidConfigData
+    case diskOperationFailed(String)
+    case fileCreationFailed(String)
+    case sessionNotFound
+    case invalidSessionData
+    
+    var errorDescription: String {
+        switch self {
+        case .configNotFound:
+            return "VM configuration file not found"
+        case .invalidConfigData:
+            return "Invalid VM configuration data"
+        case .diskOperationFailed(let reason):
+            return "Disk operation failed: \(reason)"
+        case .fileCreationFailed(let path):
+            return "Failed to create file at path: \(path)"
+        case .sessionNotFound:
+            return "VNC session file not found"
+        case .invalidSessionData:
+            return "Invalid VNC session data"
+        }
+    }
+}
+
+enum VMError: Error, LocalizedError {
+    case alreadyExists(String)
+    case notFound(String)
+    case notInitialized(String)
+    case notRunning(String)
+    case alreadyRunning(String)
+    case installNotStarted(String)
+    case stopTimeout(String)
+    case resizeTooSmall(current: UInt64, requested: UInt64)
+    case vncNotConfigured
+    case vncPortBindingFailed(requested: Int, actual: Int)
+    case vncDisabledConflict(String)
+    case internalError(String)
+    case unsupportedOS(String)
+    case invalidDisplayResolution(String)
+    case stillProvisioning(String)
+    var errorDescription: String? {
+        switch self {
+        case .alreadyExists(let name):
+            return "Virtual machine already exists with name: \(name)"
+        case .notFound(let name):
+            return "Virtual machine not found: \(name)"
+        case .notInitialized(let name):
+            return "Virtual machine not initialized: \(name)"
+        case .notRunning(let name):
+            return "Virtual machine not running: \(name)"
+        case .alreadyRunning(let name):
+            return "Virtual machine already running: \(name)"
+        case .installNotStarted(let name):
+            return "Virtual machine install not started: \(name)"
+        case .stopTimeout(let name):
+            return "Timeout while stopping virtual machine: \(name)"
+        case .resizeTooSmall(let current, let requested):
+            return "Cannot resize disk to \(requested) bytes, current size is \(current) bytes"
+        case .vncNotConfigured:
+            return "VNC is not configured for this virtual machine"
+        case .vncPortBindingFailed(let requested, let actual):
+            if actual == -1 {
+                return "Could not bind to VNC port \(requested) (port already in use). Try a different port or use port 0 for auto-assign."
+            }
+            return "Could not bind to VNC port \(requested) (port already in use). System assigned port \(actual) instead. Try a different port or use port 0 for auto-assign."
+        case .vncDisabledConflict(let option):
+            return "VNC is disabled for this run, so '\(option)' cannot be used."
+        case .internalError(let message):
+            return "Internal error: \(message)"
+        case .unsupportedOS(let os):
+            return "Unsupported operating system: \(os)"
+        case .invalidDisplayResolution(let resolution):
+            return "Invalid display resolution: \(resolution)"
+        case .stillProvisioning(let name):
+            return "Virtual machine is still being provisioned: \(name)"
+        }
+    }
+}
+
+enum ResticError: Error {
+    case snapshotFailed(String)
+    case restoreFailed(String)
+    case genericError(String)
+}
+
+/// Errors surfaced by the recovery-preserving macOS disk expansion engine.
+///
+/// Every message is fail-closed: it states which check failed with concrete
+/// values, whether the disk was modified or rolled back, and one next step.
+enum DiskResizeError: Error, LocalizedError {
+    case vmRunning(String)
+    case resizeInProgress(String)
+    case invalidResizeMarker(String)
+    case rollbackFailed(original: String, restore: String)
+    case shrinkNotSupported(current: UInt64, requested: UInt64)
+    case growthTooSmall(minimumBytes: UInt64)
+    case unsupportedLayout(String)
+    case unsupportedSectorSize
+    case fileVaultEnabled
+    case imageAttached
+    case backupFailed(String)
+    case insufficientHostSpace(needed: UInt64, available: UInt64)
+    case apfsCheckFailed(String)
+    case containerGrowFailed(String)
+    case verificationFailed(String)
+    case commandFailed(command: String, output: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .vmRunning(let name):
+            return "Cannot modify \(name): the VM is running. Stop it first."
+        case .resizeInProgress(let name):
+            return
+                "A previous disk resize of \(name) did not finish. Re-run the same command to roll it back and restore the disk from its backup."
+        case .invalidResizeMarker(let reason):
+            return "The disk-resize marker is invalid (\(reason)). The VM remains blocked to protect its disk."
+        case .rollbackFailed(let original, let restore):
+            return "Disk resize failed (\(original)), and rollback also failed (\(restore)). The resize marker was kept; do not run the VM."
+        case .shrinkNotSupported(let current, let requested):
+            return
+                "Cannot shrink the disk (current \(current) bytes, requested \(requested) bytes). Only growing is supported; the disk was not modified."
+        case .growthTooSmall(let minimumBytes):
+            return
+                "Requested growth is too small. The new size must add at least \(minimumBytes) bytes so the recovery partition can be relocated; the disk was not modified."
+        case .unsupportedLayout(let reason):
+            return
+                "The disk layout is not the expected macOS 3-partition layout (\(reason)); the disk was not modified."
+        case .unsupportedSectorSize:
+            return "Only 512-byte-sector disk images are supported; the disk was not modified."
+        case .fileVaultEnabled:
+            return
+                "The main volume is encrypted (FileVault). Encrypted containers are not supported yet; the disk was not modified."
+        case .imageAttached:
+            return
+                "disk.img is already attached to the host. Detach it (hdiutil detach) and retry; the disk was not modified."
+        case .backupFailed(let reason):
+            return
+                "Could not create the pre-resize backup (\(reason)). Free space or use a different storage location, or pass --no-backup to proceed without one; the disk was not modified."
+        case .insufficientHostSpace(let needed, let available):
+            return
+                "Not enough host free space for the resize (need ~\(needed) bytes, have \(available) bytes); the disk was not modified."
+        case .apfsCheckFailed(let output):
+            return
+                "The APFS container is not clean. Boot the VM, shut it down cleanly, and retry. Details: \(output)"
+        case .containerGrowFailed(let output):
+            return "Growing the APFS container failed: \(output). The disk was restored from backup."
+        case .verificationFailed(let reason):
+            return "Post-resize verification failed: \(reason). The disk was restored from backup."
+        case .commandFailed(let command, let output):
+            return "\(command) failed: \(output)"
+        }
+    }
+}
+
+enum VmrunError: Error, LocalizedError {
+    case commandNotFound
+    case operationFailed(command: String, output: String?)
+
+    var errorDescription: String? {
+        switch self {
+        case .commandNotFound:
+            return "vmrun command not found. Ensure VMware Fusion is installed and in the system PATH."
+        case .operationFailed(let command, let output):
+            return "vmrun command '\(command)' failed. Output: \(output ?? "No output")"
+        }
+    }
+}
+
+enum UnattendedError: Error, LocalizedError {
+    case configLoadFailed(String)
+    case textNotFound(text: String, timeout: TimeInterval)
+    case ocrFailed(String)
+    case vncAutomationFailed(String)
+    case framebufferCaptureFailed(String)
+    case inputSimulationFailed(String)
+    case commandExecutionFailed(String)
+    case timeout(String)
+    case healthCheckFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .configLoadFailed(let reason):
+            return "Failed to load unattended config: \(reason)"
+        case .textNotFound(let text, let timeout):
+            return "Text '\(text)' not found on screen after \(Int(timeout)) seconds"
+        case .ocrFailed(let reason):
+            return "OCR text recognition failed: \(reason)"
+        case .vncAutomationFailed(let reason):
+            return "VNC automation failed: \(reason)"
+        case .framebufferCaptureFailed(let reason):
+            return "Failed to capture VNC framebuffer: \(reason)"
+        case .inputSimulationFailed(let reason):
+            return "Failed to simulate input: \(reason)"
+        case .commandExecutionFailed(let command):
+            return "Failed to execute boot command: \(command)"
+        case .timeout(let operation):
+            return "Timeout during unattended operation: \(operation)"
+        case .healthCheckFailed(let reason):
+            return "Health check failed: \(reason)"
+        }
+    }
+}

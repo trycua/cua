@@ -1,0 +1,8 @@
+{
+  "binary_path": "/usr/share/elasticsearch/bin/elasticsearch",
+  "binary_name": "elasticsearch",
+  "display_name": "Distributed RESTful search engine built for the cloud",
+  "desktop_entry": null,
+  "icon_paths": [],
+  "version": "9.3.3"
+}

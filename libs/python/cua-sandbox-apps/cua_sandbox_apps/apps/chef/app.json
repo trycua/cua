@@ -1,0 +1,36 @@
+{
+  "id": "chef",
+  "name": "Chef",
+  "description": "Chef is an open-source configuration management and infrastructure automation platform that transforms infrastructure into code, automating how infrastructure is configured, deployed and managed across any environment at any scale. It provides both a free open-source version (Chef Infra) and commercial enterprise offerings (Progress Chef 360).",
+  "website": "https://www.chef.io",
+  "icon_url": "https://www.chef.io/images/cheflibraries/logos/chef_progress_primary_logo.png",
+  "categories": [
+    "Configuration Management",
+    "Infrastructure Automation",
+    "DevOps"
+  ],
+  "tags": [
+    "infrastructure-as-code",
+    "configuration-management",
+    "automation",
+    "devops",
+    "compliance",
+    "orchestration"
+  ],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/chef/chef",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "chef",
+    "yum": "chef",
+    "rubygems": "chef"
+  },
+  "download_url": "https://www.chef.io/downloads"
+}

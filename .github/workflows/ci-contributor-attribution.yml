@@ -1,0 +1,36 @@
+name: "CI: Contributor attribution"
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  contributor-attribution:
+    name: contributor-attribution
+    runs-on: ubuntu-latest
+    steps:
+      # For pull_request_target, github.sha is the current commit on the trusted
+      # base branch. The PR's recorded base.sha can be stale after main advances.
+      # The PR head remains inert API data and is never checked out or executed.
+      - name: Check out trusted base validator
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate contributor attribution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 .github/scripts/release_attribution.py validate-pr
+          --event "$GITHUB_EVENT_PATH"

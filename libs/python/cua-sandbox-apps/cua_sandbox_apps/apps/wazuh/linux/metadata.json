@@ -1,0 +1,14 @@
+{
+  "binary_path": "/var/ossec/bin/wazuh-control",
+  "binary_name": "wazuh-control",
+  "display_name": "Wazuh agent",
+  "desktop_entry": null,
+  "icon_paths": [
+    "/usr/share/icons/Adwaita/16x16/status/security-medium-symbolic.symbolic.png",
+    "/usr/share/icons/Adwaita/16x16/status/security-high-symbolic.symbolic.png",
+    "/usr/share/icons/Adwaita/16x16/status/security-low-symbolic.symbolic.png",
+    "/usr/share/icons/Adwaita/16x16/legacy/security-high.png",
+    "/usr/share/icons/Adwaita/16x16/legacy/security-low.png"
+  ],
+  "version": "4.14.4-1"
+}

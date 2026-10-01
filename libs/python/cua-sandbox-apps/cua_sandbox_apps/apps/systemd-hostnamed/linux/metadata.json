@@ -1,0 +1,12 @@
+{
+  "binary_path": "/lib/systemd/systemd-hostnamed",
+  "binary_name": "systemd-hostnamed",
+  "display_name": "systemd-hostnamed",
+  "desktop_entry": null,
+  "icon_paths": [
+    "/usr/share/icons/LoginIcons/apps/22/system-shutdown.svg",
+    "/usr/share/icons/LoginIcons/apps/48/system-shutdown.svg",
+    "/usr/share/icons/LoginIcons/apps/24/system-shutdown.svg"
+  ],
+  "version": "249"
+}

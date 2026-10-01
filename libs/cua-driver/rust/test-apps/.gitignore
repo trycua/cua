@@ -1,0 +1,18 @@
+# Pre-built test app binaries are staged by the source-build scripts under
+# ../../tests/fixtures/build/ and are never committed.
+*.exe
+*.app
+*.dmg
+*.zip
+*.AppImage
+*.deb
+
+# Locally-built .NET test fixture output (see ../../tests/fixtures/build/windows.ps1).
+# These dirs are produced by `dotnet publish -o ...` and contain the
+# CuaTestHarness.{Wpf,WinUI3} binaries + their self-contained runtime
+# (several thousand files, ~150 MB). Always rebuilt locally.
+harness-wpf/
+harness-winui3/
+harness-webview/
+harness-electron/
+harness-tauri/

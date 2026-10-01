@@ -1,0 +1,15 @@
+[project]
+name = "cua-bench-kicad-55f2eefb-env"
+version = "0.1.0"
+license = "MIT"
+authors = [
+    { name = "Snorkel AI" },
+    { name = "Cua" }
+]
+requires-python = ">=3.11"
+
+[tool.cua-bench]
+description = "Change the voltage source of the circuit from a 9V to 5V."
+difficulty = "easy"
+category = "eda"
+tags = ["kicad", "schematic", "eda"]

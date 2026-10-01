@@ -1,0 +1,22 @@
+<Window x:Class="CuaTestHarness.Wpf.OwnedPopupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Harness Owned Popup"
+        Width="400" Height="220"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" FontWeight="Bold" Text="Owned popup"/>
+        <TextBlock Grid.Row="1" Margin="0,8" TextWrapping="Wrap"
+                   AutomationProperties.AutomationId="txt-owned-body"
+                   Text="OWNED_POPUP_MARKER_v1 — this window has its Owner set to MainWindow, so window enumeration must follow the ownership link."/>
+        <Button Grid.Row="2" HorizontalAlignment="Right" Width="80"
+                AutomationProperties.AutomationId="btn-owned-close"
+                Content="Close" Click="OnCloseClick"/>
+    </Grid>
+</Window>

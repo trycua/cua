@@ -1,0 +1,15 @@
+[project]
+name = "cua-bench-kicad-5dbc9e02-env"
+version = "0.1.0"
+license = "MIT"
+authors = [
+    { name = "Snorkel AI" },
+    { name = "Cua" }
+]
+requires-python = ">=3.11"
+
+[tool.cua-bench]
+description = "Design a 555 timer-based LED flasher circuit in astable mode using an NE555P. Use a 1kΩ resistor for R1, a 50kΩ resistor for R2, and a 10µF electrolytic capacitor for C1 to set the timing. Include a 0.01µF decoupling capacitor on the control pin, a 330Ω current-limiting resistor for the LED, and screw terminals for power input and signal output."
+difficulty = "easy"
+category = "eda"
+tags = ["kicad", "schematic", "eda"]

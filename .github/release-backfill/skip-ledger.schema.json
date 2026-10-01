@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/release-backfill/skip-ledger.schema.json",
+  "title": "Cua historical release skip ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "generatedAt", "skips"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "release-backfill-skip-ledger"},
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "skips": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "stage", "reason", "details"],
+        "properties": {
+          "key": {"type": "string", "minLength": 1},
+          "stage": {"enum": ["inventory", "evidence", "authoring", "review"]},
+          "reason": {"enum": ["disconnected-history", "no-product-changes", "same-tag-sha", "security-review-required", "unresolved-identity", "ambiguous-pull-request", "agent-rejected", "human-review-required"]},
+          "details": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

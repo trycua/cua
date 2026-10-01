@@ -1,0 +1,8 @@
+{
+  "binary_path": "/usr/local/bin/cassandra",
+  "binary_name": "cassandra",
+  "display_name": "Cassandra",
+  "desktop_entry": null,
+  "icon_paths": [],
+  "version": "5.0.7"
+}

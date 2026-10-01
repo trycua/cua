@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/release-backfill/evidence.schema.json",
+  "title": "Cua historical release evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "repository", "generatedAt", "releases"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "release-backfill-evidence"},
+    "repository": {"const": "trycua/cua"},
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "releases": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/releaseEvidence"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "contributor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["login", "roles", "external"],
+      "properties": {
+        "login": {"type": "string", "minLength": 1},
+        "roles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["author", "coauthor", "reporter"]}},
+        "external": {"type": "boolean"}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "title", "body", "url", "commitShas", "files", "contributors", "issues"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^(pr:[0-9]+|commit:[0-9a-f]{40})$"},
+        "kind": {"enum": ["pull_request", "direct_commit"]},
+        "title": {"type": "string", "minLength": 1},
+        "body": {"type": "string"},
+        "url": {"type": "string", "format": "uri"},
+        "commitShas": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[0-9a-f]{40}$"}},
+        "files": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "contributors": {"type": "array", "items": {"$ref": "#/$defs/contributor"}},
+        "issues": {"type": "array", "items": {"type": "integer", "minimum": 1}, "uniqueItems": true}
+      }
+    },
+    "releaseEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "catalogSnapshotSha256", "sources", "evidenceSha256"],
+      "properties": {
+        "key": {"type": "string", "minLength": 1},
+        "catalogSnapshotSha256": {"$ref": "#/$defs/sha256"},
+        "sources": {"type": "array", "items": {"$ref": "#/$defs/source"}},
+        "evidenceSha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

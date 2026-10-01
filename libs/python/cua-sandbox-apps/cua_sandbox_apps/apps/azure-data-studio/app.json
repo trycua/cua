@@ -1,0 +1,39 @@
+{
+  "id": "azure-data-studio",
+  "name": "Azure Data Studio",
+  "description": "A lightweight, cross-platform data management and development tool with connectivity to popular cloud and on-premises databases including SQL Server, Azure SQL, PostgreSQL, MySQL, and MongoDB. Features include a modern editor with IntelliSense, code snippets, notebooks, git integration, and extensibility through plugins.",
+  "website": "https://learn.microsoft.com/sql/azure-data-studio",
+  "download_url": "https://learn.microsoft.com/sql/azure-data-studio/download/",
+  "icon_url": "https://github.com/microsoft/azuredatastudio/raw/main/docs/overview_screen.jpg",
+  "categories": [
+    "Database IDE",
+    "Database Management"
+  ],
+  "tags": [
+    "database",
+    "sql",
+    "azure",
+    "cross-platform",
+    "data-management",
+    "ide",
+    "query-editor",
+    "notebooks",
+    "extensible"
+  ],
+  "os_support": [
+    "linux",
+    "macos",
+    "windows"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/microsoft/azuredatastudio",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "winget": "azure-data-studio",
+    "apt": "azuredatastudio",
+    "rpm": "azuredatastudio"
+  },
+  "app_type": "standalone"
+}

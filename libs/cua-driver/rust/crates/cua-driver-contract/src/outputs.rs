@@ -1,0 +1,1140 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
+use crate::{schema_settings, CaptureScope, EscalationReason, Platform};
+use schemars::JsonSchema;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::{Map, Value};
+use std::collections::BTreeMap;
+
+/// Transport-free structured result used by both the live runtime and SDK generation.
+pub trait ToolOutput: Serialize + DeserializeOwned + JsonSchema {
+    fn validate(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn output_schema() -> Value {
+        output_schema_with_additional_properties::<Self>(true)
+    }
+}
+
+/// Schema for the refusal payload a tool emits alongside `isError: true`.
+///
+/// Refusals answer with a diagnostic shape rather than the success shape, and
+/// two are in service: `{"status":"refused","refusal":{code,message,detail}}`
+/// on the element-token and daemon paths, and `{"code":…,"effect":"refused",…}`
+/// on the window-target paths. Both carry tool-specific diagnostic keys, so the
+/// envelope stays open — the marker keys are what make it recognisably a
+/// refusal rather than a malformed success.
+pub fn refusal_envelope_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": true,
+        "anyOf": [
+            {"required": ["refusal"]},
+            {"required": ["status"]},
+            {"required": ["code"]},
+        ],
+    })
+}
+
+/// Marker code for structured error envelopes that carry no tool-specific
+/// refusal shape.
+///
+/// The transport and daemon failure paths answer with diagnostics like
+/// `{"exit_code": 1}` rather than a tool refusal. That payload satisfies
+/// neither arm of [`advertised_output_schema`]: it is missing the success
+/// arm's required keys while carrying a key the success arm does not allow,
+/// and it has none of the refusal arm's marker keys. Strict MCP clients then
+/// reject the whole response, so the error text in `content` never reaches the
+/// agent.
+pub const TOOL_INVOCATION_FAILED_CODE: &str = "tool_invocation_failed";
+
+/// Keys that make a payload recognisable to the refusal arm of
+/// [`advertised_output_schema`].
+const REFUSAL_MARKER_KEYS: [&str; 3] = ["refusal", "status", "code"];
+
+/// Whether a payload already satisfies the refusal arm of
+/// [`advertised_output_schema`].
+pub fn is_refusal_envelope(value: &Value) -> bool {
+    value.as_object().is_some_and(has_refusal_marker)
+}
+
+fn has_refusal_marker(object: &Map<String, Value>) -> bool {
+    REFUSAL_MARKER_KEYS
+        .iter()
+        .any(|marker| object.contains_key(*marker))
+}
+
+/// Guarantee a structured error payload is recognisable as a refusal.
+///
+/// Inserts [`TOOL_INVOCATION_FAILED_CODE`] when the payload carries none of the
+/// refusal marker keys, so any diagnostic an error path invents still validates
+/// against the advertised `outputSchema`. Payloads that already carry a marker
+/// are returned untouched.
+pub fn conforming_error_envelope(structured: Value) -> Value {
+    // Both arms require `type: object`, so a non-object diagnostic is kept as a
+    // value inside the envelope rather than being emitted as the envelope.
+    let mut object = match structured {
+        Value::Object(object) => object,
+        Value::Null => Map::new(),
+        other => {
+            let mut object = Map::new();
+            object.insert("detail".into(), other);
+            object
+        }
+    };
+    if !has_refusal_marker(&object) {
+        object.insert(
+            "code".into(),
+            Value::String(TOOL_INVOCATION_FAILED_CODE.into()),
+        );
+    }
+    Value::Object(object)
+}
+
+/// Wrap a success schema into the shape advertised as the MCP `outputSchema`.
+///
+/// MCP requires every `structuredContent` a tool emits to validate against its
+/// advertised `outputSchema` — including payloads that accompany
+/// `isError: true`. Advertising the success shape alone made strict clients
+/// reject refusals outright, replacing the actionable message the driver had
+/// already placed in `content` ("element_token is stale; call get_window_state
+/// again to refresh") with an opaque schema-validation error. Agents then had
+/// no signal to re-snapshot and fell back to blind pixel clicking.
+///
+/// The success variant is kept exactly as generated — still closed, so success
+/// payloads stay strictly checked — and the refusal envelope joins it as a
+/// sibling variant.
+pub fn advertised_output_schema(success: Value) -> Value {
+    serde_json::json!({ "type": "object", "anyOf": [success, refusal_envelope_schema()] })
+}
+
+pub(crate) fn output_schema_with_additional_properties<T: JsonSchema>(
+    additional_properties: bool,
+) -> Value {
+    let mut schema = serde_json::to_value(
+        schema_settings()
+            .into_generator()
+            .into_root_schema_for::<T>(),
+    )
+    .expect("JSON Schema serializes");
+    strip_schema_titles(&mut schema);
+    if let Some(object) = schema.as_object_mut() {
+        object.insert(
+            "additionalProperties".into(),
+            Value::Bool(additional_properties),
+        );
+        object
+            .entry("properties")
+            .or_insert_with(|| Value::Object(Map::new()));
+    }
+    schema
+}
+
+/// Compact generated schemas by removing the JSON Schema annotations `title`
+/// and `description`.
+///
+/// `properties` and `patternProperties` hold property names as keys, not
+/// annotations, so the stripper must recurse into each property schema without
+/// touching the map's keys — a tool may legitimately publish a property named
+/// `title` (list_windows does), and deleting it silently under-describes the
+/// contract.
+fn strip_schema_titles(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            object.remove("title");
+            object.remove("description");
+            for (key, child) in object.iter_mut() {
+                if key == "properties" || key == "patternProperties" {
+                    match child {
+                        Value::Object(properties) => {
+                            properties.values_mut().for_each(strip_schema_titles)
+                        }
+                        other => strip_schema_titles(other),
+                    }
+                } else {
+                    strip_schema_titles(child);
+                }
+            }
+        }
+        Value::Array(values) => values.iter_mut().for_each(strip_schema_titles),
+        _ => {}
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectiveScope {
+    Window,
+    Desktop,
+}
+
+impl EffectiveScope {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Window => "window",
+            Self::Desktop => "desktop",
+        }
+    }
+}
+
+/// Successful structured result shared by session state and escalation tools.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct SessionStateOutput {
+    pub session: String,
+    pub capture_scope: CaptureScope,
+    pub effective_scope: EffectiveScope,
+    /// Whether this session is authorized to use desktop-scope capture and
+    /// actions. This does not report the operating system's lock-screen state.
+    pub desktop_capture_authorized: bool,
+    /// Compatibility field: this reports whether this session has unlocked
+    /// desktop capture scope. It is not an operating-system lock-screen probe.
+    pub desktop_unlocked: bool,
+    #[schemars(required, schema_with = "nullable_escalation_reason_schema")]
+    pub escalation_reason: Option<EscalationReason>,
+    #[schemars(required, schema_with = "nullable_string_schema")]
+    pub escalation_detail: Option<String>,
+}
+
+impl ToolOutput for SessionStateOutput {}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionLifecycleState {
+    Active,
+    Ending,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionClientKindOutput {
+    Cli,
+    Direct,
+    Mcp,
+    PythonSdk,
+    TypescriptSdk,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionTransportOutput {
+    Cli,
+    Daemon,
+    McpStdio,
+    McpHttp,
+}
+
+/// Content-free lifecycle state safe for an ordinary agent transport.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct SessionOutput {
+    /// Sanitized public label, or null for an unnamed implicit session.
+    #[schemars(required, schema_with = "nullable_string_schema")]
+    pub session: Option<String>,
+    pub implicit: bool,
+    pub state: SessionLifecycleState,
+    pub client_kind: SessionClientKindOutput,
+    pub transport: SessionTransportOutput,
+    pub cursor_visible: bool,
+    pub recording_active: bool,
+    pub idle_seconds: u64,
+    pub expires_in_seconds: u64,
+}
+
+impl ToolOutput for SessionOutput {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct ListSessionsOutput {
+    pub sessions: Vec<SessionOutput>,
+    #[schemars(required, schema_with = "nullable_string_schema")]
+    pub next_cursor: Option<String>,
+}
+
+impl ToolOutput for ListSessionsOutput {}
+
+/// Successful structured result returned by `start_session`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct StartSessionOutput {
+    #[serde(flatten)]
+    pub state: SessionStateOutput,
+    pub active: bool,
+    pub revived: bool,
+}
+
+impl ToolOutput for StartSessionOutput {}
+
+/// Successful structured result returned by `end_session`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct EndSessionOutput {
+    pub session: String,
+    #[schemars(schema_with = "inactive_schema")]
+    pub active: bool,
+}
+
+impl ToolOutput for EndSessionOutput {
+    fn validate(&self) -> Result<(), String> {
+        if self.active {
+            Err("active must be false".into())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+pub struct CursorMotionOutput {
+    pub start_handle: f64,
+    pub end_handle: f64,
+    pub arc_size: f64,
+    pub arc_flow: f64,
+    pub spring: f64,
+    pub glide_duration_ms: f64,
+    pub dwell_after_click_ms: f64,
+    pub idle_hide_ms: f64,
+    pub turn_radius: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct CursorThemeOutput {
+    pub id: String,
+    pub version: String,
+    pub profile: String,
+    pub reduced_motion: crate::CursorReducedMotion,
+    #[schemars(required, schema_with = "nullable_string_schema")]
+    pub fallback: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct CursorVisualOutput {
+    pub requested_action: crate::CursorAction,
+    pub resolved_action: crate::CursorAction,
+    pub modifiers: Vec<String>,
+    pub phase: String,
+    pub frame: u64,
+    pub preempted_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+pub struct CursorPointOutput {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct SetAgentCursorEnabledOutput {
+    pub session: String,
+    pub enabled: bool,
+}
+
+impl ToolOutput for SetAgentCursorEnabledOutput {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+pub struct SetAgentCursorMotionOutput {
+    pub session: String,
+    pub motion: CursorMotionOutput,
+}
+
+impl ToolOutput for SetAgentCursorMotionOutput {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct SetAgentCursorThemeOutput {
+    pub session: String,
+    pub theme: CursorThemeOutput,
+}
+
+impl ToolOutput for SetAgentCursorThemeOutput {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
+pub struct GetAgentCursorStateOutput {
+    pub session: String,
+    pub enabled: bool,
+    // Wire contract: the key is always present, and its value is `null` until
+    // the session cursor first moves.
+    #[schemars(required, schema_with = "nullable_cursor_point_schema")]
+    pub position: Option<CursorPointOutput>,
+    pub theme: CursorThemeOutput,
+    pub visual_state: CursorVisualOutput,
+    pub motion: CursorMotionOutput,
+}
+
+impl ToolOutput for GetAgentCursorStateOutput {}
+
+fn inactive_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({ "const": false })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct DesktopStateOutput {
+    #[schemars(schema_with = "platform_schema")]
+    pub platform: Platform,
+    pub display: String,
+    #[schemars(schema_with = "integer_schema")]
+    pub screenshot_width: u64,
+    #[schemars(schema_with = "integer_schema")]
+    pub screenshot_height: u64,
+    #[schemars(schema_with = "integer_schema")]
+    pub screen_width: u64,
+    #[schemars(schema_with = "integer_schema")]
+    pub screen_height: u64,
+    #[schemars(schema_with = "number_schema")]
+    pub scale_factor: f64,
+    #[schemars(schema_with = "png_mime_schema")]
+    pub screenshot_mime_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "string_schema")]
+    pub screenshot_file_path: Option<String>,
+    /// Whether the Driver's own overlay pixels (agent cursor, session pill)
+    /// were kept out of this capture. Absent from producers that predate the
+    /// report.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_overlay_capture: Option<AgentOverlayCapture>,
+    #[serde(flatten)]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+/// How a Driver-owned desktop capture treated Driver-owned overlay pixels.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentOverlayCaptureStatus {
+    /// Overlay windows were on screen and were kept out of the pixels.
+    Excluded,
+    /// No Driver overlay pixels were on screen, so there was nothing to keep out.
+    NotPresent,
+    /// Overlay pixels may be in the capture; `reason` says why.
+    NotExcluded,
+}
+
+/// Report attached to desktop captures about Driver-owned overlay pixels.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AgentOverlayCapture {
+    pub status: AgentOverlayCaptureStatus,
+    /// Native mechanism that kept the overlay out, when `status` is `excluded`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    /// Why the overlay could not be kept out, when `status` is `not_excluded`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl AgentOverlayCapture {
+    pub fn excluded(method: impl Into<String>) -> Self {
+        Self {
+            status: AgentOverlayCaptureStatus::Excluded,
+            method: Some(method.into()),
+            reason: None,
+        }
+    }
+
+    pub fn not_present() -> Self {
+        Self {
+            status: AgentOverlayCaptureStatus::NotPresent,
+            method: None,
+            reason: None,
+        }
+    }
+
+    pub fn not_excluded(reason: impl Into<String>) -> Self {
+        Self {
+            status: AgentOverlayCaptureStatus::NotExcluded,
+            method: None,
+            reason: Some(reason.into()),
+        }
+    }
+
+    /// Whether the capture is free of Driver overlay pixels.
+    pub fn is_clean(&self) -> bool {
+        self.status != AgentOverlayCaptureStatus::NotExcluded
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        match (self.status, &self.method, &self.reason) {
+            (AgentOverlayCaptureStatus::Excluded, Some(_), None)
+            | (AgentOverlayCaptureStatus::NotPresent, None, None)
+            | (AgentOverlayCaptureStatus::NotExcluded, None, Some(_)) => Ok(()),
+            _ => Err(
+                "agent_overlay_capture: excluded requires only method, not_excluded requires \
+                 only reason, not_present carries neither"
+                    .into(),
+            ),
+        }
+    }
+}
+
+impl ToolOutput for DesktopStateOutput {
+    fn validate(&self) -> Result<(), String> {
+        if self.screenshot_mime_type != "image/png" {
+            return Err("screenshot_mime_type must be image/png".into());
+        }
+        match &self.agent_overlay_capture {
+            Some(report) => report.validate(),
+            None => Ok(()),
+        }
+    }
+}
+
+fn png_mime_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({ "const": "image/png" })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ScreenSizeOutput {
+    #[schemars(schema_with = "number_schema")]
+    pub width: f64,
+    #[schemars(schema_with = "number_schema")]
+    pub height: f64,
+    #[schemars(schema_with = "number_schema")]
+    pub scale_factor: f64,
+    #[serde(flatten)]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+impl ToolOutput for ScreenSizeOutput {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct CursorPositionOutput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "number_schema")]
+    pub x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "number_schema")]
+    pub y: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "boolean_schema")]
+    pub available: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "string_schema")]
+    pub source: Option<String>,
+    #[serde(flatten)]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+impl ToolOutput for CursorPositionOutput {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct ClipboardReadOutput {
+    pub supported: bool,
+    pub types: Vec<String>,
+    #[schemars(required, schema_with = "nullable_string_schema")]
+    pub text: Option<String>,
+    pub privacy_sensitive: bool,
+    pub content_redacted_from_telemetry: bool,
+}
+
+impl ToolOutput for ClipboardReadOutput {
+    fn validate(&self) -> Result<(), String> {
+        if !self.supported {
+            return Err("successful clipboard reads must be supported".into());
+        }
+        if !self.privacy_sensitive || !self.content_redacted_from_telemetry {
+            return Err("clipboard privacy metadata must remain enabled".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+pub struct ClipboardWriteOutput {
+    pub supported: bool,
+    pub written_type: String,
+    pub types: Vec<String>,
+    pub privacy_sensitive: bool,
+    pub content_redacted_from_telemetry: bool,
+}
+
+impl ToolOutput for ClipboardWriteOutput {
+    fn validate(&self) -> Result<(), String> {
+        if !self.supported {
+            return Err("successful clipboard writes must be supported".into());
+        }
+        if !matches!(self.written_type.as_str(), "text" | "image" | "file_url") {
+            return Err("written_type must be text, image, or file_url".into());
+        }
+        if !self.privacy_sensitive || !self.content_redacted_from_telemetry {
+            return Err("clipboard privacy metadata must remain enabled".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionEffect {
+    Confirmed,
+    Partial,
+    Unverifiable,
+    SuspectedNoop,
+    Refused,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionRoute {
+    Accessibility,
+    SyntheticEvents,
+    GlobalInput,
+    SystemApi,
+    Dom,
+    TrustedInput,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionDeliveryMode {
+    Background,
+    Foreground,
+    NotApplicable,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ActionDelivery {
+    pub mode: ActionDeliveryMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivered_count: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionEvidenceKind {
+    ValueReadback,
+    WindowChange,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ActionEvidence {
+    pub kind: ActionEvidenceKind,
+    /// Human-readable readback the evidence rests on (what changed, which
+    /// popup or window appeared and how to target it). Never request data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// Why a `refused` action sent no input, and what to do instead.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ActionError {
+    pub code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionEscalationTarget {
+    Pixel,
+    Foreground,
+    Page,
+    Session,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionEscalationReason {
+    RouteUnavailable,
+    DeliveryFailed,
+    EffectUnconfirmed,
+    SuspectedNoop,
+    PermissionRequired,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ActionEscalation {
+    pub target: ActionEscalationTarget,
+    pub reason: ActionEscalationReason,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ActionResult {
+    pub effect: ActionEffect,
+    pub route: ActionRoute,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<ActionDelivery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<Vec<ActionEvidence>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub escalation: Option<ActionEscalation>,
+    /// The producer's human summary of what happened (resolved points, the
+    /// element hit, popups that opened, focus outcome, follow-up calls).
+    /// Clients that read only `structuredContent` still get everything the
+    /// text content says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// Present only with `effect: refused`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ActionError>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionResultValidationError {
+    ConfirmedRequiresEvidence,
+    PartialRequiresDeliveredCount,
+    RefusedCannotHaveDelivery,
+    RefusedCannotHaveEvidence,
+    ErrorRequiresRefused,
+}
+
+impl std::fmt::Display for ActionResultValidationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::ConfirmedRequiresEvidence => "confirmed effect requires evidence",
+            Self::PartialRequiresDeliveredCount => "partial effect requires delivered_count",
+            Self::RefusedCannotHaveDelivery => "refused effect cannot include delivery",
+            Self::RefusedCannotHaveEvidence => "refused effect cannot include evidence",
+            Self::ErrorRequiresRefused => "error is only reported with a refused effect",
+        })
+    }
+}
+
+impl std::error::Error for ActionResultValidationError {}
+
+impl ActionResult {
+    pub fn validate_invariants(&self) -> Result<(), ActionResultValidationError> {
+        match self.effect {
+            ActionEffect::Confirmed
+                if self
+                    .evidence
+                    .as_ref()
+                    .is_none_or(|evidence| evidence.is_empty()) =>
+            {
+                Err(ActionResultValidationError::ConfirmedRequiresEvidence)
+            }
+            ActionEffect::Partial
+                if self
+                    .delivery
+                    .as_ref()
+                    .and_then(|delivery| delivery.delivered_count)
+                    .is_none() =>
+            {
+                Err(ActionResultValidationError::PartialRequiresDeliveredCount)
+            }
+            ActionEffect::Refused if self.delivery.is_some() => {
+                Err(ActionResultValidationError::RefusedCannotHaveDelivery)
+            }
+            ActionEffect::Refused if self.evidence.is_some() => {
+                Err(ActionResultValidationError::RefusedCannotHaveEvidence)
+            }
+            effect if effect != ActionEffect::Refused && self.error.is_some() => {
+                Err(ActionResultValidationError::ErrorRequiresRefused)
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+impl ToolOutput for ActionResult {
+    fn validate(&self) -> Result<(), String> {
+        self.validate_invariants()
+            .map_err(|error| error.to_string())
+    }
+
+    fn output_schema() -> Value {
+        output_schema_with_additional_properties::<Self>(false)
+    }
+}
+
+fn string_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({ "type": "string" })
+}
+
+fn boolean_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({ "type": "boolean" })
+}
+
+fn number_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({ "type": "number" })
+}
+
+fn integer_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({ "type": "integer" })
+}
+
+fn platform_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": "string",
+        "enum": ["macos", "linux", "windows"]
+    })
+}
+
+fn nullable_string_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({ "anyOf": [{ "type": "string" }, { "type": "null" }] })
+}
+
+fn nullable_cursor_point_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let point = generator.subschema_for::<CursorPointOutput>();
+    schemars::json_schema!({ "anyOf": [point, { "type": "null" }] })
+}
+
+fn nullable_escalation_reason_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "anyOf": [
+            {
+                "type": "string",
+                "enum": [
+                    "ax_tree_pixel_mismatch",
+                    "background_delivery_failed",
+                    "foreground_ineffective",
+                    "no_window_target",
+                    "other"
+                ]
+            },
+            { "type": "null" }
+        ]
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn object_variant(schema: &Value) -> &Value {
+        if schema.get("properties").is_some() {
+            return schema;
+        }
+        schema["anyOf"]
+            .as_array()
+            .expect("nullable anyOf")
+            .iter()
+            .find(|variant| variant.get("properties").is_some())
+            .expect("object variant")
+    }
+
+    fn confirmed_result() -> ActionResult {
+        ActionResult {
+            effect: ActionEffect::Confirmed,
+            route: ActionRoute::Accessibility,
+            delivery: Some(ActionDelivery {
+                mode: ActionDeliveryMode::Background,
+                delivered_count: None,
+            }),
+            evidence: Some(vec![ActionEvidence {
+                kind: ActionEvidenceKind::ValueReadback,
+                detail: None,
+            }]),
+            escalation: None,
+            summary: None,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn schema_compaction_keeps_properties_named_title_or_description() {
+        let mut schema = serde_json::json!({
+            "title": "TopLevel",
+            "description": "Top-level annotation",
+            "properties": {
+                "title": { "type": "string", "description": "The window title." },
+                "description": { "type": "string" },
+                "nested": {
+                    "title": "Nested",
+                    "properties": { "title": { "type": "string", "title": "Inner" } }
+                }
+            }
+        });
+
+        strip_schema_titles(&mut schema);
+
+        assert!(schema.get("title").is_none(), "annotation must be stripped");
+        assert!(
+            schema.get("description").is_none(),
+            "annotation must be stripped"
+        );
+        let properties = schema["properties"].as_object().expect("properties map");
+        assert!(
+            properties.contains_key("title"),
+            "property name must survive compaction"
+        );
+        assert!(
+            properties.contains_key("description"),
+            "property name must survive compaction"
+        );
+        assert!(
+            properties["nested"]["properties"]
+                .as_object()
+                .expect("nested properties")
+                .contains_key("title"),
+            "nested property name must survive compaction"
+        );
+        assert!(properties["title"].get("description").is_none());
+        assert!(properties["nested"].get("title").is_none());
+    }
+
+    #[test]
+    fn action_result_schema_is_exact_and_closed() {
+        let schema = ActionResult::output_schema();
+        assert_eq!(schema["additionalProperties"], false);
+        assert_eq!(schema["required"], json!(["effect", "route"]));
+
+        let properties = schema["properties"].as_object().expect("properties");
+        assert_eq!(
+            properties.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "delivery",
+                "effect",
+                "error",
+                "escalation",
+                "evidence",
+                "route",
+                "summary"
+            ]
+        );
+        assert_eq!(
+            properties["effect"]["enum"],
+            json!([
+                "confirmed",
+                "partial",
+                "unverifiable",
+                "suspected_noop",
+                "refused"
+            ])
+        );
+        assert_eq!(
+            properties["route"]["enum"],
+            json!([
+                "accessibility",
+                "synthetic_events",
+                "global_input",
+                "system_api",
+                "dom",
+                "trusted_input"
+            ])
+        );
+
+        let delivery = object_variant(&properties["delivery"]);
+        assert_eq!(delivery["additionalProperties"], false);
+        assert_eq!(delivery["required"], json!(["mode"]));
+        assert_eq!(
+            delivery["properties"]["mode"]["enum"],
+            json!(["background", "foreground", "not_applicable", "unknown"])
+        );
+
+        let evidence_schema = &properties["evidence"];
+        let evidence_array = if evidence_schema.get("items").is_some() {
+            evidence_schema
+        } else {
+            evidence_schema["anyOf"]
+                .as_array()
+                .expect("nullable anyOf")
+                .iter()
+                .find(|variant| variant.get("items").is_some())
+                .expect("array variant")
+        };
+        let evidence = &evidence_array["items"];
+        assert_eq!(evidence["additionalProperties"], false);
+        assert_eq!(evidence["required"], json!(["kind"]));
+        assert_eq!(
+            evidence["properties"]["kind"]["enum"],
+            json!(["value_readback", "window_change"])
+        );
+
+        let escalation = object_variant(&properties["escalation"]);
+        assert_eq!(escalation["additionalProperties"], false);
+        assert_eq!(escalation["required"], json!(["target", "reason"]));
+        assert_eq!(
+            escalation["properties"]["target"]["enum"],
+            json!(["pixel", "foreground", "page", "session"])
+        );
+        assert_eq!(
+            escalation["properties"]["reason"]["enum"],
+            json!([
+                "route_unavailable",
+                "delivery_failed",
+                "effect_unconfirmed",
+                "suspected_noop",
+                "permission_required"
+            ])
+        );
+    }
+
+    #[test]
+    fn action_result_round_trips_without_legacy_or_request_fields() {
+        let result = confirmed_result();
+        let value = serde_json::to_value(&result).expect("serialize");
+        assert_eq!(
+            value,
+            json!({
+                "effect": "confirmed",
+                "route": "accessibility",
+                "delivery": {"mode": "background"},
+                "evidence": [{"kind": "value_readback"}]
+            })
+        );
+        assert_eq!(
+            serde_json::from_value::<ActionResult>(value).expect("deserialize"),
+            result
+        );
+
+        for legacy in [
+            ("scope", json!("desktop")),
+            ("target", json!("button")),
+            ("x", json!(10)),
+            ("y", json!(20)),
+            ("path", json!("cgevent")),
+            ("transport", json!("windows_send_input")),
+            ("verified", json!(true)),
+            ("extensions", json!({})),
+        ] {
+            let mut value = serde_json::to_value(&result).expect("serialize");
+            value
+                .as_object_mut()
+                .expect("object")
+                .insert(legacy.0.into(), legacy.1);
+            assert!(
+                serde_json::from_value::<ActionResult>(value).is_err(),
+                "accepted legacy field {}",
+                legacy.0
+            );
+        }
+
+        let mut delivery_extension = serde_json::to_value(&result).expect("serialize");
+        delivery_extension["delivery"]["requested"] = json!("background");
+        assert!(serde_json::from_value::<ActionResult>(delivery_extension).is_err());
+
+        // Evidence carries its human detail so a client that reads only
+        // structuredContent still sees what the readback said; other
+        // evidence extensions stay closed.
+        let mut evidence_detail = serde_json::to_value(&result).expect("serialize");
+        evidence_detail["evidence"][0]["detail"] = json!("value read back as 42");
+        assert_eq!(
+            serde_json::from_value::<ActionResult>(evidence_detail)
+                .expect("detail")
+                .evidence
+                .expect("evidence")[0]
+                .detail
+                .as_deref(),
+            Some("value read back as 42")
+        );
+        let mut evidence_extension = serde_json::to_value(&result).expect("serialize");
+        evidence_extension["evidence"][0]["raw"] = json!("private readback");
+        assert!(serde_json::from_value::<ActionResult>(evidence_extension).is_err());
+
+        let refusal = json!({
+            "effect": "refused",
+            "route": "synthetic_events",
+            "summary": "no input was sent",
+            "error": {"code": "point_outside_window", "hint": "use window-local pixels"}
+        });
+        let refusal = serde_json::from_value::<ActionResult>(refusal).expect("refusal");
+        assert_eq!(refusal.validate_invariants(), Ok(()));
+        assert_eq!(
+            refusal.error.as_ref().map(|error| error.code.as_str()),
+            Some("point_outside_window")
+        );
+        let mut error_extension = serde_json::to_value(&refusal).expect("serialize");
+        error_extension["error"]["detail"] = json!({"x": 1});
+        assert!(serde_json::from_value::<ActionResult>(error_extension).is_err());
+
+        let escalation_extension = json!({
+            "effect": "unverifiable",
+            "route": "synthetic_events",
+            "escalation": {
+                "target": "foreground",
+                "reason": "delivery_failed",
+                "requires": ["window_id"]
+            }
+        });
+        assert!(serde_json::from_value::<ActionResult>(escalation_extension).is_err());
+    }
+
+    #[test]
+    fn action_result_enforces_effect_invariants() {
+        let mut result = confirmed_result();
+        result.evidence = None;
+        assert_eq!(
+            result.validate_invariants(),
+            Err(ActionResultValidationError::ConfirmedRequiresEvidence)
+        );
+        assert_eq!(
+            ToolOutput::validate(&result),
+            Err("confirmed effect requires evidence".into())
+        );
+
+        result.effect = ActionEffect::Partial;
+        result.delivery = Some(ActionDelivery {
+            mode: ActionDeliveryMode::Foreground,
+            delivered_count: None,
+        });
+        assert_eq!(
+            result.validate_invariants(),
+            Err(ActionResultValidationError::PartialRequiresDeliveredCount)
+        );
+        result.delivery.as_mut().expect("delivery").delivered_count = Some(1);
+        assert_eq!(result.validate_invariants(), Ok(()));
+
+        result.effect = ActionEffect::Refused;
+        assert_eq!(
+            result.validate_invariants(),
+            Err(ActionResultValidationError::RefusedCannotHaveDelivery)
+        );
+        result.delivery = None;
+        result.evidence = Some(vec![ActionEvidence {
+            kind: ActionEvidenceKind::WindowChange,
+            detail: None,
+        }]);
+        assert_eq!(
+            result.validate_invariants(),
+            Err(ActionResultValidationError::RefusedCannotHaveEvidence)
+        );
+        result.evidence = None;
+        assert_eq!(result.validate_invariants(), Ok(()));
+
+        result.error = Some(ActionError {
+            code: "window_target_not_found".into(),
+            hint: None,
+        });
+        assert_eq!(result.validate_invariants(), Ok(()));
+        result.effect = ActionEffect::Unverifiable;
+        assert_eq!(
+            result.validate_invariants(),
+            Err(ActionResultValidationError::ErrorRequiresRefused)
+        );
+    }
+}
+
+#[cfg(test)]
+mod error_envelope_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_diagnostic_without_a_marker_gains_one() {
+        let envelope = conforming_error_envelope(json!({"exit_code": 1}));
+
+        assert_eq!(envelope["code"], TOOL_INVOCATION_FAILED_CODE);
+        assert_eq!(envelope["exit_code"], 1);
+    }
+
+    #[test]
+    fn each_existing_marker_is_left_alone() {
+        for marker in ["refusal", "status", "code"] {
+            let envelope = conforming_error_envelope(json!({marker: "already-named"}));
+
+            assert_eq!(
+                envelope,
+                json!({marker: "already-named"}),
+                "guard rewrote a payload that already carries `{marker}`"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_object_diagnostic_becomes_an_object() {
+        let envelope = conforming_error_envelope(json!("daemon transport closed"));
+
+        assert_eq!(envelope["code"], TOOL_INVOCATION_FAILED_CODE);
+        assert_eq!(envelope["detail"], "daemon transport closed");
+    }
+
+    #[test]
+    fn an_absent_diagnostic_still_produces_a_refusal() {
+        assert_eq!(
+            conforming_error_envelope(Value::Null),
+            json!({"code": TOOL_INVOCATION_FAILED_CODE})
+        );
+    }
+}

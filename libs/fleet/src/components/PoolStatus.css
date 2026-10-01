@@ -1,0 +1,14 @@
+.cua-pool-status {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.cua-pool-status__dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 50%;
+}

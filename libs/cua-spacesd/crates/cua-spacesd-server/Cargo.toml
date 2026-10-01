@@ -1,0 +1,83 @@
+[package]
+name = "cua-spacesd-server"
+description = "gRPC, gRPC-Web and HTTP server core of cua-spacesd (cua.env.v1)"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+cua-proto = { path = "../../../cua/crates/cua-proto" }
+# Sealed delivery to a pinned machine key (S1): this guest's own keypair
+# and the replay guard for unsealing.
+cua-machine-seal = { path = "../../../cua/crates/cua-machine-seal" }
+# Opt-in aggregate health counts (off unless the host enables them).
+cua-telemetry = { path = "../../../cua/crates/cua-telemetry" }
+cua-driver-core = { path = "../../../cua-driver/rust/crates/cua-driver-core" }
+# Typed Driver envelopes over `/mcp`: the canonical receiver (generations,
+# request ledger, cancellation) and the envelope wire records.
+cua-driver-sdk = { path = "../../../cua-driver/rust/crates/cua-driver-sdk", default-features = false }
+cua-driver-contract = { path = "../../../cua-driver/rust/crates/cua-driver-contract" }
+async-trait = "0.1"
+cua-spacesd-teleport = { path = "../cua-spacesd-teleport" }
+cua-spacesd-socks = { path = "../cua-spacesd-socks" }
+# The HTML5 viewer served at /viewer.
+cua-spacesd-html5 = { path = "../../../cua/crates/cua-spacesd-html5" }
+axum = { version = "0.8", features = ["ws"] }
+base64.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+hmac.workspace = true
+http.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+libc = "0.2"
+mime_guess = "2"
+# Not used directly: turns on OpenSSL `vendored` for tokio-tungstenite
+# (see the workspace entry), so the Linux driver has no libssl.so dependency.
+native-tls.workspace = true
+notify = "8"
+percent-encoding = "2"
+prost.workspace = true
+rand.workspace = true
+serde.workspace = true
+# `join` account mode: relay assertion verification (relay_account).
+cua-relay = { path = "../cua-relay" }
+serde_json.workspace = true
+sha2.workspace = true
+socket2 = "0.6"
+subtle.workspace = true
+sysinfo = "0.37"
+tokio = { workspace = true, features = ["fs", "process", "io-util"] }
+tokio-stream.workspace = true
+tokio-util.workspace = true
+tonic.workspace = true
+tonic-reflection.workspace = true
+tonic-web.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# ConPTY for PTY processes (portable-pty is MIT; its errors are anyhow).
+anyhow = "1"
+portable-pty = "0.9"
+# The Cua Volume drive: GetLogicalDrives, GetDriveTypeW, WNetGetConnectionW.
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_NetworkManagement_WNet"] }
+
+[dev-dependencies]
+async-trait = "0.1"
+# https for the conformance suite's raw requests against a Fleet gateway target.
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "ring", "webpki-roots"] }
+cua-spacesd-client = { path = "../../../cua/crates/cua-spacesd-client" }
+prost-types = "0.14"
+rustls.workspace = true
+tempfile.workspace = true
+tokio-tungstenite.workspace = true
+tracing-subscriber.workspace = true

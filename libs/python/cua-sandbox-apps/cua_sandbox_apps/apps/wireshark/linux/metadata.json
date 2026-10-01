@@ -1,0 +1,17 @@
+{
+  "binary_path": "/usr/bin/wireshark",
+  "binary_name": "wireshark",
+  "display_name": "Wireshark",
+  "desktop_entry": "/usr/share/applications/org.wireshark.Wireshark.desktop",
+  "icon_paths": [
+    "/usr/share/icons/hicolor/128x128/apps/org.wireshark.Wireshark.png",
+    "/usr/share/icons/hicolor/16x16/apps/org.wireshark.Wireshark.png",
+    "/usr/share/icons/hicolor/24x24/apps/org.wireshark.Wireshark.png",
+    "/usr/share/icons/hicolor/256x256/apps/org.wireshark.Wireshark.png",
+    "/usr/share/icons/hicolor/32x32/apps/org.wireshark.Wireshark.png",
+    "/usr/share/icons/hicolor/48x48/apps/org.wireshark.Wireshark.png",
+    "/usr/share/icons/hicolor/64x64/apps/org.wireshark.Wireshark.png",
+    "/usr/share/icons/hicolor/scalable/apps/org.wireshark.Wireshark.svg"
+  ],
+  "version": "3.6.2"
+}

@@ -1,0 +1,683 @@
+{
+  "flow": "placement-picker",
+  "frames": [
+    {
+      "on": "local",
+      "step": "this Mac and your machines, no cloud without the experiment",
+      "wizard": {
+        "canContinue": true,
+        "cloud": null,
+        "fields": [
+          "os",
+          "image",
+          "placement",
+          "kind",
+          "runtime",
+          "connect-by-address"
+        ],
+        "kindsOff": [],
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "---",
+          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "host:lab | lab | Over Tailscale or your network | on",
+          "host:m-studio | Studio (offline) | Studio is offline. | off"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Container",
+          "Architecture: ARM",
+          "Disk: 2.8 GB"
+        ],
+        "step": 0,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: This Mac",
+          "Kind: Container",
+          "Architecture: ARM",
+          "Runtime: Container on this Mac (gVisor when installed)",
+          "Resources: 2 cores, 4 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    },
+    {
+      "on": "local",
+      "step": "an offline machine cannot be chosen",
+      "wizard": {
+        "canContinue": true,
+        "cloud": null,
+        "fields": [
+          "os",
+          "image",
+          "placement",
+          "kind",
+          "runtime",
+          "connect-by-address"
+        ],
+        "kindsOff": [],
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "---",
+          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "host:lab | lab | Over Tailscale or your network | on",
+          "host:m-studio | Studio (offline) | Studio is offline. | off"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Container",
+          "Architecture: ARM",
+          "Disk: 2.8 GB"
+        ],
+        "step": 0,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: This Mac",
+          "Kind: Container",
+          "Architecture: ARM",
+          "Runtime: Container on this Mac (gVisor when installed)",
+          "Resources: 2 cores, 4 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    },
+    {
+      "on": "local",
+      "step": "a hidden cloud cannot be chosen",
+      "wizard": {
+        "canContinue": true,
+        "cloud": null,
+        "fields": [
+          "os",
+          "image",
+          "placement",
+          "kind",
+          "runtime",
+          "connect-by-address"
+        ],
+        "kindsOff": [],
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "---",
+          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "host:lab | lab | Over Tailscale or your network | on",
+          "host:m-studio | Studio (offline) | Studio is offline. | off"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Container",
+          "Architecture: ARM",
+          "Disk: 2.8 GB"
+        ],
+        "step": 0,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: This Mac",
+          "Kind: Container",
+          "Architecture: ARM",
+          "Runtime: Container on this Mac (gVisor when installed)",
+          "Resources: 2 cores, 4 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    },
+    {
+      "on": "host:m-mini",
+      "step": "the Mac mini on the relay",
+      "wizard": {
+        "canContinue": true,
+        "cloud": null,
+        "fields": [
+          "os",
+          "image",
+          "placement",
+          "kind",
+          "runtime",
+          "connect-by-address"
+        ],
+        "kindsOff": [],
+        "placement": "host",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "---",
+          "host:m-mini | Mac mini | Through the Cua relay | on *",
+          "host:lab | lab | Over Tailscale or your network | on",
+          "host:m-studio | Studio (offline) | Studio is offline. | off"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "step": 0,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: Mac mini",
+          "Kind: Container",
+          "Runtime: Container on Mac mini",
+          "Resources: 2 cores, 4 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    },
+    {
+      "on": "host:m-mini",
+      "step": "macOS: the Mac mini is at its limit, the Linux box is not a Mac",
+      "wizard": {
+        "canContinue": false,
+        "cloud": null,
+        "fields": [
+          "os",
+          "image",
+          "placement",
+          "kind",
+          "runtime",
+          "connect-by-address"
+        ],
+        "kindsOff": [
+          "container | Container |  | off"
+        ],
+        "placement": "host",
+        "placementError": "Mac mini is at its limit: Apple's macOS license allows two macOS VMs per Mac.",
+        "placements": [
+          "local | This Mac | Lume virtual machine (Apple silicon) | on",
+          "---",
+          "host:m-mini | Mac mini (at its limit) | Mac mini is at its limit: Apple's macOS license allows two macOS VMs per Mac. | off *",
+          "host:lab | lab (not a Mac) | lab cannot run macOS: it is not a Mac. | off",
+          "host:m-studio | Studio (offline) | Studio is offline. | off"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Disk: 150 GB"
+        ],
+        "step": 0,
+        "summary": [
+          "System: macOS Tahoe 26",
+          "Image: ghcr.io/trycua/macos:26",
+          "Runs on: Mac mini",
+          "Kind: Virtual machine",
+          "Runtime: Virtual machine on Mac mini",
+          "Resources: 4 cores, 8 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    },
+    {
+      "on": "host:m-mini",
+      "step": "Linux again",
+      "wizard": {
+        "canContinue": true,
+        "cloud": null,
+        "fields": [
+          "os",
+          "image",
+          "placement",
+          "kind",
+          "runtime",
+          "connect-by-address"
+        ],
+        "kindsOff": [],
+        "placement": "host",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "---",
+          "host:m-mini | Mac mini | Through the Cua relay | on *",
+          "host:lab | lab | Over Tailscale or your network | on",
+          "host:m-studio | Studio (offline) | Studio is offline. | off"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "step": 0,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: Mac mini",
+          "Kind: Container",
+          "Runtime: Container on Mac mini",
+          "Resources: 2 cores, 4 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    },
+    {
+      "on": "host:lab",
+      "step": "the Linux box over Tailscale",
+      "wizard": {
+        "canContinue": true,
+        "cloud": null,
+        "fields": [
+          "os",
+          "image",
+          "placement",
+          "kind",
+          "runtime",
+          "connect-by-address"
+        ],
+        "kindsOff": [],
+        "placement": "host",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "---",
+          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "host:lab | lab | Over Tailscale or your network | on *",
+          "host:m-studio | Studio (offline) | Studio is offline. | off"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "step": 0,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: lab",
+          "Kind: Container",
+          "Runtime: Container on lab",
+          "Resources: 2 cores, 4 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    },
+    {
+      "on": "host:lab",
+      "step": "with Your cloud, AWS after your machines",
+      "wizard": {
+        "canContinue": true,
+        "cloud": "aws",
+        "fields": [
+          "os",
+          "image",
+          "placement",
+          "kind",
+          "runtime",
+          "connect-cloud",
+          "connect-by-address"
+        ],
+        "kindsOff": [],
+        "placement": "host",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "---",
+          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "host:lab | lab | Over Tailscale or your network | on *",
+          "host:m-studio | Studio (offline) | Studio is offline. | off",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "step": 0,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: lab",
+          "Kind: Container",
+          "Runtime: Container on lab",
+          "Resources: 2 cores, 4 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    },
+    {
+      "on": "aws",
+      "step": "AWS",
+      "wizard": {
+        "canContinue": true,
+        "cloud": "aws",
+        "fields": [
+          "os",
+          "image",
+          "placement",
+          "kind",
+          "runtime",
+          "connect-cloud",
+          "connect-by-address"
+        ],
+        "kindsOff": [
+          "vm | Virtual machine | AWS does not run this image. Ask your agent to deploy the Ubuntu 24.04 VM image on AWS and add it with cua spaces add. | off"
+        ],
+        "placement": "yours",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "---",
+          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "host:lab | lab | Over Tailscale or your network | on",
+          "host:m-studio | Studio (offline) | Studio is offline. | off",
+          "---",
+          "aws | AWS · us-west-2 | t4g.medium, about $0.04/hour | on *"
+        ],
+        "price": "About $0.04/hour",
+        "resourceFacts": [
+          "Kind: Container",
+          "Machine: t4g.medium",
+          "Deletes itself: After 2 hours"
+        ],
+        "step": 0,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: AWS · us-west-2",
+          "Kind: Container",
+          "Runtime: Container on t4g.medium",
+          "Cost: About $0.04/hour",
+          "Deletes itself: After 2 hours",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": [
+          "windows | Windows | AWS does not run this image. Ask your agent to deploy the Windows Server 2022 image on AWS and add it with cua spaces add. | off",
+          "macos | macOS | macOS on AWS needs EC2 Mac (24 h minimum); not offered. Ask your agent to deploy the macOS Tahoe 26 image on AWS and add it with cua spaces add. | off"
+        ]
+      }
+    },
+    {
+      "on": "local",
+      "step": "Your cloud off: this Mac again, AWS still connected",
+      "wizard": {
+        "canContinue": true,
+        "cloud": null,
+        "fields": [
+          "os",
+          "image",
+          "placement",
+          "kind",
+          "runtime",
+          "connect-by-address"
+        ],
+        "kindsOff": [],
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on *",
+          "---",
+          "host:m-mini | Mac mini | Through the Cua relay | on",
+          "host:lab | lab | Over Tailscale or your network | on",
+          "host:m-studio | Studio (offline) | Studio is offline. | off"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Container",
+          "Architecture: ARM",
+          "Disk: 2.8 GB"
+        ],
+        "step": 0,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: This Mac",
+          "Kind: Container",
+          "Architecture: ARM",
+          "Runtime: Container on this Mac (gVisor when installed)",
+          "Resources: 2 cores, 4 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    },
+    {
+      "on": "host:m-mini",
+      "step": "the Mac mini again",
+      "wizard": {
+        "canContinue": true,
+        "cloud": null,
+        "fields": [
+          "os",
+          "image",
+          "placement",
+          "kind",
+          "runtime",
+          "connect-by-address"
+        ],
+        "kindsOff": [],
+        "placement": "host",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "---",
+          "host:m-mini | Mac mini | Through the Cua relay | on *",
+          "host:lab | lab | Over Tailscale or your network | on",
+          "host:m-studio | Studio (offline) | Studio is offline. | off"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "step": 0,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: Mac mini",
+          "Kind: Container",
+          "Runtime: Container on Mac mini",
+          "Resources: 2 cores, 4 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    },
+    {
+      "on": "host:m-mini",
+      "step": "resources: its own size, no price",
+      "wizard": {
+        "canContinue": true,
+        "cloud": null,
+        "fields": [
+          "cpus",
+          "memory"
+        ],
+        "kindsOff": [],
+        "placement": "host",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "---",
+          "host:m-mini | Mac mini | Through the Cua relay | on *",
+          "host:lab | lab | Over Tailscale or your network | on",
+          "host:m-studio | Studio (offline) | Studio is offline. | off"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "step": 1,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: Mac mini",
+          "Kind: Container",
+          "Runtime: Container on Mac mini",
+          "Resources: 2 cores, 4 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    },
+    {
+      "on": "host:m-mini",
+      "step": "options",
+      "wizard": {
+        "canContinue": true,
+        "cloud": null,
+        "fields": [
+          "name",
+          "open-when-ready"
+        ],
+        "kindsOff": [],
+        "placement": "host",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "---",
+          "host:m-mini | Mac mini | Through the Cua relay | on *",
+          "host:lab | lab | Over Tailscale or your network | on",
+          "host:m-studio | Studio (offline) | Studio is offline. | off"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "step": 2,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: Mac mini",
+          "Kind: Container",
+          "Runtime: Container on Mac mini",
+          "Resources: 2 cores, 4 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    },
+    {
+      "on": "host:m-mini",
+      "step": "summary: runs on the Mac mini",
+      "wizard": {
+        "canContinue": true,
+        "cloud": null,
+        "fields": [],
+        "kindsOff": [],
+        "placement": "host",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on",
+          "---",
+          "host:m-mini | Mac mini | Through the Cua relay | on *",
+          "host:lab | lab | Over Tailscale or your network | on",
+          "host:m-studio | Studio (offline) | Studio is offline. | off"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Container",
+          "Disk: 3.0 GB"
+        ],
+        "step": 3,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: Mac mini",
+          "Kind: Container",
+          "Runtime: Container on Mac mini",
+          "Resources: 2 cores, 4 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    },
+    {
+      "on": "local",
+      "step": "the Mac mini leaves the list: this Mac again",
+      "wizard": {
+        "canContinue": true,
+        "cloud": null,
+        "fields": [],
+        "kindsOff": [],
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on *"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Container",
+          "Architecture: ARM",
+          "Disk: 2.8 GB"
+        ],
+        "step": 3,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: This Mac",
+          "Kind: Container",
+          "Architecture: ARM",
+          "Runtime: Container on this Mac (gVisor when installed)",
+          "Resources: 2 cores, 4 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    },
+    {
+      "on": "local",
+      "step": "this Mac",
+      "wizard": {
+        "canContinue": true,
+        "cloud": null,
+        "fields": [],
+        "kindsOff": [],
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local | This Mac | Container on this Mac (gVisor when installed) | on *"
+        ],
+        "price": null,
+        "resourceFacts": [
+          "Kind: Container",
+          "Architecture: ARM",
+          "Disk: 2.8 GB"
+        ],
+        "step": 3,
+        "summary": [
+          "System: Ubuntu 24.04",
+          "Image: ghcr.io/trycua/linux:24.04",
+          "Runs on: This Mac",
+          "Kind: Container",
+          "Architecture: ARM",
+          "Runtime: Container on this Mac (gVisor when installed)",
+          "Resources: 2 cores, 4 GB memory",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ],
+        "systemsOff": []
+      }
+    }
+  ]
+}

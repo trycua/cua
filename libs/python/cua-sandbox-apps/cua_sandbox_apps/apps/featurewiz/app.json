@@ -1,0 +1,37 @@
+{
+  "id": "featurewiz",
+  "name": "FeatureWiz",
+  "description": "An automated feature selection and engineering library powered by the Minimum Redundancy Maximum Relevance (MRMR) algorithm. Enables users to select optimal features and create engineered variables with minimal code, supporting deep learning-based transformations.",
+  "website": "https://github.com/AutoViML/featurewiz",
+  "icon_url": "",
+  "categories": [
+    "Feature Engineering",
+    "Machine Learning",
+    "Data Science"
+  ],
+  "tags": [
+    "feature-selection",
+    "feature-engineering",
+    "machine-learning",
+    "mrmr-algorithm",
+    "automl",
+    "data-science",
+    "xgboost",
+    "python"
+  ],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/AutoViML/featurewiz",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "pip": "featurewiz",
+    "conda": "featurewiz"
+  },
+  "download_url": "https://pypi.org/project/featurewiz/"
+}

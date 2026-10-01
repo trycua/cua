@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "platforms": [
+    { "os": "linux", "arch": "x86_64", "triple": "x86_64-unknown-linux-gnu", "runner": "ubuntu-latest", "bundleArtifact": "cua-perception-input-linux-x86_64", "worker": "cua-perception", "runtime": "libonnxruntime.so", "modelManifest": "model-manifest.json" },
+    { "os": "macos", "arch": "aarch64", "triple": "aarch64-apple-darwin", "runner": "macos-15", "bundleArtifact": "cua-perception-input-macos-aarch64", "worker": "cua-perception", "runtime": "libonnxruntime.dylib", "modelManifest": "model-manifest.json" },
+    { "os": "windows", "arch": "x86_64", "triple": "x86_64-pc-windows-msvc", "runner": "windows-latest", "bundleArtifact": "cua-perception-input-windows-x86_64", "worker": "cua-perception.exe", "runtime": "onnxruntime.dll", "modelManifest": "model-manifest.json" }
+  ]
+}

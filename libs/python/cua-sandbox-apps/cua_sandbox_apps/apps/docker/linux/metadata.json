@@ -1,0 +1,8 @@
+{
+  "binary_path": "/usr/bin/docker",
+  "binary_name": "docker",
+  "display_name": "Docker",
+  "desktop_entry": null,
+  "icon_paths": [],
+  "version": "29.4.0"
+}

@@ -1,0 +1,13 @@
+module CyclopsSdkFFI {
+    header "CyclopsSdkFFI.h"
+    export *
+    use "Darwin"
+    use "_Builtin_stdbool"
+    use "_Builtin_stdint"
+}module CyclopsSdkSchemaFFI {
+    header "CyclopsSdkSchemaFFI.h"
+    export *
+    use "Darwin"
+    use "_Builtin_stdbool"
+    use "_Builtin_stdint"
+}

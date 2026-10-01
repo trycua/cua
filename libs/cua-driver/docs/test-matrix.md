@@ -1,0 +1,285 @@
+# CUA Driver Test Matrix
+
+This is the source map for the Rust test suites in `libs/cua-driver`. It uses
+two top-level test classes:
+
+1. **Unit and deterministic protocol tests.** These do not depend on a repo-local
+   application or an interactive desktop.
+2. **Harness E2E tests.** These build and launch a repo-local application, drive
+   it through the Rust driver, and verify an external application or desktop
+   oracle.
+
+A test is E2E because it crosses the driver, OS, window system, and application
+boundary. The Rust harness catalog and its external oracles are the source of
+truth.
+
+## Matrix Dimensions
+
+Every harness E2E result should identify these dimensions:
+
+| Dimension | Values |
+| --- | --- |
+| OS | `windows`, `macos`, `linux` |
+| Window system | Win32/UIA, AppKit/AX, X11/AT-SPI, Wayland/AT-SPI, WebView/CDP |
+| Harness | Electron, Tauri, WPF, WinUI3, WebView2, AppKit, SwiftUI, WKWebView, GTK3 |
+| Action targeting | `ax`, `px`, `page`, `not_applicable` |
+| Delivery | `background`, `foreground`, `N/A` |
+| Scope | `window`, `desktop`, `N/A` |
+| Oracle | App state, accessibility state, focus state, pixel state, protocol state |
+| Test status | `pass`, `fail`, `skip`, `environment_error` |
+| Observed behavior | `delivered`, `refused`, `no_effect`, `error`, `not_run` |
+
+Focus preservation is a cross-cutting oracle, not a separate matrix family.
+When a background action is tested, the row should attach the platform focus
+observer in addition to checking the target application's external state.
+
+`AX` and `PX` describe how an action addresses a target. They are not capture
+modes. `get_window_state` returns the tree and screenshot together; the action
+uses an element index or coordinates.
+
+## Unit And Deterministic Tests
+
+These run without the repo-local GUI applications:
+
+| Area | Location | Coverage |
+| --- | --- | --- |
+| Core driver logic | `rust/crates/*/src/**` | Protocol values, sessions, schemas, image helpers, input helpers, configuration, telemetry, CLI behavior |
+| MCP and CLI boundary | `rust/crates/cua-driver/tests/protocol_*` | Handshake, tool registration, tool calls, media, sessions, and errors |
+| Lifecycle sessions and target migration | Core `session`, `session_tools`, `action_target`, and compatibility `capture_scope` tests plus `session_capture_scope_test.rs` | One implicit session per transport, five-minute idle policy, in-flight and exact-once cleanup, owner-scoped inspection and revival, per-call target validation, and legacy capture-scope compatibility |
+| Tool-contract gate | `schema_consistency_test.rs` | Shared tool schema parity and reviewed risk metadata across OS backends |
+| Configuration transport | `transport_config_persistence_test.rs` | CLI configuration persistence across daemon-backed processes |
+| Token and protocol surfaces | `protocol_element_token_test.rs`, related tests | JSON-RPC-visible contract behavior |
+| Permission modes and policy startup | `permission_policy_startup_test.rs`, `daemon_required_test.rs`, core `authorization`, `policy`, and `session_manifest` tests | Fail-before-bind policy loading, managed/user intersection, immutable standard/autonomous/unrestricted startup, danger acknowledgement, admin disable, deny-by-default manifests, and canonical daemon dispatch |
+| Protected browser grants | Core `consent`, `browser::grant`, `browser::engine`, and `browser::v2_tests` | Exact request digests, provider authentication seam and deadline, persistent-indicator activation, Stop/session teardown, forged legacy artifact refusal, exact PID/window manifest scope, and the live-origin decision path used before mutation |
+
+Some protocol tests spawn the driver process. They remain deterministic because
+they do not launch a real target application or require a desktop. They should
+be reported with the unit gate, separately from Harness E2E.
+
+The ordinary unit gate must not run `#[ignore]` GUI tests and must not turn
+missing desktop fixtures into silent skips.
+
+## Harness E2E: Shared Web Applications
+
+Electron and Tauri are separate repo-local applications that load the shared
+web harness. The fixture exposes action-specific controls and external state
+markers rather than an application task that duplicates those same actions.
+
+Source:
+
+- `tests/fixtures/shared/web/index.html`
+- `tests/fixtures/apps/cross-platform/electron/`
+- `tests/fixtures/apps/cross-platform/tauri/`
+- `rust/crates/cua-driver-e2e/tests/cross_platform_behavior_test.rs`
+
+The shared harness exposes deterministic external markers for these actions:
+
+| Action family | Actions | Addressing | Delivery |
+| --- | --- | --- | --- |
+| Pointer | Left click, right click, double click | AX and PX | Background and foreground |
+| Keyboard and text | Type text, Return, hotkey, type then Return | AX and PX where supported | Background and foreground |
+| Scroll | Scroll | AX and PX where supported | Background and foreground |
+| Child windows | Open child window | AX and PX | Background and foreground |
+| Drag | Drag source to drop target | PX | Background and foreground |
+| State controls | Checkbox, radio, combo, slider | AX or PX by control | Mode declared per action |
+| Editor | Type, save, saved-state readback | AX and PX where supported | Mode declared per action |
+
+The Rust shared catalog declares 40 evidence-bearing cells per harness
+application. Windows and Linux run 80 shared cells across Electron and Tauri;
+macOS also runs the native WKWebView host for 120 shared cells. Each host covers
+the full AX/PX and foreground/background cross-product for click, text,
+keyboard, sequential type-then-Return, scroll, and child-window actions, plus
+both delivery modes for PX drag and AX editor-save. A
+background capability refusal is a valid result only when the test verifies the
+declared structured refusal and the no-focus/no-z-order/no-input-leak side
+effect. Background posture requires one foreground window to contain the target
+geometry, not merely overlap it. The lane preflight also injects deliberate
+focus and input violations and requires the sentinel to detect both before its
+results are trusted. A refusal fails a cell whose contract requires delivery.
+Canonical reporting rejects skips and enforces the complete shared catalog
+size for unfiltered runs. Diagnostic filters are allowed, but matching zero
+cells is always an error.
+
+## Harness E2E: Optional Perception Loop
+
+`perception_capture_loop_test.rs` runs the documented capture-bound loop in
+the capture lane of the macOS, Windows, and Linux X11 runners:
+
+| Cell | Coverage |
+| --- | --- |
+| `<os>-electron-parse-visual-regions-not-installed-not-applicable-not-applicable` | A retained window capture parses to the typed `not_installed` refusal when no extension is installed |
+| `<os>-electron-perception-capture-click-px-foreground` | `get_window_state` capture, `parse_visual_regions` on that capture, one foreground `click` with the same `capture_id` at the parsed region center, fixture-journal delivery oracle, `capture_not_found` refusal for the consumed capture, then a fresh capture and reparse |
+| `<os>-tk-perception-published-capture-click-px-foreground` | The published `cua-perception` extension, installed from its signed release catalog as `publisher-verified`, parses a capture of the visual-only Tk canvas. One foreground capture-bound `click` on the OCR region that reads "Cancel" selects that card in the fixture journal. The consumed capture is refused with `capture_not_found`, a fresh capture reparses, and an unused capture older than 60 seconds is refused with `capture_expired`. Neither refusal changes the fixture |
+
+The Electron rows use a developer-only unsigned worker compiled from
+`tests/support/perception_swatch_worker.rs`. It speaks the real worker
+protocol inside Driver's containment, echoes the retained PNG digest, and finds
+the harness's solid `#drag-source` and `#drop-target` swatches in the captured
+pixels, so those rows need no published artifact or model.
+
+The published-catalog row pins the `cua-perception-v0.2.1` catalog and archive
+SHA-256 for each target and downloads them (about 425 MB) unless
+`CUA_E2E_PERCEPTION_CACHE_DIR` already holds verified copies. The Driver also
+checks the catalog signature. The canvas fixture needs a Python with Tk:
+`python3` on macOS and Linux, and `py -3` or `python` on Windows.
+`CUA_E2E_TK_PYTHON` overrides the search. The hosted macOS capture lane adds
+the matching Homebrew `python-tk` formula, and the Linux capture lane installs
+`python3-tk` and `x11-utils`. The row fails rather than skips when Tk is
+missing.
+
+macOS runs a second instance of the installed app with an isolated extension
+home and socket, so the shared daemon never gains either extension. Wayland
+lanes record a coverage limitation instead of running these rows. Broader
+model quality belongs to the `cua-perception` crate and its artifact-gated
+lanes.
+
+## Harness E2E: Model-Backed Perception Decision Loop
+
+`perception_s1_decision_loop_test.rs` runs the same capture-bound loop with
+real models, in the `s1-perception` lane of the Linux X11 runner
+(`scripts/ci/linux/run-rust-e2e.sh`). Only
+`.github/workflows/ci-cua-s1-weights.yml` selects that lane (nightly, manual
+dispatch, and pull requests that touch Cua-S1, the jev-use chooser, or the
+row), because it needs the pinned Cua-S1-4B weights:
+
+| Cell | Coverage |
+| --- | --- |
+| `linux-electron-perception-s1-capture-click-px-foreground` | The published `cua-perception` release, installed from its signed catalog as `publisher-verified`, parses a retained Electron window capture with OmniParser; a resident Cua-S1-4B (text adapter, CPU) chooses one of the parsed text regions for the goal "Increment the counter once."; Driver clicks the region center once with the same `capture_id` within the 60-second capture lifetime; the fixture journal must reach `counter=1`; the consumed capture is refused with `capture_not_found`, an unused capture past its lifetime is refused with `capture_expired`, and the counter stays at 1 |
+
+The model runs on CPU in `bfloat16`, which fits the capture lifetime only on
+hosted runners that expose AVX512-BF16. With 16 offered regions, decisions
+took 20 to 38 s and the click landed 23 to 42 s after the capture, so the row
+offers at most 12. The same
+`ubuntu-latest` label sometimes lands on a VM without AVX-512, where one text
+decision takes over 50 s. On such a runner the job skips the row, writes a
+`cua-e2e-limitation-v1` record (`perception-s1-decision-loop-limitation.json`),
+and warns; re-run the job to draw another runner.
+
+The row writes the parse, the `cua.jev_choice_request_v1` request, the S1
+decision, and a timing record under `artifacts/cua-driver/linux/s1-perception/`
+next to the trajectory video. macOS and Windows lanes do not run it: the
+hosted macOS arm64 runner has 7 GB of memory, less than the 9.3 GB of 16-bit
+base weights, and the Windows lane has no provisioned weights. Their
+capture-bound loop is covered by the model-free row above.
+
+## Harness E2E: Native Windows
+
+Windows native harnesses are repo-local applications built from source:
+
+| Harness | Source test | Coverage |
+| --- | --- | --- |
+| WPF | `harness_wpf_test.rs` | UIA controls, text, keys, pointer actions, scroll, drag, popups, menus, modal windows |
+| WinUI3 | `harness_winui3_test.rs` | XAML controls, text, checkbox/radio, slider, combo, popup |
+| WebView2 | `harness_web_test.rs` | Window discovery, CDP page access, JavaScript, DOM click path |
+| Desktop target | `desktop_scope_windows_test.rs` | Per-call window/desktop modality, full-display capture, screen-absolute click/scroll, and strict rejection |
+| Desktop invariants | Testkit `DesktopObserver` plus typed launch/capture/cursor owners | Cross-cutting focus, z-order, minimized-launch, screenshot, cursor, and desktop checks |
+
+Native controls use AX/UIA state as their oracle. Pointer actions also use PX
+where the tool contract requires coordinates. Current `set_value` rows declare
+background delivery and attach desktop-side-effect oracles.
+
+## Harness E2E: macOS
+
+| Harness | Source test | Coverage |
+| --- | --- | --- |
+| AppKit | `harness_appkit_test.rs` | AX tree/capture, AX value/text, AX scroll, PX clicks, and foreground slider drag across the proven delivery modes; background drag is an exact refusal |
+| SwiftUI | `harness_swiftui_test.rs` | AX tree/capture, background click/value, and foreground popover-trigger state |
+| WKWebView | `cross_platform_behavior_test.rs` | Dedicated native host running the full 40-cell shared web catalog |
+| Desktop target | `desktop_scope_macos_test.rs` | Per-call window/desktop modality, screen-absolute action delivery, and strict rejection |
+| Installed-app launch/focus | `installed_app_launch_macos_test.rs` | Real Calculator/TextEdit launch and focus behavior in the canonical logged-in lane |
+| Installed-app text | `installed_app_textedit_macos_test.rs` | Real TextEdit AX background write and verification in the canonical logged-in lane |
+
+The AppKit `snapshot_publication` regression holds a fixture PNG write with FIFO
+backpressure while replacing a button at the same AX index. It exercises the
+built-in `get_window_state` and `click` tools and uses an independent fixture
+activation journal to reject wrong-target activation and verify fresh-token
+recovery. The macOS runner includes this regression.
+
+macOS uses the installed ScreenCaptureKit/AX permissions for GUI runs. Its
+maintainer acceptance gate runs in a disposable clone of the stopped Lume
+SIP-off golden image described in the [macOS Lume runner
+guide](../tests/runners/macos-lume/README.md). Maintainers build that private
+seed from the sanitized public base `macos-tahoe-cua:26.5.2`. The repo-local
+harnesses are canonical; Calculator and TextEdit are supporting real-app
+checks. SwiftUI's popover trigger is proven independently from the remaining
+transient-panel AX discovery gap.
+
+## Harness E2E: Linux
+
+| Harness | Source test | Window system | Coverage |
+| --- | --- | --- | --- |
+| Electron | `cross_platform_behavior_test.rs` | X11 and hosted Sway | Shared web action matrix |
+| Tauri | `cross_platform_behavior_test.rs` | X11 and hosted Sway | Shared web action matrix |
+| GTK3 | `harness_gtk3_test.rs` | X11/AT-SPI and Wayland/AT-SPI where configured | Native GTK controls and input |
+| Desktop target | `desktop_scope_linux_test.rs` | X11/Wayland | Per-call window/desktop modality, screen-absolute action delivery, and strict rejection |
+
+Nix provides the Linux build and desktop environment. X11 and Wayland are
+separate matrix dimensions because their capture and input contracts differ.
+Linux runs do not produce GIF output. Every canonical GUI cell retains an MP4
+and trajectory alongside screenshots, AX trees, structured results, and driver
+logs for E2E evidence.
+
+## Action Delivery Matrix
+
+The current per-OS delivery/refusal ledger is maintained in
+[`action-support.md`](action-support.md). This section defines the coverage
+policy; the ledger records empirical status.
+
+For each OS and harness where the action is supported, the canonical E2E suite
+should cover both delivery modes:
+
+| Action | Background | Foreground | Addressing |
+| --- | --- | --- | --- |
+| Left click | Required delivery or a declared refusal contract | Required | AX, PX |
+| Right click | Required delivery or a declared refusal contract | Required | AX, PX |
+| Double click | Required delivery or a declared refusal contract | Required | AX, PX |
+| Drag | Required delivery or a declared refusal contract | Required | PX, with AX discovery |
+| Scroll | Required delivery or a declared refusal contract | Required | AX, PX where supported |
+| Type text | Required delivery or a declared refusal contract | Required | AX, PX where supported |
+| Press key | Required delivery or a declared refusal contract | Required | AX, PX where supported |
+| Hotkey | Required delivery or a declared refusal contract | Required | AX, PX where supported |
+| Set value | Required in current native rows | Not separately declared | AX/UIA/AXValue |
+| Screenshot | N/A | N/A | Window or desktop capture |
+| Page/CDP | N/A | N/A | Page selector/JavaScript |
+
+`N/A` means the API has no delivery mode for that operation. A refusal is a
+passing observation only when the Rust case expects refusal, the exact code is
+allowed, and the desktop-side-effect oracles pass.
+
+## CI And Local Entry Points
+
+| Gate | Environment | Entry point |
+| --- | --- | --- |
+| Linux unit/source | Nix Linux CI | `nix build .#checks.x86_64-linux.cua-driver-build .#checks.x86_64-linux.cua-driver-linux-rust-unit` |
+| Windows unit/compile | `windows-latest` | Package-scoped `cargo test --all-targets --no-run --locked` |
+| Windows Harness E2E | Active Windows user session | `scripts/ci/windows/run-rust-e2e.ps1 -RequireGui` |
+| Linux X11 Harness E2E | Nix X11 session | `scripts/ci/linux/run-rust-e2e.sh` |
+| Linux Sway Harness E2E | Controlled wlroots session | `scripts/ci/linux/run-rust-e2e-wayland.sh` |
+| Linux nested-compositor E2E | Controlled experimental session | `scripts/ci/linux/run-rust-e2e-inject.sh` |
+| Linux representative desktop E2E | Existing GNOME, KDE, or Xorg login | `scripts/ci/linux/run-rust-e2e-desktop.sh <desktop>` |
+| macOS Harness E2E | Maintainer Lume SIP-off worker with a logged-in session and inherited grants, or a disposable worker prepared with the checked-in macOS consent seed helper | `libs/cua-driver/tests/runners/macos-lume/run-all.sh` |
+
+Workflows select private execution lanes. Rust source owns scenario definitions,
+fixture oracles, and result records. OS runners only build the driver, stage the
+local harnesses, establish the desktop session, collect evidence, and publish
+the shared report.
+
+## Evidence And Ownership
+
+Every Harness E2E cell should produce:
+
+```text
+recordings/<cell-label>-pid<pid>-<sequence>/recording.mp4
+recordings/<cell-label>-pid<pid>-<sequence>/trajectory.json
+results.jsonl
+<rust-target>.log
+```
+
+The GitHub summary links the exact recording path from the corresponding row to
+its lane archive. Target logs remain lane-level diagnostics. Unit tests need
+logs and test-result output, but do not need desktop video.
+
+When a new action or modality is added, update this document, the shared fixture
+oracle, the Rust test, and the OS-specific runner selection together. This is
+the cross-OS checklist that prevents a Windows-only test from being mistaken
+for cross-platform coverage.

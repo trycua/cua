@@ -1,0 +1,5 @@
+"""{{agent_name}} - Custom agent for cua-bench."""
+
+from .agent import {{class_name}}
+
+__all__ = ["{{class_name}}"]

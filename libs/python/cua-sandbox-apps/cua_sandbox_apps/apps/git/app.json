@@ -1,0 +1,35 @@
+{
+  "id": "git",
+  "name": "Git",
+  "description": "A free and open source distributed version control system designed to handle everything from small to very large projects with speed and efficiency.",
+  "website": "https://git-scm.com",
+  "icon_url": "https://git-scm.com/favicon.ico",
+  "categories": [
+    "Version Control"
+  ],
+  "tags": [
+    "vcs",
+    "distributed",
+    "scm",
+    "development",
+    "cli",
+    "open-source"
+  ],
+  "os_support": [
+    "linux",
+    "macos",
+    "windows"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/git/git",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "git",
+    "brew": "git",
+    "winget": "Git.Git"
+  },
+  "download_url": "https://git-scm.com/download",
+  "app_type": "standalone"
+}

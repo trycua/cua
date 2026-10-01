@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/trycua/cua/.github/release-backfill/rendered.schema.json",
+  "title": "Cua historical release rendered payloads",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "kind", "generatedAt", "releases"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "kind": {"const": "release-backfill-rendered"},
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "releases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "releaseId", "tag", "managedBlock", "managedBlockSha256", "finalBody", "finalBodySha256"],
+        "properties": {
+          "key": {"type": "string", "minLength": 1},
+          "releaseId": {"type": "integer", "minimum": 1},
+          "tag": {"type": "string", "minLength": 1},
+          "managedBlock": {"type": "string", "minLength": 1},
+          "managedBlockSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "finalBody": {"type": "string", "minLength": 1},
+          "finalBodySha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    }
+  }
+}

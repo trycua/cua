@@ -1,0 +1,319 @@
+{
+    "folders": [
+        {
+            "name": "lume",
+            "path": "../libs/lume"
+        }
+    ],
+    "settings": {
+        "files.exclude": {
+            "**/.git": true,
+            "**/.svn": true,
+            "**/.hg": true,
+            "**/CVS": true,
+            "**/.DS_Store": true
+        },
+        "swift.path.swift_driver_bin": "/usr/bin/swift",
+        "swift.enableLanguageServer": true,
+        "files.associations": {
+            "*.swift": "swift"
+        },
+        "[swift]": {
+            "editor.formatOnSave": true,
+            "editor.detectIndentation": true,
+            "editor.tabSize": 4
+        },
+        "swift.path": "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin",
+        "swift.swiftEnvironmentVariables": {
+            "DEVELOPER_DIR": "/Applications/Xcode.app"
+        },
+        "lldb.library": "/Applications/Xcode.app/Contents/SharedFrameworks/LLDB.framework/Versions/A/LLDB",
+        "lldb.launch.expressions": "native"
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "build-debug",
+                "type": "shell",
+                "command": "${workspaceFolder:lume}/scripts/build/build-debug.sh",
+                "options": {
+                    "cwd": "${workspaceFolder:lume}"
+                },
+                "group": {
+                    "kind": "build",
+                    "isDefault": true
+                },
+                "presentation": {
+                    "reveal": "silent",
+                    "panel": "shared"
+                },
+                "problemMatcher": []
+            },
+            {
+                "label": "swift: Build Debug lume",
+                "type": "shell",
+                "command": "${workspaceFolder:lume}/scripts/build/build-debug.sh",
+                "options": {
+                    "cwd": "${workspaceFolder:lume}"
+                },
+                "group": "build",
+                "presentation": {
+                    "reveal": "silent",
+                    "panel": "shared"
+                },
+                "problemMatcher": []
+            }
+        ]
+    },
+    "launch": {
+        "configurations": [
+            {
+                "type": "bashdb",
+                "request": "launch",
+                "name": "Bash-Debug (select script from list of sh files)",
+                "cwd": "${workspaceFolder}",
+                "program": "${command:SelectScriptName}",
+                "pathBash": "/opt/homebrew/bin/bash",
+                "args": []
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "sourceLanguages": [
+                    "swift"
+                ],
+                "args": [
+                    "serve"
+                ],
+                "cwd": "${workspaceFolder:lume}",
+                "name": "Debug lume serve",
+                "program": "${workspaceFolder:lume}/.build/debug/lume",
+                "preLaunchTask": "build-debug"
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "sourceLanguages": [
+                    "swift"
+                ],
+                "args": [
+                    "create",
+                    "macos-vm",
+                    "--cpu",
+                    "4",
+                    "--memory",
+                    "4GB",
+                    "--disk-size",
+                    "40GB",
+                    "--ipsw",
+                    "/Users/<USER>/Downloads/UniversalMac_15.2_24C101_Restore.ipsw"
+                ],
+                "cwd": "${workspaceFolder:lume}",
+                "name": "Debug lume create --os macos --ipsw 'path/to/ipsw' (macos)",
+                "program": "${workspaceFolder:lume}/.build/debug/lume",
+                "preLaunchTask": "build-debug"
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "sourceLanguages": [
+                    "swift"
+                ],
+                "args": [
+                    "create",
+                    "macos-vm",
+                    "--cpu",
+                    "4",
+                    "--memory",
+                    "4GB",
+                    "--disk-size",
+                    "20GB",
+                    "--ipsw",
+                    "latest"
+                ],
+                "cwd": "${workspaceFolder:lume}",
+                "name": "Debug lume create --os macos --ipsw latest (macos)",
+                "program": "${workspaceFolder:lume}/.build/debug/lume",
+                "preLaunchTask": "build-debug"
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "sourceLanguages": [
+                    "swift"
+                ],
+                "args": [
+                    "create",
+                    "linux-vm",
+                    "--os",
+                    "linux",
+                    "--cpu",
+                    "4",
+                    "--memory",
+                    "4GB",
+                    "--disk-size",
+                    "20GB"
+                ],
+                "cwd": "${workspaceFolder:lume}",
+                "name": "Debug lume create --os linux (linux)",
+                "program": "${workspaceFolder:lume}/.build/debug/lume",
+                "preLaunchTask": "build-debug"
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "sourceLanguages": [
+                    "swift"
+                ],
+                "args": [
+                    "pull",
+                    "macos-sequoia-vanilla:15.2",
+                    "--name",
+                    "macos-vm-cloned"
+                ],
+                "cwd": "${workspaceFolder:lume}",
+                "name": "Debug lume pull (macos)",
+                "program": "${workspaceFolder:lume}/.build/debug/lume",
+                "preLaunchTask": "build-debug"
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "sourceLanguages": [
+                    "swift"
+                ],
+                "args": [
+                    "run",
+                    "macos-vm",
+                    "--shared-dir",
+                    "/Users/<USER>/repos/trycua/lume/shared_folder:rw",
+                    "--start-vnc"
+                ],
+                "cwd": "${workspaceFolder:lume}",
+                "name": "Debug lume run (macos)",
+                "program": "${workspaceFolder:lume}/.build/debug/lume",
+                "preLaunchTask": "build-debug"
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "sourceLanguages": [
+                    "swift"
+                ],
+                "args": [
+                    "run",
+                    "linux-vm",
+                    "--start-vnc",
+                    "--mount",
+                    "/Users/<USER>/Downloads/ubuntu-24.04.1-live-server-arm64.iso"
+                ],
+                "cwd": "${workspaceFolder:lume}",
+                "name": "Debug lume run with setup mount (linux)",
+                "program": "${workspaceFolder:lume}/.build/debug/lume",
+                "preLaunchTask": "build-debug"
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "sourceLanguages": [
+                    "swift"
+                ],
+                "args": [
+                    "run",
+                    "linux-vm",
+                    "--start-vnc"
+                ],
+                "cwd": "${workspaceFolder:lume}",
+                "name": "Debug lume run (linux)",
+                "program": "${workspaceFolder:lume}/.build/debug/lume",
+                "preLaunchTask": "build-debug"
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "sourceLanguages": [
+                    "swift"
+                ],
+                "args": [
+                    "get",
+                    "macos-vm"
+                ],
+                "cwd": "${workspaceFolder:lume}",
+                "name": "Debug lume get (macos)",
+                "program": "${workspaceFolder:lume}/.build/debug/lume",
+                "preLaunchTask": "build-debug"
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "sourceLanguages": [
+                    "swift"
+                ],
+                "args": [
+                    "ls"
+                ],
+                "cwd": "${workspaceFolder:lume}",
+                "name": "Debug lume ls",
+                "program": "${workspaceFolder:lume}/.build/debug/lume",
+                "preLaunchTask": "build-debug"
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "sourceLanguages": [
+                    "swift"
+                ],
+                "args": [
+                    "images"
+                ],
+                "cwd": "${workspaceFolder:lume}",
+                "name": "Debug lume images",
+                "program": "${workspaceFolder:lume}/.build/debug/lume",
+                "preLaunchTask": "build-debug"
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "sourceLanguages": [
+                    "swift"
+                ],
+                "args": [
+                    "stop",
+                    "macos-vm"
+                ],
+                "cwd": "${workspaceFolder:lume}",
+                "name": "Debug lume stop (macos)",
+                "program": "${workspaceFolder:lume}/.build/debug/lume",
+                "preLaunchTask": "build-debug"
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "args": [],
+                "cwd": "${workspaceFolder:lume}",
+                "name": "Debug lume",
+                "program": "${workspaceFolder:lume}/.build/debug/lume",
+                "preLaunchTask": "swift: Build Debug lume"
+            },
+            {
+                "type": "lldb",
+                "request": "launch",
+                "args": [],
+                "cwd": "${workspaceFolder:lume}",
+                "name": "Release lume",
+                "program": "${workspaceFolder:lume}/.build/release/lume",
+                "preLaunchTask": "swift: Build Release lume"
+            },
+            {
+                "type": "bashdb",
+                "request": "launch",
+                "name": "Bash-Debug (select script)",
+                "cwd": "${workspaceFolder:lume}",
+                "program": "${command:SelectScriptName}",
+                "pathBash": "/opt/homebrew/bin/bash",
+                "args": []
+            }
+        ]
+    }
+} 

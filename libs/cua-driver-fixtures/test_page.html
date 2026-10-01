@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CUA Driver Test Page v2</title>
+<style>
+body { font-family: -apple-system, sans-serif; padding: 30px; background: #f0f0f0; }
+h2 { margin: 20px 0 8px; font-size: 16px; color: #555; }
+.section { background: white; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+#btn-counter { font-size: 36px; font-weight: bold; color: #1a73e8; }
+button { font-size: 18px; padding: 10px 24px; cursor: pointer; border-radius: 6px; }
+input[type=text], textarea { font-size: 16px; padding: 10px; width: 360px; border: 1px solid #ccc; border-radius: 4px; }
+textarea { height: 80px; resize: none; }
+select { font-size: 16px; padding: 8px; border-radius: 4px; }
+#checkbox-label { font-size: 16px; margin-left: 8px; }
+a { font-size: 16px; color: #1a73e8; }
+canvas { border: 2px solid #999; cursor: crosshair; background: white; }
+#canvas-status { font-size: 14px; margin-top: 6px; color: #555; }
+</style>
+</head>
+<body>
+
+<div class="section">
+  <h2>Button</h2>
+  <div id="btn-counter">clicks: 0</div>
+  <button id="clicker" onclick="bumpClick()">Click Me</button>
+</div>
+
+<div class="section">
+  <h2>Text Input</h2>
+  <input type="text" id="textbox" placeholder="Type here..." oninput="mirrorText()">
+  <div id="text-mirror" style="font-size:14px;margin-top:6px;color:#333">typed: </div>
+</div>
+
+<div class="section">
+  <h2>Checkbox</h2>
+  <input type="checkbox" id="checkbox" onchange="updateCheckbox()">
+  <span id="checkbox-label">unchecked</span>
+</div>
+
+<div class="section">
+  <h2>Select / Dropdown</h2>
+  <select id="dropdown" onchange="updateSelect()">
+    <option value="a">Option A</option>
+    <option value="b">Option B</option>
+    <option value="c">Option C</option>
+  </select>
+  <div id="select-label" style="font-size:14px;margin-top:6px;color:#333">selected: Option A</div>
+</div>
+
+<div class="section">
+  <h2>Textarea</h2>
+  <textarea id="textarea" placeholder="Multi-line text..." oninput="mirrorTextarea()"></textarea>
+  <div id="textarea-mirror" style="font-size:14px;margin-top:6px;color:#333">content: </div>
+</div>
+
+<div class="section">
+  <h2>Link</h2>
+  <a href="#anchor" id="testlink" onclick="trackLink(event)">Test Link</a>
+  <div id="link-status" style="font-size:14px;margin-top:4px;color:#333">link: not clicked</div>
+</div>
+
+<div class="section">
+  <h2>Canvas</h2>
+  <canvas id="mycanvas" width="300" height="150"></canvas>
+  <div id="canvas-status">canvas: no click</div>
+</div>
+
+<div id="anchor" style="height:1px"></div>
+
+<script>
+// Button
+var clickCount = 0;
+function bumpClick() {
+  clickCount++;
+  document.getElementById('btn-counter').textContent = 'clicks: ' + clickCount;
+}
+
+// Text input
+function mirrorText() {
+  document.getElementById('text-mirror').textContent = 'typed: ' + document.getElementById('textbox').value;
+}
+
+// Checkbox
+function updateCheckbox() {
+  var cb = document.getElementById('checkbox');
+  document.getElementById('checkbox-label').textContent = cb.checked ? 'checked' : 'unchecked';
+}
+
+// Select
+function updateSelect() {
+  var sel = document.getElementById('dropdown');
+  var txt = sel.options[sel.selectedIndex].text;
+  document.getElementById('select-label').textContent = 'selected: ' + txt;
+}
+
+// Textarea
+function mirrorTextarea() {
+  document.getElementById('textarea-mirror').textContent = 'content: ' + document.getElementById('textarea').value;
+}
+
+// Link
+function trackLink(e) {
+  document.getElementById('link-status').textContent = 'link: clicked';
+}
+
+// Canvas — draw on click, record last position
+var canvas = document.getElementById('mycanvas');
+var ctx = canvas.getContext('2d');
+// Draw initial grey background
+ctx.fillStyle = '#eee';
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+ctx.fillStyle = '#999';
+ctx.font = '14px sans-serif';
+ctx.fillText('Click to draw', 90, 80);
+
+canvas.addEventListener('mousedown', function(e) {
+  var rect = canvas.getBoundingClientRect();
+  var x = Math.round(e.clientX - rect.left);
+  var y = Math.round(e.clientY - rect.top);
+  canvas.dataset.lastX = x;
+  canvas.dataset.lastY = y;
+  // Draw a red dot
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#eee';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.beginPath();
+  ctx.arc(x, y, 12, 0, Math.PI * 2);
+  ctx.fillStyle = '#e53935';
+  ctx.fill();
+  document.getElementById('canvas-status').textContent = 'canvas: clicked at (' + x + ',' + y + ')';
+});
+</script>
+</body>
+</html>

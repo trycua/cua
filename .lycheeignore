@@ -1,0 +1,26 @@
+https://cua.ai/
+https://api.cua.ai/
+# Google Cloud Console links have HTTP/2 protocol issues with automated checkers
+https://console.cloud.google.com/*
+# hud.ai rate-limits automated link checkers (429)
+https://www.hud.ai/*
+# openai.com returns 403 to automated checkers but resolves fine in-browser
+https://openai.com/*
+# GitHub user attachments require a browser session and return 404 to anonymous link checkers
+https://github.com/user-attachments/assets/*
+# Self-referential install.sh URL: resolves once this PR merges to main
+https://raw.githubusercontent.com/trycua/cua/main/libs/cua-driver/scripts/install.sh
+# Paths added in cua-staging (samples, examples, Spaces): resolve once promoted to trycua/cua main
+https://github.com/trycua/cua/tree/main/samples/openkoalabots
+https://github.com/trycua/cua/tree/main/libs/spaces-sdk-swift
+https://github.com/trycua/cua/tree/main/samples/infinite-canvas-swift
+https://github.com/trycua/cua/tree/main/samples/openkoalabot-example-
+https://github.com/trycua/cua/tree/main/samples/cua-bots-
+https://github.com/trycua/cua/(tree|blob)/main/examples/agents-in-sandboxes
+https://github.com/trycua/cua/tree/main/examples/streaming/
+https://github.com/trycua/cua/tree/main/libs/cua/bench/streaming
+https://github.com/trycua/cua/blob/main/libs/cua/proto/MEDIA\.md
+https://github.com/trycua/cua/blob/main/tests/e2e/browse/e2e_browse\.py
+
+# TypeSafe console returns 403 to automated checkers but resolves fine in-browser
+https://console.typesafe.ai/*

@@ -1,0 +1,42 @@
+{
+  "id": "godot-engine",
+  "name": "Godot Engine",
+  "description": "A feature-packed, cross-platform game engine to create 2D and 3D games from a unified interface. Free and open-source with support for desktop, mobile, web, and console platforms.",
+  "website": "https://godotengine.org",
+  "download_url": "https://godotengine.org/download",
+  "icon_url": "https://raw.githubusercontent.com/godotengine/godot/master/logo_outlined.svg",
+  "categories": [
+    "Game Engine",
+    "Game Development"
+  ],
+  "tags": [
+    "2D",
+    "3D",
+    "Open Source",
+    "Cross-Platform",
+    "GDScript",
+    "C#",
+    "C++"
+  ],
+  "os_support": [
+    "android",
+    "ios",
+    "linux",
+    "macos",
+    "windows"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/godotengine/godot",
+  "self_hostable": true,
+  "requires_hardware": true,
+  "app_type": "standalone",
+  "package_managers": {
+    "snap": "godot-4",
+    "flatpak": "org.godotengine.Godot",
+    "brew": "godot",
+    "choco": "godot",
+    "winget": "GodotEngine.GodotEngine"
+  },
+  "hallucinated": false
+}

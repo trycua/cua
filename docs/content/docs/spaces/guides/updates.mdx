@@ -1,0 +1,43 @@
+---
+title: Updates
+description: 'How the Cua Spaces app for macOS updates itself, how to pick the Stable or Beta channel, and what it refreshes after an update.'
+---
+
+The Cua Spaces app for macOS checks for new versions and installs them for
+you. Everything is in **Settings, About**.
+
+## How updates work
+
+The app checks once a day. When a new version is out, it offers to install
+it; with **Install updates automatically** on, it downloads the update in the
+background and installs it when you quit the app. **Check Now** checks right
+away, and **Last check** says when it last looked. Turn off **Automatically
+check for updates** to only check by hand.
+
+Every update is the same notarized disk image as the download on the
+release page, and the app installs it only when its signature matches the
+key built into the app.
+
+## Channels
+
+**Update to** picks what you get:
+
+- **Stable**: releases.
+- **Beta**: releases and prereleases, with new features sooner and rough
+  edges.
+
+Going back to Stable from a newer beta keeps the version you have until a
+newer stable release is out.
+
+## After an update
+
+The first time the new version opens, it refreshes what Cua installed into
+your AI agents, the way `cua agents update` does: the Cua skill folders and
+the Cua MCP entries in Claude Code, Cursor and the other agents you set up.
+A skill folder you edited is left as you left it. It also restarts the Cua
+daemon when the app started it, so the daemon runs the new version too.
+
+This happens without any window. If something fails, the app shows one
+notice with what to run.
+
+On Linux and Windows, the Tauri app updates through its own updater.

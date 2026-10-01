@@ -1,0 +1,694 @@
+{
+  "schema": "cua.transcript.frame/1",
+  "cast": "claude-plan-question",
+  "instant": "plan-approval",
+  "cli": "claude",
+  "cli_version": "2.1.278 (Claude Code)",
+  "columns": 100,
+  "rows": 34,
+  "requested_time_ms": 30000,
+  "effective_time_ms": 17726,
+  "events_applied": 130,
+  "unsupported_sequences": 0,
+  "unsupported_resize": false,
+  "alternate_screen": true,
+  "window_title": "✳ Add divide function to calc.py",
+  "cursor": {
+    "row": 28,
+    "column": 3,
+    "visible": false
+  },
+  "lines": [
+    "",
+    "  ⎿  /plan to preview",
+    "▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔",
+    "",
+    "  ────────────────────────────────────────────────────────────────────────────────────────────────",
+    "   Ready to code?",
+    "",
+    "   Here is Claude's plan:",
+    "  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌���╌╌╌╌╌╌╌",
+    "   Add divide to calc.py",
+    "",
+    "   Context",
+    "",
+    "   calc.py currently holds two plain arithmetic helpers, add and subtract. The user wants",
+    "   division available alongside them. The file has no docstrings, no type hints, and no tests —",
+    "   the new function should match that style exactly.",
+    "",
+    "   Change",
+    "",
+    "   File: /private/tmp/cua-cast-sandbox/calc.py",
+    "",
+    "   Append, after subtract:",
+    "",
+    "   def divide(a, b):",
+    "       if b == 0:                                                                                 ↓",
+    "  ────────────────────────────────────────────────────────────────────────────────────────────────",
+    "   Claude has written up a plan and is ready to execute. Would you like to proceed?",
+    "",
+    "   ❯ 1. Yes, and use auto mode",
+    "     2. Yes, manually approve edits",
+    "     3. Tell Claude what to change",
+    "        shift+tab to approve with this feedback",
+    "",
+    "   ctrl+g to edit in Vim · ~/.claude/plans/add-a-divide-function-stateful-hare.md"
+  ],
+  "attributes": [
+    {
+      "row": 1,
+      "runs": [
+        [
+          0,
+          0,
+          "dim"
+        ],
+        [
+          2,
+          2,
+          "dim"
+        ],
+        [
+          4,
+          9,
+          "dim"
+        ],
+        [
+          11,
+          20,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 2,
+      "runs": [
+        [
+          0,
+          99,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 4,
+      "runs": [
+        [
+          2,
+          97,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 5,
+      "runs": [
+        [
+          3,
+          7,
+          "dim"
+        ],
+        [
+          9,
+          10,
+          "dim"
+        ],
+        [
+          12,
+          16,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 7,
+      "runs": [
+        [
+          3,
+          6,
+          "dim"
+        ],
+        [
+          8,
+          9,
+          "dim"
+        ],
+        [
+          11,
+          18,
+          "dim"
+        ],
+        [
+          20,
+          24,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 8,
+      "runs": [
+        [
+          0,
+          0,
+          "dim"
+        ],
+        [
+          2,
+          99,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 9,
+      "runs": [
+        [
+          3,
+          5,
+          "dim"
+        ],
+        [
+          7,
+          12,
+          "dim"
+        ],
+        [
+          14,
+          15,
+          "dim"
+        ],
+        [
+          17,
+          23,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 11,
+      "runs": [
+        [
+          2,
+          10,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 13,
+      "runs": [
+        [
+          3,
+          9,
+          "dim"
+        ],
+        [
+          11,
+          19,
+          "dim"
+        ],
+        [
+          21,
+          25,
+          "dim"
+        ],
+        [
+          27,
+          29,
+          "dim"
+        ],
+        [
+          31,
+          35,
+          "dim"
+        ],
+        [
+          37,
+          46,
+          "dim"
+        ],
+        [
+          48,
+          55,
+          "dim"
+        ],
+        [
+          57,
+          59,
+          "dim"
+        ],
+        [
+          61,
+          63,
+          "dim"
+        ],
+        [
+          65,
+          73,
+          "dim"
+        ],
+        [
+          75,
+          77,
+          "dim"
+        ],
+        [
+          79,
+          82,
+          "dim"
+        ],
+        [
+          84,
+          88,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 14,
+      "runs": [
+        [
+          3,
+          10,
+          "dim"
+        ],
+        [
+          12,
+          20,
+          "dim"
+        ],
+        [
+          22,
+          30,
+          "dim"
+        ],
+        [
+          32,
+          36,
+          "dim"
+        ],
+        [
+          38,
+          40,
+          "dim"
+        ],
+        [
+          42,
+          45,
+          "dim"
+        ],
+        [
+          47,
+          49,
+          "dim"
+        ],
+        [
+          51,
+          52,
+          "dim"
+        ],
+        [
+          54,
+          64,
+          "dim"
+        ],
+        [
+          66,
+          67,
+          "dim"
+        ],
+        [
+          69,
+          72,
+          "dim"
+        ],
+        [
+          74,
+          79,
+          "dim"
+        ],
+        [
+          81,
+          83,
+          "dim"
+        ],
+        [
+          85,
+          86,
+          "dim"
+        ],
+        [
+          88,
+          92,
+          "dim"
+        ],
+        [
+          94,
+          94,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 15,
+      "runs": [
+        [
+          3,
+          5,
+          "dim"
+        ],
+        [
+          7,
+          9,
+          "dim"
+        ],
+        [
+          11,
+          18,
+          "dim"
+        ],
+        [
+          20,
+          25,
+          "dim"
+        ],
+        [
+          27,
+          31,
+          "dim"
+        ],
+        [
+          33,
+          36,
+          "dim"
+        ],
+        [
+          38,
+          42,
+          "dim"
+        ],
+        [
+          44,
+          51,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 17,
+      "runs": [
+        [
+          3,
+          8,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 19,
+      "runs": [
+        [
+          3,
+          7,
+          "dim"
+        ],
+        [
+          9,
+          45,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 21,
+      "runs": [
+        [
+          3,
+          9,
+          "dim"
+        ],
+        [
+          11,
+          15,
+          "dim"
+        ],
+        [
+          17,
+          25,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 23,
+      "runs": [
+        [
+          3,
+          5,
+          "dim"
+        ],
+        [
+          7,
+          15,
+          "dim"
+        ],
+        [
+          17,
+          19,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 24,
+      "runs": [
+        [
+          7,
+          8,
+          "dim"
+        ],
+        [
+          10,
+          10,
+          "dim"
+        ],
+        [
+          12,
+          13,
+          "dim"
+        ],
+        [
+          15,
+          16,
+          "dim"
+        ],
+        [
+          98,
+          98,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 25,
+      "runs": [
+        [
+          2,
+          97,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 26,
+      "runs": [
+        [
+          3,
+          8,
+          "dim"
+        ],
+        [
+          10,
+          12,
+          "dim"
+        ],
+        [
+          14,
+          20,
+          "dim"
+        ],
+        [
+          22,
+          23,
+          "dim"
+        ],
+        [
+          25,
+          25,
+          "dim"
+        ],
+        [
+          27,
+          30,
+          "dim"
+        ],
+        [
+          32,
+          34,
+          "dim"
+        ],
+        [
+          36,
+          37,
+          "dim"
+        ],
+        [
+          39,
+          43,
+          "dim"
+        ],
+        [
+          45,
+          46,
+          "dim"
+        ],
+        [
+          48,
+          55,
+          "dim"
+        ],
+        [
+          57,
+          61,
+          "dim"
+        ],
+        [
+          63,
+          65,
+          "dim"
+        ],
+        [
+          67,
+          70,
+          "dim"
+        ],
+        [
+          72,
+          73,
+          "dim"
+        ],
+        [
+          75,
+          82,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 28,
+      "runs": [
+        [
+          0,
+          0,
+          "dim"
+        ],
+        [
+          2,
+          29,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 29,
+      "runs": [
+        [
+          5,
+          6,
+          "dim"
+        ],
+        [
+          8,
+          11,
+          "dim"
+        ],
+        [
+          13,
+          20,
+          "dim"
+        ],
+        [
+          22,
+          28,
+          "dim"
+        ],
+        [
+          30,
+          34,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 30,
+      "runs": [
+        [
+          0,
+          33,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 31,
+      "runs": [
+        [
+          0,
+          1,
+          "dim"
+        ],
+        [
+          8,
+          16,
+          "dim"
+        ],
+        [
+          18,
+          19,
+          "dim"
+        ],
+        [
+          21,
+          27,
+          "dim"
+        ],
+        [
+          29,
+          32,
+          "dim"
+        ],
+        [
+          34,
+          37,
+          "dim"
+        ],
+        [
+          39,
+          46,
+          "dim"
+        ]
+      ]
+    },
+    {
+      "row": 33,
+      "runs": [
+        [
+          2,
+          80,
+          "dim"
+        ]
+      ]
+    }
+  ]
+}

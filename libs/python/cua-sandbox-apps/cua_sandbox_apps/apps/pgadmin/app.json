@@ -1,0 +1,40 @@
+{
+  "id": "pgadmin",
+  "name": "pgAdmin",
+  "description": "The most popular and feature-rich open-source administration and development platform for PostgreSQL. pgAdmin provides a comprehensive graphical interface for managing PostgreSQL databases, with support for desktop, web, and container deployments. Features include query tool with syntax highlighting, graphical EXPLAIN planning, database object management, and extensive database administration capabilities.",
+  "website": "https://www.pgadmin.org",
+  "icon_url": "https://www.pgadmin.org/static/COMPILED/assets/img/postgres-alt.svg",
+  "categories": [
+    "Database Administration",
+    "Database Management",
+    "PostgreSQL Tools"
+  ],
+  "tags": [
+    "postgresql",
+    "database",
+    "admin",
+    "tool",
+    "cross-platform",
+    "open-source",
+    "web-based"
+  ],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/pgadmin-org/pgadmin4",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": null,
+    "snap": "pgadmin4",
+    "flatpak": null,
+    "brew": null,
+    "choco": null,
+    "winget": null
+  },
+  "download_url": "https://www.pgadmin.org/download/"
+}

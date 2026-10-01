@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/trycua/cua/security/advisories/new
+    about: Report suspected vulnerabilities privately. Do not open a public issue.
+  - name: Question or contributor help
+    url: https://discord.com/invite/mVnXXpdE85
+    about: Ask questions and get help from the Cua community.
+  - name: RFC guidance
+    url: https://github.com/trycua/cua/blob/main/rfcs/README.md
+    about: Check whether a public contract or architecture change needs an RFC.

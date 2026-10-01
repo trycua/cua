@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cua-driver:schema:history-event:v0",
+  "title": "Cua Driver Computer History Event v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["specversion", "id", "source", "type", "subject", "time", "datacontenttype", "dataschema", "data"],
+  "properties": {
+    "specversion": { "const": "1.0" },
+    "id": { "$ref": "#/$defs/opaqueId" },
+    "source": { "type": "string", "pattern": "^urn:cua-driver:history:[0-9a-f]{32}$" },
+    "type": {
+      "enum": [
+        "cua-driver.history.control.v0",
+        "cua-driver.history.action_started.v0",
+        "cua-driver.history.action_completed.v0",
+        "cua-driver.history.session_started.v0",
+        "cua-driver.history.session_ended.v0",
+        "cua-driver.history.access.v0",
+        "cua-driver.history.health.v0"
+      ]
+    },
+    "subject": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "time": { "type": "string", "format": "date-time" },
+    "datacontenttype": { "const": "application/json" },
+    "dataschema": { "const": "urn:cua-driver:schema:history-event:v0" },
+    "data": { "$ref": "#/$defs/data" }
+  },
+  "$defs": {
+    "opaqueId": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "application": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bundle_id": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "display_name": { "type": "string", "minLength": 1, "maxLength": 120 }
+      },
+      "minProperties": 1
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sequence", "platform", "process_model", "caller_category", "payload"],
+      "properties": {
+        "session_id": { "$ref": "#/$defs/opaqueId" },
+        "action_id": { "$ref": "#/$defs/opaqueId" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "platform": { "enum": ["macos", "windows", "linux"] },
+        "process_model": { "const": "in_daemon" },
+        "capability": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "caller_category": { "const": "cua_runtime" },
+        "application": { "$ref": "#/$defs/application" },
+        "payload": { "$ref": "#/$defs/payload" }
+      }
+    },
+    "payload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "operation"],
+          "properties": {
+            "kind": { "const": "control" },
+            "operation": { "enum": ["enable", "disable", "pause", "resume", "flush", "delete"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "action_started" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "effect", "route", "evidence_kinds"],
+          "properties": {
+            "kind": { "const": "action_completed" },
+            "effect": { "enum": ["confirmed", "partial", "unverifiable", "suspected_noop", "refused", "failed"] },
+            "route": { "enum": ["accessibility", "synthetic_events", "global_input", "system_api", "dom", "trusted_input", "unknown"] },
+            "delivery": { "enum": ["background", "foreground", "not_applicable", "unknown"] },
+            "delivered_count": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+            "evidence_kinds": { "type": "array", "maxItems": 16, "items": { "enum": ["accessibility_readback", "browser_readback", "value_readback", "window_change"] } },
+            "escalation_kind": { "enum": ["activate_target", "retry_with_pixel_target", "retry_with_page_action", "refresh_page_state", "request_permission", "elevate_access", "expand_capture_scope", "prepare_session", "retry_with_foreground_delivery"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "phase"],
+          "properties": {
+            "kind": { "const": "session" },
+            "phase": { "enum": ["started", "ended"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "operation", "returned_events"],
+          "properties": {
+            "kind": { "const": "access" },
+            "operation": { "enum": ["agent_query", "local_cli"] },
+            "returned_events": { "type": "integer", "minimum": 0, "maximum": 200 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "category", "count"],
+          "properties": {
+            "kind": { "const": "health" },
+            "category": { "enum": ["ready", "disabled", "paused", "not_admitted", "key_unavailable", "key_locked", "key_corrupt", "key_destroy_failed", "storage_unavailable", "storage_corrupt", "quota_reached", "events_dropped", "writer_stopped"] },
+            "count": { "type": "integer", "minimum": 0 }
+          }
+        }
+      ]
+    }
+  }
+}

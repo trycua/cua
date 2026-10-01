@@ -1,0 +1,8 @@
+d cpp
+d ts
+f cpp/cyclops_sdk_schema_module.rs
+f cpp/fleet_sdk_module.rs
+f ts/cyclops_sdk_schema-ffi.ts
+f ts/cyclops_sdk_schema.ts
+f ts/fleet_sdk-ffi.ts
+f ts/fleet_sdk.ts

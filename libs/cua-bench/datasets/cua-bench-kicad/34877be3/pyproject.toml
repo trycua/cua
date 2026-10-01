@@ -1,0 +1,15 @@
+[project]
+name = "cua-bench-kicad-34877be3-env"
+version = "0.1.0"
+license = "MIT"
+authors = [
+    { name = "Snorkel AI" },
+    { name = "Cua" }
+]
+requires-python = ">=3.11"
+
+[tool.cua-bench]
+description = "Please draw a clean schematic in KiCAD for a 9V battery driving two infrared LN271 LEDs. The battery positive terminal is first connected to a 100 ohm current limiting resistor followed by the two LEDs."
+difficulty = "easy"
+category = "eda"
+tags = ["kicad", "schematic", "eda"]

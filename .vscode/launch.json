@@ -1,0 +1,22 @@
+{
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:cua-root}/libs/lume",
+      "name": "Debug lume (libs/lume)",
+      "program": "${workspaceFolder:cua-root}/libs/lume/.build/debug/lume",
+      "preLaunchTask": "swift: Build Debug lume (libs/lume)"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:cua-root}/libs/lume",
+      "name": "Release lume (libs/lume)",
+      "program": "${workspaceFolder:cua-root}/libs/lume/.build/release/lume",
+      "preLaunchTask": "swift: Build Release lume (libs/lume)"
+    }
+  ]
+}

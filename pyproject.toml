@@ -1,0 +1,125 @@
+[project]
+authors = [{ name = "TryCua", email = "gh@trycua.com" }]
+dependencies = [
+    "openai>=2.20.0,<3.0.0",
+    "anthropic>=0.67.0",
+]
+description = "Cua (Computer Use Agent) mono-repo"
+license = { text = "MIT" }
+name = "cua-workspace"
+readme = "README.md"
+requires-python = "<3.14,>=3.12"
+version = "0.1.0"
+
+[project.urls]
+repository = "https://github.com/trycua/cua"
+
+[dependency-groups]
+dev = [
+    "cua-core",
+    "cua-agent",
+    "black>=23.0.0",
+    "ipykernel>=6.29.5",
+    "jedi>=0.19.2",
+    "mypy>=1.10.0",
+    "ruff>=0.9.2",
+    "types-requests>=2.31.0",
+    "pre-commit>=4.3.0",
+    "isort>=7.0.0",
+]
+docs = [
+    "mkdocs-material>=9.2.0",
+    "mkdocs>=1.5.0",
+]
+docs-scripts = [
+    "playwright>=1.40.0",
+    "lancedb>=0.4.0",
+    "sentence-transformers>=2.2.0",
+    "pyarrow>=14.0.1",
+    "fastmcp>=2.14.0",
+    "pydantic>=2.0.0",
+    "pandas>=2.0.0",
+    "markdown-it-py>=3.0.0",
+    "markitdown>=0.0.1",
+    "modal>=0.63.0",
+    "gitpython>=3.1.43",
+    "griffe>=2.0.0",
+]
+test = [
+    "aioresponses>=0.7.4",
+    "pytest-asyncio>=0.21.1",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.10.0",
+    "pytest-xdist>=3.6.1",
+    "pytest>=8.0.0",
+]
+[tool.uv]
+package = false
+constraint-dependencies = [
+    "fastmcp>=3.2.0,<3.3.0",
+    "pytest>=9.0.3",
+    "transformers>=5.0.0rc3",
+]
+
+[tool.uv.workspace]
+members = [
+    "libs/python/agent",
+    "libs/python/core",
+    "libs/python/som",
+    "libs/python/bench-ui",
+]
+
+[tool.uv.sources]
+cua-agent = { workspace = true }
+cua-core = { workspace = true }
+cua-som = { workspace = true }
+cua-bench-ui = { workspace = true }
+# cua-sandbox is not a workspace member (it pulls the native cua-fleet wheel
+# from the cua-wheels index); consumers resolve it from the in-repo path.
+cua-sandbox = { path = "libs/python/cua-sandbox", editable = true }
+# cua-sandbox depends on the cua SDK (UniFFI binding), built from the repo.
+cua = { path = "libs/cua/python", editable = true }
+
+[[tool.uv.index]]
+name = "cua-wheels"
+url = "https://wheels.cua.ai/simple"
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.ruff]
+fix = true
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "I"]
+ignore = [
+    "E501", "E402", "I001", "I002", "B007", "B023", "B024", "B027", "B028",
+    "B904", "B905", "E711", "E712", "E722", "E731", "F401", "F403", "F405",
+    "F811", "F821", "F841"
+]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.mypy]
+check_untyped_defs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+python_version = "3.12"
+show_error_codes = true
+strict = true
+warn_return_any = true
+warn_unused_ignores = false
+
+[tool.isort]
+profile = "black"
+py_version = 312
+known_first_party = ["cua"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+python_files = "test_*.py"
+testpaths = ["libs/*/tests"]

@@ -1,0 +1,4 @@
+/* Local MDX preview — stock fumadocs neutral theme, no custom branding. */
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';

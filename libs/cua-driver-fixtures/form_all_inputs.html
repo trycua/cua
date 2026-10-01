@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>All Inputs Test Form</title>
+<style>
+body { font-family: -apple-system, sans-serif; padding: 30px; background: #f0f0f0; max-width: 640px; }
+h1 { font-size: 22px; margin-bottom: 20px; }
+.field { margin-bottom: 16px; }
+label { display: block; font-weight: bold; margin-bottom: 4px; font-size: 14px; }
+input[type=text], input[type=password], input[type=email],
+input[type=number], input[type=tel], input[type=url], input[type=search],
+textarea, select {
+  width: 100%; padding: 8px; font-size: 16px; box-sizing: border-box;
+  border: 1px solid #bbb; border-radius: 4px;
+}
+textarea { height: 80px; resize: vertical; }
+.radio-group label, .checkbox-group label { font-weight: normal; display: inline; margin-left: 6px; }
+input[type=range] { width: 100%; }
+input[type=color] { width: 80px; height: 40px; border: none; cursor: pointer; }
+button#submit-btn {
+  background: #007AFF; color: white; border: none; padding: 12px 28px;
+  font-size: 16px; border-radius: 6px; cursor: pointer; margin-top: 10px;
+}
+button#submit-btn:hover { background: #0066DD; }
+#result {
+  margin-top: 24px; padding: 16px; background: white; border: 1px solid #ccc;
+  border-radius: 6px; font-size: 13px; white-space: pre-wrap; display: none;
+}
+#submitted { display: none; font-size: 18px; color: green; font-weight: bold; margin-top: 16px; }
+</style>
+</head>
+<body>
+<h1>All Inputs Test Form</h1>
+<form id="test-form" onsubmit="handleSubmit(event)" autocomplete="off">
+
+  <div class="field">
+    <label for="f-text">Text</label>
+    <input type="text" id="f-text" name="text_field" placeholder="Enter text...">
+  </div>
+
+  <div class="field">
+    <label for="f-password">Password</label>
+    <input type="password" id="f-password" name="password_field" placeholder="Enter password...">
+  </div>
+
+  <div class="field">
+    <label for="f-email">Email</label>
+    <input type="email" id="f-email" name="email_field" placeholder="you@example.com">
+  </div>
+
+  <div class="field">
+    <label for="f-number">Number</label>
+    <input type="number" id="f-number" name="number_field" placeholder="42" min="0" max="999">
+  </div>
+
+  <div class="field">
+    <label for="f-tel">Phone</label>
+    <input type="tel" id="f-tel" name="tel_field" placeholder="555-1234">
+  </div>
+
+  <div class="field">
+    <label for="f-textarea">Message (Textarea)</label>
+    <textarea id="f-textarea" name="textarea_field" placeholder="Type a message..."></textarea>
+  </div>
+
+  <div class="field">
+    <label for="f-select">Favourite colour (Select)</label>
+    <select id="f-select" name="select_field">
+      <option value="">-- pick one --</option>
+      <option value="red">Red</option>
+      <option value="green">Green</option>
+      <option value="blue">Blue</option>
+      <option value="yellow">Yellow</option>
+    </select>
+  </div>
+
+  <div class="field checkbox-group">
+    <label>Checkbox</label><br>
+    <input type="checkbox" id="f-checkbox" name="checkbox_field" value="checked">
+    <label for="f-checkbox">I agree to the terms</label>
+  </div>
+
+  <div class="field radio-group">
+    <label>Radio buttons — Preferred fruit</label><br>
+    <input type="radio" id="r-apple" name="radio_field" value="apple">
+    <label for="r-apple">Apple</label>&nbsp;&nbsp;
+    <input type="radio" id="r-banana" name="radio_field" value="banana">
+    <label for="r-banana">Banana</label>&nbsp;&nbsp;
+    <input type="radio" id="r-cherry" name="radio_field" value="cherry">
+    <label for="r-cherry">Cherry</label>
+  </div>
+
+  <div class="field">
+    <label for="f-range">Range / Slider (0–100)</label>
+    <input type="range" id="f-range" name="range_field" min="0" max="100" value="50">
+    <span id="range-display">50</span>
+  </div>
+
+  <div class="field">
+    <label for="f-date">Date</label>
+    <input type="date" id="f-date" name="date_field">
+  </div>
+
+  <div class="field">
+    <label for="f-color">Colour picker</label><br>
+    <input type="color" id="f-color" name="color_field" value="#4488ff">
+  </div>
+
+  <button type="submit" id="submit-btn">Submit Form</button>
+</form>
+
+<div id="submitted">&#10003; Form Submitted!</div>
+<div id="result"></div>
+
+<script>
+document.getElementById('f-range').addEventListener('input', function() {
+  document.getElementById('range-display').textContent = this.value;
+});
+
+function handleSubmit(e) {
+  e.preventDefault();
+  var form = document.getElementById('test-form');
+  var data = {
+    text:     document.getElementById('f-text').value,
+    password: document.getElementById('f-password').value,
+    email:    document.getElementById('f-email').value,
+    number:   document.getElementById('f-number').value,
+    tel:      document.getElementById('f-tel').value,
+    textarea: document.getElementById('f-textarea').value,
+    select:   document.getElementById('f-select').value,
+    checkbox: document.getElementById('f-checkbox').checked,
+    radio:    (document.querySelector('input[name=radio_field]:checked') || {}).value || '',
+    range:    document.getElementById('f-range').value,
+    date:     document.getElementById('f-date').value,
+    color:    document.getElementById('f-color').value,
+  };
+  document.getElementById('submitted').style.display = 'block';
+  document.getElementById('result').style.display = 'block';
+  document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+  window._submitted = data;
+}
+
+// Expose live field state for test assertions (no submit required)
+function getFieldValues() {
+  return JSON.stringify({
+    text:     document.getElementById('f-text').value,
+    password: document.getElementById('f-password').value,
+    email:    document.getElementById('f-email').value,
+    number:   document.getElementById('f-number').value,
+    tel:      document.getElementById('f-tel').value,
+    textarea: document.getElementById('f-textarea').value,
+    select:   document.getElementById('f-select').value,
+    checkbox: document.getElementById('f-checkbox').checked,
+    radio:    (document.querySelector('input[name=radio_field]:checked') || {}).value || '',
+    range:    document.getElementById('f-range').value,
+    date:     document.getElementById('f-date').value,
+    color:    document.getElementById('f-color').value,
+    submitted: typeof window._submitted !== 'undefined',
+  });
+}
+</script>
+</body>
+</html>

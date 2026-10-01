@@ -1,0 +1,39 @@
+{
+  "id": "netbeans",
+  "name": "Apache NetBeans",
+  "description": "Free, open-source integrated development environment (IDE) and application platform that supports multiple programming languages including Java, JavaScript, PHP, HTML5, CSS, and more. Offers advanced features like syntax highlighting, semantic analysis, refactoring, and a modular architecture for building extensible applications.",
+  "website": "https://netbeans.apache.org",
+  "icon_url": "https://netbeans.apache.org/images/logo.png",
+  "categories": [
+    "IDE",
+    "Development Tools"
+  ],
+  "tags": [
+    "java-ide",
+    "open-source",
+    "cross-platform",
+    "multi-language",
+    "netbeans-platform",
+    "apache",
+    "free"
+  ],
+  "os_support": [
+    "linux",
+    "windows",
+    "macos"
+  ],
+  "requires_payment": false,
+  "foss": true,
+  "gh_repo": "https://github.com/apache/netbeans",
+  "self_hostable": true,
+  "requires_hardware": false,
+  "package_managers": {
+    "apt": "netbeans",
+    "snap": "netbeans",
+    "flatpak": null,
+    "brew": "netbeans",
+    "choco": null,
+    "winget": null
+  },
+  "download_url": "https://www.apache.org/dyn/closer.lua/netbeans/netbeans/29/netbeans-29-bin.zip?action=download"
+}

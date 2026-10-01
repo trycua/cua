@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CUA Driver Test Page</title>
+<style>
+body { font-family: -apple-system, sans-serif; padding: 40px; background: #f5f5f5; }
+#counter { font-size: 48px; font-weight: bold; margin: 20px 0; }
+button { font-size: 24px; padding: 12px 32px; cursor: pointer; }
+input { font-size: 24px; padding: 12px; width: 400px; margin-top: 20px; display: block; }
+#typed { font-size: 20px; color: #333; margin-top: 10px; }
+</style>
+</head>
+<body>
+<h1>Interactive Test Page</h1>
+<div id="counter">clicks: 0</div>
+<button id="clicker" onclick="bump()">Click Me</button>
+<input id="textbox" type="text" placeholder="Type here..." oninput="mirror()">
+<div id="typed">typed: </div>
+<script>
+var n = 0;
+function bump() {
+    n++;
+    document.getElementById('counter').textContent = 'clicks: ' + n;
+}
+function mirror() {
+    document.getElementById('typed').textContent = 'typed: ' + document.getElementById('textbox').value;
+}
+</script>
+</body>
+</html>

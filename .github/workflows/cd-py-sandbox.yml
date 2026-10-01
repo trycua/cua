@@ -1,0 +1,67 @@
+name: "CD: cua-sandbox (PyPI)"
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published stable Release Please Sandbox tag (sandbox-vX.Y.Z)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sandbox-pypi-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'sandbox-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Resolve published release and verify source versions
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: python .github/scripts/resolve_sandbox_release.py resolve
+
+      - name: Check out immutable release source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ steps.release.outputs.sha }}
+          path: release-source
+          persist-credentials: false
+
+      - name: Install build tools
+        run: python -m pip install build twine
+
+      - name: Build released package
+        working-directory: release-source/libs/python/cua-sandbox
+        run: python -m build
+
+      - name: Verify distribution metadata
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          python .github/scripts/resolve_sandbox_release.py artifacts release-source/libs/python/cua-sandbox/dist
+          python -m twine check --strict release-source/libs/python/cua-sandbox/dist/*
+
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+          TWINE_NON_INTERACTIVE: "1"
+        # Existing distributions fail explicitly; never overwrite or skip them.
+        run: python -m twine upload release-source/libs/python/cua-sandbox/dist/*

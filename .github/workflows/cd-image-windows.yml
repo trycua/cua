@@ -1,0 +1,317 @@
+name: "CD: Image windows"
+
+# Builds ghcr.io/trycua/windows:2022 with cua-spacesd from the published
+# Windows workspace disk, with `cua images release` over
+# libs/images/windows-2022/release.json:
+#
+#   bins     windows-latest: cua-spacesd.exe (static CRT) + build-info
+#   cli      the cua CLI
+#   image    ubuntu-24.04 + KVM: build (boot the base, install cua-spacesd as a
+#            logon task, write disk.img), gate (`cua-spacesd doctor --strict`
+#            in the guest), stage; with stage=publish, push the new dated
+#            pins 2022-disk-<stamp> and 2022-<stamp> (check-tag-safety.sh
+#            guards every push)
+#   verify   the strict doctor again, on a fresh runner, against the exact
+#            pushed digest
+#   promote  only then 2022-disk and 2022 move
+#
+# stage=probe only boots the base and prints its inventory.
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        type: choice
+        options: [probe, build, publish]
+        default: build
+      base:
+        description: "Base containerDisk (the published Windows workspace)"
+        type: string
+        default: "ghcr.io/trycua/windows@sha256:a2966dac6c68a60f67addcc2c23db40ca1048a37616b1d6d39abc25dab9ce1f4"
+      mem:
+        type: string
+        default: "4G"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-image-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_BUILD_JOBS: "4"
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+  STAGE: ${{ inputs.stage || 'probe' }}
+  BASE: ${{ inputs.base || 'ghcr.io/trycua/windows@sha256:a2966dac6c68a60f67addcc2c23db40ca1048a37616b1d6d39abc25dab9ce1f4' }}
+  MEM: ${{ inputs.mem || '4G' }}
+
+jobs:
+  bins:
+    if: (inputs.stage || 'probe') != 'probe'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      TARGET: x86_64-pc-windows-msvc
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: "-C target-feature=+crt-static"
+      # The runner's CMake 4 refuses audiopus_sys's bundled Opus
+      # (cmake_minimum_required < 3.5) without this.
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-spacesd -> target"
+          key: image-windows-x86_64-pc-windows-msvc
+          cache-on-failure: true
+      - name: Build cua-spacesd.exe
+        working-directory: libs/cua-spacesd
+        run: cargo build --locked --release --target "$TARGET" -p cua-spacesd --bin cua-spacesd
+      - name: Stage
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp "libs/cua-spacesd/target/$TARGET/release/cua-spacesd.exe" dist/
+          ./dist/cua-spacesd.exe build-info >dist/cua-spacesd-build-info.json
+          cat dist/cua-spacesd-build-info.json
+      # Informational: the same doctor and fixtures on the hosted Windows
+      # runner (a Hyper-V VM with a desktop session), minutes before the image
+      # boots. The gate is the strict doctor in the image job.
+      - name: Smoke the doctor on the runner (informational)
+        continue-on-error: true
+        timeout-minutes: 12
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "cua-e2e-smoke"
+          New-Item -ItemType Directory -Force -Path "$root\fixtures" | Out-Null
+          Copy-Item libs/images/windows-2022/fixtures/*.ps1 "$root\fixtures\"
+          $m = Get-Content scripts/images/manifests/windows-2022.json -Raw | ConvertFrom-Json
+          $m.fixtures.root = "$root\fixtures"
+          $m.display.resolution = ""
+          $info = Get-Content dist/cua-spacesd-build-info.json -Raw | ConvertFrom-Json
+          foreach ($k in "version", "protocol_revision", "git_sha", "cua_driver_version", "tools_sha256", "tools_count") {
+            $m.spacesd | Add-Member -Force -NotePropertyName $k -NotePropertyValue $info.$k
+          }
+          $m | ConvertTo-Json -Depth 8 | Set-Content "$root\manifest.json"
+          $exe = (Resolve-Path dist/cua-spacesd.exe).Path
+          $token = [guid]::NewGuid().ToString("N")
+          Set-Content -NoNewline -Path "$root\token" -Value $token
+          $p = Start-Process -FilePath $exe -ArgumentList @("serve", "--token-file", "$root\token", "--listen", "127.0.0.1:3211") -PassThru -RedirectStandardError "$root\serve.err" -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+          # annotations.variant: a containerDisk claim cannot hold on the runner (Hyper-V).
+          & $exe doctor --effects virtual --expect-manifest "$root\manifest.json" --token-file "$root\token" --timeout 300 --skip annotations.variant
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Get-Content "$root\serve.err" -Tail 40 -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-bins
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  cli:
+    if: (inputs.stage || 'probe') != 'probe'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install protoc
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends protobuf-compiler libprotobuf-dev
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cli-amd64
+      - name: Build the cua CLI
+        working-directory: libs/cua
+        run: cargo build --release --locked -p cua-cli
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cua-cli-linux-amd64
+          path: libs/cua/target/release/cua
+          if-no-files-found: error
+          retention-days: 7
+
+  # `cua images release` over libs/images/windows-2022/release.json; the same
+  # command runs locally on a KVM host:
+  #   cua images release libs/images/windows-2022 --var bin=DIR [--publish --promote]
+  image:
+    needs: [bins, cli]
+    if: ${{ !cancelled() && needs.bins.result != 'failure' && needs.cli.result != 'failure' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Runner facts
+        run: |
+          nproc; free -h; df -h / /mnt 2>/dev/null || df -h /; ls -la /dev/kvm || true
+      - name: Host tools (QEMU, OVMF, crane, oras, grpcurl)
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf
+          sudo chmod 666 /dev/kvm
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          go install github.com/fullstorydev/grpcurl/cmd/grpcurl@v1.9.3
+          go install oras.land/oras/cmd/oras@v1.3.0
+          echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/.ghcup || true
+          sudo docker image prune -af >/dev/null 2>&1 || true
+          df -h /
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cua-cli-linux-amd64
+          path: ${{ runner.temp }}/cli
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: env.STAGE != 'probe'
+        with:
+          name: windows-bins
+          path: ${{ runner.temp }}/bin
+      - name: Probe the base
+        if: env.STAGE == 'probe'
+        run: |
+          libs/images/windows-2022/build-image.sh --base "$BASE" --out "$RUNNER_TEMP/out" --mem "$MEM" --smp "$(nproc)" --probe
+      - name: Stamp
+        if: env.STAGE != 'probe'
+        run: |
+          chmod +x "$RUNNER_TEMP/cli/cua"; echo "$RUNNER_TEMP/cli" >>"$GITHUB_PATH"
+          echo "STAMP=$(date -u +%Y%m%d)-${GITHUB_SHA::7}" >>"$GITHUB_ENV"
+      - name: cua images release (build, strict doctor, stage)
+        if: env.STAGE != 'probe'
+        run: |
+          cua images release libs/images/windows-2022 --stamp "$STAMP" --work release \
+            --var "bin=$RUNNER_TEMP/bin" --var "base=$BASE" --var "mem=$MEM" --var "smp=$(nproc)" \
+            --steps build,gate,stage
+      # The disk that passed the strict doctor, kept whether or not a push follows.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: env.STAGE != 'probe'
+        with:
+          name: windows-2022-disk
+          path: |
+            release/out/disk.img
+            release/out/manifest.json
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
+        if: env.STAGE == 'publish'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: cua images release (push 2022-disk-<stamp> and 2022-<stamp>)
+        if: env.STAGE == 'publish'
+        run: |
+          cua images release libs/images/windows-2022 --stamp "$STAMP" --work release \
+            --var "bin=$RUNNER_TEMP/bin" --var "base=$BASE" --var "mem=$MEM" --var "smp=$(nproc)" \
+            --publish --steps push --scope push
+          {
+            echo "### Pushed (immutable pins)"
+            jq -r '"- ghcr.io/trycua/windows:2022-disk-\(.stamp) \(.disk_digest)\n- ghcr.io/trycua/windows:2022-\(.stamp) \(.primary_digest)"' release/evidence/pushed.json
+          } >>"$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && env.STAGE != 'probe'
+        with:
+          name: windows-release-image
+          path: release/evidence
+          if-no-files-found: warn
+          retention-days: 30
+
+  # The strict doctor again, on a fresh runner, against the exact pushed disk.
+  verify:
+    needs: [cli, image]
+    if: ${{ !cancelled() && needs.image.result == 'success' && (inputs.stage || 'probe') == 'publish' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/.ghcup || true
+          df -h /
+      - name: Install QEMU, OVMF, crane and grpcurl
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qemu-utils qemu-system-x86 ovmf
+          sudo chmod 666 /dev/kvm
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          go install github.com/fullstorydev/grpcurl/cmd/grpcurl@v1.9.3
+          echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cua-cli-linux-amd64
+          path: ${{ runner.temp }}/cli
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-release-image
+          path: release/evidence
+      - name: cua images release (verify the pushed disk)
+        run: |
+          chmod +x "$RUNNER_TEMP/cli/cua"
+          stamp="$(python3 -c 'import json;print(json.load(open("release/evidence/pushed.json"))["stamp"])')"
+          "$RUNNER_TEMP/cli/cua" images release libs/images/windows-2022 --stamp "$stamp" --work release \
+            --var "mem=$MEM" --var "smp=$(nproc)" --publish --steps verify --scope verify
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: windows-release-verify
+          path: release/evidence
+          if-no-files-found: warn
+          retention-days: 30
+
+  # Moving tags, only after the pushed digest passed the strict doctor.
+  promote:
+    needs: [cli, image, verify]
+    if: ${{ !cancelled() && needs.verify.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      # contents: write for the image-doctor-ledger branch (attest).
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install crane and oras
+        run: |
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          go install oras.land/oras/cmd/oras@v1.3.0
+          echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cua-cli-linux-amd64
+          path: ${{ runner.temp }}/cli
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: windows-release-*
+          path: release/evidence
+          merge-multiple: true
+      - name: cua images release (attest the doctor reports, then move 2022-disk and 2022)
+        run: |
+          set -euo pipefail
+          chmod +x "$RUNNER_TEMP/cli/cua"
+          stamp="$(python3 -c 'import json;print(json.load(open("release/evidence/pushed.json"))["stamp"])')"
+          "$RUNNER_TEMP/cli/cua" images release libs/images/windows-2022 --stamp "$stamp" --work release \
+            --publish --promote --steps attest,promote --scope promote --var record_ledger=true | tee -a "$GITHUB_STEP_SUMMARY"

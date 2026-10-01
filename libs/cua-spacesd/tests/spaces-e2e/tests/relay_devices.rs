@@ -87,6 +87,7 @@ async fn devices_enroll_and_reach_machines_on_the_real_relay() {
                 name: "studio-mac".into(),
                 allow: vec![],
                 host: None,
+                meta: Default::default(),
             },
         )
         .await
@@ -101,6 +102,7 @@ async fn devices_enroll_and_reach_machines_on_the_real_relay() {
                 name: "studio-mac".into(),
                 allow: vec![],
                 host: None,
+                meta: Default::default(),
             },
         )
         .await
@@ -116,6 +118,7 @@ async fn devices_enroll_and_reach_machines_on_the_real_relay() {
                     name: "x".into(),
                     allow: vec![],
                     host: None,
+                    meta: Default::default(),
                 },
             )
             .await

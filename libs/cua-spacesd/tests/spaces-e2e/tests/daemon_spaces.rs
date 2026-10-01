@@ -473,6 +473,7 @@ async fn space_service_lists_the_accounts_relay_machines() {
                 name: "studio".into(),
                 allow: vec![],
                 host: None,
+                meta: Default::default(),
             },
         )
         .await

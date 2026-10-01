@@ -88,6 +88,10 @@ browser_prepare({
 })
 ```
 
+Without a `pid`, the driver launches a vendor-signed system install it can
+verify: Chrome, Edge, or Brave (system Chromium on Linux), never one a standard
+user could modify.
+
 Bind the window of the returned `prepared_pid`. An `isolated_new` profile is
 deleted when the session ends; use `{"mode": "isolated_named", "name": "research"}`
 to keep it. Do not pass remote-debugging flags through `launch_app`: they are
@@ -172,9 +176,8 @@ ids are invalid. The grant lives in memory: it expires after 30 minutes idle or
 off Chrome's remote-debugging setting; do that in Chrome.
 
 Supported: Chrome and Edge on macOS, Windows, and Linux X11; Chrome on GNOME
-Wayland; Chrome, Edge, and Chromium on Sway; Brave on macOS. Brave's Windows
-and Linux routes use the same setup but are not yet validated. On Linux, start
-the browser with `--force-renderer-accessibility`. Setup recognizes English UI
+Wayland; Chrome, Edge, and Chromium on Sway; Brave on macOS, Windows, and
+Linux X11. On Linux, start the browser with `--force-renderer-accessibility`. Setup recognizes English UI
 labels only.
 
 ## Refusals

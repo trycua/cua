@@ -45,7 +45,7 @@ You need:
 The Fleet-verified public image reference is:
 
 ```text
-public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:dc448dcc986f443980dfb3586f1b91d8699091ad96a74b369016535f0dbb0342
+public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:dd09f70f8cd35eca7871dff000538302baad63688a3008803f2238492802d743
 ```
 
 The image is an amd64 KubeVirt containerDisk. It is not an ordinary OCI
@@ -100,7 +100,7 @@ from cua_sandbox import Image, Pool
 IMAGE = os.environ.get(
     "OMARCHY_IMAGE",
     "public.ecr.aws/k5j5w0x5/cua-omarchy-workspace"
-    "@sha256:dc448dcc986f443980dfb3586f1b91d8699091ad96a74b369016535f0dbb0342",
+    "@sha256:dd09f70f8cd35eca7871dff000538302baad63688a3008803f2238492802d743",
 )
 POOL_NAME = os.environ["CUA_POOL_NAME"]
 
@@ -180,7 +180,10 @@ not expose a public raw VNC TCP socket.
 ## Connect an MCP client
 
 The claim exposes the Cua Driver MCP service as the named Fleet service
-`mcp`. Use the SDK service interface while the claim is active:
+`mcp`. Python Sandbox users should normally use the [typed Cua Driver
+connection](/how-to-guides/sandbox/control-the-desktop-with-cua-driver). The
+raw initialization request below is useful for protocol diagnostics while the
+claim is active:
 
 ```python
 response = await sandbox.services.request(

@@ -71,9 +71,10 @@ authorization. `get_browser_state` never performs setup itself.
 Use this route only when the agent must work in a supported Chromium profile
 that is already running and authenticated. Cua Driver does not restart the
 browser, copy the profile, or modify profile files. The route supports Chrome
-and Edge on macOS and Windows, plus Chrome in the validated Linux X11 and Sway
-configurations. Chromium and Edge have descriptor-backed Linux routes but are
-not yet product-validated there. Start a named driver session and choose the
+and Edge on macOS and Windows, Brave on macOS, plus Chrome in the validated
+Linux X11 and Sway configurations. Chromium and Edge have descriptor-backed
+Linux routes, and Brave has descriptor-backed Windows and Linux routes, but
+those are not yet product-validated. Start a named driver session and choose the
 permission mode before launching the daemon.
 
 Prefer `bounded` for repeatable browser automation: approve one short-lived
@@ -170,8 +171,8 @@ refused; it is never treated as generic permission to click security dialogs.
 
 If the approved process has no DevTools endpoint, Cua Driver opens a temporary
 tab in the approved window and navigates to the product's fixed remote-debugging
-page (`chrome://inspect/#remote-debugging` or
-`edge://inspect/#remote-debugging`). It matches exactly one **Allow remote
+page (`chrome://inspect/#remote-debugging`, `edge://inspect/#remote-debugging`,
+or `brave://inspect/#remote-debugging`). It matches exactly one **Allow remote
 debugging for this browser instance** checkbox, verifies that it is off, and
 presses it once. It then proves that the new listener is loopback-only and
 owned by the approved process before closing the temporary tab. The result's

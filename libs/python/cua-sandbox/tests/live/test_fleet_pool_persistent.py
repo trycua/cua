@@ -58,6 +58,17 @@ def selected_pool_namespace(mode: str) -> str:
     return namespace
 
 
+async def recover_terminal_failed_claim(fleet, namespace: str) -> bool:
+    for claim in await fleet.list_claims(namespace):
+        if getattr(claim.metadata, "name", None) != namespace:
+            continue
+        if getattr(getattr(claim, "status", None), "phase", None) != "Failed":
+            continue
+        await fleet.delete_claim(claim)
+        return True
+    return False
+
+
 pytestmark = [
     pytest.mark.asyncio,
     pytest.mark.skipif(not has_oauth_credentials(), reason="Fleet OAuth credentials not set"),
@@ -129,6 +140,9 @@ async def run_fleet_pool_live(mode: str) -> None:
 
         template = await fleet.get_template(namespace, namespace)
         assert_template_contract(template, expected_port=8000)
+        summary["terminal_failed_claim_recovered"] = await recover_terminal_failed_claim(
+            fleet, namespace
+        )
 
         claim_started = time.monotonic()
         async with Sandbox.ephemeral(

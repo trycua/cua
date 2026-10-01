@@ -84,6 +84,51 @@ class PoolRunnerHarness:
         self.inventory_calls: list[str] = []
         self.template_contract_calls: list[tuple] = []
         self.summaries: dict[str, dict] = {}
+        self.claims: list[object] = []
+        self.deleted_claims: list[object] = []
+
+
+@pytest.mark.asyncio
+async def test_terminal_failed_named_claim_is_recovered() -> None:
+    claim = SimpleNamespace(
+        metadata=SimpleNamespace(name="pool-name"),
+        status=SimpleNamespace(phase="Failed"),
+    )
+    deleted: list[object] = []
+
+    class Fleet:
+        async def list_claims(self, namespace: str):
+            assert namespace == "pool-name"
+            return [claim]
+
+        async def delete_claim(self, existing_claim):
+            deleted.append(existing_claim)
+
+    assert await pool_live.recover_terminal_failed_claim(Fleet(), "pool-name") is True
+    assert deleted == [claim]
+
+
+@pytest.mark.asyncio
+async def test_resumable_or_different_named_claim_is_not_recovered() -> None:
+    resumable = SimpleNamespace(
+        metadata=SimpleNamespace(name="pool-name"),
+        status=SimpleNamespace(phase="Pending"),
+    )
+    unrelated_failed = SimpleNamespace(
+        metadata=SimpleNamespace(name="other-name"),
+        status=SimpleNamespace(phase="Failed"),
+    )
+    deleted: list[object] = []
+
+    class Fleet:
+        async def list_claims(self, namespace: str):
+            return [resumable, unrelated_failed]
+
+        async def delete_claim(self, existing_claim):
+            deleted.append(existing_claim)
+
+    assert await pool_live.recover_terminal_failed_claim(Fleet(), "pool-name") is False
+    assert deleted == []
 
 
 def install_pool_runner(monkeypatch, tmp_path, *, mode: str, namespace: str) -> PoolRunnerHarness:
@@ -116,6 +161,12 @@ def install_pool_runner(monkeypatch, tmp_path, *, mode: str, namespace: str) -> 
             return _FakeEphemeral(FakeSandbox(kwargs["name"], harness.shell_stdout))
 
     class FakeFleet:
+        async def list_claims(self, namespace: str):
+            return harness.claims
+
+        async def delete_claim(self, claim) -> None:
+            harness.deleted_claims.append(claim)
+
         async def get_template(self, template_namespace: str, name: str):
             return SimpleNamespace(namespace=template_namespace, name=name)
 
@@ -151,6 +202,25 @@ def install_pool_runner(monkeypatch, tmp_path, *, mode: str, namespace: str) -> 
     monkeypatch.setattr(pool_live, "assert_template_contract", fake_assert_template_contract)
     monkeypatch.setattr(pool_live, "write_summary", fake_write_summary)
     return harness
+
+
+@pytest.mark.asyncio
+async def test_pool_live_runner_replaces_only_its_terminal_failed_claim(
+    monkeypatch, tmp_path
+) -> None:
+    namespace = "cua-live-pool-warm-test-schedule"
+    harness = install_pool_runner(monkeypatch, tmp_path, mode="warm", namespace=namespace)
+    failed_claim = SimpleNamespace(
+        metadata=SimpleNamespace(name=namespace),
+        status=SimpleNamespace(phase="Failed"),
+    )
+    harness.claims = [failed_claim]
+    harness.get_results = [make_pool_resource(namespace), make_pool_resource(namespace)]
+
+    await pool_live.run_fleet_pool_live("warm")
+
+    assert harness.deleted_claims == [failed_claim]
+    assert harness.summaries["summary-pool-warm.json"]["terminal_failed_claim_recovered"] is True
 
 
 @pytest.mark.asyncio

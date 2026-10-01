@@ -86,6 +86,25 @@ If these names are unfamiliar, start with
 The experimental Hyprland plugin is separate from this installer; installing
 the driver does not enable isolated raw background input on Omarchy.
 
+### Install the GNOME WinRects helper
+
+The helper is included with Cua Driver. For an installed release, run its
+installer from the current package:
+
+```bash
+~/.cua-driver/packages/current/wayland-helper/install.sh
+```
+
+From a source checkout, run `./libs/cua-driver/wayland-helper/install.sh` from
+the repository root instead. The script installs and enables the extension for
+your user; it does not need `sudo`. Log out of GNOME and back in once so Shell
+loads the helper, then verify it is active:
+
+```bash
+gnome-extensions info winrects@cua
+# State: ACTIVE
+```
+
   </Tab>
 </Tabs>
 

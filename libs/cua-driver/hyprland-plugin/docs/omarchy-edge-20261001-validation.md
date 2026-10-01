@@ -32,16 +32,30 @@ the initial package is `02fe5dc2293eb5b66a7ec9c837d1f9a5dd149aff624ffdd4d82d218e
 and the lifecycle rebuild is `c689cc41a9cbece8b67cdfff18074269dac21c6ea745fe789484301753586d0d`.
 Do not substitute one archive's lifecycle evidence for the other's native proof.
 
-The existing bounded app smoke does not pass yet. Its one-second accessibility
-walk times out on this environment; a longer observation completes the tree.
-Its initial selection predicate also expects closed-menu children and an
-object-panel row that are absent from the current initial UI projection.
-These attempts stop before input and report `inspection_only`; they establish
-neither successful background delivery nor an input-routing defect.
+The bounded app smoke does not pass yet. Initial attempts stopped before raw
+input because the default accessibility walk was truncated or the grounding
+expected absent closed-menu children. The repaired harness requires a complete
+15-second-budget observation, prepares the Objects panel through accessibility,
+and accepts exact semantic geometry labels without relaxing numeric values.
+The latest native attempt selected the rectangle, moved it two pixels right,
+and saved the SVG, but failed its immediate post-save identity observation
+during a compositor/AT-SPI title transition. Saved-file evidence alone does not
+pass the smoke. A bounded observation-only retry now preserves strict identity;
+native replay remains required. Failures after raw input are reported as failed,
+not inspection-only. The portable harness suite passes 619 tests, with two skips.
+
+The unchanged complete native Linux baseline finished with failures in Tauri
+page scrolling, keyboard-first cursor placement, GTK3 pixel geometry, desktop
+scope, and encrypted history setup. Product repairs are isolated in #4396;
+the guest function-key helper and Secret Service setup were also corrected.
+The manual foreground safety suite passed three tests. The manual observation
+test returned before its behavioral-video boundary, so its zero exit status is
+not counted as native behavioral proof.
 
 ## Remaining gates
 
-- Complete unchanged native Linux all-suite and the two manual Hyprland suites.
+- Pass the complete native Linux all-suite on the final repaired candidate and
+  resolve the manual observation test's pre-behavior return.
 - Review any bounded smoke grounding repair and replay it natively.
 - Two independent app lanes, traced overlap/capacity/refusal and cleanup proof.
 - Independent primary-input isolation and negative control on production bytes.

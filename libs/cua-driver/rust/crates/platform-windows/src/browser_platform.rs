@@ -153,6 +153,12 @@ fn isolated_browser_candidates_from_roots(
             "CN=Microsoft Corporation",
             "O=Microsoft Corporation",
         ),
+        (
+            program_files.join(r"BraveSoftware\Brave-Browser\Application\brave.exe"),
+            program_files.to_owned(),
+            "CN=Brave Software, Inc.",
+            "O=Brave Software, Inc.",
+        ),
     ]
 }
 
@@ -557,6 +563,7 @@ fn windows_installation_write_access_with_probe(
 fn isolated_browser_product_name(executable: &std::path::Path) -> &'static str {
     match browser_product(&executable.to_string_lossy()) {
         BrowserProduct::MicrosoftEdge => "Edge",
+        BrowserProduct::Brave => "Brave",
         _ => "Chrome",
     }
 }
@@ -2424,7 +2431,7 @@ mod tests {
             std::path::Path::new(r"D:\Apps"),
             std::path::Path::new(r"E:\Apps32"),
         );
-        assert_eq!(candidates.len(), 4);
+        assert_eq!(candidates.len(), 5);
         assert_eq!(
             candidates[0].0,
             PathBuf::from(r"D:\Apps\Google\Chrome\Application\chrome.exe")
@@ -2437,6 +2444,15 @@ mod tests {
             candidates[2].0,
             PathBuf::from(r"D:\Apps\Microsoft\Edge\Application\msedge.exe")
         );
+        assert_eq!(
+            candidates[4].0,
+            PathBuf::from(r"D:\Apps\BraveSoftware\Brave-Browser\Application\brave.exe")
+        );
+        assert_eq!(
+            (candidates[4].2, candidates[4].3),
+            ("CN=Brave Software, Inc.", "O=Brave Software, Inc.")
+        );
+        assert_eq!(isolated_browser_product_name(&candidates[4].0), "Brave");
     }
 
     #[test]
@@ -2471,6 +2487,12 @@ mod tests {
                 "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
                 "CN=Microsoft Corporation",
                 "O=Microsoft Corporation",
+            ),
+            (
+                // the comma in the name is quoted in Windows' rendering
+                r#"CN="Brave Software, Inc.", O="Brave Software, Inc.", L=San Francisco, S=California, C=US"#,
+                "CN=Brave Software, Inc.",
+                "O=Brave Software, Inc.",
             ),
         ] {
             let details = format!("Valid\r\n{subject}\r\n");

@@ -277,6 +277,11 @@ fn isolated_browser_candidates() -> Vec<(PathBuf, &'static str, &'static str)> {
             "com.microsoft.edgemac",
             "UBF8T346G9",
         ),
+        (
+            PathBuf::from("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
+            "com.brave.Browser",
+            "KL8N8XSYF4",
+        ),
     ]
 }
 
@@ -1469,7 +1474,7 @@ mod tests {
     #[test]
     fn isolated_browser_candidates_are_vendor_attested_system_installs() {
         let candidates = isolated_browser_candidates();
-        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates.len(), 3);
         assert_eq!(candidates[0].1, "com.google.Chrome");
         assert_eq!(candidates[0].2, "EQHXZ8M8AV");
         assert!(candidates[0]
@@ -1480,6 +1485,11 @@ mod tests {
         assert!(candidates[1]
             .0
             .ends_with("Microsoft Edge.app/Contents/MacOS/Microsoft Edge"));
+        assert_eq!(candidates[2].1, "com.brave.Browser");
+        assert_eq!(candidates[2].2, "KL8N8XSYF4");
+        assert!(candidates[2]
+            .0
+            .ends_with("Brave Browser.app/Contents/MacOS/Brave Browser"));
         assert!(candidates
             .iter()
             .all(|(candidate, _, _)| candidate.is_absolute()));

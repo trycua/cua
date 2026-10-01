@@ -182,6 +182,32 @@ def test_status_match_rejects_the_wrong_mode_and_a_failing_cli(tmp_path: Path) -
         assert expected in completed.stdout
 
 
+def test_golden_image_preflight_requires_python3(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    for command in (
+        "cargo",
+        "codesign",
+        "ffmpeg",
+        "ffprobe",
+        "jq",
+        "node",
+        "npm",
+        "osascript",
+        "security",
+        "xcrun",
+    ):
+        _write_executable(fake_bin / command, "exit 0\n")
+
+    completed = _run(
+        RUN_ALL,
+        'PATH="$TEST_FAKE_BIN"\nrequire_golden_image_dependencies\n',
+        env={"TEST_FAKE_BIN": str(fake_bin)},
+    )
+
+    assert completed.returncode == 2
+    assert completed.stderr == "Missing golden-image dependency: python3\n"
+
+
 @pytest.mark.parametrize("script", [RUN_ALL, RUN_RUST_E2E], ids=lambda path: path.name)
 def test_no_permission_mode_check_pipes_into_grep(script: Path) -> None:
     text = script.read_text(encoding="utf-8")

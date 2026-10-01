@@ -16,6 +16,8 @@
 
 ### Bug Fixes
 
+* **cua-driver:** list every windowed instance of a bundle in macOS list_apps ([#4421](https://github.com/trycua/cua/issues/4421)) ([29c5465](https://github.com/trycua/cua/commit/29c54656ccf6bf8490461768a0fac3096eb91e5c))
+* **installers:** hash downloads with .NET and load Windows PowerShell's own modules, so update --apply works from pwsh 7 ([#4418](https://github.com/trycua/cua/issues/4418)) ([a22426a](https://github.com/trycua/cua/commit/a22426adac1980dae7a44dde2f6446a8da39b99c))
 * **cua-driver:** keep Windows update --apply from killing its own installer ([#4398](https://github.com/trycua/cua/issues/4398)) ([93d0f7a](https://github.com/trycua/cua/commit/93d0f7af24b1561f98f6a85cd20ca2b35f37db35))
 * **cua-driver:** run the cursor event loop when PiP is enabled ([#4304](https://github.com/trycua/cua/issues/4304)) ([5933507](https://github.com/trycua/cua/commit/5933507e73be299f0d7d7e4d7a600950da7b09e3))
 

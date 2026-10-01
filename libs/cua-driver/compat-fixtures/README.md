@@ -35,6 +35,12 @@ freeze that method. Current language tests cover the new signatures and typed
 native-window discovery and observation. All other frozen package signatures,
 the CLI/MCP fixtures, and the baseline application fixtures remain unchanged.
 
+The released `cua-driver-rs-v0.28.2` UniFFI wire order is also frozen:
+`ClickPosition` uses `1=Coordinates` and `2=Element`; `CapturedCoordinates` is
+appended as ordinal 3. `GetWindowStateInput.max_image_dimension` is appended to
+the existing record fields. Future UniFFI enum variants and record fields must
+remain append-only unless an explicit compatibility decision says otherwise.
+
 RFC 2549 independently accepts one additive CLI change: `cua-driver mcp
 --direct`. Bare MCP behavior remains platform-defined (direct on Windows and
 Linux, signed app service on macOS), while `--socket` continues to select an

@@ -112,10 +112,10 @@ impl Tool for LaunchAppTool {
         }
         if additional_arguments
             .iter()
-            .any(|argument| contains_remote_debugging_flag(argument))
+            .any(|argument| cua_driver_core::launch_guard::contains_remote_debugging_flag(argument))
         {
             return ToolResult::error(
-                "Chromium remote-debugging flags moved to browser_prepare so DevTools is never enabled on an unproven user profile",
+                cua_driver_core::launch_guard::REMOTE_DEBUGGING_LAUNCH_REFUSAL,
             );
         }
 
@@ -498,11 +498,6 @@ impl Tool for LaunchAppTool {
     }
 }
 
-fn contains_remote_debugging_flag(value: &str) -> bool {
-    let lower = value.to_ascii_lowercase();
-    lower.contains("--remote-debugging-port") || lower.contains("--remote-debugging-pipe")
-}
-
 fn is_cua_driver_bundle_id(bundle_id: &str) -> bool {
     matches!(bundle_id, "com.trycua.driver" | "com.trycua.driver.local")
 }
@@ -718,9 +713,8 @@ fn hex_value(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        contains_remote_debugging_flag, is_cua_driver_bundle_id, local_file_target,
-        normalize_launch_url, preflight_file_urls, response_identity, structured_launch_failure,
-        LaunchAppTool,
+        is_cua_driver_bundle_id, local_file_target, normalize_launch_url, preflight_file_urls,
+        response_identity, structured_launch_failure, LaunchAppTool,
     };
     use cua_driver_core::tool::Tool;
     use serde_json::json;
@@ -783,15 +777,6 @@ mod tests {
             local_file_target("file://localhost/tmp/%E2%9C%93.txt"),
             Some(PathBuf::from("/tmp/✓.txt"))
         );
-    }
-
-    #[test]
-    fn rejects_all_chromium_remote_debugging_spellings() {
-        assert!(contains_remote_debugging_flag("--remote-debugging-port=0"));
-        assert!(contains_remote_debugging_flag("--REMOTE-DEBUGGING-PIPE"));
-        assert!(!contains_remote_debugging_flag(
-            "--user-data-dir=/tmp/profile"
-        ));
     }
 
     #[test]

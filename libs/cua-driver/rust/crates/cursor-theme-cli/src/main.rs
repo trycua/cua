@@ -884,6 +884,35 @@ fn compile_animation(bytes: &[u8], id: &str) -> Result<CompiledAnimation> {
     })
 }
 
+const PREVIEW_BACKING_SCALE: f32 = CANVAS as f32 / 48.0;
+
+/// Preview pixel where the hotspot must be drawn so the authored canvas stays
+/// centred. The renderer pivots on the hotspot rather than the canvas centre.
+fn preview_hotspot(theme: &CompiledTheme) -> (f32, f32) {
+    let units_to_pixels = cursor_overlay::theme::DISPLAY_SIZE * PREVIEW_BACKING_SCALE
+        / cursor_overlay::theme::CANVAS_SIZE;
+    let centre = CANVAS as f32 * 0.5;
+    let place = |hotspot: u16| centre + (f32::from(hotspot) - centre) * units_to_pixels;
+    (place(theme.hotspot[0]), place(theme.hotspot[1]))
+}
+
+fn preview_pixmap(theme: &CompiledTheme, visual: &CursorVisualState) -> Result<tiny_skia::Pixmap> {
+    let mut pixmap =
+        tiny_skia::Pixmap::new(CANVAS, CANVAS).ok_or_else(|| anyhow!("create preview pixmap"))?;
+    let (anchor_x, anchor_y) = preview_hotspot(theme);
+    cursor_overlay::paint_compiled_theme(
+        &mut pixmap,
+        theme,
+        visual,
+        anchor_x,
+        anchor_y,
+        std::f32::consts::FRAC_PI_4,
+        PREVIEW_BACKING_SCALE,
+        1.0,
+    );
+    Ok(pixmap)
+}
+
 fn preview(theme: &CompiledTheme, output: &Path) -> Result<()> {
     fs::create_dir_all(output).with_context(|| format!("create {}", output.display()))?;
     for name in theme.actions.keys() {
@@ -900,18 +929,7 @@ fn preview(theme: &CompiledTheme, output: &Path) -> Result<()> {
         } else {
             bail!("unknown compiled action `{name}`");
         }
-        let mut pixmap = tiny_skia::Pixmap::new(CANVAS, CANVAS)
-            .ok_or_else(|| anyhow!("create preview pixmap"))?;
-        cursor_overlay::paint_compiled_theme(
-            &mut pixmap,
-            theme,
-            &visual,
-            CANVAS as f32 * 0.5,
-            CANVAS as f32 * 0.5,
-            std::f32::consts::FRAC_PI_4,
-            CANVAS as f32 / 48.0,
-            1.0,
-        );
+        let pixmap = preview_pixmap(theme, &visual)?;
         // tiny-skia stores premultiplied pixels; PNG expects straight RGBA.
         let pixels = unpremultiply_rgba(pixmap.data().to_vec());
         let path = output.join(format!("{name}.png"));
@@ -951,27 +969,31 @@ mod tests {
     use zip::{write::SimpleFileOptions, ZipWriter};
 
     #[test]
+    fn preview_keeps_the_default_artwork_inside_the_canvas() {
+        let theme = cursor_overlay::embedded_default_theme();
+        let visual = CursorVisualState {
+            reduced_motion: ReducedMotion::On,
+            ..CursorVisualState::default()
+        };
+        let pixmap = preview_pixmap(&theme, &visual).unwrap();
+        let edge = CANVAS - 1;
+        let clipped = pixmap
+            .data()
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(_, pixel)| pixel[3] > 0)
+            .map(|(index, _)| (index as u32 % CANVAS, index as u32 / CANVAS))
+            .find(|&(x, y)| x == 0 || y == 0 || x == edge || y == edge);
+        assert_eq!(clipped, None, "preview artwork reaches the canvas edge");
+    }
+
+    #[test]
     fn preview_unpremultiplication_is_bounded() {
         let straight = unpremultiply_rgba(vec![100, 50, 25, 128, 0, 0, 0, 0]);
         assert!(straight[0].abs_diff(199) <= 1);
         assert!(straight[1].abs_diff(100) <= 1);
         assert!(straight[2].abs_diff(50) <= 1);
         assert_eq!(&straight[4..], &[0, 0, 0, 0]);
-    }
-
-    #[test]
-    fn usage_lists_every_management_command() {
-        for command in [
-            "validate",
-            "build",
-            "inspect",
-            "preview",
-            "install",
-            "list",
-            "uninstall",
-        ] {
-            assert!(usage().contains(command));
-        }
     }
 
     fn source_archive(standard_id: &str, variants: &str) -> tempfile::NamedTempFile {

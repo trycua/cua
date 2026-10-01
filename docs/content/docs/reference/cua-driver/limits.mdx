@@ -92,11 +92,11 @@ does not imply arbitrary raw background PX delivery on Wayland.
 
 **Workarounds, in order of preference:**
 
-1. Use `right_click({pid, element_index})` on AX-addressable targets (links, buttons, toolbar items). AX delivery sidesteps the renderer filter entirely.
+1. Use `right_click({pid, element_token})` on AX-addressable targets (links, buttons, toolbar items). AX delivery sidesteps the renderer filter entirely.
 2. For context menus on pure web content (nothing in the AX tree), activate Chrome briefly and fall back to a HID-tap right-click. This interrupts best-effort background behavior for that one click.
 
 <Callout type="info">
-  Element-indexed right-click (`right_click` with `element_index`) works fine. The limit is
+  Element right-click (`right_click` with `element_token`) works fine. The limit is
   specifically pixel right-click on non-AX Chromium web content.
 </Callout>
 
@@ -118,6 +118,35 @@ does not imply arbitrary raw background PX delivery on Wayland.
 
 ---
 
+## Off-Space windows keep background input and hide the agent cursor
+
+**Behavior:** macOS omits windows on other Spaces from an application's `AXWindows` list. For AppKit windows, Cua Driver recovers the requested window by its exact CGWindowID, so `get_window_state`, element actions, and background pixel actions keep working while the window stays on its Space. The user's current Space, frontmost application, and keyboard focus do not change.
+
+**Scope:** recovery runs only for windows that WindowServer reports on another Space, and it probes the first 2,000 accessibility element ids of the application. A window whose element id is beyond that limit, such as a window created late in a long-running browser or Electron app, is not recovered; its request reports `ax_window_unresolved`. SwiftUI windows are recovered but expose little or no accessibility tree while off-Space; see [Off-Space SwiftUI windows strip their AX tree](#off-space-swiftui-windows-strip-their-ax-tree).
+
+**Agent cursor:** the overlay does not paint while an action targets a window on another Space, so the cursor never animates over the user's Space at that window's coordinates. It reappears with the next action on a current-Space window.
+
+**Platform scope:** macOS only. Windows virtual desktops and Linux workspaces do not yet suppress the cursor for off-workspace targets.
+
+---
+
+## Desktop captures leave out the agent cursor
+
+**Behavior:** `get_desktop_state` keeps the Driver's own agent cursor and session pill out of the PNG it returns, so a cursor resting on the control it just clicked does not cover that control's label. The on-screen cursor, external screen recorders, and the Driver's own recordings keep showing it. Every response reports the outcome in `structuredContent.agent_overlay_capture`:
+
+- `excluded`, with the native `method`;
+- `not_present`, when no overlay pixels were on screen;
+- `not_excluded`, with a `reason`, when overlay pixels may be in the image. The text summary repeats the caveat.
+
+**Platform scope:**
+
+- **macOS:** the capture uses a ScreenCaptureKit display filter that leaves out the overlay window (macOS 14 or later). The capture falls back to `screencapture`, which reports `not_excluded`.
+- **Windows:** the overlay is marked `WDA_EXCLUDEFROMCAPTURE` for the length of the capture (Windows 10 version 2004 or later). During that window, other capture tools also stop seeing the cursor. Older builds report `not_excluded`.
+- **Linux X11:** the overlay hides for the length of the root grab, so the cursor blinks off briefly. Without a compositing manager, pixels that a slow window has not repainted are replaced with the desktop that the overlay recorded under them (`method` ends in `+x11_save_under`).
+- **Linux Wayland:** the compositor draws the cursor into the output that the capture reads, and the Driver cannot leave it out. Captures report `not_excluded`.
+
+---
+
 ## Off-Space SwiftUI windows strip their AX tree
 
 **Symptom:** `get_window_state({pid, window_id})` on a window on a different Space (e.g. System Settings parked on Space 2 while on Space 1) returns a minimal tree that contains only the menu bar, or just the `AXApplication` root.
@@ -136,13 +165,13 @@ does not imply arbitrary raw background PX delivery on Wayland.
 
 ## Minimized windows silently drop keyboard commits
 
-**Symptom:** `press_key({pid, element_index, key: "return"})` on a text field in a minimized window returns success, but the field doesn't commit. The macOS system-alert beep fires, or nothing happens.
+**Symptom:** `press_key({pid, element_token, key: "return"})` on a text field in a minimized window returns success, but the field doesn't commit. The macOS system-alert beep fires, or nothing happens.
 
 **Cause:** AX reads and AX clicks propagate through to minimized windows normally, but keyboard-commit events (Return, Space, Tab) require renderer focus, which AX focus does not confer on a minimized window. This is a macOS-wide behavior.
 
 **Workarounds:**
 
-1. Use `set_value({pid, element_index, value: "..."})` to write the field's value directly. No keyboard event involved; no focus handoff required.
+1. Use `set_value({pid, element_token, value: "..."})` to write the field's value directly. No keyboard event involved; no focus handoff required.
 2. AX-click a commit-equivalent button (Go, Submit, Send, OK) rather than relying on Return.
 3. Restore the window through the Dock or an application-specific Window menu command. This interrupts best-effort background behavior for that window. (`Cmd+M` minimizes a window; it does not restore one.)
 
@@ -172,7 +201,7 @@ not require the same portal route.
 **Workarounds:**
 
 1. Type into accessible text fields with `type_text`. AT-SPI `insertText` writes the field directly, with no synthetic key event involved.
-2. Drive controls by `element_index` (`click`, `set_value`) instead of keyboard shortcuts where an equivalent control exists.
+2. Drive controls by `element_token` (`click`, `set_value`) instead of keyboard shortcuts where an equivalent control exists.
 3. Retry with `delivery_mode:"foreground"` when the desktop exposes a verified
    activation and input adapter.
 4. Run the app under XWayland (`GDK_BACKEND=x11` / `QT_QPA_PLATFORM=xcb`). It
@@ -224,8 +253,7 @@ the window-local screenshot space. `double_click` currently labels these as
 screen coordinates in its generated argument reference, but its implementation
 uses the same window-local conversion as the other pixel actions.
 
-**What to do:** prefer `element_token`, or `element_index` with the matching
-`snapshot_id`. The accessibility path carries no coordinates, so it is
+**What to do:** prefer `element_token`. The accessibility path carries no coordinates, so it is
 unaffected by this mismatch, and it also works on backgrounded windows. Reach
 for a pixel action only on canvas, WebGL, or custom-drawn surfaces that expose
 no element.
@@ -293,7 +321,7 @@ Cua Driver is constrained by the macOS permission model. Two relevant grants:
 
 | Grant | Required for |
 | ----- | ------------ |
-| **Accessibility** (System Settings → Privacy & Security → Accessibility) | Every AX read, every element-indexed click, every keyboard/text primitive. Without it, `check_permissions` returns `accessibility: false` and every tool returns a structured error. |
+| **Accessibility** (System Settings → Privacy & Security → Accessibility) | Every AX read, every `element_token` click, every keyboard/text primitive. Without it, `check_permissions` returns `accessibility: false` and every tool returns a structured error. |
 | **Screen Recording** | Screenshots. `get_window_state` returns both the accessibility tree and a screenshot by default; without this grant it returns the tree only (no PNG). The tree path still works. |
 
 Grants are tied to the `CuaDriver.app` bundle identity (`com.trycua.driver`). The Rust build and installer preserve this identity, so TCC grants persist across rebuilds and updates.

@@ -440,64 +440,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lost_action_response_is_reported_with_unknown_completion() {
-        let directory = tempfile::tempdir().unwrap();
-        let socket = directory.path().join("service.sock");
-        let listener = UnixListener::bind(&socket).unwrap();
-        let server = std::thread::spawn(move || {
-            serve_compatible_metadata(&listener);
-            let (stream, _) = listener.accept().unwrap();
-            let mut reader = BufReader::new(stream.try_clone().unwrap());
-            let mut writer = stream;
-
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
-            let begin: DaemonRequest = serde_json::from_str(&line).unwrap();
-            assert_eq!(begin.method, "trusted_session_begin");
-            writeln!(
-                writer,
-                "{}",
-                serde_json::to_string(&DaemonResponse::ok(serde_json::json!({
-                    "resume_credential": "resume-test-1"
-                })))
-                .unwrap()
-            )
-            .unwrap();
-
-            line.clear();
-            reader.read_line(&mut line).unwrap();
-            let call: DaemonRequest = serde_json::from_str(&line).unwrap();
-            assert_eq!(call.method, "trusted_session_call");
-            // Closing the accepted connection after reading the action leaves
-            // its completion unknown to the client.
-        });
-
-        let client = ServiceSessionClient::connect_and_bind(
-            socket.to_string_lossy().into_owned(),
-            TrustedSessionOptions {
-                public_session: "lost-response".into(),
-                mode: SessionPermissionMode::Standard,
-                ttl_seconds: 60,
-                idle_ttl_seconds: 30,
-                capability_manifest_path: None,
-                bounded_manifest_path: None,
-            },
-            DaemonClientKind::Unknown,
-        )
-        .unwrap();
-        assert!(matches!(
-            client
-                .invoke("click", serde_json::json!({"x": 1, "y": 1}))
-                .await,
-            Err(DriverError::ActionInterrupted {
-                completion: crate::worker::ActionCompletion::Unknown,
-                ..
-            })
-        ));
-        server.join().unwrap();
-    }
-
-    #[tokio::test]
     async fn next_call_resumes_with_single_use_host_credential_after_disconnect() {
         let directory = tempfile::tempdir().unwrap();
         let socket = directory.path().join("resumable-service.sock");

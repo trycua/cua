@@ -368,6 +368,80 @@ mod tests {
         assert_eq!(result["content"][1]["text"], "action completed");
     }
 
+    fn agent_cursor_state(position: Value) -> Value {
+        json!({
+            "session": "cursor-state-test",
+            "enabled": true,
+            "position": position,
+            "theme": {
+                "id": "cua-default",
+                "version": "1",
+                "profile": "default",
+                "reduced_motion": "auto",
+                "fallback": null,
+            },
+            "visual_state": {
+                "requested_action": "idle",
+                "resolved_action": "idle",
+                "modifiers": [],
+                "phase": "idle",
+                "frame": 0,
+                "preempted_count": 0,
+            },
+            "motion": {
+                "start_handle": 0.3,
+                "end_handle": 0.3,
+                "arc_size": 0.25,
+                "arc_flow": 0.0,
+                "spring": 0.72,
+                "glide_duration_ms": 750.0,
+                "dwell_after_click_ms": 400.0,
+                "idle_hide_ms": 3000.0,
+                "turn_radius": 12.0,
+            },
+        })
+    }
+
+    /// A session cursor that has never moved has no position yet. Every
+    /// platform reports that as `"position": null`, and the advertised schema
+    /// must accept it rather than turning the read into `tool_output_invalid`.
+    #[test]
+    fn agent_cursor_state_accepts_a_cursor_that_has_not_moved() {
+        const TOOL: &str = "get_agent_cursor_state";
+        for position in [Value::Null, json!({"x": 10.0, "y": 20.0})] {
+            let success = json!({
+                "content": [{"type": "text", "text": "Agent cursor state."}],
+                "isError": false,
+                "structuredContent": agent_cursor_state(position),
+            });
+
+            let result = conforming_tool_result(TOOL, success.clone());
+
+            assert_conforms(TOOL, &result);
+            assert_eq!(result, success);
+        }
+    }
+
+    /// `position` stays required: an unmoved cursor reports `null`, it does
+    /// not drop the key.
+    #[test]
+    fn agent_cursor_state_without_a_position_key_is_rejected() {
+        const TOOL: &str = "get_agent_cursor_state";
+        let mut structured = agent_cursor_state(Value::Null);
+        structured.as_object_mut().unwrap().remove("position");
+
+        let result = conforming_tool_result(
+            TOOL,
+            json!({"content": [], "isError": false, "structuredContent": structured}),
+        );
+
+        assert_eq!(result["isError"], true);
+        assert_eq!(
+            result["structuredContent"]["code"],
+            TOOL_OUTPUT_INVALID_CODE
+        );
+    }
+
     /// A tool with no advertised schema has no contract to violate, so its
     /// successful payload must not be second-guessed here.
     #[test]

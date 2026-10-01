@@ -290,9 +290,7 @@ impl PartialEq for CreateTemplateRequest {
     }
 }
 
-#[derive(
-    Clone, Debug, Serialize, Deserialize, uniffi::Record, uniffi_builder_derive::UniffiBuilder,
-)]
+#[derive(Clone, Serialize, Deserialize, uniffi::Record, uniffi_builder_derive::UniffiBuilder)]
 #[uniffi_builder(crate::SdkBuildError)]
 pub struct CreateClaimRequest {
     pub pool: Pool,
@@ -309,6 +307,37 @@ pub struct CreateClaimRequest {
     #[serde(default)]
     #[uniffi(default = None)]
     pub labels: Option<HashMap<String, String>>,
+    /// Files delivered into the bound sandbox under `/run/cua/<key>` (mode
+    /// 0600) once the claim binds, without restarting it. The key
+    /// `claim_env_token_key()` (`env-token`) carries the cua-env-driver token.
+    /// The client stores them in a claim-scoped `cua-claim-<claim>` Secret
+    /// that the claim references by `spec.secretRef`; `delete_claim` removes
+    /// it. The pool's template must set `vmTemplate.claimSecrets`. Values are
+    /// never serialized with the request nor printed by `Debug`.
+    #[serde(default, skip_serializing)]
+    #[uniffi(default = None)]
+    pub secret_files: Option<HashMap<String, String>>,
+}
+
+impl fmt::Debug for CreateClaimRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let secret_keys = self.secret_files.as_ref().map(|files| {
+            let mut keys: Vec<&str> = files.keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            keys
+        });
+        formatter
+            .debug_struct("CreateClaimRequest")
+            .field("pool", &self.pool)
+            .field("spec", &self.spec)
+            .field("name", &self.name)
+            .field("labels", &self.labels)
+            .field(
+                "secret_files",
+                &secret_keys.map(|keys| (keys, "<redacted>")),
+            )
+            .finish()
+    }
 }
 
 impl PartialEq for CreateClaimRequest {
@@ -317,6 +346,7 @@ impl PartialEq for CreateClaimRequest {
             && schema_values_equal(&self.spec, &other.spec)
             && self.name == other.name
             && self.labels == other.labels
+            && self.secret_files == other.secret_files
     }
 }
 

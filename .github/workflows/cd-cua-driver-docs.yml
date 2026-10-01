@@ -44,7 +44,7 @@ jobs:
         working-directory: docs
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
 
       - name: Build cua-driver (release)
         run: cargo build -p cua-driver --release

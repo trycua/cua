@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-cua-driver-valgrind-${{ github.workflow }}-${{ github.ref }}
+  group: ci-cua-driver-valgrind-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -35,10 +35,11 @@ jobs:
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       # Keep in sync with libs/cua-driver/rust/rust-toolchain.toml; the action
       # exports RUSTUP_TOOLCHAIN, which outranks the toolchain file.
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           workspaces: "libs/cua-driver/rust -> target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Test Valgrind runner shutdown
         run: python3 -m unittest -v scripts/ci/linux/test_run_valgrind_e2e.py
       - name: Install Linux build and Memcheck dependencies

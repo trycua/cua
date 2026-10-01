@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that checked-in Driver, Lume, and Sandbox release versions agree."""
+"""Verify that checked-in product release versions agree."""
 
 from __future__ import annotations
 
@@ -59,6 +59,59 @@ def driver_installer_versions(root: Path) -> dict[str, str]:
     }
 
 
+WITHDRAWN_VERSIONS_PATH = ".github/release-state/cua-driver-rs-withdrawn-versions"
+# The installers run from `curl | bash` and `irm | iex` and cannot read repo
+# files, so each carries a baked copy of the withdrawn list that must mirror
+# WITHDRAWN_VERSIONS_PATH exactly.
+SHELL_WITHDRAWN_VERSIONS = re.compile(
+    r'^CUA_DRIVER_RS_WITHDRAWN_VERSIONS="([^"]*)" # withdrawn-installer-versions$',
+    re.MULTILINE,
+)
+POWERSHELL_WITHDRAWN_VERSIONS = re.compile(
+    r"^\$Script:CuaDriverRsWithdrawnVersions\s*=\s*@\(([^)]*)\) # withdrawn-installer-versions$",
+    re.MULTILINE,
+)
+
+
+def driver_withdrawn_versions(root: Path) -> dict[str, str]:
+    """Releases that must never be installed, baked, or certified."""
+    return read_withdrawn_versions(root / WITHDRAWN_VERSIONS_PATH)
+
+
+def _single_match(path: Path, pattern: re.Pattern[str]) -> str:
+    matches = list(pattern.finditer(path.read_text(encoding="utf-8-sig")))
+    if len(matches) != 1:
+        raise VersionError(
+            f"expected exactly one withdrawn-versions sentinel in {path}, found {len(matches)}"
+        )
+    return matches[0].group(1)
+
+
+def driver_installer_withdrawn_versions(root: Path) -> dict[str, list[str]]:
+    """Withdrawn lists baked into each installer."""
+    base = root / "libs/cua-driver/scripts"
+    shell = _single_match(base / "_install-rust.sh", SHELL_WITHDRAWN_VERSIONS).split()
+    powershell = re.findall(
+        r"'([^']*)'", _single_match(base / "install.ps1", POWERSHELL_WITHDRAWN_VERSIONS)
+    )
+    return {"scripts/_install-rust.sh": shell, "scripts/install.ps1": powershell}
+
+
+def read_withdrawn_versions(path: Path) -> dict[str, str]:
+    """Parse a withdrawn-versions file: one ``x.y.z # reason`` entry per line."""
+    if not path.exists():
+        return {}
+    withdrawn: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        version, _, reason = line.partition("#")
+        version = version.strip()
+        if not version:
+            continue
+        stable_version_tuple(version)
+        withdrawn[version] = reason.strip() or "withdrawn"
+    return withdrawn
+
+
 def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
     base = root / "libs/cua-driver"
     docs = root / "docs/content/docs/reference/cua-driver"
@@ -99,6 +152,7 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
     local_names = {
         tomllib.loads((member / "Cargo.toml").read_text())["package"]["name"] for member in members
     }
+    local_names.discard("cua-perception")
     lock = tomllib.loads((base / "rust/Cargo.lock").read_text())
     for package in lock["package"]:
         if package["name"] in local_names:
@@ -109,6 +163,21 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
     if missing:
         raise VersionError(f"Cargo.lock is missing workspace packages: {sorted(missing)}")
     return expected, values
+
+
+def perception_versions(root: Path) -> tuple[str, dict[str, str]]:
+    base = root / "libs/cua-driver/rust/crates/cua-perception"
+    expected = (base / "VERSION").read_text().strip()
+    project = tomllib.loads((base / "Cargo.toml").read_text())
+    lock = tomllib.loads((root / "libs/cua-driver/rust/Cargo.lock").read_text())
+    packages = [entry for entry in lock["package"] if entry["name"] == "cua-perception"]
+    if len(packages) != 1:
+        raise VersionError("Cargo.lock must contain exactly one cua-perception package")
+    stable_version_tuple(expected)
+    return expected, {
+        "Cargo.toml": str(project["package"]["version"]),
+        "Cargo.lock:cua-perception": str(packages[0]["version"]),
+    }
 
 
 def lume_versions(root: Path) -> tuple[str, dict[str, str]]:
@@ -162,11 +231,32 @@ def validate(root: Path, product: str) -> None:
         installers = driver_installer_versions(root)
         installer_version = next(iter(installers.values()))
         require_equal("Cua Driver baked installers", installer_version, installers)
+        withdrawn = driver_withdrawn_versions(root)
+        if installer_version in withdrawn:
+            raise VersionError(
+                f"Cua Driver baked installers advertise withdrawn release {installer_version}: "
+                f"{withdrawn[installer_version]}"
+            )
+        expected_withdrawn = sorted(withdrawn, key=stable_version_tuple)
+        for name, baked in driver_installer_withdrawn_versions(root).items():
+            for version in baked:
+                stable_version_tuple(version)
+            if sorted(baked, key=stable_version_tuple) != expected_withdrawn:
+                raise VersionError(
+                    f"Cua Driver {name} withdraws {baked or 'nothing'}, but "
+                    f"{WITHDRAWN_VERSIONS_PATH} withdraws {expected_withdrawn or 'nothing'}"
+                )
         if stable_version_tuple(installer_version) > stable_version_tuple(expected):
             raise VersionError(
                 f"Cua Driver baked installers advertise {installer_version}, "
                 f"ahead of source release {expected}"
             )
+    if product in {"all", "perception"}:
+        expected, values = perception_versions(root)
+        values[".release-please-manifest.json"] = str(
+            manifest["libs/cua-driver/rust/crates/cua-perception"]
+        )
+        require_equal("Cua Perception", expected, values)
     if product in {"all", "lume"}:
         expected, values = lume_versions(root)
         values[".release-please-manifest.json"] = str(manifest["libs/lume"])
@@ -180,7 +270,11 @@ def validate(root: Path, product: str) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
-    parser.add_argument("--product", choices=("all", "driver", "lume", "sandbox"), default="all")
+    parser.add_argument(
+        "--product",
+        choices=("all", "driver", "perception", "lume", "sandbox"),
+        default="all",
+    )
     args = parser.parse_args(argv)
     try:
         validate(args.repo_root.resolve(), args.product)

@@ -6,7 +6,7 @@
 //! These types are transport-free. The contract generator derives JSON Schema
 //! from them, and live Rust handlers deserialize the same types before acting.
 
-use crate::CursorThemeSelection;
+use crate::{schema_settings, CursorThemeSelection};
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
@@ -19,11 +19,9 @@ pub trait ToolInput: Serialize + DeserializeOwned + JsonSchema {
     }
 
     fn input_schema() -> Value {
-        let settings = schemars::generate::SchemaSettings::draft2020_12().with(|settings| {
-            settings.meta_schema = None;
-            settings.inline_subschemas = true;
-        });
-        let schema = settings.into_generator().into_root_schema_for::<Self>();
+        let schema = schema_settings()
+            .into_generator()
+            .into_root_schema_for::<Self>();
         let mut value = serde_json::to_value(schema).expect("tool input schema serializes");
         normalize_schema(&mut value);
         value
@@ -60,6 +58,10 @@ fn normalize_schema(value: &mut Value) {
 
 fn string_schema(generator: &mut SchemaGenerator) -> Schema {
     String::json_schema(generator)
+}
+
+fn nonempty_string_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "string", "minLength": 1 })
 }
 
 pub const MULTI_CALL_SESSION_DESCRIPTION: &str =
@@ -222,11 +224,7 @@ pub enum ActionTarget {
 }
 
 pub fn action_target_schema() -> Value {
-    let settings = schemars::generate::SchemaSettings::draft2020_12().with(|settings| {
-        settings.meta_schema = None;
-        settings.inline_subschemas = true;
-    });
-    let schema = settings
+    let schema = schema_settings()
         .into_generator()
         .into_root_schema_for::<ActionTarget>();
     let mut value = serde_json::to_value(schema).expect("action target schema serializes");
@@ -456,6 +454,17 @@ pub struct GetDesktopStateInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub screenshot_out_file: Option<String>,
+    /// Optional long-edge cap for the returned PNG, in pixels. Omitted or 0
+    /// returns the full-size capture. When the cap downsizes the image,
+    /// desktop-scope x/y taken from it are mapped back automatically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "nonnegative_integer_schema")]
+    #[uniffi(default = None)]
+    pub max_image_dimension: Option<u32>,
+}
+
+fn nonnegative_integer_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "integer", "minimum": 0 })
 }
 
 impl ToolInput for GetDesktopStateInput {
@@ -606,6 +615,7 @@ pub enum InputDeliveryMode {
 pub enum ClickPosition {
     Coordinates { x: f64, y: f64 },
     Element { element_token: String },
+    CapturedCoordinates { x: f64, y: f64, capture_id: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, uniffi::Record)]
@@ -621,6 +631,11 @@ pub struct ClickInput {
     pub button: Option<ClickButton>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
+}
+
+impl ClickInput {
+    pub const DESKTOP_BACKGROUND_MESSAGE: &'static str =
+        "desktop clicks require delivery_mode:\"foreground\"; background delivery is unavailable for desktop targets";
 }
 
 // Parse the flat wire shape before constructing the sum type: an untagged
@@ -639,6 +654,9 @@ struct ClickWireInput {
     #[serde(default, deserialize_with = "present_click_field")]
     #[schemars(schema_with = "string_schema")]
     element_token: Option<String>,
+    #[serde(default, deserialize_with = "present_click_field")]
+    #[schemars(schema_with = "nonempty_string_schema")]
+    capture_id: Option<String>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
     /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default)]
@@ -663,9 +681,12 @@ where
 impl TryFrom<ClickWireInput> for ClickInput {
     type Error = String;
     fn try_from(wire: ClickWireInput) -> Result<Self, Self::Error> {
-        let position = match (wire.x, wire.y, wire.element_token) {
-            (Some(x), Some(y), None) => ClickPosition::Coordinates { x, y },
-            (None, None, Some(element_token)) => ClickPosition::Element { element_token },
+        let position = match (wire.x, wire.y, wire.element_token, wire.capture_id) {
+            (Some(x), Some(y), None, None) => ClickPosition::Coordinates { x, y },
+            (Some(x), Some(y), None, Some(capture_id)) => {
+                ClickPosition::CapturedCoordinates { x, y, capture_id }
+            }
+            (None, None, Some(element_token), None) => ClickPosition::Element { element_token },
             _ => return Err("click requires exactly x and y, or element_token".into()),
         };
         let input = Self {
@@ -689,7 +710,7 @@ impl JsonSchema for ClickInput {
         let mut schema = ClickWireInput::json_schema(generator);
         schema.insert("oneOf".into(), serde_json::json!([
             {"required":["x","y"], "not":{"required":["element_token"]}},
-            {"required":["element_token"], "not":{"anyOf":[{"required":["x"]},{"required":["y"]}]}}
+            {"required":["element_token"], "not":{"anyOf":[{"required":["x"]},{"required":["y"]},{"required":["capture_id"]}]}}
         ]));
         schema
     }
@@ -702,6 +723,11 @@ impl ToolInput for ClickInput {
             ClickPosition::Coordinates { x, y } if !x.is_finite() || !y.is_finite() => {
                 return Err("click coordinates must be finite".into())
             }
+            ClickPosition::CapturedCoordinates { x, y, capture_id }
+                if !x.is_finite() || !y.is_finite() || capture_id.trim().is_empty() =>
+            {
+                return Err("captured click coordinates and capture_id must be valid".into())
+            }
             ClickPosition::Element { element_token } if element_token.trim().is_empty() => {
                 return Err("element_token must not be empty".into())
             }
@@ -712,7 +738,7 @@ impl ToolInput for ClickInput {
                 return Err("portable desktop target must be primary".into());
             }
             if self.delivery_mode != InputDeliveryMode::Foreground {
-                return Err("desktop clicks require foreground delivery".into());
+                return Err(Self::DESKTOP_BACKGROUND_MESSAGE.into());
             }
             if matches!(self.position, ClickPosition::Element { .. }) {
                 return Err("element clicks require an exact window target".into());
@@ -888,7 +914,12 @@ impl ToolInput for PressKeyInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HotkeyInput {
+    // Enforced by the parser as well as the schema so a typed input can never
+    // carry a combination the platform runtimes would refuse. Not a doc
+    // comment: that would become a schema description and change the
+    // published contract.
     #[schemars(length(min = 2))]
+    #[serde(deserialize_with = "at_least_two_keys")]
     pub keys: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ActionTarget>,
@@ -907,15 +938,52 @@ impl ToolInput for HotkeyInput {
     const TOOL_NAME: &'static str = "hotkey";
 }
 
+fn at_least_two_keys<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    let keys = Vec::<String>::deserialize(deserializer)?;
+    if keys.len() < 2 {
+        return Err(serde::de::Error::custom(
+            "hotkey.keys must contain at least two keys",
+        ));
+    }
+    Ok(keys)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
 
+    /// Found by the tool-call boundary fuzzer: the published schema and every
+    /// platform runtime require at least two keys, but the contract parser
+    /// accepted any count, so `{"keys": []}` passed typed validation.
+    #[test]
+    fn hotkey_parser_enforces_the_published_two_key_minimum() {
+        for keys in [json!([]), json!(["ctrl"])] {
+            let error = serde_json::from_value::<HotkeyInput>(json!({"keys": keys}))
+                .expect_err("fewer than two keys must be rejected");
+            assert!(
+                error.to_string().contains("at least two keys"),
+                "unexpected error for {keys}: {error}"
+            );
+        }
+        let parsed: HotkeyInput = serde_json::from_value(json!({"keys": ["ctrl", "c"]})).unwrap();
+        assert_eq!(parsed.keys, vec!["ctrl", "c"]);
+        assert_eq!(
+            HotkeyInput::input_schema()["properties"]["keys"]["minItems"],
+            2
+        );
+    }
+
     #[test]
     fn typed_click_round_trips_flat_native_wire_and_exact_window_id() {
-        for position in [json!({"x":-1.5,"y":2.0}), json!({"element_token":"s1:0"})] {
+        for position in [
+            json!({"x":-1.5,"y":2.0}),
+            json!({"x":-1.5,"y":2.0,"capture_id":"capture-1"}),
+            json!({"element_token":"s1:0"}),
+        ] {
             let mut wire = json!({"target":{"kind":"window","pid":7,"window_id":9007199254740993_u64},"delivery_mode":"background"});
             wire.as_object_mut()
                 .unwrap()
@@ -927,6 +995,8 @@ mod tests {
         assert_eq!(schema["required"], json!(["target", "delivery_mode"]));
         assert!(schema["oneOf"].is_array());
         assert!(schema["properties"].get("position").is_none());
+        assert!(schema["properties"].get("capture_id").is_some());
+        assert_eq!(schema["properties"]["capture_id"]["minLength"], 1);
     }
 
     #[test]
@@ -936,6 +1006,8 @@ mod tests {
             json!({"x":1}),
             json!({"y":2}),
             json!({"x":1,"y":2,"element_token":"s1:0"}),
+            json!({"element_token":"s1:0","capture_id":"capture-1"}),
+            json!({"x":1,"y":2,"capture_id":"  "}),
             json!({"x":1,"element_token":"s1:0"}),
             json!({"x":null,"element_token":"s1:0"}),
             json!({"element_token":"  "}),
@@ -973,7 +1045,10 @@ mod tests {
         assert!(input.validate().is_err());
         input.position = ClickPosition::Coordinates { x: 1.0, y: 2.0 };
         input.delivery_mode = InputDeliveryMode::Background;
-        assert!(input.validate().is_err());
+        assert_eq!(
+            input.validate().unwrap_err(),
+            ClickInput::DESKTOP_BACKGROUND_MESSAGE
+        );
     }
 
     #[test]

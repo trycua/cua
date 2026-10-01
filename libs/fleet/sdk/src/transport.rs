@@ -529,6 +529,29 @@ impl Transport {
         }
     }
 
+    /// The current bearer value, for callers that attach the header to a
+    /// connection the SDK does not own (for example a native WebSocket).
+    /// `force_refresh` bypasses any cached token; a static access token has
+    /// nothing fresher to offer and is returned as-is.
+    pub(crate) async fn bearer_token(&self, force_refresh: bool) -> Result<String, SdkError> {
+        if !force_refresh {
+            return Ok(self.access_token().await?.value);
+        }
+
+        match &self.authentication {
+            Authentication::ClientCredentials { cached, .. } => {
+                let mut cached = cached.lock().await;
+                let token = self.acquire_client_credentials_token().await?;
+                *cached = Some(token.clone());
+                Ok(token.value)
+            }
+            Authentication::TokenProvider { provider } => {
+                Ok(self.provider_token(provider, true).await?.value)
+            }
+            Authentication::StaticAccessToken { value } => Ok(value.clone()),
+        }
+    }
+
     async fn access_token(&self) -> Result<AccessToken, SdkError> {
         match &self.authentication {
             Authentication::ClientCredentials { cached, .. } => {

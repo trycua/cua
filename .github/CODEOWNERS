@@ -26,6 +26,7 @@
 /.github/workflows/ci-distro-compat-cua-driver.yml @f-trycua @injaneity
 /.github/workflows/ci-rust-format.yml @f-trycua @injaneity
 /.github/workflows/ci-rust-linux.yml @f-trycua @injaneity
+/.github/workflows/ci-rust-macos.yml @f-trycua @injaneity
 /.github/workflows/ci-rust-windows.yml @f-trycua @injaneity
 /.github/workflows/clawhub-cua-driver.yml @f-trycua @injaneity
 /.github/workflows/e2e-rust-linux-wayland.yml @f-trycua @injaneity
@@ -34,7 +35,7 @@
 /.github/workflows/e2e-rust-windows.yml @f-trycua @injaneity
 
 # Platform infrastructure.
-/libs/fleet/ @r33drichards
-/nix/ @r33drichards
-/flake.nix @r33drichards
-/flake.lock @r33drichards
+/libs/fleet/ @ddupont808
+/nix/ @ddupont808
+/flake.nix @ddupont808
+/flake.lock @ddupont808

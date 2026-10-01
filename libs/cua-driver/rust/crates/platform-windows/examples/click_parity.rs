@@ -116,7 +116,7 @@ fn main() {
     let v_m: serde_json::Value = serde_json::from_str(r_m.trim()).expect("parse");
     let err1 = extract_text(&v_m);
     assert!(
-        err1.contains("Provide element_index or (x, y) to address the click target"),
+        err1.contains("Provide element_token or (x, y) to address the click target"),
         "Expected Swift-style missing-target wording, got: {err1:?}"
     );
     println!("Missing-target err OK: {err1:?}");

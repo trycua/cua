@@ -85,6 +85,11 @@ For the relationship between distributions, desktops, and compositors, read
 | `cua-compositor` nested session | Experimental          | Native GTK behavior, capture and scope, private route metadata, independent observation, and per-cell video                                                         | The complete shared renderer matrix is not accepted. Unicode text and a canonical parallel-drag row remain unproven; this route does not establish a stock-Wayland capability.                                            |
 | XWayland                        | Supported with limits | X11 routes are used when the application exposes a real X11 window; native Wayland and AT-SPI fallbacks cover mixed sessions                                        | Capabilities depend on whether the application is actually using X11 or native Wayland.                                                                                                                                   |
 
+X11 window capture supports packed 16-, 24-, and 32-bit TrueColor and
+DirectColor images. DirectColor capture reads the window’s current colormap
+for each frame, including palette changes that do not repaint the window.
+Other indexed visual classes remain outside the native capture path.
+
 ### Hyprland and Omarchy
 
 Omarchy uses Hyprland; it is not a separate display protocol. Modern Hyprland
@@ -115,17 +120,22 @@ The initial native application qualification scope is Calc from
 executable against the expected package path and exact local package metadata
 before each action. Those checks establish eligibility for isolated input, not
 proof that every application operation works. The plugin requires a live native
-surface and the exact compiled default `evdev`/`pc105`/`us` keymap. Variants,
-options, remaps, multiple layout groups, Unicode, IME input, arbitrary held-key
-streams, and modified pointer gestures are outside the qualified contract. Chromium,
-Electron, and XWayland raw background input are also outside this scope.
-Semantic AT-SPI actions retain their separate behavior.
+surface. Its background seats use a private canonical `evdev`/`pc105`/`us`
+keymap, so user options such as Caps Lock remapped to Ctrl or Super do not alter
+agent key semantics. A physical keymap transition still cancels existing
+authority; a fresh background action may proceed afterward. Multiple agent
+layout groups, Unicode, IME input, arbitrary held-key streams, and modified
+pointer gestures remain outside the qualified contract. Chromium, Electron,
+and XWayland raw background input are also outside this scope. Semantic AT-SPI
+actions retain their separate behavior.
 
 The explicitly requested foreground route binds an exact native top-level
 surface and intentionally changes primary focus and, for pointer actions,
 cursor position. It does not restore either. The canonical native harness
 covers defined GTK3, Electron, and Tauri foreground cases; background refusals
-never select this route automatically.
+never select this route automatically. Foreground pointer-only actions are
+independent of the user's keyboard layout. Foreground keyboard actions remain
+limited to the canonical physical US keymap and refuse safely under remaps.
 
 Bounded instrumented two-seat app proof and an uninstrumented smoke are retained
 from source `f180e8828b8f31cc153e3c44eaa89a9c13c5bc68`, with an unchanged

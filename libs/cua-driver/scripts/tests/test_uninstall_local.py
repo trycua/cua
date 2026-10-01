@@ -187,9 +187,12 @@ def test_unix_local_uninstall_rejects_release_home_override(tmp_path: Path) -> N
     assert "release-owned local home" in result.stderr
 
 
-def test_release_uninstallers_do_not_target_local_identity() -> None:
-    for name in ("uninstall.sh", "uninstall.ps1"):
-        script = (SCRIPTS / name).read_text(encoding="utf-8-sig")
-        assert "CuaDriverLocal" not in script
-        assert ".cua-driver-local" not in script
-        assert "cua-driver-local-serve" not in script
+def test_unix_release_uninstaller_declares_local_detection_inputs() -> None:
+    unix = (SCRIPTS / "uninstall.sh").read_text(encoding="utf-8-sig")
+
+    for token in (
+        "CUA_DRIVER_LOCAL_HOME",
+        "CUA_DRIVER_LOCAL_INSTALL_DIR",
+        "/Applications/CuaDriverLocal.app",
+    ):
+        assert token in unix

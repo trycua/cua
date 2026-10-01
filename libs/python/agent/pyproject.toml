@@ -7,6 +7,7 @@ name = "cua-agent"
 version = "0.8.4"
 description = "Cua (Computer Use) Agent for AI-driven computer interaction"
 readme = "README.md"
+license = { text = "MIT" }
 authors = [
     { name = "TryCua", email = "gh@trycua.com" }
 ]
@@ -37,6 +38,7 @@ qwen = [
     "Pillow>=10.0.0",
 ]
 omni = [
+    # Deprecated: cua-som is no longer maintained (AGPL-3.0).
     "cua-som>=0.1.0,<0.2.0",
 ]
 uitars = []

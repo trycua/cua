@@ -64,10 +64,16 @@ The request sequence for every Driver-admitted action is:
 `TARGET` binds the exact live native top-level surface, generates a fresh token,
 and grants at most five seconds of steady-clock technical lifetime. It first
 retires any unused previous grant. It refuses unavailable desktops, primary
-focus on the target's Wayland client, another lane targeting that client, and
-unsupported keymaps. A discovered address is an input to attestation, not a
-surface lifetime token. Surface unmap, destruction, or replacement invalidates
-the binding. Geometry changes increment the revision and refuse stale actions.
+focus on the target's Wayland client, and another lane targeting that client.
+Background seats always publish a private canonical `evdev`/`pc105`/`us`
+keymap, so user layout options and remaps do not alter agent key semantics.
+They advertise the user seat's key repeat rate and delay, falling back to
+Hyprland's 25 Hz and 600 ms defaults until a keyboard is active. A `KEY`
+request presses and releases every key within one compositor dispatch, so no
+agent key is held long enough to repeat. A discovered address is an input to
+attestation, not a surface lifetime token.
+Surface unmap, destruction, or replacement invalidates the binding. Geometry
+changes increment the revision and refuse stale actions.
 
 The complete operation requests are:
 
@@ -126,6 +132,9 @@ their lanes before either selects a target, without retrying any input.
 
 Target replacement, unmap, destruction, geometry change, primary-client
 conflict, and desktop/keymap/configuration transitions clear passive focus.
+An observed physical keymap transition cancels existing authority, but fresh
+background admission after that transition uses the unchanged private agent
+keymap.
 The five-second action grant does not extend to passive focus. These boundaries
 may still end focus before a stalled client processes its events; dispatch
 acknowledgement is not an application-processing fence. Verify the application's
@@ -167,9 +176,36 @@ makes no promise to restore focus or cursor position after delivery.
 Before taking over primary input, the plugin must refuse held physical keys or
 buttons, active grabs, pointer constraints, and drag-and-drop. It requires a
 single primary seat binding, excluding its own agent seats by resource identity,
-and refuses binding or input-resource changes during dispatch. Keyboard delivery
-requires neutral primary modifiers and layout group zero; latched or locked
-modifiers refuse before activation. Foreground drag
+and refuses binding or input-resource changes during dispatch. Foreground
+keyboard delivery never changes the human keyboard's modifiers or locks, so the
+focused client sees no modifier change around the action. It requires layout
+group zero and no held or latched modifiers. Num Lock may stay on; Caps Lock and
+any other lock refuse. The physical keymap qualifies when every key the KEY
+command can press (evdev 1-247 except the lock keys) produces the same keysym as
+canonical `evdev`/`pc105`/`us`, at the base level and, for non-modifier keys,
+with Shift held. Options that only change Caps Lock or modifier chords, such as
+`compose:caps` and `shift:both_capslock_cancel`, qualify; a different layout or
+a remapped typing key refuses before activation with `unsupported_layout`.
+Before consuming the grant or changing focus, the plugin also simulates the
+whole KEY chord under the live keymap and lock state and admits it only when it
+means what the wire chord means on a neutral canonical US keyboard: the same
+symbols, consumed modifiers, and resulting modifier state. These refusals use
+`primary_target_busy` before activation, with these details:
+
+- `foreground_keyboard_caps_lock`: Caps Lock is on.
+- `foreground_keyboard_numlock_keypad`: Num Lock is on and changes what a
+  keypad key in the chord means, such as `KP_End` becoming `KP_1`. Text,
+  digits, navigation keys, and keypad operators are unaffected.
+- `foreground_unsupported_layout`: the chord, such as a remapped Ctrl, Alt, or
+  Super shortcut, means something else under the live keymap.
+- `foreground_keyboard_locked`, `foreground_keyboard_depressed`,
+  `foreground_keyboard_latched`, `foreground_keyboard_group`: another lock
+  modifier, a held or latched modifier, or a nonzero layout group.
+
+A modifier, lock, or group change during the action refuses the rest of it
+with `foreground_partial_unknown` and detail `foreground_keyboard_state`; the
+unwind restores the human keyboard's current state. Foreground pointer-only
+actions do not depend on the physical keyboard layout. Foreground drag
 cancellation on primary-input and focus transitions remains subject to review
 and native verification; do not infer background isolation from this route.
 Foreground results use foreground delivery metadata. A drag cancellation after

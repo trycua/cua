@@ -2,7 +2,7 @@
 //!
 //! Two addressing modes:
 //!
-//! * **AX path** (`element_index` + `window_id`): performs AXAction on the cached
+//! * **AX path** (`element_token`): performs AXAction on the cached
 //!   element. Fires via AX RPC — the target app never needs to be frontmost.
 //!   Extra behaviors vs. the naive dispatch:
 //!   - AXTextField / AXTextArea: 800 ms post-click delay for WebKit DOM focus settle.
@@ -25,13 +25,15 @@ use std::sync::Arc;
 
 use crate::apps;
 use crate::ax::bindings::{
-    copy_action_names, copy_children, copy_string_attr, element_at_screen_position,
-    element_screen_rect, kAXErrorSuccess, AXUIElementPerformAction, AXUIElementRef,
+    copy_action_names, copy_bool_attr, copy_children, copy_element_attr, copy_string_attr,
+    element_at_screen_position, element_screen_rect, kAXErrorSuccess, AXUIElementPerformAction,
+    AXUIElementRef,
 };
 use crate::focus_guard;
 use crate::window_change_detector::WindowChangeDetector;
-use core_foundation::base::{CFRelease, TCFType};
+use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
 
+use super::pixel_route::PixelClickRoute;
 use super::ToolState;
 
 pub struct ClickTool {
@@ -64,6 +66,55 @@ struct SelectionPixelTarget {
     screen_y: f64,
     window_x: f64,
     window_y: f64,
+}
+
+fn selection_pixel_target(
+    screen_center: (f64, f64),
+    window_origin: (f64, f64),
+) -> SelectionPixelTarget {
+    SelectionPixelTarget {
+        screen_x: screen_center.0,
+        screen_y: screen_center.1,
+        window_x: screen_center.0 - window_origin.0,
+        window_y: screen_center.1 - window_origin.1,
+    }
+}
+
+/// Resolve the selectable row/item rather than an actionable child such as a
+/// selectable NSTextField. A modified click on the child can be consumed as a
+/// text interaction without ever reaching the collection's selection model.
+fn nearest_selectable_container_center(element_ptr: usize) -> Option<(f64, f64)> {
+    let mut current = element_ptr as AXUIElementRef;
+    let mut owns_current = false;
+
+    for _ in 0..8 {
+        let role = unsafe { copy_string_attr(current, "AXRole") }.unwrap_or_default();
+        if matches!(role.as_str(), "AXRow" | "AXCell" | "AXListItem" | "AXImage")
+            && unsafe { copy_bool_attr(current, "AXSelected") }.is_some()
+        {
+            let center = unsafe { element_screen_rect(current) }
+                .map(|rect| (rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0));
+            if owns_current {
+                unsafe { CFRelease(current as CFTypeRef) };
+            }
+            return center;
+        }
+
+        let parent = unsafe { copy_element_attr(current, "AXParent") };
+        if owns_current {
+            unsafe { CFRelease(current as CFTypeRef) };
+        }
+        let Some(parent) = parent else {
+            return None;
+        };
+        current = parent;
+        owns_current = true;
+    }
+
+    if owns_current {
+        unsafe { CFRelease(current as CFTypeRef) };
+    }
+    None
 }
 
 fn selection_readback_confirms(
@@ -132,7 +183,7 @@ fn def() -> &'static ToolDef {
              `x, y` only when the target is a canvas / video / WebGL / custom-drawn surface \
              that doesn't appear in the AX tree.\n\n\
              Two addressing modes:\n\n\
-             - element_token, or element_index + snapshot_id (from get_window_state): AX action path. \
+             - element_token (from get_window_state): AX action path. \
                Works on backgrounded/hidden windows. No cursor move, no focus steal. \
                The snapshot cache is scoped per (pid, window_id) and is replaced by the \
                next snapshot of the same window — re-snapshot every turn before clicking.\n\n\
@@ -161,10 +212,9 @@ fn def() -> &'static ToolDef {
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
                 "pid":           { "type": "integer", "description": "Target process ID." },
-                "window_id":     { "type": "integer", "description": "Target window ID. Required for element_index. Optional when element_token is supplied (the token carries it)." },
-                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "window_id":     { "type": "integer", "description": "Target window ID. Omit when element_token is supplied (the token carries it)." },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
+                "capture_id": { "type": "string", "description": "Optional immutable source capture ID returned by get_window_state or get_desktop_state. With x,y, Driver atomically admits and consumes that exact capture before dispatch; stale, mismatched, or out-of-bounds captures are refused without fallback." },
                 "x":             { "type": "number",  "description": "X in screenshot pixels. A window target uses the get_window_state PNG; a desktop target uses the native get_desktop_state PNG. The driver reverses Retina backing scale and any window-image downscale." },
                 "y":             { "type": "number",  "description": "Y in screenshot pixels from the image selected by target." },
                 "action":        { "type": "string",  "description": "AX action: press, show_menu, pick, confirm, cancel, open." },
@@ -190,7 +240,7 @@ fn def() -> &'static ToolDef {
                 "delivery_mode": {
                     "type": "string",
                     "enum": ["background", "foreground"],
-                    "description": "Best-effort-background ladder rung (default \"background\"). \"background\": perform the AX action or post the CGEvent without fronting. \"foreground\": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. Modified clicks require \"foreground\" so macOS observes physical modifier-key state. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_index) → snapshot → background pixel (x/y) → snapshot → delivery_mode:\"foreground\"."
+                    "description": "Best-effort-background ladder rung (default \"background\"). \"background\": perform the AX action or post the CGEvent without fronting. \"foreground\": briefly front the window, act, let transient UI settle, then restore the prior frontmost app. Requires window_id. Modified clicks require \"foreground\" so macOS observes physical modifier-key state. A generic click has no independent postcondition read-back, except selection of list-like AX rows whose AXSelected state can be confirmed; otherwise confirm the effect from a fresh state snapshot. Use the agent loop: background AX (element_token) → snapshot → background pixel (x/y) → snapshot → delivery_mode:\"foreground\"."
                 },
                 "scope": {
                     "type": "string",
@@ -227,6 +277,11 @@ impl Tool for ClickTool {
         let has_window_id = args.get("window_id").map(|v| !v.is_null()).unwrap_or(false);
         let has_xy = args.get("x").map(|v| v.is_number()).unwrap_or(false)
             && args.get("y").map(|v| v.is_number()).unwrap_or(false);
+        let capture_id = args.opt_str("capture_id");
+        if capture_id.is_some() && !has_xy {
+            return ToolResult::error("click.capture_id requires pixel coordinates x and y.")
+                .with_structured(serde_json::json!({ "code": "invalid_arguments" }));
+        }
         if has_xy && !has_pid && !has_window_id {
             // `scope` is a per-call param now (default "window"); pass
             // scope="desktop" to enable screen-absolute clicks.
@@ -266,22 +321,32 @@ impl Tool for ClickTool {
             // screenshot width / logical screen width. This is robust even when
             // CGDisplayPixelsWide under-reports the backing scale (it returns the
             // scaled-mode point width on some Retina configs → a bogus 1.0).
-            let desktop_ratio = tokio::task::spawn_blocking(|| {
-                let logical_w =
-                    super::get_screen_size::main_screen_size().map(|(w, _, _)| w as f64);
-                let shot_w = crate::capture::screenshot_display_bytes()
-                    .ok()
-                    .and_then(|png| crate::capture::png_dimensions(&png).ok())
-                    .map(|(w, _)| w as f64);
-                match (shot_w, logical_w) {
-                    (Some(sw), Some(lw)) if lw > 0.0 && sw > lw => sw / lw,
-                    _ => 1.0,
+            let (sx, sy) = if let Some(ref capture_id) = capture_id {
+                match self
+                    .state
+                    .capture_bindings
+                    .admit_desktop_click(capture_id, &args, sx_shot, sy_shot)
+                {
+                    Ok(point) => point,
+                    Err(refusal) => return refusal,
                 }
-            })
-            .await
-            .unwrap_or(1.0);
-            let sx = sx_shot / desktop_ratio;
-            let sy = sy_shot / desktop_ratio;
+            } else {
+                let desktop_ratio = tokio::task::spawn_blocking(|| {
+                    let logical_w =
+                        super::get_screen_size::main_screen_size().map(|(w, _, _)| w as f64);
+                    let shot_w = crate::capture::screenshot_display_bytes()
+                        .ok()
+                        .and_then(|png| crate::capture::png_dimensions(&png).ok())
+                        .map(|(w, _)| w as f64);
+                    match (shot_w, logical_w) {
+                        (Some(sw), Some(lw)) if lw > 0.0 && sw > lw => sw / lw,
+                        _ => 1.0,
+                    }
+                })
+                .await
+                .unwrap_or(1.0);
+                (sx_shot / desktop_ratio, sy_shot / desktop_ratio)
+            };
             let button = match input.button.unwrap_or(ClickButton::Left) {
                 ClickButton::Left => "left",
                 ClickButton::Right => "right",
@@ -299,6 +364,9 @@ impl Tool for ClickTool {
             self.state
                 .cursor_registry
                 .update_position(&cursor_key, sx, sy);
+            // Press edge for the agent-cursor overlay (renders a click pulse on
+            // viewers via the cursor hook).
+            self.state.cursor_registry.note_press(&cursor_key, sx, sy);
 
             let btn = button.clone();
             let desktop_modifiers: Vec<String> = args.str_array("modifier");
@@ -343,25 +411,18 @@ impl Tool for ClickTool {
         // the calling session's cursor, not the shared "default" one.
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
 
-        // Surface 6: resolve element_token / element_index precedence
-        // BEFORE the pixel-path fallback. Token wins on disagreement; a
-        // stale token returns an explicit error instead of silently
-        // falling back to the integer (Surface 6 hard constraint).
-        let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
-        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match self.state.element_cache.resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "click",
-        ) {
+        let resolved = match self.state.snapshots.resolve(pid, &args) {
             Ok(r) => r,
             Err(e) => return e,
         };
         let (element_index, window_id, element_guard) = resolved.into_parts(window_id_arg);
+        if capture_id.is_some() && element_guard.is_some() {
+            return ToolResult::error(
+                "click.capture_id is valid only for the pixel x,y path, not element actions.",
+            )
+            .with_structured(serde_json::json!({ "code": "invalid_arguments" }));
+        }
         let window_id = match super::native_window_id(window_id) {
             Ok(window_id) => window_id,
             Err(error) => return error,
@@ -474,7 +535,7 @@ impl Tool for ClickTool {
                     Some(c) => c,
                     None => {
                         return ToolResult::error(
-                            "click(button=middle) on element_index: could not resolve element \
+                            "click(button=middle) on element_token: could not resolve element \
                          center for the pixel-middle-click fallback. Pass x, y directly.",
                         )
                     }
@@ -487,6 +548,7 @@ impl Tool for ClickTool {
                 self.state
                     .cursor_registry
                     .update_position(&cursor_key, cx, cy);
+                self.state.cursor_registry.note_press(&cursor_key, cx, cy);
 
                 let mods_owned = modifiers.clone();
                 let foreground = delivery_mode.is_foreground();
@@ -531,6 +593,7 @@ impl Tool for ClickTool {
                 self.state
                     .cursor_registry
                     .update_position(&cursor_key, cx, cy);
+                self.state.cursor_registry.note_press(&cursor_key, cx, cy);
             }
 
             // Finder icon/list items can expose a readable AXSelected state
@@ -538,33 +601,26 @@ impl Tool for ClickTool {
             // verified coordinate frame only for those collection-like
             // elements so perform_ax_click can cross that one failed semantic
             // rung internally and confirm the result by AX read-back.
-            let selection_candidate = if effective_action == "press" {
+            let selection_center = if effective_action == "press" {
                 let selection_guard = element_guard.clone();
                 tokio::task::spawn_blocking(move || {
                     crate::input::ax_actions::nearest_container_selection_state(
                         selection_guard.as_ptr(),
                     )
-                    .is_some()
+                    .and_then(|_| nearest_selectable_container_center(selection_guard.as_ptr()))
                 })
                 .await
-                .unwrap_or(false)
+                .unwrap_or(None)
             } else {
-                false
+                None
             };
-            let mut selection_pixel = if selection_candidate {
-                if let Some((cx, cy)) = center {
-                    super::px_frame::resolve_or_refuse(wid)
-                        .await
-                        .ok()
-                        .map(|frame| SelectionPixelTarget {
-                            screen_x: cx,
-                            screen_y: cy,
-                            window_x: cx - frame.bounds.x,
-                            window_y: cy - frame.bounds.y,
-                        })
-                } else {
-                    None
-                }
+            let mut selection_pixel = if let Some(screen_center) = selection_center {
+                super::px_frame::resolve_or_refuse(wid)
+                    .await
+                    .ok()
+                    .map(|frame| {
+                        selection_pixel_target(screen_center, (frame.bounds.x, frame.bounds.y))
+                    })
             } else {
                 None
             };
@@ -676,7 +732,7 @@ impl Tool for ClickTool {
             .await;
 
             // Drop the wildcard lease + detect window/foreground side-effects.
-            let changes = super::finish_window_observation(snapshot, &args).await;
+            let changes = super::finish_window_observation(snapshot).await;
 
             match result {
                 Ok(Ok((
@@ -743,6 +799,14 @@ impl Tool for ClickTool {
         } else if let (Some(mut cx), Some(mut cy)) = (x, y) {
             // ── Pixel path ─────────────────────────────────────────────────
 
+            if capture_id.is_some() && (from_zoom || debug_image_out.is_some()) {
+                return ToolResult::error(
+                    "click.capture_id is incompatible with from_zoom and debug_image_out; \
+                     pass coordinates from the exact source capture directly.",
+                )
+                .with_structured(serde_json::json!({ "code": "invalid_arguments" }));
+            }
+
             // debug_image_out: capture fresh screenshot, overlay crosshair BEFORE
             // any coordinate translation (so it shows received coords in the same
             // space the caller was reasoning in).
@@ -787,20 +851,41 @@ impl Tool for ClickTool {
                 }
             }
 
-            if from_zoom {
-                match self.state.zoom_registry.get(pid) {
-                    Some(ctx) => {
+            if let Some(ref capture_id) = capture_id {
+                let wid = match window_id {
+                    Some(window_id) => window_id,
+                    None => {
+                        return ToolResult::error(
+                            "window capture_id requires the matching pid and window_id.",
+                        )
+                        .with_structured(serde_json::json!({ "code": "invalid_arguments" }));
+                    }
+                };
+                match self
+                    .state
+                    .capture_bindings
+                    .admit_window_click(capture_id, &args, pid, wid, cx, cy)
+                {
+                    Ok((action_x, action_y)) => {
+                        cx = action_x;
+                        cy = action_y;
+                    }
+                    Err(refusal) => return refusal,
+                }
+            } else if from_zoom {
+                match super::zoom_context(&self.state, &args, pid, window_id) {
+                    Ok(ctx) => {
                         let (wx, wy) = ctx.zoom_to_window(cx, cy);
                         cx = wx;
                         cy = wy;
                     }
-                    None => {
-                        return ToolResult::error(format!(
-                            "from_zoom=true but no zoom context for pid {pid}. Call zoom first."
-                        ))
-                    }
+                    Err(refusal) => return refusal,
                 }
-            } else if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
+            } else {
+                let ratio = match super::screenshot_scale(&self.state, &args, pid, window_id) {
+                    Ok(ratio) => ratio,
+                    Err(refusal) => return refusal,
+                };
                 // Coordinates are in the downscaled image space; scale back to native pixels.
                 cx *= ratio;
                 cy *= ratio;
@@ -814,8 +899,9 @@ impl Tool for ClickTool {
             // has no live frame — see px_frame's module docs for why there is
             // no screen-absolute fallback.
             //
-            // win_local_x/y: window-local logical-pixel coords needed for
-            // CGEventSetWindowLocation in the Chromium recipe.
+            // win_local_x/y: window-local logical-pixel coords used when the
+            // Chromium recipe falls back to public PID posting. Its SkyLight
+            // route uses the translated screen coordinates instead.
             let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
                 match super::px_frame::resolve_or_refuse(wid).await {
                     Ok(frame) => {
@@ -876,6 +962,27 @@ impl Tool for ClickTool {
                 None
             };
 
+            // Pin the overlay above the target window BEFORE animating so
+            // the cursor is already sandwiched correctly while it glides in.
+            // Both PX deliveries below (AX hit-test and routed events) share
+            // this glide, so the cursor shows whichever one lands the click.
+            if let Some(wid) = window_id {
+                crate::cursor::overlay::send_command(
+                    cursor_key.clone(),
+                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
+                );
+            }
+            // Animate the visual cursor to the click point and wait for it to
+            // arrive — mirrors Swift's `AgentCursor.shared.animateAndWait(to:)`.
+            crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
+            // Keep the registry in sync with the overlay (see AX path above).
+            self.state
+                .cursor_registry
+                .update_position(&cursor_key, screen_x, screen_y);
+            self.state
+                .cursor_registry
+                .note_press(&cursor_key, screen_x, screen_y);
+
             // A background PX action can still use an accessibility delivery
             // backend after resolving the requested screen point. This keeps
             // targeting (PX) orthogonal to delivery (AX) and avoids making a
@@ -914,6 +1021,13 @@ impl Tool for ClickTool {
                 .await;
                 match ax_result {
                     Ok(Ok(true)) => {
+                        crate::cursor::overlay::send_command(
+                            cursor_key.clone(),
+                            cursor_overlay::OverlayCommand::ClickPulse {
+                                x: screen_x,
+                                y: screen_y,
+                            },
+                        );
                         let label = if focus_only { "focused" } else { "pressed" };
                         return ToolResult::text(format!(
                             "✅ PX hit-test {label} the background element via AX."
@@ -946,23 +1060,13 @@ impl Tool for ClickTool {
             // requested foreground click without a window id still degrades to
             // background, matching the existing contract and result label.
             let fg = delivery_mode.is_foreground() && window_id.is_some();
+            // Background delivery cannot satisfy a toolkit that reads the
+            // hardware pointer; refuse before any activation or dispatch.
+            let route = match super::pixel_route::resolve(pid, fg, window_id, "mouse_click").await {
+                Ok(route) => route,
+                Err(refusal) => return refusal,
+            };
             let activation_policy = pixel_activation_policy(&button_str, fg, window_id.is_some());
-
-            // Pin the overlay above the target window BEFORE animating so
-            // the cursor is already sandwiched correctly while it glides in.
-            if let Some(wid) = window_id {
-                crate::cursor::overlay::send_command(
-                    cursor_key.clone(),
-                    cursor_overlay::OverlayCommand::PinAbove(wid as u64),
-                );
-            }
-            // Animate the visual cursor to the click point and wait for it to
-            // arrive — mirrors Swift's `AgentCursor.shared.animateAndWait(to:)`.
-            crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
-            // Keep the registry in sync with the overlay (see AX path above).
-            self.state
-                .cursor_registry
-                .update_position(&cursor_key, screen_x, screen_y);
 
             // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
             // A pixel click can land on a "Sign In" button that opens a sheet
@@ -1037,11 +1141,14 @@ impl Tool for ClickTool {
                 "click.pixel",
                 || async move {
                     tokio::task::spawn_blocking(move || {
-                        let has_modifiers = !mods_owned.is_empty();
                         let do_click = move || -> anyhow::Result<()> {
                             let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
-                            if fg && !m.is_empty() {
-                                return crate::input::mouse::click_at_xy_desktop_with_modifiers_preserving_cursor(
+                            if route == PixelClickRoute::ForegroundHid {
+                                // Warp the hardware pointer to the mapped global
+                                // point and post at the HID tap. The pointer stays
+                                // at the target, as on Windows and X11, so apps that
+                                // read the pointer when handling the event see it.
+                                return crate::input::mouse::click_at_xy_desktop_with_modifiers(
                                     screen_x,
                                     screen_y,
                                     count,
@@ -1068,10 +1175,10 @@ impl Tool for ClickTool {
                                 }
                                 // "left" (default) or anything else — preserve legacy left-click path.
                                 _ => {
-                                    // When we know the window_id, pass the window-local coordinates so
-                                    // `click_at_xy_with_window_local` can stamp `CGEventSetWindowLocation`
-                                    // and Chromium-specific fields (f40, f51, f58, f91, f92) onto events
-                                    // for better backgrounded-target delivery.
+                                    // When we know the window_id, use the targeted primitive so
+                                    // foreground delivery can stamp window-local coordinates and
+                                    // background delivery can retain the translated screen point
+                                    // while adding Chromium routing fields (f40, f51, f58, f91, f92).
                                     if let Some(wid) = window_id {
                                         return crate::input::mouse::click_at_xy_with_window_local(
                                             pid, screen_x, screen_y,
@@ -1084,26 +1191,19 @@ impl Tool for ClickTool {
                                 }
                             }
                         };
-                        // Foreground rung: brief front → click → restore.
-                        // Returns whether the window was ACTUALLY fronted, so the
-                        // reported `path` honestly reflects the rung that ran.
-                        match (fg, window_id, has_modifiers) {
-                            (true, Some(wid), true) => {
+                        // Foreground rung: front the exact window → HID click →
+                        // restore the prior front process. The HID tap has no
+                        // pid addressing, so activation must be proven (the
+                        // window is AX-focused) or no input is sent.
+                        match (route, window_id) {
+                            (PixelClickRoute::ForegroundHid, Some(wid)) => {
                                 crate::input::skylight::with_foreground_hid_activation(
                                     pid as libc::pid_t,
                                     wid,
                                     do_click,
                                 )
-                                .map(|_| true)
                             }
-                            (true, Some(wid), false) => {
-                                crate::input::skylight::with_foreground_assist(
-                                    pid as libc::pid_t,
-                                    wid,
-                                    do_click,
-                                )
-                            }
-                            _ => do_click().map(|_| false),
+                            _ => do_click(),
                         }
                     })
                     .await
@@ -1131,10 +1231,24 @@ impl Tool for ClickTool {
                     apps::frontmost_pid(),
                 ) {
                     let _ = apps::activate_pid(previous_pid);
+                } else if let (Some(previous_pid), Some(wid)) = (prior_front, window_id) {
+                    // The prior app is still frontmost, but the no-raise
+                    // recipe posted it a defocus record: hand its key window
+                    // focus back so the user's typing keeps landing there.
+                    if focus_without_raise && apps::frontmost_pid() == Some(previous_pid) {
+                        let _ = tokio::task::spawn_blocking(move || {
+                            crate::input::skylight::restore_focus_after_without_raise(
+                                previous_pid,
+                                pid,
+                                wid,
+                            )
+                        })
+                        .await;
+                    }
                 }
             }
 
-            let changes = super::finish_window_observation(snapshot, &args).await;
+            let changes = super::finish_window_observation(snapshot).await;
 
             let button_label = match button_str.as_str() {
                 "right" => "right-click",
@@ -1142,34 +1256,36 @@ impl Tool for ClickTool {
                 _ => "click",
             };
             match result {
-                Ok(Ok(fronted)) => {
-                    // `with_foreground_assist` returns `false` when the fronting SPIs
-                    // were unavailable and it clicked WITHOUT activation — report the
-                    // background path in that case so `path` reflects the rung that ran.
-                    let (path, mode_label) = if fg && fronted {
-                        ("cgevent_fg", "foreground CGEvent")
+                Ok(Ok(())) => {
+                    let target = if route == PixelClickRoute::ForegroundHid {
+                        format!("at screen-point ({screen_x:.0},{screen_y:.0}) for pid {pid}")
                     } else {
-                        ("cgevent", "background CGEvent")
+                        format!("to pid {pid}")
                     };
                     ToolResult::text(format!(
-                        "✅ Posted {button_label} to pid {pid} ({mode_label}; \
-                         not driver-verified — confirm via screenshot).{}",
+                        "✅ Posted {button_label} {target} ({}).{}",
+                        super::pixel_route::delivery_note(route),
                         changes.result_suffix()
                     ))
                     .with_structured(serde_json::json!({
-                        "path": path,
+                        "path": super::pixel_route::path_label(route),
                         "verified": false,
                         "effect": "unverifiable",
                         "focus_without_raise": focus_without_raise
                     }))
                 }
+                Ok(Err(e)) if route == PixelClickRoute::ForegroundHid => {
+                    super::pixel_route::foreground_unavailable(
+                        button_label,
+                        window_id.unwrap_or_default(),
+                        &e.to_string(),
+                    )
+                }
                 Ok(Err(e)) => ToolResult::error(format!("{button_label} failed: {e}")),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
         } else {
-            ToolResult::error(
-                "Provide either (element_index + window_id) or (x + y). pid is always required.",
-            )
+            ToolResult::error("Provide either element_token or (x + y). pid is always required.")
         }
     }
 }
@@ -1384,7 +1500,7 @@ fn perform_ax_click(
                 summary.push_str(
                     "\n\n⚠️ This is a popup/select button. The native macOS menu closes \
                      immediately when the window is in the background. Do NOT use click \
-                     again — instead, use:\n  set_value(pid, window_id, element_index, value)\n\
+                     again — instead, use:\n  set_value(pid, element_token, value)\n\
                      Available options: [",
                 );
                 summary.push_str(&opt_list);
@@ -1438,7 +1554,16 @@ fn perform_ax_click(
 
 #[cfg(test)]
 mod selection_fallback_tests {
-    use super::selection_readback_confirms;
+    use super::{selection_pixel_target, selection_readback_confirms};
+
+    #[test]
+    fn selection_pixel_uses_container_center_in_both_coordinate_spaces() {
+        let target = selection_pixel_target((360.0, 240.0), (100.0, 80.0));
+        assert_eq!(target.screen_x, 360.0);
+        assert_eq!(target.screen_y, 240.0);
+        assert_eq!(target.window_x, 260.0);
+        assert_eq!(target.window_y, 160.0);
+    }
 
     #[test]
     fn plain_click_requires_selected_readback() {
@@ -1494,6 +1619,7 @@ mod tests {
         assert!(enum_vals.contains(&"left"));
         assert!(enum_vals.contains(&"right"));
         assert!(enum_vals.contains(&"middle"));
+        assert_eq!(props["capture_id"]["type"], "string");
     }
 
     /// Surface 5 hard constraint: the tool description must mention the
@@ -1515,36 +1641,6 @@ mod tests {
             desc.contains("middle"),
             "description should mention middle button"
         );
-    }
-
-    /// Existing default behaviour preserved: no `button` field on the call →
-    /// resolves to "left" inside invoke. We can't drive the AX path without a
-    /// live macOS Window Server, but we CAN check the same arg-parsing logic
-    /// the invoke uses produces "left" for empty / absent input.
-    #[test]
-    fn button_defaults_to_left_when_absent() {
-        use cua_driver_core::tool_args::ArgsExt;
-        let args = serde_json::json!({ "pid": 1234 });
-        let button_str_raw = args.str_or("button", "left").to_lowercase();
-        let resolved = if button_str_raw.is_empty() {
-            "left".to_string()
-        } else {
-            button_str_raw
-        };
-        assert_eq!(resolved, "left");
-    }
-
-    /// Round-trip the three canonical values through the same parse the invoke
-    /// uses, so any future refactor that changes str_or semantics breaks here
-    /// before it breaks consumers.
-    #[test]
-    fn button_round_trips_right_and_middle() {
-        use cua_driver_core::tool_args::ArgsExt;
-        for v in ["left", "right", "middle"] {
-            let args = serde_json::json!({ "pid": 1234, "button": v });
-            let s = args.str_or("button", "left").to_lowercase();
-            assert_eq!(s, v);
-        }
     }
 
     /// Regression for the Swift→Rust port gap: only a raw background left

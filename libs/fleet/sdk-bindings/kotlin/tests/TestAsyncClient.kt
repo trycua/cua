@@ -52,7 +52,7 @@ private fun tokenExpected() = textExpected(
 private fun serviceExpected(body: ByteArray?, response: ByteArray) = Expected(
     "POST",
     "https://cyclops.invalid/api/svc/default/offline-sandbox-mcp/mcp",
-    listOf("authorization" to "Bearer offline-token"),
+    listOf("X-Cua-Fleet-Claim" to "default", "authorization" to "Bearer offline-token"),
     body,
     202u,
     response,

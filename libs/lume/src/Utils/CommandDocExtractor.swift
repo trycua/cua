@@ -136,7 +136,7 @@ enum CommandDocExtractor {
                 OptionDoc(name: "display", shortName: nil, help: "Display resolution (e.g., 1024x768)", type: "String", defaultValue: "1024x768", isOptional: false),
                 OptionDoc(name: "ipsw", shortName: nil, help: "Path to IPSW file or 'latest' for macOS VMs", type: "String", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),
-                OptionDoc(name: "unattended", shortName: nil, help: "Prepare macOS unattended setup offline after install. Preset name or YAML path is accepted for compatibility. Built-in presets: sequoia, tahoe. Only supported for macOS VMs.", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "unattended", shortName: nil, help: "Prepare macOS unattended setup offline after install. Preset name or YAML path is accepted for compatibility. Built-in presets: goldengate, sequoia, tahoe. Only supported for macOS VMs.", type: "String", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "debug-dir", shortName: nil, help: "Compatibility option; ignored by offline setup.", type: "String", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "vnc-port", shortName: nil, help: "Port to use for the temporary verification VNC server. Defaults to 0 (auto-assign).", type: "Int", defaultValue: "0", isOptional: true),
             ],
@@ -752,7 +752,7 @@ enum CommandDocExtractor {
                 ArgumentDoc(name: "name", help: "Name of the virtual machine", type: "String", isOptional: false),
             ],
             options: [
-                OptionDoc(name: "unattended", shortName: nil, help: "Defaults to tahoe. Preset name or YAML path for compatibility and optional post-SSH commands. Built-in presets: sequoia, tahoe.", type: "String", defaultValue: "tahoe", isOptional: true),
+                OptionDoc(name: "unattended", shortName: nil, help: "Defaults to tahoe. Preset name or YAML path for compatibility and optional post-SSH commands. Built-in presets: goldengate, sequoia, tahoe.", type: "String", defaultValue: "tahoe", isOptional: true),
                 OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use or direct path to VM location", type: "String", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "vnc-port", shortName: nil, help: "Port to use for the temporary verification VNC server. Defaults to 0 (auto-assign)", type: "Int", defaultValue: "0", isOptional: true),
                 OptionDoc(name: "debug-dir", shortName: nil, help: "Compatibility option; ignored by offline setup", type: "String", defaultValue: nil, isOptional: true),

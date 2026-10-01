@@ -46,7 +46,9 @@ struct Create: AsyncParsableCommand {
 
     @Option(
         name: .customLong("unattended"),
-        help: "Prepare macOS unattended setup offline after install. Preset name or YAML path is accepted for compatibility. Built-in presets: sequoia, tahoe. Only supported for macOS VMs.",
+        help: ArgumentHelp(
+            "Prepare macOS unattended setup offline after install. Preset name or YAML path is accepted for compatibility. Built-in presets: \(UnattendedConfig.availablePresets().joined(separator: ", ")). Only supported for macOS VMs."
+        ),
         completion: .file(extensions: ["yml", "yaml"])
     )
     var unattended: String?

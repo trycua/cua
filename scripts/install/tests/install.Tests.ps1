@@ -178,17 +178,22 @@ Describe 'install.ps1' {
         $out | Should -Match 'is not on your PATH'
     }
 
-    It 'dry run: plans both components and changes nothing' {
+    # Cua Spaces is macOS-only for now: Windows skips the app with a note.
+    It 'dry run: plans the CLI, skips the app (macOS only) and changes nothing' {
         $prefix = Join-Path $env:CUA_TEST_ROOT 'p2'
         $out = Invoke-Installer @{ DryRun = $true; Yes = $true; Prefix = $prefix; Mode = 'host' } @{ CUA_INSTALL_ARCH = 'ARM64' }
         $out | Should -Match 'cua-cli-1.2.3-windows-arm64.zip'
-        $out | Should -Match 'msiexec.exe /i .*cua-spaces-1.2.3-windows-arm64.msi.* /qn /norestart CUA_SPACES_MODE=host'
+        $out | Should -Match 'Cua Spaces is macOS-only for now'
+        $out | Should -Not -Match 'msiexec'
+        $out | Should -Not -Match 'cua-spaces-1.2.3-windows'
         $prefix | Should -Not -Exist
     }
 
-    It 'dry run with -Installer nsis uses /S /MODE' {
+    It 'dry run: -AppOnly skips the app with a note and installs nothing' {
         $out = Invoke-Installer @{ DryRun = $true; Yes = $true; AppOnly = $true; Installer = 'nsis'; Mode = 'client' }
-        $out | Should -Match 'windows-x64-setup.exe /S /MODE=client'
+        $out | Should -Match 'Cua Spaces is macOS-only for now'
+        $out | Should -Not -Match 'setup.exe'
+        $out | Should -Not -Match 'cua-cli-1.2.3'
     }
 
     It 'aborts on a checksum mismatch' {
@@ -248,9 +253,11 @@ Describe 'install.ps1' {
         $out | Should -Not -Match 'cua-driver'
     }
 
-    It 'dry run: -Only spaces installs the app' {
+    It 'dry run: -Only spaces installs the CLI and skips the app' {
         $out = Invoke-Installer @{ DryRun = $true; Only = 'spaces' }
-        $out | Should -Match 'msiexec.exe /i .*cua-spaces-1.2.3-windows-x64.msi'
+        $out | Should -Match 'cua-cli-1.2.3-windows-x64.zip'
+        $out | Should -Match 'Cua Spaces is macOS-only for now'
+        $out | Should -Not -Match 'msiexec'
     }
 
     It 'dry run: -Select cua-driver,host prints the driver, agents and host steps' {
@@ -268,8 +275,8 @@ Describe 'install.ps1' {
         { Invoke-Installer @{ DryRun = $true; CliOnly = $true; Select = 'spaces' } } | Should -Throw '*use -Only spaces*'
     }
 
-    It 'dry run names the install-mode file for -Mode' {
+    It 'dry run: -Mode writes no install-mode file while the app is skipped' {
         $out = Invoke-Installer @{ DryRun = $true; Yes = $true; AppOnly = $true; Mode = 'host' }
-        $out | Should -Match 'spaces-install-mode \(host\)'
+        $out | Should -Not -Match 'spaces-install-mode'
     }
 }

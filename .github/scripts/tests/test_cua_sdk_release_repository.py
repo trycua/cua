@@ -97,6 +97,29 @@ def test_spaces_signing_fails_closed_only_on_trycua_cua() -> None:
     assert "$env:REQUIRE_SIGNING -eq 'true'" in verify
 
 
+def test_spaces_releases_macos_only_for_now() -> None:
+    jobs = workflow("cd-cua-spaces.yml")["jobs"]
+    # The Tauri Linux/Windows job is kept but off unless explicitly enabled.
+    assert jobs["build-linux-windows"]["if"] == "vars.CUA_SPACES_LINUX_WINDOWS == 'true'"
+    assert "if" not in jobs["build-macos"]
+    # Publishing runs with the Tauri job skipped, never after it failed.
+    gate = jobs["installer-manifest"]["if"]
+    assert "!cancelled()" in gate
+    assert "needs.build-macos.result == 'success'" in gate
+    assert "needs.build-linux-windows.result == 'skipped'" in gate
+    assert "startsWith(github.ref, 'refs/tags/cua-spaces-v')" in gate
+    # latest.json (the Tauri feed) only when Linux/Windows artifacts exist.
+    sign = step("cd-cua-spaces.yml", "installer-manifest", "Sign, checksum and build release-artifacts.json")["run"]
+    assert 'compgen -G "assets/cua-spaces-$VERSION-linux-*"' in sign
+    assert "updater_feed.py" in sign
+    assert "cosign sign-blob" in sign and "checksums.txt" in sign
+    feeds = step("cd-cua-spaces.yml", "installer-manifest", "Update the rolling feeds")["run"]
+    assert "if [ -f assets/latest.json ]; then" in feeds
+    assert "cua-install-latest assets/release-artifacts.json" in feeds
+    appcast = step("cd-cua-spaces.yml", "installer-manifest", "Upload the Sparkle appcast")
+    assert appcast["if"] == "needs.build-macos.outputs.appcast == 'true'"
+
+
 def test_spaces_prereleases_never_become_latest_or_move_canonical_feeds() -> None:
     publish = step("cd-cua-spaces.yml", "installer-manifest", "Publish the release")["run"]
     assert "--prerelease --latest=false" in publish

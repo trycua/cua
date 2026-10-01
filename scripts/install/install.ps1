@@ -9,7 +9,7 @@ Cua installer for Windows: the `cua` CLI, the Cua Spaces app and agent extras.
 
 At a console it first shows a numbered checklist of what to install. Items:
     cli         the cua CLI (always installed, except with -AppOnly)
-    spaces      the Cua Spaces app (off by default; -AppOnly or -Mode imply it)
+    spaces      the Cua Spaces app (macOS only for now; skipped here with a note)
     cua-driver  cua-driver MCP and skill for your agents (off by default)
     host        host this machine: `cua host setup` (off by default)
 Set CUA_INSTALL_NONINTERACTIVE=1 to never prompt.
@@ -17,8 +17,9 @@ Set CUA_INSTALL_NONINTERACTIVE=1 to never prompt.
 Reads release-artifacts.json (see scripts/install/README.md), downloads the
 artifacts for this machine, verifies their sha256 (and a minisign or cosign
 signature when available), installs `cua` to %LOCALAPPDATA%\Programs\cua\bin
-(or -Prefix\bin) and Cua Spaces with a silent MSI (or NSIS) install, then runs
-`cua auth login` when a user is at the console.
+(or -Prefix\bin), then runs `cua auth login` when a user is at the console.
+Cua Spaces is macOS-only for now, so -AppOnly, -Mode and the `spaces` item
+install nothing here (the installer says so and goes on).
 
 .PARAMETER Select
 Preselect items (comma list: spaces, cua-driver, host); the checklist still shows.
@@ -70,6 +71,10 @@ $LatestTag = 'cua-install-latest'
 $MinisignPubkey = $env:CUA_INSTALL_MINISIGN_PUBKEY
 $CuaItems = @('spaces', 'cua-driver', 'host')
 $script:Picked = $false
+# Cua Spaces ships for macOS only for now (cd-cua-spaces.yml builds no Windows
+# app): a selected `spaces` is skipped with a note. Set this to $true to bring
+# the Windows app back (Install-App is kept).
+$script:SpacesSupported = $false
 
 function Write-Info([string]$Message) { Write-Host "cua-install: $Message" }
 function Stop-Install([string]$Message) { throw "cua-install: error: $Message" }
@@ -419,6 +424,10 @@ function Invoke-CuaInstall {
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
     $sel = Get-CuaSelection
+    if ($sel.spaces -and -not $script:SpacesSupported) {
+        Write-Info 'Cua Spaces is macOS-only for now; skipping the app on Windows'
+        $sel.spaces = $false
+    }
     if ($Version -and $Version.TrimStart('v') -notmatch '^\d+\.\d+\.\d+') { Stop-Install "-Version must look like 1.2.3, not '$Version'" }
     $platform = Get-CuaPlatform
     if (Test-WantsChecklist) { $sel = Read-CuaSelection $sel }

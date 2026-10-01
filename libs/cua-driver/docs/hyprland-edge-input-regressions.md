@@ -7,8 +7,8 @@ these focused foreground failures:
 - Both Tauri scroll targeting modes request two pages but deliver only 126
   pixels into a 128-pixel viewport. The compositor route discards `by=page`.
 - Keyboard-first named-session input leaves its cursor position unset.
-- GTK3 pixel targeting subtracts the window origin from already window-local
-  accessibility bounds, producing an out-of-capture target before dispatch.
+- GTK3 supplies window-local accessibility bounds that the Driver incorrectly
+  trusts as screen coordinates, producing an out-of-capture pixel target.
 
 This workstream repairs those exact failures and adds focused regression
 coverage. It does not change application admission, private security handling,

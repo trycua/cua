@@ -3700,7 +3700,7 @@ pub fn element_bounds_ref(
             };
             if coord == CoordType::Window {
                 if let Some(Ok(raw)) = call(component.get_extents(CoordType::Screen)).await {
-                    if screen_extents_trusted(raw, display) {
+                    if screen_answer_overrides_window(raw, display, compositor_origin_attested()) {
                         return project_screen_extents(raw, (0, 0), None)
                             .ok_or_else(|| anyhow!("cached element reports no on-screen extents"));
                     }
@@ -3993,7 +3993,8 @@ async fn frame_screen_origin(
     let display = (!crate::wayland::is_wayland())
         .then(x11_display_size)
         .flatten();
-    screen_extents_trusted(raw, display).then_some((raw.0, raw.1))
+    screen_answer_overrides_window(raw, display, compositor_origin_attested())
+        .then_some((raw.0, raw.1))
 }
 
 /// Largest offset between an X11 client origin and the toolkit's own frame
@@ -5554,6 +5555,23 @@ pub(crate) fn screen_extents_trusted(
     }
 }
 
+/// Whether a `CoordType::Screen` answer may override the Window-relative
+/// reconstruction. On a Hyprland session the compositor attests the window
+/// origin, while GTK3 on native Wayland reports window-local values as
+/// `Screen` (no display bounds exist to reject them), so the attested origin
+/// plus `Window` extents must win there.
+fn screen_answer_overrides_window(
+    raw: (i32, i32, i32, i32),
+    display: Option<(u32, u32)>,
+    compositor_origin_attested: bool,
+) -> bool {
+    !compositor_origin_attested && screen_extents_trusted(raw, display)
+}
+
+fn compositor_origin_attested() -> bool {
+    crate::wayland::is_wayland() && crate::wayland::hyprland::is_session()
+}
+
 pub(crate) fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
     use x11rb::protocol::xproto::*;
     use x11rb::rust_connection::RustConnection;
@@ -6079,6 +6097,7 @@ async fn element_bounds_for_visited(
     // Bounds are independent read-only queries. Overlap a bounded number of
     // calls instead of serializing thousands of unrealized menu components.
     // Preserve original indices, all extents checks, and per-call timeouts.
+    let origin_attested = compositor_origin_attested();
     let queries = scoped_component_nodes(&action_nodes, scoped_frame, |node| {
         (node.frame_ordinal, node.has_component)
     })
@@ -6090,7 +6109,7 @@ async fn element_bounds_for_visited(
         // origin path.
         if coord == CoordType::Window && !node.in_web_doc {
             if let Some(Ok(raw)) = call(comp.get_extents(CoordType::Screen)).await {
-                if screen_extents_trusted(raw, display) {
+                if screen_answer_overrides_window(raw, display, origin_attested) {
                     return project_screen_extents(raw, (0, 0), None).map(|bounds| (idx, bounds));
                 }
             }
@@ -6196,6 +6215,63 @@ mod screen_extents_tests {
             (-500, 10, 40, 20),
             Some((1920, 1080))
         ));
+    }
+}
+
+#[cfg(test)]
+mod screen_override_tests {
+    use super::{project_screen_extents, screen_answer_overrides_window};
+
+    #[test]
+    fn attested_origin_rejects_window_local_screen_answer() {
+        // GTK3 on Hyprland reports window-local (12,211) as Screen; with no
+        // display bounds it would otherwise pass `screen_extents_trusted`.
+        let local = (12, 211, 917, 34);
+        assert!(screen_answer_overrides_window(local, None, false));
+        assert!(!screen_answer_overrides_window(local, None, true));
+        // Window extents plus the attested nonzero origin give screen space.
+        assert_eq!(
+            project_screen_extents(local, (955, 349), None),
+            Some((967, 560, 917, 34))
+        );
+    }
+
+    #[test]
+    fn x11_screen_answer_still_wins_with_display_bounds() {
+        let screen = (70, 110, 848, 433);
+        assert!(screen_answer_overrides_window(
+            screen,
+            Some((1920, 1080)),
+            false
+        ));
+    }
+
+    #[test]
+    fn invalid_screen_answers_never_override() {
+        for attested in [false, true] {
+            assert!(!screen_answer_overrides_window(
+                (i32::MIN, i32::MIN, 1, 1),
+                None,
+                attested
+            ));
+            assert!(!screen_answer_overrides_window(
+                (0, 0, 100, 20),
+                None,
+                attested
+            ));
+        }
+        assert_eq!(
+            project_screen_extents((i32::MIN, i32::MIN, 1, 1), (955, 349), None),
+            None
+        );
+    }
+
+    #[test]
+    fn web_document_origin_is_added_after_window_offset() {
+        assert_eq!(
+            project_screen_extents((10, 20, 30, 40), (955, 349), Some((0, 80))),
+            Some((965, 449, 30, 40))
+        );
     }
 }
 

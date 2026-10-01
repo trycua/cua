@@ -109,6 +109,52 @@ pub(crate) fn text_actions(text: &str) -> Result<Vec<Action>> {
         .collect()
 }
 
+/// Wheel detents per `by: "page"` unit. This is the same documented
+/// approximation the Windows foreground fallback uses (page ≈ 3 detents); it is
+/// not a toolkit-measured viewport fraction, and callers must not treat a page
+/// as an exact viewport.
+pub(crate) const PAGE_WHEEL_DETENTS: usize = 3;
+/// Public scroll `amount` bound (before the page multiplier).
+const MAX_SCROLL_AMOUNT: usize = 50;
+/// One protocol packet carries at most 100 detents (|value| <= 1000 at 10 per
+/// detent). Larger requests are decomposed, never clamped.
+const MAX_DETENTS_PER_PACKET: usize = 100;
+
+/// Validate the whole request before dispatching anything, then expand it to
+/// wheel packets. `amount` is the public 1..=50 count of lines or pages. A page
+/// request that exceeds one packet becomes several consecutive same-direction
+/// packets whose detents sum exactly to `amount * PAGE_WHEEL_DETENTS`.
+pub(crate) fn scroll_actions(
+    point: Option<(f64, f64)>,
+    direction: &str,
+    amount: usize,
+    by: cua_driver_contract::ScrollBy,
+) -> Result<Vec<Action>> {
+    ensure!(
+        (1..=MAX_SCROLL_AMOUNT).contains(&amount),
+        "unsupported scroll amount"
+    );
+    ensure!(
+        matches!(direction, "up" | "down" | "left" | "right"),
+        "unsupported scroll direction"
+    );
+    let mut remaining = match by {
+        cua_driver_contract::ScrollBy::Line => amount,
+        cua_driver_contract::ScrollBy::Page => amount * PAGE_WHEEL_DETENTS,
+    };
+    let mut actions = Vec::new();
+    while remaining > 0 {
+        let chunk = remaining.min(MAX_DETENTS_PER_PACKET);
+        actions.push(Action::Scroll {
+            point,
+            direction: direction.to_owned(),
+            amount: chunk,
+        });
+        remaining -= chunk;
+    }
+    Ok(actions)
+}
+
 /// Cancellation belongs to one invocation, never to its session's next call.
 #[derive(Clone, Default)]
 pub(crate) struct ActionCancellation(Arc<AtomicBool>);
@@ -159,7 +205,8 @@ impl std::fmt::Display for LaneBusy {
 impl std::error::Error for LaneBusy {}
 
 /// A sent action has no trustworthy final reply. The count describes only
-/// acknowledged gesture phases (drag start or completed text keys), never a
+/// acknowledged gesture phases (drag start, completed text keys, or completed
+/// wheel packets of a multi-packet scroll), never a
 /// total event count or proof that no later events landed.
 #[derive(Debug)]
 pub struct DispatchUnknown {
@@ -1046,6 +1093,67 @@ pub(crate) fn execute_background_text(
     )
 }
 
+pub(crate) fn execute_scroll(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    actions: Vec<Action>,
+    cancellation: ActionCancellation,
+) -> Result<Value> {
+    execute_scroll_routed(
+        owner,
+        pid,
+        address,
+        actions,
+        cancellation,
+        DeliveryRoute::Background,
+    )
+}
+
+pub(crate) fn execute_foreground_scroll(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    actions: Vec<Action>,
+    cancellation: ActionCancellation,
+) -> Result<Value> {
+    execute_scroll_routed(
+        owner,
+        pid,
+        address,
+        actions,
+        cancellation,
+        DeliveryRoute::Foreground,
+    )
+}
+
+/// One packet keeps the single-action reply; several run as a paced sequence
+/// whose `delivered_count` counts acknowledged wheel packets, not detents.
+fn execute_scroll_routed(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    actions: Vec<Action>,
+    cancellation: ActionCancellation,
+    route: DeliveryRoute,
+) -> Result<Value> {
+    ensure!(
+        !actions.is_empty() && actions.iter().all(|a| matches!(a, Action::Scroll { .. })),
+        "scroll requires wheel actions"
+    );
+    let sequence = actions.len() > 1;
+    execute_actions_routed(
+        owner,
+        pid,
+        address,
+        actions,
+        None,
+        cancellation,
+        route,
+        sequence,
+    )
+}
+
 fn execute_text_routed(
     owner: Option<String>,
     pid: u32,
@@ -1168,6 +1276,11 @@ fn execute_text_actions(
 ) -> Result<Value> {
     let mut delivered = 0u32;
     let action_count = actions.len();
+    // Shared by text keys and wheel packets; only the interruption code differs.
+    let interrupted_code = match actions.first() {
+        Some(Action::Scroll { .. }) => "scroll_interrupted",
+        _ => "text_interrupted",
+    };
     for (index, action) in actions.into_iter().enumerate() {
         match dispatch(action) {
             Ok(mut reply) if reply["ok"] == false => {
@@ -1195,7 +1308,7 @@ fn execute_text_actions(
                     return Err(error);
                 }
                 return Ok(
-                    json!({"ok":false,"code":"text_interrupted","detail":error.to_string(),
+                    json!({"ok":false,"code":interrupted_code,"detail":error.to_string(),
                         "effect":"partial","delivery":{"mode":route.mode(),"delivered_count":delivered}}),
                 );
             }
@@ -1243,6 +1356,7 @@ fn terminal_connection_result(value: &Value) -> bool {
                         | "plugin_shutdown"
                         | "generation_exhausted"
                         | "text_interrupted"
+                        | "scroll_interrupted"
                 )
             ))
 }
@@ -1331,6 +1445,116 @@ mod tests {
             false,
             record_test_attestation,
         )
+    }
+
+    fn scroll_values(actions: &[Action]) -> Vec<String> {
+        actions
+            .iter()
+            .map(|action| {
+                let packet = action.packet(1, TOKEN, 1, 100.0, 100.0).unwrap();
+                packet.rsplit(' ').next().unwrap().to_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn scroll_line_keeps_ten_units_per_detent_in_each_direction() {
+        use cua_driver_contract::ScrollBy::Line;
+        for (direction, axis, sign) in [
+            ("up", 0, -1),
+            ("down", 0, 1),
+            ("left", 1, -1),
+            ("right", 1, 1),
+        ] {
+            let actions = scroll_actions(None, direction, 3, Line).unwrap();
+            assert_eq!(actions.len(), 1);
+            let packet = actions[0].packet(1, TOKEN, 1, 100.0, 100.0).unwrap();
+            assert_eq!(
+                packet,
+                format!("SCROLL 1 {TOKEN} 1 50 50 {axis} {}", 30 * sign)
+            );
+        }
+    }
+
+    #[test]
+    fn scroll_page_is_three_detents_per_page_in_each_direction() {
+        use cua_driver_contract::ScrollBy::Page;
+        for (direction, sign) in [("up", -1), ("down", 1), ("left", -1), ("right", 1)] {
+            let actions = scroll_actions(Some((5.0, 6.0)), direction, 2, Page).unwrap();
+            assert_eq!(scroll_values(&actions), vec![(60 * sign).to_string()]);
+        }
+    }
+
+    #[test]
+    fn scroll_page_beyond_one_packet_is_decomposed_without_loss() {
+        use cua_driver_contract::ScrollBy::{Line, Page};
+        // Maximum public amount: 50 lines fit one packet; 50 pages = 150
+        // detents = 100 + 50, never clamped.
+        assert_eq!(
+            scroll_values(&scroll_actions(None, "down", 50, Line).unwrap()),
+            vec!["500"]
+        );
+        let actions = scroll_actions(None, "up", 50, Page).unwrap();
+        assert_eq!(scroll_values(&actions), vec!["-1000", "-500"]);
+        // The first packet at the protocol's |1000| limit is still valid.
+        assert_eq!(
+            scroll_values(&scroll_actions(None, "down", 34, Page).unwrap()),
+            vec!["1000", "20"]
+        );
+        assert_eq!(
+            scroll_values(&scroll_actions(None, "down", 33, Page).unwrap()),
+            vec!["990"]
+        );
+    }
+
+    #[test]
+    fn scroll_rejects_invalid_amount_and_direction_before_any_packet() {
+        use cua_driver_contract::ScrollBy::{Line, Page};
+        for by in [Line, Page] {
+            assert!(scroll_actions(None, "down", 0, by).is_err());
+            assert!(scroll_actions(None, "down", 51, by).is_err());
+            assert!(scroll_actions(None, "sideways", 1, by).is_err());
+            assert!(scroll_actions(None, "", 1, by).is_err());
+        }
+        // The packet encoder keeps its own protocol bound.
+        let over = Action::Scroll {
+            point: None,
+            direction: "down".into(),
+            amount: 101,
+        };
+        assert!(over.packet(1, TOKEN, 1, 100.0, 100.0).is_err());
+    }
+
+    #[test]
+    fn multi_packet_scroll_reports_packets_and_interruption_honestly() {
+        let actions =
+            scroll_actions(None, "down", 50, cua_driver_contract::ScrollBy::Page).unwrap();
+        let mut calls = 0;
+        let result = execute_text_actions(actions, DeliveryRoute::Foreground, |_| {
+            calls += 1;
+            Ok(json!({"ok":true,"effect":"unverifiable","route":"primary_foreground"}))
+        })
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(result["delivery"]["delivered_count"], 2);
+        assert_eq!(result["route"], "primary_foreground");
+
+        let actions =
+            scroll_actions(None, "down", 50, cua_driver_contract::ScrollBy::Page).unwrap();
+        let mut calls = 0;
+        let result = execute_text_actions(actions, DeliveryRoute::Background, |_| {
+            calls += 1;
+            if calls == 1 {
+                Ok(json!({"ok":true,"effect":"unverifiable","route":"synthetic_events"}))
+            } else {
+                anyhow::bail!("cancelled")
+            }
+        })
+        .unwrap();
+        assert_eq!(result["code"], "scroll_interrupted");
+        assert_eq!(result["effect"], "partial");
+        assert_eq!(result["delivery"]["delivered_count"], 1);
+        assert!(terminal_connection_result(&result));
     }
 
     #[test]

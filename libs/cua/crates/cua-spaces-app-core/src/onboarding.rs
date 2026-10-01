@@ -552,7 +552,7 @@ pub fn reduce(s: &OnboardingState, a: &OnboardingAction) -> OnboardingState {
             t.enabled = *on;
             n.telemetry = Some(t);
         }
-        (step, OnboardingAction::Back) if step != Welcome && step != Done => {
+        (step, OnboardingAction::Back) if step != Welcome => {
             let all = steps(s);
             if let Some(i) = all.iter().position(|x| *x == step).filter(|i| *i > 0) {
                 n.step = all[i - 1];
@@ -1182,7 +1182,7 @@ pub fn view(s: &OnboardingState) -> OnboardingView {
         lede: lede.into(),
         primary_label: primary.into(),
         can_skip: s.step == Agents || (s.step == Signin && s.identity.is_none()),
-        can_back: !matches!(s.step, Welcome | Done),
+        can_back: s.step != Welcome,
         show_mark: s.step == Welcome,
         preselected_mode: s.installer_mode.unwrap_or(OnboardingMode::Client),
         summary,
@@ -1406,6 +1406,7 @@ mod tests {
         s.step = OnboardingStep::Mode;
         assert!(view(&s).prompts.is_empty(), "only on Done");
         s.step = OnboardingStep::Done;
+        assert!(view(&s).can_back, "Back on every page after Welcome");
         let facts = view(&s).summary;
         assert!(
             facts

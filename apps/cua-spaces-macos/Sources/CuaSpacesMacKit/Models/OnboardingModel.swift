@@ -66,8 +66,9 @@ public final class OnboardingModel {
     public var agentSelection: Set<String> = []
     public var agentSkills = true
     public var agentMcp = true
-    /// The background computer-use card: also set up cua-driver.
-    public var agentDriver = false
+    /// The background computer-use card: also set up cua-driver (on by
+    /// default, like the skills and MCP switches).
+    public var agentDriver = true
     public private(set) var agentsBusy = false
     public private(set) var agentsError: String?
     public private(set) var agentOutcomes: [AppAgentSetupOutcomeInput]?

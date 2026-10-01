@@ -64,6 +64,25 @@ struct SnapshotTests {
         try assertSnapshot(OnboardingView(onboarding: o), "onboarding-done", size: size)
     }
 
+    /// The AI agents page with twelve agents at the window's minimum size:
+    /// the list scrolls in two columns, so Back and Set up stay in view.
+    @Test func onboardingAgentsLongListAtMinimumSize() async throws {
+        let names = ["Claude Code", "Codex", "Cursor", "Gemini CLI", "GitHub Copilot", "Windsurf", "Cline",
+                     "Roo Code", "OpenCode", "Goose", "Amp", "Hermes"]
+        let statuses = names.map { n in
+            AppAgentSetupStatus(id: n.lowercased().replacingOccurrences(of: " ", with: "-"), name: n, installed: true,
+                                skillsDir: "~/.agents/skills", mcpConfig: nil, cuaConfigured: false,
+                                skillsInstalled: [], skillsOutdated: [], error: nil)
+        }
+        let o = OnboardingModel(statePath: nil, agentSetup: FixtureAgentSetup(statuses: statuses))
+        o.send(.start)
+        o.send(.signinDone)
+        await o.loadAgents()
+        #expect(o.installedAgents.count == 12)
+        #expect(o.view.canBack)
+        try assertSnapshot(OnboardingView(onboarding: o), "onboarding-agents-long", size: CGSize(width: 720, height: 520))
+    }
+
     /// The AI agents page's background computer-use card at beats of its
     /// loop (the agent gliding while the user drags a selection, the agent
     /// clicking a box, both idle at the loop's end), ticked, and the Reduce

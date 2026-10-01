@@ -57,7 +57,8 @@ public struct OnboardingView: View {
                 }
             }
             Spacer(minLength: 24)
-            footer(v)
+            // The buttons always show: the pages give way first.
+            footer(v).layoutPriority(1)
         }
         .frame(minWidth: 720, minHeight: 520)
         .task { await onboarding.installCliSilently() }
@@ -288,15 +289,16 @@ public struct OnboardingView: View {
             } else if onboarding.installedAgents.isEmpty {
                 Text(copy.agentsNone).foregroundStyle(.secondary)
             } else {
-                ForEach(onboarding.installedAgents, id: \.id) { a in
-                    Toggle(a.name, isOn: Binding(
-                        get: { onboarding.agentSelection.contains(a.id) },
-                        set: { on in
-                            if on { onboarding.agentSelection.insert(a.id) } else { onboarding.agentSelection.remove(a.id) }
-                        }))
-                        .toggleStyle(.checkbox)
-                        .help([a.mcpConfig ?? a.skillsDir ?? "", a.error ?? ""].filter { !$0.isEmpty }.joined(separator: " \u{b7} "))
+                // Two columns, at most `agentsListHeight` tall (scrolling
+                // past it), so a long list never pushes Back and Continue
+                // off the window.
+                ViewThatFits(in: .vertical) {
+                    agentGrid
+                    ScrollView { agentGrid }
+                        .scrollIndicators(.automatic)
                 }
+                .frame(maxHeight: Self.agentsListHeight)
+                .accessibilityIdentifier("agents-list")
                 Divider()
                 HStack(spacing: 16) {
                     Toggle(copy.agentsSkills, isOn: $onboarding.agentSkills).toggleStyle(.checkbox)
@@ -312,6 +314,26 @@ public struct OnboardingView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .task { if onboarding.agentStatuses == nil { await onboarding.loadAgents() } }
+    }
+
+    /// The agent list's tallest (six rows of two); longer lists scroll.
+    static let agentsListHeight: CGFloat = 132
+
+    /// The detected agents' checkboxes, in two columns.
+    private var agentGrid: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)],
+                  alignment: .leading, spacing: 6) {
+            ForEach(onboarding.installedAgents, id: \.id) { a in
+                Toggle(a.name, isOn: Binding(
+                    get: { onboarding.agentSelection.contains(a.id) },
+                    set: { on in
+                        if on { onboarding.agentSelection.insert(a.id) } else { onboarding.agentSelection.remove(a.id) }
+                    }))
+                    .toggleStyle(.checkbox)
+                    .lineLimit(1)
+                    .help([a.mcpConfig ?? a.skillsDir ?? "", a.error ?? ""].filter { !$0.isEmpty }.joined(separator: " \u{b7} "))
+            }
+        }
     }
 
     /// The telemetry notice with its link inline at the end (it wraps).

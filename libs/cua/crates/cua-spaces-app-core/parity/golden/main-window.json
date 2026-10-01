@@ -1094,7 +1094,7 @@
     },
     {
       "frame": {
-        "canBack": false,
+        "canBack": true,
         "canSkip": false,
         "choices": [],
         "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",

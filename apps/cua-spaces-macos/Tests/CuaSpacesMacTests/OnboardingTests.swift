@@ -247,25 +247,27 @@ struct OnboardingTests {
         #expect(o.installedAgents.map(\.id) == ["claude-code", "codex"])
         o.agentSelection.remove("codex")
         await o.setUpAgents()
-        #expect(agents.calls == ["setup:claude-code"])
+        #expect(agents.calls == ["setup:claude-code", "driver:claude-code"], "the driver card is on by default")
         #expect(o.agentSummaries.map(\.line) == ["Claude Code: done"])
         o.finishAgents()
         #expect(o.view.step == .presentation)
         #expect(o.state.agents == ["Claude Code"])
     }
 
-    /// The background computer-use card: off by default; ticked, "Set up"
-    /// also runs the cua-driver step for the same agents (alone when the
-    /// skills and MCP switches are off), and the summary names it.
+    /// The background computer-use card: on by default, like the skills
+    /// and MCP switches; ticked, "Set up" also runs the cua-driver step for
+    /// the same agents (alone when the skills and MCP switches are off), and
+    /// the summary names it.
     @Test func theDriverCardAddsTheCuaDriverStepForTheTickedAgents() async {
         let agents = FixtureAgentSetup()
         let o = model(agents: agents)
         o.send(.signinDone)
         await o.loadAgents()
-        #expect(!o.agentDriver)
+        #expect(o.agentSkills && o.agentMcp && o.agentDriver, "all three on by default")
         #expect(o.copy.agentsDriver == "cua-driver skill for background computer-use")
         o.agentSkills = false
         o.agentMcp = false
+        o.agentDriver = false
         #expect(!o.canSetUpAgents, "nothing chosen")
         o.agentDriver = true
         #expect(o.canSetUpAgents)

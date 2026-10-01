@@ -19,7 +19,7 @@
       ],
       "onboarding": {
         "done": {
-          "canBack": false,
+          "canBack": true,
           "canSkip": false,
           "choices": [],
           "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
@@ -124,7 +124,7 @@
       ],
       "onboarding": {
         "done": {
-          "canBack": false,
+          "canBack": true,
           "canSkip": false,
           "choices": [],
           "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
@@ -248,7 +248,7 @@
       ],
       "onboarding": {
         "done": {
-          "canBack": false,
+          "canBack": true,
           "canSkip": false,
           "choices": [],
           "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
@@ -377,7 +377,7 @@
       ],
       "onboarding": {
         "done": {
-          "canBack": false,
+          "canBack": true,
           "canSkip": false,
           "choices": [],
           "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
@@ -507,7 +507,7 @@
       ],
       "onboarding": {
         "done": {
-          "canBack": false,
+          "canBack": true,
           "canSkip": false,
           "choices": [],
           "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
@@ -623,7 +623,7 @@
       ],
       "onboarding": {
         "done": {
-          "canBack": false,
+          "canBack": true,
           "canSkip": false,
           "choices": [],
           "dots": "Welcome,Sign in,AI agents,Menu bar,Cua Volume,This machine,*Done",
@@ -738,7 +738,7 @@
       ],
       "onboarding": {
         "done": {
-          "canBack": false,
+          "canBack": true,
           "canSkip": false,
           "choices": [],
           "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
@@ -859,7 +859,7 @@
       ],
       "onboarding": {
         "done": {
-          "canBack": false,
+          "canBack": true,
           "canSkip": false,
           "choices": [],
           "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",
@@ -975,7 +975,7 @@
       ],
       "onboarding": {
         "done": {
-          "canBack": false,
+          "canBack": true,
           "canSkip": false,
           "choices": [],
           "dots": "Welcome,Sign in,AI agents,Menu bar,This machine,*Done",

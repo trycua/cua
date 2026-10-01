@@ -77,7 +77,7 @@ Cua Spaces is a desktop app that gives your agents full desktops. Each desktop i
 - **Multiplayer.** You and your agents work on the same desktop, each with your own cursor. Step in to make a choice, then hand the desktop back.
 - **Agent-ready images.** Spaces images ship with [cua-spacesd](libs/cua-spacesd/README.md), so agents get processes, files, screenshots and input as soon as a Space starts.
 
-[Watch teleport and multiplayer (22 s, MP4)](img/cua-spaces-demo.mp4)
+https://github.com/user-attachments/assets/a2ccc86b-10d0-48c0-bee6-7ae652ba1c59
 
 **Install on macOS 26 or later**
 

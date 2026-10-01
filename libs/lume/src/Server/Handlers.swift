@@ -474,6 +474,20 @@ extension Server {
             let vncPolicy = try request.validatedVNCPolicy(noDisplayDefault: false)
             let noDisplay = request.noDisplay ?? false
 
+            let runningVMCount = try LumeController().list(storage: nil)
+                .filter { $0.status == "running" }
+                .count
+            if let capacityError = Self.activeVMCapacityError(
+                runningVMCount: runningVMCount,
+                maxVMs: Self.maxActiveVMs
+            ) {
+                return HTTPResponse(
+                    statusCode: .conflict,
+                    headers: ["Content-Type": "application/json"],
+                    body: try JSONEncoder().encode(APIError(message: capacityError))
+                )
+            }
+
             // Start VM in background
             Logger.info("Starting VM in background", metadata: ["name": name])
             startVM(
@@ -938,7 +952,7 @@ extension Server {
 
             // Count running VMs (Apple policy: max 2 VMs per host)
             let runningVMs = vms.filter { $0.status == "running" }
-            let maxVMs = 2  // Apple Virtualization Framework limit
+            let maxVMs = Self.maxActiveVMs  // Apple Virtualization Framework limit
 
             let response = HostStatusResponse(
                 status: "healthy",
@@ -956,6 +970,14 @@ extension Server {
     }
 
     // MARK: - Private Helper Methods
+
+    static let maxActiveVMs = 2
+
+    static func activeVMCapacityError(runningVMCount: Int, maxVMs: Int) -> String? {
+        runningVMCount >= maxVMs
+            ? "VM start rejected: host active VM limit reached"
+            : nil
+    }
 
     nonisolated private func startVM(
         name: String,

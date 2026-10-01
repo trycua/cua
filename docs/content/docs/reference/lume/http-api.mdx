@@ -427,6 +427,7 @@ const data = await response.json();
 #### Response
 
 - **202**: VM start initiated (async operation)
+- **409**: Host active VM limit reached. The response body is `{"message":"VM start rejected: host active VM limit reached"}`.
 - **400**: Invalid request or VM not found
 
 ---

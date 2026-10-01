@@ -897,6 +897,69 @@ describe('MacOSComputerInterface', () => {
       });
     });
 
+    it('should reject a command when the WebSocket closes before responding', async () => {
+      const disconnectingWss = new WebSocketServer({ port: 0 });
+      const disconnectingPort = (disconnectingWss.address() as { port: number }).port;
+      let connectionCount = 0;
+      let commandCount = 0;
+
+      disconnectingWss.on('connection', (ws) => {
+        connectionCount += 1;
+        const connectionNumber = connectionCount;
+
+        ws.on('message', () => {
+          commandCount += 1;
+          if (connectionNumber === 1) {
+            ws.close(1011, 'test disconnect');
+            return;
+          }
+          ws.send(JSON.stringify({ success: true }));
+        });
+      });
+
+      const macosInterface = new MacOSComputerInterface(
+        `localhost:${disconnectingPort}`,
+        testParams.username,
+        testParams.password,
+        undefined,
+        testParams.vmName
+      );
+      const settleWithinTwoSeconds = <T>(promise: Promise<T>): Promise<T> =>
+        new Promise((resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error('Command did not settle within two seconds')),
+            2000
+          );
+          promise.then(
+            (value) => {
+              clearTimeout(timeout);
+              resolve(value);
+            },
+            (error) => {
+              clearTimeout(timeout);
+              reject(error);
+            }
+          );
+        });
+
+      try {
+        await macosInterface.connect();
+        await expect(settleWithinTwoSeconds(macosInterface.leftClick(100, 100))).rejects.toThrow(
+          'WebSocket closed before receiving a response'
+        );
+        await expect(
+          settleWithinTwoSeconds(macosInterface.leftClick(100, 100))
+        ).resolves.toBeUndefined();
+        expect(connectionCount).toBe(2);
+        expect(commandCount).toBe(2);
+      } finally {
+        macosInterface.disconnect();
+        await new Promise<void>((resolve) => {
+          disconnectingWss.close(() => resolve());
+        });
+      }
+    });
+
     it('should handle disconnection gracefully', async () => {
       const macosInterface = new MacOSComputerInterface(
         testParams.ipAddress,

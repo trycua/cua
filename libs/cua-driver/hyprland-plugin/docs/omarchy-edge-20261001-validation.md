@@ -109,9 +109,20 @@ kit provenance is `28a3ccebccb539fc625b972082d3426f41a403e872d358b8eff130a4f8091
 The rebuilt production module is byte-identical to the original module, but
 the package is distinct:
 `fa68bd906e8bfe6473d790d28728e35efad978f548f48cf61d08a668d3841a30`.
-Its live lifecycle still requires verification; old package proof is not
-silently transferred. Published-source packages and the repaired Driver
-candidate remain separately identified.
+Its live install, upgrade to release 4, rollback to release 3, removal and
+reinstallation pass with the compositor stopped for every package mutation.
+Fresh sessions after each installed stage map the production module with matching
+ABI and enabled input. Removal leaves no module or loaded plugin; the retained
+test-only enable setting reports an unknown key until reinstallation and
+deliberate activation clear it. The current-profile production smoke passes
+on published Driver 0.31.0 bytes, with strict semantic and saved-SVG readback.
+Full reboot verification passes on kernel `7.2.7-arch1-1`: a new boot identity,
+fresh compositor activation, matching ABI, enabled input, and the consumer
+verifier all pass. The post-reboot production smoke also passes on published
+Driver 0.31.0, including semantic readback and the saved two-pixel SVG translation.
+These bounded checks do not replace the complete matrix on the updated runtime.
+Old package proof is not silently transferred. Published-source packages and the repaired Driver candidate remain
+separately identified.
 
 ## Remaining gates
 
@@ -135,13 +146,14 @@ passing. Its measured profile differs from release `3` only in explicit labels
 and package revision. Package SHA-256 is
 `4bf905f05590a9f2bd4b25fa7d302c63dc17c71ebd2bd726b67235248d561982`;
 kit provenance is `0947837380c9af82ca9dc0d2ac4f7b1e0238a74f7677495fee4685278c8af0d3`.
-It is staged solely for the still-unproven live upgrade/rollback check.
+Its live upgrade and rollback checks pass as described above; it is not a
+published release asset.
 
 - Canonical Lume macOS verification of the shared refusal-metadata repair.
   Canonical hosted Linux and Windows pass; hosted macOS is supplemental only.
 - Fault evidence is limited to the cases stated above; it is not arbitrary
   application or physical-hardware certification.
-- Live removal/reinstallation, restart, upgrade and rollback evidence.
+- Current-profile complete canonical evidence on the updated Mesa and kernel.
 - Bind any published kit/package to the exact passing evidence.
 - Omarchy-owned downstream acceptance and package promotion.
 

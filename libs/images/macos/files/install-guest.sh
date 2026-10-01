@@ -11,6 +11,7 @@
 #   com.trycua.spacesd.plist  -> /Library/LaunchAgents (root:wheel 0644)
 #   seed-tcc.sh               run once here, not shipped
 #   image.json manifest.json  -> /etc/cua-image/ (build identity)
+#   spacesd-source            optional: local (default) or release
 #
 # Layout (mirrors the Linux image where macOS allows):
 #   /Applications/Cua Spacesd.app       the daemon, by bundle (TCC identity)
@@ -51,7 +52,9 @@ sudo_run install -d -o root -g wheel -m 0755 /etc/cua-image /etc/cua
 sudo_run install -o root -g wheel -m 0644 "$STAGE/image.json" /etc/cua-image/image.json
 sudo_run install -o root -g wheel -m 0644 "$STAGE/manifest.json" /etc/cua-image/manifest.json
 # (sudo_run owns stdin for the password, so no pipe into it.)
-sudo_run sh -c "printf 'local\\n' >/etc/cua-image/spacesd-source; printf 'lume\\n' >/etc/cua-image/variant"
+source_kind="$(cat "$STAGE/spacesd-source" 2>/dev/null || echo local)"
+case "$source_kind" in local|release) ;; *) echo "bad spacesd-source $source_kind" >&2; exit 1 ;; esac
+sudo_run sh -c "printf '%s\\n' '$source_kind' >/etc/cua-image/spacesd-source; printf 'lume\\n' >/etc/cua-image/variant"
 sudo_run chmod 0644 /etc/cua-image/spacesd-source /etc/cua-image/variant
 /usr/local/bin/cua-spacesd build-info
 

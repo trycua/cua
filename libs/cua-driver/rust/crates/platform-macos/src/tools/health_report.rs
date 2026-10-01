@@ -50,9 +50,9 @@ impl HealthCheckProvider for MacosHealthProvider {
 
     async fn run_check(&self, name: &str) -> CheckEntry {
         match name {
-            NAME_BINARY_VERSION => check_binary_version(),
+            NAME_BINARY_VERSION => CheckEntry::binary_version(),
             NAME_PLATFORM_SUPPORTED => check_platform_supported(),
-            NAME_SESSION_ACTIVE => check_session_active(),
+            NAME_SESSION_ACTIVE => CheckEntry::session_active(),
             NAME_BUNDLE_IDENTITY => check_bundle_identity(),
             NAME_TCC_ACCESSIBILITY => check_tcc_accessibility(),
             NAME_TCC_SCREEN_RECORDING => check_tcc_screen_recording(),
@@ -70,15 +70,6 @@ impl HealthCheckProvider for MacosHealthProvider {
 
 // ── Individual checks ────────────────────────────────────────────────────────
 
-pub(crate) fn check_binary_version() -> CheckEntry {
-    // CARGO_PKG_VERSION is a compiled-in constant; reaching this code
-    // already implies the binary built. Always pass.
-    CheckEntry::pass(
-        NAME_BINARY_VERSION,
-        format!("cua-driver {}", env!("CARGO_PKG_VERSION")),
-    )
-}
-
 pub(crate) fn check_platform_supported() -> CheckEntry {
     // Reaching this code path on macOS implies a supported platform —
     // the macOS build is gated behind `cfg(target_os = "macos")`.
@@ -93,13 +84,6 @@ pub(crate) fn check_platform_supported() -> CheckEntry {
         architecture: Some(arch.to_owned()),
         ..Default::default()
     })
-}
-
-pub(crate) fn check_session_active() -> CheckEntry {
-    // We are servicing this MCP call, so by construction the session
-    // is up. The check exists so consumers can hard-code a canonical
-    // "is the server reachable?" signal in a fixed shape.
-    CheckEntry::pass(NAME_SESSION_ACTIVE, "MCP session is active.")
 }
 
 pub(crate) fn check_bundle_identity() -> CheckEntry {
@@ -402,28 +386,12 @@ mod tests {
     }
 
     #[test]
-    fn binary_version_always_passes() {
-        let entry = check_binary_version();
-        assert_eq!(entry.status, CheckStatus::Pass);
-        assert!(
-            entry.message.contains("cua-driver "),
-            "message must include the binary version"
-        );
-    }
-
-    #[test]
     fn platform_supported_carries_os_and_arch_data() {
         let entry = check_platform_supported();
         assert_eq!(entry.status, CheckStatus::Pass);
         let data = entry.data.expect("data block expected");
         assert!(data.os_version.is_some(), "os_version must be set");
         assert!(data.architecture.is_some(), "architecture must be set");
-    }
-
-    #[test]
-    fn session_active_passes() {
-        let entry = check_session_active();
-        assert_eq!(entry.status, CheckStatus::Pass);
     }
 
     #[test]

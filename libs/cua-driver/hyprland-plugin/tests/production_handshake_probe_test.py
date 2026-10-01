@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 from production_handshake_probe import (
     CAPACITY, CLOSED, ENDPOINTS, NativeRuntime, ProbeFailure, preflight,
     probe_endpoint, run, validate_path, validate_reply,

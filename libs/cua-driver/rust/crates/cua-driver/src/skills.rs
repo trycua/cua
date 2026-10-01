@@ -84,6 +84,7 @@ const SKILL_FILES: &[&str] = &[
     "MACOS.md",
     "LINUX.md",
     "BROWSER.md",
+    "VISUAL.md",
     "RECORDING.md",
     "EMBEDDING.md",
 ];
@@ -1186,7 +1187,7 @@ mod tests {
             "screen_recording_capturable` is `null",
             "direct_capture_status` is `\"not_checked\"",
             "include_screenshot:false",
-            "element-indexed AX actions",
+            "`element_token` AX actions",
         ] {
             assert!(
                 macos.contains(required),
@@ -1291,7 +1292,7 @@ mod tests {
     }
 
     #[test]
-    fn extracted_skill_pack_keeps_history_consultation_policy() {
+    fn extracted_skill_pack_keeps_canonical_skill_bytes() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let files = SKILL_FILES
             .iter()
@@ -1314,7 +1315,15 @@ mod tests {
 
         let packaged = std::fs::read_to_string(dest.path().join("SKILL.md"))
             .expect("extracted skill must be readable");
-        assert_history_consultation_policy(&packaged, "extracted skill pack");
+        // The canonical guidance phrases are owned by the bundled_skill_* tests;
+        // extraction must deliver those exact bytes.
+        assert_eq!(
+            packaged.as_bytes(),
+            std::fs::read(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+                .unwrap()
+                .as_slice(),
+            "extracted SKILL.md must equal the canonical skill"
+        );
         for reference in ["WORKFLOW.md", "RUNTIME.md"] {
             assert!(
                 packaged.contains(&format!("]({reference})")),
@@ -1500,6 +1509,7 @@ mod tests {
             ("cua-driver-rs-v0.2.20-skills/LINUX.md", b"l"),
             ("cua-driver-rs-v0.2.20-skills/RECORDING.md", b"R"),
             ("cua-driver-rs-v0.2.20-skills/BROWSER.md", b"B"),
+            ("cua-driver-rs-v0.2.20-skills/VISUAL.md", b"V"),
             ("cua-driver-rs-v0.2.20-skills/EMBEDDING.md", b"E"),
         ]);
         let dest = tempdir().unwrap();
@@ -1510,6 +1520,7 @@ mod tests {
             "SKILL.md",
             "RECORDING.md",
             "BROWSER.md",
+            "VISUAL.md",
             "EMBEDDING.md",
         ] {
             assert!(

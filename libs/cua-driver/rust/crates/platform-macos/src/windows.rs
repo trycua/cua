@@ -235,7 +235,7 @@ fn enumerate_windows(options: u32, layers: LayerFilter) -> WindowEnumeration {
         };
 
         // z_index: CGWindowList front-to-back → assign reverse index.
-        let z_index = z_index_from_front_to_back(total, idx);
+        let z_index = cua_driver_core::window_target::z_index_from_front_to_back(total, idx);
 
         results.push(WindowInfo {
             window_id,
@@ -291,10 +291,6 @@ fn window_on_current_space(
     Some(space_ids?.contains(&current_space_id?))
 }
 
-fn z_index_from_front_to_back(total: usize, position: usize) -> usize {
-    total.saturating_sub(position)
-}
-
 fn get_bounds_num(
     dict: &core_foundation::dictionary::CFDictionary<
         *const std::os::raw::c_void,
@@ -330,6 +326,15 @@ pub fn window_info_by_id(window_id: u32) -> Option<WindowInfo> {
     all_windows_any_layer()
         .into_iter()
         .find(|w| w.window_id == window_id)
+}
+
+/// Whether `window_id` is on the current Space of its display. `None` when
+/// WindowServer does not know the window or Space membership is unreadable.
+pub fn window_on_current_space_by_id(window_id: u32) -> Option<bool> {
+    all_windows()
+        .into_iter()
+        .find(|w| w.window_id == window_id)?
+        .on_current_space
 }
 
 /// Look up a window's bounds by its CGWindowID.
@@ -402,15 +407,6 @@ pub fn resolve_main_window_id(pid: i32) -> anyhow::Result<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn cg_front_to_back_order_normalizes_to_higher_is_frontmost() {
-        let indices: Vec<_> = (0..3)
-            .map(|position| z_index_from_front_to_back(3, position))
-            .collect();
-        assert_eq!(indices, vec![3, 2, 1]);
-        assert!(indices[0] > indices[2]);
-    }
 
     #[test]
     fn space_membership_checks_all_spaces_for_a_window() {

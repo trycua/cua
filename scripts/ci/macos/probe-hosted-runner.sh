@@ -91,7 +91,13 @@ run_with_deadline() {
 [[ "${GITHUB_ACTIONS:-}" == true ]] || fail "GITHUB_ACTIONS must be true"
 [[ "${RUNNER_ENVIRONMENT:-}" == github-hosted ]] || fail "runner must be GitHub-hosted"
 [[ "${CI:-}" == true ]] || fail "CI must be true"
-[[ "${GITHUB_EVENT_NAME:-}" == workflow_dispatch ]] || fail "probe must be manually dispatched"
+# Only maintainer-controlled events may seed hosted TCC state: a manual
+# dispatch, or the stable Cua Driver tag push whose CD run calls this matrix
+# as its release gate. Pull request events are never accepted.
+if [[ "${GITHUB_EVENT_NAME:-}" != workflow_dispatch ]]; then
+  [[ "${GITHUB_EVENT_NAME:-}" == push && "${GITHUB_REF:-}" == refs/tags/cua-driver-rs-v* ]] \
+    || fail "probe must be manually dispatched or run by a stable cua-driver-rs tag release gate"
+fi
 [[ "${SOURCE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]] || fail "source SHA must contain 40 hexadecimal characters"
 [[ -z "${SSH_CONNECTION:-}${SSH_CLIENT:-}${SSH_TTY:-}" ]] || fail "SSH sessions cannot seed or certify hosted TCC state"
 

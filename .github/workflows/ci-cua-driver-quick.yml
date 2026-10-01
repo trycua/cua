@@ -1,0 +1,45 @@
+name: "CI: Cua Driver quick feedback (non-certifying)"
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/rust/**"
+      - "libs/cua-driver/tests/fixtures/shared/web/**"
+      - ".github/workflows/ci-cua-driver-quick.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cua-driver-quick-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused:
+    name: "Linux / focused contracts (not desktop certification)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: quick-contracts
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Check formatting and shared web fixture journal
+        run: |
+          cargo fmt --manifest-path libs/cua-driver/rust/Cargo.toml --all -- --check
+          node --test libs/cua-driver/tests/fixtures/shared/web/journal.test.cjs
+      - name: Run focused perception and platform-independent contracts
+        working-directory: libs/cua-driver/rust
+        run: |
+          cargo test --locked -p cua-driver-contract --test visual_contract
+          cargo test --locked -p cua-perception --test protocol
+          cargo test --locked -p cua-driver-core --lib

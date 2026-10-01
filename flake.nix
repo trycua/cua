@@ -31,6 +31,7 @@
               ./libs/cua-driver/wayland-helper
               ./libs/cua-driver/compat-fixtures
               ./libs/cua-driver/tests/fixtures/shared/web/index.html
+              ./libs/cua-driver/tests/perception-demo/evidence-manifest.schema.json
             ];
           };
 
@@ -100,6 +101,8 @@
               chromium
               dbus
               ffmpeg
+              # The shared Wayland history gate requires an unlocked Secret Service.
+              gnome-keyring
               gobject-introspection
               grim
               jq

@@ -2,6 +2,7 @@
 name = "platform-windows"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 tokio = { workspace = true }
@@ -20,7 +21,6 @@ getrandom = { workspace = true }
 # IndexMap gives the keyed cursor render collection deterministic
 # insertion-ordered iteration = stable per-session cursor z-order frame to
 # frame (mirrors platform-macos's per-session overlay).
-indexmap = "2"
 # tiny-skia for cross-platform cursor rendering (used in overlay.rs on all targets)
 tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 
@@ -33,6 +33,8 @@ windows = { version = "0.58", features = [
     "Win32_UI_Accessibility",
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_Threading",
+    # CreatePipe: the result pipe of the standard-user shell launch helper.
+    "Win32_System_Pipes",
     "Win32_System_SystemInformation",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_Graphics_Gdi",
@@ -48,6 +50,9 @@ windows = { version = "0.58", features = [
     "Win32_System_LibraryLoader",
     "Win32_Graphics_OpenGL",
     "Win32_Security",
+    # SaferCreateLevel / SaferComputeTokenFromLevel: derive the standard-user
+    # token an elevated Driver uses to run isolated browsers.
+    "Win32_Security_AppLocker",
     "Win32_System_Com",
     "Win32_Storage_Xps",
     "Win32_Storage_FileSystem",
@@ -59,6 +64,9 @@ windows = { version = "0.58", features = [
     "Win32_System_Com_StructuredStorage",
     "Win32_Media",
     "Win32_System_Registry",
+    # Locale-independent TCP listener ownership for browser endpoint proof.
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
     # `cua-driver doctor` interactive-session probe:
     # - Win32_System_RemoteDesktop → ProcessIdToSessionId
     # - Win32_System_StationsAndDesktops → OpenWindowStationW

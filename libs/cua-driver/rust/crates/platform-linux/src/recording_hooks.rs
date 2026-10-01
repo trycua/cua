@@ -1,18 +1,29 @@
 //! Application-state snapshots used by trajectory recording on Linux.
 
+/// Per-turn application state for trajectory recording, walked under the
+/// shared `get_window_state` budget. The walk reports the shared walk fields so
+/// the turn evidence says when the tree is partial.
 #[cfg(target_os = "linux")]
-pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
+pub fn app_state_json_for(
+    window_id: Option<u64>,
+    pid: Option<i64>,
+    budget: cua_driver_core::recording::StateCaptureBudget,
+) -> Option<Vec<u8>> {
     if tokio::runtime::Handle::try_current().is_ok() {
-        return std::thread::spawn(move || app_state_json_for_blocking(window_id, pid))
+        return std::thread::spawn(move || app_state_json_for_blocking(window_id, pid, budget))
             .join()
             .ok()
             .flatten();
     }
-    app_state_json_for_blocking(window_id, pid)
+    app_state_json_for_blocking(window_id, pid, budget)
 }
 
 #[cfg(target_os = "linux")]
-fn app_state_json_for_blocking(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
+fn app_state_json_for_blocking(
+    window_id: Option<u64>,
+    pid: Option<i64>,
+    budget: cua_driver_core::recording::StateCaptureBudget,
+) -> Option<Vec<u8>> {
     let pid = u32::try_from(pid?).ok()?;
     let window_id = if crate::wayland::is_inject_mode() {
         // Most injected actions already carry the protocol-verified window id.
@@ -26,12 +37,13 @@ fn app_state_json_for_blocking(window_id: Option<u64>, pid: Option<i64>) -> Opti
     } else {
         resolve_window_for_recording(pid, window_id)?.xid
     };
+    let timeout = std::time::Duration::from_millis(budget.timeout_ms);
     let result = if crate::wayland::is_inject_mode() {
-        // Evidence capture runs inside the daemon call. Keep it below the
-        // transport deadline so an unresponsive renderer cannot block input.
-        crate::atspi::walk_tree_for_recording(pid, window_id, std::time::Duration::from_secs(2))
+        // Evidence capture runs inside the daemon call. One attempt only, so
+        // an unresponsive renderer cannot block input past the budget.
+        crate::atspi::walk_tree_for_recording(pid, window_id, timeout)
     } else {
-        crate::atspi::walk_tree(pid, window_id, None)
+        crate::atspi::walk_tree_bounded_within(pid, window_id, None, None, None, timeout)
     };
     if result.nodes.is_empty() || result.tree_markdown.trim().is_empty() {
         return None;
@@ -41,12 +53,21 @@ fn app_state_json_for_blocking(window_id: Option<u64>, pid: Option<i64>) -> Opti
         .iter()
         .filter(|node| node.element_index.is_some())
         .count();
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "pid": pid,
         "window_id": window_id,
         "element_count": element_count,
         "tree_markdown": result.tree_markdown,
+        // The shared walk fields (see cua_driver_core::walk_budget).
+        "truncated": result.truncated,
+        "nodes_visited": result.nodes_visited,
+        "nodes_pending": result.nodes_pending,
+        "walk_elapsed_ms": result.elapsed_ms as u64,
+        "timeout_ms": budget.timeout_ms,
     });
+    if let Some(reason) = result.truncation_reason {
+        payload["truncation_reason"] = serde_json::json!(reason);
+    }
     serde_json::to_vec_pretty(&payload).ok()
 }
 
@@ -76,21 +97,10 @@ pub fn element_window_local_xy(
     args: &serde_json::Value,
     capture_point: bool,
 ) -> Option<(u64, Option<(f64, f64)>)> {
-    use cua_driver_core::tool_args::ArgsExt;
-    let cache = cua_driver_core::element_cache::current_runtime_cache::<
-        crate::atspi::cache::CachedSnapshot,
+    let cache = cua_driver_core::snapshot_store::current_runtime_store::<
+        crate::atspi::snapshot::AtspiSnapshot,
     >()?;
-    let resolved = cache
-        .resolve_element_args(
-            i32::try_from(pid).ok()?,
-            args.opt_u64("element_index").map(|index| index as usize),
-            args.get("element_token")
-                .and_then(serde_json::Value::as_str),
-            args.get("snapshot_id").and_then(serde_json::Value::as_str),
-            args.opt_u64("window_id"),
-            "recording",
-        )
-        .ok()?;
+    let resolved = cache.resolve(i32::try_from(pid).ok()?, args).ok()?;
     let (index, window, _) = resolved.into_parts(None);
     let window_id = window?;
     let element_index = u32::try_from(index?).ok()?;
@@ -214,7 +224,11 @@ fn resolve_window_for_recording(
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn app_state_json_for(_window_id: Option<u64>, _pid: Option<i64>) -> Option<Vec<u8>> {
+pub fn app_state_json_for(
+    _window_id: Option<u64>,
+    _pid: Option<i64>,
+    _budget: cua_driver_core::recording::StateCaptureBudget,
+) -> Option<Vec<u8>> {
     None
 }
 

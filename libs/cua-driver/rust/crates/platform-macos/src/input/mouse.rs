@@ -17,10 +17,11 @@ use core_graphics::{
 };
 use foreign_types::ForeignType;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MousePostMode {
     Both,
     PublicOnly,
+    HidOnly,
 }
 
 #[derive(Clone, Copy)]
@@ -142,6 +143,22 @@ fn click_at_xy_desktop_inner(
     unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
     std::thread::sleep(std::time::Duration::from_millis(40));
     let result = super::keyboard::with_global_modifier_keys(modifiers, |flags| {
+        if !modifiers.is_empty() {
+            // Prime AppKit's cursor-tracking state after the physical modifiers
+            // are down so the modified mouseDown preserves the existing
+            // selection. Leave ordinary clicks on their established event path.
+            let moved = CGEvent::new_mouse_event(
+                source.clone(),
+                CGEventType::MouseMoved,
+                point,
+                CGMouseButton::Left,
+            )
+            .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(move) failed"))?;
+            moved.set_flags(flags);
+            moved.post(CGEventTapLocation::HID);
+            std::thread::sleep(std::time::Duration::from_millis(12));
+        }
+
         for pair_index in 0..count.max(1) {
             let down = CGEvent::new_mouse_event(source.clone(), down_ty, point, btn)
                 .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(down) failed"))?;
@@ -257,8 +274,9 @@ extern "C" {
 }
 
 /// Like `click_at_xy` but also targets a specific window. Foreground delivery
-/// uses one public pid post; background delivery uses one SkyLight post with a
-/// public fallback only when the private symbol is unavailable.
+/// uses the supplied window-local point with one public pid post. Background
+/// delivery keeps the translated screen point through the SkyLight route, with
+/// a public fallback only when the private symbol is unavailable.
 // The flattened arguments mirror the native event fields used by existing callers.
 #[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_with_window_local(
@@ -410,8 +428,8 @@ pub fn prepare_background_pixel_click(pid: i32, wid: u32) -> bool {
     activated
 }
 
-/// Post the stamped event half of the Chromium-compatible left-click recipe
-/// matching Swift's `clickViaAuthSignedPost`.
+/// Event kinds in the pure route plan for the Chromium-compatible background
+/// left-click recipe.
 ///
 /// The sequence stays PID/window-routed throughout. The caller must first run
 /// [`prepare_background_pixel_click`] for background delivery, then re-pin any
@@ -429,11 +447,110 @@ pub fn prepare_background_pixel_click(pid: i32, wid: u32) -> bool {
 ///  - f40 = target pid   (Chromium synthetic-event filter)
 ///  - f51 / f91 / f92 = CGWindowID (window routing)
 ///  - f58 = constant click-group ID across all events (gesture coalescing)
-///  - `CGEventSetWindowLocation` per-event (window-local point)
+///  - `CGEventSetWindowLocation` per-event (screen point for both routes)
 ///
 /// Uses the SkyLight route required by Chromium-compatible targets, with the
 /// public API only as a fallback when the private symbol is unavailable.
-// The flattened arguments mirror the native event fields used by existing callers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChromiumClickEventKind {
+    Move,
+    Down,
+    Up,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ChromiumClickRouteStep {
+    kind: ChromiumClickEventKind,
+    event_location: (f64, f64),
+    skylight_window_location: (f64, f64),
+    public_window_location: (f64, f64),
+    click_state: i64,
+    phase: i64,
+    button_number: i64,
+    subtype: i64,
+    delay_after_ms: u64,
+}
+
+fn chromium_click_route_plan(
+    screen_x: f64,
+    screen_y: f64,
+    win_local_x: f64,
+    win_local_y: f64,
+    count: usize,
+) -> Vec<ChromiumClickRouteStep> {
+    let screen_target = (screen_x, screen_y);
+    let _ = (win_local_x, win_local_y);
+    let off_screen = (-1.0, -1.0);
+    let mut steps = vec![
+        ChromiumClickRouteStep {
+            kind: ChromiumClickEventKind::Move,
+            event_location: screen_target,
+            skylight_window_location: screen_target,
+            public_window_location: screen_target,
+            click_state: 0,
+            phase: 2,
+            button_number: 0,
+            subtype: 3,
+            delay_after_ms: 15,
+        },
+        ChromiumClickRouteStep {
+            kind: ChromiumClickEventKind::Down,
+            event_location: off_screen,
+            skylight_window_location: off_screen,
+            public_window_location: off_screen,
+            click_state: 1,
+            phase: 1,
+            button_number: 0,
+            subtype: 3,
+            delay_after_ms: 1,
+        },
+        ChromiumClickRouteStep {
+            kind: ChromiumClickEventKind::Up,
+            event_location: off_screen,
+            skylight_window_location: off_screen,
+            public_window_location: off_screen,
+            click_state: 1,
+            phase: 2,
+            button_number: 0,
+            subtype: 3,
+            delay_after_ms: 100,
+        },
+    ];
+
+    let click_pairs = count.clamp(1, 2);
+    for pair_index in 1..=click_pairs {
+        let click_state = pair_index as i64;
+        steps.push(ChromiumClickRouteStep {
+            kind: ChromiumClickEventKind::Down,
+            event_location: screen_target,
+            skylight_window_location: screen_target,
+            public_window_location: screen_target,
+            click_state,
+            phase: 3,
+            button_number: 0,
+            subtype: 3,
+            delay_after_ms: 1,
+        });
+        steps.push(ChromiumClickRouteStep {
+            kind: ChromiumClickEventKind::Up,
+            event_location: screen_target,
+            skylight_window_location: screen_target,
+            public_window_location: screen_target,
+            click_state,
+            phase: 3,
+            button_number: 0,
+            subtype: 3,
+            delay_after_ms: if pair_index < click_pairs { 80 } else { 0 },
+        });
+    }
+    steps
+}
+
+/// Post the route plan for the Chromium-compatible background left-click
+/// recipe. `CGEvent::new_mouse_event` starts with the screen-space location.
+/// `CGEventSetWindowLocation` uses the screen point for both SkyLight and the
+/// public PID fallback. macOS interprets the stamped location in screen space
+/// even when the public route is used for a background process.
 #[allow(clippy::too_many_arguments)]
 pub fn click_at_xy_chromium(
     pid: i32,
@@ -449,12 +566,8 @@ pub fn click_at_xy_chromium(
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-    let target = CGPoint::new(screen_x, screen_y);
-    let off_screen = CGPoint::new(-1.0, -1.0);
-    let win_local = (win_local_x, win_local_y);
-    let off_local = (-1.0_f64, -1.0_f64);
+    let route_plan = chromium_click_route_plan(screen_x, screen_y, win_local_x, win_local_y, count);
     let flags = parse_modifier_flags(modifiers);
-    let click_pairs = count.clamp(1, 2);
     let window_id = wid as i64;
 
     // All 5 events share the same click-group ID so WindowServer / Chromium
@@ -466,15 +579,15 @@ pub fn click_at_xy_chromium(
 
     // Stamp required fields onto a CGEvent.  All captured values are Copy so
     // this closure is Fn (callable multiple times).
-    let stamp = |event: &CGEvent, local: (f64, f64), click_state: i64, phase: i64| {
+    let stamp = |event: &CGEvent, step: &ChromiumClickRouteStep| {
         let ptr = event.as_ptr() as *mut std::ffi::c_void;
         let set = |f: u32, v: i64| {
             crate::input::skylight::set_integer_field(ptr, f, v);
         };
-        set(0, phase); // kCGMouseEventNumber (gesture phase)
-        set(1, click_state); // kCGMouseEventClickState
-        set(3, 0); // kCGMouseEventButtonNumber (left)
-        set(7, 3); // kCGMouseEventSubtype (NSEventSubtypeTouch)
+        set(0, step.phase); // kCGMouseEventNumber (gesture phase)
+        set(1, step.click_state); // kCGMouseEventClickState
+        set(3, step.button_number); // kCGMouseEventButtonNumber (left)
+        set(7, step.subtype); // kCGMouseEventSubtype (NSEventSubtypeTouch)
         set(40, pid as i64); // Chromium synthetic-event filter
         if window_id != 0 {
             set(51, window_id); // windowNumber (NSEvent bridge equivalent)
@@ -482,86 +595,46 @@ pub fn click_at_xy_chromium(
             set(92, window_id); // kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent
         }
         set(58, click_group_id); // click-group ID (gesture coalescing)
-        crate::input::skylight::set_window_location(ptr, local.0, local.1);
+        crate::input::skylight::set_window_location(
+            ptr,
+            step.skylight_window_location.0,
+            step.skylight_window_location.1,
+        );
         if flags != CGEventFlags::CGEventFlagNull {
             event.set_flags(flags);
         }
     };
 
-    let post = |event: &CGEvent| {
+    let post = |event: &CGEvent, _step: &ChromiumClickRouteStep| {
         let ptr = event.as_ptr() as *mut std::ffi::c_void;
         if !crate::input::skylight::post_to_pid(pid as libc::pid_t, ptr, false) {
             event.post_to_pid(pid as libc::pid_t);
         }
     };
 
-    // Step 1: mouseMoved at target (phase=2, clickState=0).
-    let move_event = CGEvent::new_mouse_event(
-        source.clone(),
-        CGEventType::MouseMoved,
-        target,
-        CGMouseButton::Left,
-    )
-    .map_err(|_| anyhow::anyhow!("mouseMoved event creation failed"))?;
-    stamp(&move_event, win_local, 0, 2);
-    post(&move_event);
-    std::thread::sleep(std::time::Duration::from_millis(15));
-
-    // Step 2: off-screen primer click — opens Chromium user-activation gate
-    // at an off-screen coordinate that can't hit any DOM element.
-    let primer_down = CGEvent::new_mouse_event(
-        source.clone(),
-        CGEventType::LeftMouseDown,
-        off_screen,
-        CGMouseButton::Left,
-    )
-    .map_err(|_| anyhow::anyhow!("primer down event creation failed"))?;
-    stamp(&primer_down, off_local, 1, 1);
-    post(&primer_down);
-    std::thread::sleep(std::time::Duration::from_millis(1));
-
-    let primer_up = CGEvent::new_mouse_event(
-        source.clone(),
-        CGEventType::LeftMouseUp,
-        off_screen,
-        CGMouseButton::Left,
-    )
-    .map_err(|_| anyhow::anyhow!("primer up event creation failed"))?;
-    stamp(&primer_up, off_local, 1, 2);
-    post(&primer_up);
-    // ≥1 frame so Chromium sees primer + target as separate gestures, not run-on.
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    // Step 3: target click pair(s) with clickState stepped 1→N for double-click
-    // coalescing (Chromium renderer coalesces pairs into dblclick when state=1→2).
-    for pair_index in 1..=click_pairs {
-        let click_state = pair_index as i64;
-
-        let down = CGEvent::new_mouse_event(
+    for step in route_plan {
+        let (event_type, error_label) = match step.kind {
+            ChromiumClickEventKind::Move => (CGEventType::MouseMoved, "mouseMoved"),
+            ChromiumClickEventKind::Down if step.phase == 1 => {
+                (CGEventType::LeftMouseDown, "primer down")
+            }
+            ChromiumClickEventKind::Up if step.phase == 2 => {
+                (CGEventType::LeftMouseUp, "primer up")
+            }
+            ChromiumClickEventKind::Down => (CGEventType::LeftMouseDown, "target down"),
+            ChromiumClickEventKind::Up => (CGEventType::LeftMouseUp, "target up"),
+        };
+        let event = CGEvent::new_mouse_event(
             source.clone(),
-            CGEventType::LeftMouseDown,
-            target,
+            event_type,
+            CGPoint::new(step.event_location.0, step.event_location.1),
             CGMouseButton::Left,
         )
-        .map_err(|_| anyhow::anyhow!("target down event creation failed"))?;
-        stamp(&down, win_local, click_state, 3);
-        post(&down);
-        std::thread::sleep(std::time::Duration::from_millis(1));
-
-        let up = CGEvent::new_mouse_event(
-            source.clone(),
-            CGEventType::LeftMouseUp,
-            target,
-            CGMouseButton::Left,
-        )
-        .map_err(|_| anyhow::anyhow!("target up event creation failed"))?;
-        stamp(&up, win_local, click_state, 3);
-        post(&up);
-
-        if pair_index < click_pairs {
-            // ~80 ms between pairs — under the system double-click threshold,
-            // clear of coalescing back into pair N.
-            std::thread::sleep(std::time::Duration::from_millis(80));
+        .map_err(|_| anyhow::anyhow!("{error_label} event creation failed"))?;
+        stamp(&event, &step);
+        post(&event, &step);
+        if step.delay_after_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(step.delay_after_ms));
         }
     }
 
@@ -569,7 +642,7 @@ pub fn click_at_xy_chromium(
 }
 
 /// Press-drag-release gesture from `(from_x, from_y)` to `(to_x, to_y)` in
-/// screen coordinates, posted to `pid`.
+/// screen coordinates, addressed to `pid` and the optional exact window.
 ///
 /// `duration_ms` is the wall-clock budget for the drag path; `steps` is the
 /// number of intermediate `leftMouseDragged` events linearly interpolated
@@ -592,7 +665,7 @@ pub fn drag_at_xy(
     steps: usize,
     modifiers: &[&str],
     button: DragButton,
-    foreground_release: bool,
+    foreground_hid: bool,
 ) -> anyhow::Result<()> {
     drag_at_xy_observed(
         pid,
@@ -607,12 +680,16 @@ pub fn drag_at_xy(
         steps,
         modifiers,
         button,
-        foreground_release,
+        foreground_hid,
         |_, _| {},
     )
 }
 
-/// PID-routed drag with an observer called for every native pointer position.
+/// Window drag with an observer called for every native pointer position.
+///
+/// Background delivery keeps the established PID-routed sequence. When
+/// `foreground_hid` is true, the same stamped gesture is posted once per event
+/// through the global HID queue while the hardware cursor follows the path.
 ///
 /// The cursor overlay uses this for the same reason as
 /// [`drag_at_xy_foreground_observed`]: the synthetic cursor should follow the
@@ -631,14 +708,31 @@ pub fn drag_at_xy_observed<F>(
     steps: usize,
     modifiers: &[&str],
     button: DragButton,
-    foreground_release: bool,
+    foreground_hid: bool,
     mut observe: F,
 ) -> anyhow::Result<()>
 where
     F: FnMut(f64, f64),
 {
-    use core_graphics::event::CGEventTapLocation;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    if foreground_hid {
+        return drag_at_xy_window_foreground_observed(
+            pid,
+            from_x,
+            from_y,
+            to_x,
+            to_y,
+            from_local,
+            to_local,
+            wid,
+            duration_ms,
+            steps,
+            modifiers,
+            button,
+            observe,
+        );
+    }
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
         .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
@@ -685,8 +779,21 @@ where
         duration_ms
     };
 
-    // MouseDown at start.
+    // Prime the routed target's cursor-tracking state immediately before the
+    // press, matching the click path's stamped mouseMoved + settle interval.
     let from_pt = CGPoint::new(from_x, from_y);
+    post_mouse_moved_primer(
+        pid,
+        &source,
+        from_pt,
+        from_local,
+        wid,
+        click_group_id,
+        MousePostMode::Both,
+    );
+    std::thread::sleep(std::time::Duration::from_millis(12));
+
+    // MouseDown at start.
     let down = CGEvent::new_mouse_event(source.clone(), down_type, from_pt, cg_button)
         .map_err(|_| anyhow::anyhow!("drag mouseDown failed"))?;
     if flags != CGEventFlags::CGEventFlagNull {
@@ -737,18 +844,181 @@ where
         up.set_flags(flags);
     }
     post_mouse_event(pid, &up, to_local, wid, click_group_id, 1, button_number, 0);
-    if foreground_release {
-        // A frontmost Chromium surface can consume PID-routed down/move
-        // events yet filter the synthetic release. Re-post only the release
-        // through the HID tap while the foreground assist still holds focus.
-        up.post(CGEventTapLocation::HID);
-    }
     // Chromium may process the final pointerup on the next run-loop turn. In
     // the foreground rung the caller restores the previous app immediately
     // after this function returns, so let the target consume the release and
     // complete pointer capture before that restore.
     std::thread::sleep(std::time::Duration::from_millis(100));
 
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn post_drag_mouse_event(
+    pid: i32,
+    event_type: CGEventType,
+    point: CGPoint,
+    button: CGMouseButton,
+    window_local: Option<(f64, f64)>,
+    wid: Option<u32>,
+    click_group_id: Option<i64>,
+    click_state: i64,
+    button_number: i64,
+    subtype: i64,
+    mode: MousePostMode,
+    flags: CGEventFlags,
+    error_context: &str,
+) -> anyhow::Result<()> {
+    debug_assert_eq!(mode, MousePostMode::HidOnly);
+    let event = new_global_mouse_event(event_type, point, button)
+        .map_err(|_| anyhow::anyhow!(error_context.to_owned()))?;
+    if flags != CGEventFlags::CGEventFlagNull {
+        event.set_flags(flags);
+    }
+    post_mouse_event_with_mode(
+        pid,
+        &event,
+        window_local,
+        wid,
+        click_group_id,
+        click_state,
+        button_number,
+        subtype,
+        mode,
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn drag_at_xy_window_foreground_observed<F>(
+    pid: i32,
+    from_x: f64,
+    from_y: f64,
+    to_x: f64,
+    to_y: f64,
+    from_local: Option<(f64, f64)>,
+    to_local: Option<(f64, f64)>,
+    wid: Option<u32>,
+    duration_ms: u64,
+    steps: usize,
+    modifiers: &[&str],
+    button: DragButton,
+    mut observe: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(f64, f64),
+{
+    use core_graphics::display::CGDisplay;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let (cg_button, down_type, dragged_type, up_type, button_number) = match button {
+        DragButton::Left => (
+            CGMouseButton::Left,
+            CGEventType::LeftMouseDown,
+            CGEventType::LeftMouseDragged,
+            CGEventType::LeftMouseUp,
+            0,
+        ),
+        DragButton::Right => (
+            CGMouseButton::Right,
+            CGEventType::RightMouseDown,
+            CGEventType::RightMouseDragged,
+            CGEventType::RightMouseUp,
+            1,
+        ),
+        DragButton::Middle => (
+            CGMouseButton::Center,
+            CGEventType::OtherMouseDown,
+            CGEventType::OtherMouseDragged,
+            CGEventType::OtherMouseUp,
+            2,
+        ),
+    };
+    let click_group_id = wid.map(|_| {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos() as i64
+    });
+    let steps = steps.max(1);
+    let step_delay_ms = if steps > 1 {
+        duration_ms / steps as u64
+    } else {
+        duration_ms
+    };
+    let events = foreground_drag_events(from_x, from_y, to_x, to_y, steps);
+
+    super::keyboard::with_global_modifier_keys(modifiers, |flags| {
+        for spec in events {
+            let (event_type, click_state, event_button, event_button_number, subtype) = match spec
+                .kind
+            {
+                ForegroundDragEventKind::Move => {
+                    (CGEventType::MouseMoved, 0, CGMouseButton::Left, 0, 3)
+                }
+                ForegroundDragEventKind::Down => (down_type, 1, cg_button, button_number, 0),
+                ForegroundDragEventKind::Dragged => (dragged_type, 1, cg_button, button_number, 0),
+                ForegroundDragEventKind::Up => (up_type, 1, cg_button, button_number, 0),
+            };
+            let local = from_local.zip(to_local).map(|((fx, fy), (tx, ty))| {
+                (
+                    fx + (tx - fx) * spec.progress,
+                    fy + (ty - fy) * spec.progress,
+                )
+            });
+
+            match spec.kind {
+                ForegroundDragEventKind::Move => {
+                    let _ = CGDisplay::warp_mouse_cursor_position(spec.point);
+                    unsafe { CGAssociateMouseAndMouseCursorPosition(true) };
+                    std::thread::sleep(std::time::Duration::from_millis(40));
+                }
+                ForegroundDragEventKind::Dragged => {
+                    let _ = CGDisplay::warp_mouse_cursor_position(spec.point);
+                }
+                ForegroundDragEventKind::Up => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                ForegroundDragEventKind::Down => {}
+            }
+
+            post_drag_mouse_event(
+                pid,
+                event_type,
+                spec.point,
+                event_button,
+                local,
+                wid,
+                click_group_id,
+                click_state,
+                event_button_number,
+                subtype,
+                MousePostMode::HidOnly,
+                flags,
+                "foreground drag event creation failed",
+            )?;
+
+            match spec.kind {
+                ForegroundDragEventKind::Move => {
+                    std::thread::sleep(std::time::Duration::from_millis(12));
+                }
+                ForegroundDragEventKind::Down => {
+                    observe(spec.point.x, spec.point.y);
+                    std::thread::sleep(std::time::Duration::from_millis(16));
+                }
+                ForegroundDragEventKind::Dragged => {
+                    observe(spec.point.x, spec.point.y);
+                    if step_delay_ms > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
+                    }
+                }
+                ForegroundDragEventKind::Up => {}
+            }
+        }
+        Ok(())
+    })?;
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
     Ok(())
 }
 
@@ -806,9 +1076,6 @@ where
     use core_graphics::display::CGDisplay;
     use core_graphics::event::CGEventTapLocation;
 
-    let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
-        .map_err(|_| anyhow::anyhow!("CGEventSource::new failed"))?;
-    let flags = parse_modifier_flags(modifiers);
     let (cg_button, down_type, dragged_type, up_type) = match button {
         DragButton::Left => (
             CGMouseButton::Left,
@@ -829,14 +1096,13 @@ where
             CGEventType::OtherMouseUp,
         ),
     };
+    let events = foreground_drag_events(from_x, from_y, to_x, to_y, steps);
     let steps = steps.max(1);
     let step_delay_ms = if steps > 1 {
         duration_ms / steps as u64
     } else {
         duration_ms
     };
-
-    let post = |event: &CGEvent| event.post(CGEventTapLocation::HID);
 
     // Keep WindowServer's hardware cursor and event stream coupled. AppKit
     // hit-tests some pointer-capture surfaces against the actual cursor even
@@ -846,61 +1112,113 @@ where
     observe(from_x, from_y);
     std::thread::sleep(std::time::Duration::from_millis(40));
 
-    // Prime the renderer's tracking state with a genuine HID mouse move.
-    if let Ok(move_event) = CGEvent::new_mouse_event(
-        source.clone(),
-        CGEventType::MouseMoved,
-        CGPoint::new(from_x, from_y),
-        cg_button,
-    ) {
-        post(&move_event);
-    }
-    std::thread::sleep(std::time::Duration::from_millis(30));
-
-    let down = CGEvent::new_mouse_event(
-        source.clone(),
-        down_type,
-        CGPoint::new(from_x, from_y),
-        cg_button,
-    )
-    .map_err(|_| anyhow::anyhow!("foreground drag mouseDown failed"))?;
-    if flags != CGEventFlags::CGEventFlagNull {
-        down.set_flags(flags);
-    }
-    down.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, 1);
-    down.post(CGEventTapLocation::HID);
-    std::thread::sleep(std::time::Duration::from_millis(16));
-
-    for i in 1..=steps {
-        let t = i as f64 / steps as f64;
-        let x = from_x + (to_x - from_x) * t;
-        let y = from_y + (to_y - from_y) * t;
-        let event =
-            CGEvent::new_mouse_event(source.clone(), dragged_type, CGPoint::new(x, y), cg_button)
-                .map_err(|_| anyhow::anyhow!("foreground drag mouseDragged failed"))?;
-        if flags != CGEventFlags::CGEventFlagNull {
+    super::keyboard::with_global_modifier_keys(modifiers, |flags| {
+        for spec in events {
+            let event_type = match spec.kind {
+                ForegroundDragEventKind::Move => CGEventType::MouseMoved,
+                ForegroundDragEventKind::Down => down_type,
+                ForegroundDragEventKind::Dragged => dragged_type,
+                ForegroundDragEventKind::Up => up_type,
+            };
+            // A null source matches macOS's established global mouse-controller
+            // path. WindowServer then carries the pressed-button state from the
+            // down through every dragged event instead of treating each event as
+            // an independent HIDSystemState snapshot.
+            let event =
+                new_global_mouse_event(event_type, spec.point, cg_button).map_err(|_| {
+                    anyhow::anyhow!("foreground drag {:?} event creation failed", spec.kind)
+                })?;
             event.set_flags(flags);
-        }
-        event.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, 1);
-        post(&event);
-        observe(x, y);
-        if step_delay_ms > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
-        }
-    }
+            event.post(CGEventTapLocation::HID);
 
-    let up = CGEvent::new_mouse_event(source, up_type, CGPoint::new(to_x, to_y), cg_button)
-        .map_err(|_| anyhow::anyhow!("foreground drag mouseUp failed"))?;
-    if flags != CGEventFlags::CGEventFlagNull {
-        up.set_flags(flags);
-    }
-    up.set_integer_value_field(core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE, 1);
-    post(&up);
+            match spec.kind {
+                ForegroundDragEventKind::Move => {
+                    std::thread::sleep(std::time::Duration::from_millis(30));
+                }
+                ForegroundDragEventKind::Down => {
+                    std::thread::sleep(std::time::Duration::from_millis(16));
+                }
+                ForegroundDragEventKind::Dragged => {
+                    observe(spec.point.x, spec.point.y);
+                    if step_delay_ms > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(step_delay_ms));
+                    }
+                }
+                ForegroundDragEventKind::Up => {}
+            }
+        }
+        Ok(())
+    })?;
     // The foreground wrapper restores the previous app immediately after this
     // function returns. Let the target's run loop consume the queued HID
     // gesture, including pointer-capture release, before that restore happens.
     std::thread::sleep(std::time::Duration::from_millis(100));
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ForegroundDragEventKind {
+    Move,
+    Down,
+    Dragged,
+    Up,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ForegroundDragEvent {
+    kind: ForegroundDragEventKind,
+    point: CGPoint,
+    progress: f64,
+}
+
+fn foreground_drag_events(
+    from_x: f64,
+    from_y: f64,
+    to_x: f64,
+    to_y: f64,
+    steps: usize,
+) -> Vec<ForegroundDragEvent> {
+    let steps = steps.max(1);
+    let mut events = Vec::with_capacity(steps + 3);
+    let from = CGPoint::new(from_x, from_y);
+    events.push(ForegroundDragEvent {
+        kind: ForegroundDragEventKind::Move,
+        point: from,
+        progress: 0.0,
+    });
+    events.push(ForegroundDragEvent {
+        kind: ForegroundDragEventKind::Down,
+        point: from,
+        progress: 0.0,
+    });
+    for i in 1..=steps {
+        let t = i as f64 / steps as f64;
+        events.push(ForegroundDragEvent {
+            kind: ForegroundDragEventKind::Dragged,
+            point: CGPoint::new(from_x + (to_x - from_x) * t, from_y + (to_y - from_y) * t),
+            progress: t,
+        });
+    }
+    events.push(ForegroundDragEvent {
+        kind: ForegroundDragEventKind::Up,
+        point: CGPoint::new(to_x, to_y),
+        progress: 1.0,
+    });
+    events
+}
+
+fn new_global_mouse_event(
+    event_type: CGEventType,
+    point: CGPoint,
+    button: CGMouseButton,
+) -> Result<CGEvent, ()> {
+    let event_ref =
+        unsafe { CGEventCreateMouseEvent(std::ptr::null_mut(), event_type, point, button) };
+    if event_ref.is_null() {
+        Err(())
+    } else {
+        Ok(unsafe { CGEvent::from_ptr(event_ref) })
+    }
 }
 
 /// Mouse button for drag gestures.
@@ -1158,6 +1476,7 @@ fn post_mouse_event_with_mode(
             event.post_to_pid(pid as libc::pid_t);
         }
         MousePostMode::PublicOnly => event.post_to_pid(pid as libc::pid_t),
+        MousePostMode::HidOnly => event.post(core_graphics::event::CGEventTapLocation::HID),
     }
 }
 
@@ -1303,6 +1622,15 @@ pub fn scroll_wheel_at_xy(
 }
 
 extern "C" {
+    /// Quartz mouse constructor with a null source, matching established
+    /// foreground controller libraries and the global scroll path above.
+    fn CGEventCreateMouseEvent(
+        source: core_graphics::sys::CGEventSourceRef,
+        event_type: core_graphics::event::CGEventType,
+        point: CGPoint,
+        button: core_graphics::event::CGMouseButton,
+    ) -> core_graphics::sys::CGEventRef;
+
     /// `void CGEventSetLocation(CGEventRef event, CGPoint location)`.
     ///
     /// `CGPoint { double x, double y }` is classified as two FP eightbytes on
@@ -1324,4 +1652,202 @@ fn parse_modifier_flags(modifiers: &[&str]) -> CGEventFlags {
         }
     }
     flags
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_bound_background_route_preserves_nonzero_origin_hit() {
+        let frame = crate::tools::px_frame::WindowPxFrame {
+            bounds: crate::windows::WindowBounds {
+                x: 170.0,
+                y: 194.0,
+                width: 760.0,
+                height: 460.0,
+            },
+            scale: 2.0,
+        };
+        let capture_local = (394.0, 310.0);
+        let admitted_native = (capture_local.0 * frame.scale, capture_local.1 * frame.scale);
+        let (screen_x, screen_y, local_x, local_y) =
+            frame.to_screen(admitted_native.0, admitted_native.1);
+        assert_eq!((screen_x, screen_y), (564.0, 504.0));
+        assert_eq!((local_x, local_y), capture_local);
+
+        let plan = chromium_click_route_plan(screen_x, screen_y, local_x, local_y, 1);
+        assert_eq!(
+            plan,
+            vec![
+                ChromiumClickRouteStep {
+                    kind: ChromiumClickEventKind::Move,
+                    event_location: (564.0, 504.0),
+                    skylight_window_location: (564.0, 504.0),
+                    public_window_location: (564.0, 504.0),
+                    click_state: 0,
+                    phase: 2,
+                    button_number: 0,
+                    subtype: 3,
+                    delay_after_ms: 15,
+                },
+                ChromiumClickRouteStep {
+                    kind: ChromiumClickEventKind::Down,
+                    event_location: (-1.0, -1.0),
+                    skylight_window_location: (-1.0, -1.0),
+                    public_window_location: (-1.0, -1.0),
+                    click_state: 1,
+                    phase: 1,
+                    button_number: 0,
+                    subtype: 3,
+                    delay_after_ms: 1,
+                },
+                ChromiumClickRouteStep {
+                    kind: ChromiumClickEventKind::Up,
+                    event_location: (-1.0, -1.0),
+                    skylight_window_location: (-1.0, -1.0),
+                    public_window_location: (-1.0, -1.0),
+                    click_state: 1,
+                    phase: 2,
+                    button_number: 0,
+                    subtype: 3,
+                    delay_after_ms: 100,
+                },
+                ChromiumClickRouteStep {
+                    kind: ChromiumClickEventKind::Down,
+                    event_location: (564.0, 504.0),
+                    skylight_window_location: (564.0, 504.0),
+                    public_window_location: (564.0, 504.0),
+                    click_state: 1,
+                    phase: 3,
+                    button_number: 0,
+                    subtype: 3,
+                    delay_after_ms: 1,
+                },
+                ChromiumClickRouteStep {
+                    kind: ChromiumClickEventKind::Up,
+                    event_location: (564.0, 504.0),
+                    skylight_window_location: (564.0, 504.0),
+                    public_window_location: (564.0, 504.0),
+                    click_state: 1,
+                    phase: 3,
+                    button_number: 0,
+                    subtype: 3,
+                    delay_after_ms: 0,
+                },
+            ]
+        );
+
+        let screen_to_canvas = (-frame.bounds.x, -frame.bounds.y);
+        let unconverted_journal_point = (
+            capture_local.0 + screen_to_canvas.0,
+            capture_local.1 + screen_to_canvas.1,
+        );
+        assert_eq!(unconverted_journal_point, (224.0, 116.0));
+        assert!(!(292.0..=496.0).contains(&unconverted_journal_point.0));
+
+        let delivered = plan
+            .iter()
+            .find(|step| step.kind == ChromiumClickEventKind::Down && step.phase == 3)
+            .expect("target mouse-down step");
+        assert_eq!(delivered.event_location, (564.0, 504.0));
+        assert_eq!(delivered.skylight_window_location, (564.0, 504.0));
+        assert_eq!(delivered.public_window_location, (564.0, 504.0));
+        let skylight_journal_point = (
+            delivered.skylight_window_location.0 + screen_to_canvas.0,
+            delivered.skylight_window_location.1 + screen_to_canvas.1,
+        );
+        assert_eq!(skylight_journal_point, capture_local);
+        assert!((292.0..=496.0).contains(&skylight_journal_point.0));
+        assert!((132.0..=310.0).contains(&skylight_journal_point.1));
+    }
+
+    #[test]
+    fn foreground_drag_plan_is_one_coherent_gesture() {
+        let events = foreground_drag_events(10.0, 20.0, 40.0, 80.0, 3);
+        let kinds: Vec<_> = events.iter().map(|event| event.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                ForegroundDragEventKind::Move,
+                ForegroundDragEventKind::Down,
+                ForegroundDragEventKind::Dragged,
+                ForegroundDragEventKind::Dragged,
+                ForegroundDragEventKind::Dragged,
+                ForegroundDragEventKind::Up,
+            ]
+        );
+        let points: Vec<_> = events
+            .iter()
+            .map(|event| (event.point.x, event.point.y))
+            .collect();
+        assert_eq!(
+            points,
+            [
+                (10.0, 20.0),
+                (10.0, 20.0),
+                (20.0, 40.0),
+                (30.0, 60.0),
+                (40.0, 80.0),
+                (40.0, 80.0),
+            ]
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == ForegroundDragEventKind::Up)
+                .count(),
+            1,
+            "the HID gesture must release exactly once"
+        );
+        let cursor_plan: Vec<_> = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.kind,
+                    ForegroundDragEventKind::Move | ForegroundDragEventKind::Dragged
+                )
+            })
+            .map(|event| (event.point.x, event.point.y))
+            .collect();
+        assert_eq!(
+            cursor_plan,
+            [(10.0, 20.0), (20.0, 40.0), (30.0, 60.0), (40.0, 80.0)]
+        );
+    }
+
+    #[test]
+    fn foreground_drag_plan_keeps_a_drag_sample_for_zero_steps() {
+        let events = foreground_drag_events(1.0, 2.0, 3.0, 4.0, 0);
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[2].kind, ForegroundDragEventKind::Dragged);
+        assert_eq!((events[2].point.x, events[2].point.y), (3.0, 4.0));
+    }
+
+    #[test]
+    fn global_drag_events_use_hardware_like_source_and_button_fields() {
+        use core_graphics::event::EventField;
+
+        let point = CGPoint::new(10.0, 20.0);
+        let cases = [
+            (CGEventType::LeftMouseDown, 1, 1.0),
+            (CGEventType::LeftMouseDragged, 1, 1.0),
+            (CGEventType::LeftMouseUp, 0, 0.0),
+        ];
+        for (event_type, click_state, pressure) in cases {
+            let event = new_global_mouse_event(event_type, point, CGMouseButton::Left).unwrap();
+            assert_eq!(
+                event.get_integer_value_field(EventField::EVENT_SOURCE_STATE_ID),
+                CGEventSourceStateID::CombinedSessionState as i64
+            );
+            assert_eq!(
+                event.get_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE),
+                click_state
+            );
+            assert_eq!(
+                event.get_double_value_field(EventField::MOUSE_EVENT_PRESSURE),
+                pressure
+            );
+        }
+    }
 }

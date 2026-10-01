@@ -221,12 +221,16 @@ class CuaAgent(BaseAgent):
         # Create custom computer dict from session
         custom_computer = self._create_custom_computer(session)
 
-        # Create agent with custom computer
+        # Create agent with custom computer.
+        # Use a higher per-step retry count than the library default so long
+        # benchmark runs ride out sustained provider throttling (e.g. Bedrock
+        # "unable to process your request") instead of dropping a task mid-run.
         agent = ComputerAgent(
             model=self.model,
             tools=[custom_computer],
             only_n_most_recent_images=3,
             trajectory_dir=trajectory_dir,
+            max_retries=6,
             instructions="Use the provided computer to complete the task as described. When the task is complete, indicate so clearly by outputting 'DONE'.",
         )
         print("CUA Agent initialized with model:", self.model)

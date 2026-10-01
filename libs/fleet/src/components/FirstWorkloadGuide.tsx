@@ -7,7 +7,7 @@ import Link from "@cloudscape-design/components/link"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import type { PoolService } from "../fleet/models"
 
-const PYTHON_PACKAGE = "cua-sandbox==0.9.0"
+const PYTHON_PACKAGE = "cua-sandbox==0.7.0"
 
 export function firstWorkloadScript({
   namespace,

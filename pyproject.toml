@@ -103,7 +103,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"libs/cua-driver/hyprland-plugin/tests/production_primary_conflict_proof.py" = ["F821"]
+"libs/cua-driver/hyprland-plugin/proofs/production_primary_conflict_proof.py" = ["F821"]
 
 [tool.ruff.format]
 docstring-code-format = true

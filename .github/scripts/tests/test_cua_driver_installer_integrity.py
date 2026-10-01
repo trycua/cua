@@ -222,6 +222,27 @@ def test_a_release_that_must_publish_a_bundle_is_refused_without_one(fixture: Fi
 
 
 @linux_only
+def test_a_patch_release_from_the_older_workflow_installs_without_a_bundle(fixture: Fixture) -> None:
+    # A 0.31.x release cut before the signing workflow reached main publishes
+    # checksums.txt only. Refusing it would break every default install once
+    # that version is baked.
+    name = fixture.publish("0.31.1", sums="txt-good", bundle=None)
+    result = fixture.install("0.31.1")
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"verified {name} against checksums.txt" in result.stdout
+    assert fixture.installed()
+
+
+@linux_only
+def test_the_signing_floor_needs_a_bundle_even_without_sha256sums(fixture: Fixture) -> None:
+    fixture.publish("0.32.0", sums="txt-good", bundle=None)
+    result = fixture.install("0.32.0")
+    assert result.returncode != 0
+    assert "has no Sigstore bundle" in result.stderr
+    assert not fixture.installed()
+
+
+@linux_only
 def test_0_31_0_is_verified_against_its_checksums_txt(fixture: Fixture) -> None:
     # 0.31.0 came from the older release workflow: checksums.txt, no bundles.
     name = fixture.publish("0.31.0", sums="txt-good", bundle=None)
@@ -282,8 +303,8 @@ def test_installers_share_the_checksum_floor_and_workflow_identity() -> None:
     powershell = (SCRIPTS / "install.ps1").read_text(encoding="utf-8")
     assert 'CHECKSUMS_REQUIRED_FROM="0.31.0"' in shell
     assert '$ChecksumsRequiredFrom = [version]"0.31.0"' in powershell
-    assert 'SIGSTORE_REQUIRED_FROM="0.31.1"' in shell
-    assert '$SigstoreRequiredFrom = [version]"0.31.1"' in powershell
+    assert 'SIGSTORE_REQUIRED_FROM="0.32.0"' in shell
+    assert '$SigstoreRequiredFrom = [version]"0.32.0"' in powershell
     identity = ".github/workflows/cd-rust-cua-driver.yml@refs/tags/"
     assert identity in shell and identity in powershell
     assert "https://token.actions.githubusercontent.com" in shell
@@ -407,6 +428,8 @@ def publish_zip(fixture: Fixture, version: str, *, sums: str | None, bundle: str
         ("0.31.0", "bad", "good", True, False, False, "does not match cua-driver-rs-v0.31.0's SHA256SUMS"),
         ("0.31.0", None, "good", True, False, False, "has no SHA256SUMS"),
         ("0.31.1", "good", None, True, False, False, "has no Sigstore bundle"),
+        ("0.31.1", "txt-good", None, False, False, True, "against checksums.txt"),
+        ("0.32.0", "txt-good", None, False, False, False, "has no Sigstore bundle"),
         ("0.31.0", "txt-good", None, False, False, True, "against checksums.txt"),
         ("0.31.0", "txt-bad", None, False, False, False, "does not match cua-driver-rs-v0.31.0's checksums.txt"),
         ("0.31.0", "good", "other-tag", True, False, False, "did not verify"),

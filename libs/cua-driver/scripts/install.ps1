@@ -151,14 +151,19 @@ $CursorThemeRequiredFrom = [version]"0.12.7"
 # Release integrity. Stable releases from $ChecksumsRequiredFrom on publish a
 # checksum file: SHA256SUMS, or (0.31.0, from the older release workflow)
 # checksums.txt, the same "<sha256>  <asset>" lines inside a Markdown fence.
-# From $SigstoreRequiredFrom on they also publish a keyless Sigstore bundle
-# (<asset>.sigstore.json) per asset, issued to cd-rust-cua-driver.yml at that
-# exact tag. A missing one fails the install. Older releases and nightlies are
-# checked when the files exist and otherwise install with a warning. Windows
-# binaries are Authenticode-signed from $AuthenticodeRequiredFrom on (stable
-# and nightly), as CD verifies.
+# The release workflow that publishes SHA256SUMS also publishes a keyless
+# Sigstore bundle (<asset>.sigstore.json) per asset, issued to
+# cd-rust-cua-driver.yml at that exact tag, so a stable release with SHA256SUMS
+# must have one. A release cut by the older workflow (checksums.txt only) needs
+# none until $SigstoreRequiredFrom, the first version that can only come from
+# the signing workflow; keying the requirement on the next patch instead would
+# refuse a patch release cut before the signing workflow landed on main. A
+# missing one fails the install. Older releases and nightlies are checked when
+# the files exist and otherwise install with a warning. Windows binaries are
+# Authenticode-signed from $AuthenticodeRequiredFrom on (stable and nightly),
+# as CD verifies.
 $ChecksumsRequiredFrom = [version]"0.31.0"
-$SigstoreRequiredFrom = [version]"0.31.1"
+$SigstoreRequiredFrom = [version]"0.32.0"
 $AuthenticodeRequiredFrom = [version]"0.22.0"
 $CosignOidcIssuer = "https://token.actions.githubusercontent.com"
 if ($env:CUA_DRIVER_RS_REQUIRE_SIGNATURE -eq '1') { $RequireSignature = $true }
@@ -1236,6 +1241,9 @@ function Assert-ReleaseZipIntegrity([string]$zipPath, [string]$version) {
             break
         }
     }
+    if ($sumsName -eq "SHA256SUMS" -and $tag.StartsWith($TagPrefix)) {
+        $signedRequired = $true
+    }
     if ($sumsName) {
         $expected = $null
         foreach ($line in Get-Content -LiteralPath (Join-Path $destDir $sumsName)) {
@@ -1296,7 +1304,7 @@ function Assert-ReleaseZipIntegrity([string]$zipPath, [string]$version) {
         exit 1
     }
     elseif ($signedRequired) {
-        Write-ErrorStep "$tag has no Sigstore bundle for $zipName; releases from $SigstoreRequiredFrom on must publish one. Refusing to install."
+        Write-ErrorStep "$tag has no Sigstore bundle for $zipName; releases that publish SHA256SUMS, and every release from $SigstoreRequiredFrom on, must publish one. Refusing to install."
         exit 1
     }
 }

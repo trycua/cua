@@ -26,8 +26,9 @@
 #                        with cosign (needs cosign on PATH)
 #
 # Every download is checked against the release's SHA256SUMS (or the older
-# checksums.txt); releases from CHECKSUMS_REQUIRED_FROM on must publish one,
-# and from SIGSTORE_REQUIRED_FROM on a Sigstore bundle per asset too
+# checksums.txt); releases from CHECKSUMS_REQUIRED_FROM on must publish one.
+# Releases that publish SHA256SUMS, and every release from
+# SIGSTORE_REQUIRED_FROM on, must publish a Sigstore bundle per asset too
 # (verified whenever cosign is installed).
 #
 # Env overrides:
@@ -923,14 +924,19 @@ download_release_tarball() {
 #
 # Stable releases from CHECKSUMS_REQUIRED_FROM on publish a checksum file:
 # SHA256SUMS, or (0.31.0, from the older release workflow) checksums.txt,
-# the same "<sha256>  <asset>" lines inside a Markdown fence. From
-# SIGSTORE_REQUIRED_FROM on they also publish a keyless Sigstore bundle
-# (<asset>.sigstore.json) per asset, issued to the release workflow at that
-# exact tag. A missing checksum file or bundle for such a release fails the
-# install. Older releases and nightlies predate them: they are checked when
-# the files exist and otherwise install with a warning.
+# the same "<sha256>  <asset>" lines inside a Markdown fence. The release
+# workflow that publishes SHA256SUMS also publishes a keyless Sigstore bundle
+# (<asset>.sigstore.json) per asset, issued to that workflow at that exact
+# tag, so a stable release with SHA256SUMS must have one. A release cut by the
+# older workflow (checksums.txt only) needs none until SIGSTORE_REQUIRED_FROM,
+# the first version that can only come from the signing workflow; keying the
+# requirement on the next patch instead would refuse a patch release cut
+# before the signing workflow landed on main. A missing checksum file or
+# bundle for such a release fails the install. Older releases and nightlies
+# predate them: they are checked when the files exist and otherwise install
+# with a warning.
 CHECKSUMS_REQUIRED_FROM="0.31.0"
-SIGSTORE_REQUIRED_FROM="0.31.1"
+SIGSTORE_REQUIRED_FROM="0.32.0"
 COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
 
 # Fetches one small release asset (SHA256SUMS, a bundle) to $2.
@@ -977,6 +983,9 @@ verify_release_tarball() {
         fetch_release_file "$sums_name" "$TMP_DIR/$sums_name" || status=$?
         (( status == 44 )) || break
     done
+    if (( status == 0 )) && [[ "$sums_name" == SHA256SUMS && "$TAG" == "$TAG_PREFIX"* ]]; then
+        signed_required=1
+    fi
     if (( status == 0 )); then
         expected="$(awk -v f="$tarball" '$2 == f || $2 == "*" f { print $1; exit }' "$TMP_DIR/$sums_name")"
         if [[ -z "$expected" && "$sums_name" == checksums.txt && $required == 0 ]]; then
@@ -1029,7 +1038,7 @@ verify_release_tarball() {
             exit 1
         fi
         if (( signed_required == 1 )); then
-            err "$TAG has no Sigstore bundle for $tarball; releases from $SIGSTORE_REQUIRED_FROM on must publish one. Refusing to install."
+            err "$TAG has no Sigstore bundle for $tarball; releases that publish SHA256SUMS, and every release from $SIGSTORE_REQUIRED_FROM on, must publish one. Refusing to install."
             exit 1
         fi
     else

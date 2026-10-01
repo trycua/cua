@@ -71,7 +71,7 @@ Bring your own agent and model, or explore CUA-S1 for specialized decisions. Cua
 
 ## Cua Spaces
 
-Cua Spaces is a desktop app that gives your agents full desktops. Each desktop is a Space: a macOS VM built locally on your Mac, or a Linux or Omarchy image. Spaces run on your Mac, on machines you own, or in your own cloud account, and the app keeps them in your menu bar and notch.
+Cua Spaces is a desktop app that gives your agents full desktops. Each desktop is a Space: a macOS VM built locally on your Mac, or a Linux or Omarchy image. Spaces run on your Mac and on other machines you own, and the app keeps them in your menu bar and notch. Support for your own cloud account is coming soon.
 
 - **Teleport.** Move a signed-in app, such as Chrome or Slack, into a Space and it opens there still signed in. Your sessions stay in the Cua Keyvault, encrypted on your Mac, and reach a Space only after you approve.
 - **Multiplayer.** You and your agents work on the same desktop, each with your own cursor. Step in to make a choice, then hand the desktop back.
@@ -85,11 +85,11 @@ Cua Spaces is a desktop app that gives your agents full desktops. Each desktop i
 curl -fsSL https://cua.ai/install.sh | sh
 ```
 
-On macOS the installer selects the Cua Spaces app by default and adds the `cua` CLI. The signed `.dmg` and `.pkg` are on [GitHub Releases](https://github.com/trycua/cua/releases?q=cua-spaces&expanded=true).
+On macOS the installer selects the Cua Spaces app by default and adds the `cua` CLI. You can also [download the signed `.dmg`](https://github.com/trycua/cua/releases/download/cua-spaces-v0.1.0/cua-spaces-0.1.0-darwin-universal.dmg), or get the `.pkg` from the [Cua Spaces 0.1.0 release](https://github.com/trycua/cua/releases/tag/cua-spaces-v0.1.0).
 
 Spaces is free for individuals. Pro and Teams plans are coming soon. The app is source-available under [FSL-1.1-MIT](#licensing).
 
-**[Quickstart](https://cua.ai/docs/spaces/quickstart)** | **[Teleport an app](https://cua.ai/docs/spaces/guides/teleport-an-app)** | **[Share a Space](https://cua.ai/docs/spaces/guides/share-a-space)** | **[Host Spaces on a spare Mac](https://cua.ai/docs/spaces/guides/host-spaces-on-your-spare-mac)** | **[App source](apps/cua-spaces-macos/README.md)**
+**[Quickstart](https://cua.ai/docs/spaces/quickstart)** | **[Teleport an app](https://cua.ai/docs/spaces/guides/teleport-an-app)** | **[Share a Space](https://cua.ai/docs/spaces/guides/share-a-space)** | **[Host Spaces on a spare Mac](https://cua.ai/docs/start-here/host-spaces-on-your-spare-mac)** | **[App source](apps/cua-spaces-macos/README.md)**
 
 ---
 

@@ -95,6 +95,30 @@ stays in screen coordinates, as on every platform); `frame_scale` < 1 and
 pixels back to the window.
 An explicit per-call `max_image_dimension` (0 = native) replaces this cap.
 
+**Budget the pixels before you aim.** The cap is a pixel budget, so on a
+high-resolution window the delivered image is a small fraction of native and
+fine controls stop being readable. Measured on a 3840x2342 window: `frame_scale`
+0.357, so a 24px toolbar icon arrives at ~8.6px and a 1px border at ~0.36px —
+sub-pixel for any reader, sighted or not. Check `frame_scale` in the
+`get_window_state` payload and, when a target is smaller than roughly 30px, frame
+it with `zoom` before choosing a coordinate. Zooming a 196x728 window-px region
+returned a 235x873 image — about 1.2x native — which restores a 24px icon to
+~29px. `zoom` takes screenshot pixels and the follow-up action needs
+`from_zoom: true`. It also requires a screenshot-owning snapshot from the same
+session first, and refuses with `screenshot_context_missing` otherwise, so
+`get_window_state` with a screenshot must precede the first `zoom`.
+
+**When the active model takes no images.** Some clients drop image content
+entirely, so `get_window_state` and `zoom` return an image the reader never sees.
+The loop still closes for most questions, and none of this needs a vision model:
+`verify_state` proves state and returns a real `satisfied` / `unsatisfied` /
+`unknown` verdict; an out-of-band read such as
+`xprop -root _NET_ACTIVE_WINDOW` proves which window holds focus; and scanning the
+written capture for colour transitions (PIL or equivalent) proves coarse layout.
+What none of them prove is that a specific small control was activated — for that
+use the `cua-perception` extension (see `VISUAL.md`) or an app that exposes a
+usable accessibility tree.
+
 **Windows without `_NET_WM_PID`.** Tk, many Java/AWT builds, Wine, and legacy
 Xlib/Xt clients do not publish `_NET_WM_PID`. On X11, `list_windows` then asks
 the X server's X-Resource extension (XRes 1.2 `LocalClientPID`) which local

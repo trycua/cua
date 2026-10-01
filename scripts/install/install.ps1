@@ -76,6 +76,15 @@ $script:Picked = $false
 # the Windows app back (Install-App is kept).
 $script:SpacesSupported = $false
 
+function Get-Sha256Hex([string]$Path) {
+    # .NET directly: Get-FileHash is missing when the Utility module is not
+    # loaded (e.g. under `cua-driver update --apply` on older drivers).
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($Path)
+    try { return ([System.BitConverter]::ToString($sha.ComputeHash($stream)) -replace '-', '').ToLowerInvariant() }
+    finally { $stream.Dispose(); $sha.Dispose() }
+}
+
 function Write-Info([string]$Message) { Write-Host "cua-install: $Message" }
 function Stop-Install([string]$Message) { throw "cua-install: error: $Message" }
 
@@ -278,7 +287,7 @@ function Get-Artifact($Manifest, [string]$ManifestUrl, [string]$Component, [stri
     }
     Write-Info "downloading $($entry.name)"
     Get-Remote $url $dest $ManifestUrl
-    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $dest).Hash.ToLowerInvariant()
+    $actual = Get-Sha256Hex $dest
     if ($actual -ne $entry.sha256.ToLowerInvariant()) {
         Stop-Install "checksum mismatch for $($entry.name) (expected $($entry.sha256), got $actual); aborting"
     }

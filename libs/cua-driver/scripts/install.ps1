@@ -210,6 +210,15 @@ $ChannelWasExplicit = $PSBoundParameters.ContainsKey('Channel')
 # in Resolve-KeepVersions below; 0 means "never GC".
 $Script:KeepVersionsDefault = 5
 
+function Get-Sha256Hex([string]$Path) {
+    # .NET directly: Get-FileHash is missing when the Utility module is not
+    # loaded (e.g. under `cua-driver update --apply` on older drivers).
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($Path)
+    try { return ([System.BitConverter]::ToString($sha.ComputeHash($stream)) -replace '-', '').ToLowerInvariant() }
+    finally { $stream.Dispose(); $sha.Dispose() }
+}
+
 function Resolve-KeepVersions {
     $raw = $env:CUA_DRIVER_RS_KEEP_VERSIONS
     if (-not $raw) { return $Script:KeepVersionsDefault }
@@ -1261,7 +1270,7 @@ function Assert-ReleaseZipIntegrity([string]$zipPath, [string]$version) {
             exit 1
         }
         else {
-            $actual = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $actual = Get-Sha256Hex $zipPath
             if ($actual -ne $expected) {
                 Write-ErrorStep "$zipName does not match $tag's $sumsName (expected $expected, got $actual); refusing to install it."
                 exit 1

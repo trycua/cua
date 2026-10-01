@@ -1,5 +1,6 @@
-from typing import Dict, Optional
+from typing import Optional
 
+from .base import ApiHeaders
 from .generic import GenericComputerInterface
 
 
@@ -15,7 +16,7 @@ class WindowsComputerInterface(GenericComputerInterface):
         vm_name: Optional[str] = None,
         api_port: Optional[int] = None,
         api_base_url: Optional[str] = None,
-        api_headers: Optional[Dict[str, str]] = None,
+        api_headers: Optional[ApiHeaders] = None,
     ):
         super().__init__(
             ip_address,

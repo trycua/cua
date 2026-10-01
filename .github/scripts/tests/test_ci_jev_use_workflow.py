@@ -175,6 +175,20 @@ def test_native_winui3_job_uses_released_driver_default_install_and_source_harne
         assert "libs/cua-driver/tests/fixtures/apps/windows/winui3/**" in triggers[event]["paths"]
 
 
+def test_native_windows_jobs_run_distractor_density_24() -> None:
+    """#4312: the WPF and WinUI3 jobs also verify the tasks past the 24-action cap."""
+    triggers = load()[True]
+    for harness in ("wpf", "winui3"):
+        native = job_text(f"native-{harness}-windows")
+        assert f"verify_native.py --harness {harness} --density 24" in native
+        assert 'summary["density"] == 24' in native
+        assert 'check["distractor_actions"] == 0' in native
+        assert 'check["max_candidates"] == 26' in native
+        assert "jev-use-native-density-window-state/*.json" in native
+        for event in ("pull_request", "push"):
+            assert f"libs/cua-driver/tests/fixtures/apps/windows/{harness}/**" in triggers[event]["paths"]
+
+
 def test_native_gtk3_job_uses_released_driver_and_x11_stack() -> None:
     """RFC #4268 Phase 2: native tasks on the GTK3 harness (Linux AT-SPI)."""
     jobs = load()["jobs"]

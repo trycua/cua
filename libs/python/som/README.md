@@ -16,6 +16,9 @@
 </h1>
 </div>
 
+> [!WARNING]
+> **Deprecated:** `cua-som` is no longer maintained and will not receive updates or fixes. It is licensed under AGPL-3.0, separately from the MIT-licensed Cua packages.
+
 **Som** (Set-of-Mark) is a visual grounding component for the Computer-Use Agent (Cua) framework powering Cua, for detecting and analyzing UI elements in screenshots. Optimized for macOS Silicon with Metal Performance Shaders (MPS), it combines YOLO-based icon detection with EasyOCR text recognition to provide comprehensive UI element analysis.
 
 ## Features

@@ -11,8 +11,12 @@ pub(crate) fn mint_snapshot_id() -> u32 {
     SNAPSHOT_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
+pub fn format_snapshot_id(snapshot_id: u32) -> String {
+    format!("s{snapshot_id:08x}")
+}
+
 pub fn token_for(snapshot_id: u32, element_index: usize) -> String {
-    format!("s{snapshot_id:08x}:{element_index}")
+    format!("{}:{element_index}", format_snapshot_id(snapshot_id))
 }
 
 pub fn parse_token(token: &str) -> Option<(u32, usize)> {
@@ -32,9 +36,8 @@ pub fn parse_snapshot_handle(handle: &str) -> Option<u32> {
 pub enum ResolvedElement<T> {
     None,
     Element {
-        window_id: Option<u64>,
+        window_id: u64,
         element_index: usize,
-        via_token: bool,
         element: T,
     },
 }
@@ -50,85 +53,14 @@ impl<T> ResolvedElement<T> {
                 window_id,
                 element_index,
                 element,
-                ..
-            } => (Some(element_index), window_id, Some(element)),
+            } => (Some(element_index), Some(window_id), Some(element)),
         }
-    }
-}
-
-pub(crate) struct ElementReference {
-    pub snapshot_id: u32,
-    pub element_index: usize,
-    pub via_token: bool,
-    window_id: Option<u64>,
-    conflicting: bool,
-}
-
-impl ElementReference {
-    pub fn validate_window(&self, window_id: u64, tool: &str) -> Result<(), ToolResult> {
-        if !self.conflicting && self.window_id.is_none_or(|supplied| supplied == window_id) {
-            return Ok(());
-        }
-        let message = if self.via_token {
-            format!("{tool}: element_token conflicts with element_index, snapshot_id, or window_id")
-        } else {
-            format!(
-                "{tool}: snapshot belongs to window_id {window_id}, not {}",
-                self.window_id.unwrap()
-            )
-        };
-        Err(refusal("conflicting_element_target", message))
     }
 }
 
 pub(crate) fn refusal(code: &str, message: String) -> ToolResult {
     ToolResult::error(message.clone()).with_structured(serde_json::json!({
         "status": "refused", "refusal": { "code": code, "message": message }
-    }))
-}
-
-pub(crate) fn parse_element_args(
-    element_index: Option<usize>,
-    element_token: Option<&str>,
-    snapshot_handle: Option<&str>,
-    window_id: Option<u64>,
-    tool: &str,
-) -> Result<Option<ElementReference>, ToolResult> {
-    match (element_index, element_token, snapshot_handle) {
-        (None, None, None) => return Ok(None),
-        (None, None, Some(_)) => return Err(refusal(
-            "element_index_required", format!("{tool}: snapshot_id requires element_index"),
-        )),
-        (Some(_), None, None) => return Err(refusal(
-            "snapshot_id_required",
-            format!("{tool}: bare element_index is not accepted; pass element_token, or snapshot_id together with element_index"),
-        )),
-        _ => {}
-    }
-    let (snapshot_id, index) = if let Some(token) = element_token {
-        parse_token(token).ok_or_else(|| {
-            refusal(
-                "invalid_element_token",
-                "element_token has invalid format".into(),
-            )
-        })?
-    } else {
-        let id = parse_snapshot_handle(snapshot_handle.unwrap()).ok_or_else(|| {
-            refusal(
-                "invalid_snapshot_id",
-                format!("{tool}: snapshot_id has invalid format"),
-            )
-        })?;
-        (id, element_index.unwrap())
-    };
-    Ok(Some(ElementReference {
-        snapshot_id,
-        element_index: index,
-        via_token: element_token.is_some(),
-        window_id,
-        conflicting: element_index.is_some_and(|supplied| supplied != index)
-            || snapshot_handle
-                .is_some_and(|handle| parse_snapshot_handle(handle) != Some(snapshot_id)),
     }))
 }
 

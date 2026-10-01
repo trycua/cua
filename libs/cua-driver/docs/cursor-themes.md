@@ -74,8 +74,14 @@ cua-driver get_agent_cursor_state '{"session":"demo"}'
 ```
 
 `get_agent_cursor_state` always includes `position`. It is `null` until the
-session cursor first moves, then `{"x": ..., "y": ...}` where the platform
-tracks session cursor placement.
+session cursor first moves, then `{"x": ..., "y": ...}`: the screen point the
+cursor tip was last placed on.
+
+Keyboard actions place a named session's cursor before the input.
+`press_key`, `hotkey`, and `type_text` put it on the targeted element, else
+at its last position, else at the target window's centre, so a session whose
+first action is a keyboard action shows its cursor on that window. Anonymous
+calls keep their existing cursor behavior.
 
 `set_agent_cursor_motion` changes only movement physics and visibility timing.
 It does not change artwork. The removed `set_agent_cursor_style` operation and

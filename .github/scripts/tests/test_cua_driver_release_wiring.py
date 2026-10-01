@@ -826,20 +826,22 @@ fi
         self.assertNotIn("publish recovery", workflow.lower())
 
         # The Release Please tag push calls every canonical hosted E2E suite
-        # against the exact tag SHA, after the attribution preflight.
+        # against the exact tag SHA, after the attribution preflight. Nightly
+        # builds call the same suites against their exact source_ref.
+        gate_sha = "${{ inputs.channel == 'nightly' && inputs.source_ref || github.sha }}"
         gates = {
-            "e2e-linux": ("e2e-rust-linux.yml", "ref: ${{ github.sha }}"),
-            "e2e-windows": ("e2e-rust-windows.yml", "ref: ${{ github.sha }}"),
-            "e2e-macos": ("e2e-rust-macos.yml", "source_sha: ${{ github.sha }}"),
+            "e2e-linux": ("e2e-rust-linux.yml", f"ref: {gate_sha}"),
+            "e2e-windows": ("e2e-rust-windows.yml", f"ref: {gate_sha}"),
+            "e2e-macos": ("e2e-rust-macos.yml", f"source_sha: {gate_sha}"),
             "e2e-standalone-browsers": (
                 "e2e-rust-standalone-browsers.yml",
-                "ref: ${{ github.sha }}",
+                f"ref: {gate_sha}",
             ),
         }
         for job, (called, sha_input) in gates.items():
             block = workflow.split(f"\n  {job}:\n", 1)[1].split("\n\n", 1)[0]
             self.assertIn("    needs: release-attribution-preflight\n", block)
-            self.assertIn(f"    if: {tag_push}\n", block)
+            self.assertIn(f"    if: ({tag_push}) || inputs.channel == 'nightly'\n", block)
             self.assertIn(f"    uses: ./.github/workflows/{called}\n", block)
             self.assertIn(sha_input, block)
             self.assertIn("      actions: read\n", block)

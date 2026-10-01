@@ -72,7 +72,7 @@
     ],
     "createUpdaterArtifacts": true,
     "category": "DeveloperTool",
-    "copyright": "\u00a9 Cua",
+    "copyright": "© Cua",
     "macOS": {
       "minimumSystemVersion": "13.0",
       "entitlements": "entitlements.plist"

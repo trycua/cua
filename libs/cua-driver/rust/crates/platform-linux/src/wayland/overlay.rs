@@ -476,9 +476,7 @@ fn visible_cores_for_output<'a>(
     let mut visible_cores: Vec<_> = cores
         .iter()
         .filter(|(_, core)| {
-            core.visible
-                && core.pos.0 >= -100.0
-                && core.idle_alpha >= 0.004
+            core.is_revealed()
                 && select_output(layouts, core.pos.0, core.pos.1)
                     .is_some_and(|selected| selected.id == output_id)
         })
@@ -825,7 +823,7 @@ fn tick_all_cores(cores: &mut CursorMap<RenderStateCore>, dt: f64) {
 /// gated on a shown, placed cursor: a hidden cursor's motion is quiesced by
 /// [`quiesce_hidden`] and never repaints a layer surface.
 fn needs_frame_tick(core: &RenderStateCore) -> bool {
-    core.visible && core.pos.0 >= -100.0 && core.needs_frame_tick()
+    core.is_enabled() && core.is_placed() && core.needs_frame_tick()
 }
 
 fn quiesce_hidden(core: &mut RenderStateCore) {
@@ -863,7 +861,7 @@ fn redraw(
         .render
         .cursors
         .values()
-        .filter(|core| core.visible && core.pos.0 >= -100.0 && core.idle_alpha >= 0.004)
+        .filter(|core| core.is_revealed())
         .map(|core| core.pos);
     let (selected, targets) = frame_plan(
         &layouts,

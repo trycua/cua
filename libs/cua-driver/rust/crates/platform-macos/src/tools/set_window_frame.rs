@@ -145,13 +145,6 @@ fn mutate_and_verify(
     if !requested.is_valid() {
         return Err("x/y must be finite and width/height must be finite positive numbers".into());
     }
-    // Retain #4348's containment until the embedded SDK/AppKit regression passes.
-    if input.pid == std::process::id() {
-        return Err(format!(
-            "refusing to move window_id {window_id} in the driver's own process (pid {}): AppKit window writes must run on the main thread",
-            input.pid
-        ));
-    }
     let before = window_server_frame(window_id);
     let mutations = before.map_or(&FRAME_MUTATION_ORDER[..], |before| {
         initial_mutations(requested, before)

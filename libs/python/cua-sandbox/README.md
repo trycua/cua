@@ -253,6 +253,13 @@ async with Sandbox.ephemeral(Image.linux(), on="local", kind="vm") as sb:
 
 cua-sandbox only controls sandboxes. To control the local machine, use cua-driver (its SDK or MCP server).
 
+## Upgrading from 0.8
+
+0.9 runs on the cua SDK (`cua>=0.2.0`). `Sandbox.create` now runs locally
+unless you pass `local=False`. The `cua_sandbox.localhost` module, `Localhost`,
+and the `computer_server`, `http`, `local` and `websocket` transports are
+removed; control the local machine with cua-driver instead.
+
 ## Cloud credentials
 
 The cloud backend is Cua Fleet at `https://run.cua.ai` (override with

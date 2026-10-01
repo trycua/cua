@@ -33,15 +33,15 @@ sandbox. Deleting an OpenAI session alone does not release the sandbox.
 Codex-in-ChatGPT's Computer Use plugin runs only on macOS and Windows, with an
 eligible, signed-in ChatGPT account. To let it take over a VM instead of your
 desktop, create a Windows sandbox (`Image.from_registry(WINDOWS_IMAGE,
-os_type="windows", kind="vm")`, `local=False`) from a disk that runs cua-spacesd,
+os_type="windows", kind="vm")`) from a disk that runs cua-spacesd,
 open it with `cua sb view`, install the ChatGPT desktop app and Codex CLI, and
 run `codex plugin add computer-use@openai-bundled`. Sign-in and approvals stay
 interactive.
 
 ## Cursor Cloud Agents
 
-A Cursor self-hosted Team Pool worker runs in a cloud Linux desktop for as
-long as your controller holds `Sandbox.ephemeral(Image.linux(), local=False)`.
+A Cursor self-hosted Team Pool worker runs in a Linux desktop for as long as
+your controller holds `Sandbox.ephemeral(Image.linux())`.
 The controller installs the Cursor CLI, writes `CURSOR_API_KEY` to a
 mode-`600` file with `sb.files.write_text`, and starts
 `agent worker --pool <pool> start` in the background. It needs Cursor
@@ -56,8 +56,7 @@ OpenClaw's bundled `cua-computer` provider runs Cua Driver in-process, so its
 `DISPLAY=:1`:
 
 ```bash test="cli-shape" id="cua-sb-create-openclaw"
-cua sb create linux --on cloud \
-  --name openclaw --cpu 4 --memory 8GB --claim-ttl 2h
+cua sb create linux --name openclaw --cpu 4 --memory 8GB
 cua sb rm openclaw -f
 ```
 
@@ -180,7 +179,7 @@ Build on an x86_64 host with KVM (the cloud runs amd64), push, and run it:
 cua image build minecraft.json \
   --base vm:ghcr.io/trycua/linux:24.04-disk \
   --push ghcr.io/<you>/minecraft-workspace:1
-cua sb create ghcr.io/<you>/minecraft-workspace@sha256:<digest> --on cloud --name mc --cpu 4 --memory 8GB
+cua sb create ghcr.io/<you>/minecraft-workspace@sha256:<digest> --name mc --cpu 4 --memory 8GB
 cua sb view mc
 cua sb rm mc -f
 ```

@@ -24,11 +24,11 @@ the interfaces below raise `SpacesdNotAvailable`.
 <Tabs groupId="language" persist items={['Python', 'TypeScript', 'CLI']}>
   <Tab value="Python">
 
-```python test="docs,fleet" id="desktop-python" prelude="fakefleet"
+```python test="container" id="desktop-python"
 from pathlib import Path
 from cua_sandbox import Image, Sandbox
 
-async with Sandbox.ephemeral(Image.linux(), local=False) as sb:
+async with Sandbox.ephemeral(Image.linux()) as sb:
     width, height = await sb.get_dimensions()
     await sb.mouse.click(width // 2, height // 2)
     await sb.keyboard.type("hello")
@@ -39,13 +39,12 @@ async with Sandbox.ephemeral(Image.linux(), local=False) as sb:
   </Tab>
   <Tab value="TypeScript">
 
-```ts test="docs,fleet" id="desktop-typescript" prelude="fakefleet"
+```ts test="container" id="desktop-typescript"
 import { writeFile } from 'node:fs/promises';
 import { embedded, SandboxCreateOptions } from '@trycua/cua';
 
-const sb = await embedded({ fleetFromSession: true }).sandboxes().create(
+const sb = await embedded().sandboxes().create(
   SandboxCreateOptions.create({
-    on: 'cloud',
     image: 'ghcr.io/trycua/linux:24.04',
   })
 );
@@ -65,7 +64,7 @@ try {
   <Tab value="CLI">
 
 ```bash test="cli-shape" id="cua-sb-create-linux"
-cua sb create linux --on cloud --name desk
+cua sb create linux --name desk
 cua sb screenshot desk -o desk.png
 cua sb view desk         # opens the desktop in the browser viewer
 cua sb rm -f desk
@@ -80,10 +79,10 @@ cua sb rm -f desk
 pip install --extra-index-url https://wheels.cua.ai/simple 'cua-sandbox[driver]==0.9.0'
 ```
 
-```python test="fleet" id="typed-driver" prelude="image-desktop"
+```python test="container" id="typed-driver" prelude="image-desktop"
 from cua_driver import GetScreenSizeInput
 
-async with Sandbox.ephemeral(image, local=False) as sb:
+async with Sandbox.ephemeral(image) as sb:
     async with sb.driver.connect() as driver:
         result = await driver.get_screen_size(GetScreenSizeInput(session=None))
         print(result.text)
@@ -112,7 +111,7 @@ cua sb exec dev ls -la /tmp         # one command, no PTY
 ```python test="container" id="terminal"
 from cua_sandbox import Sandbox, Image
 
-async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
+async with Sandbox.ephemeral(Image.linux()) as sb:
     session = await sb.terminal.create(cols=80, rows=24)   # command='python3' for a program
     pid = session['pid']
     await sb.terminal.send_input(pid, 'echo hello\n')
@@ -137,10 +136,10 @@ cua sb create linux --name desk2 --view # open it when the sandbox is ready
 cua viewer                              # one local page for every sandbox (Cua Spaces)
 ```
 
-```python test="docs,fleet" id="desktop-viewer-url" prelude="fakefleet"
+```python test="container" id="desktop-viewer-url"
 from cua_sandbox import Image, Sandbox
 
-async with Sandbox.ephemeral(Image.linux(), local=False) as sb:
+async with Sandbox.ephemeral(Image.linux()) as sb:
     print(await sb.viewer_url())
 ```
 

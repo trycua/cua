@@ -3,8 +3,8 @@ title: Manage sandbox lifecycle
 description: Create, keep, reconnect to, list, suspend and delete sandboxes, keep cloud sandboxes alive, and run many at once.
 ---
 
-Every lifecycle call takes the same `local=` switch as `Sandbox.create`. The
-examples use `local=True`; pass `local=False` for the cloud.
+Sandboxes run on this machine by default, so the examples pass no location.
+Every lifecycle call takes the same `local=` switch as `Sandbox.create`.
 
 ## Ephemeral or kept
 
@@ -12,11 +12,11 @@ examples use `local=True`; pass `local=False` for the cloud.
 from cua_sandbox import Image, Sandbox
 
 # Deleted when the block exits.
-async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
+async with Sandbox.ephemeral(Image.linux()) as sb:
     ...
 
 # Kept until you delete it.
-sb = await Sandbox.create(Image.linux(), name="dev", local=True)
+sb = await Sandbox.create(Image.linux(), name="dev")
 await sb.disconnect()          # the sandbox keeps running
 ```
 
@@ -48,12 +48,12 @@ works when it is unique; otherwise the call raises `AmbiguousSandbox`.
 ## Reconnect, list, delete
 
 ```python test="container" id="reconnect-list-delete" session="local" prelude="local-cleanup"
-sb = await Sandbox.connect("dev", local=True)
-for s in await Sandbox.list():              # local and cloud; local=True filters
+sb = await Sandbox.connect("dev")
+for s in await Sandbox.list():
     print(s.name, s.status, s.location)
-await Sandbox.suspend("dev", local=True)
-sb = await Sandbox.resume("dev", local=True)
-await Sandbox.delete("dev", local=True)
+await Sandbox.suspend("dev")
+sb = await Sandbox.resume("dev")
+await Sandbox.delete("dev")
 ```
 
 `await sb.destroy()` deletes the sandbox you hold. Suspend, resume and restart
@@ -62,7 +62,7 @@ are local only: in the cloud `suspend` and `restart` raise `Unsupported`, and
 in `~/.cua/sandboxes`, so either can reconnect to the other's sandboxes.
 
 ```bash test="cli-shape" id="cua-sb-create-linux"
-cua sb create linux --name dev          # --on cloud for the cloud
+cua sb create linux --name dev
 cua sb ls                               # local and cloud; --local or --cloud filters
 cua sb info dev
 cua sb suspend dev && cua sb resume dev

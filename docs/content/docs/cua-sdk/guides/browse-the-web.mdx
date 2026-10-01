@@ -44,7 +44,7 @@ cua images ls --browser
 `sandbox_create` with `browser: true` starts the canonical Linux image
 (`ghcr.io/trycua/linux:24.04`), launches Chromium with a fresh throwaway
 profile inside it, binds the window for the browser tools and, with `url`,
-opens a first page. Pass `on: "cloud"` to run it on Cua Fleet. It returns the
+opens a first page. It runs on this machine by default. It returns the
 sandbox `id` and the `session`, `target_id` and `tab_id` every browser call
 takes.
 

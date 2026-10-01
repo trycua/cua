@@ -275,14 +275,12 @@
           "path": "typescript/package-lock.json",
           "jsonpath": "$.packages[''].version"
         }
-      ],
-      "release-as": "0.2.0"
+      ]
     },
     "libs/cua-spacesd": {
       "release-type": "simple",
       "component": "cua-spacesd",
       "package-name": "cua-spacesd",
-      "release-as": "0.1.0",
       "bump-minor-pre-major": true,
       "version-file": "VERSION",
       "changelog-path": "CHANGELOG.md",
@@ -420,8 +418,7 @@
           "path": "src-tauri/Cargo.lock",
           "jsonpath": "$.package[?(@.name.value=='cua-spaces-app')].version"
         }
-      ],
-      "release-as": "0.1.0"
+      ]
     }
   }
 }

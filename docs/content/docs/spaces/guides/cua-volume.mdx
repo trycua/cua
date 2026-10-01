@@ -267,7 +267,6 @@ copy in Finder, Resolve clears the entry and keeps both files.
 |---------|-------|--------|
 | `fs` (default) | `~/.cua/volume/data` on this machine | Nothing |
 | `s3` | Any S3-compatible bucket with versioning on (AWS S3, R2, MinIO) | `cua volume config set` and `cua volume config set-keys` |
-| `cloud` | The Cua cloud's bucket, short-lived keys scoped to your folders | Off by default; the Cua cloud must enable Cua Volume for your account |
 
 ```bash test="cli-shape" id="cua-volume-config"
 cua volume config show
@@ -280,12 +279,6 @@ the credential store; they never go in `~/.cua/volume/config.json`. Restart the
 daemon after changing the backend from the terminal. Settings > Storage in
 Cua tests the bucket first (reachable, keys allowed to write, versioning on)
 and switches the running drive without a restart.
-
-<Callout type="info">
-The `cloud` backend is off until the Cua cloud turns on Cua Volume: the
-server answers `drive_disabled` until then. When on, keys last 15 to 60
-minutes and reach only the folders your session may use.
-</Callout>
 
 ## Limits
 

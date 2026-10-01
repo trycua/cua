@@ -685,6 +685,29 @@ pub mod macos {
         }
     }
 
+    /// Whether AppKit reports `pid` as finished launching and WindowServer
+    /// shows one of its windows on screen, observed without the driver.
+    ///
+    /// AppKit registers a window with WindowServer when the app constructs it,
+    /// before the app enters its run loop, so a fixture that only waits for its
+    /// window to be listed can start a case while every accessibility request
+    /// to the app still fails. Fixtures wait for this posture instead.
+    pub fn application_presented(pid: u32) -> bool {
+        let Ok(pid) = i32::try_from(pid) else {
+            return false;
+        };
+        // SAFETY: plain Objective-C messages on a retained
+        // NSRunningApplication; neither requires the main thread.
+        let finished = unsafe {
+            objc2_app_kit::NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+                .is_some_and(|app| app.isFinishedLaunching())
+        };
+        finished
+            && window_rows()
+                .iter()
+                .any(|row| row.pid == pid as u32 && row.on_screen)
+    }
+
     fn frontmost_pid() -> Option<u64> {
         unsafe {
             Some(
@@ -877,6 +900,7 @@ pub mod macos {
         }
 
         #[test]
+        #[ignore = "host desktop: reads the real windows, frontmost app and cursor; run by scripts/ci/macos/run-rust-e2e.sh"]
         fn native_snapshot_reads_desktop_without_a_target() {
             let snapshot = MacosObserver::new()
                 .snapshot(TargetWindow {
@@ -1085,10 +1109,6 @@ pub mod linux {
                 leaked_input_events: Vec::new(),
             })
         }
-    }
-
-    pub(crate) fn hyprland_client_address(pid: u32) -> Result<String, ObserverError> {
-        super::hyprland::client_address(TargetWindow { pid, native_id: 0 })
     }
 
     pub(crate) fn hyprland_target_address(target: TargetWindow) -> Result<String, ObserverError> {
@@ -1337,10 +1357,7 @@ pub mod linux {
             .map_err(|error| ObserverError::new(format!("invalid GetRects JSON: {error}")))
     }
 
-    fn gnome_target<'a>(
-        windows: &'a [GnomeWindow],
-        target: TargetWindow,
-    ) -> Option<&'a GnomeWindow> {
+    fn gnome_target(windows: &[GnomeWindow], target: TargetWindow) -> Option<&GnomeWindow> {
         let matching = windows.iter().filter(|window| window.pid == target.pid);
         matching
             .clone()

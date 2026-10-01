@@ -16,8 +16,13 @@
 pub mod delivery;
 pub mod focus_guard;
 pub mod foreground;
+/// Low-latency ordered input batches for one target (embedders).
+pub mod interactive;
 mod mpx_keyboard;
 mod mpx_owner;
+/// One-shot targeted pointer/keyboard delivery with explicit
+/// auto/background/foreground semantics (embedders).
+pub mod targeted;
 
 pub use focus_guard::{FocusGuardReport, FocusSnapshot, SameAppWindow};
 pub use foreground::{with_x11_foreground_opts, FocusAfter, ForegroundOptions, ForegroundReport};
@@ -1330,7 +1335,7 @@ pub fn x11_activate_window_persistent(xid: u64) -> Result<Option<u64>> {
             std::env::var("DISPLAY").ok()
         );
     }
-    let prior = ewmh_active_window(display).map(|w| w as u64);
+    let prior = ewmh_active_window(display);
     ewmh_activate_window(
         display,
         xid as x11::xlib::Window,
@@ -1795,13 +1800,13 @@ fn popup_info(display: *mut x11::xlib::Display, child: x11::xlib::Window) -> Opt
     if attrs.width <= 1 || attrs.height <= 1 {
         return None;
     }
-    let pid = crate::x11::window_pid(child as u64).or_else(|| {
+    let pid = crate::x11::window_pid(child).or_else(|| {
         window_children(display, child)
             .into_iter()
-            .find_map(|kid| crate::x11::window_pid(kid as u64))
+            .find_map(crate::x11::window_pid)
     });
     Some(PopupWindow {
-        window: child as u64,
+        window: child,
         x: attrs.x,
         y: attrs.y,
         width: attrs.width as u32,
@@ -2428,7 +2433,7 @@ fn occluding_window(
     if let Some(bounds) = window_screen_bounds(display, window) {
         if !bounds_contain(bounds, x, y) {
             return Ok(PointCover::Outside(PointOutsideWindow {
-                target_window: window as u64,
+                target_window: window,
                 screen_x: x,
                 screen_y: y,
                 window_x: x - bounds.0,
@@ -2444,27 +2449,27 @@ fn occluding_window(
             let previous_handler = unsafe { x11::xlib::XSetErrorHandler(Some(ignore_x_error)) };
             let covering_client = window_children(display, under)
                 .into_iter()
-                .find(|kid| crate::x11::window_pid(*kid as u64).is_some());
-            let covering_pid = crate::x11::window_pid(under as u64)
-                .or_else(|| covering_client.and_then(|kid| crate::x11::window_pid(kid as u64)));
+                .find(|kid| crate::x11::window_pid(*kid).is_some());
+            let covering_pid = crate::x11::window_pid(under)
+                .or_else(|| covering_client.and_then(crate::x11::window_pid));
             unsafe {
                 x11::xlib::XSync(display, 0);
                 x11::xlib::XSetErrorHandler(previous_handler);
             }
-            let target_pid = crate::x11::window_pid(window as u64);
+            let target_pid = crate::x11::window_pid(window);
             let title = window_title_for_report(display, under);
             // The app's own window (a dialog, a file chooser) sits over the
             // point: the press goes where the caller can see it, on that
             // window, and the effect reports the retarget.
             if target_pid.is_some() && covering_pid == target_pid {
                 return Ok(PointCover::SameApp(SameAppCover {
-                    window: covering_client.map(u64::from).unwrap_or(under as u64),
+                    window: covering_client.unwrap_or(under),
                     title,
                 }));
             }
             Ok(PointCover::Occluded(TargetOccluded {
-                target_window: window as u64,
-                covering_window: under as u64,
+                target_window: window,
+                covering_window: under,
                 covering_title: title,
                 covering_pid,
                 x,
@@ -3087,7 +3092,7 @@ pub fn send_focus_in(xid: u64) -> Result<()> {
         mode: NotifyMode::NORMAL,
     };
 
-    conn.send_event(false, window, EventMask::FOCUS_CHANGE, &focus_in)?;
+    conn.send_event(false, window, EventMask::FOCUS_CHANGE, focus_in)?;
     conn.flush()?;
     Ok(())
 }
@@ -3105,9 +3110,19 @@ pub fn send_focus_out(xid: u64) -> Result<()> {
         mode: NotifyMode::NORMAL,
     };
 
-    conn.send_event(false, window, EventMask::FOCUS_CHANGE, &focus_out)?;
+    conn.send_event(false, window, EventMask::FOCUS_CHANGE, focus_out)?;
     conn.flush()?;
     Ok(())
+}
+
+/// Round-trip to the X server before the short-lived connection that sent
+/// synthetic events is dropped. A bare flush is not enough: the server may
+/// discard the tail of a client's request stream when the connection closes,
+/// which drops the last key or button event (observed under Xvfb).
+fn settle_synthetic_events(conn: &RustConnection) {
+    if let Ok(cookie) = conn.get_input_focus() {
+        let _ = cookie.reply();
+    }
 }
 
 /// Send a button click (down + up) to a window at window-local coordinates.
@@ -3169,16 +3184,17 @@ pub fn send_click_with_modifiers(
         // The event mask selects recipients independently of the payload type.
         // Select the press client for both payloads so a press-only toolkit
         // binding (such as Tk's <Button-1>) receives one coherent click.
-        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?
+        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, press)?
             .check()?;
         sleep(Duration::from_millis(CLICK_DELAY_MS));
-        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &release)?
+        conn.send_event(false, target.window, EventMask::BUTTON_PRESS, release)?
             .check()?;
 
         if count > 1 {
             sleep(Duration::from_millis(80));
         }
     }
+    settle_synthetic_events(&conn);
     Ok(())
 }
 
@@ -3189,14 +3205,13 @@ pub fn send_click_with_modifiers(
 /// `button` — X11 button number (1=left, 2=middle, 3=right).
 pub fn send_drag(
     xid: u64,
-    from_x: i32,
-    from_y: i32,
-    to_x: i32,
-    to_y: i32,
+    from: (i32, i32),
+    to: (i32, i32),
     duration_ms: u64,
     steps: usize,
     button: u8,
 ) -> Result<()> {
+    let ((from_x, from_y), (to_x, to_y)) = (from, to);
     let (conn, _) = connect_x11_for_input()?;
     let root = conn.setup().roots[0].root;
     let steps = steps.max(1);
@@ -3223,7 +3238,7 @@ pub fn send_drag(
         state: KeyButMask::from(0u16),
         same_screen: true,
     };
-    conn.send_event(false, press_target.window, EventMask::BUTTON_PRESS, &press)?;
+    conn.send_event(false, press_target.window, EventMask::BUTTON_PRESS, press)?;
     conn.flush()?;
     sleep(Duration::from_millis(CLICK_DELAY_MS));
 
@@ -3248,7 +3263,7 @@ pub fn send_drag(
             state: button_state_mask(button),
             same_screen: true,
         };
-        conn.send_event(false, target.window, EventMask::POINTER_MOTION, &motion)?;
+        conn.send_event(false, target.window, EventMask::POINTER_MOTION, motion)?;
         conn.flush()?;
         if step_delay_ms > 0 {
             sleep(Duration::from_millis(step_delay_ms));
@@ -3276,9 +3291,10 @@ pub fn send_drag(
         false,
         release_target.window,
         EventMask::BUTTON_RELEASE,
-        &release,
+        release,
     )?;
     conn.flush()?;
+    settle_synthetic_events(&conn);
     Ok(())
 }
 
@@ -3301,8 +3317,9 @@ pub fn send_button_down(xid: u64, x: i32, y: i32, button: u8) -> Result<()> {
         state: KeyButMask::from(0u16),
         same_screen: true,
     };
-    conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?;
-    conn.flush()?;
+    conn.send_event(false, target.window, EventMask::BUTTON_PRESS, &press)?
+        .check()?;
+    settle_synthetic_events(&conn);
     Ok(())
 }
 
@@ -3327,8 +3344,9 @@ pub fn send_motion(xid: u64, x: i32, y: i32, button: Option<u8>) -> Result<()> {
             .unwrap_or_else(|| KeyButMask::from(0u16)),
         same_screen: true,
     };
-    conn.send_event(false, target.window, EventMask::POINTER_MOTION, &motion)?;
+    conn.send_event(false, target.window, EventMask::POINTER_MOTION, motion)?;
     conn.flush()?;
+    settle_synthetic_events(&conn);
     Ok(())
 }
 
@@ -3351,8 +3369,9 @@ pub fn send_button_up(xid: u64, x: i32, y: i32, button: u8) -> Result<()> {
         state: button_state_mask(button),
         same_screen: true,
     };
-    conn.send_event(false, target.window, EventMask::BUTTON_RELEASE, &release)?;
-    conn.flush()?;
+    conn.send_event(false, target.window, EventMask::BUTTON_RELEASE, &release)?
+        .check()?;
+    settle_synthetic_events(&conn);
     Ok(())
 }
 
@@ -3430,11 +3449,11 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
             same_screen: true,
         };
 
-        conn.send_event(false, window, EventMask::KEY_PRESS, &press)?;
+        conn.send_event(false, window, EventMask::KEY_PRESS, press)?;
         // Start the hold interval after sending the press, not while it is buffered.
         conn.flush()?;
         sleep(Duration::from_millis(KEY_DELAY_MS));
-        conn.send_event(false, window, EventMask::KEY_RELEASE, &release)?;
+        conn.send_event(false, window, EventMask::KEY_RELEASE, release)?;
         conn.flush()?;
         if inter_char_ms > 0 {
             sleep(Duration::from_millis(inter_char_ms));
@@ -3508,7 +3527,7 @@ pub fn send_type_text_xtest(text: &str) -> Result<()> {
 /// released after the key. Modifier names resolve to their keysyms
 /// (Control_L/Shift_L/Alt_L/Super_L), then to keycodes that are in the server's
 /// modifier map, so the modifier mask actually engages. Sparse/headless keymaps
-/// that lack a keysym borrow a spare keycode (xdotool-style) via
+/// that lack a keysym borrow a spare keycode via
 /// [`keycode_for_keysym`]; the returned guards restore the map on drop.
 pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
@@ -3640,6 +3659,7 @@ pub fn send_click_xtest_desktop_with_modifiers(
         modifier_keycodes.push(keycode);
     }
     let mut pressed = Vec::new();
+    let mut button_pressed = false;
     let gesture_result = (|| -> Result<()> {
         for &keycode in &modifier_keycodes {
             conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
@@ -3650,23 +3670,32 @@ pub fn send_click_xtest_desktop_with_modifiers(
         conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
         let count = count.max(1);
         for click_index in 0..count {
-            conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
-            conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+            let press =
+                conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+            // Confirm delivery before sleeping; buffering both edges produces a zero-ms click.
+            press.check()?;
+            button_pressed = true;
+            sleep(Duration::from_millis(CLICK_DELAY_MS));
+            conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?
+                .check()?;
+            button_pressed = false;
             if click_index + 1 < count {
-                // Chromium needs the first pair to reach the server before the
-                // second pair. A zero-gap batch produces two click events but
-                // no DOM dblclick event under Xvfb/Openbox.
-                conn.flush()?;
+                // Keep the existing gap between completed click pairs.
                 sleep(Duration::from_millis(DOUBLE_CLICK_DELAY_MS));
             }
         }
         Ok(())
     })();
 
-    // Always attempt to release every modifier that was successfully queued,
-    // including when a later pointer request fails. A failed gesture must not
-    // leave the desktop with a logically stuck Ctrl/Shift/Alt/Super key.
+    // Attempt all releases after a partial failure. Do not strand buttons or modifiers.
     let mut release_result: Result<()> = Ok(());
+    if button_pressed {
+        release_result = (|| -> Result<()> {
+            conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?
+                .check()?;
+            Ok(())
+        })();
+    }
     for &keycode in pressed.iter().rev() {
         if let Err(error) =
             conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)
@@ -3676,15 +3705,16 @@ pub fn send_click_xtest_desktop_with_modifiers(
             }
         }
     }
-    conn.flush()?;
-    // Round-trip so the server processes the warp+button events before this
-    // short-lived connection drops. Pointer events happened to survive the close
-    // under Xtigervnc where keyboard events did not (see send_key_xtest), but make
-    // it explicit so the desktop click is reliable across X servers too.
-    let _ = conn.get_input_focus()?.reply();
+    // Complete queued modifier releases before the short-lived connection closes,
+    // while preserving the primary gesture or cleanup error when one exists.
+    let completion_result = (|| -> Result<()> {
+        conn.get_input_focus()?.reply()?;
+        Ok(())
+    })();
     drop(guards);
     gesture_result?;
     release_result?;
+    completion_result?;
     Ok(())
 }
 
@@ -3734,60 +3764,139 @@ pub fn send_drag_xtest_desktop(
     duration_ms: u64,
     steps: usize,
 ) -> Result<()> {
+    send_drag_xtest_desktop_with_modifiers(
+        from_x,
+        from_y,
+        to_x,
+        to_y,
+        button,
+        duration_ms,
+        steps,
+        &[],
+    )
+}
+
+/// Screen-absolute drag via XTest with physical modifier transitions around
+/// the complete press/motion/release gesture.
+pub fn send_drag_xtest_desktop_with_modifiers(
+    from_x: i32,
+    from_y: i32,
+    to_x: i32,
+    to_y: i32,
+    button: u8,
+    duration_ms: u64,
+    steps: usize,
+    modifiers: &[&str],
+) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
+    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut guards = Vec::new();
+    let mut modifier_keycodes = Vec::new();
+    for modifier in modifiers {
+        let keysym = key_name_to_keysym(modifier)?;
+        let (keycode, guard) = keycode_for_keysym(&conn, &mapping, keysym, modifier)?;
+        if let Some(guard) = guard {
+            guards.push(guard);
+        }
+        modifier_keycodes.push(keycode);
+    }
     let steps = steps.max(1);
     let delay = duration_ms / steps as u64;
+    let mut pressed_modifiers = Vec::new();
+    let mut button_pressed = false;
 
-    conn.xtest_fake_input(
-        MOTION_NOTIFY_EVENT,
-        0,
-        0,
-        root,
-        from_x as i16,
-        from_y as i16,
-        0,
-    )?;
-    conn.xtest_fake_input(
-        BUTTON_PRESS_EVENT,
-        button,
-        0,
-        root,
-        from_x as i16,
-        from_y as i16,
-        0,
-    )?;
-    conn.flush()?;
-    for step in 1..=steps {
-        let t = step as f64 / steps as f64;
-        let x = from_x as f64 + (to_x - from_x) as f64 * t;
-        let y = from_y as f64 + (to_y - from_y) as f64 * t;
+    let gesture_result = (|| -> Result<()> {
+        for &keycode in &modifier_keycodes {
+            conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+            pressed_modifiers.push(keycode);
+        }
         conn.xtest_fake_input(
             MOTION_NOTIFY_EVENT,
             0,
             0,
             root,
-            x.round() as i16,
-            y.round() as i16,
+            from_x as i16,
+            from_y as i16,
             0,
         )?;
+        conn.xtest_fake_input(
+            BUTTON_PRESS_EVENT,
+            button,
+            0,
+            root,
+            from_x as i16,
+            from_y as i16,
+            0,
+        )?;
+        button_pressed = true;
         conn.flush()?;
-        if delay > 0 {
-            sleep(Duration::from_millis(delay));
+        for step in 1..=steps {
+            let t = step as f64 / steps as f64;
+            let x = from_x as f64 + (to_x - from_x) as f64 * t;
+            let y = from_y as f64 + (to_y - from_y) as f64 * t;
+            conn.xtest_fake_input(
+                MOTION_NOTIFY_EVENT,
+                0,
+                0,
+                root,
+                x.round() as i16,
+                y.round() as i16,
+                0,
+            )?;
+            conn.flush()?;
+            if delay > 0 {
+                sleep(Duration::from_millis(delay));
+            }
+        }
+        conn.xtest_fake_input(
+            BUTTON_RELEASE_EVENT,
+            button,
+            0,
+            root,
+            to_x as i16,
+            to_y as i16,
+            0,
+        )?;
+        button_pressed = false;
+        Ok(())
+    })();
+
+    // Always attempt to release the button and every modifier queued above,
+    // including when a later motion request fails.
+    let mut cleanup_result: Result<()> = Ok(());
+    if button_pressed {
+        if let Err(error) = conn.xtest_fake_input(
+            BUTTON_RELEASE_EVENT,
+            button,
+            0,
+            root,
+            to_x as i16,
+            to_y as i16,
+            0,
+        ) {
+            cleanup_result = Err(error.into());
         }
     }
-    conn.xtest_fake_input(
-        BUTTON_RELEASE_EVENT,
-        button,
-        0,
-        root,
-        to_x as i16,
-        to_y as i16,
-        0,
-    )?;
-    conn.flush()?;
+    for &keycode in pressed_modifiers.iter().rev() {
+        if let Err(error) =
+            conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)
+        {
+            if cleanup_result.is_ok() {
+                cleanup_result = Err(error.into());
+            }
+        }
+    }
+    if let Err(error) = conn.flush() {
+        if cleanup_result.is_ok() {
+            cleanup_result = Err(error.into());
+        }
+    }
     let _ = conn.get_input_focus()?.reply();
+    drop(guards);
+    gesture_result?;
+    cleanup_result?;
     Ok(())
 }
 
@@ -3859,7 +3968,7 @@ fn send_key_to_target(
             state,
             same_screen: true,
         };
-        conn.send_event(false, window, event_mask, &event)
+        conn.send_event(false, window, event_mask, event)
     };
 
     let mut state_bits = 0u16;
@@ -3900,6 +4009,7 @@ fn send_key_to_target(
         sleep(Duration::from_millis(KEY_DELAY_MS));
     }
     drop(remap_guard);
+    settle_synthetic_events(&conn);
     Ok(())
 }
 
@@ -3926,7 +4036,11 @@ fn char_to_keycode_shift(mapping: &GetKeyboardMappingReply, keysym: u32) -> Opti
 /// Map a human key name (e.g. "Return", "F5", "a") to its X11 keysym. Pure name
 /// resolution — no server interaction — split out from keycode lookup so the
 /// keysym can be remapped onto a spare keycode when the keymap lacks it.
-fn key_name_to_keysym(key: &str) -> Result<u32> {
+/// Resolve a key name in the shared X keysym vocabulary, or error on an
+/// unknown name. Exposed crate-wide so input-adjacent paths (e.g. the
+/// press_key terminal short-circuit gate) can test key identity against
+/// this canonical mapping instead of a local string comparison.
+pub(crate) fn key_name_to_keysym(key: &str) -> Result<u32> {
     // Common X11 keysym names.
     let keysym: u32 = match key.to_lowercase().as_str() {
         "return" | "enter" => 0xFF0D,
@@ -4018,9 +4132,9 @@ mod key_name_alias_tests {
 /// A keycode we have *temporarily* rebound to host a keysym that is absent from
 /// the current X keyboard map (sparse/headless keymaps such as a minimal
 /// Xwayland). On drop it reinstates the keycode's original keysyms so the
-/// server's mapping is left exactly as we found it. Modelled on xdotool's
-/// remap-a-spare-keycode trick (`_xdo_charcodemap` / `XChangeKeyboardMapping`).
-struct RemappedKeycode<'a> {
+/// server's mapping is left exactly as we found it. The remap goes through
+/// `XChangeKeyboardMapping` on a spare keycode.
+pub(crate) struct RemappedKeycode<'a> {
     conn: &'a RustConnection,
     keycode: u8,
     keysyms_per_keycode: u8,
@@ -4102,13 +4216,13 @@ fn keycode_for_keysym<'a>(
     let per = mapping.keysyms_per_keycode as usize;
     if per > 0 {
         for (i, syms) in mapping.keysyms.chunks(per).enumerate() {
-            if syms.iter().any(|&s| s == keysym) {
+            if syms.contains(&keysym) {
                 return Ok(((8 + i) as u8, None));
             }
         }
     }
 
-    // Not in the map — fall back to remapping a spare keycode (xdotool-style).
+    // Not in the map — fall back to remapping a spare keycode.
     let guard = remap_spare_keycode(conn, mapping, keysym).with_context(|| {
         format!("Keysym 0x{keysym:X} not in keyboard map for key '{key}' and no spare keycode could be remapped")
     })?;
@@ -4530,7 +4644,7 @@ mod path_tests {
             assert!((y - (2.0 * x + 1.0)).abs() < 1e-9);
         }
         // sin(x) parses and yields finite, bounded values.
-        let s = sample_function("100+50*sin(x)", 0.0, 6.28, 40).unwrap();
+        let s = sample_function("100+50*sin(x)", 0.0, std::f64::consts::TAU, 40).unwrap();
         assert!(s.iter().all(|(_, y)| (49.9..=150.1).contains(y)));
     }
 

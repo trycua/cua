@@ -489,6 +489,7 @@ impl SpaceQuery {
 }
 
 // ── Target-only synthetic focus ───────────────────────────────────────────────
+// Focus event encoding derived from yabai (MIT); see THIRD_PARTY_NOTICES.md.
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SyntheticFocusCommand {

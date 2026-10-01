@@ -13,12 +13,16 @@ FLEET_IMPORTS = (
 
 
 class FleetSdkPackagingTests(unittest.TestCase):
+    """cua-sandbox depends on two bindings: the published ``cua-fleet`` wheel
+    (``fleet_sdk``: the typed Fleet resource model re-exported publicly) and
+    the ``cua`` SDK (spacesd, Fleet sandboxes and local runtimes)."""
+
     def test_declares_published_fleet_without_a_direct_train_dependency(self):
         with PYPROJECT_PATH.open("rb") as pyproject_file:
             project = tomllib.load(pyproject_file)
 
         dependencies = project["project"]["dependencies"]
-        self.assertIn("cua-fleet==0.1.16", dependencies)
+        self.assertIn("cua-fleet==0.1.17", dependencies)
         self.assertFalse(any(dependency.startswith("cua-train") for dependency in dependencies))
         self.assertNotIn("cua-fleet", project["tool"]["uv"]["sources"])
         self.assertNotIn("cua-train", project["tool"]["uv"]["sources"])
@@ -49,12 +53,38 @@ class FleetSdkPackagingTests(unittest.TestCase):
         self.assertNotIn("cua-train", sandbox_dependencies)
         self.assertIn("cua-fleet", sandbox_requires_dist)
         self.assertNotIn("cua-train", sandbox_requires_dist)
-        self.assertEqual(packages["cua-fleet"]["version"], "0.1.16")
+        self.assertEqual(packages["cua-fleet"]["version"], "0.1.17")
         self.assertEqual(
             packages["cua-fleet"]["source"], {"registry": "https://wheels.cua.ai/simple"}
         )
         self.assertNotIn("cua-train", fleet_dependencies)
         self.assertNotIn("cua-train", packages)
+
+    def test_depends_on_the_cua_sdk_for_the_data_plane(self):
+        with PYPROJECT_PATH.open("rb") as pyproject_file:
+            project = tomllib.load(pyproject_file)
+
+        dependencies = project["project"]["dependencies"]
+        self.assertIn("cua>=0.2.0", dependencies)
+        # In the monorepo the SDK binding is built from libs/cua/python.
+        self.assertEqual(
+            project["tool"]["uv"]["sources"]["cua"],
+            {"path": "../../cua/python", "editable": True},
+        )
+        # computer-server's WebSocket client is gone with its transport.
+        self.assertFalse(any(dep.startswith("websockets") for dep in dependencies))
+
+    def test_lock_resolves_the_cua_sdk_from_the_checkout(self):
+        with LOCK_PATH.open("rb") as lock_file:
+            lock = tomllib.load(lock_file)
+
+        packages = {package["name"]: package for package in lock["package"]}
+        sandbox_dependencies = {
+            dependency["name"] for dependency in packages["cua-sandbox"]["dependencies"]
+        }
+        self.assertIn("cua", sandbox_dependencies)
+        self.assertEqual(packages["cua"]["source"], {"editable": "../../cua/python"})
+        self.assertEqual(packages["cua"]["version"], "0.2.0")
 
     def test_package_does_not_copy_the_binding_from_the_checkout(self):
         self.assertFalse((PROJECT_ROOT / "hatch_build.py").exists())

@@ -122,6 +122,11 @@ runs `.github/workflows/cd-cua-perception.yml`, which:
 Pull requests that change this pipeline run steps 1 through 3 plus an unsigned
 package and a developer-only install check. They never sign or publish.
 
+After publication, the capture lane of the canonical macOS, Windows, and Linux
+X11 desktop E2E installs a pinned published catalog as `publisher-verified`
+and runs the full capture-bound loop below against a visual-only fixture. The
+row is described in [the test matrix](test-matrix.md).
+
 Inspect a replacement before running `extension update`. Remove only the
 extension-owned installation with `extension remove cua-perception`. Neither
 operation changes the default Driver or an external `cua-som` installation.
@@ -189,10 +194,10 @@ after a worker failure, timeout, invalid frame, or resource-limit error.
 
 ## Distribution boundary
 
-The extension artifact has its own license and source obligations. The current
-candidate ledgers identify the OmniParser detector artifact as AGPL-3.0-only,
-the PP-OCR detector and recognizer artifacts as Apache-2.0, and the packaged
-ONNX Runtime by an exact version and hash selected at assembly time. Read the
+The extension artifact has its own license and source obligations. The release
+ledgers identify the OmniParser detector artifact as AGPL-3.0-only and the
+PP-OCR detector and recognizer artifacts as Apache-2.0. Each release's SBOM
+records the exact version and hash of the ONNX Runtime it packages. Read the
 [perception third-party notices](perception-third-party-notices.md), including
 its precautions for redistribution and hosted services. A release
 must include the reviewed notices, ledgers, SBOM, source/conversion materials,

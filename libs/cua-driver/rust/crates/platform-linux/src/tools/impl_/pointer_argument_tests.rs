@@ -30,6 +30,7 @@ fn foreground_report_becomes_evidence() {
         confirm_ms: 12,
         focus_after: crate::input::FocusAfter::SamePid,
         window_change: Some("appeared: window 9 \"Brightness-Contrast\"".into()),
+        window_change_owned: true,
     };
     let v = foreground_structured("x11_xtest_fg", report, serde_json::Map::new());
     assert_eq!(v["effect"], "confirmed");
@@ -41,16 +42,59 @@ fn foreground_report_becomes_evidence() {
         confirm_ms: 0,
         focus_after: crate::input::FocusAfter::Target,
         window_change: None,
+        window_change_owned: false,
     };
     let v = foreground_structured("x11_xtest_fg", quiet, serde_json::Map::new());
     assert_eq!(v["effect"], "unverifiable");
     assert_eq!(v["evidence"][0]["kind"], "native_api_result");
+    let closed = crate::input::ForegroundReport {
+        already_active: true,
+        retried_activation: false,
+        confirm_ms: 0,
+        focus_after: crate::input::FocusAfter::Unknown,
+        window_change: Some("closed: window 3 \"Format Cells\"".into()),
+        window_change_owned: true,
+    };
+    let v = foreground_structured("x11_xtest_fg", closed, serde_json::Map::new());
+    assert_eq!(v["effect"], "confirmed");
+    assert_eq!(v["evidence"][0]["kind"], "window_change");
+    // A popup that names no pid is listed in the target's window set (a VCL
+    // menu carries none), but it may be another client's: once the focus
+    // left the target process its change is no confirmation.
+    let unattributed = |focus_after| crate::input::ForegroundReport {
+        already_active: true,
+        retried_activation: false,
+        confirm_ms: 0,
+        focus_after,
+        window_change: Some("appeared: popup window 7 (200x300 at 1,2)".into()),
+        window_change_owned: false,
+    };
+    let v = foreground_structured(
+        "x11_xtest_fg",
+        unattributed(crate::input::FocusAfter::Elsewhere),
+        serde_json::Map::new(),
+    );
+    assert_eq!(v["effect"], "suspected_noop");
+    let v = foreground_structured(
+        "x11_xtest_fg",
+        unattributed(crate::input::FocusAfter::Unknown),
+        serde_json::Map::new(),
+    );
+    assert_eq!(v["effect"], "unverifiable");
+    assert_eq!(v["evidence"][0]["kind"], "native_api_result");
+    let v = foreground_structured(
+        "x11_xtest_fg",
+        unattributed(crate::input::FocusAfter::SamePid),
+        serde_json::Map::new(),
+    );
+    assert_eq!(v["effect"], "confirmed");
     let lost = crate::input::ForegroundReport {
         already_active: true,
         retried_activation: false,
         confirm_ms: 0,
         focus_after: crate::input::FocusAfter::Elsewhere,
-        window_change: Some("closed: window 3".into()),
+        window_change: None,
+        window_change_owned: false,
     };
     let v = foreground_structured("x11_xtest_fg", lost, serde_json::Map::new());
     assert_eq!(v["effect"], "suspected_noop");

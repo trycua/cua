@@ -23,6 +23,7 @@ use atspi::{CoordType, Interface, State, StateSet};
 
 use super::{AtspiIdentity, AtspiNode};
 
+pub mod hit;
 pub(crate) mod hit_test;
 
 /// Per-call D-Bus timeout: a single unresponsive accessible (common in large,
@@ -422,6 +423,54 @@ mod listener_startup_tests {
 
 /// A node discovered during the pre-order walk, with its proxy retained so the
 /// per-index operations can act on it without re-walking the tree.
+/// The `value` of one walked node: its Value-interface value, else, for an
+/// editable text widget without a Value interface, its non-empty Text
+/// content (the typed string). A SpinButton implements Text and Value, so it
+/// keeps its numeric value. Callers pass `has_editable: false` for password
+/// fields.
+fn editable_text_value(
+    has_editable: bool,
+    has_value: bool,
+    value: Option<String>,
+    text_content: &str,
+) -> Option<String> {
+    if value.is_some() || has_value || !has_editable || text_content.is_empty() {
+        return value;
+    }
+    Some(text_content.to_owned())
+}
+
+#[cfg(test)]
+mod editable_text_value_tests {
+    use super::editable_text_value;
+
+    #[test]
+    fn editable_text_reports_its_content_as_value() {
+        assert_eq!(
+            editable_text_value(true, false, None, "jev-use native note").as_deref(),
+            Some("jev-use native note")
+        );
+    }
+
+    #[test]
+    fn empty_or_non_editable_text_has_no_value() {
+        assert_eq!(editable_text_value(true, false, None, ""), None);
+        assert_eq!(
+            editable_text_value(false, false, None, "static label"),
+            None
+        );
+    }
+
+    #[test]
+    fn value_interface_wins() {
+        assert_eq!(
+            editable_text_value(true, true, Some("3".into()), "3.0").as_deref(),
+            Some("3")
+        );
+        assert_eq!(editable_text_value(true, true, None, "3.0"), None);
+    }
+}
+
 struct Visited<'a> {
     depth: usize,
     role: String,
@@ -946,8 +995,11 @@ const FRAME_MATCH_MARGIN_PX: u64 = 24;
 /// coordinates against the X11 outer geometry the caller already named. This
 /// refuses ties rather than guessing, because callers use the result to decide
 /// which window they are about to act inside.
+/// An AT-SPI frame ordinal and its screen extents (x, y, width, height).
+type FrameExtents = (usize, (i32, i32, i32, i32));
+
 fn correlate_frame_to_window(
-    candidates: &[(usize, (i32, i32, i32, i32))],
+    candidates: &[FrameExtents],
     window: &crate::x11::WindowInfo,
 ) -> Option<usize> {
     let mut scored: Vec<(u64, usize)> = candidates
@@ -1240,6 +1292,7 @@ async fn resolve_window_frame(
 /// - `max_elements = None` keeps the historical 5 000-node budget.
 /// - `max_depth = None` keeps depth uncapped (the historical behaviour);
 ///   `Some(d)` skips enqueueing children whose depth would exceed `d`.
+///
 /// Issue #22865: caps protect against Electron / large web apps that produce
 /// 10k+ element trees and blow context windows.
 async fn collect_visited_bounded<'a>(
@@ -1637,6 +1690,14 @@ async fn collect_visited_bounded_opts<'a>(
             }
         }
 
+        // An editable text widget's typed content is its value, reported
+        // separately from its name (parity with macOS AXValue and the Windows
+        // ValuePattern). Without it a named entry ("Note") hides what it holds
+        // from `elements[].value` and `verify_state`.
+        // A password field's content is never surfaced.
+        let editable_text = has_editable && !role_lower.contains("password");
+        value = editable_text_value(editable_text, has_value, value, &text_content);
+
         // Surface Text content as the display name when the widget has no
         // name — for text widgets. A value control (GtkSpinButton implements
         // AtkText with its formatted number) would otherwise be named after
@@ -1672,7 +1733,7 @@ async fn collect_visited_bounded_opts<'a>(
         // Enqueue children (fetched above) before moving `acc` into `visited`.
         // Honor max_depth (#22865): skip enqueueing descendants whose depth
         // would exceed the cap.
-        let descend = max_depth.map(|d| depth + 1 <= d).unwrap_or(true);
+        let descend = max_depth.map(|d| depth < d).unwrap_or(true);
         // A menu that is not open (a menubar entry that is not expanded, or
         // any menu that is not showing) keeps its child count and is not
         // walked: its items are hidden, never indexed, and cost a round-trip
@@ -2638,6 +2699,7 @@ fn list_windows_blocking(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo>
 ///      chrome),
 ///   3. the first editable anywhere (covers single-field apps like a GTK dialog
 ///      entry, or a GTK4 GtkEntry).
+///
 /// Choose the editable to write into. `complete` says whether `visited` is the
 /// whole tree: on a *partial* walk the "first editable anywhere" fallback is
 /// withheld, because the field the user means (the focused one) may simply not
@@ -2904,7 +2966,7 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
                             dlog!("GTK3 fallback: window XID {xid}, local coords ({wx},{wy})");
 
                             // Click the entry to focus the widget (widget focus, not window focus).
-                            if let Err(e) = crate::input::send_click(xid as u64, wx, wy, 1, 1) {
+                            if let Err(e) = crate::input::send_click(xid, wx, wy, 1, 1) {
                                 dlog!("GTK3 fallback: click failed: {e}");
                                 return Ok(false);
                             };
@@ -2914,7 +2976,7 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
 
                             // Now type via X11 XSendEvent — the entry widget has internal focus
                             // so it should accept the keystrokes even though the window is unfocused.
-                            if let Err(e) = crate::input::send_type_text(xid as u64, text) {
+                            if let Err(e) = crate::input::send_type_text(xid, text) {
                                 dlog!("GTK3 fallback: send_type_text failed: {e}");
                                 return Ok(false);
                             }
@@ -3270,9 +3332,7 @@ fn exact_menu_path_matches(visited: &[Visited<'_>], path: &[String]) -> Vec<usiz
             parent_at_depth.push(None);
         }
         parent_at_depth[node.depth] = Some(index);
-        for deeper in (node.depth + 1)..parent_at_depth.len() {
-            parent_at_depth[deeper] = None;
-        }
+        parent_at_depth[node.depth + 1..].fill(None);
     }
 
     visited
@@ -4421,7 +4481,7 @@ mod page_scroll_tests {
         );
         assert!(descendant_indices([0, 1, 1].into_iter(), 1).is_empty());
         assert_eq!(
-            descendant_indices(std::iter::once(0).chain(std::iter::repeat(1).take(100)), 0).len(),
+            descendant_indices(std::iter::once(0).chain(std::iter::repeat_n(1, 100)), 0).len(),
             64
         );
     }

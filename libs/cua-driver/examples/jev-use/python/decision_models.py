@@ -14,6 +14,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, Mapping, Protocol
 
+from choose_action import REQUEST_SCHEMA, REQUEST_SCHEMA_V2, provider_observation
 from jev_adapter import choose_bounded_with_typesafe
 
 DecisionKind = Literal["selected", "reobserve", "abstain", "error"]
@@ -26,6 +27,12 @@ class DecisionRequest:
     regions: tuple[Mapping[str, Any], ...]
     history: tuple[Mapping[str, str], ...]
     candidates: tuple[Mapping[str, str], ...]
+    # v2 only (RFC #4268): native snapshot and compact accessibility elements,
+    # and task steps counted from the runner's own performed actions (#4313).
+    schema: str = REQUEST_SCHEMA
+    snapshot_id: str | None = None
+    elements: tuple[Mapping[str, str], ...] = ()
+    progress: tuple[Mapping[str, Any], ...] = ()
 
     @classmethod
     def from_validated(cls, request: Mapping[str, Any]) -> "DecisionRequest":
@@ -35,11 +42,30 @@ class DecisionRequest:
             regions=tuple(request["regions"]),
             history=tuple(request["history"]),
             candidates=tuple(MappingProxyType(dict(item)) for item in request["candidates"]),
+            schema=request.get("schema", REQUEST_SCHEMA),
+            snapshot_id=request.get("snapshot_id"),
+            elements=tuple(MappingProxyType(dict(item)) for item in request.get("elements", ())),
+            progress=tuple(MappingProxyType(dict(item)) for item in request.get("progress", ())),
         )
 
     @property
     def criteria(self) -> dict[str, str]:
         return {item["id"]: item["description"] for item in self.candidates}
+
+    def provider_observation(self) -> dict[str, Any]:
+        """The provider observation; byte-identical to v1 for a v1 request."""
+        validated: dict[str, Any] = {
+            "schema": self.schema,
+            "capture_id": self.capture_id,
+            "regions": list(self.regions),
+            "history": list(self.history),
+            "candidates": [dict(item) for item in self.candidates],
+        }
+        if self.schema == REQUEST_SCHEMA_V2:
+            validated["snapshot_id"] = self.snapshot_id
+            validated["elements"] = [dict(item) for item in self.elements]
+            validated["progress"] = [dict(item) for item in self.progress]
+        return provider_observation(validated)
 
 
 @dataclass(frozen=True)
@@ -151,11 +177,7 @@ class TypeSafeDecisionModel:
         choice = choose_bounded_with_typesafe(
             self.client,
             goal=request.goal,
-            observation={
-                "capture_id": request.capture_id,
-                "regions": list(request.regions),
-                "history": list(request.history),
-            },
+            observation=request.provider_observation(),
             criteria=request.criteria,
         )
         if choice.selected_id not in request.criteria:
@@ -194,6 +216,46 @@ def visual_regions_as_text(request: DecisionRequest) -> str:
     if request.history:
         lines.append("Prior bounded decisions:")
         lines.extend(json.dumps(item, ensure_ascii=False) for item in request.history)
+    return "\n".join(lines)
+
+
+def native_elements_as_text(request: DecisionRequest) -> str:
+    """Render a v2 request's native elements as an accessibility tree for S1.
+
+    Each line is one supplied native control: its role class, label, and state.
+    Visual regions from the same capture, if any, follow as a separate section,
+    then the prior decisions and, when supplied, the task progress.
+    """
+    lines = [
+        f"Accessibility tree for snapshot {json.dumps(request.snapshot_id)} "
+        f"(capture {json.dumps(request.capture_id)}):"
+    ]
+    for element in request.elements:
+        lines.append(
+            f"- {element['role_class']} {json.dumps(element['label'], ensure_ascii=False)} "
+            f"({element['state']})"
+        )
+    if request.regions:
+        lines.append(visual_regions_as_text(DecisionRequest(
+            request.goal, request.capture_id, request.regions, (), request.candidates
+        )))
+    if request.history:
+        lines.append("Prior bounded decisions:")
+        lines.extend(json.dumps(item, ensure_ascii=False) for item in request.history)
+    if request.progress:
+        lines.append(progress_as_text(request.progress))
+    return "\n".join(lines)
+
+
+def progress_as_text(progress: tuple[Mapping[str, Any], ...]) -> str:
+    """Render task progress; counts come from the run's actions, not the app."""
+    lines = [
+        "Task progress (counted from this run's own completed actions, not read from the app):"
+    ]
+    for item in progress:
+        done, required = item["done"], item["required"]
+        status = f"{required - done} remaining" if done < required else "complete"
+        lines.append(f"- {item['step']}: done {done} of {required} times; {status}")
     return "\n".join(lines)
 
 
@@ -320,7 +382,11 @@ class S1DecisionModel:
             "modality": self.modality,
         }
         if self.modality == "text":
-            kwargs["ax_tree"] = visual_regions_as_text(request)
+            kwargs["ax_tree"] = (
+                native_elements_as_text(request)
+                if request.schema == REQUEST_SCHEMA_V2 and request.elements
+                else visual_regions_as_text(request)
+            )
         else:
             kwargs["screenshot"] = self.screenshot_path
         scores = self.scorer.forward(options, **kwargs)

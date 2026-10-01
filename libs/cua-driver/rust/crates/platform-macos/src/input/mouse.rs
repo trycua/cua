@@ -52,7 +52,15 @@ pub fn click_at_xy(
     count: usize,
     modifiers: &[&str],
 ) -> anyhow::Result<()> {
-    click_at_xy_inner(pid, x, y, None, None, count, modifiers, MousePostMode::Both)
+    click_at_xy_inner(
+        pid,
+        (x, y),
+        None,
+        None,
+        count,
+        modifiers,
+        MousePostMode::Both,
+    )
 }
 
 /// Screen-absolute click posted to the GLOBAL HID tap (`CGEventTapLocation::HID`),
@@ -296,8 +304,7 @@ pub fn click_at_xy_with_window_local(
         }
         WindowClickDelivery::Foreground => click_at_xy_inner(
             pid,
-            x,
-            y,
+            (x, y),
             Some((wx, wy)),
             Some(wid),
             count,
@@ -307,16 +314,17 @@ pub fn click_at_xy_with_window_local(
     }
 }
 
+/// `screen` is the click point in screen coordinates.
 fn click_at_xy_inner(
     pid: i32,
-    x: f64,
-    y: f64,
+    screen: (f64, f64),
     window_local: Option<(f64, f64)>,
     wid: Option<u32>,
     count: usize,
     modifiers: &[&str],
     post_mode: MousePostMode,
 ) -> anyhow::Result<()> {
+    let (x, y) = screen;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
@@ -1637,7 +1645,9 @@ fn parse_modifier_flags(modifiers: &[&str]) -> CGEventFlags {
     let mut flags = CGEventFlags::CGEventFlagNull;
     for m in modifiers {
         match m.to_lowercase().as_str() {
-            "cmd" | "command" => flags |= CGEventFlags::CGEventFlagCommand,
+            "cmd" | "command" | "super" | "meta" | "win" => {
+                flags |= CGEventFlags::CGEventFlagCommand
+            }
             "shift" => flags |= CGEventFlags::CGEventFlagShift,
             "option" | "alt" => flags |= CGEventFlags::CGEventFlagAlternate,
             "ctrl" | "control" => flags |= CGEventFlags::CGEventFlagControl,

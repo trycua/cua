@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-use crate::{CaptureScope, EscalationReason, Platform};
-use schemars::{generate::SchemaSettings, JsonSchema};
+use crate::{schema_settings, CaptureScope, EscalationReason, Platform};
+use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -113,11 +113,12 @@ pub fn advertised_output_schema(success: Value) -> Value {
 pub(crate) fn output_schema_with_additional_properties<T: JsonSchema>(
     additional_properties: bool,
 ) -> Value {
-    let mut settings = SchemaSettings::draft2020_12();
-    settings.inline_subschemas = true;
-    settings.meta_schema = None;
-    let mut schema = serde_json::to_value(settings.into_generator().into_root_schema_for::<T>())
-        .expect("JSON Schema serializes");
+    let mut schema = serde_json::to_value(
+        schema_settings()
+            .into_generator()
+            .into_root_schema_for::<T>(),
+    )
+    .expect("JSON Schema serializes");
     strip_schema_titles(&mut schema);
     if let Some(object) = schema.as_object_mut() {
         object.insert(
@@ -131,13 +132,30 @@ pub(crate) fn output_schema_with_additional_properties<T: JsonSchema>(
     schema
 }
 
+/// Compact generated schemas by removing the JSON Schema annotations `title`
+/// and `description`.
+///
+/// `properties` and `patternProperties` hold property names as keys, not
+/// annotations, so the stripper must recurse into each property schema without
+/// touching the map's keys — a tool may legitimately publish a property named
+/// `title` (list_windows does), and deleting it silently under-describes the
+/// contract.
 fn strip_schema_titles(value: &mut Value) {
     match value {
         Value::Object(object) => {
             object.remove("title");
             object.remove("description");
-            for child in object.values_mut() {
-                strip_schema_titles(child);
+            for (key, child) in object.iter_mut() {
+                if key == "properties" || key == "patternProperties" {
+                    match child {
+                        Value::Object(properties) => {
+                            properties.values_mut().for_each(strip_schema_titles)
+                        }
+                        other => strip_schema_titles(other),
+                    }
+                } else {
+                    strip_schema_titles(child);
+                }
             }
         }
         Value::Array(values) => values.iter_mut().for_each(strip_schema_titles),
@@ -802,6 +820,48 @@ mod tests {
             summary: None,
             error: None,
         }
+    }
+
+    #[test]
+    fn schema_compaction_keeps_properties_named_title_or_description() {
+        let mut schema = serde_json::json!({
+            "title": "TopLevel",
+            "description": "Top-level annotation",
+            "properties": {
+                "title": { "type": "string", "description": "The window title." },
+                "description": { "type": "string" },
+                "nested": {
+                    "title": "Nested",
+                    "properties": { "title": { "type": "string", "title": "Inner" } }
+                }
+            }
+        });
+
+        strip_schema_titles(&mut schema);
+
+        assert!(schema.get("title").is_none(), "annotation must be stripped");
+        assert!(
+            schema.get("description").is_none(),
+            "annotation must be stripped"
+        );
+        let properties = schema["properties"].as_object().expect("properties map");
+        assert!(
+            properties.contains_key("title"),
+            "property name must survive compaction"
+        );
+        assert!(
+            properties.contains_key("description"),
+            "property name must survive compaction"
+        );
+        assert!(
+            properties["nested"]["properties"]
+                .as_object()
+                .expect("nested properties")
+                .contains_key("title"),
+            "nested property name must survive compaction"
+        );
+        assert!(properties["title"].get("description").is_none());
+        assert!(properties["nested"].get("title").is_none());
     }
 
     #[test]

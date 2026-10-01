@@ -294,4 +294,23 @@ fn assert_mcp_contract(driver: &mut RawDriver, fixture: &Value) {
             "tools/call result no longer contains {field}"
         );
     }
+
+    // Clients and gateway watchdogs send `ping` as a liveness probe and treat
+    // an error answer as a dead child, so it must return an empty result with
+    // or without `params` (#4001).
+    for (id, ping) in [
+        (5, json!({"jsonrpc": "2.0", "id": 5, "method": "ping"})),
+        (
+            6,
+            json!({"jsonrpc": "2.0", "id": 6, "method": "ping", "params": {}}),
+        ),
+    ] {
+        driver.send(&ping);
+        let pong = driver.recv();
+        assert_eq!(
+            pong,
+            json!({"jsonrpc": "2.0", "id": id, "result": {}}),
+            "ping must answer with an empty result"
+        );
+    }
 }

@@ -261,7 +261,7 @@ fi
         self.assertIn("missing from Screen & System Audio Recording", cli)
         self.assertIn("add {app_path}", cli)
 
-        limits = self.read("docs/content/docs/reference/cua-driver/limits.mdx")
+        limits = self.read("docs/content/docs/cua-driver/guides/troubleshoot.mdx")
         self.assertIn("without this grant it returns the tree only (no PNG)", limits)
 
     def test_release_please_owns_driver_and_lume(self) -> None:
@@ -445,8 +445,9 @@ fi
         self.assertIn('"path": "python/pyproject.toml"', config)
         self.assertIn('"path": "python/src/cua_driver/__init__.py"', config)
         self.assertIn('"path": "typescript/package.json"', config)
+        driver_files = json.loads(config)["packages"]["libs/cua-driver"]["extra-files"]
         self.assertEqual(
-            config.count('"path": "typescript/package-lock.json"'), 2
+            [entry["path"] for entry in driver_files].count("typescript/package-lock.json"), 2
         )
         self.assertNotIn('"path": "scripts/_install-rust.sh"', config)
         self.assertNotIn('"path": "scripts/install.ps1"', config)
@@ -826,20 +827,22 @@ fi
         self.assertNotIn("publish recovery", workflow.lower())
 
         # The Release Please tag push calls every canonical hosted E2E suite
-        # against the exact tag SHA, after the attribution preflight.
+        # against the exact tag SHA, after the attribution preflight. Nightly
+        # builds call the same suites against their exact source_ref.
+        gate_sha = "${{ inputs.channel == 'nightly' && inputs.source_ref || github.sha }}"
         gates = {
-            "e2e-linux": ("e2e-rust-linux.yml", "ref: ${{ github.sha }}"),
-            "e2e-windows": ("e2e-rust-windows.yml", "ref: ${{ github.sha }}"),
-            "e2e-macos": ("e2e-rust-macos.yml", "source_sha: ${{ github.sha }}"),
+            "e2e-linux": ("e2e-rust-linux.yml", f"ref: {gate_sha}"),
+            "e2e-windows": ("e2e-rust-windows.yml", f"ref: {gate_sha}"),
+            "e2e-macos": ("e2e-rust-macos.yml", f"source_sha: {gate_sha}"),
             "e2e-standalone-browsers": (
                 "e2e-rust-standalone-browsers.yml",
-                "ref: ${{ github.sha }}",
+                f"ref: {gate_sha}",
             ),
         }
         for job, (called, sha_input) in gates.items():
             block = workflow.split(f"\n  {job}:\n", 1)[1].split("\n\n", 1)[0]
             self.assertIn("    needs: release-attribution-preflight\n", block)
-            self.assertIn(f"    if: {tag_push}\n", block)
+            self.assertIn(f"    if: ({tag_push}) || inputs.channel == 'nightly'\n", block)
             self.assertIn(f"    uses: ./.github/workflows/{called}\n", block)
             self.assertIn(sha_input, block)
             self.assertIn("      actions: read\n", block)
@@ -883,6 +886,7 @@ fi
 
         windows = self.read(".github/workflows/e2e-rust-windows.yml")
         self.assertIn('name: "Windows / installer and update smoke"', windows)
+        self.assertIn("update-apply-windows-e2e.ps1", windows)
         self.assertIn("install-local.ps1 -NoAutoStart -NoPathUpdate", windows)
         self.assertIn('CUA_DRIVER_LOCAL_HOME = Join-Path $env:RUNNER_TEMP', windows)
 
@@ -1023,7 +1027,9 @@ fi
         self.assertIn("workflow_call:\n", workflow)
         self.assertIn("Installer compatibility summary", workflow)
         self.assertIn("ubuntu-latest, macos-26, windows-latest", workflow)
-        self.assertIn("repos/$GITHUB_REPOSITORY/releases?per_page=100", workflow)
+        # Versions come from the repository the installers download from.
+        self.assertIn("RELEASE_REPOSITORY: trycua/cua", workflow)
+        self.assertIn("repos/$RELEASE_REPOSITORY/releases?per_page=100", workflow)
         self.assertIn("libs/cua-driver/scripts/install.sh", workflow)
         self.assertIn("libs/cua-driver/scripts/install.ps1", workflow)
         self.assertIn("-NoAutoStart", workflow)

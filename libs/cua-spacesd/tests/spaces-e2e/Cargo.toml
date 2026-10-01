@@ -1,0 +1,64 @@
+# Spaces end to end against a real cua-spacesd server core in process.
+#
+# A standalone workspace on purpose: libs/cua (the SDK, client side) must
+# never depend on the driver workspace (server side), and the driver must
+# never link the SDK's Spaces client. Only this crate links both:
+#
+# - the library is the in-process driver harness (temp guest HOME/PATH via
+#   Init, temp Downloads and teleport home, a FakeHost teleport receiver and
+#   a fake cua-driver tool registry);
+# - tests/ are the Spaces suites of cua-spaces, cua-daemon and cua-sdk;
+# - `cua-test-fixtures` is the loopback fixture server behind the language
+#   binding smoke tests (build it with libs/cua/scripts/build-test-fixtures.sh,
+#   which places it in libs/cua/target where the bindings look for it), plus
+#   a cua daemon server core with a test-only Keyvault (temp passphrase
+#   vault, fake presence gate). It refuses to start when its checkout's HEAD
+#   is not the commit it was built from.
+#
+# Every host effect goes through fakes and temporary homes.
+[package]
+name = "cua-spaces-e2e"
+version = "0.0.0"
+edition = "2024"
+license = "FSL-1.1-MIT"
+publish = false
+
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "cua-test-fixtures"
+path = "src/bin/cua-test-fixtures.rs"
+
+[dependencies]
+cua-spaces = { path = "../../../cua/crates/cua-spaces", features = ["mcp-client"] }
+cua-spacesd-client = { path = "../../../cua/crates/cua-spacesd-client", features = ["testing"] }
+cua-fleet = { path = "../../../cua/crates/cua-fleet", features = ["testing"] }
+cua-daemon = { path = "../../../cua/crates/cua-daemon", features = ["server", "client", "test-fixtures"] }
+cua-spacesd-server = { path = "../../crates/cua-spacesd-server" }
+cua-spacesd-teleport = { path = "../../crates/cua-spacesd-teleport" }
+cua-driver-core = { path = "../../../cua-driver/rust/crates/cua-driver-core" }
+cua-keyvault = { path = "../../../cua/crates/cua-keyvault" }
+cua-spaces-ext = { path = "../../../cua/crates/cua-spaces-ext" }
+async-trait = "0.1"
+serde_json = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+cua-sdk = { path = "../../../cua/crates/cua-sdk" }
+cua-host = { path = "../../../cua/crates/cua-host", features = ["testing"] }
+# The real relay, for the device-enrollment conformance of cua-host's client.
+cua-relay = { path = "../../crates/cua-relay" }
+cua-proto = { path = "../../../cua/crates/cua-proto", features = ["client", "server", "serde"] }
+futures-util = "0.3"
+hex = "0.4"
+prost = "0.14"
+sha2 = "0.10"
+tonic = { version = "0.14", default-features = false, features = ["codegen", "server", "router", "channel"] }
+# The media wire the daemon fixtures frame by hand (media_wire.rs).
+cua-media-protocol = { path = "../../../cua/crates/cua-media-protocol" }
+cua-media-transport = { path = "../../../cua/crates/cua-media-transport" }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }

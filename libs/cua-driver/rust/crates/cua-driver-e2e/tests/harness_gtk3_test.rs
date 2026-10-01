@@ -260,6 +260,15 @@ fn harness_gtk3_rejects_exited_target_and_recovers_with_fresh_app() {
 
         let killed = driver.call("kill_app", serde_json::json!({ "pid": stale_pid as i64 }));
         assert!(!killed.is_error(), "kill_app failed: {}", killed.text());
+        // kill_app reports success only after the same process exited, not
+        // when the signal was merely accepted (#2661).
+        assert_eq!(
+            killed.structured()["terminated"],
+            true,
+            "kill_app did not confirm termination: {}",
+            killed.text()
+        );
+        assert_eq!(killed.structured()["effect"], "confirmed");
 
         let exit_deadline = Instant::now() + Duration::from_secs(5);
         while Instant::now() < exit_deadline {
@@ -786,6 +795,10 @@ fn invoke_operation(
         "required GTK3 AT-SPI tree is empty"
     );
 
+    // An AX text set_value row also checks the structured `value` read-back.
+    // Slider rows keep their numeric Value formatting ("64.0") and are
+    // checked through the harness label only.
+    let mut value_check: Option<(&str, &str)> = None;
     let (response, expected) = match row.operation {
         Operation::AxClick { target, expected } => {
             let index = element_index(&pre, target);
@@ -794,7 +807,7 @@ fn invoke_operation(
                     "click",
                     serde_json::json!({
                         "pid": pid as i64, "window_id": window_id,
-                        "element_index": index, "snapshot_id": pre.snapshot_id(),
+                        "element_token": pre.element_token(index),
                         "delivery_mode": mode
                     }),
                 ),
@@ -812,7 +825,7 @@ fn invoke_operation(
                     "type_text",
                     serde_json::json!({
                         "pid": pid as i64, "window_id": window_id,
-                        "element_index": index, "snapshot_id": pre.snapshot_id(),
+                        "element_token": pre.element_token(index),
                         "text": text, "delivery_mode": mode
                     }),
                 ),
@@ -825,12 +838,15 @@ fn invoke_operation(
             expected,
         } => {
             let index = element_index(&pre, target);
+            if row.action == "set_value" {
+                value_check = Some((target, value));
+            }
             (
                 driver.call(
                     "set_value",
                     serde_json::json!({
                         "pid": pid as i64, "window_id": window_id,
-                        "element_index": index, "snapshot_id": pre.snapshot_id(),
+                        "element_token": pre.element_token(index),
                         "value": value
                     }),
                 ),
@@ -930,8 +946,8 @@ fn invoke_operation(
                 args["x"] = serde_json::json!(x + width / 2.0);
                 args["y"] = serde_json::json!(y + height / 2.0);
             } else {
-                args["element_index"] = serde_json::json!(element_index(&pre, target));
-                args["snapshot_id"] = serde_json::json!(pre.snapshot_id());
+                args["element_token"] =
+                    serde_json::json!(pre.element_token(element_index(&pre, target)));
             }
             let response = driver.call("scroll", args);
             if expect_refusal {
@@ -992,7 +1008,7 @@ fn invoke_operation(
                 "click",
                 serde_json::json!({
                     "pid": pid as i64, "window_id": window_id,
-                    "element_index": index, "snapshot_id": pre.snapshot_id(),
+                    "element_token": pre.element_token(index),
                     "delivery_mode": mode
                 }),
             );
@@ -1032,6 +1048,23 @@ fn invoke_operation(
         response.text()
     );
     wait_for_state(driver, pid, window_id, expected);
+    if let Some((target, value)) = value_check {
+        // A named entry reports its typed text as `value`, separately from
+        // its label, as macOS and Windows do.
+        let post = snapshot(driver, pid, window_id);
+        let index = element_index(&post, target);
+        let element = post.structured()["elements"]
+            .as_array()
+            .and_then(|elements| {
+                elements
+                    .iter()
+                    .find(|element| element["element_index"].as_u64() == Some(index))
+            })
+            .cloned()
+            .unwrap_or_else(|| panic!("{target:?} missing from structured elements"));
+        assert_eq!(element["label"].as_str(), Some(target), "label: {element}");
+        assert_eq!(element["value"].as_str(), Some(value), "value: {element}");
+    }
     false
 }
 

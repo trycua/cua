@@ -60,7 +60,13 @@ def test_registry_matches_release_please_and_channel_prefixes_are_disjoint():
     schema = json.loads((ROOT / ".github/releases/component.schema.json").read_text())
     Draft202012Validator(schema).validate(json.loads(REGISTRY.read_text()))
     registry = load_registry(REGISTRY, root=ROOT)
-    assert set(registry["components"]) == {"cua-driver-rs", "cua-perception", "lume"}
+    assert set(registry["components"]) == {
+        "cua-driver-rs",
+        "cua-perception",
+        "lume",
+        "cua-sdk",
+        "cua-spacesd",
+    }
     assert registry["components"]["cua-perception"]["candidateOnly"] is True
     assert registry["components"]["cua-perception"]["channels"]["nightly"] is False
     all_prefixes = {
@@ -93,6 +99,11 @@ def test_candidate_only_component_rejects_nightly_planning():
             "nightly-cua-driver-rs-v1.2.3-nightly.20260812.42",
         ),
         ("lume", "lume-v1.2.3", "nightly-lume-v1.2.3-nightly.20260812.42"),
+        (
+            "cua-spacesd",
+            "cua-spacesd-v1.2.3",
+            "nightly-cua-spacesd-v1.2.3-nightly.20260812.42",
+        ),
     ],
 )
 def test_strict_tag_grammars_do_not_cross_channels(component_name, stable, nightly):

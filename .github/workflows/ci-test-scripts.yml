@@ -17,7 +17,6 @@ on:
       - ".github/workflows/cd-rust-cua-driver.yml"
       - ".github/workflows/cd-py-cua-driver.yml"
       - ".github/workflows/cd-py-sandbox.yml"
-      - ".github/workflows/cd-py-computer-server.yml"
       - ".github/workflows/py-reusable-publish.yml"
       - ".github/workflows/release-github-reusable.yml"
       - ".github/workflows/ci-cua-driver-installer-compat.yml"
@@ -58,6 +57,8 @@ on:
       - "scripts/ci/**"
       - "scripts/ci/macos/**"
       - "libs/cua-driver/tests/perception-demo/**"
+      - "libs/cua-s1/ci/**"
+      - "libs/cua-s1/README.md"
       # Release-wiring, channel, and installer tests read these inputs.
       - ".github/release-notes/**"
       - ".github/release-state/**"
@@ -85,6 +86,14 @@ concurrency:
   group: ci-test-scripts-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+permissions:
+  contents: read
+
 jobs:
   windows-uninstall:
     runs-on: windows-latest
@@ -98,6 +107,9 @@ jobs:
       - name: Test Windows release uninstall reporting
         shell: powershell
         run: '& ./libs/cua-driver/scripts/tests/uninstall-windows-regression.ps1'
+      - name: Test Windows installer daemon cleanup spares its launcher
+        shell: powershell
+        run: '& ./libs/cua-driver/scripts/tests/install-common-windows-regression.ps1'
 
   test:
     runs-on: ubuntu-latest

@@ -1,18 +1,33 @@
-export type Outcome = 'verified' | 'refuted' | 'unknown' | 'abstained' | 'budget_exhausted';
+/**
+ * Runner primitives shared by every jev-use task: visual-region parsing,
+ * candidate validation, and the mock chooser. Candidate sources are in
+ * sources.ts and task specs in tasks.ts; the names re-exported below keep
+ * existing imports from core.ts working.
+ */
+import type { Candidate } from './sources.js';
+
+export type { Candidate } from './sources.js';
+export {
+  FIELD_NAME,
+  HISTORY_OUTCOMES,
+  REDACTED_TOKEN,
+  SUBMIT_IDS,
+  SUBMIT_NAME,
+  buildCandidates,
+  classify,
+  formState,
+  historyEntry,
+  redactToken,
+  visualSubmitRegion,
+  type FormState,
+  type HistoryEntry,
+  type Outcome,
+  type SubmitButtonState,
+} from './tasks.js';
+
 export type VisualDelivery = 'background' | 'foreground';
 
-export const SUBMIT_IDS: ReadonlySet<string> = new Set(['submit-form', 'submit-form-foreground']);
-
-export type Candidate = Readonly<{
-  id: string;
-  description: string;
-  tool: string | null;
-  arguments: Readonly<Record<string, unknown>>;
-  captureId?: string;
-  screenshotReference?: string;
-}>;
-
-type PageRef = {
+export type PageRef = {
   role?: string;
   name?: string | null;
   ref?: string;
@@ -48,12 +63,59 @@ export type VisualObservation = Readonly<{
   screenshotHeight: number;
   pid: number;
   windowId: number;
-  actionOriginX: number;
-  actionOriginY: number;
-  actionUnitsPerPixelX: number;
-  actionUnitsPerPixelY: number;
+  /**
+   * Driver's screenshot-to-action affine `[m11, m12, m21, m22, tx, ty]`. It is
+   * validated but never applied here: a capture-bound click sends the original
+   * screenshot point and `capture_id`, and Driver maps it once.
+   */
+  screenshotToAction: AffineCoefficients;
   regions: readonly VisualRegion[];
 }>;
+
+export type AffineCoefficients = readonly [number, number, number, number, number, number];
+
+export const IDENTITY_MAPPING: AffineCoefficients = Object.freeze([1, 0, 0, 1, 0, 0] as const);
+
+/**
+ * Return Driver's screenshot-to-action affine from `parse_visual_regions`.
+ *
+ * Driver reports `screenshot_pixels` for an identity transform and `affine`
+ * otherwise (for example, a Retina window capture). The mapping must be finite
+ * and invertible, matching Driver's own contract validation. Mirrors
+ * `action_coordinate_mapping` in python/action_policy.py.
+ */
+export function actionCoordinateMapping(space: unknown): AffineCoefficients {
+  if (!space || typeof space !== 'object' || Array.isArray(space)) {
+    throw new Error('unsupported action coordinate space');
+  }
+  const value = space as Record<string, unknown>;
+  if (value.kind === 'screenshot_pixels') return IDENTITY_MAPPING;
+  if (value.kind !== 'affine') throw new Error('unsupported action coordinate space');
+  const coefficients = (['m11', 'm12', 'm21', 'm22', 'tx', 'ty'] as const).map((key) => value[key]);
+  if (coefficients.some((item) => typeof item !== 'number' || !Number.isFinite(item))) {
+    throw new Error('malformed action coordinate mapping');
+  }
+  const [m11, m12, m21, m22, tx, ty] = coefficients as number[];
+  if (Math.abs(m11 * m22 - m12 * m21) <= Number.EPSILON) {
+    throw new Error('malformed action coordinate mapping');
+  }
+  return Object.freeze([m11, m12, m21, m22, tx, ty] as const);
+}
+
+/** Map one screenshot point, refusing a mapping that overflows it. */
+export function mapScreenshotPoint(
+  mapping: AffineCoefficients,
+  x: number,
+  y: number
+): readonly [number, number] {
+  const [m11, m12, m21, m22, tx, ty] = mapping;
+  const actionX = m11 * x + m12 * y + tx;
+  const actionY = m21 * x + m22 * y + ty;
+  if (!Number.isFinite(actionX) || !Number.isFinite(actionY)) {
+    throw new Error('action coordinate mapping produced a non-finite point');
+  }
+  return [actionX, actionY];
+}
 
 export class VisualObservationError extends Error {
   constructor(
@@ -91,10 +153,6 @@ function pixelInt(value: unknown): number {
   return Number(value);
 }
 
-function immutableCandidate(candidate: Candidate): Candidate {
-  return Object.freeze({ ...candidate, arguments: Object.freeze({ ...candidate.arguments }) });
-}
-
 export function parseVisualRegions(
   payload: unknown,
   expectedCaptureId: string,
@@ -129,27 +187,19 @@ export function parseVisualRegions(
   const screenshotWidth = positiveInt(screenshot.width);
   const screenshotHeight = positiveInt(screenshot.height);
 
-  const space = record(capture.action_coordinate_space, 'visual result has no coordinate mapping');
-  let actionOriginX = 0;
-  let actionOriginY = 0;
-  let actionUnitsPerPixelX = 1;
-  let actionUnitsPerPixelY = 1;
-  if (space.kind === 'scaled_top_left') {
-    const values = [
-      space.action_origin_x,
-      space.action_origin_y,
-      space.action_units_per_pixel_x,
-      space.action_units_per_pixel_y,
-    ];
-    if (values.some((value) => typeof value !== 'number' || !Number.isFinite(value))) {
-      throw new Error('visual result has malformed coordinate mapping');
+  let screenshotToAction: AffineCoefficients;
+  try {
+    screenshotToAction = actionCoordinateMapping(capture.action_coordinate_space);
+    for (const [x, y] of [
+      [0, 0],
+      [screenshotWidth, 0],
+      [0, screenshotHeight],
+      [screenshotWidth, screenshotHeight],
+    ]) {
+      mapScreenshotPoint(screenshotToAction, x, y);
     }
-    [actionOriginX, actionOriginY, actionUnitsPerPixelX, actionUnitsPerPixelY] = values as number[];
-    if (actionUnitsPerPixelX <= 0 || actionUnitsPerPixelY <= 0) {
-      throw new Error('visual result has non-positive coordinate scale');
-    }
-  } else if (space.kind !== 'screenshot_pixels') {
-    throw new Error('visual result has unsupported coordinate mapping');
+  } catch (error) {
+    throw new Error(`visual result has ${(error as Error).message}`);
   }
 
   if (!Array.isArray(root.regions)) throw new Error('visual result has no region list');
@@ -202,119 +252,13 @@ export function parseVisualRegions(
     screenshotHeight,
     pid: expectedPid,
     windowId: expectedWindowId,
-    actionOriginX,
-    actionOriginY,
-    actionUnitsPerPixelX,
-    actionUnitsPerPixelY,
+    screenshotToAction,
     regions: Object.freeze(regions),
   });
 }
 
-function reservedCandidates(): Candidate[] {
-  return [
-    immutableCandidate({
-      id: 'reobserve',
-      description: 'Discard this decision set and obtain a fresh Driver observation.',
-      tool: null,
-      arguments: {},
-    }),
-    immutableCandidate({
-      id: 'abstain',
-      description: 'Stop without acting if none of the proposed actions is safe for the observed state.',
-      tool: null,
-      arguments: {},
-    }),
-  ];
-}
-
-/**
- * Build the closed candidate set for one decision. Page-structure refs always
- * win. The capture-bound visual Submit is offered only when no Submit ref
- * exists. visualDelivery 'foreground' replaces the background visual click with
- * a distinct submit-form-foreground candidate after Driver refused background
- * delivery; the chooser must pick it explicitly.
- */
-export function buildCandidates(
-  snapshot: BrowserSnapshot,
-  token: string,
-  visual?: VisualObservation,
-  captureBoundClick = false,
-  visualDelivery: VisualDelivery = 'background'
-): Candidate[] {
-  const common = { target_id: snapshot.target_id, tab_id: snapshot.tab_id };
-  const refs = snapshot.refs ?? [];
-  const field = refs.find(
-    (item) => item.role === 'textbox' && item.name === 'verification value' && item.ref
-  );
-  const button = refs.find((item) => item.role === 'button' && item.name === 'Submit' && item.ref);
-  const candidates: Candidate[] = [];
-  if (field?.value !== token && field?.ref) {
-    candidates.push(
-      immutableCandidate({
-        id: 'type-verification-value',
-        description: 'Replace the verification field with the required token.',
-        tool: 'browser_type',
-        arguments: { ...common, ref: field.ref, text: token, replace: true },
-      })
-    );
-  } else if (field?.value === token && button?.ref) {
-    candidates.push(
-      immutableCandidate({
-        id: 'submit-form',
-        description: 'Submit the form now that the verification field contains the token.',
-        tool: 'browser_click',
-        arguments: { ...common, ref: button.ref, input_route: 'dom_event' },
-      })
-    );
-  } else if (
-    field?.value === token &&
-    visual &&
-    captureBoundClick
-  ) {
-    const matches = visual.regions.filter(
-      (region) =>
-        region.confidence >= 0.8 &&
-        asciiLower(region.text ?? region.label ?? '') === 'submit'
-    );
-    if (matches.length === 1) {
-      const region = matches[0];
-      const x = region.x + region.width / 2;
-      const y = region.y + region.height / 2;
-      const foreground = visualDelivery === 'foreground';
-      candidates.push(
-        immutableCandidate({
-          id: foreground ? 'submit-form-foreground' : 'submit-form',
-          description: foreground
-            ? 'Submit the form by clicking the unique validated visual Submit region with ' +
-              'foreground delivery, which activates the browser window, because Driver ' +
-              'refused background delivery for the previous visual click.'
-            : 'Submit the form using the unique validated visual Submit region.',
-          tool: 'click',
-          arguments: {
-            pid: visual.pid,
-            window_id: visual.windowId,
-            x,
-            y,
-            capture_id: visual.captureId,
-            delivery_mode: visualDelivery,
-          },
-          captureId: visual.captureId,
-          screenshotReference: visual.screenshotReference,
-        })
-      );
-    }
-  }
-  return [...candidates, ...reservedCandidates()];
-}
-
 export function hasExecutableCandidate(candidates: readonly Candidate[]): boolean {
   return candidates.some((candidate) => candidate.tool !== null);
-}
-
-function asciiLower(value: string): string {
-  return value.replace(/[A-Z]/g, (character) =>
-    String.fromCharCode(character.charCodeAt(0) + 32)
-  );
 }
 
 export function chooseMock(candidates: Candidate[]) {
@@ -351,16 +295,4 @@ export function validateChoice(
     throw new Error('provider selected a stale or capture-mismatched candidate');
   }
   return candidate;
-}
-
-export function classify(
-  submitted: string | null,
-  token: string,
-  steps: number,
-  maxSteps: number
-): Outcome {
-  if (submitted === token) return 'verified';
-  if (submitted !== null) return 'refuted';
-  if (steps >= maxSteps) return 'budget_exhausted';
-  return 'unknown';
 }

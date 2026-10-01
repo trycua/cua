@@ -50,6 +50,11 @@ concurrency:
   group: e2e-rust-macos-hosted-${{ github.event_name }}-${{ inputs.source_sha }}
   cancel-in-progress: false
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
 jobs:
   probe:
     if: inputs.mode != 'lume'
@@ -182,8 +187,19 @@ jobs:
           missing=()
           command -v ffmpeg >/dev/null 2>&1 || missing+=(ffmpeg)
           command -v jq >/dev/null 2>&1 || missing+=(jq)
+          # The capture lane's published-catalog perception row drives the
+          # Tk visual-only canvas fixture. Hosted Homebrew Python ships
+          # without _tkinter, so add the matching python-tk formula there.
+          if [[ "${CUA_E2E_INTERNAL_LANE}" == capture ]] \
+              && ! python3 -c 'import tkinter' >/dev/null 2>&1; then
+            python_minor="$(python3 -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')"
+            missing+=("python-tk@${python_minor}")
+          fi
           if ((${#missing[@]})); then
             brew install "${missing[@]}"
+          fi
+          if [[ "${CUA_E2E_INTERNAL_LANE}" == capture ]]; then
+            python3 -c 'import tkinter; print("Tk", tkinter.TkVersion)'
           fi
 
       - name: Run hosted macOS lane

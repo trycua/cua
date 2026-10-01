@@ -113,13 +113,13 @@ fn helper_owner() -> Option<String> {
         DBUS_DEST,
         DBUS_PATH,
         &format!("{DBUS_IFACE}.GetConnectionUnixProcessID"),
-        &[owner.clone()],
+        std::slice::from_ref(&owner),
     );
     let uid_raw = gdbus_call_to(
         DBUS_DEST,
         DBUS_PATH,
         &format!("{DBUS_IFACE}.GetConnectionUnixUser"),
-        &[owner.clone()],
+        std::slice::from_ref(&owner),
     );
     let pid = parse_first_u32(&pid_raw?)?;
     let uid = parse_first_u32(&uid_raw?)?;

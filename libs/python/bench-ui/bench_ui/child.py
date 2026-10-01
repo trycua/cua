@@ -44,7 +44,21 @@ def _start_http_server(
 
         # Safely embed selector into JS
         selector_js = json.dumps(selector)
-        if space == "screen":
+        origin = _client_origin(window) if space == "screen" else None
+        if origin is not None:
+            # The toolkit knows where the page's client area is on screen;
+            # window.screenX/screenY are the frame's origin (decorations
+            # included) and WebKitGTK reports outerHeight == innerHeight.
+            js = (
+                "(function(){"
+                f"const s = {selector_js};"
+                "const el = document.querySelector(s);"
+                "if(!el){return null;}"
+                "const r = el.getBoundingClientRect();"
+                f"return {{x:{origin[0]} + r.left, y:{origin[1]} + r.top, width:r.width, height:r.height}};"
+                "})()"
+            )
+        elif space == "screen":
             # Compute approximate screen coordinates using window metrics
             js = (
                 "(function(){"
@@ -124,6 +138,44 @@ def _start_http_server(
 
     t = threading.Thread(target=run_loop, daemon=True)
     t.start()
+
+
+def _client_origin(window) -> Optional[tuple]:
+    """Screen position of the web view's top-left corner, from the GTK
+    toolkit (Linux), or None where it is not available (the JS estimate is
+    used then). Runs on the GTK main thread; bounded to 2 s."""
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        from gi.repository import GLib
+    except Exception:
+        return None
+    native = getattr(window, "native", None)
+    widget = getattr(native, "webview", None) or native
+    if widget is None or not hasattr(widget, "get_window"):
+        return None
+    result: dict = {}
+    done = threading.Event()
+
+    def read() -> bool:
+        try:
+            gdk_window = widget.get_window()
+            if gdk_window is not None:
+                origin = gdk_window.get_origin()
+                # PyGObject: (x, y) or (ok, x, y) depending on the GDK version.
+                xy = tuple(origin)[-2:]
+                alloc = widget.get_allocation() if widget is not native else None
+                dx, dy = (alloc.x, alloc.y) if alloc is not None else (0, 0)
+                result["xy"] = (int(xy[0]) + dx, int(xy[1]) + dy)
+        except Exception:
+            pass
+        finally:
+            done.set()
+        return False
+
+    GLib.idle_add(read)
+    done.wait(2.0)
+    return result.get("xy")
 
 
 def main():

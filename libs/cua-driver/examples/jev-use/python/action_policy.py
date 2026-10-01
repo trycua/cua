@@ -16,6 +16,55 @@ class ActionAuthorizationError(ValueError):
     """The selected candidate is not authorized by the current observation."""
 
 
+class CoordinateMappingError(ValueError):
+    """A capture's ``action_coordinate_space`` cannot be represented exactly."""
+
+
+AffineCoefficients = tuple[float, float, float, float, float, float]
+IDENTITY_MAPPING: AffineCoefficients = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+
+def action_coordinate_mapping(coordinate_space: Any) -> AffineCoefficients:
+    """Return Driver's screenshot-to-action affine as ``(m11, m12, m21, m22, tx, ty)``.
+
+    ``parse_visual_regions`` reports ``screenshot_pixels`` for an identity
+    transform and ``affine`` otherwise (for example, a Retina window capture).
+    The mapping must be finite and invertible, matching Driver's own contract
+    validation. Callers still send the original screenshot point with the
+    ``capture_id``; Driver applies this mapping itself, so it is validated here
+    but never applied to the dispatched coordinates.
+    """
+    if not isinstance(coordinate_space, Mapping):
+        raise CoordinateMappingError("unsupported action coordinate space")
+    kind = coordinate_space.get("kind")
+    if kind == "screenshot_pixels":
+        return IDENTITY_MAPPING
+    if kind != "affine":
+        raise CoordinateMappingError("unsupported action coordinate space")
+    values = [coordinate_space.get(key) for key in ("m11", "m12", "m21", "m22", "tx", "ty")]
+    if any(
+        not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value)
+        for value in values
+    ):
+        raise CoordinateMappingError("malformed action coordinate mapping")
+    m11, m12, m21, m22, tx, ty = (float(value) for value in values)
+    if abs(m11 * m22 - m12 * m21) <= sys.float_info.epsilon:
+        raise CoordinateMappingError("malformed action coordinate mapping")
+    return (m11, m12, m21, m22, tx, ty)
+
+
+def map_screenshot_point(
+    mapping: AffineCoefficients, x: float, y: float
+) -> tuple[float, float]:
+    """Map one screenshot point, refusing a mapping that overflows it."""
+    m11, m12, m21, m22, tx, ty = mapping
+    action_x = m11 * x + m12 * y + tx
+    action_y = m21 * x + m22 * y + ty
+    if not math.isfinite(action_x) or not math.isfinite(action_y):
+        raise CoordinateMappingError("action coordinate mapping produced a non-finite point")
+    return (action_x, action_y)
+
+
 @dataclass(frozen=True)
 class AuthorizedVisualClick:
     capture_id: str
@@ -121,25 +170,10 @@ def authorize_exact_region_text_action(
         )
     ):
         raise ActionAuthorizationError("invalid screenshot provenance")
-    coordinate_space = capture.get("action_coordinate_space")
-    if not isinstance(coordinate_space, Mapping) or coordinate_space.get("kind") not in {
-        "screenshot_pixels",
-        "affine",
-    }:
-        raise ActionAuthorizationError("unsupported action coordinate space")
-    values = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
-    if coordinate_space["kind"] == "affine":
-        values = [coordinate_space.get(key) for key in ("m11", "m12", "m21", "m22", "tx", "ty")]
-        if (
-            any(
-                not isinstance(value, (int, float))
-                or isinstance(value, bool)
-                or not math.isfinite(value)
-                for value in values
-            )
-            or abs(values[0] * values[3] - values[1] * values[2]) <= sys.float_info.epsilon
-        ):
-            raise ActionAuthorizationError("malformed action coordinate mapping")
+    try:
+        values = action_coordinate_mapping(capture.get("action_coordinate_space"))
+    except CoordinateMappingError as error:
+        raise ActionAuthorizationError(str(error)) from error
     if (
         decision.get("schema") != "cua.decision_choice_v1"
         or decision.get("kind") != "selected"
@@ -243,9 +277,8 @@ def authorize_exact_region_text_action(
         raise ActionAuthorizationError("malformed visual bounds")
     px = bounds["x"] + bounds["width"] / 2
     py = bounds["y"] + bounds["height"] / 2
-    m11, m12, m21, m22, tx, ty = values
-    x = m11 * px + m12 * py + tx
-    y = m21 * px + m22 * py + ty
-    if not math.isfinite(x) or not math.isfinite(y):
-        raise ActionAuthorizationError("action coordinate mapping produced a non-finite point")
+    try:
+        map_screenshot_point(values, px, py)
+    except CoordinateMappingError as error:
+        raise ActionAuthorizationError(str(error)) from error
     return AuthorizedVisualClick(current_capture_id, px, py)

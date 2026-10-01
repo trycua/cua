@@ -1,0 +1,61 @@
+---
+title: Omarchy with Cua Driver
+description: Run the Omarchy edge VM image, where Omarchy's own Cua Driver injects input at the OS level, and drive it with the cua CLI.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`ghcr.io/trycua/omarchy:edge` is Omarchy's edge channel (Arch, Hyprland) with
+the Cua Driver packages Omarchy ships, `cua-driver-bin` and
+`cua-hyprland-plugin`, turned on. The plugin adds two agent seats inside
+Hyprland, so input is injected by the compositor itself. The image also runs
+cua-spacesd, so the cua CLI, SDK and Spaces work with it.
+
+- amd64 only (Omarchy is x86_64). VM only: Hyprland needs a GPU or KMS
+  device, which containers do not have.
+- Locally it boots under QEMU: KVM on Linux, TCG (slow) on Apple silicon.
+  In the cloud it runs on KubeVirt.
+
+## Create, view and run commands
+
+Set `OMARCHY=ghcr.io/trycua/omarchy:edge` (pin an `edge-<date>-<sha>` tag or a digest in CI).
+
+```bash skip="local-vm"
+cua sb create "$OMARCHY" --kind vm --name omarchy --cpu 4 --memory 4GB
+cua sb view omarchy                      # the desktop in the browser
+cua sb exec omarchy 'pacman -Q cua-driver-bin cua-hyprland-plugin hyprland'
+cua sb exec omarchy 'hyprctl -j cua:status'
+```
+
+## Drive it
+
+```bash skip="local-vm"
+cua do switch omarchy
+cua do launch foot                       # Hyprland opens a terminal
+cua do click 640 400
+cua do type 'echo hello from Cua'
+cua do key enter
+cua do window ls                          # then: cua do window maximize <id>
+cua do screenshot --save shot.png
+```
+
+Every action goes through Cua Driver. The agent cursor overlay (a
+layer-shell surface) draws where the driver clicks, so screenshots show it:
+
+![The Cua agent cursor on Omarchy after `cua do click`](/img/cua-sdk/omarchy-overlay.png)
+
+## Omarchy's own Cua Driver
+
+`/usr/bin/cua-driver` is Omarchy's package, running as the user unit
+`cua-driver.service`. Its MCP server is available to agents in the guest:
+
+```bash skip="local-vm"
+cua sb exec omarchy 'cua-driver list-tools | head'
+cua sb mcp omarchy env tools             # the same driver tools over cua-spacesd's /mcp
+```
+
+<Callout type="info">
+  The Hyprland plugin is experimental and qualified for a narrow app set; see
+  [Platform support](/cua-driver/concepts/platform-support#hyprland-and-omarchy).
+  Build the image yourself with `cua images build libs/images/omarchy --outputs rootfs,disk`.
+</Callout>

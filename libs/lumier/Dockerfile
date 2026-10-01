@@ -1,5 +1,5 @@
 # Base image using Debian for arm64 architecture (optimized for Apple Silicon)
-FROM debian:bullseye-slim AS lumier-base
+FROM debian:bookworm-slim AS lumier-base
 
 # Set environment variables for Lume API server configuration
 ENV LUME_API_HOST="host.docker.internal"

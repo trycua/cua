@@ -5,7 +5,8 @@ name: "Release gate: Cua Driver signatures"
 #
 #   macOS    every CuaDriver.app is Developer ID signed by the pinned team,
 #            accepted by Gatekeeper as "Notarized Developer ID", and stapled;
-#            bare Mach-O binaries carry the same hardened-runtime signature.
+#            bare Mach-O binaries, including the Node runtime addon, carry the
+#            same hardened-runtime signature.
 #   Windows  every PE file in every zip has a valid, timestamped Authenticode
 #            signature from Cua AI, Inc.
 #
@@ -25,6 +26,11 @@ on:
         description: "Exact Cua Driver version whose archives are verified"
         required: true
         type: string
+      release_repository:
+        description: "Repository whose published release is verified (source: release). Empty means this repository."
+        required: false
+        type: string
+        default: ""
       source:
         description: "artifacts (this workflow run) or release (published GitHub release assets)"
         required: false
@@ -43,6 +49,11 @@ on:
         required: false
         default: pass
         type: string
+      legacy_unsigned_node_runtime:
+        description: "Skip cua_driver_node_runtime.node, which releases published before #4168 left unsigned"
+        required: false
+        default: false
+        type: boolean
       expect_windows:
         description: "pass, or fail for a negative control"
         required: false
@@ -74,10 +85,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
+          RELEASE_REPOSITORY: ${{ inputs.release_repository }}
         run: |
           set -euo pipefail
           gh release download "cua-driver-rs-v${VERSION}" \
-            --repo "$GITHUB_REPOSITORY" \
+            --repo "${RELEASE_REPOSITORY:-$GITHUB_REPOSITORY}" \
             --dir signature-artifacts \
             --pattern "cua-driver-rs-${VERSION}-darwin-*.tar.gz" \
             --pattern "*.pkg" \
@@ -86,17 +98,21 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           EXPECT: ${{ inputs.expect_macos }}
+          LEGACY_UNSIGNED_NODE_RUNTIME: ${{ inputs.legacy_unsigned_node_runtime }}
         run: |
           set -euo pipefail
           ls -l signature-artifacts
-          ANNOTATE=()
-          if [[ "$EXPECT" == "fail" ]]; then ANNOTATE=(--no-annotations); fi
+          OPTIONS=()
+          if [[ "$EXPECT" == "fail" ]]; then OPTIONS+=(--no-annotations); fi
+          if [[ "$LEGACY_UNSIGNED_NODE_RUNTIME" == "true" ]]; then
+            OPTIONS+=(--legacy-unsigned-node-runtime)
+          fi
           STATUS=0
           python3 .github/scripts/verify_cua_driver_release_signatures.py macos \
             --artifacts signature-artifacts \
             --version "$VERSION" \
             --team-id YCK386LBJ7 \
-            ${ANNOTATE[@]+"${ANNOTATE[@]}"} || STATUS=$?
+            ${OPTIONS[@]+"${OPTIONS[@]}"} || STATUS=$?
           bash .github/scripts/expect_verification_result.sh "$EXPECT" "$STATUS" "macOS signatures for $VERSION"
 
   windows:
@@ -121,10 +137,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
+          RELEASE_REPOSITORY: ${{ inputs.release_repository }}
         run: |
           set -euo pipefail
           gh release download "cua-driver-rs-v${VERSION}" \
-            --repo "$GITHUB_REPOSITORY" \
+            --repo "${RELEASE_REPOSITORY:-$GITHUB_REPOSITORY}" \
             --dir signature-artifacts \
             --pattern "cua-driver-rs-${VERSION}-windows-*.zip"
       - name: Verify Windows Authenticode signatures

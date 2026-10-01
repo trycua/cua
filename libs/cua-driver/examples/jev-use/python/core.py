@@ -1,35 +1,63 @@
+"""Runner primitives shared by every jev-use task.
+
+Visual-region parsing, candidate validation, and the mock chooser live here.
+Candidate sources are in ``sources.py`` and task specs in ``tasks.py``; the
+names re-exported below keep existing imports from ``core`` working.
+"""
+
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Any, Literal, Mapping
 
-Outcome = Literal["verified", "refuted", "unknown", "abstained", "budget_exhausted"]
+from action_policy import (
+    AffineCoefficients,
+    CoordinateMappingError,
+    action_coordinate_mapping,
+    map_screenshot_point,
+)
+from sources import Candidate
+from tasks import (
+    FIELD_NAME,
+    HISTORY_OUTCOMES,
+    REDACTED_TOKEN,
+    SUBMIT_IDS,
+    SUBMIT_NAME,
+    Outcome,
+    build_candidates,
+    classify,
+    form_state,
+    history_entry,
+    redact_token,
+    visual_submit_region,
+)
+
+__all__ = [
+    "FIELD_NAME",
+    "HISTORY_OUTCOMES",
+    "REDACTED_TOKEN",
+    "SUBMIT_IDS",
+    "SUBMIT_NAME",
+    "Candidate",
+    "Outcome",
+    "VisualDelivery",
+    "VisualObservation",
+    "VisualObservationError",
+    "VisualRegion",
+    "build_candidates",
+    "choose_mock",
+    "classify",
+    "form_state",
+    "has_executable_candidate",
+    "history_entry",
+    "parse_visual_regions",
+    "redact_token",
+    "validate_choice",
+    "visual_submit_region",
+]
+
 VisualDelivery = Literal["background", "foreground"]
-
-SUBMIT_IDS = frozenset({"submit-form", "submit-form-foreground"})
-
-
-def _freeze(value: Any) -> Any:
-    if isinstance(value, dict):
-        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
-    if isinstance(value, list):
-        return tuple(_freeze(item) for item in value)
-    return value
-
-
-@dataclass(frozen=True)
-class Candidate:
-    id: str
-    description: str
-    tool: str | None
-    arguments: Mapping[str, Any]
-    capture_id: str | None = None
-    screenshot_reference: str | None = None
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "arguments", _freeze(dict(self.arguments)))
 
 
 @dataclass(frozen=True)
@@ -54,10 +82,10 @@ class VisualObservation:
     screenshot_height: int
     pid: int
     window_id: int
-    action_origin_x: float
-    action_origin_y: float
-    action_units_per_pixel_x: float
-    action_units_per_pixel_y: float
+    # Driver's screenshot-to-action affine ``(m11, m12, m21, m22, tx, ty)``.
+    # It is validated but never applied here: a capture-bound click sends the
+    # original screenshot point and ``capture_id`` and Driver maps it once.
+    screenshot_to_action: AffineCoefficients
     regions: tuple[VisualRegion, ...]
 
     def screenshot_center(self, region: VisualRegion) -> tuple[float, float]:
@@ -119,27 +147,17 @@ def parse_visual_regions(
     screenshot_width = _positive_int(screenshot.get("width"))
     screenshot_height = _positive_int(screenshot.get("height"))
 
-    coordinate_space = capture.get("action_coordinate_space")
-    if not isinstance(coordinate_space, dict):
-        raise VisualObservationError("visual result has no action coordinate space")
-    if coordinate_space.get("kind") == "screenshot_pixels":
-        origin_x, origin_y, scale_x, scale_y = 0.0, 0.0, 1.0, 1.0
-    elif coordinate_space.get("kind") == "scaled_top_left":
-        values = (
-            coordinate_space.get("action_origin_x"),
-            coordinate_space.get("action_origin_y"),
-            coordinate_space.get("action_units_per_pixel_x"),
-            coordinate_space.get("action_units_per_pixel_y"),
-        )
-        if any(not isinstance(value, (int, float)) or isinstance(value, bool) for value in values):
-            raise VisualObservationError("visual result has malformed coordinate mapping")
-        origin_x, origin_y, scale_x, scale_y = (float(value) for value in values)
-        if not all(math.isfinite(value) for value in (origin_x, origin_y, scale_x, scale_y)):
-            raise VisualObservationError("visual result has non-finite coordinate mapping")
-        if scale_x <= 0 or scale_y <= 0:
-            raise VisualObservationError("visual result has non-positive coordinate scale")
-    else:
-        raise VisualObservationError("visual result has unsupported coordinate mapping")
+    try:
+        screenshot_to_action = action_coordinate_mapping(capture.get("action_coordinate_space"))
+        for corner_x, corner_y in (
+            (0, 0),
+            (screenshot_width, 0),
+            (0, screenshot_height),
+            (screenshot_width, screenshot_height),
+        ):
+            map_screenshot_point(screenshot_to_action, corner_x, corner_y)
+    except CoordinateMappingError as error:
+        raise VisualObservationError(f"visual result has {error}") from error
 
     raw_regions = payload.get("regions")
     if not isinstance(raw_regions, list):
@@ -205,130 +223,13 @@ def parse_visual_regions(
         screenshot_height=screenshot_height,
         pid=expected_pid,
         window_id=expected_window_id,
-        action_origin_x=origin_x,
-        action_origin_y=origin_y,
-        action_units_per_pixel_x=scale_x,
-        action_units_per_pixel_y=scale_y,
+        screenshot_to_action=screenshot_to_action,
         regions=tuple(regions),
     )
 
 
-def _reserved_candidates() -> list[Candidate]:
-    return [
-        Candidate(
-            "reobserve",
-            "Discard this decision set and obtain a fresh Driver observation.",
-            None,
-            {},
-        ),
-        Candidate(
-            "abstain",
-            "Stop without acting if none of the proposed actions is safe for the observed state.",
-            None,
-            {},
-        ),
-    ]
-
-
-def build_candidates(
-    snapshot: dict[str, Any],
-    token: str,
-    visual: VisualObservation | None = None,
-    *,
-    capture_bound_click: bool = False,
-    visual_delivery: VisualDelivery = "background",
-) -> list[Candidate]:
-    """Build the closed candidate set for one decision.
-
-    Page-structure refs always win. The capture-bound visual Submit is offered
-    only when no Submit ref exists. ``visual_delivery="foreground"`` replaces the
-    background visual click with a distinct ``submit-form-foreground`` candidate
-    after Driver refused background delivery; the chooser must pick it explicitly.
-    """
-    common = {
-        "target_id": snapshot["target_id"],
-        "tab_id": snapshot["tab_id"],
-    }
-    refs = snapshot.get("refs", [])
-    field = next(
-        (
-            ref
-            for ref in refs
-            if ref.get("role") == "textbox" and ref.get("name") == "verification value"
-        ),
-        None,
-    )
-    button = next(
-        (ref for ref in refs if ref.get("role") == "button" and ref.get("name") == "Submit"),
-        None,
-    )
-    candidates: list[Candidate] = []
-    if field and field.get("value") != token:
-        candidates.append(
-            Candidate(
-                "type-verification-value",
-                "Replace the verification field with the required token.",
-                "browser_type",
-                {**common, "ref": field["ref"], "text": token, "replace": True},
-            )
-        )
-    elif field and field.get("value") == token and button:
-        candidates.append(
-            Candidate(
-                "submit-form",
-                "Submit the form now that the verification field contains the token.",
-                "browser_click",
-                {**common, "ref": button["ref"], "input_route": "dom_event"},
-            )
-        )
-    elif (
-        field
-        and field.get("value") == token
-        and visual
-        and capture_bound_click
-    ):
-        matches = [
-            region
-            for region in visual.regions
-            if region.confidence >= 0.8
-            and _ascii_lower(region.text or region.label or "") == "submit"
-        ]
-        if len(matches) == 1:
-            x, y = visual.screenshot_center(matches[0])
-            foreground = visual_delivery == "foreground"
-            candidates.append(
-                Candidate(
-                    "submit-form-foreground" if foreground else "submit-form",
-                    (
-                        "Submit the form by clicking the unique validated visual Submit "
-                        "region with foreground delivery, which activates the browser "
-                        "window, because Driver refused background delivery for the "
-                        "previous visual click."
-                        if foreground
-                        else "Submit the form using the unique validated visual Submit region."
-                    ),
-                    "click",
-                    {
-                        "pid": visual.pid,
-                        "window_id": visual.window_id,
-                        "x": x,
-                        "y": y,
-                        "capture_id": visual.capture_id,
-                        "delivery_mode": visual_delivery,
-                    },
-                    capture_id=visual.capture_id,
-                    screenshot_reference=visual.screenshot_reference,
-                )
-            )
-    return candidates + _reserved_candidates()
-
-
 def has_executable_candidate(candidates: list[Candidate]) -> bool:
     return any(candidate.tool is not None for candidate in candidates)
-
-
-def _ascii_lower(value: str) -> str:
-    return "".join(chr(ord(char) + 32) if "A" <= char <= "Z" else char for char in value)
 
 
 def choose_mock(candidates: list[Candidate]) -> tuple[str | None, float, dict[str, float]]:
@@ -365,13 +266,3 @@ def validate_choice(
     if candidate.capture_id is not None and candidate.capture_id != current_capture_id:
         raise ValueError("provider selected a stale or capture-mismatched candidate")
     return candidate
-
-
-def classify(submitted: str | None, token: str, *, steps: int, max_steps: int) -> Outcome:
-    if submitted == token:
-        return "verified"
-    if submitted is not None:
-        return "refuted"
-    if steps >= max_steps:
-        return "budget_exhausted"
-    return "unknown"

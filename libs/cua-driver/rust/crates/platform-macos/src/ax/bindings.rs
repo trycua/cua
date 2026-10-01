@@ -92,7 +92,7 @@ extern "C" {
     ) -> bool;
 
     /// Private SPI: maps an AX window element to its CGWindowID.
-    /// Stable since macOS 10.9; used by yabai, Hammerspoon, Accessibility Inspector.
+    /// Stable since macOS 10.9.
     pub fn _AXUIElementGetWindow(element: AXUIElementRef, window_id: *mut u32) -> AXError;
 
     /// Private SPI: materializes an AX element from its 20-byte remote token
@@ -254,6 +254,12 @@ unsafe fn coerce_binary_value(value: CFTypeRef) -> Option<bool> {
     None
 }
 
+/// Read a boolean-valued AX attribute (CFBoolean, or a 0/1 CFNumber).
+///
+/// # Safety
+///
+/// `element` must be a valid, retained `AXUIElementRef` for the duration of
+/// the call.
 pub unsafe fn copy_binary_attr(element: AXUIElementRef, attr_name: &str) -> Option<bool> {
     let attr = CFStr::new(attr_name);
     let mut value: CFTypeRef = std::ptr::null();
@@ -674,14 +680,15 @@ pub unsafe fn set_bool_attr_true(element: AXUIElementRef, attr_name: &str) -> AX
     AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), cf_true.as_CFTypeRef())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessibilityOptIn {
+    ManualAccessibility,
+    EnhancedUserInterface,
+    NotAccepted,
+}
+
 /// Signal to a Chromium/Electron application root that a real assistive client
 /// is present so it materializes its full web-content accessibility tree.
-///
-/// Returns `true` when an attribute write was accepted — meaning the app was
-/// flipped from "tree off" to "tree building" and the caller should let the
-/// tree settle before walking. Returns `false` when the app does not support
-/// either attribute (native Cocoa apps such as Finder / Calculator / TextEdit),
-/// in which case no settle delay is warranted.
 ///
 /// `AXManualAccessibility` is the modern opt-in with no screen-reader side
 /// effects; `AXEnhancedUserInterface` is the legacy fallback some Electron
@@ -691,18 +698,22 @@ pub unsafe fn set_bool_attr_true(element: AXUIElementRef, attr_name: &str) -> AX
 /// # Safety
 ///
 /// `app_element` must be a valid, live application `AXUIElementRef`.
-pub unsafe fn enable_chromium_accessibility(app_element: AXUIElementRef) -> bool {
+pub unsafe fn enable_chromium_accessibility(app_element: AXUIElementRef) -> AccessibilityOptIn {
     let manual = set_bool_attr_true(app_element, "AXManualAccessibility");
     if manual == kAXErrorSuccess {
-        return true;
+        return AccessibilityOptIn::ManualAccessibility;
     }
     if manual != kAXErrorAttributeUnsupported {
         // A transient error (e.g. timeout / app busy) rather than a hard
         // "this app has no such attribute" — don't bother with the legacy
         // fallback, and don't claim enablement happened.
-        return false;
+        return AccessibilityOptIn::NotAccepted;
     }
-    set_bool_attr_true(app_element, "AXEnhancedUserInterface") == kAXErrorSuccess
+    if set_bool_attr_true(app_element, "AXEnhancedUserInterface") == kAXErrorSuccess {
+        AccessibilityOptIn::EnhancedUserInterface
+    } else {
+        AccessibilityOptIn::NotAccepted
+    }
 }
 
 /// Get the CGWindowID of an AX window element via the private `_AXUIElementGetWindow` SPI.

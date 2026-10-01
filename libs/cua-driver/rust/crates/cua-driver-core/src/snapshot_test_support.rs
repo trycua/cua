@@ -1,4 +1,4 @@
-use crate::element_cache::{register_runtime_cache, ElementCacheCore, SnapshotPayload};
+use crate::snapshot_store::{register_runtime_store, SnapshotPayload, SnapshotStore};
 use std::sync::Arc;
 
 pub(crate) struct Payload(pub Vec<usize>);
@@ -13,8 +13,8 @@ impl SnapshotPayload for Payload {
     }
 }
 
-pub(crate) fn cache() -> Arc<ElementCacheCore<Payload>> {
-    let cache = Arc::new(ElementCacheCore::new());
-    register_runtime_cache(&cache);
+pub(crate) fn cache() -> Arc<SnapshotStore<Payload>> {
+    let cache = Arc::new(SnapshotStore::new());
+    register_runtime_store(&cache);
     cache
 }

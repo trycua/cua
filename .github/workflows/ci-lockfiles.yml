@@ -1,0 +1,66 @@
+name: "CI: Lockfiles"
+
+# Every committed lockfile (Cargo, pnpm, npm, uv) must match its manifests, so
+# a build or `npm install` never rewrites one. scripts/ci/check-lockfiles.sh
+# discovers the lockfiles, so new workspaces are covered without editing this
+# file. Nothing is built; the check only resolves.
+
+on:
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "**/package.json"
+      - "**/package-lock.json"
+      - "**/pnpm-lock.yaml"
+      - "**/pnpm-workspace.yaml"
+      - "**/pyproject.toml"
+      - "**/uv.lock"
+      - "**/rust-toolchain.toml"
+      - "scripts/ci/check-lockfiles.sh"
+      - "scripts/ci/lockfile-drift-allowlist.txt"
+      - ".github/workflows/ci-lockfiles.yml"
+  push:
+    branches: [main]
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "**/package.json"
+      - "**/package-lock.json"
+      - "**/pnpm-lock.yaml"
+      - "**/pnpm-workspace.yaml"
+      - "**/pyproject.toml"
+      - "**/uv.lock"
+      - "**/rust-toolchain.toml"
+      - "scripts/ci/check-lockfiles.sh"
+      - "scripts/ci/lockfile-drift-allowlist.txt"
+      - ".github/workflows/ci-lockfiles.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-lockfiles-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lockfiles:
+    name: lockfiles match manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Pin npm
+        # The npm that wrote the committed package-lock.json files.
+        run: npm install -g npm@11.19.1
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: List lockfiles
+        run: scripts/ci/check-lockfiles.sh --list
+      - name: Check lockfiles
+        # Each workspace's rust-toolchain.toml is honoured (rustup installs it
+        # on first use); pnpm runs at the package.json packageManager version.
+        run: scripts/ci/check-lockfiles.sh

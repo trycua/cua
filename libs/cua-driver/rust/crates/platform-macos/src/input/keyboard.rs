@@ -295,7 +295,9 @@ fn release_global_modifiers(
 
 fn modifier_key_code_and_flag(modifier: &str) -> Option<(u16, CGEventFlags)> {
     match modifier.to_lowercase().as_str() {
-        "cmd" | "command" => Some((55, CGEventFlags::CGEventFlagCommand)),
+        "cmd" | "command" | "super" | "meta" | "win" => {
+            Some((55, CGEventFlags::CGEventFlagCommand))
+        }
         "shift" => Some((56, CGEventFlags::CGEventFlagShift)),
         "option" | "alt" => Some((58, CGEventFlags::CGEventFlagAlternate)),
         "ctrl" | "control" => Some((59, CGEventFlags::CGEventFlagControl)),
@@ -414,28 +416,38 @@ pub fn type_text_physical_global(text: &str, inter_char_delay_ms: u64) -> anyhow
     Ok(())
 }
 
-/// Send a physical key chord using the exact bare-event sequence documented by
-/// Apple for `CGEventCreateKeyboardEvent`: NULL source, modifier downs, base
-/// down/up, then modifier ups in reverse order. No flags, Unicode payload, or
-/// event-type overrides are applied; CoreGraphics derives those from the
-/// virtual key transitions and its default source state.
+/// Send a physical key chord as the virtual-key transition sequence Apple
+/// documents for `CGEventCreateKeyboardEvent`: NULL source, modifier downs,
+/// base down/up, then modifier ups in reverse order.
+///
+/// Each transition also carries the chord's accumulated `CGEventFlags`, as the
+/// PID-routed and global rungs do. A keyboard event created from the default
+/// source starts with no flags, and posting a modifier keycode does not
+/// retro-fit them onto events that were already created, so a chord whose base
+/// key carries no flags arrives as the bare key: `cmd+a` inserts a literal `a`.
+/// Remote-input clients such as Screen Sharing re-derive modifiers from the
+/// keycode transitions and ignore the flags, so both consumers are served.
 pub fn press_key_bare_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()> {
     use core_graphics::event::CGEventTapLocation;
 
     let key_code = key_name_to_code(key)?;
-    let mut modifier_codes = Vec::new();
+    let mut modifier_keys = Vec::new();
     for modifier in modifiers {
-        let Some((modifier_code, _)) = modifier_key_code_and_flag(modifier) else {
+        let Some((modifier_code, flag)) = modifier_key_code_and_flag(modifier) else {
             continue;
         };
-        if !modifier_codes.contains(&modifier_code) {
-            modifier_codes.push(modifier_code);
+        if !modifier_keys.iter().any(|&(code, _)| code == modifier_code) {
+            modifier_keys.push((modifier_code, flag));
         }
     }
 
-    let events = bare_chord_transitions(key_code, &modifier_codes)
+    let events = bare_chord_transitions(key_code, &modifier_keys)
         .into_iter()
-        .map(|(code, down)| create_bare_keyboard_event(code, down))
+        .map(|(code, down, flags)| {
+            let event = create_bare_keyboard_event(code, down)?;
+            event.set_flags(flags);
+            Ok(event)
+        })
         .collect::<anyhow::Result<Vec<_>>>()?;
     for event in events {
         event.post(CGEventTapLocation::HID);
@@ -444,12 +456,25 @@ pub fn press_key_bare_global(key: &str, modifiers: &[&str]) -> anyhow::Result<()
     Ok(())
 }
 
-fn bare_chord_transitions(key_code: u16, modifier_codes: &[u16]) -> Vec<(u16, bool)> {
-    let mut transitions = Vec::with_capacity(modifier_codes.len() * 2 + 2);
-    transitions.extend(modifier_codes.iter().map(|&code| (code, true)));
-    transitions.push((key_code, true));
-    transitions.push((key_code, false));
-    transitions.extend(modifier_codes.iter().rev().map(|&code| (code, false)));
+/// The chord's transitions with the flags each one carries. A modifier's own
+/// down is the first event that holds its flag and its up is the first that has
+/// dropped it again, so the base key always sees the full chord.
+fn bare_chord_transitions(
+    key_code: u16,
+    modifier_keys: &[(u16, CGEventFlags)],
+) -> Vec<(u16, bool, CGEventFlags)> {
+    let mut transitions = Vec::with_capacity(modifier_keys.len() * 2 + 2);
+    let mut flags = CGEventFlags::CGEventFlagNull;
+    let mut releases = Vec::with_capacity(modifier_keys.len());
+    for &(code, flag) in modifier_keys {
+        let previous = flags;
+        flags |= flag;
+        transitions.push((code, true, flags));
+        releases.push((code, false, previous));
+    }
+    transitions.push((key_code, true, flags));
+    transitions.push((key_code, false, flags));
+    transitions.extend(releases.into_iter().rev());
     transitions
 }
 
@@ -634,7 +659,9 @@ fn modifier_flags(modifiers: &[&str]) -> CGEventFlags {
     let mut flags = CGEventFlags::CGEventFlagNull;
     for m in modifiers {
         match m.to_lowercase().as_str() {
-            "cmd" | "command" => flags |= CGEventFlags::CGEventFlagCommand,
+            "cmd" | "command" | "super" | "meta" | "win" => {
+                flags |= CGEventFlags::CGEventFlagCommand
+            }
             "shift" => flags |= CGEventFlags::CGEventFlagShift,
             "option" | "alt" => flags |= CGEventFlags::CGEventFlagAlternate,
             "ctrl" | "control" => flags |= CGEventFlags::CGEventFlagControl,
@@ -652,7 +679,7 @@ pub(super) fn key_name_to_code(key: &str) -> anyhow::Result<u16> {
         "space" => 49,
         "delete" | "backspace" => 51,
         "escape" | "esc" => 53,
-        "command" | "cmd" => 55,
+        "command" | "cmd" | "super" | "meta" | "win" => 55,
         "shift" => 56,
         "capslock" => 57,
         "option" | "alt" => 58,
@@ -735,6 +762,25 @@ pub(super) fn key_name_to_code(key: &str) -> anyhow::Result<u16> {
 mod tests {
     use super::*;
     use core_graphics::event::CGEventType;
+
+    /// cua-spacesd names the Meta key `super` (the cross-platform name), and
+    /// the macOS driver dropped it: `cua do hotkey cmd+w` pressed a bare `w`.
+    #[test]
+    fn super_meta_and_win_are_command() {
+        for name in ["cmd", "command", "super", "meta", "win", "Super"] {
+            assert_eq!(
+                modifier_key_code_and_flag(name),
+                Some((55, CGEventFlags::CGEventFlagCommand)),
+                "{name}"
+            );
+            assert_eq!(
+                modifier_flags(&[name]),
+                CGEventFlags::CGEventFlagCommand,
+                "{name}"
+            );
+            assert_eq!(key_name_to_code(name).unwrap(), 55, "{name}");
+        }
+    }
 
     #[test]
     fn physical_text_uses_flags_changed_for_balanced_shift_transitions() {
@@ -836,10 +882,23 @@ mod tests {
 
     #[test]
     fn bare_command_chord_orders_modifier_base_and_reverse_release() {
+        let command = (55, CGEventFlags::CGEventFlagCommand);
         assert_eq!(
-            bare_chord_transitions(9, &[55]),
-            vec![(55, true), (9, true), (9, false), (55, false)]
+            bare_chord_transitions(9, &[command]),
+            vec![
+                (55, true, CGEventFlags::CGEventFlagCommand),
+                (9, true, CGEventFlags::CGEventFlagCommand),
+                (9, false, CGEventFlags::CGEventFlagCommand),
+                (55, false, CGEventFlags::CGEventFlagNull),
+            ]
         );
+    }
+
+    /// The default source derives a modifier's own flag from its keycode but
+    /// has nothing to derive from for the base key, which is what turned
+    /// `cmd+a` into a literal `a` on the foreground rung.
+    #[test]
+    fn bare_base_key_carries_the_chord_flags_the_default_source_cannot_derive() {
         let command_down = create_bare_keyboard_event(55, true).unwrap();
         assert_eq!(
             command_down.get_type() as u32,
@@ -850,6 +909,25 @@ mod tests {
                 .get_flags()
                 .contains(CGEventFlags::CGEventFlagCommand),
             "bare Command down must derive the active Command flag"
+        );
+
+        let bare_base = create_bare_keyboard_event(0, true).unwrap();
+        assert!(
+            !bare_base
+                .get_flags()
+                .contains(CGEventFlags::CGEventFlagCommand),
+            "the default source cannot derive Command for a non-modifier keycode"
+        );
+
+        let (code, down, flags) =
+            bare_chord_transitions(0, &[(55, CGEventFlags::CGEventFlagCommand)])[1];
+        let carried = create_bare_keyboard_event(code, down).unwrap();
+        carried.set_flags(flags);
+        assert!(
+            carried
+                .get_flags()
+                .contains(CGEventFlags::CGEventFlagCommand),
+            "the chord's base key must carry Command"
         );
     }
 

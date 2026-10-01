@@ -3683,6 +3683,7 @@ pub fn element_bounds_ref(
     let display = (!crate::wayland::is_wayland())
         .then(x11_display_size)
         .flatten();
+    let origin_attested = native_wayland_origin_attested(pid, xid);
     bounded_for(
         REF_ACTION_BUDGET,
         async {
@@ -3700,7 +3701,7 @@ pub fn element_bounds_ref(
             };
             if coord == CoordType::Window {
                 if let Some(Ok(raw)) = call(component.get_extents(CoordType::Screen)).await {
-                    if screen_extents_trusted(raw, display) {
+                    if screen_answer_overrides_window(raw, display, origin_attested) {
                         return project_screen_extents(raw, (0, 0), None)
                             .ok_or_else(|| anyhow!("cached element reports no on-screen extents"));
                     }
@@ -5554,6 +5555,31 @@ pub(crate) fn screen_extents_trusted(
     }
 }
 
+/// Whether a `CoordType::Screen` answer may override the Window-relative
+/// reconstruction. GTK3 on native Wayland reports window-local values as
+/// `Screen` (no display bounds exist to reject them), so a compositor-attested
+/// native client's origin plus `Window` extents must win. XWayland clients
+/// report true screen extents and are never attested.
+fn screen_answer_overrides_window(
+    raw: (i32, i32, i32, i32),
+    display: Option<(u32, u32)>,
+    native_origin_attested: bool,
+) -> bool {
+    !native_origin_attested && screen_extents_trusted(raw, display)
+}
+
+/// True only when the Hyprland compositor identifies this exact client
+/// (nonzero address `xid` AND `pid`) as native Wayland, not XWayland. Missing,
+/// mismatched, or unreported clients fail closed, so `Screen` extents keep
+/// winning, which is correct for XWayland GTK and LibreOffice. Performs
+/// blocking compositor IPC: async callers must use `bounded_blocking`.
+fn native_wayland_origin_attested(pid: u32, xid: u64) -> bool {
+    xid != 0
+        && crate::wayland::is_wayland()
+        && crate::wayland::hyprland::is_session()
+        && crate::wayland::hyprland::native_client_attested(xid, pid)
+}
+
 pub(crate) fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
     use x11rb::protocol::xproto::*;
     use x11rb::rust_connection::RustConnection;
@@ -6079,6 +6105,9 @@ async fn element_bounds_for_visited(
     // Bounds are independent read-only queries. Overlap a bounded number of
     // calls instead of serializing thousands of unrealized menu components.
     // Preserve original indices, all extents checks, and per-call timeouts.
+    let origin_attested = bounded_blocking(move || native_wayland_origin_attested(pid, xid))
+        .await
+        .unwrap_or(false);
     let queries = scoped_component_nodes(&action_nodes, scoped_frame, |node| {
         (node.frame_ordinal, node.has_component)
     })
@@ -6090,7 +6119,7 @@ async fn element_bounds_for_visited(
         // origin path.
         if coord == CoordType::Window && !node.in_web_doc {
             if let Some(Ok(raw)) = call(comp.get_extents(CoordType::Screen)).await {
-                if screen_extents_trusted(raw, display) {
+                if screen_answer_overrides_window(raw, display, origin_attested) {
                     return project_screen_extents(raw, (0, 0), None).map(|bounds| (idx, bounds));
                 }
             }
@@ -6196,6 +6225,85 @@ mod screen_extents_tests {
             (-500, 10, 40, 20),
             Some((1920, 1080))
         ));
+    }
+}
+
+#[cfg(test)]
+mod screen_override_tests {
+    use super::{project_screen_extents, screen_answer_overrides_window};
+
+    #[test]
+    fn attested_origin_rejects_window_local_screen_answer() {
+        // GTK3 on Hyprland reports window-local (12,211) as Screen; with no
+        // display bounds it would otherwise pass `screen_extents_trusted`.
+        let local = (12, 211, 917, 34);
+        assert!(screen_answer_overrides_window(local, None, false));
+        assert!(!screen_answer_overrides_window(local, None, true));
+        // Window extents plus the attested nonzero origin give screen space.
+        assert_eq!(
+            project_screen_extents(local, (955, 349), None),
+            Some((967, 560, 917, 34))
+        );
+    }
+
+    #[test]
+    fn xwayland_or_unattested_screen_answer_wins() {
+        // XWayland GTK/LibreOffice report true screen extents; without an
+        // exact native-client attestation they must not be discarded. A zero
+        // address never attests, without consulting the compositor.
+        assert!(!super::native_wayland_origin_attested(1, 0));
+        assert!(super::screen_answer_overrides_window(
+            (967, 560, 917, 34),
+            None,
+            super::native_wayland_origin_attested(1, 0)
+        ));
+    }
+
+    #[test]
+    fn native_attested_window_local_screen_answer_loses_to_window_extents() {
+        assert!(!super::screen_answer_overrides_window(
+            (10, 20, 800, 600),
+            None,
+            true
+        ));
+    }
+
+    #[test]
+    fn x11_screen_answer_still_wins_with_display_bounds() {
+        let screen = (70, 110, 848, 433);
+        assert!(screen_answer_overrides_window(
+            screen,
+            Some((1920, 1080)),
+            false
+        ));
+    }
+
+    #[test]
+    fn invalid_screen_answers_never_override() {
+        for attested in [false, true] {
+            assert!(!screen_answer_overrides_window(
+                (i32::MIN, i32::MIN, 1, 1),
+                None,
+                attested
+            ));
+            assert!(!screen_answer_overrides_window(
+                (0, 0, 100, 20),
+                None,
+                attested
+            ));
+        }
+        assert_eq!(
+            project_screen_extents((i32::MIN, i32::MIN, 1, 1), (955, 349), None),
+            None
+        );
+    }
+
+    #[test]
+    fn web_document_origin_is_added_after_window_offset() {
+        assert_eq!(
+            project_screen_extents((10, 20, 30, 40), (955, 349), Some((0, 80))),
+            Some((965, 449, 30, 40))
+        );
     }
 }
 

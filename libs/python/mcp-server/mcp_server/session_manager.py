@@ -277,31 +277,25 @@ class SessionManager:
                 logger.error(f"Error in cleanup loop: {e}")
 
     def get_session_stats(self) -> Dict[str, Any]:
-        """Get statistics about active sessions."""
+        """Get statistics about active sessions.
 
-        async def _get_stats():
-            async with self._session_lock:
-                return {
-                    "total_sessions": len(self._sessions),
-                    "max_concurrent": self.max_concurrent_sessions,
-                    "sessions": {
-                        session_id: {
-                            "created_at": session.created_at,
-                            "last_activity": session.last_activity,
-                            "active_tasks": len(session.active_tasks),
-                            "is_shutting_down": session.is_shutting_down,
-                        }
-                        for session_id, session in self._sessions.items()
-                    },
+        This is synchronous and does not await, so it reads a consistent
+        snapshot without taking ``_session_lock``. Blocking on a coroutine
+        scheduled on the running loop would deadlock that loop.
+        """
+        return {
+            "total_sessions": len(self._sessions),
+            "max_concurrent": self.max_concurrent_sessions,
+            "sessions": {
+                session_id: {
+                    "created_at": session.created_at,
+                    "last_activity": session.last_activity,
+                    "active_tasks": len(session.active_tasks),
+                    "is_shutting_down": session.is_shutting_down,
                 }
-
-        # Run in current event loop or create new one
-        try:
-            loop = asyncio.get_running_loop()
-            return asyncio.run_coroutine_threadsafe(_get_stats(), loop).result()
-        except RuntimeError:
-            # No event loop running, create a new one
-            return asyncio.run(_get_stats())
+                for session_id, session in list(self._sessions.items())
+            },
+        }
 
 
 # Global session manager instance

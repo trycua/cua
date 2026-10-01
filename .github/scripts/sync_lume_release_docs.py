@@ -9,10 +9,13 @@ import re
 from typing import Sequence
 
 
-DOC_PATHS = (
-    "docs/content/docs/reference/lume/cli-reference.mdx",
-    "docs/content/docs/reference/lume/http-api.mdx",
-)
+from release_reference_docs import reference_paths
+
+BODY_MARKER = r"Documented against Lume \*\*\S+\*\*\."
+
+
+def lume_reference_paths(root: Path) -> tuple[str, ...]:
+    return reference_paths(root, "lume")
 
 
 def replace_once(content: str, pattern: str, replacement: str, path: Path) -> str:
@@ -24,16 +27,14 @@ def replace_once(content: str, pattern: str, replacement: str, path: Path) -> st
 
 def sync_lume_release_docs(root: Path) -> None:
     version = (root / "libs/lume/VERSION").read_text().strip()
-    for relative in DOC_PATHS:
+    for relative in lume_reference_paths(root):
         path = root / relative
         content = path.read_text()
         content = replace_once(content, r"^  Version: \S+$", f"  Version: {version}", path)
-        content = replace_once(
-            content,
-            r"Documented against Lume \*\*\S+\*\*\.",
-            f"Documented against Lume **{version}**.",
-            path,
-        )
+        if re.search(BODY_MARKER, content):
+            content = replace_once(
+                content, BODY_MARKER, f"Documented against Lume **{version}**.", path
+            )
         path.write_text(content)
 
 

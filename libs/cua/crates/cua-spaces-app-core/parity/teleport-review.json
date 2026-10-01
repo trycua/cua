@@ -1,0 +1,67 @@
+{
+  "name": "teleport-review",
+  "about": "Teleport an app: pick, options, plan, the review gate with a secret, run; then a window dragged to the notch.",
+  "spaceName": "Aurora",
+  "entries": [
+    { "id": "unsupported-app", "name": "Figma", "hostPath": "/Applications/Figma.app", "hostAppId": "com.figma.Desktop", "version": null, "capability": "unsupported", "reason": "no Linux build", "moves": [], "providerId": null, "installSource": null, "installId": null, "installVersion": null, "launchBin": null, "lastUsedMs": null, "json": "{}" },
+    { "id": "slack", "name": "Slack", "hostPath": "/Applications/Slack.app", "hostAppId": "com.tinyspeck.slackmacgap", "version": "4.41", "capability": "full", "reason": null, "moves": ["app_only", "app_with_state"], "providerId": "slack", "installSource": "manifest", "installId": "slack", "installVersion": "4.41.105", "launchBin": "slack", "lastUsedMs": 1799999000000, "json": "{\"id\":\"slack\"}" },
+    { "id": "code", "name": "Visual Studio Code", "hostPath": "/Applications/Visual Studio Code.app", "hostAppId": "com.microsoft.VSCode", "version": "1.99", "capability": "install_only", "reason": null, "moves": ["app_only", "app_with_files"], "providerId": null, "installSource": "manifest", "installId": "vscode", "installVersion": "1.99.0", "launchBin": "code", "lastUsedMs": null, "json": "{\"id\":\"code\"}" }
+  ],
+  "plan": {
+    "app": { "id": "slack", "name": "Slack", "hostPath": "/Applications/Slack.app", "hostAppId": "com.tinyspeck.slackmacgap", "version": "4.41", "capability": "full", "reason": null, "moves": ["app_only", "app_with_state"], "providerId": "slack", "installSource": "manifest", "installId": "slack", "installVersion": "4.41.105", "launchBin": "slack", "lastUsedMs": 1799999000000, "json": "{\"id\":\"slack\"}" },
+    "spaceId": "local:aurora",
+    "moves": "app_with_state",
+    "steps": [
+      { "kind": "install", "summary": "Install slack (pinned, verified)" },
+      { "kind": "state", "summary": "Import 2 slack item(s)" },
+      { "kind": "launch", "summary": "Open slack" }
+    ],
+    "consent": [
+      { "kind": "install", "key": "slack", "label": "Slack 4.41.105", "detail": "pinned, sha256 verified", "bytes": 0, "sensitive": false },
+      { "kind": "state", "key": "Local Storage", "label": "Workspace settings", "detail": "3 items", "bytes": 1280, "sensitive": false },
+      { "kind": "secret", "key": "Cookies", "label": "Sign-in cookies", "detail": "12 cookies", "bytes": 15728640, "sensitive": true }
+    ],
+    "sensitive": true,
+    "totalBytes": 15729920,
+    "warnings": ["Slack signs out on this Mac while the Space holds the session."],
+    "relayUnsealed": true,
+    "json": "{\"space_id\":\"local:aurora\"}"
+  },
+  "picker": [
+    { "type": "choose" },
+    { "type": "loaded" },
+    { "type": "query", "query": "fig" },
+    { "type": "choose" },
+    { "type": "query", "query": "" },
+    { "type": "select", "id": "slack" },
+    { "type": "choose" },
+    { "type": "move", "move": "app_with_files" },
+    { "type": "move", "move": "app_with_state" },
+    { "type": "plan" },
+    { "type": "planned" },
+    { "type": "confirm" },
+    { "type": "acknowledge", "value": true },
+    { "type": "confirm" },
+    { "type": "acknowledge-relay-plaintext", "value": true },
+    { "type": "confirm" },
+    { "type": "progress", "event": { "step": 0, "steps": 3, "kind": "install", "phase": "finished", "detail": "", "doneBytes": 0, "totalBytes": 0 } },
+    { "type": "progress", "event": { "step": 1, "steps": 3, "kind": "state", "phase": "progress", "detail": "", "doneBytes": 7864960, "totalBytes": 15729920 } },
+    { "type": "finished", "report": { "appId": "slack", "installed": ["slack"], "sent": [], "imported": ["Cookies", "Local Storage"], "skipped": [], "launched": true } }
+  ],
+  "spaces": [
+    { "id": "local:aurora", "name": "Aurora", "os": "linux", "status": "running", "detail": "This Mac", "lastUsedAt": 1799999990000, "scene": "linux-terminal", "provider": "local", "sdk": { "features": ["desktop_stream"], "spacesdVersion": "0.4.0", "reachable": true } },
+    { "id": "cloud:builder", "name": "Builder", "os": "linux", "status": "suspended", "detail": "Unreachable", "lastUsedAt": 1799990000000, "scene": "linux-terminal", "provider": "cloud", "sdk": { "features": [], "spacesdVersion": "0.4.0", "reachable": false } },
+    { "id": "this-mac", "name": "This machine", "os": "macos", "status": "local", "detail": "Set up for access", "lastUsedAt": 1800000000000, "scene": "mac-desktop" }
+  ],
+  "notch": [
+    { "type": "hover-enter" },
+    { "type": "dwell-elapsed" },
+    { "type": "hover-exit" },
+    { "type": "close-elapsed" },
+    { "type": "drag", "event": { "type": "start", "windowId": 7, "appName": "Slack" } },
+    { "type": "drag", "event": { "type": "ghost-ready", "ghost": "ghost:7" } },
+    { "type": "drag", "event": { "type": "enter-notch" } },
+    { "type": "drag", "event": { "type": "over", "spaceId": "local:aurora" } },
+    { "type": "drag", "event": { "type": "drop", "spaceId": null } }
+  ]
+}

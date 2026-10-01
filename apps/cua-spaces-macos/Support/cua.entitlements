@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Contents/MacOS/cua (com.trycua.cua), the bundled Cua Spaces build of the
+  cua CLI and daemon, Developer ID with the hardened runtime
+  (scripts/build-release.sh).
+
+  - automation.apple-events: the daemon runs App Teleport, which drives
+    browsers with osascript. From a terminal the terminal app is the
+    responsible process; this keeps the hardened `cua` from being the reason
+    an Apple Event is refused.
+
+  No JIT, no library validation exceptions and no keychain access groups
+  (see CuaSpacesMac.entitlements). Virtual machines run in Lume, a separate
+  process with its own entitlements, not in `cua`.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+</dict>
+</plist>

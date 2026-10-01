@@ -97,12 +97,12 @@ class LocalComputerAdapter implements ComputerAdapter {
     });
 
     // If a default computer URL is configured, add it
-    if (this.config.computerServerUrl) {
+    if (this.config.agentUrl) {
       const defaultComputer: ComputerInfo = {
         id: 'default',
         name: 'Local Computer',
-        vncUrl: `${this.config.computerServerUrl}/vnc`,
-        agentUrl: this.config.computerServerUrl,
+        vncUrl: `${this.config.agentUrl}/vnc`,
+        agentUrl: this.config.agentUrl,
         status: 'running',
       };
       return [defaultComputer, ...customComputers];
@@ -222,7 +222,7 @@ class LocalInferenceAdapter implements InferenceAdapter {
  * @example
  * ```typescript
  * const adapters = createLocalAdapter({
- *   computerServerUrl: 'http://localhost:8443',
+ *   agentUrl: 'http://localhost:8080',
  *   providerApiKeys: {
  *     anthropic: process.env.ANTHROPIC_API_KEY,
  *   },

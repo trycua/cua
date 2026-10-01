@@ -89,6 +89,20 @@ fn arrival_fire(key: &CursorKey) {
     }
 }
 
+/// Arrival hook for the native Wayland renderer (`wayland::overlay`), which
+/// fires once the frame at the glide target is committed.
+#[cfg(target_os = "linux")]
+pub(crate) fn fire_arrival(key: &CursorKey) {
+    arrival_fire(key);
+}
+
+/// Unblock every waiting pointer action; the renderer that would have fired
+/// their arrivals is gone.
+#[cfg(target_os = "linux")]
+pub(crate) fn release_arrivals() {
+    release_all_arrivals();
+}
+
 fn arrival_cancel(key: &CursorKey) {
     if let Ok(mut guard) = ARRIVAL_TX.lock() {
         if let Some(map) = guard.as_mut() {
@@ -331,15 +345,23 @@ pub fn send_command(cmd: OverlayCommand) {
     send_command_for("default".to_owned(), cmd);
 }
 
+/// Whether commands for `key` reach a renderer: not the empty no-cursor key,
+/// and not a human-origin session, whose client draws the human's own cursor
+/// (see `cua_driver_core::agent_cursor`).
+pub(crate) fn draws_cursor(key: &str) -> bool {
+    !key.is_empty() && !cua_driver_core::agent_cursor::overlay_suppressed(key)
+}
+
 pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
     let _ = try_send_command_for(key, cmd);
 }
 
-/// Dispatch to exactly one Linux overlay backend. The result reports only
-/// whether the X11 owner accepted the command and can fire `ARRIVAL_TX`; the
-/// Wayland backends do not currently publish arrival notifications.
+/// Dispatch to exactly one Linux overlay backend. The result reports whether
+/// a renderer that fires `ARRIVAL_TX` accepted the command: the X11 owner or
+/// the native layer-shell overlay. The shell-helper backends publish no
+/// arrivals.
 fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
-    if key.is_empty() {
+    if !draws_cursor(&key) {
         return false;
     }
     let msg = OverlayMsg::Cmd(KeyedOverlayCommand {
@@ -359,12 +381,103 @@ fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
         );
     }
     #[cfg(target_os = "linux")]
-    {
-        if native_wayland {
-            dispatch_wayland_overlay_message(&msg);
+    let layer_shell_queued = native_wayland
+        && dispatch_wayland_overlay_message(&msg) == WaylandOverlayBackend::LayerShell;
+    #[cfg(not(target_os = "linux"))]
+    let layer_shell_queued = false;
+    x11_queued || layer_shell_queued
+}
+
+/// How long a pointer action waits for the native Wayland glide to arrive
+/// before acting anyway. The layer-shell renderer connects lazily and paints
+/// in software, so its first glide can lag the planned duration; a renderer
+/// that failed mid-glide must not stall input.
+#[cfg(target_os = "linux")]
+fn wayland_arrival_budget(glide_duration_ms: f64) -> Duration {
+    let glide = if glide_duration_ms.is_finite() {
+        glide_duration_ms.clamp(0.0, 5_000.0)
+    } else {
+        0.0
+    };
+    Duration::from_millis(glide as u64 + 3_000)
+}
+
+/// The GNOME Shell helper draws a single compositor cursor, so the shared
+/// single-surface rules decide what reaches it: the session that drew last
+/// owns it, only that session's end hides it, and it hides after the shared
+/// agent idle timeout (the helper has no idle fade of its own).
+#[cfg(target_os = "linux")]
+static SHELL_HELPER_SURFACE: Mutex<Option<cua_driver_core::agent_cursor::SharedCursorSurface>> =
+    Mutex::new(None);
+#[cfg(target_os = "linux")]
+static SHELL_HELPER_IDLE: std::sync::Condvar = std::sync::Condvar::new();
+
+/// Apply one overlay message to the shell-helper surface. Returns whether it
+/// reaches the helper: `true` draws a command, or hides for `Remove`.
+#[cfg(target_os = "linux")]
+fn shell_helper_surface_event(msg: &OverlayMsg, now: Instant) -> bool {
+    use cua_driver_core::agent_cursor::{SharedCursorSurface, SharedSurfaceAction};
+    let mut guard = SHELL_HELPER_SURFACE.lock().unwrap();
+    let surface = guard.get_or_insert_with(SharedCursorSurface::new);
+    let reach = match msg {
+        OverlayMsg::Cmd(command) => matches!(
+            surface.on_command(&command.key, now),
+            SharedSurfaceAction::Draw { .. }
+        ),
+        OverlayMsg::Remove(key) => surface.on_session_end(key) == SharedSurfaceAction::Hide,
+        OverlayMsg::Revive(key) => {
+            surface.on_session_revive(key);
+            false
         }
+        OverlayMsg::Wake => false,
+    };
+    drop(guard);
+    if reach && matches!(msg, OverlayMsg::Cmd(_)) {
+        start_shell_helper_idle_watch();
+        SHELL_HELPER_IDLE.notify_all();
     }
-    x11_queued
+    reach
+}
+
+/// Hide the shell-helper cursor once its owner has been idle for the shared
+/// agent idle timeout. One parked thread, started on the first draw.
+#[cfg(target_os = "linux")]
+fn start_shell_helper_idle_watch() {
+    static STARTED: OnceLock<()> = OnceLock::new();
+    STARTED.get_or_init(|| {
+        let spawned = std::thread::Builder::new()
+            .name("cua-shell-cursor-idle".into())
+            .spawn(|| {
+                use cua_driver_core::agent_cursor::{
+                    SharedSurfaceAction, AGENT_CURSOR_IDLE_TIMEOUT,
+                };
+                let mut guard = SHELL_HELPER_SURFACE.lock().unwrap();
+                loop {
+                    let deadline = guard
+                        .as_ref()
+                        .and_then(|surface| surface.idle_deadline(AGENT_CURSOR_IDLE_TIMEOUT));
+                    guard = match deadline {
+                        None => SHELL_HELPER_IDLE.wait(guard).unwrap(),
+                        Some(deadline) => {
+                            let wait = deadline.saturating_duration_since(Instant::now());
+                            SHELL_HELPER_IDLE.wait_timeout(guard, wait).unwrap().0
+                        }
+                    };
+                    let hide = guard.as_mut().is_some_and(|surface| {
+                        surface.poll_idle(Instant::now(), AGENT_CURSOR_IDLE_TIMEOUT)
+                            == SharedSurfaceAction::Hide
+                    });
+                    if hide {
+                        drop(guard);
+                        crate::wayland::shell_helper::hide_cursor();
+                        guard = SHELL_HELPER_SURFACE.lock().unwrap();
+                    }
+                }
+            });
+        if let Err(error) = spawned {
+            tracing::warn!("overlay: shell-helper idle watch did not start: {error}");
+        }
+    });
 }
 
 #[cfg(target_os = "linux")]
@@ -373,12 +486,12 @@ fn dispatch_wayland_overlay_message(msg: &OverlayMsg) -> WaylandOverlayBackend {
     match backend {
         WaylandOverlayBackend::SemanticShellHelper | WaylandOverlayBackend::LegacyShellHelper => {
             let semantic = backend == WaylandOverlayBackend::SemanticShellHelper;
-            match msg {
-                OverlayMsg::Cmd(command) => {
+            if shell_helper_surface_event(msg, Instant::now()) {
+                if let OverlayMsg::Cmd(command) = msg {
                     dispatch_shell_helper_command(&command.key, &command.cmd, semantic);
+                } else {
+                    crate::wayland::shell_helper::hide_cursor();
                 }
-                OverlayMsg::Remove(_) => crate::wayland::shell_helper::hide_cursor(),
-                OverlayMsg::Revive(_) | OverlayMsg::Wake => {}
             }
         }
         WaylandOverlayBackend::LayerShell if !crate::wayland::overlay::forward(msg) => {
@@ -529,16 +642,16 @@ pub async fn animate_cursor_to(x: f64, y: f64) {
 }
 
 pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
-    if key.is_empty() {
+    if !draws_cursor(&key) {
         return;
     }
     seed_start_if_sentinel(&key, x, y);
     let should_animate = {
         let guard = RENDER.lock().unwrap();
-        match guard.as_ref().and_then(|m| m.cursors.get(&key)) {
-            Some(rs) if rs.core.cfg.enabled && rs.core.visible && rs.core.pos.0 > -50.0 => true,
-            _ => false,
-        }
+        matches!(
+            guard.as_ref().and_then(|m| m.cursors.get(&key)),
+            Some(rs) if rs.core.cfg.enabled && rs.core.visible && rs.core.pos.0 > -50.0
+        )
     };
     if !should_animate {
         return;
@@ -561,6 +674,15 @@ pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
         return;
     }
 
+    #[cfg(target_os = "linux")]
+    if crate::wayland::is_wayland() {
+        let budget = wayland_arrival_budget(current_motion_for(&key).glide_duration_ms);
+        if tokio::time::timeout(budget, rx).await.is_err() {
+            tracing::debug!(key = %key, "overlay: Wayland glide arrival timed out");
+            arrival_cancel(&key);
+        }
+        return;
+    }
     if ARRIVAL_DEGRADED.load(std::sync::atomic::Ordering::Relaxed) {
         // The renderer already failed to report one arrival. Keep the glide
         // fire-and-forget until it proves itself again rather than charging
@@ -598,12 +720,14 @@ pub fn remove_cursor(key: CursorKey) {
     if key.is_empty() {
         return;
     }
-    let msg = OverlayMsg::Remove(key);
+    let msg = OverlayMsg::Remove(key.clone());
     if let Some(tx) = CMD_TX.get() {
         let _ = tx.try_send(msg.clone());
     }
     #[cfg(target_os = "linux")]
     if crate::wayland::is_wayland() {
+        // The Wayland renderer drops the cursor without an arrival.
+        arrival_cancel(&key);
         dispatch_wayland_overlay_message(&msg);
     }
 }
@@ -1149,7 +1273,7 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
 
     // Set window title (identifies our overlay, matches Windows convention).
     // `Cua.` namespace mirrors the Windows class-name + install-path
-    // convention; was `TropeCUA.` (leaked codename from an early C# ref).
+    // convention.
     let title = format!("Cua.AgentCursorOverlay.{}", cfg.cursor_id);
     conn.change_property8(
         PropMode::REPLACE,
@@ -1211,10 +1335,13 @@ fn run_overlay_thread(cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     // sees no pixels of ours. (A previous overlay instance torn down moments
     // earlier can still be on screen; that resolves itself as soon as the
     // cursor vacates the rect and its owner repaints.)
-    let mut backdrop = X11BackdropCache::default();
-    // Startup probe result; a property of the server, not of the compositor,
-    // so it is never re-sampled when a compositing manager comes or goes.
-    backdrop.readback_untrusted = readback_untrusted;
+    let mut backdrop = X11BackdropCache {
+        // Startup probe result; a property of the server, not of the
+        // compositor, so it is never re-sampled when a compositing manager
+        // comes or goes.
+        readback_untrusted,
+        ..X11BackdropCache::default()
+    };
     if readback_untrusted {
         tracing::warn!(
             "X11 overlay: root reads cannot see this window's own pixels; \
@@ -2809,6 +2936,42 @@ fn bgra_and_visible_shape(
 mod tests {
     use super::*;
 
+    /// A human-origin session (a Cua Spaces viewer's relayed input) never
+    /// reaches the X11, layer-shell or shell-helper renderers, including the
+    /// Wayland glide; an agent's session does. The rule itself lives in
+    /// `cua_driver_core::agent_cursor`.
+    #[test]
+    fn human_origin_sessions_draw_no_agent_cursor() {
+        use cua_driver_core::agent_cursor::{set_input_origin, InputOrigin};
+        let human = "overlay-test-human-origin-session";
+        assert!(draws_cursor(human));
+        set_input_origin(human, InputOrigin::Human);
+        assert!(!draws_cursor(human));
+        assert!(!try_send_command_for(
+            human.to_owned(),
+            OverlayCommand::SetEnabled(true)
+        ));
+        assert!(draws_cursor("overlay-test-agent-session"));
+        assert!(!draws_cursor(""));
+        set_input_origin(human, InputOrigin::Agent);
+        assert!(draws_cursor(human));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wayland_arrival_wait_is_bounded_above_the_glide() {
+        use super::wayland_arrival_budget;
+        assert_eq!(wayland_arrival_budget(0.0), Duration::from_secs(3));
+        assert_eq!(wayland_arrival_budget(400.0), Duration::from_millis(3_400));
+        // Hostile motion settings cannot turn the wait into a stall.
+        assert_eq!(
+            wayland_arrival_budget(f64::INFINITY),
+            Duration::from_secs(3)
+        );
+        assert_eq!(wayland_arrival_budget(1.0e12), Duration::from_secs(8));
+        assert_eq!(wayland_arrival_budget(-5.0), Duration::from_secs(3));
+    }
+
     #[test]
     fn wayland_display_does_not_start_legacy_x11_overlay() {
         assert!(!should_start_x11_overlay(true));
@@ -4377,8 +4540,10 @@ mod tests {
     #[test]
     fn untrusted_readback_serves_the_save_under_on_mismatch() {
         let tile = tile_bounds(0, 0, 4, 1);
-        let mut cache = X11BackdropCache::default();
-        cache.readback_untrusted = true;
+        let mut cache = X11BackdropCache {
+            readback_untrusted: true,
+            ..X11BackdropCache::default()
+        };
         let now = Instant::now();
         cache.record_frame(
             now,
@@ -4918,3 +5083,46 @@ mod tests {
 
 #[cfg(not(target_os = "linux"))]
 fn run_overlay_thread(_cfg: CursorConfig, _rx: std::sync::mpsc::Receiver<OverlayMsg>) {}
+
+#[cfg(all(test, target_os = "linux"))]
+mod shell_helper_surface_tests {
+    use super::*;
+
+    fn cmd(key: &str) -> OverlayMsg {
+        OverlayMsg::Cmd(KeyedOverlayCommand {
+            key: key.to_owned(),
+            cmd: OverlayCommand::SnapTo {
+                x: 10.0,
+                y: 10.0,
+                heading_radians: None,
+            },
+        })
+    }
+
+    /// The GNOME Shell helper has one cursor: another session ending must not
+    /// hide the agent that is drawing, and a late command from an ended
+    /// session must not take the cursor back.
+    #[test]
+    fn only_the_drawing_session_ending_hides_the_shell_helper_cursor() {
+        let now = Instant::now();
+        let a = "shell-surface-test-a";
+        let b = "shell-surface-test-b";
+        assert!(shell_helper_surface_event(&cmd(a), now));
+        assert!(!shell_helper_surface_event(
+            &OverlayMsg::Remove(b.to_owned()),
+            now
+        ));
+        assert!(!shell_helper_surface_event(&cmd(b), now));
+        assert!(shell_helper_surface_event(&cmd(a), now));
+        assert!(shell_helper_surface_event(
+            &OverlayMsg::Remove(a.to_owned()),
+            now
+        ));
+        assert!(!shell_helper_surface_event(&cmd(a), now));
+        assert!(!shell_helper_surface_event(
+            &OverlayMsg::Revive(b.to_owned()),
+            now
+        ));
+        assert!(shell_helper_surface_event(&cmd(b), now));
+    }
+}

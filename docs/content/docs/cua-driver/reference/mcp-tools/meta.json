@@ -1,0 +1,21 @@
+{
+  "title": "MCP tools",
+  "pages": [
+    "index",
+    "apps-and-windows",
+    "window-state",
+    "screen",
+    "click",
+    "double-and-right-click",
+    "pointer",
+    "keyboard",
+    "keys-and-shortcuts",
+    "values-and-clipboard",
+    "page",
+    "browser-input",
+    "sessions",
+    "agent-cursor",
+    "recording",
+    "maintenance"
+  ]
+}

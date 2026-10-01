@@ -37,8 +37,33 @@ def copy_release_sources(destination: Path) -> None:
             target,
             ignore=shutil.ignore_patterns(".build", ".swiftpm", "target", "node_modules"),
         )
+    for relative in (
+        "libs/cua/VERSION",
+        "libs/cua/python/pyproject.toml",
+        "libs/cua/python/src/cua/__init__.py",
+        "libs/cua/typescript/package.json",
+        "libs/cua/typescript/package-lock.json",
+        "apps/cua-spaces/VERSION",
+        "apps/cua-spaces/package.json",
+        "apps/cua-spaces/src-tauri/tauri.conf.json",
+        "apps/cua-spaces/src-tauri/Cargo.toml",
+        "apps/cua-spaces/src-tauri/Cargo.lock",
+    ):
+        (destination / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO_ROOT / relative, destination / relative)
+    spacesd = REPO_ROOT / "libs/cua-spacesd"
+    for source in (
+        spacesd / "VERSION",
+        spacesd / "Cargo.toml",
+        spacesd / "Cargo.lock",
+        *spacesd.glob("crates/*/Cargo.toml"),
+        *spacesd.glob("tests/*/Cargo.lock"),
+    ):
+        target = destination / source.relative_to(REPO_ROOT)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(source, target)
     for product in ("cua-driver", "lume"):
-        docs = f"docs/content/docs/reference/{product}"
+        docs = f"docs/content/docs/{product}/reference"
         shutil.copytree(REPO_ROOT / docs, destination / docs)
 
 
@@ -118,6 +143,49 @@ def test_sandbox_version_drift_fails(tmp_path: Path, product: str, source: str):
         path.write_text(path.read_text().replace(current, "9.9.9"))
 
     expected = "Sandbox expects 9.9.9" if source == "VERSION" else f"{source}=9.9.9"
+    with pytest.raises(VersionError, match=re.escape(expected)):
+        validate(tmp_path, product)
+
+
+def test_spacesd_product_cli_accepts_current_versions():
+    assert main(["--repo-root", str(REPO_ROOT), "--product", "spacesd"]) == 0
+
+
+@pytest.mark.parametrize("product", ["spacesd", "all"])
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("VERSION", "cua-spacesd expects 9.9.9"),
+        ("Cargo.toml", "Cargo.toml=9.9.9"),
+        ("Cargo.lock", "Cargo.lock:cua-spacesd=9.9.9"),
+        ("tests/teleport-e2e/Cargo.lock", "tests/teleport-e2e/Cargo.lock:cua-spacesd-server=9.9.9"),
+        (".release-please-manifest.json", ".release-please-manifest.json=9.9.9"),
+    ],
+)
+def test_spacesd_version_drift_fails(
+    tmp_path: Path, product: str, source: str, expected: str
+):
+    copy_release_sources(tmp_path)
+    base = tmp_path / "libs/cua-spacesd"
+    current = (base / "VERSION").read_text().strip()
+    if source == ".release-please-manifest.json":
+        path = tmp_path / source
+        manifest = json.loads(path.read_text())
+        manifest["libs/cua-spacesd"] = "9.9.9"
+        path.write_text(json.dumps(manifest))
+    elif source == "Cargo.toml":
+        path = base / source
+        path.write_text(path.read_text().replace(f'version = "{current}"', 'version = "9.9.9"', 1))
+    elif source == "VERSION":
+        (base / source).write_text("9.9.9\n")
+    else:
+        name = "cua-spacesd" if source == "Cargo.lock" else "cua-spacesd-server"
+        path = base / source
+        path.write_text(
+            path.read_text().replace(
+                f'name = "{name}"\nversion = "{current}"', f'name = "{name}"\nversion = "9.9.9"'
+            )
+        )
     with pytest.raises(VersionError, match=re.escape(expected)):
         validate(tmp_path, product)
 
@@ -265,3 +333,69 @@ def test_malformed_withdrawn_version_fails(tmp_path: Path):
     withdrawn.write_text("v0.28.3 # prefixed\n", encoding="utf-8")
     with pytest.raises(VersionError, match="exact stable"):
         validate(tmp_path, "driver")
+
+
+SDK_AND_SPACES_SOURCES = (
+    ".release-please-manifest.json",
+    "libs/cua/VERSION",
+    "libs/cua/python/pyproject.toml",
+    "libs/cua/python/src/cua/__init__.py",
+    "libs/cua/typescript/package.json",
+    "libs/cua/typescript/package-lock.json",
+    "apps/cua-spaces/VERSION",
+    "apps/cua-spaces/package.json",
+    "apps/cua-spaces/src-tauri/tauri.conf.json",
+    "apps/cua-spaces/src-tauri/Cargo.toml",
+    "apps/cua-spaces/src-tauri/Cargo.lock",
+)
+
+
+def test_sdk_and_spaces_products_accept_current_versions():
+    assert main(["--repo-root", str(REPO_ROOT), "--product", "sdk"]) == 0
+    assert main(["--repo-root", str(REPO_ROOT), "--product", "spaces"]) == 0
+
+
+@pytest.mark.parametrize(
+    ("product", "relative"),
+    [
+        ("sdk", "libs/cua/typescript/package.json"),
+        ("sdk", "libs/cua/python/pyproject.toml"),
+        ("spaces", "apps/cua-spaces/src-tauri/tauri.conf.json"),
+        ("spaces", "apps/cua-spaces/package.json"),
+    ],
+)
+def test_sdk_and_spaces_version_drift_fails(tmp_path: Path, product: str, relative: str):
+    for source in SDK_AND_SPACES_SOURCES:
+        target = tmp_path / source
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO_ROOT / source, target)
+    path = tmp_path / relative
+    text = path.read_text()
+    marker = 'version = "' if relative.endswith(".toml") else '"version": "'
+    assert marker in text
+    path.write_text(text.replace(marker, marker + "9.9.9-drift", 1))
+    assert main(["--repo-root", str(tmp_path), "--product", product]) == 1
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("VERSION", "cua SDK expects 9.9.9"),
+        ("python/pyproject.toml", "python/pyproject.toml=9.9.9"),
+        ("typescript/package-lock.json", "typescript/package-lock.json=9.9.9"),
+    ],
+)
+def test_sdk_version_drift_fails(tmp_path: Path, source: str, expected: str):
+    copy_release_sources(tmp_path)
+    path = tmp_path / "libs/cua" / source
+    current = (tmp_path / "libs/cua/VERSION").read_text().strip()
+    if source == "VERSION":
+        path.write_text("9.9.9\n")
+    elif source.endswith(".json"):
+        data = json.loads(path.read_text())
+        data["version"] = "9.9.9"
+        path.write_text(json.dumps(data))
+    else:
+        path.write_text(path.read_text().replace(f'version = "{current}"', 'version = "9.9.9"', 1))
+    with pytest.raises(VersionError, match=re.escape(expected)):
+        validate(tmp_path, "sdk")

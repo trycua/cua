@@ -50,7 +50,9 @@ jobs:
   smoke:
     name: S1 chooser smoke with pinned weights (CPU, text + multimodal)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Hosted runners vary: with AVX512-BF16 this takes about 40 minutes; without
+    # it the cold and warm multimodal decisions alone passed 85 minutes.
+    timeout-minutes: 150
     env:
       S1_DEVICE: cpu
       S1_DTYPE: ${{ inputs.dtype || 'bfloat16' }}
@@ -364,7 +366,8 @@ jobs:
           set -euo pipefail
           tag="cua-perception-v${CUA_E2E_PERCEPTION_VERSION}"
           stem="cua-perception-${CUA_E2E_PERCEPTION_VERSION}-x86_64-unknown-linux-gnu"
-          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}"
+          # Perception releases are published on trycua/cua; forks have none.
+          base="https://github.com/trycua/cua/releases/download/${tag}"
           mkdir -p "$PERCEPTION_DIR"
           cd "$PERCEPTION_DIR"
           for asset in "${stem}.catalog.json" "${stem}.tar.gz" SHA256SUMS; do

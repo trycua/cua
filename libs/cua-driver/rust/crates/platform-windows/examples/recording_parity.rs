@@ -5,7 +5,9 @@
 //! the older Swift CLI surface is no longer the reference. This file
 //! verifies the new contract end-to-end against a running daemon.
 
+#[cfg(target_os = "windows")]
 use std::io::{Read, Write};
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]

@@ -150,6 +150,12 @@ extension VMDirectory {
         return handle
     }
 
+    /// Removes the resize guard file. Call it only after the VM directory
+    /// is gone, while holding the guard exclusively.
+    func removeResizeGuard() {
+        try? FileManager.default.removeItem(atPath: resizeGuardPath.path)
+    }
+
     /// Loads the resize transaction marker if a resize is in progress.
     func loadResizeMarker() throws -> ResizeMarker? {
         guard resizeMarkerPath.exists() else {
@@ -486,7 +492,9 @@ extension VMDirectory {
             locationName: locationName,
             sharedDirectories: nil,
             networkMode: config.networkMode.description,
-            downloadProgress: downloadProgress
+            downloadProgress: downloadProgress,
+            machineIdentifier: config.machineIdentifier?.base64EncodedString(),
+            macAddress: config.macAddress
         )
     }
 }

@@ -22,7 +22,14 @@ pub fn build_registry_with_provider(
     provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
 ) -> ToolRegistry {
     #[cfg(target_os = "linux")]
-    return impl_::build_registry_with_provider(compat, provider);
+    #[allow(clippy::needless_return)] // a cfg-gated early return, not a tail
+    {
+        // Visibly targeted pointer actions push cursor-hook events (see
+        // `impl_::emit_cursor_hook`), so an embedder such as cua-spacesd can
+        // publish the agent's cursor as presence without polling.
+        cua_driver_core::cursor_hook::declare_cursor_hook_emitter();
+        return impl_::build_registry_with_provider(compat, provider);
+    }
 
     #[cfg(not(target_os = "linux"))]
     {

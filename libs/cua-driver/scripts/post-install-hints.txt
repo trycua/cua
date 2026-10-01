@@ -100,4 +100,4 @@ Next steps:
          {{BINARY}} serve --permission-mode unrestricted \
            --dangerously-bypass-approvals
 
-Docs: https://cua.ai/docs/how-to-guides/driver/connect-your-agent
+Docs: https://cua.ai/docs/cua-driver/guides/connect-your-agent

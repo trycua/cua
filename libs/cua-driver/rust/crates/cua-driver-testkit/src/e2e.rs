@@ -2160,25 +2160,46 @@ mod tests {
             manifest["click"] = serde_json::json!({"status":"not_applicable","classification":"semantic_action_without_point"});
             std::fs::write(&manifest_path, manifest.to_string()).unwrap();
             assert!(
-                validate_catalog(&[case.clone()], &[result.clone()], Some(root.path()), true)
-                    .is_err(),
+                validate_catalog(
+                    std::slice::from_ref(&case),
+                    std::slice::from_ref(&result),
+                    Some(root.path()),
+                    true
+                )
+                .is_err(),
                 "a semantic action cannot retain a spatial marker"
             );
             std::fs::remove_file(turn.join("click.png")).unwrap();
-            validate_catalog(&[case.clone()], &[result.clone()], Some(root.path()), true).unwrap();
+            validate_catalog(
+                std::slice::from_ref(&case),
+                std::slice::from_ref(&result),
+                Some(root.path()),
+                true,
+            )
+            .unwrap();
             action["click_point"] = serde_json::json!({"x":10,"y":20});
             std::fs::write(turn.join("action.json"), action.to_string()).unwrap();
             assert!(
-                validate_catalog(&[case.clone()], &[result.clone()], Some(root.path()), true)
-                    .is_err(),
+                validate_catalog(
+                    std::slice::from_ref(&case),
+                    std::slice::from_ref(&result),
+                    Some(root.path()),
+                    true
+                )
+                .is_err(),
                 "resolved points still require markers"
             );
             manifest["click"]["status"] = serde_json::json!("captured");
             std::fs::write(&manifest_path, manifest.to_string()).unwrap();
             std::fs::write(turn.join("click.png"), b"png").unwrap();
             assert!(
-                validate_catalog(&[case.clone()], &[result.clone()], Some(root.path()), true)
-                    .is_err(),
+                validate_catalog(
+                    std::slice::from_ref(&case),
+                    std::slice::from_ref(&result),
+                    Some(root.path()),
+                    true
+                )
+                .is_err(),
                 "a captured marker cannot legitimize a false semantic classification"
             );
             std::fs::remove_file(turn.join("click.png")).unwrap();
@@ -2187,10 +2208,13 @@ mod tests {
             std::fs::write(turn.join("action.json"), action.to_string()).unwrap();
             manifest["click"]["classification"] = serde_json::json!("capture_failed");
             std::fs::write(&manifest_path, manifest.to_string()).unwrap();
-            assert!(
-                validate_catalog(&[case.clone()], &[result.clone()], Some(root.path()), true)
-                    .is_err()
-            );
+            assert!(validate_catalog(
+                std::slice::from_ref(&case),
+                std::slice::from_ref(&result),
+                Some(root.path()),
+                true
+            )
+            .is_err());
             manifest["click"]["classification"] =
                 serde_json::json!("semantic_action_without_point");
             std::fs::write(&manifest_path, manifest.to_string()).unwrap();

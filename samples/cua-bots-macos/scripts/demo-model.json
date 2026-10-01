@@ -1,0 +1,42 @@
+[
+ {
+  "when": "Introduce yourself",
+  "do": "say [[status: Settling in]]\n; shell mkdir -p memory && printf '%s\\n' '- Met my person today. They like short, concrete answers.' >> memory/MEMORY.md; say \nHi, I'm Ada. I have my own computer to research, build and get things done for you, and I keep working while you're away. I'll check in when something needs your approval.\n[[status: Ready]]"
+ },
+ {
+  "when": "Research standing desks",
+  "do": "say [[status: Researching]]\n[[step: Open the sources]]\n; shell (DISPLAY=:1 chromium --no-sandbox --test-type --no-first-run --no-default-browser-check --start-maximized https://en.wikipedia.org/wiki/Standing_desk >/dev/null 2>&1 &) && sleep 9 && echo opened; say \n[[step-done: Open the sources]]\n[[step: Read the evidence]]\n; shell curl -fsS -m 20 https://en.wikipedia.org/api/rest_v1/page/summary/Standing_desk | python3 -c \"print(__import__('json').load(__import__('sys').stdin)['extract'])\" > /tmp/desk.txt && wc -w < /tmp/desk.txt; say \n[[step-done: Read the evidence]]\n[[step: Write it up]]\n; shell mkdir -p outputs && ( printf '# Standing desks\\n\\nFrom Wikipedia (Standing desk), fetched by Ada:\\n\\n' && cat /tmp/desk.txt && printf '\\nSource: https://en.wikipedia.org/wiki/Standing_desk\\n' ) > outputs/standing-desks.md && printf '%s\\n' '- Researching standing desks for my person.' >> memory/MEMORY.md && echo written; say \n[[step-done: Write it up]]\n[[output: outputs/standing-desks.md]]\n[[notify: Your research is ready | Standing desks: a short summary with its source]]\n[[done: Research standing desks]]\nYour research is ready. I read the Wikipedia article on standing desks and wrote a short summary with its source."
+ },
+ {
+  "when": "Every morning at 9",
+  "do": "say I'll check Hacker News every morning at 9 and tell you what changed.\n[[schedule: daily 09:00 | Morning briefing | Summarize what changed on news.ycombinator.com since yesterday]]"
+ },
+ {
+  "when": "[routine] Morning briefing",
+  "do": "say [[status: Morning briefing]]\n; shell mkdir -p outputs && curl -fsS -m 20 https://hacker-news.firebaseio.com/v0/topstories.json | head -c 200 > outputs/hn-top.json && echo ok; say [[output: outputs/hn-top.json]]\n[[notify: Morning briefing | Today's top stories are in outputs]]\n[[done: Morning briefing]]\nHere are today's top stories."
+ },
+ {
+  "when": "Order the Flexispot",
+  "do": "say [[status: Waiting for you]]\nBuying something needs your approval under your rules.\n[[ask: Buy the Flexispot E7 standing desk | From flexispot.com with the card saved there. Price and delivery shown at checkout.]]"
+ },
+ {
+  "when": "Approved: Buy the Flexispot",
+  "do": "say [[status: Ready]]\nThanks. This demo runs a scripted model, so nothing was bought. A real model would check out now and send you the confirmation.\n[[done: Order the standing desk]]"
+ },
+ {
+  "when": "Denied:",
+  "do": "say [[status: Ready]]\nOkay, I won't. I'll leave it for you."
+ },
+ {
+  "when": "Log me into github.com",
+  "do": "say [[status: Waiting for you]]\nI need to be signed in to github.com to read your notifications.\n[[login: github.com]]"
+ },
+ {
+  "when": "Signed in to github.com",
+  "do": "say [[status: Checking notifications]]\n; shell (DISPLAY=:1 chromium --no-sandbox --test-type https://github.com/notifications >/dev/null 2>&1 &) && sleep 5 && echo opened; say I'm signed in and your notifications are open on my computer."
+ },
+ {
+  "when": "I did it myself",
+  "do": "say Thanks, I'll carry on from there."
+ }
+]

@@ -449,6 +449,15 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 infos.extend(st.windowless_targets.iter().cloned());
                 MockReply::ok(json!({ "targetInfos": infos }))
             }
+            "Target.getTargetInfo" => MockReply::ok(json!({
+                "targetInfo": {
+                    "targetId": "T1",
+                    "type": "page",
+                    "title": "Fixture after navigation",
+                    "url": "https://fixture.test/",
+                    "attached": true,
+                }
+            })),
             "Browser.getWindowForTarget" => {
                 let target_id = call.params["targetId"].as_str().unwrap_or("");
                 let windowless = st
@@ -2133,6 +2142,58 @@ async fn click_validates_same_process_iframe_loader_and_uses_the_tab_session() {
         !recorded_calls(&f, "Page.getFrameTree").is_empty(),
         "frame identity must have been re-proven"
     );
+}
+
+#[tokio::test]
+async fn semantic_snapshot_reports_the_live_page_title() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["page"]["title"], "Fixture after navigation", "{snap}");
+}
+
+#[tokio::test]
+async fn foreground_delivery_mode_accepts_window_activation_for_trusted_click() {
+    let f = fixture_with_platform(|_| {}, true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let bad = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "delivery_mode": "sideways", "session": SESSION
+        }))
+        .await;
+    assert!(
+        bad.is_error.unwrap_or(false),
+        "an unknown delivery_mode is refused"
+    );
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+
+    let refused = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref, "session": SESSION
+        }))
+        .await;
+    assert_eq!(
+        structured(&refused)["refusal"]["detail"]["alternative_delivery_mode"],
+        "foreground"
+    );
+
+    let foreground = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "delivery_mode": "foreground", "session": SESSION
+        }))
+        .await;
+    let s = structured(&foreground);
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["route"], "trusted");
+    assert_eq!(s["delivery_mode"], "foreground");
+    let mouse = recorded_calls(&f, "Input.dispatchMouseEvent");
+    assert_eq!(mouse.len(), 2, "press and release: {mouse:?}");
 }
 
 #[tokio::test]

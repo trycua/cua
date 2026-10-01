@@ -1,0 +1,78 @@
+{
+  "name": "experiments",
+  "about": "Settings, Experiments: every switch off by default, then each turned on and off. After each change: the tab (a switch and one line per experiment), the events it sends (experiment_on or experiment_off, then the set that is on), Settings (Storage after General only with Cua Volume, and the launch-at-login line), the first run's pages and Done page (the Volume page and its line only with Cua Volume), the main window's Volume page and the menu bar's Volume sync line and conflicts (only with Cua Volume), a shared Space's buttons (Share only with Sharing) and New Space's Run on menu and links (the connected cloud and Connect a cloud only with Your cloud). Turning one off undoes nothing: the Volume stays mounted, AWS stays connected and the Space stays shared.",
+  "now": 1790000000000,
+  "changes": [
+    { "step": "cua volume on", "row": "experiment:cua_volume", "option": "on" },
+    { "step": "your cloud on", "row": "experiment:your_cloud", "option": "on" },
+    { "step": "sharing on", "row": "experiment:sharing", "option": "on" },
+    { "step": "on again changes nothing", "row": "experiment:sharing", "option": "on" },
+    { "step": "another row changes nothing", "row": "notch", "option": "hide" },
+    { "step": "cua volume off", "row": "experiment:cua_volume", "option": "off" },
+    { "step": "your cloud off", "row": "experiment:your_cloud", "option": "off" },
+    { "step": "sharing off", "row": "experiment:sharing", "option": "off" }
+  ],
+  "settings": {
+    "identity": "maya@example.com",
+    "canSignOut": true,
+    "signIn": { "kind": "idle" },
+    "menuBar": false,
+    "defaultLocation": "local",
+    "telemetry": { "enabled": true },
+    "agents": [],
+    "loginItem": { "status": "enabled" }
+  },
+  "storageInput": {
+    "os": "macos",
+    "home": "/Users/maya",
+    "storage": { "backend": "fs", "fs_path": "/Users/maya/.cua/volume/data", "s3": null, "has_keys": false },
+    "mount": { "enabled": true, "state": "mounted", "method": "fskit", "path": "/Users/maya/Cua Volume", "volume_name": "Cua Volume" },
+    "cache": null
+  },
+  "onboarding": [
+    { "type": "start" },
+    { "type": "signin-done" },
+    { "type": "agents-done", "configured": [] },
+    { "type": "drive-checked", "os": "macos", "status": { "enabled": true, "state": "mounted", "method": "fskit", "path": "/Users/maya/Cua Volume", "volume_name": "Cua Volume" } },
+    { "type": "presentation-done" },
+    { "type": "drive-continue" },
+    { "type": "mode-chosen", "mode": "client" }
+  ],
+  "menu": {
+    "spaces": [],
+    "sync": { "device_id": "dev-a", "feed": "live", "last_poll_ms": 1790000000000, "pending_uploads": 2, "conflicts": [{ "path": "notes.md", "conflict_path": "notes (conflict).md", "winner_device": "dev-a", "loser_device": "dev-b", "ts_ms": 0 }] },
+    "backend": "s3",
+    "nowMs": 1790000001000
+  },
+  "space": {
+    "id": "relay:m-desk",
+    "name": "desk",
+    "provider": "relay",
+    "spacesdVersion": "0.4.0",
+    "features": ["desktop_stream", "relay_attach"],
+    "os": "linux",
+    "reachable": true
+  },
+  "env": {
+    "defaultLocation": "local",
+    "cloudAvailable": false,
+    "localAvailable": true,
+    "localReason": null,
+    "localBackends": ["docker"],
+    "maxCpus": 8,
+    "hostArch": "arm64",
+    "storage": null,
+    "cloudPricing": null,
+    "hosts": [
+      { "id": "m-mini", "name": "Mac mini", "via": "relay", "online": true, "os": "macos", "limits": [] }
+    ],
+    "clouds": [
+      {
+        "name": "aws", "title": "AWS", "label": "AWS · us-west-2", "isDefault": false, "ttlHours": 2,
+        "offers": [
+          { "image": "linux", "kind": "container", "supported": true, "machineType": "t4g.medium", "usdPerHour": 0.0368 }
+        ]
+      }
+    ]
+  }
+}

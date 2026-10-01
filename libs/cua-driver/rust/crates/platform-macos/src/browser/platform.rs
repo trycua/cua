@@ -1462,7 +1462,7 @@ mod tests {
             || {},
         );
 
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
     }
 
     #[test]

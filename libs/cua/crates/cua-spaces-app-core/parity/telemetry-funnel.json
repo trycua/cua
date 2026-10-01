@@ -1,0 +1,739 @@
+{
+  "name": "telemetry-funnel",
+  "about": "The usage events one run from first launch (nothing while Welcome shows its notice and usage-data switch; nothing at all in a run that turns the switch off) to a first ready Space means, the same in every shell: the app launched; every first-run page shown and left (completed, skipped or back, with its answer as a fixed word), the Cua Volume choice, signing in, Done; Spaces created (one ready, one failed while booting, one that stalled pulling and was dismissed, one with GPU acceleration cancelled while pulling, and one whose first cancel failed and whose second ended the create); Settings, Storage (the Finder volume on, Open in Finder, a bucket saved, a failed save); sharing (view-only, a role change, unsharing, a failure); and enrolling this device (a fresh sign-in, an approval, a failure). Names, paths, emails and buckets in the inputs never reach a signal. Three more creates: one with GPU acceleration cancelled while pulling (the cancel counts once, as cancelled, with the time to it), one whose cancel failed and that then became ready (counted as ready), and one with GPU acceleration that ended cancelled while being cancelled.",
+  "onboarding": [
+    {
+      "type": "experiments-loaded",
+      "experiments": {
+        "cuaVolume": true
+      }
+    },
+    {
+      "type": "telemetry-loaded",
+      "telemetry": {
+        "enabled": true,
+        "lockedBy": null
+      }
+    },
+    {
+      "type": "start"
+    },
+    {
+      "type": "cli-installed",
+      "target": "/Users/maya/.local/bin/cua"
+    },
+    {
+      "type": "signed-in",
+      "identity": "maya@example.com"
+    },
+    {
+      "type": "signin-done"
+    },
+    {
+      "type": "agents-done",
+      "configured": [
+        "Claude Code"
+      ]
+    },
+    {
+      "type": "presentation-picked",
+      "menuBar": true
+    },
+    {
+      "type": "presentation-done"
+    },
+    {
+      "type": "drive-storage-loaded",
+      "storage": {
+        "backend": "fs",
+        "fs_path": "/Users/maya/.cua/volume/data",
+        "s3": null,
+        "has_keys": false
+      },
+      "home": "/Users/maya"
+    },
+    {
+      "type": "drive-checked",
+      "os": "macos",
+      "status": {
+        "enabled": false,
+        "state": "off",
+        "method": "fskit",
+        "path": null,
+        "volume_name": "Cua Volume"
+      }
+    },
+    {
+      "type": "drive-toggled",
+      "on": true
+    },
+    {
+      "type": "back"
+    },
+    {
+      "type": "presentation-done"
+    },
+    {
+      "type": "drive-continue"
+    },
+    {
+      "type": "drive-mounted",
+      "status": {
+        "enabled": true,
+        "state": "mounted",
+        "method": "fskit",
+        "path": "/Volumes/Cua Volume",
+        "volume_name": "Cua Volume"
+      }
+    },
+    {
+      "type": "mode-chosen",
+      "mode": "client"
+    }
+  ],
+  "skipping": [
+    {
+      "type": "experiments-loaded",
+      "experiments": {
+        "cuaVolume": true
+      }
+    },
+    {
+      "type": "signed-in",
+      "identity": "sam@example.com"
+    },
+    {
+      "type": "start"
+    },
+    {
+      "type": "signin-done"
+    },
+    {
+      "type": "agents-done",
+      "configured": []
+    },
+    {
+      "type": "presentation-done"
+    },
+    {
+      "type": "drive-checked",
+      "os": "windows",
+      "status": null
+    },
+    {
+      "type": "mode-chosen",
+      "mode": "host"
+    }
+  ],
+  "creates": [
+    {
+      "now": 1000,
+      "action": {
+        "type": "start",
+        "id": "pending:1",
+        "name": "maya-secret-project",
+        "os": "linux",
+        "provider": "local",
+        "now": 1000,
+        "image": "linux:24.04",
+        "kind": "container",
+        "hostArch": "arm64"
+      }
+    },
+    {
+      "now": 4000,
+      "action": {
+        "type": "progress",
+        "id": "pending:1",
+        "phase": "pulling",
+        "fraction": 0.5,
+        "now": 4000
+      }
+    },
+    {
+      "now": 9000,
+      "action": {
+        "type": "progress",
+        "id": "pending:1",
+        "phase": "booting",
+        "fraction": null,
+        "now": 9000
+      }
+    },
+    {
+      "now": 48000,
+      "action": {
+        "type": "finish",
+        "id": "pending:1",
+        "spaceId": "local:maya-secret-project"
+      }
+    },
+    {
+      "now": 50000,
+      "action": {
+        "type": "start",
+        "id": "pending:2",
+        "name": "",
+        "os": "windows",
+        "provider": "cloud",
+        "now": 50000,
+        "image": null,
+        "kind": "vm",
+        "hostArch": "arm64"
+      }
+    },
+    {
+      "now": 70000,
+      "action": {
+        "type": "progress",
+        "id": "pending:2",
+        "phase": "booting",
+        "fraction": null,
+        "now": 70000
+      }
+    },
+    {
+      "now": 95000,
+      "action": {
+        "type": "fail",
+        "id": "pending:2",
+        "error": "boot failed at /Users/maya/.cua/vmm"
+      }
+    },
+    {
+      "now": 96000,
+      "action": {
+        "type": "dismiss",
+        "id": "pending:2"
+      }
+    },
+    {
+      "now": 100000,
+      "action": {
+        "type": "start",
+        "id": "pending:3",
+        "name": "",
+        "os": "linux",
+        "provider": "local",
+        "now": 100000,
+        "image": "linux:24.04",
+        "kind": "container",
+        "hostArch": "arm64"
+      }
+    },
+    {
+      "now": 101000,
+      "action": {
+        "type": "progress",
+        "id": "pending:3",
+        "phase": "pulling",
+        "fraction": null,
+        "now": 101000
+      }
+    },
+    {
+      "now": 7300000,
+      "action": {
+        "type": "tick",
+        "now": 7300000
+      }
+    },
+    {
+      "now": 7301000,
+      "action": {
+        "type": "dismiss",
+        "id": "pending:3"
+      }
+    },
+    {
+      "now": 8000000,
+      "action": {
+        "type": "start",
+        "id": "pending:4",
+        "name": "",
+        "os": "macos",
+        "provider": "local",
+        "now": 8000000,
+        "image": null,
+        "kind": "vm",
+        "hostArch": "arm64",
+        "gpu": true
+      }
+    },
+    {
+      "now": 8004000,
+      "action": {
+        "type": "progress",
+        "id": "pending:4",
+        "phase": "pulling",
+        "fraction": 0.2,
+        "now": 8004000
+      }
+    },
+    {
+      "now": 8020000,
+      "action": {
+        "type": "cancel-start",
+        "id": "pending:4"
+      }
+    },
+    {
+      "now": 8031000,
+      "action": {
+        "type": "cancel-done",
+        "id": "pending:4"
+      }
+    },
+    {
+      "now": 9000000,
+      "action": {
+        "type": "start",
+        "id": "pending:5",
+        "name": "",
+        "os": "linux",
+        "provider": "cloud",
+        "now": 9000000,
+        "image": "linux:24.04",
+        "kind": "container",
+        "hostArch": "arm64",
+        "gpu": false
+      }
+    },
+    {
+      "now": 9002000,
+      "action": {
+        "type": "cancel-start",
+        "id": "pending:5"
+      }
+    },
+    {
+      "now": 9003000,
+      "action": {
+        "type": "cancel-fail",
+        "id": "pending:5",
+        "error": "timed out: the daemon did not answer"
+      }
+    },
+    {
+      "now": 9040000,
+      "action": {
+        "type": "finish",
+        "id": "pending:5",
+        "spaceId": "cloud:maya-private"
+      }
+    },
+    {
+      "now": 9100000,
+      "action": {
+        "type": "start",
+        "id": "pending:6",
+        "name": "",
+        "os": "linux",
+        "provider": "local",
+        "now": 9100000,
+        "image": "linux:24.04",
+        "kind": "container",
+        "hostArch": "arm64",
+        "gpu": true
+      }
+    },
+    {
+      "now": 9101000,
+      "action": {
+        "type": "cancel-start",
+        "id": "pending:6"
+      }
+    },
+    {
+      "now": 9104000,
+      "action": {
+        "type": "fail",
+        "id": "pending:6",
+        "error": "cancelled: Cancelled local:maya-private; removed its VM or container."
+      }
+    }
+  ],
+  "storage": {
+    "input": {
+      "os": "macos",
+      "home": "/Users/maya",
+      "storage": {
+        "backend": "fs",
+        "fs_path": "/Users/maya/.cua/volume/data",
+        "s3": null,
+        "has_keys": false
+      },
+      "mount": {
+        "enabled": false,
+        "state": "off",
+        "method": "fskit",
+        "path": null,
+        "volume_name": "Cua Volume"
+      }
+    },
+    "cases": [
+      {
+        "step": "Finder volume on",
+        "state": {
+          "busy": true,
+          "request": {
+            "kind": "mount"
+          }
+        },
+        "action": {
+          "type": "done"
+        }
+      },
+      {
+        "step": "Open in Finder",
+        "state": {
+          "request": {
+            "kind": "reveal",
+            "path": "/Volumes/Cua Volume/maya"
+          }
+        },
+        "action": {
+          "type": "done"
+        }
+      },
+      {
+        "step": "bucket saved",
+        "state": {
+          "busy": true,
+          "request": {
+            "kind": "save",
+            "update": {
+              "backend": "s3",
+              "s3": {
+                "endpoint": "http://127.0.0.1:9000",
+                "region": "us-east-1",
+                "bucket": "maya-private-bucket",
+                "root": "",
+                "path_style": true
+              },
+              "access_key_id": "maya-drive",
+              "secret_access_key": "fixture-secret",
+              "dry_run": false
+            }
+          }
+        },
+        "action": {
+          "type": "saved",
+          "check": {
+            "ok": true,
+            "reachable": true,
+            "authorized": true,
+            "versioning": true,
+            "detail": null,
+            "applied": true
+          }
+        }
+      },
+      {
+        "step": "save failed",
+        "state": {
+          "busy": true,
+          "request": {
+            "kind": "save",
+            "update": {
+              "backend": "s3",
+              "s3": {
+                "endpoint": "http://127.0.0.1:9000",
+                "region": "us-east-1",
+                "bucket": "maya-private-bucket",
+                "root": "",
+                "path_style": true
+              },
+              "access_key_id": "maya-drive",
+              "secret_access_key": "fixture-secret",
+              "dry_run": false
+            }
+          }
+        },
+        "action": {
+          "type": "failed",
+          "error": "bucket maya-private-bucket is not reachable"
+        }
+      },
+      {
+        "step": "a test is not a save",
+        "state": {
+          "busy": true,
+          "request": {
+            "kind": "test",
+            "update": {
+              "backend": "s3",
+              "s3": {
+                "endpoint": "http://127.0.0.1:9000",
+                "region": "us-east-1",
+                "bucket": "maya-private-bucket",
+                "root": "",
+                "path_style": true
+              },
+              "access_key_id": "maya-drive",
+              "secret_access_key": "fixture-secret",
+              "dry_run": false
+            }
+          }
+        },
+        "action": {
+          "type": "checked",
+          "check": {
+            "ok": true,
+            "reachable": true,
+            "authorized": true,
+            "versioning": true,
+            "detail": null,
+            "applied": false
+          }
+        }
+      }
+    ]
+  },
+  "share": {
+    "input": {
+      "spaceId": "local:maya-secret-project",
+      "spaceName": "Maya Secret Project",
+      "shares": [
+        {
+          "who": "sam@example.com",
+          "role": "viewer",
+          "connected": false
+        }
+      ],
+      "signedIn": true
+    },
+    "cases": [
+      {
+        "step": "shared view-only",
+        "state": {
+          "who": "",
+          "role": "viewer",
+          "busy": true,
+          "request": {
+            "kind": "share",
+            "space": "local:maya-secret-project",
+            "who": "ada@example.com",
+            "role": "viewer"
+          }
+        },
+        "action": {
+          "type": "done"
+        }
+      },
+      {
+        "step": "role changed",
+        "state": {
+          "who": "",
+          "role": "viewer",
+          "busy": true,
+          "request": {
+            "kind": "share",
+            "space": "local:maya-secret-project",
+            "who": "sam@example.com",
+            "role": "editor"
+          }
+        },
+        "action": {
+          "type": "done"
+        }
+      },
+      {
+        "step": "unshared",
+        "state": {
+          "who": "",
+          "role": "viewer",
+          "busy": true,
+          "request": {
+            "kind": "unshare",
+            "space": "local:maya-secret-project",
+            "who": "sam@example.com"
+          }
+        },
+        "action": {
+          "type": "done"
+        }
+      },
+      {
+        "step": "share failed",
+        "state": {
+          "who": "",
+          "role": "editor",
+          "busy": true,
+          "request": {
+            "kind": "share",
+            "space": "local:maya-secret-project",
+            "who": "eve@example.com",
+            "role": "editor"
+          }
+        },
+        "action": {
+          "type": "failed",
+          "error": "eve@example.com has no Cua account"
+        }
+      },
+      {
+        "step": "typing is not sharing",
+        "state": {
+          "who": "",
+          "role": "viewer",
+          "busy": false,
+          "request": null
+        },
+        "action": {
+          "type": "set-who",
+          "who": "ada@example.com"
+        }
+      }
+    ]
+  },
+  "enroll": [
+    {
+      "step": "fresh sign-in",
+      "state": {
+        "phase": "registering",
+        "method": "sign-in",
+        "code": null,
+        "error": null
+      },
+      "action": {
+        "type": "registered",
+        "enrolled": true,
+        "code": null
+      }
+    },
+    {
+      "step": "code shown",
+      "state": {
+        "phase": "registering",
+        "method": "approve",
+        "code": null,
+        "error": null
+      },
+      "action": {
+        "type": "registered",
+        "enrolled": false,
+        "code": "K7Q-2PX"
+      }
+    },
+    {
+      "step": "approved",
+      "state": {
+        "phase": "waiting",
+        "method": "approve",
+        "code": "K7Q-2PX",
+        "error": null
+      },
+      "action": {
+        "type": "approved"
+      }
+    },
+    {
+      "step": "failed",
+      "state": {
+        "phase": "signing-in",
+        "method": "sign-in",
+        "code": null,
+        "error": null
+      },
+      "action": {
+        "type": "failed",
+        "error": "the browser sign-in for maya@example.com timed out"
+      }
+    }
+  ],
+  "no-usage-data": [
+    {
+      "type": "experiments-loaded",
+      "experiments": {
+        "cuaVolume": true
+      }
+    },
+    {
+      "type": "telemetry-loaded",
+      "telemetry": {
+        "enabled": true,
+        "lockedBy": null
+      }
+    },
+    {
+      "type": "usage-data-toggled",
+      "on": false
+    },
+    {
+      "type": "start"
+    },
+    {
+      "type": "cli-installed",
+      "target": "/Users/maya/.local/bin/cua"
+    },
+    {
+      "type": "signed-in",
+      "identity": "maya@example.com"
+    },
+    {
+      "type": "signin-done"
+    },
+    {
+      "type": "agents-done",
+      "configured": [
+        "Claude Code"
+      ]
+    },
+    {
+      "type": "presentation-picked",
+      "menuBar": true
+    },
+    {
+      "type": "presentation-done"
+    },
+    {
+      "type": "drive-storage-loaded",
+      "storage": {
+        "backend": "fs",
+        "fs_path": "/Users/maya/.cua/volume/data",
+        "s3": null,
+        "has_keys": false
+      },
+      "home": "/Users/maya"
+    },
+    {
+      "type": "drive-checked",
+      "os": "macos",
+      "status": {
+        "enabled": false,
+        "state": "off",
+        "method": "fskit",
+        "path": null,
+        "volume_name": "Cua Volume"
+      }
+    },
+    {
+      "type": "drive-toggled",
+      "on": true
+    },
+    {
+      "type": "back"
+    },
+    {
+      "type": "presentation-done"
+    },
+    {
+      "type": "drive-continue"
+    },
+    {
+      "type": "drive-mounted",
+      "status": {
+        "enabled": true,
+        "state": "mounted",
+        "method": "fskit",
+        "path": "/Volumes/Cua Volume",
+        "volume_name": "Cua Volume"
+      }
+    },
+    {
+      "type": "mode-chosen",
+      "mode": "client"
+    }
+  ]
+}

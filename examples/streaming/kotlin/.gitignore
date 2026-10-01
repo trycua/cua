@@ -1,0 +1,5 @@
+.gradle/
+build/
+out/
+*.jsonl
+.kotlin/

@@ -1,0 +1,150 @@
+{
+  "flow": "stream-section",
+  "frames": [
+    {
+      "case": "loading, Ubuntu 1280x800",
+      "help": [
+        "Desktop (1280×800)"
+      ],
+      "rows": [
+        "desktop desktop | Desktop (1280×800) | 1280×800 | os os-ubuntu | pip pip.enter: Picture in picture"
+      ],
+      "statusText": "Looking for this Space’s windows…"
+    },
+    {
+      "case": "windows, one panel open",
+      "help": [
+        "Desktop (1280×800)",
+        "Mozilla Firefox",
+        "xterm",
+        "Quarterly planning notes for the Spaces launch, draft 7 (unsaved changes) - gedit"
+      ],
+      "rows": [
+        "desktop desktop | Desktop (1280×800) | 1280×800 | os os-ubuntu | pip pip.enter: Picture in picture",
+        "window w-1 | Mozilla Firefox | - | app Firefox firefox 812 | pip pip.enter: Picture in picture",
+        "window w-2 | xterm | - | app xterm xterm 904 | pip pip.exit: Close picture in picture (on)",
+        "window w-3 | Quarterly planning notes for the Spaces launch, draft 7 (unsaved changes) - gedit | - | app gedit org.gnome.gedit 0 | pip pip.enter: Picture in picture"
+      ],
+      "statusText": null
+    },
+    {
+      "case": "desktop open, no display list yet, macOS",
+      "help": [
+        "Desktop",
+        "Start Page"
+      ],
+      "rows": [
+        "desktop desktop | Desktop | - | os os-macos | pip pip.exit: Close picture in picture (on)",
+        "window m-1 | Start Page | - | app Safari com.apple.Safari 511 | pip pip.enter: Picture in picture"
+      ],
+      "statusText": null
+    },
+    {
+      "case": "failed, Windows 1920x1080",
+      "help": [
+        "Desktop (1920×1080)"
+      ],
+      "rows": [
+        "desktop desktop | Desktop (1920×1080) | 1920×1080 | os os-windows | pip pip.enter: Picture in picture"
+      ],
+      "statusText": "No windows: the Space’s window host is not up."
+    },
+    {
+      "case": "no windows, Arch",
+      "help": [
+        "Desktop (1024×768)"
+      ],
+      "rows": [
+        "desktop desktop | Desktop (1024×768) | 1024×768 | os os-arch | pip pip.enter: Picture in picture"
+      ],
+      "statusText": "No open windows in this Space yet."
+    },
+    {
+      "case": "filter hides every window",
+      "help": [
+        "Desktop (1280×800)"
+      ],
+      "rows": [
+        "desktop desktop | Desktop (1280×800) | 1280×800 | os os-linux | pip pip.enter: Picture in picture"
+      ],
+      "statusText": "No windows match your filter."
+    },
+    {
+      "click": "desktop",
+      "command": "open",
+      "row": "desktop"
+    },
+    {
+      "buttons": [
+        "desktop pip.exit true",
+        "w-1 pip.enter false",
+        "w-2 pip.enter false"
+      ],
+      "event": "opened",
+      "open": [
+        "desktop"
+      ]
+    },
+    {
+      "click": "desktop",
+      "command": "close",
+      "row": "desktop"
+    },
+    {
+      "buttons": [
+        "desktop pip.exit true",
+        "w-1 pip.enter false",
+        "w-2 pip.exit true"
+      ],
+      "event": "opened",
+      "open": [
+        "desktop",
+        "w-2"
+      ]
+    },
+    {
+      "click": "w-2",
+      "command": "close",
+      "row": "w-2"
+    },
+    {
+      "click": "w-1",
+      "command": "open",
+      "row": "w-1"
+    },
+    {
+      "buttons": [
+        "desktop pip.exit true",
+        "w-1 pip.enter false",
+        "w-2 pip.enter false"
+      ],
+      "event": "closed",
+      "open": [
+        "desktop"
+      ]
+    },
+    {
+      "buttons": [
+        "desktop pip.exit true",
+        "w-1 pip.exit true",
+        "w-2 pip.enter false"
+      ],
+      "event": "synced",
+      "open": [
+        "desktop",
+        "w-1"
+      ]
+    },
+    {
+      "buttons": [
+        "desktop pip.enter false",
+        "w-1 pip.exit true",
+        "w-2 pip.enter false"
+      ],
+      "event": "closed",
+      "open": [
+        "w-1"
+      ]
+    }
+  ]
+}

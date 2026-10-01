@@ -1,0 +1,6 @@
+# Labels of the self-hosted runners this repository dispatches to. Without
+# these, actionlint flags `runs-on: [self-hosted, macOS, ARM64, lume]` as an
+# unknown label and the real errors get lost in the noise.
+self-hosted-runner:
+  labels:
+    - lume

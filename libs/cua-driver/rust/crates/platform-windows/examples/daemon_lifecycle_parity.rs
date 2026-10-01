@@ -1,5 +1,6 @@
 //! Parity check for `cua-driver status` + `cua-driver stop` CLI subcommands.
 
+#[cfg(target_os = "windows")]
 use std::process::Command;
 
 #[cfg(target_os = "windows")]

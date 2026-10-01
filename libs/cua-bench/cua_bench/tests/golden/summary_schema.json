@@ -1,0 +1,41 @@
+{
+  "avg_reward": "float",
+  "completed": "int",
+  "failed": "int",
+  "n_total_trials": "int",
+  "pass_at_k": "NoneType",
+  "results": [
+    {
+      "attempt": "int",
+      "duration_s": "float",
+      "error": "NoneType",
+      "image_digest": "NoneType",
+      "image_variant": "str",
+      "kind": "str",
+      "pool": "NoneType",
+      "retries": "int",
+      "reward": "float",
+      "runtime": "NoneType",
+      "status": "str",
+      "task": "str",
+      "variant": "int"
+    }
+  ],
+  "schema_version": "int",
+  "stats": {
+    "n_completed": "int",
+    "n_errored": "int",
+    "n_retries": "int"
+  },
+  "targets": [
+    {
+      "count": "int",
+      "image": "str",
+      "image_variant": "str",
+      "kind": "str",
+      "on": "str",
+      "runtime": "NoneType"
+    }
+  ],
+  "total": "int"
+}

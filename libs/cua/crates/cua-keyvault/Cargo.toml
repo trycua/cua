@@ -1,0 +1,52 @@
+[package]
+name = "cua-keyvault"
+description = "Cua Keyvault: the local, hardware-bound secret vault that owns teleport. Encrypted store, OS key protectors, verified IPC callers, macaroon-style capability grants, unattended rules and a hash-chained audit log."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license = "FSL-1.1-MIT"
+repository.workspace = true
+publish = false
+
+[features]
+default = []
+# The embedded-SDK teleport seam (enterprise). Compiled out by default; even
+# when compiled in, `embedded::EmbeddedTeleport::authorize` refuses without a
+# verified license. See docs and design.md, "Enterprise embedded mode".
+enterprise-embedded = []
+
+[dependencies]
+# Audited primitives only: AEAD, HKDF, HMAC, SHA-256 and the CSPRNG come from
+# ring; the passphrase KDF is RustCrypto argon2 (Argon2id).
+ring = "0.17"
+argon2 = { version = "0.5", default-features = false, features = ["alloc", "zeroize"] }
+zeroize = { version = "1", features = ["zeroize_derive"] }
+serde.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# Teleport and consent counts (cua-telemetry; nothing from the vault).
+cua-telemetry.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "sync", "time", "rt", "macros"] }
+libc = "0.2"
+subtle = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Keychain-wrapped key protector and code-signature checks of IPC peers
+# (SecCodeCopyGuestWithAttributes with the peer's audit token).
+security-framework = { version = "3", features = ["OSX_10_15"] }
+security-framework-sys = "2"
+core-foundation = "0.10"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Windows Credential Manager (DPAPI-protected) holds the key-encryption key.
+keyring = { version = "3", default-features = false, features = ["windows-native"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+proptest = "1"
+tokio = { workspace = true, features = ["full"] }

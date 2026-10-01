@@ -179,9 +179,13 @@ public struct TeleportAppPicker: View {
         VStack(alignment: .leading, spacing: 10) {
             header("Teleporting \(model.plan?.app.name ?? "") to \(model.spaceName)…")
             ProgressView(value: model.progress)
-            if let last = model.events.last {
-                Text("\(last.kind): \(last.detail)").font(.caption).foregroundStyle(.secondary).lineLimit(2)
-            }
+            Text(model.status ?? " ")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .contentTransition(.opacity)
+                .animation(.easeInOut(duration: 0.15), value: model.status)
+                .accessibilityIdentifier("teleport-run-status")
             Spacer()
         }
     }

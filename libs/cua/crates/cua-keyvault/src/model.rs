@@ -102,6 +102,10 @@ pub const DEFAULT_TTL_SECS: u64 = 3600;
 pub const IDP_TTL_SECS: u64 = 15 * 60;
 /// Upper bound on a delivered copy's lifetime (30 days).
 pub const MAX_TTL_SECS: u64 = 30 * 24 * 3600;
+/// A delivery's `expires_ms` when it never expires on its own: the copy
+/// stays until it is wiped (Wipe, deleting the item, the kill switch). The
+/// receiver reads `0` the same way (`ImportOptions.expires_at_ms`).
+pub const NO_EXPIRY: u64 = 0;
 
 impl Default for ItemPolicy {
     fn default() -> Self {
@@ -433,11 +437,28 @@ pub struct Delivery {
     pub caller_fp: String,
     /// Delivered, Unix ms.
     pub delivered_ms: u64,
-    /// When the receiver wipes it on its own.
+    /// When the receiver wipes it on its own ([`NO_EXPIRY`]: never).
     pub expires_ms: u64,
     /// Wiped (or superseded) already.
     #[serde(default)]
     pub wiped: bool,
+}
+
+impl Delivery {
+    /// Not wiped and not past its expiry (one without expiry stays live).
+    pub fn live(&self, now_ms: u64) -> bool {
+        !self.wiped && (self.expires_ms == NO_EXPIRY || self.expires_ms > now_ms)
+    }
+}
+
+/// When a copy delivered at `now_ms` expires: `ttl_secs` later while
+/// auto-wipe is on, else never ([`NO_EXPIRY`]).
+pub fn delivery_expiry(auto_wipe: bool, now_ms: u64, ttl_secs: u64) -> u64 {
+    if auto_wipe {
+        now_ms + ttl_secs * 1000
+    } else {
+        NO_EXPIRY
+    }
 }
 
 /// How the vault unlocks.
@@ -461,6 +482,10 @@ pub struct Settings {
     pub unlock_policy: UnlockPolicy,
     /// Idle minutes before auto-lock (`presence` policy).
     pub auto_lock_minutes: u32,
+    /// Delivered copies wipe themselves after their item's `ttl_secs`. Off
+    /// (the default) they stay until wiped ([`NO_EXPIRY`]).
+    #[serde(default)]
+    pub auto_wipe: bool,
 }
 
 impl Default for Settings {
@@ -469,6 +494,7 @@ impl Default for Settings {
             disabled: false,
             unlock_policy: UnlockPolicy::Auto,
             auto_lock_minutes: 15,
+            auto_wipe: false,
         }
     }
 }

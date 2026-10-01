@@ -558,6 +558,17 @@ pub trait SpaceTeleport {
         approval: &Approval,
         options: ImportOptions,
     ) -> Result<TeleportReceipt>;
+
+    /// [`Self::teleport`], telling `stage` where the Keyvault is: reading
+    /// (when macOS asks for the Keychain), saving, packing, uploading and
+    /// importing.
+    async fn teleport_with_progress(
+        &self,
+        sessions: Arc<AppSessions>,
+        approval: &Approval,
+        options: ImportOptions,
+        stage: &mut (dyn FnMut(cua_keyvault::broker::TeleportStage) + Send),
+    ) -> Result<TeleportReceipt>;
 }
 
 impl SpaceTeleport for Space {
@@ -607,6 +618,16 @@ impl SpaceTeleport for Space {
         &self,
         sessions: Arc<AppSessions>,
         approval: &Approval,
+        options: ImportOptions,
+    ) -> Result<TeleportReceipt> {
+        self.teleport_with_progress(sessions, approval, options, &mut |_| {})
+            .await
+    }
+
+    async fn teleport_with_progress(
+        &self,
+        sessions: Arc<AppSessions>,
+        approval: &Approval,
         // `replace_existing` and `close_running_app` are already inert on
         // the direct upload path too (`replace_existing` has no
         // receiver-side effect at all; `close_running_app` is accepted and
@@ -624,6 +645,7 @@ impl SpaceTeleport for Space {
         // three are tracked as follow-up work, not specific to this path.
         // `save_to_keyvault` is honored below.
         options: ImportOptions,
+        stage: &mut (dyn FnMut(cua_keyvault::broker::TeleportStage) + Send),
     ) -> Result<TeleportReceipt> {
         if approval.space != self.id().to_string() {
             return Err(Error::TeleportRefused(format!(
@@ -667,7 +689,12 @@ impl SpaceTeleport for Space {
                 ),
             })?;
         let outcome = client
-            .import_and_teleport(spec, self.id().to_string(), options.save_to_keyvault)
+            .import_and_teleport_with_progress(
+                spec,
+                self.id().to_string(),
+                options.save_to_keyvault,
+                stage,
+            )
             .await
             .map_err(|e| Error::TeleportRefused(format!("{}: {e}", approval.app)))?;
         let delivery = outcome.deliveries.first();
@@ -896,7 +923,11 @@ async fn teleport_app_broker(
                 "transferred_paths": imported,
                 "import_ids": import_ids,
                 "expires_ms": expires_ms,
-                "next": "The Space now has this app's session. Delete the Space when done; the delivered session is also wiped when the grant expires.",
+                "next": if expires_ms == 0 {
+                    "The Space now has this app's session. It stays until you wipe it in Cua's Keyvault or delete the Space."
+                } else {
+                    "The Space now has this app's session. Delete the Space when done; the delivered session is also wiped when it expires."
+                },
             }))),
             Err(e) => Ok(broker_error(e)),
         },

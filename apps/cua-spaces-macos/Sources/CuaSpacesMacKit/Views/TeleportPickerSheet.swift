@@ -27,7 +27,7 @@ struct TeleportPickerSheet: View {
                 case .consent:
                     review
                 case .running:
-                    ProgressView(value: teleport.progress).padding(20)
+                    TeleportRunning(progress: teleport.progress, status: teleport.status)
                 case .done:
                     Text("Done").padding(20)
                 case .error:
@@ -264,5 +264,27 @@ struct TeleportTileView: View {
         .accessibilityLabel(tile.title)
         .accessibilityHint(tile.help)
         .accessibilityAddTraits(tile.selected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// The run: the bar, and under it the step it is on in words, so the
+/// Keychain prompts that come with reading a browser's cookies are expected.
+struct TeleportRunning: View {
+    let progress: Double
+    let status: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ProgressView(value: progress)
+            Text(status ?? " ")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .contentTransition(.opacity)
+                .animation(.easeInOut(duration: 0.15), value: status)
+                .accessibilityIdentifier("teleport-run-status")
+        }
+        .padding(20)
     }
 }

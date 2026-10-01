@@ -21,6 +21,7 @@ final class FakeKeyvault: KeyvaultClientProtocol, @unchecked Sendable {
         commands.append(command)
         switch command {
         case .setDisabled(let disabled): current.status?.disabled = disabled
+        case .setAutoWipe(let on): current.status?.autoWipe = on
         case .approve(let id, _), .deny(let id): current.pending.removeAll { $0.id == id }
         default: break
         }
@@ -91,6 +92,117 @@ struct ViewModelTests {
         await model.keyvault.refresh()
         #expect(model.notch.state.keyvault == nil)
         #expect(!model.menuBar.contains { $0.label.hasPrefix("Keyvault") })
+    }
+
+    /// A Keyvault sign-in in a Space: "Signed in" in the list (the badge
+    /// opens Access on its row), the key on its notch tile. Dismiss hides
+    /// the notch's indicator, line and key, never the access itself; it is
+    /// remembered, and a new copy shows again.
+    @Test func signedInSpacesAndDismissingFromTheNotch() async throws {
+        var o = try fixtureOverview()
+        o.deliveries = [KvDelivery(importId: "imp-1", target: "local:aurora", providerId: "chrome", items: ["i1"],
+                                   callerFp: "fp-agent", deliveredMs: 1_799_999_000_000,
+                                   expiresMs: 0, wiped: false)]
+        let fake = FakeKeyvault(o)
+        let model = makeModel(kv: fake)
+        await model.refresh()
+        await model.keyvault.refresh()
+        #expect(model.signedInSpaceIds == ["local:aurora"])
+        #expect(model.notch.state.signedIn == ["local:aurora"])
+        #expect(model.notch.state.keyvault == "Keyvault sign-ins live in local:aurora")
+        model.notch.send(.click)
+        #expect(model.notch.view.tiles.first { $0.id == "local:aurora" }?.signedIn == true)
+        #expect(model.notch.view.access?.dismiss == "Dismiss")
+        // The badge: Access, its row brought forward.
+        model.showAccess(spaceId: "local:aurora")
+        #expect(model.selection == .keyvault(.category(category: .access)))
+        #expect(model.keyvault.focusKey == "d:local:aurora")
+        let row = try #require(model.keyvault.list.access.first { $0.kind == .delivery })
+        #expect(row.detail == "until you wipe it", "auto-wipe off: no expiry")
+        #expect(!model.keyvault.isDismissed(row))
+        // Dismiss: the notch forgets it; the list and Access keep it.
+        model.keyvault.dismiss(row.imports)
+        #expect(model.notch.state.keyvault == nil)
+        #expect(model.notch.state.signedIn.isEmpty)
+        #expect(model.notch.view.access == nil)
+        #expect(model.signedInSpaceIds == ["local:aurora"])
+        #expect(model.keyvault.isDismissed(row))
+        #expect(model.settings.dismissedAccess == ["imp-1"])
+        #expect(!fake.commands.contains { if case .release = $0 { return true } else { return false } },
+                "dismissing wipes nothing")
+        // Saved: a relaunch keeps it dismissed.
+        let again = AppModel(backend: FixtureSpacesBackend(), keyvault: KeyvaultModel(client: fake, clock: { fixtureNow }),
+                             onboarding: OnboardingModel(statePath: nil), settingsPath: model.settingsPath)
+        await again.refresh()
+        await again.keyvault.refresh()
+        #expect(again.notch.state.keyvault == nil)
+        // A new copy (another import) shows again; the gone one is forgotten.
+        fake.current.deliveries = [KvDelivery(importId: "imp-2", target: "local:aurora", providerId: "chrome",
+                                              items: ["i1"], callerFp: "fp-agent",
+                                              deliveredMs: 1_799_999_500_000, expiresMs: 0, wiped: false)]
+        await model.keyvault.refresh()
+        #expect(model.notch.state.keyvault == "Keyvault sign-ins live in local:aurora")
+        #expect(model.settings.dismissedAccess.isEmpty)
+    }
+
+    /// Settings, Keyvault: auto-wipe is off by default; the switch sends the
+    /// broker's setting and follows it.
+    @Test func autoWipeIsASettingOffByDefault() async throws {
+        var o = try fixtureOverview()
+        o.status?.autoWipe = false
+        let fake = FakeKeyvault(o)
+        let model = makeModel(kv: fake)
+        await model.loadSettings()
+        let section = try #require(model.settingsPage.sections.first { $0.id == "keyvault" })
+        let toggle = try #require(section.rows.first { $0.id == "keyvault-auto-wipe" })
+        #expect(toggle.kind == .toggle)
+        #expect(toggle.options.first { $0.id == "on" }?.active == false)
+        await model.choose(row: "keyvault-auto-wipe", option: "on")
+        #expect(fake.commands.last == .setAutoWipe(on: true))
+        #expect(model.keyvault.autoWipe == true)
+        #expect(model.settingsPage.sections.first { $0.id == "keyvault" }?.rows.first?
+            .options.first { $0.id == "on" }?.active == true)
+        // No broker answer: no section.
+        let bare = makeModel()
+        await bare.loadSettings()
+        #expect(!bare.settingsPage.sections.contains { $0.id == "keyvault" })
+    }
+
+    /// The teleport's run says what it is doing, from the SDK's step events
+    /// (the Keychain prompts are named before they appear).
+    @Test func teleportRunStatusFollowsTheSteps() throws {
+        let m = TeleportModel(spaceName: "Aurora", teleport: nil, space: nil, sources: PickerFixture.sources())
+        #expect(m.status == nil)
+        // To the run, as the teleport-review flow gets there.
+        let flow = try PickerFixture.json("teleport-review")
+        func json(_ v: Any?) throws -> String {
+            String(decoding: try JSONSerialization.data(withJSONObject: v!), as: UTF8.self)
+        }
+        m.send(.loaded(entries: try appCatalogEntriesFromJson(json: json(flow["entries"]))))
+        m.send(.select(id: "slack"))
+        m.send(.choose(id: nil))
+        m.send(.move(moves: .appWithState))
+        m.send(.plan)
+        m.send(.planned(plan: try appTeleportPlanFromJson(json: json(flow["plan"]))))
+        m.send(.acknowledge(value: true))
+        m.send(.acknowledgeRelayPlaintext(value: true))
+        m.send(.confirm)
+        #expect(m.state.step == .running)
+        #expect(m.status == nil, "no step yet")
+        func ev(_ phase: AppTeleportRunPhase, _ detail: String, _ done: UInt64 = 0, _ total: UInt64 = 0) -> AppPickerEvent {
+            .progress(event: AppTeleportRunEvent(step: 0, steps: 1, kind: "state", phase: phase, detail: detail,
+                                                 doneBytes: done, totalBytes: total))
+        }
+        let reading = "Reading Chrome cookies (macOS will ask for Keychain access)\u{2026}"
+        m.send(ev(.progress, reading))
+        #expect(m.status == reading)
+        m.send(ev(.progress, "Uploading", 12 << 20, 80 << 20))
+        #expect(m.status == "Uploading 12 / 80 MB")
+        // The SDK's string phases map onto the picker's.
+        let sdk = TeleportRunEvent(step: 0, steps: 1, kind: "state", phase: "progress",
+                                   detail: "Importing into the Space", doneBytes: 0, totalBytes: 0)
+        m.send(.progress(event: appTeleportRunEvent(event: sdk)))
+        #expect(m.status == "Importing into the Space")
     }
 
     @Test func thisMachineComesFirstAndFollowsTheHost() async {

@@ -22,9 +22,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
+              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
-              "Kind: Container",
-              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Container"
             ],
             "id": "local:box",
             "previewText": "Loading the desktop…",
@@ -44,9 +44,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
+              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
-              "Kind: Virtual machine",
-              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Virtual machine"
             ],
             "id": "local:mac",
             "previewText": "Loading the desktop…",
@@ -66,8 +66,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
             "previewText": "Loading the desktop…",
@@ -86,8 +86,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "cloud:pool-c",
             "previewText": "Loading the desktop…",
@@ -139,9 +139,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Suspending…",
+              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
-              "Kind: Container",
-              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Container"
             ],
             "id": "local:box",
             "previewText": "Suspending…",
@@ -161,9 +161,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
+              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
-              "Kind: Virtual machine",
-              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Virtual machine"
             ],
             "id": "local:mac",
             "previewText": "Loading the desktop…",
@@ -183,8 +183,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
             "previewText": "Loading the desktop…",
@@ -203,8 +203,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "cloud:pool-c",
             "previewText": "Loading the desktop…",
@@ -258,9 +258,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Suspending…",
+              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
-              "Kind: Container",
-              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Container"
             ],
             "id": "local:box",
             "previewText": "Suspending…",
@@ -280,9 +280,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
+              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
-              "Kind: Virtual machine",
-              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Virtual machine"
             ],
             "id": "local:mac",
             "previewText": "Loading the desktop…",
@@ -302,8 +302,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
             "previewText": "Loading the desktop…",
@@ -322,8 +322,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "cloud:pool-c",
             "previewText": "Loading the desktop…",
@@ -377,9 +377,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Suspending…",
+              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
-              "Kind: Container",
-              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Container"
             ],
             "id": "local:box",
             "previewText": "Suspending…",
@@ -399,9 +399,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
+              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
-              "Kind: Virtual machine",
-              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Virtual machine"
             ],
             "id": "local:mac",
             "previewText": "Loading the desktop…",
@@ -421,8 +421,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
             "previewText": "Loading the desktop…",
@@ -441,8 +441,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "cloud:pool-c",
             "previewText": "Loading the desktop…",
@@ -496,9 +496,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Suspending…",
+              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
-              "Kind: Container",
-              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Container"
             ],
             "id": "local:box",
             "previewText": "Suspending…",
@@ -518,9 +518,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
+              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
-              "Kind: Virtual machine",
-              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Virtual machine"
             ],
             "id": "local:mac",
             "previewText": "Loading the desktop…",
@@ -540,8 +540,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
             "previewText": "Loading the desktop…",
@@ -560,8 +560,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "cloud:pool-c",
             "previewText": "Loading the desktop…",
@@ -615,9 +615,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Suspended",
+              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
-              "Kind: Container",
-              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Container"
             ],
             "id": "local:box",
             "previewText": "Suspended",
@@ -637,9 +637,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
+              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
-              "Kind: Virtual machine",
-              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Virtual machine"
             ],
             "id": "local:mac",
             "previewText": "Loading the desktop…",
@@ -659,8 +659,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
             "previewText": "Loading the desktop…",
@@ -679,8 +679,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "cloud:pool-c",
             "previewText": "Loading the desktop…",
@@ -732,9 +732,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Resuming…",
+              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
-              "Kind: Container",
-              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Container"
             ],
             "id": "local:box",
             "previewText": "Resuming…",
@@ -754,9 +754,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
+              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
-              "Kind: Virtual machine",
-              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Virtual machine"
             ],
             "id": "local:mac",
             "previewText": "Loading the desktop…",
@@ -776,8 +776,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
             "previewText": "Loading the desktop…",
@@ -796,8 +796,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "cloud:pool-c",
             "previewText": "Loading the desktop…",
@@ -851,9 +851,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Suspended",
+              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
-              "Kind: Container",
-              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
@@ -874,9 +874,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
+              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
-              "Kind: Virtual machine",
-              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Virtual machine"
             ],
             "id": "local:mac",
             "previewText": "Loading the desktop…",
@@ -896,8 +896,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
             "previewText": "Loading the desktop…",
@@ -916,8 +916,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "cloud:pool-c",
             "previewText": "Loading the desktop…",
@@ -971,9 +971,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Suspended",
+              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
-              "Kind: Container",
-              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
@@ -994,9 +994,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Turning off…",
+              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
-              "Kind: Virtual machine",
-              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Virtual machine"
             ],
             "id": "local:mac",
             "previewText": "Turning off…",
@@ -1016,8 +1016,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
             "previewText": "Loading the desktop…",
@@ -1036,8 +1036,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "cloud:pool-c",
             "previewText": "Loading the desktop…",
@@ -1092,9 +1092,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Suspended",
+              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
-              "Kind: Container",
-              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
@@ -1115,9 +1115,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Turning off…",
+              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
-              "Kind: Virtual machine",
-              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Virtual machine"
             ],
             "id": "local:mac",
             "previewText": "Turning off…",
@@ -1137,8 +1137,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
             "previewText": "Loading the desktop…",
@@ -1157,8 +1157,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "cloud:pool-c",
             "previewText": "Loading the desktop…",
@@ -1213,9 +1213,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Suspended",
+              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
-              "Kind: Container",
-              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
@@ -1236,9 +1236,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Off",
+              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
-              "Kind: Virtual machine",
-              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Virtual machine"
             ],
             "id": "local:mac",
             "previewText": "Off",
@@ -1258,8 +1258,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
             "previewText": "Loading the desktop…",
@@ -1278,8 +1278,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "cloud:pool-c",
             "previewText": "Loading the desktop…",
@@ -1333,9 +1333,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Suspended",
+              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
-              "Kind: Container",
-              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
@@ -1356,9 +1356,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Off",
+              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
-              "Kind: Virtual machine",
-              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Virtual machine"
             ],
             "id": "local:mac",
             "previewText": "Off",
@@ -1378,8 +1378,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Turning off…",
-              "System: Linux",
-              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
             "previewText": "Turning off…",
@@ -1398,8 +1398,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "cloud:pool-c",
             "previewText": "Loading the desktop…",
@@ -1454,9 +1454,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Suspended",
+              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
-              "Kind: Container",
-              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
@@ -1477,9 +1477,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Off",
+              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
-              "Kind: Virtual machine",
-              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Virtual machine"
             ],
             "id": "local:mac",
             "previewText": "Off",
@@ -1499,8 +1499,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Turning off…",
-              "System: Linux",
-              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
             "previewText": "Turning off…",
@@ -1519,8 +1519,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "cloud:pool-c",
             "previewText": "Loading the desktop…",
@@ -1575,9 +1575,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Suspended",
+              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
-              "Kind: Container",
-              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
@@ -1598,9 +1598,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Off",
+              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
-              "Kind: Virtual machine",
-              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Virtual machine"
             ],
             "id": "local:mac",
             "previewText": "Off",
@@ -1620,8 +1620,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Off",
-              "System: Linux",
-              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
             "previewText": "Off",
@@ -1640,8 +1640,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "cloud:pool-c",
             "previewText": "Loading the desktop…",
@@ -1695,9 +1695,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Suspended",
+              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
-              "Kind: Container",
-              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
@@ -1718,9 +1718,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Turning on…",
+              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
-              "Kind: Virtual machine",
-              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Virtual machine"
             ],
             "id": "local:mac",
             "previewText": "Turning on…",
@@ -1740,8 +1740,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Off",
-              "System: Linux",
-              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
             "previewText": "Off",
@@ -1760,8 +1760,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "cloud:pool-c",
             "previewText": "Loading the desktop…",
@@ -1816,9 +1816,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Suspended",
+              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
-              "Kind: Container",
-              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
@@ -1838,9 +1838,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Deleting…",
+              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: macOS",
-              "Kind: Virtual machine",
-              "Identifier: local:mac [copy local:mac doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Virtual machine"
             ],
             "id": "local:mac",
             "previewText": "Deleting…",
@@ -1860,8 +1860,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Off",
-              "System: Linux",
-              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
             "previewText": "Off",
@@ -1880,8 +1880,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "cloud:pool-c",
             "previewText": "Loading the desktop…",
@@ -1936,9 +1936,9 @@
             "creditNotice": null,
             "facts": [
               "Status: Suspended",
+              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Linux",
-              "Kind: Container",
-              "Identifier: local:box [copy local:box doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Kind: Container"
             ],
             "id": "local:box",
             "powerError": "Could not turn it on: Docker is not running",
@@ -1959,8 +1959,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Off",
-              "System: Linux",
-              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: relay:space-0123456789abcdef [copy relay:space-0123456789abcdef doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "relay:space-0123456789abcdef",
             "previewText": "Off",
@@ -1979,8 +1979,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: cloud:pool-c [copy cloud:pool-c doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "cloud:pool-c",
             "previewText": "Loading the desktop…",

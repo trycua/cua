@@ -30,7 +30,7 @@ use base64::Engine as _;
 use cua_keyvault::broker::{
     AccessRequest, Backend, Broker, BrokerConfig, Captured, CookieFilter, DeliveryOutcome,
     ImportSpec, Inventory, LoginFill, LoginFilled, PasswordImportSpec, Selector, TeleportRequest,
-    UserPresence,
+    TeleportStage, UserPresence,
 };
 use cua_keyvault::caller::{CallerIdentity, Signing};
 use cua_keyvault::model::{
@@ -523,7 +523,21 @@ impl Backend for DaemonBackend {
         payloads: Vec<ItemPayload>,
         expires_ms: u64,
     ) -> KvResult<DeliveryOutcome> {
+        self.deliver_with_progress(target, provider_id, payloads, expires_ms, Arc::new(|_| {}))
+            .await
+    }
+
+    /// Packs, uploads (with bytes) and imports, telling `stage` each step.
+    async fn deliver_with_progress(
+        &self,
+        target: &str,
+        provider_id: &str,
+        payloads: Vec<ItemPayload>,
+        expires_ms: u64,
+        stage: cua_keyvault::broker::StageSink,
+    ) -> KvResult<DeliveryOutcome> {
         let space = self.open_target(target).await?;
+        stage(TeleportStage::Packing);
         let spacesd = space
             .spacesd()
             .map_err(|e| backend_err("spacesd channel", e))?;
@@ -548,6 +562,17 @@ impl Backend for DaemonBackend {
             .map_err(|e| backend_err("finish bundle", e))?;
         let sha = hex::encode(Sha256::digest(&bytes));
         let import_id = format!("cua-kv-{:016x}", rand::random::<u64>());
+        // `sent == total` once the last chunk (the import) is on its way.
+        let progress: cua_teleport::Progress = {
+            let stage = stage.clone();
+            Arc::new(move |done, total| {
+                stage(if total > 0 && done >= total {
+                    TeleportStage::Importing
+                } else {
+                    TeleportStage::Uploading { done, total }
+                })
+            })
+        };
         // The env token / Fleet bearer authenticate this channel and are never
         // exposed to the MCP caller; the guest wipes on its own at expiry.
         let result = cua_teleport::upload_bundle(
@@ -562,6 +587,7 @@ impl Backend for DaemonBackend {
                 expires_at_ms: expires_ms,
                 // Every delivery through here was authorized by the broker.
                 broker_grant: Some("keyvault".into()),
+                progress: Some(progress),
                 ..Default::default()
             },
         )

@@ -985,6 +985,18 @@ mod tests {
         assert!(h.join("link").symlink_metadata().is_ok());
     }
 
+    /// The Keyvault broker sends `expires_at_ms: 0` while auto-wipe is off:
+    /// such an import never expires on its own, however late it is.
+    #[test]
+    fn a_zero_expiry_never_expires() {
+        let forever = ledger("kv", &[], &[], 0);
+        assert!(!forever.expired(0));
+        assert!(!forever.expired(u64::MAX));
+        let timed = ledger("kv", &[], &[], 5_000);
+        assert!(!timed.expired(4_999));
+        assert!(timed.expired(5_000));
+    }
+
     #[test]
     fn sweep_wipes_expired_but_not_live_and_keeps_unreadable() {
         let home = tempfile::tempdir().unwrap();

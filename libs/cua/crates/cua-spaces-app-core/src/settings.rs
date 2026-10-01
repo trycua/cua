@@ -57,6 +57,10 @@ pub struct AppSettings {
     /// Settings, Experiments: every switch off unless turned on
     /// ([`crate::experiments`]).
     pub experiments: Experiments,
+    /// Keyvault copies (import ids) the user dismissed from the notch: it no
+    /// longer shows them, nothing is revoked or wiped
+    /// ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
+    pub dismissed_access: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -72,6 +76,7 @@ impl Default for AppSettings {
             update_channel: UpdateChannel::Stable,
             launch_at_login: None,
             experiments: Experiments::default(),
+            dismissed_access: vec![],
         }
     }
 }
@@ -235,6 +240,9 @@ pub struct SettingsInput {
     pub login_item: Option<crate::login_item::LoginItemInput>,
     /// Settings, Experiments (what the page mentions follows them).
     pub experiments: Experiments,
+    /// The Keyvault's auto-wipe, once the broker told it (none: no
+    /// Keyvault section).
+    pub keyvault_auto_wipe: Option<bool>,
 }
 
 impl Default for SettingsInput {
@@ -254,7 +262,45 @@ impl Default for SettingsInput {
             billing: None,
             login_item: None,
             experiments: Experiments::default(),
+            keyvault_auto_wipe: None,
         }
+    }
+}
+
+/// The Keyvault auto-wipe switch's label.
+pub const AUTO_WIPE_LABEL: &str = "Wipe access from Spaces automatically";
+
+/// The line under it.
+pub const AUTO_WIPE_NOTE: &str = "When off, sign-ins stay in a Space until you wipe them.";
+
+/// The Keyvault section: the auto-wipe switch (off by default) and its
+/// line. Row id `keyvault-auto-wipe`; its options are `on` and `off`.
+pub fn keyvault_section(auto_wipe: bool) -> SettingsSection {
+    let mut toggle = row(
+        "keyvault-auto-wipe",
+        SettingsRowKind::Toggle,
+        AUTO_WIPE_LABEL,
+    );
+    toggle.options = vec![opt("on", "On", auto_wipe), opt("off", "Off", !auto_wipe)];
+    toggle.help = Some(if auto_wipe {
+        "Turning it off asks for Touch ID".into()
+    } else {
+        "Wipes sign-ins after an hour (15 minutes for identity providers)".into()
+    });
+    SettingsSection {
+        id: "keyvault".into(),
+        title: "Keyvault".into(),
+        button: None,
+        button_enabled: false,
+        button_help: None,
+        rows: vec![
+            toggle,
+            row(
+                "keyvault-auto-wipe-note",
+                SettingsRowKind::Note,
+                AUTO_WIPE_NOTE,
+            ),
+        ],
     }
 }
 
@@ -521,6 +567,10 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
         });
     }
 
+    if let Some(on) = input.keyvault_auto_wipe {
+        sections.push(keyvault_section(on));
+    }
+
     let agents = input.agents.clone().unwrap_or_default();
     let any_installed = agents.iter().any(|a| a.installed);
     let rows = agents
@@ -664,6 +714,42 @@ mod tests {
                 user_code: Some("AB-CD".into())
             }
         );
+    }
+
+    #[test]
+    fn the_keyvault_section_offers_auto_wipe_off_by_default() {
+        let ids =
+            |p: &SettingsPage| -> Vec<String> { p.sections.iter().map(|s| s.id.clone()).collect() };
+        // Not told yet (no broker): no section.
+        assert!(!ids(&page(&SettingsInput::default())).contains(&"keyvault".to_string()));
+        let p = page(&SettingsInput {
+            telemetry: Some(TelemetryInput::default()),
+            keyvault_auto_wipe: Some(false),
+            ..Default::default()
+        });
+        assert_eq!(
+            ids(&p),
+            ["account", "general", "privacy", "keyvault", "agents"]
+        );
+        let kv = &p.sections[3];
+        assert_eq!(kv.title, "Keyvault");
+        let toggle = &kv.rows[0];
+        assert_eq!(
+            (toggle.id.as_str(), toggle.kind, toggle.label.as_str()),
+            (
+                "keyvault-auto-wipe",
+                SettingsRowKind::Toggle,
+                AUTO_WIPE_LABEL
+            )
+        );
+        let on = |r: &SettingsRow| r.options.iter().find(|o| o.id == "on").unwrap().active;
+        assert!(!on(toggle), "off by default");
+        assert!(on(&keyvault_section(true).rows[0]));
+        assert_eq!(kv.rows[1].kind, SettingsRowKind::Note);
+        assert!(!AUTO_WIPE_NOTE.contains('\u{2014}'), "no em dashes in copy");
+        // A settings file from before dismissals: none dismissed.
+        let old: AppSettings = serde_json::from_str(r#"{"menuBar":true}"#).unwrap();
+        assert!(old.dismissed_access.is_empty());
     }
 
     #[test]

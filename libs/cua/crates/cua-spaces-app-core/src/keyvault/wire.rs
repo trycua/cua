@@ -313,12 +313,16 @@ pub struct KvDelivery {
     pub caller_fp: String,
     /// Delivered.
     pub delivered_ms: u64,
-    /// Wiped at.
+    /// Wiped at ([`KV_NO_EXPIRY`]: only when wiped).
     pub expires_ms: u64,
     /// Already wiped.
     #[serde(default)]
     pub wiped: bool,
 }
+
+/// A delivery's `expires_ms` when it never expires on its own (auto-wipe
+/// off): it stays until wiped.
+pub const KV_NO_EXPIRY: u64 = 0;
 
 /// One audit log entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -372,6 +376,10 @@ pub struct KvStatus {
     /// `auto` or `presence`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unlock_policy: Option<String>,
+    /// Delivered copies wipe themselves after their TTL (off by default;
+    /// none: not told, a broker before the setting or a third party).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_wipe: Option<bool>,
     /// The daemon can create the OS key store protector (setup offers Touch
     /// ID); false for a development daemon, which is passphrase-only.
     #[serde(default)]
@@ -477,6 +485,12 @@ pub enum KvCommand {
     RemoveRule {
         /// Id.
         id: String,
+    },
+    /// Auto-wipe of delivered copies (turning it off asks for Touch ID).
+    #[serde(rename_all = "camelCase")]
+    SetAutoWipe {
+        /// On.
+        on: bool,
     },
     /// Wipe a Space's copies.
     Release {

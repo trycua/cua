@@ -1297,10 +1297,10 @@
             "facts": [
               "Status: Running",
               "Image: ghcr.io/trycua/omarchy:edge [copy ghcr.io/trycua/omarchy:edge doc.on.doc Copy / checkmark Copied 1500ms]",
+              "Identifier: local:omarchy [copy local:omarchy doc.on.doc Copy / checkmark Copied 1500ms]",
               "System: Omarchy",
               "Kind: Virtual machine",
-              "Architecture: x64",
-              "Identifier: local:omarchy [copy local:omarchy doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Architecture: x64"
             ],
             "id": "local:omarchy",
             "previewText": "Loading the desktop…",

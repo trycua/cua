@@ -289,6 +289,34 @@ pub struct DeliveryOutcome {
     pub launched: bool,
 }
 
+/// Where a direct teleport ([`Broker::import_and_teleport_with_progress`])
+/// is, so the UI can say what is happening (and why macOS asks for the
+/// Keychain) instead of showing a bare progress bar. Never carries a value.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "stage", rename_all = "snake_case")]
+pub enum TeleportStage {
+    /// Reading the app's sign-in on this machine (the OS may ask for
+    /// Keychain access).
+    Reading,
+    /// Sealing what was read into the vault (the review's "Save to
+    /// Keyvault").
+    Saving,
+    /// Packing the bundle for the Space.
+    Packing,
+    /// Uploading it: bytes the Space has of the total.
+    Uploading {
+        /// Bytes sent.
+        done: u64,
+        /// Bytes in all.
+        total: u64,
+    },
+    /// The Space is importing it.
+    Importing,
+}
+
+/// Receives [`TeleportStage`]s (from any task).
+pub type StageSink = Arc<dyn Fn(TeleportStage) + Send + Sync>;
+
 /// Capture and delivery, supplied by the daemon (and by fakes in tests).
 #[async_trait::async_trait]
 pub trait Backend: Send + Sync {
@@ -319,6 +347,20 @@ pub trait Backend: Send + Sync {
         payloads: Vec<ItemPayload>,
         expires_ms: u64,
     ) -> Result<DeliveryOutcome>;
+    /// [`Self::deliver`], telling `stage` when it packs, uploads (with
+    /// bytes) and the Space imports. The default reports nothing.
+    async fn deliver_with_progress(
+        &self,
+        target: &str,
+        provider_id: &str,
+        payloads: Vec<ItemPayload>,
+        expires_ms: u64,
+        stage: StageSink,
+    ) -> Result<DeliveryOutcome> {
+        let _ = stage;
+        self.deliver(target, provider_id, payloads, expires_ms)
+            .await
+    }
     /// Wipes an earlier import from `target`.
     async fn wipe(&self, target: &str, import_id: &str) -> Result<Vec<String>>;
     /// Tells the UI a consent request is waiting (open the Keyvault page).
@@ -641,7 +683,7 @@ pub struct TeleportOutcome {
     pub items: Vec<String>,
     /// How it was authorized.
     pub authority: String,
-    /// When the target wipes the copy.
+    /// When the target wipes the copy (`0`: only when wiped).
     pub expires_ms: u64,
 }
 
@@ -667,6 +709,10 @@ pub struct Status {
     /// Unlock policy (first party only).
     #[serde(default)]
     pub unlock_policy: Option<UnlockPolicy>,
+    /// Delivered copies wipe themselves after their TTL (first party only;
+    /// off by default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_wipe: Option<bool>,
     /// This daemon can create the OS key store protector (the macOS Keychain
     /// or Windows Credential Manager): the platform has one, this daemon may
     /// use it, and (macOS) it is the signed Cua daemon. False for a debug
@@ -1059,6 +1105,11 @@ impl Broker {
             } else {
                 None
             },
+            auto_wipe: if fp {
+                meta.map(|m| m.settings.auto_wipe)
+            } else {
+                None
+            },
             os_protector_available: self.os_enroll_block().is_none(),
             passphrase_available: true,
             unlock_protectors: match (&st.vault, fp) {
@@ -1333,6 +1384,35 @@ impl Broker {
         Ok(())
     }
 
+    /// Auto-wipe (first party): on, copies delivered from now on wipe
+    /// themselves after their item's TTL; off, they stay until wiped.
+    /// Turning it off keeps copies longer, so it needs presence. Copies
+    /// already delivered keep the expiry they were delivered with.
+    pub async fn set_auto_wipe(&self, caller: &CallerIdentity, on: bool) -> Result<()> {
+        policy::require_first_party(caller, "changing Keyvault settings")?;
+        let current = {
+            let st = self.state.lock().await;
+            Self::settings(&st)?.auto_wipe
+        };
+        if current == on {
+            return Ok(());
+        }
+        if !on {
+            self.confirm("Keep Keyvault access in Spaces until you wipe it".into())
+                .await?;
+        }
+        let mut st = self.state.lock().await;
+        let v = Self::vault_mut(&mut st)?;
+        v.update_meta(|m| {
+            m.settings.auto_wipe = on;
+            Ok(())
+        })?;
+        let mut e = ev("settings.update", caller, "ok");
+        e.detail = format!("auto_wipe={on}");
+        Self::audit(&mut st, e);
+        Ok(())
+    }
+
     // ------------------------------------------------------------------
     // Items
     // ------------------------------------------------------------------
@@ -1430,6 +1510,13 @@ impl Broker {
         caller: &CallerIdentity,
         spec: ImportSpec,
     ) -> Result<Vec<ItemMeta>> {
+        let captured = self.capture_confirmed(spec).await?;
+        self.store_captured(caller, captured).await
+    }
+
+    /// The capture half of [`Self::import_confirmed`] (after presence):
+    /// checks the selection, then reads it on a blocking thread.
+    async fn capture_confirmed(&self, spec: ImportSpec) -> Result<Vec<Captured>> {
         if spec.sites.iter().any(|s| s.include_passwords) && !spec.confirm_passwords {
             return Err(Error::Invalid(
                 "saved passwords need the explicit second confirmation (confirm_passwords)".into(),
@@ -1441,11 +1528,9 @@ impl Broker {
             ));
         }
         let b = self.backend.clone();
-        let spec2 = spec.clone();
-        let captured = tokio::task::spawn_blocking(move || b.capture(&spec2))
+        tokio::task::spawn_blocking(move || b.capture(&spec))
             .await
-            .map_err(|e| Error::Backend(e.to_string()))??;
-        self.store_captured(caller, captured).await
+            .map_err(|e| Error::Backend(e.to_string()))?
     }
 
     /// Captures `spec` and immediately delivers every resulting item to
@@ -1455,7 +1540,8 @@ impl Broker {
     /// SwiftUI apps -- uses instead of exporting and uploading a bundle on
     /// its own: the capture, the audited authorization and the delivery all
     /// happen inside the Keyvault, so a direct teleport gets the same audit
-    /// trail, kill switch and auto-wipe a Keyvault-saved session already has.
+    /// trail, kill switch and auto-wipe setting a Keyvault-saved session
+    /// already has.
     ///
     /// `save`: when `false` (the common case -- "teleport this app", not
     /// "save this session"), every item this call captured is forgotten
@@ -1477,6 +1563,26 @@ impl Broker {
         target: String,
         save: bool,
     ) -> Result<TeleportOutcome> {
+        self.import_and_teleport_with_progress(caller, spec, target, save, None)
+            .await
+    }
+
+    /// [`Self::import_and_teleport`], telling `stage` where it is: reading
+    /// (when the OS may ask for Keychain access), saving (`save` only),
+    /// packing, uploading and importing.
+    pub async fn import_and_teleport_with_progress(
+        &self,
+        caller: &CallerIdentity,
+        spec: ImportSpec,
+        target: String,
+        save: bool,
+        stage: Option<StageSink>,
+    ) -> Result<TeleportOutcome> {
+        let tell = |s: TeleportStage| {
+            if let Some(f) = &stage {
+                f(s);
+            }
+        };
         policy::require_first_party(caller, "teleporting from this machine")?;
         {
             let st = self.state.lock().await;
@@ -1492,7 +1598,12 @@ impl Broker {
             caller.display()
         );
         self.confirm(reason).await?;
-        let items = self.import_confirmed(caller, spec).await?;
+        tell(TeleportStage::Reading);
+        let captured = self.capture_confirmed(spec).await?;
+        if save {
+            tell(TeleportStage::Saving);
+        }
+        let items = self.store_captured(caller, captured).await?;
         let item_ids: Vec<String> = items.iter().map(|m| m.id.clone()).collect();
         if item_ids.is_empty() {
             return Err(Error::Invalid(
@@ -1511,7 +1622,7 @@ impl Broker {
             target: target.clone(),
         };
         let result = self
-            .teleport_inner(caller, req, PresenceAlready::Confirmed)
+            .teleport_inner(caller, req, PresenceAlready::Confirmed, stage.clone())
             .await;
         crate::telemetry::teleport(&self.telemetry, caller, &app, started, &result, n);
         if !save {
@@ -2347,7 +2458,7 @@ impl Broker {
                 .unwrap_or_default()
         };
         let r = self
-            .teleport_inner(caller, req, PresenceAlready::NotConfirmed)
+            .teleport_inner(caller, req, PresenceAlready::NotConfirmed, None)
             .await;
         crate::telemetry::teleport(&self.telemetry, caller, &app, started, &r, items);
         r
@@ -2358,6 +2469,7 @@ impl Broker {
         caller: &CallerIdentity,
         req: TeleportRequest,
         presence: PresenceAlready,
+        stage: Option<StageSink>,
     ) -> Result<TeleportOutcome> {
         validate_target(&req.target)?;
         if req.items.is_empty() {
@@ -2376,7 +2488,7 @@ impl Broker {
             )));
         }
         // Phase 1 (locked): authorize and read payloads.
-        let (authority, groups, labels, ttl) = {
+        let (authority, groups, labels, ttl, auto_wipe) = {
             let mut st = self.state.lock().await;
             let disabled = Self::settings(&st)?.disabled;
             if disabled {
@@ -2501,7 +2613,7 @@ impl Broker {
             for d in meta
                 .deliveries
                 .iter()
-                .filter(|d| !d.wiped && d.target == req.target && d.expires_ms > now)
+                .filter(|d| d.live(now) && d.target == req.target)
             {
                 if let Some(g) = groups.get_mut(&d.provider_id) {
                     for i in &d.items {
@@ -2518,6 +2630,7 @@ impl Broker {
                 .map(|i| meta.items[i].policy.ttl_secs)
                 .min()
                 .unwrap_or(crate::model::DEFAULT_TTL_SECS);
+            let auto_wipe = meta.settings.auto_wipe;
             let mut out = Vec::new();
             for (provider, (ids, superseded)) in groups {
                 let mut payloads = Vec::new();
@@ -2545,7 +2658,7 @@ impl Broker {
                 .iter()
                 .map(|i| meta.items[i].label.clone())
                 .collect();
-            (authority, out, labels, ttl)
+            (authority, out, labels, ttl, auto_wipe)
         };
         if authority == Authority::Interactive && presence == PresenceAlready::NotConfirmed {
             self.confirm(format!(
@@ -2568,7 +2681,8 @@ impl Broker {
             Self::audit_required(&mut st, e)?;
         }
         // Phase 2 (unlocked): supersede, deliver.
-        let expires_ms = now + ttl * 1000;
+        // Auto-wipe off (the default): the copy stays until it is wiped.
+        let expires_ms = crate::model::delivery_expiry(auto_wipe, now, ttl);
         let mut outcome = TeleportOutcome {
             authority: authority.describe(),
             expires_ms,
@@ -2582,10 +2696,24 @@ impl Broker {
                 // leaves its own TTL to clean up.
                 let _ = self.backend.wipe(&req.target, &d.import_id).await;
             }
-            let res = self
-                .backend
-                .deliver(&req.target, &provider, payloads, expires_ms)
-                .await;
+            let res = match &stage {
+                Some(sink) => {
+                    self.backend
+                        .deliver_with_progress(
+                            &req.target,
+                            &provider,
+                            payloads,
+                            expires_ms,
+                            sink.clone(),
+                        )
+                        .await
+                }
+                None => {
+                    self.backend
+                        .deliver(&req.target, &provider, payloads, expires_ms)
+                        .await
+                }
+            };
             match res {
                 Ok(o) => {
                     delivered.push((provider, ids, o.clone(), superseded));

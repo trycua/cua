@@ -182,10 +182,11 @@
         "contentIn": 0.22,
         "contentOut": 0.1,
         "contentScale": 0.92,
-        "hoverDamping": 0.8,
+        "hoverDamping": 0.65,
         "hoverDwellMs": 300,
-        "hoverResponse": 0.38,
+        "hoverResponse": 0.3,
         "hoverScale": 1.08,
+        "hoverScaleY": 1.12,
         "openDamping": 0.8,
         "openResponse": 0.42,
         "reducedDuration": 0.15

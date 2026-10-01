@@ -27,8 +27,8 @@ use zeroize::Zeroize;
 use crate::audit::{AuditEntry, Verification};
 use crate::broker::{
     AccessRequest, ApproveOptions, Broker, Decision, ImportSpec, InitRequest, Inventory,
-    LoginOutcome, LoginRequest, PasswordImportSpec, PendingView, RuleSpec, Status, TeleportOutcome,
-    TeleportRequest, UnlockRequest,
+    LoginOutcome, LoginRequest, PasswordImportSpec, PendingView, RuleSpec, StageSink, Status,
+    TeleportOutcome, TeleportRequest, TeleportStage, UnlockRequest,
 };
 use crate::caller::{CallerIdentity, TrustPolicy};
 use crate::model::{Delivery, Grant, ItemMeta, ItemPolicy, UnattendedRule, UnlockPolicy};
@@ -57,6 +57,11 @@ pub enum Request {
     SetDisabled {
         /// On (true) or off.
         disabled: bool,
+    },
+    /// Auto-wipe of delivered copies (off: they stay until wiped).
+    SetAutoWipe {
+        /// On (true) or off.
+        on: bool,
     },
     /// Unlock policy.
     SetUnlockPolicy {
@@ -154,6 +159,10 @@ pub enum Request {
         /// Keep the captured item(s) in the vault afterward.
         #[serde(default)]
         save: bool,
+        /// Stream [`TeleportStage`] frames (`Response::stage`) before the
+        /// reply. Off for older clients, which read one reply per request.
+        #[serde(default)]
+        progress: bool,
     },
     /// Wipe deliveries on a target.
     Release {
@@ -218,6 +227,10 @@ pub struct Response {
     /// Error (when not `ok`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<WireError>,
+    /// A progress frame before the reply (only to a request that asked
+    /// for them); the reply itself never has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<TeleportStage>,
 }
 
 impl Response {
@@ -226,6 +239,7 @@ impl Response {
             ok: true,
             result: Some(serde_json::to_value(v).unwrap_or(Value::Null)),
             error: None,
+            stage: None,
         }
     }
 
@@ -237,9 +251,22 @@ impl Response {
                 code: error_code(e).into(),
                 message: e.to_string(),
             }),
+            stage: None,
+        }
+    }
+
+    fn stage(s: TeleportStage) -> Self {
+        Self {
+            ok: true,
+            result: None,
+            error: None,
+            stage: Some(s),
         }
     }
 }
+
+/// Most stage frames one request streams (each upload chunk is one).
+pub const MAX_STAGE_FRAMES: usize = 100_000;
 
 async fn read_frame<R: AsyncReadExt + Unpin>(r: &mut R) -> std::io::Result<Option<Vec<u8>>> {
     let mut len = [0u8; 4];
@@ -293,6 +320,7 @@ pub async fn dispatch(broker: &Broker, caller: &CallerIdentity, req: Request) ->
         Request::Unlock(r) => reply!(broker.unlock(caller, r).await),
         Request::Lock => reply!(broker.lock(caller).await),
         Request::SetDisabled { disabled } => reply!(broker.set_disabled(caller, disabled).await),
+        Request::SetAutoWipe { on } => reply!(broker.set_auto_wipe(caller, on).await),
         Request::SetUnlockPolicy {
             policy,
             auto_lock_minutes,
@@ -338,7 +366,9 @@ pub async fn dispatch(broker: &Broker, caller: &CallerIdentity, req: Request) ->
         Request::AddRule(spec) => reply!(broker.add_rule(caller, spec).await),
         Request::RemoveRule { id } => reply!(broker.remove_rule(caller, &id).await),
         Request::Teleport(r) => reply!(broker.teleport(caller, r).await),
-        Request::ImportAndTeleport { spec, target, save } => {
+        Request::ImportAndTeleport {
+            spec, target, save, ..
+        } => {
             reply!(broker.import_and_teleport(caller, spec, target, save).await)
         }
         Request::Release { target } => reply!(broker.release(caller, &target).await),
@@ -469,6 +499,17 @@ async fn handle(mut stream: tokio::net::UnixStream, broker: Arc<Broker>, policy:
         // bytes as soon as they are parsed.
         frame.zeroize();
         let resp = match parsed {
+            Ok(Request::ImportAndTeleport {
+                spec,
+                target,
+                save,
+                progress: true,
+            }) => {
+                match teleport_streaming(&mut stream, &broker, &caller, spec, target, save).await {
+                    Some(r) => r,
+                    None => return,
+                }
+            }
             Ok(req) => dispatch(&broker, &caller, req).await,
             Err(e) => Response::err(&Error::Invalid(format!("bad request: {e}"))),
         };
@@ -483,6 +524,56 @@ async fn handle(mut stream: tokio::net::UnixStream, broker: Arc<Broker>, policy:
             return;
         }
     }
+}
+
+/// `import_and_teleport` with its stages written as frames while it runs;
+/// the reply is returned for the caller to write. None when the client went
+/// away (the teleport still finishes).
+#[cfg(unix)]
+async fn teleport_streaming(
+    stream: &mut tokio::net::UnixStream,
+    broker: &Broker,
+    caller: &CallerIdentity,
+    spec: ImportSpec,
+    target: String,
+    save: bool,
+) -> Option<Response> {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TeleportStage>();
+    let sink: StageSink = Arc::new(move |s| {
+        let _ = tx.send(s);
+    });
+    let work = broker.import_and_teleport_with_progress(caller, spec, target, save, Some(sink));
+    tokio::pin!(work);
+    let mut connected = true;
+    let mut sent = 0usize;
+    // Bounded: the teleport future ends, and at most MAX_STAGE_FRAMES go out.
+    let result = loop {
+        tokio::select! {
+            r = &mut work => break r,
+            Some(s) = rx.recv() => {
+                if connected && sent < MAX_STAGE_FRAMES {
+                    sent += 1;
+                    let frame = serde_json::to_vec(&Response::stage(s)).unwrap_or_default();
+                    connected = write_frame(stream, &frame).await.is_ok();
+                }
+            }
+        }
+    };
+    if !connected {
+        return None;
+    }
+    while let Ok(s) = rx.try_recv() {
+        if sent >= MAX_STAGE_FRAMES {
+            break;
+        }
+        sent += 1;
+        let frame = serde_json::to_vec(&Response::stage(s)).unwrap_or_default();
+        write_frame(stream, &frame).await.ok()?;
+    }
+    Some(match result {
+        Ok(v) => Response::ok(v),
+        Err(e) => Response::err(&e),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -654,17 +745,38 @@ impl KeyvaultClient {
 
     /// Sends one request and returns the raw result.
     pub async fn call(&mut self, req: &Request) -> Result<Value> {
+        self.call_with_stages(req, &mut |_| {}).await
+    }
+
+    /// [`Self::call`], handing each stage frame before the reply to `on`.
+    async fn call_with_stages(
+        &mut self,
+        req: &Request,
+        on: &mut (dyn FnMut(TeleportStage) + Send),
+    ) -> Result<Value> {
         let mut bytes = serde_json::to_vec(req)?;
         let written = write_frame(&mut self.stream, &bytes).await;
         // `init` and `unlock` frames carry a passphrase.
         bytes.zeroize();
         written?;
-        let mut frame = read_frame(&mut self.stream)
-            .await?
-            .ok_or_else(|| Error::Backend("the Keyvault closed the connection".into()))?;
-        let parsed = serde_json::from_slice::<Response>(&frame);
-        frame.zeroize();
-        let resp = parsed?;
+        // Bounded: the server sends at most MAX_STAGE_FRAMES before the reply.
+        let mut resp = None;
+        for _ in 0..=MAX_STAGE_FRAMES {
+            let mut frame = read_frame(&mut self.stream)
+                .await?
+                .ok_or_else(|| Error::Backend("the Keyvault closed the connection".into()))?;
+            let parsed = serde_json::from_slice::<Response>(&frame);
+            frame.zeroize();
+            let r = parsed?;
+            match r.stage {
+                Some(s) => on(s),
+                None => {
+                    resp = Some(r);
+                    break;
+                }
+            }
+        }
+        let resp = resp.ok_or_else(|| Error::Backend("too many progress frames".into()))?;
         if resp.ok {
             Ok(resp.result.unwrap_or(Value::Null))
         } else {
@@ -777,8 +889,35 @@ impl KeyvaultClient {
         target: String,
         save: bool,
     ) -> Result<TeleportOutcome> {
-        self.typed(&Request::ImportAndTeleport { spec, target, save })
-            .await
+        self.typed(&Request::ImportAndTeleport {
+            spec,
+            target,
+            save,
+            progress: false,
+        })
+        .await
+    }
+    /// [`Self::import_and_teleport`], telling `on` each [`TeleportStage`]
+    /// as the daemon reaches it.
+    pub async fn import_and_teleport_with_progress(
+        &mut self,
+        spec: ImportSpec,
+        target: String,
+        save: bool,
+        mut on: impl FnMut(TeleportStage) + Send,
+    ) -> Result<TeleportOutcome> {
+        let v = self
+            .call_with_stages(
+                &Request::ImportAndTeleport {
+                    spec,
+                    target,
+                    save,
+                    progress: true,
+                },
+                &mut on,
+            )
+            .await?;
+        Ok(serde_json::from_value(v)?)
     }
     /// Release.
     pub async fn release(&mut self, target: &str) -> Result<Vec<String>> {
@@ -810,6 +949,10 @@ impl KeyvaultClient {
     /// Kill switch.
     pub async fn set_disabled(&mut self, disabled: bool) -> Result<()> {
         self.typed(&Request::SetDisabled { disabled }).await
+    }
+    /// Auto-wipe of delivered copies.
+    pub async fn set_auto_wipe(&mut self, on: bool) -> Result<()> {
+        self.typed(&Request::SetAutoWipe { on }).await
     }
 }
 
@@ -911,6 +1054,86 @@ mod tests {
             "an unsafe socket dir must be refused at connect: {cerr:?}"
         );
         std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    /// A streaming `import_and_teleport`: stage frames, then the reply; the
+    /// client hands each stage over in order and returns the outcome. The
+    /// request opts in, so an older daemon that ignores the flag (one reply,
+    /// no stages) still works.
+    #[tokio::test]
+    async fn teleport_stages_stream_before_the_reply() {
+        let (client_end, mut server_end) = tokio::net::UnixStream::pair().unwrap();
+        let server = tokio::spawn(async move {
+            let req = read_frame(&mut server_end).await.unwrap().unwrap();
+            let req: Request = serde_json::from_slice(&req).unwrap();
+            assert!(matches!(
+                req,
+                Request::ImportAndTeleport { progress: true, .. }
+            ));
+            for st in [
+                TeleportStage::Reading,
+                TeleportStage::Packing,
+                TeleportStage::Uploading { done: 5, total: 10 },
+                TeleportStage::Importing,
+            ] {
+                let f = serde_json::to_vec(&Response::stage(st)).unwrap();
+                write_frame(&mut server_end, &f).await.unwrap();
+            }
+            let done = Response::ok(TeleportOutcome {
+                authority: "interactive".into(),
+                ..Default::default()
+            });
+            write_frame(&mut server_end, &serde_json::to_vec(&done).unwrap())
+                .await
+                .unwrap();
+        });
+        let mut client = KeyvaultClient {
+            stream: client_end,
+            server: None,
+        };
+        let mut seen = Vec::new();
+        let out = client
+            .import_and_teleport_with_progress(ImportSpec::default(), "dev-1".into(), false, |st| {
+                seen.push(st)
+            })
+            .await
+            .unwrap();
+        server.await.unwrap();
+        assert_eq!(out.authority, "interactive");
+        assert_eq!(
+            seen,
+            [
+                TeleportStage::Reading,
+                TeleportStage::Packing,
+                TeleportStage::Uploading { done: 5, total: 10 },
+                TeleportStage::Importing,
+            ]
+        );
+        // On the wire a stage is tagged and the reply carries none.
+        let wire = serde_json::to_value(Response::stage(TeleportStage::Uploading {
+            done: 1,
+            total: 2,
+        }))
+        .unwrap();
+        assert_eq!(wire["stage"]["stage"], "uploading");
+        assert!(
+            serde_json::to_value(Response::ok(1))
+                .unwrap()
+                .get("stage")
+                .is_none()
+        );
+        // An older client's request (no flag) asks for no stages.
+        let old: Request = serde_json::from_str(
+            r#"{"op":"import_and_teleport","spec":{"app":"chrome"},"target":"t"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            old,
+            Request::ImportAndTeleport {
+                progress: false,
+                ..
+            }
+        ));
     }
 
     #[test]

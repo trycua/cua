@@ -114,6 +114,7 @@ struct CategoryList: View {
 
     var body: some View {
         let list = keyvault.list
+        ScrollViewReader { proxy in
         Form {
             if !list.sites.isEmpty {
                 ForEach(list.sites, id: \.key) { group in
@@ -151,9 +152,16 @@ struct CategoryList: View {
                         HStack {
                             Text(a.detail.isEmpty ? a.text : "\(a.text) \u{b7} \(a.detail)").lineLimit(1).help(a.detail)
                             Spacer()
+                            // Hides the notch's indicator only; Wipe removes it.
+                            if !a.imports.isEmpty, !keyvault.isDismissed(a) {
+                                Button("Dismiss") { keyvault.dismiss(a.imports) }
+                                    .help("Hide from the notch. Access stays until you wipe it.")
+                            }
                             Button(a.actionLabel) { Task { await keyvault.run(a.command) } }
                                 .disabled(keyvault.busy)
                         }
+                        .id(a.key)
+                        .listRowBackground(keyvault.focusKey == a.key ? Color.accentColor.opacity(0.12) : nil)
                     }
                 }
             }
@@ -181,6 +189,15 @@ struct CategoryList: View {
         }
         .formStyle(.grouped)
         .searchable(text: $keyvault.query)
+        .task(id: keyvault.focusKey) {
+            // A Space's "Signed in" badge: bring its row forward, then let
+            // the highlight go.
+            guard let key = keyvault.focusKey else { return }
+            withAnimation { proxy.scrollTo(key, anchor: .center) }
+            try? await Task.sleep(for: .seconds(2))
+            if keyvault.focusKey == key { withAnimation { keyvault.focusKey = nil } }
+        }
+        }
     }
 }
 

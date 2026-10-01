@@ -17457,6 +17457,72 @@ public func FfiConverterTypeAppModeChoice_lower(_ value: AppModeChoice) -> RustB
 }
 
 
+public struct AppNotchAccess: Equatable, Hashable {
+    /**
+     * "Keyvault sign-ins live in dev-1" (opens the Access page).
+     */
+    public var text: String
+    /**
+     * "Dismiss".
+     */
+    public var dismiss: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Keyvault sign-ins live in dev-1" (opens the Access page).
+         */text: String,
+        /**
+         * "Dismiss".
+         */dismiss: String) {
+        self.text = text
+        self.dismiss = dismiss
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppNotchAccess: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppNotchAccess: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppNotchAccess {
+        return
+            try AppNotchAccess(
+                text: FfiConverterString.read(from: &buf),
+                dismiss: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppNotchAccess, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.text, into: &buf)
+        FfiConverterString.write(value.dismiss, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppNotchAccess_lift(_ buf: RustBuffer) throws -> AppNotchAccess {
+    return try FfiConverterTypeAppNotchAccess.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppNotchAccess_lower(_ value: AppNotchAccess) -> RustBuffer {
+    return FfiConverterTypeAppNotchAccess.lower(value)
+}
+
+
 public struct AppNotchActivity: Equatable, Hashable {
     /**
      * Which.
@@ -17946,6 +18012,11 @@ public struct AppNotchMotion: Equatable, Hashable {
      */
     public var hoverScale: Double
     /**
+     * Vertical scale of the closed notch under the pointer (a few points
+     * taller, anchored at the top).
+     */
+    public var hoverScaleY: Double
+    /**
      * The content starts fading in this long after the shape starts
      * opening (ms).
      */
@@ -17998,6 +18069,10 @@ public struct AppNotchMotion: Equatable, Hashable {
          * Horizontal scale of the closed notch (and its tab) under the pointer.
          */hoverScale: Double,
         /**
+         * Vertical scale of the closed notch under the pointer (a few points
+         * taller, anchored at the top).
+         */hoverScaleY: Double,
+        /**
          * The content starts fading in this long after the shape starts
          * opening (ms).
          */contentDelayMs: UInt32,
@@ -18020,6 +18095,7 @@ public struct AppNotchMotion: Equatable, Hashable {
         self.hoverResponse = hoverResponse
         self.hoverDamping = hoverDamping
         self.hoverScale = hoverScale
+        self.hoverScaleY = hoverScaleY
         self.contentDelayMs = contentDelayMs
         self.contentIn = contentIn
         self.contentOut = contentOut
@@ -18052,6 +18128,7 @@ public struct FfiConverterTypeAppNotchMotion: FfiConverterRustBuffer {
                 hoverResponse: FfiConverterDouble.read(from: &buf),
                 hoverDamping: FfiConverterDouble.read(from: &buf),
                 hoverScale: FfiConverterDouble.read(from: &buf),
+                hoverScaleY: FfiConverterDouble.read(from: &buf),
                 contentDelayMs: FfiConverterUInt32.read(from: &buf),
                 contentIn: FfiConverterDouble.read(from: &buf),
                 contentOut: FfiConverterDouble.read(from: &buf),
@@ -18070,6 +18147,7 @@ public struct FfiConverterTypeAppNotchMotion: FfiConverterRustBuffer {
         FfiConverterDouble.write(value.hoverResponse, into: &buf)
         FfiConverterDouble.write(value.hoverDamping, into: &buf)
         FfiConverterDouble.write(value.hoverScale, into: &buf)
+        FfiConverterDouble.write(value.hoverScaleY, into: &buf)
         FfiConverterUInt32.write(value.contentDelayMs, into: &buf)
         FfiConverterDouble.write(value.contentIn, into: &buf)
         FfiConverterDouble.write(value.contentOut, into: &buf)
@@ -18445,6 +18523,12 @@ public struct AppNotchState: Equatable, Hashable {
      */
     public var keyvault: String?
     /**
+     * The Spaces signed in through the Keyvault, less the copies the user
+     * dismissed ([`crate::keyvault::view::signed_in_spaces`]): their tiles
+     * carry the key.
+     */
+    public var signedIn: [String]
+    /**
      * "Spaces tab in the notch: Hide" (menu bar only): nothing shows in
      * the notch, and hover, clicks and window drags do nothing.
      */
@@ -18483,6 +18567,11 @@ public struct AppNotchState: Equatable, Hashable {
          * [`crate::keyvault::view::sharing_label`]), so access is never silent.
          */keyvault: String?,
         /**
+         * The Spaces signed in through the Keyvault, less the copies the user
+         * dismissed ([`crate::keyvault::view::signed_in_spaces`]): their tiles
+         * carry the key.
+         */signedIn: [String],
+        /**
          * "Spaces tab in the notch: Hide" (menu bar only): nothing shows in
          * the notch, and hover, clicks and window drags do nothing.
          */hidden: Bool) {
@@ -18495,6 +18584,7 @@ public struct AppNotchState: Equatable, Hashable {
         self.hotspot = hotspot
         self.transfer = transfer
         self.keyvault = keyvault
+        self.signedIn = signedIn
         self.hidden = hidden
     }
 
@@ -18523,6 +18613,7 @@ public struct FfiConverterTypeAppNotchState: FfiConverterRustBuffer {
                 hotspot: FfiConverterBool.read(from: &buf),
                 transfer: FfiConverterOptionTypeAppNotchTransfer.read(from: &buf),
                 keyvault: FfiConverterOptionString.read(from: &buf),
+                signedIn: FfiConverterSequenceString.read(from: &buf),
                 hidden: FfiConverterBool.read(from: &buf)
         )
     }
@@ -18537,6 +18628,7 @@ public struct FfiConverterTypeAppNotchState: FfiConverterRustBuffer {
         FfiConverterBool.write(value.hotspot, into: &buf)
         FfiConverterOptionTypeAppNotchTransfer.write(value.transfer, into: &buf)
         FfiConverterOptionString.write(value.keyvault, into: &buf)
+        FfiConverterSequenceString.write(value.signedIn, into: &buf)
         FfiConverterBool.write(value.hidden, into: &buf)
     }
 }
@@ -18672,6 +18764,10 @@ public struct AppNotchTile: Equatable, Hashable {
      * "Failed"; while it is being deleted, "Deleting…".
      */
     public var progressLabel: String?
+    /**
+     * Signed in through the Keyvault (and not dismissed): the key badge.
+     */
+    public var signedIn: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -18712,7 +18808,10 @@ public struct AppNotchTile: Equatable, Hashable {
         /**
          * While it is being created: the phase in words ("Starting…"), or
          * "Failed"; while it is being deleted, "Deleting…".
-         */progressLabel: String?) {
+         */progressLabel: String?,
+        /**
+         * Signed in through the Keyvault (and not dismissed): the key badge.
+         */signedIn: Bool) {
         self.id = id
         self.name = name
         self.os = os
@@ -18724,6 +18823,7 @@ public struct AppNotchTile: Equatable, Hashable {
         self.label = label
         self.progress = progress
         self.progressLabel = progressLabel
+        self.signedIn = signedIn
     }
 
 
@@ -18752,7 +18852,8 @@ public struct FfiConverterTypeAppNotchTile: FfiConverterRustBuffer {
                 symbol: FfiConverterString.read(from: &buf),
                 label: FfiConverterString.read(from: &buf),
                 progress: FfiConverterOptionUInt32.read(from: &buf),
-                progressLabel: FfiConverterOptionString.read(from: &buf)
+                progressLabel: FfiConverterOptionString.read(from: &buf),
+                signedIn: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -18768,6 +18869,7 @@ public struct FfiConverterTypeAppNotchTile: FfiConverterRustBuffer {
         FfiConverterString.write(value.label, into: &buf)
         FfiConverterOptionUInt32.write(value.progress, into: &buf)
         FfiConverterOptionString.write(value.progressLabel, into: &buf)
+        FfiConverterBool.write(value.signedIn, into: &buf)
     }
 }
 
@@ -18978,6 +19080,11 @@ public struct AppNotchView: Equatable, Hashable {
      * One line in the open panel when window drags cannot be detected.
      */
     public var permission: AppNotchPermission?
+    /**
+     * One line in the open panel while Keyvault sign-ins are live in a
+     * Space (and not dismissed): what is live, and Dismiss.
+     */
+    public var access: AppNotchAccess?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -19025,7 +19132,11 @@ public struct AppNotchView: Equatable, Hashable {
          */hoverCue: Bool,
         /**
          * One line in the open panel when window drags cannot be detected.
-         */permission: AppNotchPermission?) {
+         */permission: AppNotchPermission?,
+        /**
+         * One line in the open panel while Keyvault sign-ins are live in a
+         * Space (and not dismissed): what is live, and Dismiss.
+         */access: AppNotchAccess?) {
         self.phase = phase
         self.tiles = tiles
         self.dropMode = dropMode
@@ -19040,6 +19151,7 @@ public struct AppNotchView: Equatable, Hashable {
         self.showTab = showTab
         self.hoverCue = hoverCue
         self.permission = permission
+        self.access = access
     }
 
 
@@ -19071,7 +19183,8 @@ public struct FfiConverterTypeAppNotchView: FfiConverterRustBuffer {
                 hidden: FfiConverterBool.read(from: &buf),
                 showTab: FfiConverterBool.read(from: &buf),
                 hoverCue: FfiConverterBool.read(from: &buf),
-                permission: FfiConverterOptionTypeAppNotchPermission.read(from: &buf)
+                permission: FfiConverterOptionTypeAppNotchPermission.read(from: &buf),
+                access: FfiConverterOptionTypeAppNotchAccess.read(from: &buf)
         )
     }
 
@@ -19090,6 +19203,7 @@ public struct FfiConverterTypeAppNotchView: FfiConverterRustBuffer {
         FfiConverterBool.write(value.showTab, into: &buf)
         FfiConverterBool.write(value.hoverCue, into: &buf)
         FfiConverterOptionTypeAppNotchPermission.write(value.permission, into: &buf)
+        FfiConverterOptionTypeAppNotchAccess.write(value.access, into: &buf)
     }
 }
 
@@ -24100,6 +24214,12 @@ public struct AppSettings: Equatable, Hashable {
      * ([`crate::experiments`]).
      */
     public var experiments: AppExperiments
+    /**
+     * Keyvault copies (import ids) the user dismissed from the notch: it no
+     * longer shows them, nothing is revoked or wiped
+     * ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
+     */
+    public var dismissedAccess: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -24137,7 +24257,12 @@ public struct AppSettings: Equatable, Hashable {
         /**
          * Settings, Experiments: every switch off unless turned on
          * ([`crate::experiments`]).
-         */experiments: AppExperiments) {
+         */experiments: AppExperiments,
+        /**
+         * Keyvault copies (import ids) the user dismissed from the notch: it no
+         * longer shows them, nothing is revoked or wiped
+         * ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
+         */dismissedAccess: [String]) {
         self.hotkey = hotkey
         self.menuBar = menuBar
         self.theme = theme
@@ -24148,6 +24273,7 @@ public struct AppSettings: Equatable, Hashable {
         self.updateChannel = updateChannel
         self.launchAtLogin = launchAtLogin
         self.experiments = experiments
+        self.dismissedAccess = dismissedAccess
     }
 
 
@@ -24175,7 +24301,8 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
                 lastSeenVersion: FfiConverterOptionString.read(from: &buf),
                 updateChannel: FfiConverterTypeAppUpdateChannel.read(from: &buf),
                 launchAtLogin: FfiConverterOptionBool.read(from: &buf),
-                experiments: FfiConverterTypeAppExperiments.read(from: &buf)
+                experiments: FfiConverterTypeAppExperiments.read(from: &buf),
+                dismissedAccess: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
@@ -24190,6 +24317,7 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
         FfiConverterTypeAppUpdateChannel.write(value.updateChannel, into: &buf)
         FfiConverterOptionBool.write(value.launchAtLogin, into: &buf)
         FfiConverterTypeAppExperiments.write(value.experiments, into: &buf)
+        FfiConverterSequenceString.write(value.dismissedAccess, into: &buf)
     }
 }
 
@@ -24267,6 +24395,11 @@ public struct AppSettingsInput: Equatable, Hashable {
      * Settings, Experiments (what the page mentions follows them).
      */
     public var experiments: AppExperiments
+    /**
+     * The Keyvault's auto-wipe, once the broker told it (none: no
+     * Keyvault section).
+     */
+    public var keyvaultAutoWipe: Bool?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -24313,7 +24446,11 @@ public struct AppSettingsInput: Equatable, Hashable {
          */loginItem: AppLoginItemInput?,
         /**
          * Settings, Experiments (what the page mentions follows them).
-         */experiments: AppExperiments) {
+         */experiments: AppExperiments,
+        /**
+         * The Keyvault's auto-wipe, once the broker told it (none: no
+         * Keyvault section).
+         */keyvaultAutoWipe: Bool?) {
         self.identity = identity
         self.apiKeyClient = apiKeyClient
         self.signIn = signIn
@@ -24328,6 +24465,7 @@ public struct AppSettingsInput: Equatable, Hashable {
         self.billing = billing
         self.loginItem = loginItem
         self.experiments = experiments
+        self.keyvaultAutoWipe = keyvaultAutoWipe
     }
 
 
@@ -24359,7 +24497,8 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
                 agentsPending: FfiConverterSequenceString.read(from: &buf),
                 billing: FfiConverterOptionTypeAppBillingStatus.read(from: &buf),
                 loginItem: FfiConverterOptionTypeAppLoginItemInput.read(from: &buf),
-                experiments: FfiConverterTypeAppExperiments.read(from: &buf)
+                experiments: FfiConverterTypeAppExperiments.read(from: &buf),
+                keyvaultAutoWipe: FfiConverterOptionBool.read(from: &buf)
         )
     }
 
@@ -24378,6 +24517,7 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
         FfiConverterOptionTypeAppBillingStatus.write(value.billing, into: &buf)
         FfiConverterOptionTypeAppLoginItemInput.write(value.loginItem, into: &buf)
         FfiConverterTypeAppExperiments.write(value.experiments, into: &buf)
+        FfiConverterOptionBool.write(value.keyvaultAutoWipe, into: &buf)
     }
 }
 
@@ -31205,6 +31345,11 @@ public struct KvAccessRow: Equatable, Hashable {
      * What the button sends.
      */
     public var command: KvCommand
+    /**
+     * A Space's copies: their import ids, which Dismiss hides from the
+     * notch (empty for grants and rules).
+     */
+    public var imports: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -31226,13 +31371,18 @@ public struct KvAccessRow: Equatable, Hashable {
          */actionLabel: String,
         /**
          * What the button sends.
-         */command: KvCommand) {
+         */command: KvCommand,
+        /**
+         * A Space's copies: their import ids, which Dismiss hides from the
+         * notch (empty for grants and rules).
+         */imports: [String]) {
         self.kind = kind
         self.key = key
         self.text = text
         self.detail = detail
         self.actionLabel = actionLabel
         self.command = command
+        self.imports = imports
     }
 
 
@@ -31256,7 +31406,8 @@ public struct FfiConverterTypeKvAccessRow: FfiConverterRustBuffer {
                 text: FfiConverterString.read(from: &buf),
                 detail: FfiConverterString.read(from: &buf),
                 actionLabel: FfiConverterString.read(from: &buf),
-                command: FfiConverterTypeKvCommand.read(from: &buf)
+                command: FfiConverterTypeKvCommand.read(from: &buf),
+                imports: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
@@ -31267,6 +31418,7 @@ public struct FfiConverterTypeKvAccessRow: FfiConverterRustBuffer {
         FfiConverterString.write(value.detail, into: &buf)
         FfiConverterString.write(value.actionLabel, into: &buf)
         FfiConverterTypeKvCommand.write(value.command, into: &buf)
+        FfiConverterSequenceString.write(value.imports, into: &buf)
     }
 }
 
@@ -32362,7 +32514,7 @@ public struct KvDelivery: Equatable, Hashable {
      */
     public var deliveredMs: UInt64
     /**
-     * Wiped at.
+     * Wiped at ([`KV_NO_EXPIRY`]: only when wiped).
      */
     public var expiresMs: UInt64
     /**
@@ -32392,7 +32544,7 @@ public struct KvDelivery: Equatable, Hashable {
          * Delivered.
          */deliveredMs: UInt64,
         /**
-         * Wiped at.
+         * Wiped at ([`KV_NO_EXPIRY`]: only when wiped).
          */expiresMs: UInt64,
         /**
          * Already wiped.
@@ -34644,6 +34796,11 @@ public struct KvStatus: Equatable, Hashable {
      */
     public var unlockPolicy: String?
     /**
+     * Delivered copies wipe themselves after their TTL (off by default;
+     * none: not told, a broker before the setting or a third party).
+     */
+    public var autoWipe: Bool?
+    /**
      * The daemon can create the OS key store protector (setup offers Touch
      * ID); false for a development daemon, which is passphrase-only.
      */
@@ -34689,6 +34846,10 @@ public struct KvStatus: Equatable, Hashable {
          * `auto` or `presence`.
          */unlockPolicy: String?,
         /**
+         * Delivered copies wipe themselves after their TTL (off by default;
+         * none: not told, a broker before the setting or a third party).
+         */autoWipe: Bool?,
+        /**
          * The daemon can create the OS key store protector (setup offers Touch
          * ID); false for a development daemon, which is passphrase-only.
          */osProtectorAvailable: Bool,
@@ -34708,6 +34869,7 @@ public struct KvStatus: Equatable, Hashable {
         self.items = items
         self.pending = pending
         self.unlockPolicy = unlockPolicy
+        self.autoWipe = autoWipe
         self.osProtectorAvailable = osProtectorAvailable
         self.passphraseAvailable = passphraseAvailable
         self.unlockProtectors = unlockProtectors
@@ -34738,6 +34900,7 @@ public struct FfiConverterTypeKvStatus: FfiConverterRustBuffer {
                 items: FfiConverterUInt32.read(from: &buf),
                 pending: FfiConverterUInt32.read(from: &buf),
                 unlockPolicy: FfiConverterOptionString.read(from: &buf),
+                autoWipe: FfiConverterOptionBool.read(from: &buf),
                 osProtectorAvailable: FfiConverterBool.read(from: &buf),
                 passphraseAvailable: FfiConverterBool.read(from: &buf),
                 unlockProtectors: FfiConverterSequenceString.read(from: &buf)
@@ -34754,6 +34917,7 @@ public struct FfiConverterTypeKvStatus: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.items, into: &buf)
         FfiConverterUInt32.write(value.pending, into: &buf)
         FfiConverterOptionString.write(value.unlockPolicy, into: &buf)
+        FfiConverterOptionBool.write(value.autoWipe, into: &buf)
         FfiConverterBool.write(value.osProtectorAvailable, into: &buf)
         FfiConverterBool.write(value.passphraseAvailable, into: &buf)
         FfiConverterSequenceString.write(value.unlockProtectors, into: &buf)
@@ -41498,7 +41662,10 @@ public enum AppNotchEvent: Equatable, Hashable {
     case keyvault(
         /**
          * The sharing label, if any.
-         */label: String?
+         */label: String?,
+        /**
+         * The Space ids signed in (their tiles carry the key).
+         */signedIn: [String]
     )
 
 
@@ -41553,7 +41720,7 @@ public struct FfiConverterTypeAppNotchEvent: FfiConverterRustBuffer {
         case 13: return .activity(hotspot: try FfiConverterBool.read(from: &buf), transfer: try FfiConverterOptionTypeAppNotchTransfer.read(from: &buf)
         )
 
-        case 14: return .keyvault(label: try FfiConverterOptionString.read(from: &buf)
+        case 14: return .keyvault(label: try FfiConverterOptionString.read(from: &buf), signedIn: try FfiConverterSequenceString.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -41623,9 +41790,10 @@ public struct FfiConverterTypeAppNotchEvent: FfiConverterRustBuffer {
             FfiConverterOptionTypeAppNotchTransfer.write(transfer, into: &buf)
 
 
-        case let .keyvault(label):
+        case let .keyvault(label,signedIn):
             writeInt(&buf, Int32(14))
             FfiConverterOptionString.write(label, into: &buf)
+            FfiConverterSequenceString.write(signedIn, into: &buf)
 
         }
     }
@@ -47875,6 +48043,14 @@ public enum KvCommand: Equatable, Hashable {
          */id: String
     )
     /**
+     * Auto-wipe of delivered copies (turning it off asks for Touch ID).
+     */
+    case setAutoWipe(
+        /**
+         * On.
+         */on: Bool
+    )
+    /**
      * Wipe a Space's copies.
      */
     case release(
@@ -47940,13 +48116,16 @@ public struct FfiConverterTypeKvCommand: FfiConverterRustBuffer {
         case 6: return .removeRule(id: try FfiConverterString.read(from: &buf)
         )
 
-        case 7: return .release(target: try FfiConverterString.read(from: &buf)
+        case 7: return .setAutoWipe(on: try FfiConverterBool.read(from: &buf)
         )
 
-        case 8: return .approve(requestId: try FfiConverterString.read(from: &buf), items: try FfiConverterOptionSequenceString.read(from: &buf)
+        case 8: return .release(target: try FfiConverterString.read(from: &buf)
         )
 
-        case 9: return .deny(requestId: try FfiConverterString.read(from: &buf)
+        case 9: return .approve(requestId: try FfiConverterString.read(from: &buf), items: try FfiConverterOptionSequenceString.read(from: &buf)
+        )
+
+        case 10: return .deny(requestId: try FfiConverterString.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -47986,19 +48165,24 @@ public struct FfiConverterTypeKvCommand: FfiConverterRustBuffer {
             FfiConverterString.write(id, into: &buf)
 
 
-        case let .release(target):
+        case let .setAutoWipe(on):
             writeInt(&buf, Int32(7))
+            FfiConverterBool.write(on, into: &buf)
+
+
+        case let .release(target):
+            writeInt(&buf, Int32(8))
             FfiConverterString.write(target, into: &buf)
 
 
         case let .approve(requestId,items):
-            writeInt(&buf, Int32(8))
+            writeInt(&buf, Int32(9))
             FfiConverterString.write(requestId, into: &buf)
             FfiConverterOptionSequenceString.write(items, into: &buf)
 
 
         case let .deny(requestId):
-            writeInt(&buf, Int32(9))
+            writeInt(&buf, Int32(10))
             FfiConverterString.write(requestId, into: &buf)
 
         }
@@ -50614,6 +50798,30 @@ fileprivate struct FfiConverterOptionTypeAppMenuPreview: FfiConverterRustBuffer 
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeAppMenuPreview.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeAppNotchAccess: FfiConverterRustBuffer {
+    typealias SwiftType = AppNotchAccess?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeAppNotchAccess.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeAppNotchAccess.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -55263,6 +55471,31 @@ fileprivate struct FfiConverterSequenceTypeTeleportProvider: FfiConverterRustBuf
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeTeleportRunEvent: FfiConverterRustBuffer {
+    typealias SwiftType = [TeleportRunEvent]
+
+    public static func write(_ value: [TeleportRunEvent], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTeleportRunEvent.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TeleportRunEvent] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [TeleportRunEvent]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTeleportRunEvent.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeTeleportWindow: FfiConverterRustBuffer {
     typealias SwiftType = [TeleportWindow]
 
@@ -57139,6 +57372,17 @@ public func appPickerSensitiveOptions(state: AppPickerState) -> [AppSensitiveOpt
 })
 }
 /**
+ * What the run is doing, in words ("Packing profile", "Uploading 12 /
+ * 80 MB"), for the line under the progress bar; none unless running.
+ */
+public func appPickerStatus(state: AppPickerState) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_picker_status(
+        FfiConverterTypeAppPickerState_lower(state),$0
+    )
+})
+}
+/**
  * The picker's Open windows tab.
  */
 public func appPickerWindowGrid(windows: [AppOpenWindow], query: String, selected: String?) -> AppPickerGrid  {
@@ -57846,6 +58090,26 @@ public func appTeleportPlanFromJson(json: String)throws  -> AppTeleportPlan  {
 })
 }
 /**
+ * An SDK run event as the picker's (`AppPickerEvent.progress`).
+ */
+public func appTeleportRunEvent(event: TeleportRunEvent) -> AppTeleportRunEvent  {
+    return try!  FfiConverterTypeAppTeleportRunEvent_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_teleport_run_event(
+        FfiConverterTypeTeleportRunEvent_lower(event),$0
+    )
+})
+}
+/**
+ * [`app_picker_status`] for a run's events as the SDK delivered them.
+ */
+public func appTeleportRunStatus(events: [TeleportRunEvent]) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_teleport_run_status(
+        FfiConverterSequenceTypeTeleportRunEvent.lower(events),$0
+    )
+})
+}
+/**
  * The "This machine" roster entry.
  */
 public func appThisMachineSpace(status: AppHostSummaryInput?, nowMs: Int64) -> AppSpace  {
@@ -58145,6 +58409,18 @@ public func kvPassphraseCheck(mode: KvFormMode, passphrase: String, confirm: Str
 })
 }
 /**
+ * The dismissed copies still live.
+ */
+public func kvPruneDismissed(overview: KeyvaultOverview, nowMs: Int64, dismissed: [String]) -> [String]  {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_kv_prune_dismissed(
+        FfiConverterTypeKeyvaultOverview_lower(overview),
+        FfiConverterInt64.lower(nowMs),
+        FfiConverterSequenceString.lower(dismissed),$0
+    )
+})
+}
+/**
  * The banner after setup: the recovery key, shown once.
  */
 public func kvRecoveryKeyText(key: String) -> String  {
@@ -58178,6 +58454,21 @@ public func kvSidebar(overview: KeyvaultOverview, nowMs: Int64) -> KvSidebar  {
 })
 }
 /**
+ * The ids of `spaces` signed in through the Keyvault (a live copy is in
+ * them), less the `dismissed` copies: "Signed in" in the Spaces list
+ * (nothing dismissed), the key on notch tiles.
+ */
+public func kvSignedInSpaces(overview: KeyvaultOverview, nowMs: Int64, dismissed: [String], spaces: [AppSpace]) -> [String]  {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_kv_signed_in_spaces(
+        FfiConverterTypeKeyvaultOverview_lower(overview),
+        FfiConverterInt64.lower(nowMs),
+        FfiConverterSequenceString.lower(dismissed),
+        FfiConverterSequenceTypeAppSpace.lower(spaces),$0
+    )
+})
+}
+/**
  * One site's detail.
  */
 public func kvSiteDetail(overview: KeyvaultOverview, key: String, nowMs: Int64) -> KvSiteDetail?  {
@@ -58197,6 +58488,31 @@ public func kvSiteToggle(group: KvSiteGroup, on: Bool) -> KvCommand  {
     uniffi_cua_spaces_ffi_fn_func_kv_site_toggle(
         FfiConverterTypeKvSiteGroup_lower(group),
         FfiConverterBool.lower(on),$0
+    )
+})
+}
+/**
+ * The Access row of `space`'s copies, to focus from its "Signed in" badge.
+ */
+public func kvSpaceAccessKey(overview: KeyvaultOverview, nowMs: Int64, space: AppSpace) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_kv_space_access_key(
+        FfiConverterTypeKeyvaultOverview_lower(overview),
+        FfiConverterInt64.lower(nowMs),
+        FfiConverterTypeAppSpace_lower(space),$0
+    )
+})
+}
+/**
+ * [`kv_sharing_label`] without the copies the user dismissed (import ids):
+ * the notch indicator.
+ */
+public func kvVisibleSharingLabel(overview: KeyvaultOverview, nowMs: Int64, dismissed: [String]) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_kv_visible_sharing_label(
+        FfiConverterTypeKeyvaultOverview_lower(overview),
+        FfiConverterInt64.lower(nowMs),
+        FfiConverterSequenceString.lower(dismissed),$0
     )
 })
 }
@@ -58699,6 +59015,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_picker_sensitive_options() != 65097) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_picker_status() != 28472) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_picker_window_grid() != 8477) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -58894,6 +59213,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_teleport_plan_from_json() != 33817) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_teleport_run_event() != 7876) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_teleport_run_status() != 21027) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_this_machine_space() != 14017) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -58978,6 +59303,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_kv_passphrase_check() != 38965) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_kv_prune_dismissed() != 61054) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_kv_recovery_key_text() != 26226) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -58987,10 +59315,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_kv_sidebar() != 64808) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_kv_signed_in_spaces() != 26065) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_kv_site_detail() != 19420) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_kv_site_toggle() != 62757) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_kv_space_access_key() != 62359) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_kv_visible_sharing_label() != 41274) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_spacesd_open_media_decoded() != 37315) {

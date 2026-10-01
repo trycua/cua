@@ -20,9 +20,19 @@ pub fn live_rule(r: &KvRule, now: i64) -> bool {
     r.enabled && now < r.not_after_ms as i64
 }
 
-/// A delivery not yet wiped.
+/// A delivery not yet wiped (one without expiry stays until wiped).
 pub fn live_delivery(d: &KvDelivery, now: i64) -> bool {
-    !d.wiped && now < d.expires_ms as i64
+    !d.wiped && (d.expires_ms == KV_NO_EXPIRY || now < d.expires_ms as i64)
+}
+
+/// How long a delivered copy stays: "wiped in 5 min", or "until you wipe
+/// it" (auto-wipe off).
+pub fn delivery_lifetime(expires_ms: u64, now: i64) -> String {
+    if expires_ms == KV_NO_EXPIRY {
+        "until you wipe it".into()
+    } else {
+        format!("wiped in {}", duration(expires_ms as i64 - now))
+    }
 }
 
 /// The always-visible signal (notch indicator, menu bar line) while any
@@ -30,19 +40,90 @@ pub fn live_delivery(d: &KvDelivery, now: i64) -> bool {
 /// an unattended rule or the user): "Keyvault sign-ins live in dev-1", or
 /// "... in 2 Spaces". None when nothing is live.
 pub fn sharing_label(o: &KeyvaultOverview, now: i64) -> Option<String> {
-    let mut targets: Vec<&str> = o
-        .deliveries
-        .iter()
-        .filter(|d| live_delivery(d, now))
-        .map(|d| d.target.as_str())
-        .collect();
-    targets.sort_unstable();
-    targets.dedup();
+    visible_sharing_label(o, now, &[])
+}
+
+/// [`sharing_label`] without the copies the user dismissed (their import
+/// ids): Dismiss hides the notch indicator, it never revokes or wipes.
+pub fn visible_sharing_label(
+    o: &KeyvaultOverview,
+    now: i64,
+    dismissed: &[String],
+) -> Option<String> {
+    let targets = live_targets(o, now, dismissed);
     match targets.as_slice() {
         [] => None,
         [one] => Some(format!("Keyvault sign-ins live in {one}")),
         many => Some(format!("Keyvault sign-ins live in {} Spaces", many.len())),
     }
+}
+
+/// The targets with a live copy not in `dismissed`, sorted, once each.
+fn live_targets<'a>(o: &'a KeyvaultOverview, now: i64, dismissed: &[String]) -> Vec<&'a str> {
+    let mut targets: Vec<&str> = o
+        .deliveries
+        .iter()
+        .filter(|d| live_delivery(d, now) && !dismissed.contains(&d.import_id))
+        .map(|d| d.target.as_str())
+        .collect();
+    targets.sort_unstable();
+    targets.dedup();
+    targets
+}
+
+/// A delivery's target names this Space: its id (`local:dev-1`), the name
+/// in it (`dev-1`, what an agent asks for), or its display name.
+fn names_space(target: &str, space: &crate::model::Space) -> bool {
+    target == space.id
+        || target == space.name
+        || space
+            .id
+            .split_once(':')
+            .is_some_and(|(_, name)| name == target)
+}
+
+/// The ids of `spaces` signed in through the Keyvault: a live copy is in
+/// them. The Spaces list marks every one ("Signed in"); the notch passes
+/// the user's `dismissed` copies, which it no longer shows.
+pub fn signed_in_spaces(
+    o: &KeyvaultOverview,
+    now: i64,
+    dismissed: &[String],
+    spaces: &[crate::model::Space],
+) -> Vec<String> {
+    let targets = live_targets(o, now, dismissed);
+    spaces
+        .iter()
+        .filter(|s| targets.iter().any(|t| names_space(t, s)))
+        .map(|s| s.id.clone())
+        .collect()
+}
+
+/// The dismissed copies still live (a wiped or expired copy no longer
+/// needs remembering).
+pub fn prune_dismissed(o: &KeyvaultOverview, now: i64, dismissed: &[String]) -> Vec<String> {
+    dismissed
+        .iter()
+        .filter(|id| {
+            o.deliveries
+                .iter()
+                .any(|d| &d.import_id == *id && live_delivery(d, now))
+        })
+        .cloned()
+        .collect()
+}
+
+/// The Access row of `space`'s copies (its [`AccessRow::key`]), to focus
+/// when its "Signed in" badge is clicked.
+pub fn space_access_key(
+    o: &KeyvaultOverview,
+    now: i64,
+    space: &crate::model::Space,
+) -> Option<String> {
+    live_targets(o, now, &[])
+        .into_iter()
+        .find(|t| names_space(t, space))
+        .map(|t| format!("d:{t}"))
 }
 
 fn js_round(x: f64) -> i64 {
@@ -229,11 +310,7 @@ fn consent_for(item: &KvItem, o: &KeyvaultOverview, now: i64) -> Vec<ConsentChip
     {
         chips.push(ConsentChip {
             kind: ConsentChipKind::Delivered,
-            text: format!(
-                "In {}, wiped in {}",
-                d.target,
-                duration(d.expires_ms as i64 - now)
-            ),
+            text: format!("In {}, {}", d.target, delivery_lifetime(d.expires_ms, now)),
         });
     }
     for g in o
@@ -609,6 +686,10 @@ pub struct AccessRow {
     pub action_label: String,
     /// What the button sends.
     pub command: KvCommand,
+    /// A Space's copies: their import ids, which Dismiss hides from the
+    /// notch (empty for grants and rules).
+    #[serde(default)]
+    pub imports: Vec<String>,
 }
 
 /// Live grants, rules and delivery targets, with their undo.
@@ -642,6 +723,7 @@ pub fn access_rows(o: &KeyvaultOverview, now: i64) -> Vec<AccessRow> {
             ),
             action_label: "Revoke".into(),
             command: KvCommand::RevokeGrant { id: g.id.clone() },
+            imports: vec![],
         });
     }
     for r in o.rules.iter().filter(|r| live_rule(r, now)) {
@@ -660,6 +742,7 @@ pub fn access_rows(o: &KeyvaultOverview, now: i64) -> Vec<AccessRow> {
             detail: names(&r.items),
             action_label: "Remove".into(),
             command: KvCommand::RemoveRule { id: r.id.clone() },
+            imports: vec![],
         });
     }
     let mut targets: Vec<&str> = Vec::new();
@@ -669,20 +752,28 @@ pub fn access_rows(o: &KeyvaultOverview, now: i64) -> Vec<AccessRow> {
         }
     }
     for t in targets {
+        // The soonest expiry; none (until wiped) only when no copy expires.
         let first = o
             .deliveries
             .iter()
             .filter(|d| live_delivery(d, now) && d.target == t)
-            .map(|d| d.expires_ms as i64)
+            .map(|d| d.expires_ms)
+            .filter(|&e| e != KV_NO_EXPIRY)
             .min()
-            .unwrap_or(now);
+            .unwrap_or(KV_NO_EXPIRY);
         rows.push(AccessRow {
             kind: AccessKind::Delivery,
             key: format!("d:{t}"),
             text: format!("Copy in {t}"),
-            detail: format!("wiped in {}", duration(first - now)),
+            detail: delivery_lifetime(first, now),
             action_label: "Wipe".into(),
             command: KvCommand::Release { target: t.into() },
+            imports: o
+                .deliveries
+                .iter()
+                .filter(|d| live_delivery(d, now) && d.target == t)
+                .map(|d| d.import_id.clone())
+                .collect(),
         });
     }
     rows
@@ -929,6 +1020,112 @@ mod sharing_tests {
             delivery("dev-2", 1_500, false),
         ];
         assert_eq!(sharing_label(&o, 2_000), None);
+    }
+
+    #[test]
+    fn a_copy_without_expiry_stays_live_until_wiped() {
+        let o = KeyvaultOverview {
+            deliveries: vec![delivery("dev-1", KV_NO_EXPIRY, false)],
+            ..KeyvaultOverview::default()
+        };
+        let far = i64::MAX / 2;
+        assert!(live_delivery(&o.deliveries[0], far));
+        assert_eq!(
+            sharing_label(&o, far).as_deref(),
+            Some("Keyvault sign-ins live in dev-1")
+        );
+        let rows = access_rows(&o, far);
+        assert_eq!(rows[0].text, "Copy in dev-1");
+        assert_eq!(rows[0].detail, "until you wipe it");
+        assert_eq!(rows[0].imports, ["imp-dev-1"]);
+        // A wiped one is gone.
+        let wiped = KeyvaultOverview {
+            deliveries: vec![delivery("dev-1", KV_NO_EXPIRY, true)],
+            ..KeyvaultOverview::default()
+        };
+        assert_eq!(sharing_label(&wiped, 0), None);
+        // With auto-wipe on, the soonest expiry is shown.
+        let timed = KeyvaultOverview {
+            deliveries: vec![
+                delivery("dev-1", KV_NO_EXPIRY, false),
+                delivery("dev-1", 2_000 + 5 * 60_000, false),
+            ],
+            ..KeyvaultOverview::default()
+        };
+        assert_eq!(access_rows(&timed, 2_000)[0].detail, "wiped in 5 min");
+        assert_eq!(delivery_lifetime(KV_NO_EXPIRY, 0), "until you wipe it");
+    }
+
+    fn space(id: &str, name: &str) -> crate::model::Space {
+        let row = crate::model::SpaceRow {
+            id: id.into(),
+            name: name.into(),
+            provider: "local".into(),
+            spacesd_version: "0.4.0".into(),
+            features: vec![],
+            added_at: None,
+            os: None,
+            os_name: None,
+            reachable: true,
+            error: None,
+            os_pretty_name: None,
+            image: None,
+            image_digest: None,
+            kind: None,
+            arch: None,
+            host: None,
+            host_name: None,
+            power: None,
+            power_state: None,
+            cloud: None,
+            cloud_place: None,
+            cloud_delete: None,
+        };
+        crate::spaces::row_to_space(&row, 0)
+    }
+
+    #[test]
+    fn signed_in_spaces_follow_live_copies_and_dismissal_hides_only_the_notch() {
+        let mut o = KeyvaultOverview::default();
+        let mut by_id = delivery("local:ci", KV_NO_EXPIRY, false);
+        by_id.import_id = "imp-a".into();
+        let mut by_name = delivery("dev-1", 10_000, false);
+        by_name.import_id = "imp-b".into();
+        o.deliveries = vec![by_id, by_name, delivery("gone", 10_000, true)];
+        let spaces = [
+            space("local:ci", "ci"),
+            space("local:dev-1", "dev-1"),
+            space("local:gone", "gone"),
+        ];
+        // Matched by id or by name; a wiped copy signs nothing in.
+        assert_eq!(
+            signed_in_spaces(&o, 2_000, &[], &spaces),
+            ["local:ci", "local:dev-1"]
+        );
+        // Dismissing one copy hides it from the notch only.
+        let dismissed = vec!["imp-b".to_string()];
+        assert_eq!(
+            signed_in_spaces(&o, 2_000, &dismissed, &spaces),
+            ["local:ci"]
+        );
+        assert_eq!(
+            visible_sharing_label(&o, 2_000, &dismissed).as_deref(),
+            Some("Keyvault sign-ins live in local:ci")
+        );
+        let all = vec!["imp-a".to_string(), "imp-b".to_string()];
+        assert_eq!(visible_sharing_label(&o, 2_000, &all), None);
+        // The Access page still lists (and wipes) both.
+        assert_eq!(access_rows(&o, 2_000).len(), 2);
+        // A new copy (a new import id) shows again; dismissed ids of copies
+        // no longer live are forgotten.
+        assert_eq!(prune_dismissed(&o, 2_000, &all), all);
+        assert_eq!(prune_dismissed(&o, 20_000, &all), ["imp-a"]);
+        // The badge focuses the Space's Access row.
+        assert_eq!(
+            space_access_key(&o, 2_000, &spaces[1]).as_deref(),
+            Some("d:dev-1")
+        );
+        assert_eq!(space_access_key(&o, 2_000, &spaces[2]), None);
     }
 
     #[test]

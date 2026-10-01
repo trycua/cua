@@ -44,7 +44,7 @@ pass the smoke. The native replay with bounded observation-only retries passes
 strict identity, semantic geometry and saved SVG checks on the published Driver
 and trace-disabled module. This proves the recorded single-app operations, not
 two-lane isolation or concurrency. Failures after raw input are reported as failed,
-not inspection-only. The portable harness suite passes 619 tests, with two skips.
+not inspection-only. The portable harness suite passes 623 tests, with two skips.
 
 The unchanged complete native Linux baseline finished with failures in Tauri
 page scrolling, keyboard-first cursor placement, GTK3 pixel geometry, desktop
@@ -62,8 +62,13 @@ Its final native evidence validator fails because an intentional stale-zoom
 refusal was classified as an unverifiable click and expected a click marker.
 The shared producer fix in candidate
 `e20386e4551c791c66a61e7e4693909cfdda430a` preserves legacy fields and reports
-refused-before-dispatch; the validator is unchanged. Final native and
-cross-platform verification remain in progress. Focused XWayland geometry on
+refused-before-dispatch; the validator is unchanged. That exact candidate passes
+the complete native Hyprland Linux runner, including final video validation:
+90 delivered, 42 expected refusals, zero failed or skipped cases. The complete
+hosted X11 gate also passes. Windows and macOS verification remain in progress.
+Final manual foreground safety passes 3/3 and native observation passes 1/1
+with behavioral video after the fixture windows are arranged without overlap.
+Focused XWayland geometry on
 the prior candidate matches an independent AT-SPI Screen oracle and delivers
 a background accessibility click.
 
@@ -71,14 +76,24 @@ Two-lane production setup exposed an observer assumption that rejected a stable
 primary locked-modifier mask despite no held keys. The proof now records that
 baseline mask, still refuses depressed/latched modifiers and nonzero groups,
 and still rejects every keyboard event during the interval, including a lock
-change and return. Native normal and negative-control replays remain required.
+change and return. The native production replay passes with two independent
+Inkscape processes and Driver runtimes: each selects, moves and saves its own
+rectangle, and both saved SVGs verify a two-pixel horizontal translation.
+Independent primary-client observation finds no interference. The separate
+negative control detects a deliberate pointer excursion and return. This does
+not substitute for diagnostic overlap, compositor attribution or cleanup proof.
+
+The first diagnostic overlap attempt stops before dragging: semantic Inkscape
+geometry labels did not match the legacy numeric-label parser, and the Fill and
+Stroke panel made the blue-rectangle pixel oracle ambiguous. The parser now
+accepts only exact axis-specific semantic labels while retaining cross-projection,
+numeric, visibility and uniqueness checks. Fresh setup closes the unrelated
+panel through accessibility; native diagnostic replay remains in progress.
 
 ## Remaining gates
 
-- Pass the complete native Linux all-suite on the final repaired candidate and
-  retain the manual observation test's behavioral video.
+- Complete cross-platform verification of the shared refusal-metadata repair.
 - Two independent app lanes, traced overlap/capacity/refusal and cleanup proof.
-- Independent primary-input isolation and negative control on production bytes.
 - Live removal/reinstallation, restart, upgrade and rollback evidence.
 - Bind any published kit/package to the exact passing evidence.
 - Omarchy-owned downstream acceptance and package promotion.

@@ -88,12 +88,36 @@ geometry labels did not match the legacy numeric-label parser, and the Fill and
 Stroke panel made the blue-rectangle pixel oracle ambiguous. The parser now
 accepts only exact axis-specific semantic labels while retaining cross-projection,
 numeric, visibility and uniqueness checks. Fresh setup closes the unrelated
-panel through accessibility; native diagnostic replay remains in progress.
+panel through accessibility. A later run verifies both drags and saved outputs,
+but fails final attribution because identical window-local coordinates match
+both lanes. Harness `1b4c066ce` binds each agent to the lane independently
+observed during its serial selection and verifies retained epoch/reservation
+before subsequent input. A fresh run passes with 1501 ms of drag overlap,
+per-lane wire endpoints, saved SVG effects, primary isolation and cleanup.
+Capacity also passes: two persistent owners are admitted and a third receives
+`lane_busy` without dispatch. Runtime cancellation passes with the sibling
+finishing and synthetic input released; reacquisition remains unproven.
+The integrated portable suite passes 628 tests with two skips.
+
+The replacement Edge guest has Mesa `1:26.2.3-2`, while the first profile pins
+`1:26.2.3-1`. The old recipe correctly refuses that mismatch. The newly measured
+profile differs only in that runtime package plus its explicit labels:
+`omarchy-edge-20261001-mesa2`, kit `1.2.1`, package release `3`.
+Its profile digest is
+`d3ff786deb7bbde5d2368dcb58966d9ddf0c705c37e51d0aac60901d7d983c84`;
+kit provenance is `28a3ccebccb539fc625b972082d3426f41a403e872d358b8eff130a4f80913f8`.
+The rebuilt production module is byte-identical to the original module, but
+the package is distinct:
+`fa68bd906e8bfe6473d790d28728e35efad978f548f48cf61d08a668d3841a30`.
+Its live lifecycle still requires verification; old package proof is not
+silently transferred. Published-source packages and the repaired Driver
+candidate remain separately identified.
 
 ## Remaining gates
 
-- Complete cross-platform verification of the shared refusal-metadata repair.
-- Two independent app lanes, traced overlap/capacity/refusal and cleanup proof.
+- Canonical Lume macOS verification of the shared refusal-metadata repair.
+  Canonical hosted Linux and Windows pass; hosted macOS is supplemental only.
+- Primary/agent conflict, geometry and target-lifetime fault recovery.
 - Live removal/reinstallation, restart, upgrade and rollback evidence.
 - Bind any published kit/package to the exact passing evidence.
 - Omarchy-owned downstream acceptance and package promotion.

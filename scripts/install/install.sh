@@ -7,7 +7,7 @@
 #
 # In a terminal it shows a checklist of what to install. Items:
 #   cli         the cua CLI (always installed, except with --app-only)
-#   spaces      the Cua Spaces app (default on macOS; off on Linux)
+#   spaces      the Cua Spaces app (macOS only for now; default on macOS)
 #   cua-driver  cua-driver MCP and skill for your agents (default off)
 #   host        host this machine: `cua host setup` (default off)
 #
@@ -266,14 +266,25 @@ init_selection() {
         list="$only_list"
     else
         list="$select_list"
-        # The app is a default only on macOS (Linux still ships it: --select spaces).
-        if [ "$os" = darwin ]; then sel_spaces=1; fi
+        # The app is a default on macOS.
+        if spaces_supported; then sel_spaces=1; fi
     fi
     for item in $(items_in "$list"); do item_set "$item" 1; done
     # Legacy: --app-only and --mode mean the app, as they always did.
     if [ "$app_only" = 1 ] || { [ -n "$mode" ] && [ "$cli_only" = 0 ]; }; then
         sel_spaces=1
     fi
+    if [ "$sel_spaces" = 1 ] && ! spaces_supported; then
+        info "Cua Spaces is macOS-only for now; skipping the app on Linux"
+        sel_spaces=0
+    fi
+}
+
+# Cua Spaces ships for macOS only for now (cd-cua-spaces.yml builds no Linux
+# app). To bring Linux back, return 0 for linux too (install_app_linux is
+# kept).
+spaces_supported() {
+    [ "$os" = darwin ]
 }
 
 # Show the checklist only when a human can answer it.
@@ -307,8 +318,8 @@ draw_rows() { # cursor row, or 0 for the numbered list
 # checklist: pick items with arrows/numbers + space, Enter to install.
 checklist() {
     rows="cli"
-    # Spaces is hidden on Linux unless preselected (--select spaces, --mode).
-    if [ "$os" = darwin ] || [ "$sel_spaces" = 1 ]; then rows="$rows spaces"; fi
+    # Spaces is offered only where it ships (macOS).
+    if spaces_supported; then rows="$rows spaces"; fi
     rows="$rows cua-driver host"
     n=0
     for r in $rows; do n=$((n + 1)); done

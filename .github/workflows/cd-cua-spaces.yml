@@ -2,6 +2,17 @@ name: "CD: Cua Spaces"
 
 # Cua Spaces desktop releases, published to a GitHub Release.
 #
+# MACOS ONLY FOR NOW: a release builds and publishes only the macOS SwiftUI
+# app (build-macos). The Linux and Windows Tauri app (build-linux-windows) is
+# kept below but disabled by its `if:`; installer-manifest runs without it,
+# and the Tauri updater feed (latest.json) is skipped while no Linux/Windows
+# updater artifact is on the release. install.sh / install.ps1 skip the Cua
+# Spaces app on Linux and Windows with a note. To bring Linux and Windows
+# back, drop build-linux-windows's `if:` (latest.json is then built and
+# required again for every Tauri platform) and re-enable the app in the
+# installers (spaces_supported in install.sh, $script:SpacesSupported in
+# install.ps1).
+#
 # macOS: the SwiftUI app (apps/cua-spaces-macos), universal (arm64 + x86_64),
 # built by apps/cua-spaces-macos/scripts/build-release.sh: the Cua Spaces app
 # export (cua-spaces-ffi, bundled as libcua_sdk.dylib) and the Cua Spaces
@@ -27,7 +38,8 @@ name: "CD: Cua Spaces"
 # items are Beta only). Two releases publishing at once could drop one
 # item; the next release adds it back.
 #
-# Linux and Windows: the Tauri app (apps/cua-spaces), with Tauri auto-updater
+# Linux and Windows (disabled for now, see above): the Tauri app
+# (apps/cua-spaces), with Tauri auto-updater
 # artifacts (.sig) and a `latest.json` update feed that lists only those
 # platforms. Every Tauri bundle carries the Cua Spaces build of the `cua` CLI
 # as its `cua` sidecar (scripts/prepare-cli-sidecar.sh,
@@ -67,10 +79,11 @@ name: "CD: Cua Spaces"
 # cua-spaces-v0.2.0-staging.1) is published as a GitHub prerelease, never
 # marked latest; on trycua/cua it does not move the rolling feeds.
 #
-# The updater feed (`latest.json` on this release and on the rolling
+# The Tauri updater feed (`latest.json` on this release and on the rolling
 # `cua-spaces-latest` release) is written once every platform has finished
-# (scripts/install/updater_feed.py). Installer assets and the feed carry
-# keyless Sigstore (cosign) bundles, which install.sh / install.ps1 verify.
+# (scripts/install/updater_feed.py), and only when the release carries Linux
+# or Windows updater artifacts. Installer assets and the feed carry keyless
+# Sigstore (cosign) bundles, which install.sh / install.ps1 verify.
 #
 # Release Please owns the version (component `cua-spaces`, apps/cua-spaces/VERSION)
 # and creates a draft release plus the `cua-spaces-v<version>` tag; this
@@ -446,9 +459,14 @@ jobs:
           done
           rm -f "$RUNNER_TEMP/application.p12" "$RUNNER_TEMP/installer.p12"
 
+  # Disabled: Cua Spaces ships for macOS only for now (see the header). It
+  # runs only when the repository variable CUA_SPACES_LINUX_WINDOWS is 'true'
+  # (unset everywhere today); drop the `if:` to build and publish the Linux
+  # and Windows Tauri app on every release again.
   build-linux-windows:
     name: ${{ matrix.name }}
     needs: build-macos
+    if: vars.CUA_SPACES_LINUX_WINDOWS == 'true'
     # Holds the Azure Artifact Signing identity (Windows Authenticode).
     environment: cua-driver-release-signing
     permissions:
@@ -679,7 +697,11 @@ jobs:
     # Only a release tag publishes: the Sigstore identity the installers and
     # the updater feed trust is cd-cua-spaces.yml at refs/tags/cua-spaces-v*.
     # A manual run from a tag re-publishes; from a branch it only builds.
-    if: startsWith(github.ref, 'refs/tags/cua-spaces-v')
+    # build-linux-windows may be skipped (disabled: macOS only), never failed.
+    if: >-
+      !cancelled() && startsWith(github.ref, 'refs/tags/cua-spaces-v')
+      && needs.build-macos.result == 'success'
+      && (needs.build-linux-windows.result == 'success' || needs.build-linux-windows.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -703,7 +725,7 @@ jobs:
           pattern: signing-*
           path: signing
           merge-multiple: true
-      - name: Sign, checksum and build release-artifacts.json and latest.json
+      - name: Sign, checksum and build release-artifacts.json (and latest.json)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
@@ -726,12 +748,20 @@ jobs:
             --dir assets --base-url "$BASE" \
             --repo "$GITHUB_REPOSITORY" --merge previous/release-artifacts.json --out assets/release-artifacts.json
           # The Tauri updater feed: Linux and Windows only (the macOS app is
-          # the SwiftUI app, which has no updater). Fails when any of those
-          # platforms is missing or unsigned.
-          python3 scripts/install/updater_feed.py --version "$VERSION" --dir assets \
-            --base-url "$BASE" --out assets/latest.json
-          gh release upload "$TAG" assets/*.sigstore.json assets/checksums.txt \
-            assets/release-artifacts.json assets/latest.json --clobber --repo "$GITHUB_REPOSITORY"
+          # the SwiftUI app, which updates through the Sparkle appcast). With
+          # any Linux/Windows artifact on the release it fails when one of
+          # those platforms is missing or unsigned; with none (macOS only for
+          # now) there is no feed.
+          upload=(assets/*.sigstore.json assets/checksums.txt assets/release-artifacts.json)
+          if compgen -G "assets/cua-spaces-$VERSION-linux-*" >/dev/null \
+            || compgen -G "assets/cua-spaces-$VERSION-windows-*" >/dev/null; then
+            python3 scripts/install/updater_feed.py --version "$VERSION" --dir assets \
+              --base-url "$BASE" --out assets/latest.json
+            upload+=(assets/latest.json)
+          else
+            echo "::notice::macOS-only release: no Linux/Windows Tauri app, so no latest.json"
+          fi
+          gh release upload "$TAG" "${upload[@]}" --clobber --repo "$GITHUB_REPOSITORY"
       - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -807,7 +837,11 @@ jobs:
               exit 1
             }
           fi
-          gh release upload cua-spaces-latest assets/latest.json --clobber --repo "$GITHUB_REPOSITORY"
+          # The Tauri feed only when this release has one (macOS only for
+          # now: Linux/Windows installs keep their current feed).
+          if [ -f assets/latest.json ]; then
+            gh release upload cua-spaces-latest assets/latest.json --clobber --repo "$GITHUB_REPOSITORY"
+          fi
           if ! gh release view cua-install-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             # The Actions token may create a release only for an existing tag
             # (with --target, or for a new tag, the API answers 403). Push the tag

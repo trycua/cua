@@ -19,7 +19,7 @@ In a terminal, install.sh shows a checklist (arrow or number keys to move and to
 | Item | What it does | Default |
 |---|---|---|
 | `cli` | The `cua` CLI | Always (not with `--app-only`) |
-| `spaces` | The Cua Spaces app | On for macOS; off and hidden on Linux and Windows unless selected. `--app-only` and `--mode` imply it |
+| `spaces` | The Cua Spaces app | On for macOS. macOS only for now: on Linux and Windows it is hidden, and selecting it (`--select`/`--only spaces`, `--app-only`, `--mode`) skips the app with a note. `--app-only` and `--mode` imply it |
 | `cua-driver` | Installs cua-driver with its own release installer (`cua.ai/driver/install.sh` / `install.ps1`, which verify SHA256SUMS and the Sigstore bundle), then `cua agents setup --cua-driver --agents all --yes` registers its skill and MCP server for your agents | Off |
 | `host` | Runs `cua host setup` after sign-in so others on your account can reach this machine | Off |
 
@@ -55,14 +55,14 @@ Pass install.sh options through the pipe with `sh -s --`, for example `curl -fsS
 | | CLI | App |
 |---|---|---|
 | macOS | `~/.local/bin/cua` (`/usr/local/bin` as root) | `/Applications` if writable, else `~/Applications` (from the .dmg; the SwiftUI app, macOS 26 or later, skipped on older macOS) |
-| Linux | same as macOS | AppImage at `~/.local/bin/cua-spaces` plus a desktop entry; the .deb via apt-get when run as root |
-| Windows | `%LOCALAPPDATA%\Programs\cua\bin\cua.exe` | Silent MSI (`CUA_SPACES_MODE=`) or NSIS (`/S /MODE=`) |
+| Linux | same as macOS | Not offered for now (macOS only). When re-enabled: AppImage at `~/.local/bin/cua-spaces` plus a desktop entry; the .deb via apt-get when run as root |
+| Windows | `%LOCALAPPDATA%\Programs\cua\bin\cua.exe` | Not offered for now (macOS only). When re-enabled: silent MSI (`CUA_SPACES_MODE=`) or NSIS (`/S /MODE=`) |
 
 cua-driver lands where its own installer puts it: `~/.local/bin/cua-driver` (or `DIR/bin` with `--prefix`), `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` on Windows.
 
 The scripts never edit shell profiles unless you pass `--modify-path`. `--mode` writes `~/.cua/spaces-install-mode`, which the app reads on first launch.
 
-MDM on macOS: `apps/cua-spaces/scripts/build-pkg.sh` builds a `.pkg` (signed with `--sign`, install mode baked with `--mode`) that installs the app and links `/usr/local/bin/cua` to the CLI bundled inside it. The macOS app is the SwiftUI app (`apps/cua-spaces-macos`, `scripts/build-release.sh`), which carries the CLI as `Contents/MacOS/cua`; the Linux and Windows (Tauri) bundles carry it as a sidecar (`apps/cua-spaces/scripts/prepare-cli-sidecar.sh` + `src-tauri/tauri.sidecar.conf.json`).
+MDM on macOS: `apps/cua-spaces/scripts/build-pkg.sh` builds a `.pkg` (signed with `--sign`, install mode baked with `--mode`) that installs the app and links `/usr/local/bin/cua` to the CLI bundled inside it. The macOS app is the SwiftUI app (`apps/cua-spaces-macos`, `scripts/build-release.sh`), which carries the CLI as `Contents/MacOS/cua`; the Linux and Windows (Tauri) bundles, not released for now, carry it as a sidecar (`apps/cua-spaces/scripts/prepare-cli-sidecar.sh` + `src-tauri/tauri.sidecar.conf.json`).
 
 ## Release manifest
 

@@ -7,6 +7,7 @@ name = "cua-computer"
 version = "0.5.19"
 description = "Computer-Use Interface (CUI) framework powering Cua"
 readme = "README.md"
+license = { text = "MIT" }
 authors = [
     { name = "TryCua", email = "gh@trycua.com" }
 ]

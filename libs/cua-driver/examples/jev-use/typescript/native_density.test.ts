@@ -1,6 +1,7 @@
 // Larger candidate sets and relevance capping (#4312). Mirrors
 // python/tests/test_native_density.py; the fixtures are get_window_state
-// results recorded from the GTK3 harness with CUA_GTK3_TASK_DENSITY set.
+// results recorded from the AppKit, GTK3, WPF, and WinUI3 harnesses with
+// CUA_<HARNESS>_TASK_DENSITY set.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
@@ -67,8 +68,9 @@ test('compose keeps relevant candidates over the cap in element order', () => {
 
 test('density fixtures reproduce the golden candidate sets', () => {
   const golden = fixture('native-density-candidates-v1.json').sets;
-  assert.equal(Object.keys(golden).length, 24);
-  for (const harness of ['gtk3', 'appkit']) {
+  const harnesses = ['gtk3', 'appkit', 'wpf', 'winui3'];
+  assert.equal(Object.keys(golden).length, harnesses.length * 2 * 3 * 2);
+  for (const harness of harnesses) {
     for (const density of [12, 24]) {
       const payload = fixture(`${harness}-window-state-density-${density}-v1.json`);
       for (const kind of KINDS) {

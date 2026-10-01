@@ -669,6 +669,8 @@ extract_published_release_versions() {
     # harnesses that predate persistent channel selection.
     local selected_channel="${SELECTED_CHANNEL:-stable}"
     local selected_tag_prefix="${SELECTED_TAG_PREFIX:-$TAG_PREFIX}"
+    # The nightly date is eight spelled-out digits: mawk 1.3.4 20200120 (the
+    # awk on Debian 12 and Ubuntu 22.04) does not support {n} intervals.
     awk -v prefix="$selected_tag_prefix" -v channel="$selected_channel" '
         /"tag_name"[[:space:]]*:/ {
             tag = $0
@@ -682,7 +684,7 @@ extract_published_release_versions() {
                 if (index(version, prefix) == 1) {
                     version = substr(version, length(prefix) + 1)
                     if ((channel == "stable" && version ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) ||
-                        (channel == "nightly" && version ~ /^[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[1-9][0-9]*$/)) {
+                        (channel == "nightly" && version ~ /^[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]\.[1-9][0-9]*$/)) {
                         print version
                     }
                 }

@@ -1034,10 +1034,7 @@ mod tests {
             .find(|agent| agent.label == "Pi")
             .expect("Pi must remain a supported skill target");
 
-        assert!(matches!(
-            target.parent,
-            AgentParent::Home(".agents/skills")
-        ));
+        assert!(matches!(target.parent, AgentParent::Home(".agents/skills")));
         assert!(matches!(target.install_marker, Some(".pi/agent")));
     }
 
@@ -1046,14 +1043,8 @@ mod tests {
         let codex = AGENTS.iter().find(|agent| agent.label == "Codex").unwrap();
         let pi = AGENTS.iter().find(|agent| agent.label == "Pi").unwrap();
 
-        assert!(matches!(
-            codex.parent,
-            AgentParent::Home(".agents/skills")
-        ));
-        assert!(matches!(
-            pi.parent,
-            AgentParent::Home(".agents/skills")
-        ));
+        assert!(matches!(codex.parent, AgentParent::Home(".agents/skills")));
+        assert!(matches!(pi.parent, AgentParent::Home(".agents/skills")));
         assert!(matches!(codex.install_marker, Some(".codex")));
         assert!(matches!(pi.install_marker, Some(".pi/agent")));
     }

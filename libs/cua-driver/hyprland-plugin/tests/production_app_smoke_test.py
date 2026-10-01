@@ -323,6 +323,36 @@ class InputTests(unittest.TestCase):
             with self.assertRaises(GroundingUnavailable):
                 ground(state, 'inkscape', 'move')
 
+    def test_selected_rectangle_accepts_only_per_axis_semantic_labels(self):
+        names = ['Horizontal coordinate of selection', 'Vertical coordinate of selection',
+                 'Width of selection', 'Height of selection']
+
+        def relabel(state, labels):
+            state = copy.deepcopy(state)
+            markdown = state['tree_markdown']
+            for row, label in zip(state['elements'][1:], labels):
+                markdown = markdown.replace(f'spin button "{row["label"]}"', f'spin button "{label}"')
+                row['label'] = label
+            return {**state, 'tree_markdown': markdown}
+
+        ground(relabel(INKSCAPE_SELECTED, names), 'inkscape', 'move')
+        # Swapped axes, a duplicate label, or a wrong value must not ground.
+        for labels in (names[1::-1] + names[2:], [names[0]] * 2 + names[2:],
+                       names[:3] + ['Depth of selection']):
+            with self.subTest(labels=labels), self.assertRaises(GroundingUnavailable):
+                ground(relabel(INKSCAPE_SELECTED, labels), 'inkscape', 'move')
+        good = relabel(INKSCAPE_SELECTED, names)
+        bad = copy.deepcopy(good)
+        bad['elements'][3]['value'] = '81.0'
+        bad['tree_markdown'] = bad['tree_markdown'].replace('value="80.0"', 'value="81.0"')
+        with self.assertRaises(GroundingUnavailable):
+            ground(bad, 'inkscape', 'move')
+        with self.assertRaises(GroundingUnavailable):
+            ground({**good, 'elements': good['elements'] + [good['elements'][1]]}, 'inkscape', 'move')
+        with self.assertRaises(GroundingUnavailable):
+            ground({**good, 'tree_markdown': good['tree_markdown'].replace('"Y:"', '"X:"')},
+                   'inkscape', 'move')
+
     def test_calc_grounding_rejects_empty_tree_dialog_and_wrong_selection(self):
         # Inkscape stages are owned by the two Inkscape grounding tables above.
         ground(CALC, 'calc', 'insert')

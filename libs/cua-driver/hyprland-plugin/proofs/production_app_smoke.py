@@ -448,17 +448,23 @@ def inkscape_selected_rectangle(snapshot, elements):
             f'- [{objects[0].get("element_index")}] table cell "smoke-rectangle" ')
             for line in lines) != 1:
         return False
-    for axis, value in (('X', 40), ('Y', 60), ('W', 80), ('H', 50)):
+    for axis, value, semantic in (('X', 40, 'Horizontal coordinate of selection'),
+                                  ('Y', 60, 'Vertical coordinate of selection'),
+                                  ('W', 80, 'Width of selection'),
+                                  ('H', 50, 'Height of selection')):
+        # The pinned Inkscape labels each control with its value or, in newer
+        # builds, with its axis meaning; accept only this axis's own label.
+        labels = (f'{value:.3f}', semantic)
         controls = [row for row in elements if row.get('role') == 'spin button'
-                    and row.get('label') == f'{value:.3f}'
+                    and row.get('label') in labels
                     and row.get('value') == f'{value:.1f}' and row.get('enabled') is True]
         matches = []
         for row in controls:
-            prefix = (f'- [{row.get("element_index")}] spin button "{value:.3f}" '
+            prefix = (f'- [{row.get("element_index")}] spin button "{row["label"]}" '
                       f'value="{value:.1f}" ')
             matches.extend(index for index, line in enumerate(lines) if index > 0
                            and line.startswith(prefix) and lines[index - 1] == f'- label = "{axis}:"')
-        if len(matches) != 1:
+        if len(controls) != 1 or len(matches) != 1:
             return False
     return True
 

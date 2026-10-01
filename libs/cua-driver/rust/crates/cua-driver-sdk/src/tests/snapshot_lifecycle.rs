@@ -48,6 +48,7 @@ fn resolve<S: SnapshotPayload>(
 }
 
 struct CaptureProbe {
+    protect_native: bool,
     started: Notify,
     invocation_dropped: Notify,
     native_finished: Notify,
@@ -94,7 +95,11 @@ impl Tool for CaptureTool {
         let _lifetime = InvocationLifetime(self.probe.clone());
         let native = self.probe.clone();
         let receiver = native.release.lock().unwrap().take().unwrap();
+        let operation = cua_driver_core::native_operation::NativeOperation::current();
         tokio::task::spawn_blocking(move || {
+            if native.protect_native {
+                assert!(operation.begin());
+            }
             native.started.notify_one();
             let released = receiver.recv_timeout(WAIT);
             native.native_finished.notify_one();
@@ -148,8 +153,15 @@ fn driver_with_tools(register: fn(&mut ToolRegistry)) -> Arc<CuaDriver> {
 }
 
 fn capture_driver() -> (Arc<CuaDriver>, Arc<CaptureProbe>, ReleaseNative) {
+    capture_driver_with_completion(false)
+}
+
+fn capture_driver_with_completion(
+    protect_native: bool,
+) -> (Arc<CuaDriver>, Arc<CaptureProbe>, ReleaseNative) {
     let (sender, receiver) = mpsc::channel();
     let probe = Arc::new(CaptureProbe {
+        protect_native,
         started: Notify::new(),
         invocation_dropped: Notify::new(),
         native_finished: Notify::new(),
@@ -431,4 +443,39 @@ mod native {
             "token eviction did not retire native cache ownership"
         );
     }
+}
+
+#[tokio::test]
+async fn cancelled_started_native_work_keeps_shutdown_waiting() {
+    let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+    let (driver, probe, release) = capture_driver_with_completion(true);
+    let caller = driver.clone();
+    let action =
+        tokio::spawn(async move { caller.call_tool("health_report".into(), "{}".into()).await });
+    tokio::time::timeout(WAIT, probe.started.notified())
+        .await
+        .unwrap();
+    action.abort();
+    assert!(action.await.unwrap_err().is_cancelled());
+    let closer = driver.clone();
+    let mut shutdown = tokio::spawn(async move { closer.shutdown().await });
+    wait_for_closed_admission(&driver).await;
+    let early = tokio::time::timeout(Duration::from_millis(100), &mut shutdown).await;
+    let premature = early.is_ok();
+    drop(release);
+    if early.is_err() {
+        tokio::time::timeout(WAIT, shutdown)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
+    assert!(
+        !premature,
+        "shutdown returned while cancelled native work was still running"
+    );
+    assert!(
+        probe.published.lock().unwrap().is_some(),
+        "started native work lost its truthful completion path"
+    );
 }

@@ -5,6 +5,7 @@
 
 pub mod mcp_skills;
 pub mod mcp_wire;
+pub mod native_operation;
 
 pub const RESPONSIBILITY_DISCLAIMED_ENV: &str = "CUA_DRIVER_RS_RESPONSIBILITY_DISCLAIMED";
 

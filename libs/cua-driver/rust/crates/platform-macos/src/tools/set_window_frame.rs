@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use core_foundation::base::{CFRelease, CFTypeRef};
 use cua_driver_contract::SetWindowFrameInput;
 use cua_driver_core::{
     action_record::{
@@ -139,156 +138,92 @@ fn window_server_frame(window_id: u32) -> Option<Frame> {
     })
 }
 
-fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String> {
-    use crate::{
-        ax::bindings::{
-            ax_get_window_id, copy_ax_windows, element_screen_rect, is_attribute_settable,
-            kAXErrorSuccess, set_point_attr, set_size_attr, AXUIElementCreateApplication,
-            AXUIElementSetMessagingTimeout,
-        },
-        windows::WindowOwner,
+fn mutate_and_verify(
+    input: &SetWindowFrameInput,
+    window: super::ax_window::Window,
+) -> Result<FrameOutcome, String> {
+    use crate::ax::bindings::{
+        element_screen_rect, is_attribute_settable, kAXErrorSuccess, set_point_attr, set_size_attr,
     };
-
-    let pid = i32::try_from(input.pid)
-        .map_err(|_| format!("pid {} is out of range on macOS", input.pid))?;
-    let window_id = u32::try_from(input.window_id)
-        .map_err(|_| format!("window_id {} is out of range on macOS", input.window_id))?;
     let requested = Frame::from_input(input);
     if !requested.is_valid() {
         return Err("x/y must be finite and width/height must be finite positive numbers".into());
     }
-
-    match crate::windows::resolve_window_owner(pid, window_id) {
-        WindowOwner::SamePid => {}
-        WindowOwner::ForeignPid {
-            owner_pid,
-            owner_app_name,
-        } => {
-            return Err(format!(
-                "window_id {window_id} belongs to pid {owner_pid} ({owner_app_name}), not pid {pid}"
-            ));
-        }
-        WindowOwner::Unknown => {
-            return Err(format!(
-                "window_id {window_id} is closed, stale, or unknown to WindowServer"
-            ));
-        }
+    let window_id = window.id;
+    // Retain #4348's containment until the embedded SDK/AppKit regression passes.
+    if input.pid == std::process::id() {
+        return Err(format!(
+            "refusing to move window_id {window_id} in the driver's own process (pid {}): AppKit window writes must run on the main thread",
+            input.pid
+        ));
     }
-
-    unsafe {
-        let app = AXUIElementCreateApplication(pid);
-        if app.is_null() {
-            return Err(format!(
-                "could not create an accessibility element for pid {pid}"
-            ));
-        }
-        AXUIElementSetMessagingTimeout(app, 2.0);
-        let windows = copy_ax_windows(app);
-        let target = windows
+    let before = window_server_frame(window_id);
+    let mutations = before.map_or(&FRAME_MUTATION_ORDER[..], |before| {
+        initial_mutations(requested, before)
+    });
+    let apply = move |target, mutations: &[FrameMutation]| unsafe {
+        mutations
             .iter()
-            .copied()
-            .find(|window| ax_get_window_id(*window) == Some(window_id));
-
-        let result = if let Some(target) = target {
-            AXUIElementSetMessagingTimeout(target, 2.0);
-            let before = window_server_frame(window_id);
-            let mutations = before.map_or(&FRAME_MUTATION_ORDER[..], |before| {
-                initial_mutations(requested, before)
-            });
-            if !is_attribute_settable(target, "AXPosition") {
-                Err(format!(
-                    "window_id {window_id} does not expose a settable AXPosition"
-                ))
-            } else if mutations.contains(&FrameMutation::Size)
-                && !is_attribute_settable(target, "AXSize")
-            {
-                Err(format!(
-                    "window_id {window_id} does not expose a settable AXSize"
-                ))
-            } else {
-                let before = before.ok_or_else(|| {
-                    format!(
-                        "could not read the current WindowServer frame of window_id {window_id}"
-                    )
-                });
-                before.and_then(|before| {
-                    let mut mutation_errors = Vec::new();
-                    let apply_mutations = |mutations: &[FrameMutation]| {
-                        let mut errors = Vec::new();
-                        for mutation in mutations {
-                            let (attribute, error) = match mutation {
-                                FrameMutation::Position => (
-                                    "AXPosition",
-                                    set_point_attr(target, "AXPosition", requested.x, requested.y),
-                                ),
-                                FrameMutation::Size => (
-                                    "AXSize",
-                                    set_size_attr(
-                                        target,
-                                        "AXSize",
-                                        requested.width,
-                                        requested.height,
-                                    ),
-                                ),
-                            };
-                            if error != kAXErrorSuccess {
-                                errors
-                                    .push(format!("{attribute} was rejected with AXError {error}"));
-                            }
-                        }
-                        errors
-                    };
-                    mutation_errors.extend(apply_mutations(mutations));
-
-                    let mut observed = None;
-                    for attempt in 0..20 {
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-
-                        // Tahoe can settle either mutation while rolling the other one
-                        // back. Correct only the component that still differs so the two
-                        // writes converge instead of continually undoing each other.
-                        if attempt < 6 {
-                            if let Some(rect) = element_screen_rect(target) {
-                                let corrections =
-                                    corrective_mutations(requested, Frame::from_ax(rect));
-                                mutation_errors.extend(apply_mutations(corrections));
-                            }
-                        }
-
-                        // Confirmation comes from WindowServer, not the AX values written
-                        // above. This is also the coordinate source exposed by list_windows.
-                        if let Some(frame) = window_server_frame(window_id) {
-                            observed = Some(frame);
-                            if frame.approximately_eq(requested, 2.0) {
-                                break;
-                            }
-                        }
-                    }
-                    let confirmed =
-                        observed.is_some_and(|frame| frame.approximately_eq(requested, 2.0));
-                    let changed =
-                        observed.is_some_and(|frame| !frame.approximately_eq(before, 2.0));
-                    Ok(FrameOutcome {
-                        requested,
-                        observed,
-                        confirmed,
-                        changed,
-                        mutation_errors,
-                    })
-                })
-            }
-        } else {
-            Err(format!(
-                "window_id {window_id} belongs to pid {pid} in WindowServer but has no matching AXWindow"
-            ))
-        };
-
-        for window in windows {
-            CFRelease(window as CFTypeRef);
+            .filter_map(|mutation| {
+                let (attribute, error) = match mutation {
+                    FrameMutation::Position => (
+                        "AXPosition",
+                        set_point_attr(target, "AXPosition", requested.x, requested.y),
+                    ),
+                    FrameMutation::Size => (
+                        "AXSize",
+                        set_size_attr(target, "AXSize", requested.width, requested.height),
+                    ),
+                };
+                (error != kAXErrorSuccess)
+                    .then(|| format!("{attribute} was rejected with AXError {error}"))
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut mutation_errors = window.with(move |target| unsafe {
+        if !is_attribute_settable(target, "AXPosition") {
+            return Err(format!(
+                "window_id {window_id} does not expose a settable AXPosition"
+            ));
         }
-        CFRelease(app as CFTypeRef);
-        result
+        if mutations.contains(&FrameMutation::Size) && !is_attribute_settable(target, "AXSize") {
+            return Err(format!(
+                "window_id {window_id} does not expose a settable AXSize"
+            ));
+        }
+        before.ok_or_else(|| {
+            format!("could not read the current WindowServer frame of window_id {window_id}")
+        })?;
+        Ok(apply(target, mutations))
+    })?;
+    let before = before.unwrap(); // Checked before the first write.
+    let mut observed = None;
+    for attempt in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        if attempt < 6 {
+            mutation_errors.extend(window.with(move |target| unsafe {
+                Ok(element_screen_rect(target).map_or_else(Vec::new, |rect| {
+                    apply(
+                        target,
+                        corrective_mutations(requested, Frame::from_ax(rect)),
+                    )
+                }))
+            })?);
+        }
+        if let Some(frame) = window_server_frame(window_id) {
+            observed = Some(frame);
+            if frame.approximately_eq(requested, 2.0) {
+                break;
+            }
+        }
     }
+    Ok(FrameOutcome {
+        requested,
+        observed,
+        confirmed: observed.is_some_and(|frame| frame.approximately_eq(requested, 2.0)),
+        changed: observed.is_some_and(|frame| !frame.approximately_eq(before, 2.0)),
+        mutation_errors,
+    })
 }
 
 fn action_record(outcome: &FrameOutcome) -> ActionExecutionRecord {
@@ -332,15 +267,35 @@ impl Tool for SetWindowFrameTool {
                 Ok(input) => input,
                 Err(result) => return result,
             };
-        let outcome = match tokio::task::spawn_blocking(move || mutate_and_verify(&input)).await {
-            Ok(Ok(outcome)) => outcome,
-            Ok(Err(error)) => return ToolResult::error(format!("set_window_frame: {error}")),
-            Err(error) => {
+        let pid = match i32::try_from(input.pid) {
+            Ok(pid) => pid,
+            Err(_) => {
                 return ToolResult::error(format!(
-                    "set_window_frame: blocking task failed: {error}"
-                ));
+                    "set_window_frame: pid {} is out of range on macOS",
+                    input.pid
+                ))
             }
         };
+        let window_id = match u32::try_from(input.window_id) {
+            Ok(id) => id,
+            Err(_) => {
+                return ToolResult::error(format!(
+                    "set_window_frame: window_id {} is out of range on macOS",
+                    input.window_id
+                ))
+            }
+        };
+        let window = super::ax_window::Window::new(pid, window_id);
+        let outcome =
+            match tokio::task::spawn_blocking(move || mutate_and_verify(&input, window)).await {
+                Ok(Ok(outcome)) => outcome,
+                Ok(Err(error)) => return ToolResult::error(format!("set_window_frame: {error}")),
+                Err(error) => {
+                    return ToolResult::error(format!(
+                        "set_window_frame: blocking task failed: {error}"
+                    ));
+                }
+            };
         ToolResult::text(if outcome.confirmed {
             "Set and verified the requested window frame."
         } else if outcome.observed.is_none() {

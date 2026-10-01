@@ -10,26 +10,17 @@ use cua_driver_core::{
     tool::{Tool, ToolDef},
 };
 use serde_json::Value;
-use std::{
-    ffi::c_void,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc::{self, SyncSender},
-        Arc,
-    },
-    time::Duration,
-};
+use std::time::Duration;
 
 use crate::ax::bindings::{
-    ax_get_window_id, copy_action_names, copy_ax_windows, copy_bool_attr, copy_children,
-    copy_element_attr, copy_string_attr, kAXErrorSuccess, perform_action, set_bool_attr_true,
-    AXUIElementCreateApplication, AXUIElementRef, AXUIElementSetMessagingTimeout,
+    copy_action_names, copy_bool_attr, copy_children, copy_element_attr, copy_string_attr,
+    kAXErrorSuccess, perform_action, AXUIElementCreateApplication, AXUIElementRef,
+    AXUIElementSetMessagingTimeout,
 };
 
 pub struct InvokeMenuTool;
 
 const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
-const MAIN_QUEUE_TIMEOUT: Duration = Duration::from_secs(5);
 
 unsafe fn set_messaging_timeout(element: AXUIElementRef) {
     let _ = AXUIElementSetMessagingTimeout(element, AX_MESSAGING_TIMEOUT_SECONDS);
@@ -223,117 +214,6 @@ fn live_frontmost_app() -> Option<i32> {
         .map(|window| window.pid)
 }
 
-/// Make one exact application window key before resolving focus-sensitive
-/// native menu state.
-///
-/// `SLPSSetFrontProcessWithOptions(..., kCPSNoWindows)` makes the application
-/// active without broadly raising its windows. That is the right default for
-/// input delivery, but it can leave the requested window non-key. macOS then
-/// exposes contextual Window-menu commands (including Move & Resize) as
-/// disabled even though the application itself is frontmost. Raise and mark
-/// only the requested AX window, then require an exact focused-window readback
-/// before menu resolution proceeds.
-fn focus_ax_window(pid: i32, window_id: u32) -> Result<(), String> {
-    unsafe {
-        let app = AXUIElementCreateApplication(pid);
-        if app.is_null() {
-            return Err("invoke_menu: target application is unavailable".into());
-        }
-        set_messaging_timeout(app);
-
-        let mut target = None;
-        for window in copy_ax_windows(app) {
-            if target.is_none() && ax_get_window_id(window) == Some(window_id) {
-                target = Some(window);
-            } else {
-                CFRelease(window as CFTypeRef);
-            }
-        }
-        CFRelease(app as CFTypeRef);
-
-        let Some(target) = target else {
-            return Err("invoke_menu: target accessibility window is unavailable".into());
-        };
-        set_messaging_timeout(target);
-
-        // SkyLight has requested native key status for this exact window. AX
-        // raise/main/focus completes the corresponding visible and semantic
-        // state; these writes remain best-effort for applications that expose
-        // only a subset of the attributes.
-        let _ = perform_action(target, "AXRaise");
-        let _ = set_bool_attr_true(target, "AXMain");
-        let _ = set_bool_attr_true(target, "AXFocused");
-        CFRelease(target as CFTypeRef);
-    }
-    Ok(())
-}
-
-struct AxWindowFocusRequest {
-    pid: i32,
-    window_id: u32,
-    tx: SyncSender<Result<(), String>>,
-    cancelled: Arc<AtomicBool>,
-}
-
-#[link(name = "System", kind = "framework")]
-extern "C" {
-    static _dispatch_main_q: u8;
-    fn dispatch_async_f(
-        queue: *const c_void,
-        context: *mut c_void,
-        work: unsafe extern "C" fn(*mut c_void),
-    );
-}
-
-unsafe extern "C" fn focus_ax_window_on_main(context: *mut c_void) {
-    let request = unsafe { Box::from_raw(context.cast::<AxWindowFocusRequest>()) };
-    if request.cancelled.load(Ordering::Acquire) {
-        return;
-    }
-    let result = focus_ax_window(request.pid, request.window_id);
-    let _ = request.tx.send(result);
-}
-
-fn focus_ax_window_with_thread_affinity(pid: i32, window_id: u32) -> Result<(), String> {
-    let is_main_thread = objc2_foundation::MainThreadMarker::new().is_some();
-    if pid != std::process::id() as i32 || is_main_thread {
-        return focus_ax_window(pid, window_id);
-    }
-
-    // AX actions against another process execute in that process. An embedded
-    // driver targeting its own window is different: AppKit services AXRaise
-    // in this process, and window ordering is main-thread-only. Queue just the
-    // self-process AX mutation onto AppKit's main queue, then return to the
-    // blocking worker for readiness polling and menu traversal.
-    let (tx, rx) = mpsc::sync_channel(1);
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let request = Box::new(AxWindowFocusRequest {
-        pid,
-        window_id,
-        tx,
-        cancelled: Arc::clone(&cancelled),
-    });
-    unsafe {
-        let main_queue = &raw const _dispatch_main_q as *const c_void;
-        dispatch_async_f(
-            main_queue,
-            Box::into_raw(request).cast::<c_void>(),
-            focus_ax_window_on_main,
-        );
-    }
-    match rx.recv_timeout(MAIN_QUEUE_TIMEOUT) {
-        Ok(result) => result,
-        Err(error) => {
-            // If AppKit never serviced the request, prevent a stale focus
-            // change from firing after this tool call has already failed.
-            cancelled.store(true, Ordering::Release);
-            Err(format!(
-                "invoke_menu: failed waiting for the embedded host window on the AppKit main queue: {error}"
-            ))
-        }
-    }
-}
-
 fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
     let native_key_requested = crate::input::skylight::make_exact_window_key(pid, window_id);
     if !native_key_requested
@@ -346,7 +226,7 @@ fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
         std::thread::sleep(Duration::from_millis(120));
     }
 
-    focus_ax_window_with_thread_affinity(pid, window_id)?;
+    super::ax_window::Window::new(pid, window_id).focus()?;
 
     // AXFocusedWindow can lead AppKit's native `isKeyWindow` state while the
     // WindowServer activation is still settling. Menu validation observes the
@@ -425,7 +305,11 @@ impl Tool for InvokeMenuTool {
             return refusal("invoke_menu: window_id does not belong to pid".into());
         }
 
+        let operation = cua_driver_core::native_operation::NativeOperation::current();
         let outcome = tokio::task::spawn_blocking(move || {
+            if !operation.begin() {
+                return Err("invoke_menu: cancelled before native work".into());
+            }
             let prior_frontmost = live_frontmost_app().or_else(crate::apps::frontmost_pid);
             let prior_frontmost_window =
                 prior_frontmost.and_then(crate::ax::bindings::focused_window_id_of_pid);

@@ -229,15 +229,64 @@ mod native {
             let (tx, rx) = mpsc::channel();
             let worker = std::thread::spawn(move || {
                 let runtime = tokio::runtime::Runtime::new().unwrap();
-                let registry = platform_macos::register_tools();
-                let result = runtime.block_on(registry.invoke(
-                    "invoke_menu",
-                    serde_json::json!({
-                        "pid": target_pid,
-                        "window_id": target_wid,
-                        "path": ["Window", "Minimize"]
-                    }),
-                ));
+                let driver = cua_driver_sdk::CuaDriver::try_create_for_host(
+                    cua_driver_sdk::DriverHostOptions {
+                        cursor: cursor_overlay::CursorConfig {
+                            enabled: false,
+                            ..Default::default()
+                        },
+                        host_owns_permission_ux: true,
+                        host_bundle_id: None,
+                        claude_code_compatibility: false,
+                        prepare_desktop_environment: false,
+                        register_host_tools: None,
+                        authorization_host: None,
+                        activity_observer: None,
+                    },
+                )
+                .unwrap();
+                for (pid, id, resize) in [
+                    (std::process::id(), original_wid as u32, false),
+                    (std::process::id(), original_wid as u32, true),
+                    (target_pid, target_wid, false),
+                ] {
+                    let before = platform_macos::windows::window_bounds_by_id(id).unwrap();
+                    let requested = serde_json::json!({
+                        "pid": pid, "window_id": id,
+                        "x": before.x + 25.0, "y": before.y + 25.0,
+                        "width": before.width + if resize { 40.0 } else { 0.0 },
+                        "height": before.height + if resize { 30.0 } else { 0.0 },
+                    });
+                    let result = runtime
+                        .block_on(
+                            driver.call_tool("set_window_frame".into(), requested.to_string()),
+                        )
+                        .unwrap();
+                    assert!(!result.is_error, "frame call failed: {result:?}");
+                    let observed = serde_json::to_value(
+                        platform_macos::windows::window_bounds_by_id(id).unwrap(),
+                    )
+                    .unwrap();
+                    for component in ["x", "y", "width", "height"] {
+                        assert!((observed[component].as_f64().unwrap() - requested[component].as_f64().unwrap()).abs() <= 2.0,
+                            "independent geometry mismatch for {component}: requested={requested} observed={observed}");
+                    }
+                    println!("embedded frame: pid={pid} window={id} requested={requested} observed={observed}");
+                }
+                let result = runtime
+                    .block_on(
+                        driver.call_tool(
+                            "invoke_menu".into(),
+                            serde_json::json!({
+                                "pid": target_pid,
+                                "window_id": target_wid,
+                                "path": ["Window", "Minimize"]
+                            })
+                            .to_string(),
+                        ),
+                    )
+                    .unwrap();
+                runtime.block_on(driver.shutdown()).unwrap();
                 tx.send(result).unwrap();
             });
             let deadline = Instant::now() + Duration::from_secs(25);
@@ -251,10 +300,7 @@ mod native {
                 assert!(Instant::now() < deadline, "embedded invoke_menu timed out");
             };
             worker.join().unwrap();
-            assert!(
-                !result.is_error.unwrap_or(false),
-                "invoke_menu failed: {result:?}"
-            );
+            assert!(!result.is_error, "invoke_menu failed: {result:?}");
             let deadline = Instant::now() + Duration::from_secs(3);
             loop {
                 pump(app);

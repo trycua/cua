@@ -2319,6 +2319,95 @@ mod tests {
         shutdown.await.unwrap().unwrap();
     }
 
+    struct NativeHostTool;
+    static NATIVE_HOST_FINISHED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+
+    #[async_trait::async_trait]
+    impl cua_driver_core::tool::Tool for NativeHostTool {
+        fn def(&self) -> &cua_driver_core::tool::ToolDef {
+            cua_driver_core::tool::Tool::def(&SlowHostTool)
+        }
+
+        async fn invoke(&self, _args: Value) -> cua_driver_core::protocol::ToolResult {
+            let native = cua_driver_core::native_operation::NativeOperation::current();
+            let executor = tokio::runtime::Handle::current();
+            tokio::task::spawn_blocking(move || {
+                assert!(native.begin()); // First native effect, e.g. process activation.
+                SLOW_HOST_TOOL_STARTED
+                    .get_or_init(tokio::sync::Notify::new)
+                    .notify_one();
+                executor.block_on(
+                    SLOW_HOST_TOOL_RELEASE
+                        .get_or_init(tokio::sync::Notify::new)
+                        .notified(),
+                );
+                // Cancellation between activation and the exact-window focus must not split ownership.
+                assert!(native.begin());
+                NATIVE_HOST_FINISHED.store(true, std::sync::atomic::Ordering::Release);
+                cua_driver_core::protocol::ToolResult::text("native effects finished")
+            })
+            .await
+            .unwrap()
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelled_started_native_call_keeps_shutdown_waiting_through_later_native_steps() {
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        NATIVE_HOST_FINISHED.store(false, std::sync::atomic::Ordering::Release);
+        let driver = CuaDriver::try_create_for_host(DriverHostOptions {
+            cursor: cursor_overlay::CursorConfig {
+                enabled: false,
+                ..cursor_overlay::CursorConfig::default()
+            },
+            host_owns_permission_ux: false,
+            host_bundle_id: None,
+            claude_code_compatibility: false,
+            prepare_desktop_environment: false,
+            register_host_tools: Some(|registry| registry.register(Box::new(NativeHostTool))),
+            authorization_host: None,
+            activity_observer: None,
+        })
+        .unwrap();
+        let action_driver = driver.clone();
+        let action = tokio::spawn(async move {
+            action_driver
+                .call_tool("health_report".into(), "{}".into())
+                .await
+        });
+        SLOW_HOST_TOOL_STARTED
+            .get_or_init(tokio::sync::Notify::new)
+            .notified()
+            .await;
+        action.abort(); // Drop the public SDK future, issuing ABI cancellation.
+        assert!(action.await.unwrap_err().is_cancelled());
+        let shutdown_driver = driver.clone();
+        let mut shutdown = tokio::spawn(async move { shutdown_driver.shutdown().await });
+        let early =
+            tokio::time::timeout(std::time::Duration::from_millis(100), &mut shutdown).await;
+        let returned_early = early.is_ok();
+        let finished_early = NATIVE_HOST_FINISHED.load(std::sync::atomic::Ordering::Acquire);
+        SLOW_HOST_TOOL_RELEASE
+            .get_or_init(tokio::sync::Notify::new)
+            .notify_one();
+        if let Ok(result) = early {
+            result.unwrap().unwrap();
+        } else {
+            tokio::time::timeout(std::time::Duration::from_secs(2), shutdown)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+        }
+        assert!(
+            !returned_early,
+            "shutdown returned before started native work completed"
+        );
+        assert!(!finished_early);
+        assert!(NATIVE_HOST_FINISHED.load(std::sync::atomic::Ordering::Acquire));
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn session_zero_refuses_runtime_creation_before_platform_dispatch() {

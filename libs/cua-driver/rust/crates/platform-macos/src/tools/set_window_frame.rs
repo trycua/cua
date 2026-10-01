@@ -5,10 +5,12 @@ use cua_driver_core::{
         effect_from_value_readback, ActionEvidence, ActionExecutionRecord, ActionTransport,
         ActualDelivery, EvidenceKind, RequestedDelivery,
     },
+    native_operation::NativeOperation,
     protocol::ToolResult,
     tool::{Tool, ToolDef},
 };
 use serde_json::Value;
+use std::sync::Arc;
 
 pub struct SetWindowFrameTool;
 
@@ -30,13 +32,7 @@ fn def() -> &'static ToolDef {
     })
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Frame {
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-}
+use crate::windows::{window_bounds_by_id as window_server_frame, WindowBounds as Frame};
 
 impl Frame {
     fn from_input(input: &SetWindowFrameInput) -> Self {
@@ -129,27 +125,26 @@ fn initial_mutations(requested: Frame, current: Frame) -> &'static [FrameMutatio
     }
 }
 
-fn window_server_frame(window_id: u32) -> Option<Frame> {
-    crate::windows::window_bounds_by_id(window_id).map(|bounds| Frame {
-        x: bounds.x,
-        y: bounds.y,
-        width: bounds.width,
-        height: bounds.height,
-    })
-}
-
 fn mutate_and_verify(
     input: &SetWindowFrameInput,
-    window: super::ax_window::Window,
+    operation: Arc<NativeOperation>,
 ) -> Result<FrameOutcome, String> {
     use crate::ax::bindings::{
         element_screen_rect, is_attribute_settable, kAXErrorSuccess, set_point_attr, set_size_attr,
+    };
+    let pid = i32::try_from(input.pid)
+        .map_err(|_| format!("pid {} is out of range on macOS", input.pid))?;
+    let window_id = u32::try_from(input.window_id)
+        .map_err(|_| format!("window_id {} is out of range on macOS", input.window_id))?;
+    let window = super::ax_window::Window {
+        pid,
+        id: window_id,
+        operation,
     };
     let requested = Frame::from_input(input);
     if !requested.is_valid() {
         return Err("x/y must be finite and width/height must be finite positive numbers".into());
     }
-    let window_id = window.id;
     // Retain #4348's containment until the embedded SDK/AppKit regression passes.
     if input.pid == std::process::id() {
         return Err(format!(
@@ -180,7 +175,7 @@ fn mutate_and_verify(
             })
             .collect::<Vec<_>>()
     };
-    let mut mutation_errors = window.with(move |target| unsafe {
+    let mutation_errors = window.with(move |target| unsafe {
         if !is_attribute_settable(target, "AXPosition") {
             return Err(format!(
                 "window_id {window_id} does not expose a settable AXPosition"
@@ -197,33 +192,55 @@ fn mutate_and_verify(
         Ok(apply(target, mutations))
     })?;
     let before = before.unwrap(); // Checked before the first write.
-    let mut observed = None;
+    let mut outcome = FrameOutcome {
+        requested,
+        observed: None,
+        confirmed: false,
+        changed: false,
+        mutation_errors,
+    };
     for attempt in 0..20 {
         std::thread::sleep(std::time::Duration::from_millis(50));
-        if attempt < 6 {
-            mutation_errors.extend(window.with(move |target| unsafe {
+        let corrections = if attempt < 6 {
+            window.with(move |target| unsafe {
                 Ok(element_screen_rect(target).map_or_else(Vec::new, |rect| {
                     apply(
                         target,
                         corrective_mutations(requested, Frame::from_ax(rect)),
                     )
                 }))
-            })?);
-        }
-        if let Some(frame) = window_server_frame(window_id) {
-            observed = Some(frame);
-            if frame.approximately_eq(requested, 2.0) {
-                break;
-            }
+            })
+        } else {
+            Ok(Vec::new())
+        };
+        outcome.observe(before, corrections, window_server_frame(window_id));
+        if outcome.confirmed {
+            break;
         }
     }
-    Ok(FrameOutcome {
-        requested,
-        observed,
-        confirmed: observed.is_some_and(|frame| frame.approximately_eq(requested, 2.0)),
-        changed: observed.is_some_and(|frame| !frame.approximately_eq(before, 2.0)),
-        mutation_errors,
-    })
+    Ok(outcome)
+}
+
+impl FrameOutcome {
+    fn observe(
+        &mut self,
+        before: Frame,
+        corrections: Result<Vec<String>, String>,
+        frame: Option<Frame>,
+    ) {
+        // A failed correction cannot erase evidence from an earlier native write.
+        self.mutation_errors
+            .extend(corrections.unwrap_or_else(|error| vec![error]));
+        if let Some(frame) = frame {
+            self.observed = Some(frame);
+        }
+        self.confirmed = self
+            .observed
+            .is_some_and(|frame| frame.approximately_eq(self.requested, 2.0));
+        self.changed = self
+            .observed
+            .is_some_and(|frame| !frame.approximately_eq(before, 2.0));
+    }
 }
 
 fn action_record(outcome: &FrameOutcome) -> ActionExecutionRecord {
@@ -267,27 +284,9 @@ impl Tool for SetWindowFrameTool {
                 Ok(input) => input,
                 Err(result) => return result,
             };
-        let pid = match i32::try_from(input.pid) {
-            Ok(pid) => pid,
-            Err(_) => {
-                return ToolResult::error(format!(
-                    "set_window_frame: pid {} is out of range on macOS",
-                    input.pid
-                ))
-            }
-        };
-        let window_id = match u32::try_from(input.window_id) {
-            Ok(id) => id,
-            Err(_) => {
-                return ToolResult::error(format!(
-                    "set_window_frame: window_id {} is out of range on macOS",
-                    input.window_id
-                ))
-            }
-        };
-        let window = super::ax_window::Window::new(pid, window_id);
+        let operation = NativeOperation::current();
         let outcome =
-            match tokio::task::spawn_blocking(move || mutate_and_verify(&input, window)).await {
+            match tokio::task::spawn_blocking(move || mutate_and_verify(&input, operation)).await {
                 Ok(Ok(outcome)) => outcome,
                 Ok(Err(error)) => return ToolResult::error(format!("set_window_frame: {error}")),
                 Err(error) => {
@@ -431,6 +430,55 @@ mod tests {
             ),
             &SIZE_ONLY
         );
+    }
+
+    #[test]
+    fn failed_corrective_lookup_preserves_initial_write_and_independent_readback() {
+        let before = Frame {
+            x: 10.0,
+            y: 20.0,
+            width: 800.0,
+            height: 600.0,
+        };
+        let requested = Frame {
+            x: 50.0,
+            width: 900.0,
+            ..before
+        };
+        // The initial position write succeeded; size is still unsettled when AX disappears.
+        let moved = Frame {
+            x: requested.x,
+            ..before
+        };
+        let mut outcome = FrameOutcome {
+            requested,
+            observed: None,
+            confirmed: false,
+            changed: false,
+            mutation_errors: vec!["AXSize was rejected with AXError -25202".into()],
+        };
+        outcome.observe(
+            before,
+            Err("window_id 23 has no matching AXWindow".into()),
+            Some(moved),
+        );
+        assert!(outcome.changed);
+        assert!(!outcome.confirmed);
+        assert_eq!(outcome.observed.unwrap().x, requested.x);
+        assert_eq!(outcome.mutation_errors.len(), 2);
+        let projection = action_record(&outcome).stable_projection().unwrap();
+        assert_eq!(
+            projection.effect,
+            cua_driver_core::action_record::ActionEffect::Unverifiable
+        );
+        assert!(
+            projection.evidence.is_some(),
+            "independent WindowServer evidence was lost"
+        );
+        // Later disappearance must retain the last independently observed geometry.
+        outcome.observe(before, Err("window_id 23 is closed".into()), None);
+        assert_eq!(outcome.observed.unwrap().x, requested.x);
+        assert!(outcome.changed);
     }
 
     #[test]

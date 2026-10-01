@@ -339,6 +339,10 @@ impl Tool for BringToFrontTool {
             None => None,
         };
 
+        if !cua_driver_core::native_operation::NativeOperation::current().begin() {
+            return ToolResult::error("bring_to_front: cancelled before native activation");
+        }
+
         let Some(app) =
             (unsafe { NSRunningApplication::runningApplicationWithProcessIdentifier(pid) })
         else {

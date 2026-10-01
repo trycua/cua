@@ -1,5 +1,6 @@
 """No native applications or input: fixtures and fail-closed orchestration only."""
 import copy
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -10,7 +11,7 @@ import zipfile
 import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 from production_app_smoke import (
     GroundingUnavailable, OBSERVATION_TIMEOUT_MS, OPEN_OBJECTS_DESCRIPTION, OFFSCREEN_DESCRIPTION, check_delivery,
-    create_documents, ground, inkscape_app_id_tag, input_step, kernel_file_identity,
+    OBSERVATION_ATTEMPTS, create_documents, grounding_outcome, ground, inkscape_app_id_tag, input_step, kernel_file_identity,
     launch_arguments, mapped_plugin, observe, package_owner, prepare_inkscape_objects,
     require_background_target, require_enabled_plugin, run_app, verify_calc, verify_inkscape,
 )
@@ -582,6 +583,119 @@ class ObjectsSetupTests(unittest.TestCase):
         observe(mcp, TARGET, 'cua-smoke-inkscape.svg')
         self.assertEqual(mcp.tool.call_args_list[0].args,
                          ('get_window_state', {**TARGET, 'timeout_ms': 15000}))
+
+
+UNPROVEN = {'degraded': True,
+            'degraded_reason': 'accessibility_window_identity_unproven: tree is application-scoped'}
+
+
+class ObservationRetryTests(unittest.TestCase):
+    FILENAME = 'cua-smoke-calc.ods'
+
+    def names(self, mcp):
+        return [call.args[0] for call in mcp.tool.call_args_list]
+
+    def test_transient_identity_refusal_succeeds_on_second_observation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            mcp = Mock()
+            mcp.directory = Path(temp)
+            mcp.tool.side_effect = [*observed({**CALC, **UNPROVEN}), *observed(CALC)]
+            self.assertEqual(observe(mcp, TARGET, self.FILENAME), CALC)
+            self.assertEqual(self.names(mcp), ['get_window_state', 'list_windows'] * 2)
+            record = json.loads((Path(temp) / 'observation-retries.json').read_text())
+            self.assertEqual(record['max_attempts'], OBSERVATION_ATTEMPTS)
+            self.assertEqual([row['attempt'] for row in record['attempts']], [1])
+            self.assertTrue(record['attempts'][0]['degraded_reason'].startswith(
+                'accessibility_window_identity_unproven'))
+
+    def test_persistent_identity_refusal_stops_after_fixed_bound(self):
+        mcp = Mock()
+        mcp.tool.side_effect = [*observed({**CALC, **UNPROVEN})] * 5
+        with self.assertRaisesRegex(GroundingUnavailable, 'still unproven'):
+            observe(mcp, TARGET, self.FILENAME)
+        self.assertEqual(OBSERVATION_ATTEMPTS, 2)
+        self.assertEqual(self.names(mcp).count('get_window_state'), 2)
+
+    def test_non_retryable_states_fail_immediately(self):
+        for change in ({'truncated': True, **UNPROVEN}, {'elements_complete': False, **UNPROVEN},
+                       {'timeout_ms': 1000, **UNPROVEN}, {'degraded': True, 'degraded_reason': 'other'},
+                       {'degraded': True}, {'truncated': True}):
+            mcp = Mock()
+            mcp.tool.side_effect = observed({**CALC, **change})
+            with self.subTest(change=change), self.assertRaisesRegex(GroundingUnavailable, 'not proven complete'):
+                observe(mcp, TARGET, self.FILENAME)
+            self.assertEqual(self.names(mcp), ['get_window_state'])
+
+    def test_wrong_title_fails_immediately(self):
+        mcp = Mock()
+        mcp.tool.side_effect = observed({**CALC, **UNPROVEN, 'window_title': 'other.ods'})
+        with self.assertRaisesRegex(AssertionError, 'not the synthetic document'):
+            observe(mcp, TARGET, self.FILENAME)
+        self.assertEqual(self.names(mcp), ['get_window_state'])
+
+    def test_wrong_windows_fail_on_every_attempt_without_retrying(self):
+        extra = {'structuredContent': {'windows': [TARGET, {'pid': 123, 'window_id': 789}]}}
+        wrong = {'structuredContent': {'windows': [{'pid': 123, 'window_id': 999}]}}
+        for windows in (extra, wrong):
+            mcp = Mock()
+            mcp.tool.side_effect = [{'structuredContent': {**CALC, **UNPROVEN}}, windows]
+            with self.subTest(windows=windows), self.assertRaisesRegex(GroundingUnavailable, 'extra app window'):
+                observe(mcp, TARGET, self.FILENAME)
+            self.assertEqual(mcp.tool.call_count, 2)
+        # The second attempt is checked too, even when the first window list was fine.
+        mcp = Mock()
+        mcp.tool.side_effect = [*observed({**CALC, **UNPROVEN}),
+                                {'structuredContent': CALC}, extra]
+        with self.assertRaisesRegex(GroundingUnavailable, 'extra app window'):
+            observe(mcp, TARGET, self.FILENAME)
+
+    def test_retry_never_replays_input(self):
+        mcp = Mock()
+        mcp.tool.side_effect = [*observed(CALC), GOOD_DELIVERY,
+                                *observed({**CALC, **UNPROVEN}), *observed(CALC)]
+        input_step(mcp, TARGET, self.FILENAME, 'calc', 'insert', 'type_text', {'text': 'abc'})
+        self.assertEqual(self.names(mcp), ['get_window_state', 'list_windows', 'type_text',
+                                           'get_window_state', 'list_windows',
+                                           'get_window_state', 'list_windows'])
+        self.assertEqual(self.names(mcp).count('type_text'), 1)
+
+
+class RawInputReportTests(unittest.TestCase):
+    def test_input_step_marks_attempt_before_dispatch(self):
+        mcp = Mock()
+        seen = []
+        responses = [*observed(CALC)]
+
+        def tool(name, arguments):
+            if name == 'type_text':
+                seen.append(mcp.raw_input_attempted)
+                raise TimeoutError('unknown')
+            return responses.pop(0)
+        mcp.tool.side_effect = tool
+        mcp.raw_input_attempted = False
+        with patch('production_app_smoke.read', side_effect=OSError('unavailable')), self.assertRaises(TimeoutError):
+            input_step(mcp, TARGET, 'cua-smoke-calc.ods', 'calc', 'insert', 'type_text', {'text': 'abc'})
+        self.assertEqual(seen, [True])
+
+    def test_grounding_loss_after_raw_attempt_is_failed_not_delivered(self):
+        mcp = Mock()
+        mcp.raw_input_attempted = True
+        outcome = grounding_outcome(mcp, GroundingUnavailable('lost'))
+        self.assertEqual(outcome, {'result': 'failed', 'blocker': 'lost', 'raw_input_attempted': True})
+        self.assertNotIn('actions_delivered', outcome)
+
+    def test_grounding_loss_without_raw_attempt_stays_inspection_only(self):
+        for mcp in (Mock(), None):  # A bare Mock attribute is truthy but not True.
+            with self.subTest(mcp=mcp):
+                self.assertEqual(grounding_outcome(mcp, GroundingUnavailable('lost')),
+                                 {'result': 'inspection_only', 'blocker': 'lost'})
+
+    def test_post_input_grounding_failure_is_reported_failed(self):
+        mcp = Mock()
+        mcp.tool.side_effect = [*observed(CALC), GOOD_DELIVERY, *observed({**CALC, 'truncated': True})]
+        with self.assertRaises(GroundingUnavailable) as caught:
+            input_step(mcp, TARGET, 'cua-smoke-calc.ods', 'calc', 'insert', 'type_text', {'text': 'abc'})
+        self.assertEqual(grounding_outcome(mcp, caught.exception)['result'], 'failed')
 
 
 if __name__ == '__main__':

@@ -35,6 +35,8 @@ NS = {'office': 'urn:oasis:names:tc:opendocument:xmlns:office:1.0',
       'svg': 'http://www.w3.org/2000/svg'}
 # Default 1000 ms truncates the pinned Inkscape tree; a full walk took ~2.2 s.
 OBSERVATION_TIMEOUT_MS = 15000
+OBSERVATION_ATTEMPTS = 2
+IDENTITY_UNPROVEN_REASON = 'accessibility_window_identity_unproven'
 OPEN_OBJECTS_DESCRIPTION = 'Open Objects\nView Objects (Shift+Ctrl+L)'
 OFFSCREEN_DESCRIPTION = '; off-screen: scroll it into view before a pixel action; element actions still reach it'
 LIMITS = {'cursor_isolation': False, 'concurrency': False,
@@ -493,17 +495,47 @@ def require_complete(state):
         raise GroundingUnavailable('accessibility tree is truncated, degraded or not proven complete')
 
 
-def observe(mcp, target, filename):
-    """One complete, single-window observation with no stage grounding."""
-    result = content(mcp.tool('get_window_state', {**target, 'timeout_ms': OBSERVATION_TIMEOUT_MS}))
-    assert filename in result.get('window_title', ''), 'snapshot is not the synthetic document'
-    require_complete(result)
+def identity_unproven_only(state):
+    """A complete walk whose only defect is a not-yet-reconciled window identity."""
+    reason = state.get('degraded_reason')
+    return (state.get('truncated') is False and state.get('elements_complete') is True
+            and state.get('timeout_ms') == OBSERVATION_TIMEOUT_MS and state.get('degraded') is True
+            and isinstance(reason, str) and reason.startswith(IDENTITY_UNPROVEN_REASON))
+
+
+def require_single_window(mcp, target):
     windows = content(mcp.tool('list_windows', {}))['windows']
     owned = [row for row in windows if row.get('pid') == target['pid']]
     if len(owned) != 1 or owned[0]['window_id'] != target['window_id']:
         raise GroundingUnavailable('extra app window or dialog; inspect fresh snapshot and window list')
-    rows(result)
-    return result
+
+
+def observe(mcp, target, filename):
+    """One complete, single-window observation with no stage grounding.
+
+    Right after a save the compositor title and the AT-SPI title can briefly
+    disagree, so the Driver refuses exact identity. That refusal alone is
+    re-observed (read-only, fixed bound); the Driver stays strict and no
+    input is ever replayed.
+    """
+    attempts = []
+    for attempt in range(1, OBSERVATION_ATTEMPTS + 1):
+        result = content(mcp.tool('get_window_state', {**target, 'timeout_ms': OBSERVATION_TIMEOUT_MS}))
+        assert filename in result.get('window_title', ''), 'snapshot is not the synthetic document'
+        retryable = identity_unproven_only(result)
+        if not retryable:
+            require_complete(result)
+        require_single_window(mcp, target)
+        if not retryable:
+            rows(result)
+            return result
+        attempts.append({'attempt': attempt, 'degraded_reason': result['degraded_reason']})
+        directory = getattr(mcp, 'directory', None)
+        if isinstance(directory, Path):
+            save_json(directory, 'observation-retries.json',
+                      {'max_attempts': OBSERVATION_ATTEMPTS, 'attempts': attempts})
+    raise GroundingUnavailable(
+        f'window identity still unproven after {OBSERVATION_ATTEMPTS} observations')
 
 
 def snapshot(mcp, target, filename, app, stage):
@@ -569,6 +601,8 @@ def prepare_inkscape_objects(mcp, target, filename, directory):
 
 def input_step(mcp, target, filename, app, stage, tool, arguments):
     snapshot(mcp, target, filename, app, stage)
+    # Attempted is not delivered: mark before dispatch so any later failure reports it.
+    setattr(mcp, 'raw_input_attempted', True)
     try:
         response = mcp.tool(tool, {**target, **arguments, 'delivery_mode': 'background'})
     except BaseException:
@@ -699,6 +733,13 @@ def run_app(mcp, app, document, directory):
             (directory / ('after' + document.suffix)).write_bytes(document.read_bytes())
 
 
+def grounding_outcome(mcp, error):
+    """Grounding loss after a raw input attempt is a failure, not inspection."""
+    if getattr(mcp, 'raw_input_attempted', False) is True:
+        return {'result': 'failed', 'blocker': str(error), 'raw_input_attempted': True}
+    return {'result': 'inspection_only', 'blocker': str(error)}
+
+
 def run(args):
     if not __debug__:
         raise RuntimeError('assertions must be enabled')
@@ -728,7 +769,7 @@ def run(args):
                                 {'mode': 'unrestricted', 'acknowledge_unrestricted': True})
                 result['apps'][app] = run_app(mcp, app, document, directory)
             except GroundingUnavailable as error:
-                result['apps'][app] = {'result': 'inspection_only', 'blocker': str(error)}
+                result['apps'][app] = grounding_outcome(mcp, error)
             except Exception as error:
                 result['apps'][app] = {'result': 'failed', 'error': str(error)}
             finally:

@@ -385,7 +385,9 @@ struct ViewModelTests {
         let w = model.wizard
         #expect(w.view.canContinue)
         w.send(.next)
-        w.send(.setCpus(cpus: 4))
+        // The local range tops out at this Mac's cores (a CI runner has 3).
+        let cpus = min(4, w.view.maxCpus)
+        w.send(.setCpus(cpus: cpus))
         w.send(.next)
         w.send(.setName(name: "Bad Name"))
         #expect(w.view.nameInvalid && !w.view.canContinue)
@@ -396,7 +398,7 @@ struct ViewModelTests {
         #expect(!model.showingNewSpace)
         for _ in 0..<50 where backend.created.isEmpty { try? await Task.sleep(for: .milliseconds(20)) }
         #expect(backend.created.first?.name == "demo")
-        #expect(backend.created.first?.cpus == 4)
+        #expect(backend.created.first?.cpus == cpus)
         #expect(backend.created.first?.memoryMb == 4096)
     }
 

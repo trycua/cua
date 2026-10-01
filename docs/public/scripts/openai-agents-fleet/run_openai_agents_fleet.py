@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.11,<3.14"
 # dependencies = [
-#   "cua-sandbox==0.8.0",
+#   "cua-sandbox==0.9.0",
 #   "httpx>=0.27,<1",
 # ]
 # [[tool.uv.index]]

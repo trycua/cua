@@ -1051,6 +1051,48 @@ fi
             'if [[ "$INSTALLER_CERTIFICATION_RESULT" != "success" ]]',
             release_metadata,
         )
+    def test_release_skill_archive_records_version_hashes_and_commit(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+        packager = self.read(".github/scripts/package_cua_driver_skills.py")
+
+        self.assertIn("package_cua_driver_skills.py", workflow)
+        self.assertIn("--source-kind release", workflow)
+        self.assertIn('--git-commit "${GITHUB_SHA}"', workflow)
+        self.assertNotIn('cp -R libs/cua-driver/rust/Skills/cua-driver/. "${SKILLS_STAGE}/"', workflow)
+        self.assertIn('"size_bytes": path.stat().st_size', packager)
+
+    def test_local_installers_use_the_same_checkout_skill_source(self) -> None:
+        shell = self.read("libs/cua-driver/scripts/_install-local-rust.sh")
+        self.assertIn('SOURCE_SKILLS="$REPO_ROOT/Skills/cua-driver"', shell)
+        self.assertIn("skills update --from local --source", shell)
+        self.assertIn('CUA_DRIVER_RS_HOME="$HOME_DIR"', shell)
+
+        powershell = self.read("libs/cua-driver/scripts/install-local.ps1")
+        self.assertIn('Join-Path $RepoRoot "Skills\\cua-driver"', powershell)
+        self.assertIn("@('skills', 'update', '--from', 'local', '--source', $SourceSkills)", powershell)
+        self.assertNotIn('Skills\\cua-driver-rs', powershell)
+
+    def test_skill_status_reports_versions_provenance_integrity_and_limits(self) -> None:
+        skills = self.read("libs/cua-driver/rust/crates/cua-driver/src/skills.rs")
+        cli = self.read("libs/cua-driver/rust/crates/cua-driver/src/cli.rs")
+        docs = self.read("libs/cua-driver/rust/Skills/cua-driver/README.md")
+
+        for field in (
+            "Installed skill version:",
+            "Compatible driver version:",
+            "Source: {provenance}",
+            "Integrity:",
+            "Missing files:",
+            "Extra/obsolete files:",
+            "Modified files:",
+        ):
+            self.assertIn(field, skills)
+        self.assertIn("size_bytes: u64", skills)
+        self.assertIn("skills status        Report versions, provenance, integrity, compatibility, and links", cli)
+        self.assertIn(
+            "do not authenticate the publisher or provide digital signatures",
+            " ".join(docs.split()),
+        )
 
     def test_lume_uses_the_same_draft_finalizer(self) -> None:
         workflow = self.read(".github/workflows/cd-swift-lume.yml")

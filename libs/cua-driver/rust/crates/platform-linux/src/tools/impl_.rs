@@ -1213,7 +1213,9 @@ impl Tool for GetWindowStateTool {
             .map(|v| v.max(1) as usize);
         let timeout_ms = linux_snapshot_timeout_ms(
             args.get("timeout_ms"),
-            self.state.snapshots.contains_window(pid as i32, xid),
+            self.state
+                .snapshots
+                .contains_semantic_window(pid as i32, xid),
         );
         let walk_timeout = std::time::Duration::from_millis(timeout_ms);
 
@@ -1623,7 +1625,7 @@ impl Tool for GetWindowStateTool {
                 }
 
                 if !observation_only && !published_snapshot && screenshot_scale.is_some() {
-                    if let Some((_, replaced)) = state.snapshots.publish_for_session(
+                    if let Some((_, replaced)) = state.snapshots.publish_capture_for_session(
                         pid as i32,
                         xid,
                         crate::atspi::snapshot::AtspiSnapshot::from_nodes(&[]),

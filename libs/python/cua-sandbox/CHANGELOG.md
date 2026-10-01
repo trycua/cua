@@ -11,6 +11,17 @@
 * **sandbox:** `SandboxInfo.location` says where a sandbox runs.
 * **sandbox:** `Image.from_registry(ref)` is literal: `ubuntu:24.04` is Docker Hub's image, never the canonical Linux alias.
 
+## [0.9.0](https://github.com/trycua/cua/compare/sandbox-v0.8.0...sandbox-v0.9.0) (2026-10-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* **sandbox:** Sandbox.create runs locally unless local=False; the localhost module and the computer_server, http, local and websocket transports are removed.
+
+### Features
+
+* **sandbox:** run on the cua SDK, local by default ([#4413](https://github.com/trycua/cua/issues/4413)) ([203cd1e](https://github.com/trycua/cua/commit/203cd1eebd3cc9f8e4706b7af7ab33e9ec578afe))
+
 ## [0.8.0](https://github.com/trycua/cua/compare/sandbox-v0.7.0...sandbox-v0.8.0) (2026-09-15)
 
 

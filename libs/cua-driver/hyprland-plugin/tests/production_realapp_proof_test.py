@@ -24,6 +24,7 @@ from production_realapp_proof import (SMOKE_STEPS, app_process_identity, provena
 from proof_fixtures import (INKSCAPE, INKSCAPE_SELECTED, START, STOP, assert_rejects, capacity_events, capacity_plan,
                             harness_args, inkscape_plan, lane, lane_status, patch_module, plan,
                             policy_cache_plan, primary_trace as trace, run_replacements)
+from production_app_smoke import OBSERVATION_TIMEOUT_MS
 
 
 def focus_evidence(rows):
@@ -673,6 +674,8 @@ class SmokeStageTests(unittest.TestCase):
 
     def test_runner_grounds_full_snapshots_and_never_recovers_or_replays(self):
         failures = {None: None, 'unmarked': None,
+                    'truncated': 'not proven complete', 'incomplete': 'not proven complete',
+                    'degraded': 'not proven complete', 'missing_budget': 'not proven complete',
                     'no_elements': 'snapshot has no semantic elements',
                     'dialog': 'unexpected dialog; no dismissal keys were sent',
                     'extra_window': 'reviewed PID/window identity is stale or ambiguous',
@@ -720,6 +723,10 @@ class SmokeStageTests(unittest.TestCase):
                             if failure == 'dialog' or (failure == 'after_dialog' and sent):
                                 rows = [{'role': 'dialog'}]
                             return {'structuredContent': {'screenshot_width': 600, 'window_bounds': bounds,
+                                                          'truncated': failure == 'truncated',
+                                                          'elements_complete': failure != 'incomplete',
+                                                          'degraded': failure == 'degraded',
+                                                          'timeout_ms': None if failure == 'missing_budget' else OBSERVATION_TIMEOUT_MS,
                                                           'tree_markdown': (INKSCAPE_SELECTED if stage == 'move'
                                                                             else INKSCAPE)['tree_markdown'],
                                                           'elements': rows}}
@@ -740,7 +747,8 @@ class SmokeStageTests(unittest.TestCase):
                         verify_output=Mock(return_value={'verified': True})))
                     self.assertEqual(run(args), 0 if expected_error is None else 1)
                     inputs = [i for i, row in enumerate(calls) if row[0] == 'input']
-                    self.assertEqual(len(inputs), 0 if failure in ('no_elements', 'dialog', 'extra_window') else 1)
+                    self.assertEqual(len(inputs), 0 if failure in ('no_elements', 'dialog', 'extra_window',
+                                      'truncated', 'incomplete', 'degraded', 'missing_budget') else 1)
                     if inputs:
                         i = inputs[0]
                         self.assertEqual(calls[i - 1][0], 'snapshot')
@@ -750,6 +758,8 @@ class SmokeStageTests(unittest.TestCase):
                         for _, parameters in (calls[i - 1], calls[i + 1]):
                             self.assertEqual('max_elements' in parameters, failure == 'unmarked')
                             self.assertEqual('max_depth' in parameters, failure == 'unmarked')
+                            if failure != 'unmarked':
+                                self.assertEqual(parameters['timeout_ms'], OBSERVATION_TIMEOUT_MS)
                     for mcp in agents + [observer]:
                         mcp.close.assert_called_once()
                     self.assertFalse(held[0])
@@ -854,7 +864,9 @@ class PointerStageTests(unittest.TestCase):
                             calls.append(('snapshot', parameters, folder.name, mcp.counter))
                             image = folder / f'{mcp.counter}.png'
                             image.write_bytes(b'synthetic image read by a stub')
-                            return {'structuredContent': {'screenshot_width': 600, 'window_bounds': bounds},
+                            return {'structuredContent': {'screenshot_width': 600, 'window_bounds': bounds,
+                                    'truncated': False, 'elements_complete': True,
+                                    'timeout_ms': OBSERVATION_TIMEOUT_MS},
                                     'content': [] if failure == 'missing_image' else
                                     [{'type': 'image', 'image_file': image.name}]}
                         if name == 'get_desktop_state':

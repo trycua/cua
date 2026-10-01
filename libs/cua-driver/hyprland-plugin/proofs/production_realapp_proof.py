@@ -24,7 +24,7 @@ from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
 from primary_observer import PrimaryObserver, verify_negative_control as verify_primary_control
 from production_app_smoke import (EXECUTABLES, NS, add_provenance_arguments, digest, ground, package_owner, profile_packages,
-                                  provenance as runtime_provenance)
+                                  provenance as runtime_provenance, OBSERVATION_TIMEOUT_MS, require_complete)
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
 import production_pointer_grounding as pointer_grounding
 from realapp_proof import cleanup_all, rect_position, released_synthetic_input
@@ -637,10 +637,12 @@ def run(args):
             assert len(matches) == 1 and matches[0].get('window_id') == target['window_id'], \
                 'reviewed PID/window identity is stale or ambiguous'
         result = mcp.tool('get_window_state', {**target,
-                          **({} if full else {'max_elements': 100, 'max_depth': 6}),
+                          **({'timeout_ms': OBSERVATION_TIMEOUT_MS} if full else {'max_elements': 100, 'max_depth': 6}),
                           **({'session': session} if session else {})})
         assert not result.get('isError'), result
         content = result['structuredContent']
+        if full:
+            require_complete(content)
         assert content.get('screenshot_width', 0) > 0, 'missing grounding image'
         if pixels:
             images = [row for row in result.get('content', []) if row.get('type') == 'image']

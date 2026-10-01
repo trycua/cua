@@ -723,6 +723,63 @@ pub fn progress(s: &PickerState) -> f64 {
     ((last.step as f64 + within) / (last.steps.max(1) as f64)).min(1.0)
 }
 
+/// What the run is doing, in words, for the line under its progress bar:
+/// the latest step or stage the pipeline reported ("Reading Chrome cookies
+/// (macOS will ask for Keychain access)…", "Packing profile"), with the
+/// bytes while they move ("Uploading 12 / 80 MB"). None before the first
+/// event and once the run is done or failed.
+pub fn run_status(events: &[RunEvent]) -> Option<String> {
+    let last = events.last()?;
+    if matches!(last.phase, RunPhase::Done | RunPhase::Failed) {
+        return None;
+    }
+    // The newest event with words: a stage, else the step as it started.
+    let worded = events
+        .iter()
+        .rev()
+        .take_while(|e| e.step == last.step)
+        .find(|e| {
+            matches!(e.phase, RunPhase::Started | RunPhase::Progress) && !e.detail.trim().is_empty()
+        })?;
+    let mut text = worded.detail.trim().to_string();
+    // A file path or an installer line reads as the step it belongs to.
+    if worded.phase == RunPhase::Progress && worded.kind != "state" {
+        text = events
+            .iter()
+            .rev()
+            .find(|e| e.step == last.step && e.phase == RunPhase::Started)
+            .map(|e| e.detail.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .unwrap_or(text);
+    }
+    if last.phase == RunPhase::Progress
+        && last.total_bytes > 0
+        && last.done_bytes < last.total_bytes
+    {
+        text = format!(
+            "{text} {}",
+            format_bytes_pair(last.done_bytes, last.total_bytes)
+        );
+    }
+    Some(text)
+}
+
+/// [`run_status`] of the picker's run (none unless it is running).
+pub fn status(s: &PickerState) -> Option<String> {
+    (s.step == Step::Running)
+        .then(|| run_status(&s.events))
+        .flatten()
+}
+
+/// "12 / 80 MB" (one unit when both read in it), else "512 KB / 80 MB".
+pub fn format_bytes_pair(done: u64, total: u64) -> String {
+    let (d, t) = (format_bytes(done.min(total)), format_bytes(total));
+    match (d.rsplit_once(' '), t.rsplit_once(' ')) {
+        (Some((dn, du)), Some((_, tu))) if du == tu => format!("{dn} / {t}"),
+        _ => format!("{d} / {t}"),
+    }
+}
+
 /// "512 B", "1.5 KB", "12 MB".
 pub fn format_bytes(n: u64) -> String {
     if n < 1024 {
@@ -1005,6 +1062,68 @@ pub fn review(s: &PickerState) -> Option<ReviewView> {
 
 #[cfg(test)]
 mod tests {
+
+    fn ev(step: u32, kind: &str, phase: RunPhase, detail: &str, done: u64, total: u64) -> RunEvent {
+        RunEvent {
+            step,
+            steps: 2,
+            kind: kind.into(),
+            phase,
+            detail: detail.into(),
+            done_bytes: done,
+            total_bytes: total,
+        }
+    }
+
+    #[test]
+    fn the_run_says_what_it_is_doing_step_by_step() {
+        use RunPhase::*;
+        const MB: u64 = 1024 * 1024;
+        let reading = "Reading Chrome cookies (macOS will ask for Keychain access)\u{2026}";
+        let mut events = vec![];
+        assert_eq!(run_status(&events), None, "nothing yet");
+        events.push(ev(0, "state", Started, "Preparing the sign-in", 0, 0));
+        assert_eq!(
+            run_status(&events).as_deref(),
+            Some("Preparing the sign-in")
+        );
+        events.push(ev(0, "state", Progress, reading, 0, 0));
+        assert_eq!(run_status(&events).as_deref(), Some(reading));
+        events.push(ev(0, "state", Progress, "Packing profile", 0, 0));
+        assert_eq!(run_status(&events).as_deref(), Some("Packing profile"));
+        events.push(ev(0, "state", Progress, "Uploading", 12 * MB, 80 * MB));
+        assert_eq!(run_status(&events).as_deref(), Some("Uploading 12 / 80 MB"));
+        events.push(ev(0, "state", Progress, "Importing into the Space", 0, 0));
+        assert_eq!(
+            run_status(&events).as_deref(),
+            Some("Importing into the Space")
+        );
+        // Between steps the finished step's words stay.
+        events.push(ev(0, "state", Finished, "", 0, 0));
+        assert_eq!(
+            run_status(&events).as_deref(),
+            Some("Importing into the Space")
+        );
+        // A file path reads as its step, with the bytes.
+        events.push(ev(1, "files", Started, "Sending 2 items", 0, 0));
+        events.push(ev(
+            1,
+            "files",
+            Progress,
+            "/Users/me/a.txt",
+            512 * 1024,
+            2 * MB,
+        ));
+        assert_eq!(
+            run_status(&events).as_deref(),
+            Some("Sending 2 items 512 KB / 2.0 MB")
+        );
+        events.push(ev(2, "done", Done, "Chrome", 0, 0));
+        assert_eq!(run_status(&events), None, "the done step says the rest");
+        assert_eq!(format_bytes_pair(5 * MB, 80 * MB), "5.0 / 80 MB");
+        assert_eq!(format_bytes_pair(90 * MB, 80 * MB), "80 / 80 MB");
+    }
+
     use super::*;
 
     #[test]

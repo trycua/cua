@@ -424,6 +424,15 @@ impl KeyvaultCommands {
             .map(|_| ())
     }
 
+    /// Auto-wipe of delivered copies. On only shortens what new copies
+    /// keep; off keeps them until wiped, so the daemon asks for presence.
+    pub async fn set_auto_wipe(&self, on: bool) -> Result<(), KvFailure> {
+        self.transport
+            .call(Request::SetAutoWipe { on })
+            .await
+            .map(|_| ())
+    }
+
     /// Whether `item_ids` may be used by unattended rules. Off only narrows;
     /// on widens, so the daemon asks for presence. Identity providers never
     /// go unattended.
@@ -555,6 +564,10 @@ impl KeyvaultCommands {
             }
             KvCommand::SetDisabled { disabled } => {
                 self.set_disabled(*disabled).await?;
+                KvOutcome::Done
+            }
+            KvCommand::SetAutoWipe { on } => {
+                self.set_auto_wipe(*on).await?;
                 KvOutcome::Done
             }
             KvCommand::SetUnattended {

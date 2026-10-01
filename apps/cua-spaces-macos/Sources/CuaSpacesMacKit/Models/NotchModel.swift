@@ -72,10 +72,11 @@ public final class NotchModel {
     }
 
     /// Keyvault sign-ins went live in a Space, changed, or stopped (the
-    /// core's sharing label; nil when nothing is live).
-    public func setKeyvault(label: String?) {
-        guard label != state.keyvault else { return }
-        send(.keyvault(label: label))
+    /// core's sharing label less dismissed copies, nil when nothing shows;
+    /// the Space ids whose tiles carry the key).
+    public func setKeyvault(label: String?, signedIn: [String] = []) {
+        guard label != state.keyvault || signedIn != state.signedIn else { return }
+        send(.keyvault(label: label, signedIn: signedIn))
     }
 
     /// The header's search text.

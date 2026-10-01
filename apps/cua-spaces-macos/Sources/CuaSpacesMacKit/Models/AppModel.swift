@@ -148,7 +148,14 @@ public final class AppModel {
         self.storage.telemetry = telemetry
         self.devices.telemetry = telemetry
         // Live Keyvault sign-ins show left of the notch (and in the menu).
-        keyvault.onSharing = { [weak notch = self.notch] label in notch?.setKeyvault(label: label) }
+        // Dismissed ones stay hidden across launches (Settings file).
+        keyvault.dismissed = settings.dismissedAccess
+        keyvault.onSharing = { [weak self] _ in self?.syncNotchKeyvault() }
+        keyvault.onDismissed = { [weak self] ids in
+            guard let self else { return }
+            self.settings.dismissedAccess = ids
+            self.saveSettings()
+        }
         self.host.onChange = { [weak self] in self?.recompose() }
         // The first run's "Where should Cua Spaces show up?" is this setting.
         onboarding.onPresentation = { [weak self] menuBar in
@@ -236,6 +243,27 @@ public final class AppModel {
     public func send(_ action: AppRosterAction) {
         roster = appRosterReduce(state: roster, action: action)
         notch.spaces = roster.spaces
+        syncNotchKeyvault()
+    }
+
+    // MARK: - Keyvault sign-ins in Spaces
+
+    /// The Spaces a Keyvault sign-in is live in ("Signed in" in the list;
+    /// dismissing hides only the notch's indicator).
+    public var signedInSpaceIds: Set<String> { Set(keyvault.signedIn(spaces)) }
+
+    /// The notch's key indicator, its line and the tiles' key, without the
+    /// dismissed copies.
+    func syncNotchKeyvault() {
+        notch.setKeyvault(label: keyvault.notchLabel, signedIn: keyvault.signedIn(spaces, notch: true))
+    }
+
+    /// A Space's "Signed in" badge: the Keyvault's Access page, with that
+    /// Space's row brought forward.
+    public func showAccess(spaceId: String) {
+        keyvault.focusKey = spaces.first { $0.id == spaceId }.flatMap { keyvault.accessKey(for: $0) }
+        keyvault.selection = .category(category: .access)
+        selection = .keyvault(.category(category: .access))
     }
 
     /// The roster: This machine first (when this app manages a host), then
@@ -592,7 +620,7 @@ public final class AppModel {
             menuBar: settings.menuBar, defaultLocation: settings.defaultLocation, locationLockedBy: nil,
             telemetry: telemetryInput, agents: agentRows, agentsBusy: agentsBusy, agentsPending: agentsPending,
             billing: identity == nil ? nil : billingStatus, loginItem: loginItemInput,
-            experiments: settings.experiments))
+            experiments: settings.experiments, keyvaultAutoWipe: keyvault.autoWipe))
     }
 
     /// Settings, General with Settings, Storage after General while the Cua
@@ -689,6 +717,7 @@ public final class AppModel {
         await storage.load()
         await reloadBilling()
         await reloadAgents()
+        await keyvault.refresh()
     }
 
     func reloadBilling() async {
@@ -731,6 +760,9 @@ public final class AppModel {
             saveSettings()
         case "launch-at-login":
             setLaunchAtLogin(option == "on")
+        case "keyvault-auto-wipe":
+            await keyvault.setAutoWipe(option == "on")
+            if let error = keyvault.error { show(error: error) }
         case "telemetry":
             do {
                 telemetryInput = try telemetry?.setEnabled(option == "on")

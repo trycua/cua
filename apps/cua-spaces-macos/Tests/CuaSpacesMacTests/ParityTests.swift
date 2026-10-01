@@ -632,7 +632,7 @@ struct ParityTests {
             "openResponse": m.openResponse, "openDamping": m.openDamping,
             "closeResponse": m.closeResponse, "closeDamping": m.closeDamping,
             "reducedDuration": m.reducedDuration, "hoverResponse": m.hoverResponse,
-            "hoverDamping": m.hoverDamping, "hoverScale": m.hoverScale,
+            "hoverDamping": m.hoverDamping, "hoverScale": m.hoverScale, "hoverScaleY": m.hoverScaleY,
             "contentDelayMs": m.contentDelayMs, "contentIn": m.contentIn,
             "contentOut": m.contentOut, "contentScale": m.contentScale,
         ] as [String: Any]])

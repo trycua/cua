@@ -136,6 +136,7 @@ fn items_callers_grants_rules_deliveries_status() {
         items: 1,
         pending: 0,
         unlock_policy: None,
+        auto_wipe: Some(true),
         os_protector_available: false,
         passphrase_available: true,
         unlock_protectors: vec![
@@ -145,6 +146,7 @@ fn items_callers_grants_rules_deliveries_status() {
     };
     let kv: KvStatus = round(&st);
     assert_eq!(kv.unlock_protectors, ["passphrase", "recovery"]);
+    assert_eq!(kv.auto_wipe, Some(true));
     let ev = AuditEvent {
         kind: "consent.allow".into(),
         actor: "Cua".into(),

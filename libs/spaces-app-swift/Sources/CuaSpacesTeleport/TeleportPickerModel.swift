@@ -91,6 +91,13 @@ public final class TeleportPickerModel: ObservableObject {
         return min(1, (Double(last.step) + within) / Double(max(1, last.steps)))
     }
 
+    /// What the run is doing, in words, under the progress bar ("Reading
+    /// Chrome cookies (macOS will ask for Keychain access)…", "Uploading
+    /// 12 / 80 MB"): the app core's reading of the SDK's step events.
+    public var status: String? {
+        step == .running ? appTeleportRunStatus(events: events) : nil
+    }
+
     /// The least that moves (files when some were dropped).
     public static func defaultMove(_ entry: TeleportCatalogEntry, files: [String] = []) -> TeleportMove? {
         if !files.isEmpty, entry.moves.contains(.appWithFiles) { return .appWithFiles }

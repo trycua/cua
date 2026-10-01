@@ -1385,6 +1385,11 @@ RustBuffer uniffi_cua_spaces_ffi_fn_func_app_picker_sections(RustBuffer state, R
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_picker_sensitive_options(RustBuffer state, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_PICKER_STATUS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_PICKER_STATUS
+RustBuffer uniffi_cua_spaces_ffi_fn_func_app_picker_status(RustBuffer state, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_PICKER_WINDOW_GRID
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_PICKER_WINDOW_GRID
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_picker_window_grid(RustBuffer windows, RustBuffer query, RustBuffer selected, RustCallStatus *_Nonnull out_status
@@ -1715,6 +1720,16 @@ RustBuffer uniffi_cua_spaces_ffi_fn_func_app_teleport_plan(RustBuffer plan, Rust
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_teleport_plan_from_json(RustBuffer json, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_TELEPORT_RUN_EVENT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_TELEPORT_RUN_EVENT
+RustBuffer uniffi_cua_spaces_ffi_fn_func_app_teleport_run_event(RustBuffer event, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_TELEPORT_RUN_STATUS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_TELEPORT_RUN_STATUS
+RustBuffer uniffi_cua_spaces_ffi_fn_func_app_teleport_run_status(RustBuffer events, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_THIS_MACHINE_SPACE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_APP_THIS_MACHINE_SPACE
 RustBuffer uniffi_cua_spaces_ffi_fn_func_app_this_machine_space(RustBuffer status, int64_t now_ms, RustCallStatus *_Nonnull out_status
@@ -1857,6 +1872,11 @@ RustBuffer uniffi_cua_spaces_ffi_fn_func_kv_page(RustBuffer overview, int64_t no
 RustBuffer uniffi_cua_spaces_ffi_fn_func_kv_passphrase_check(RustBuffer mode, RustBuffer passphrase, RustBuffer confirm, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_KV_PRUNE_DISMISSED
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_KV_PRUNE_DISMISSED
+RustBuffer uniffi_cua_spaces_ffi_fn_func_kv_prune_dismissed(RustBuffer overview, int64_t now_ms, RustBuffer dismissed, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_KV_RECOVERY_KEY_TEXT
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_KV_RECOVERY_KEY_TEXT
 RustBuffer uniffi_cua_spaces_ffi_fn_func_kv_recovery_key_text(RustBuffer key, RustCallStatus *_Nonnull out_status
@@ -1872,6 +1892,11 @@ RustBuffer uniffi_cua_spaces_ffi_fn_func_kv_sharing_label(RustBuffer overview, i
 RustBuffer uniffi_cua_spaces_ffi_fn_func_kv_sidebar(RustBuffer overview, int64_t now_ms, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_KV_SIGNED_IN_SPACES
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_KV_SIGNED_IN_SPACES
+RustBuffer uniffi_cua_spaces_ffi_fn_func_kv_signed_in_spaces(RustBuffer overview, int64_t now_ms, RustBuffer dismissed, RustBuffer spaces, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_KV_SITE_DETAIL
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_KV_SITE_DETAIL
 RustBuffer uniffi_cua_spaces_ffi_fn_func_kv_site_detail(RustBuffer overview, RustBuffer key, int64_t now_ms, RustCallStatus *_Nonnull out_status
@@ -1880,6 +1905,16 @@ RustBuffer uniffi_cua_spaces_ffi_fn_func_kv_site_detail(RustBuffer overview, Rus
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_KV_SITE_TOGGLE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_KV_SITE_TOGGLE
 RustBuffer uniffi_cua_spaces_ffi_fn_func_kv_site_toggle(RustBuffer group, int8_t on, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_KV_SPACE_ACCESS_KEY
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_KV_SPACE_ACCESS_KEY
+RustBuffer uniffi_cua_spaces_ffi_fn_func_kv_space_access_key(RustBuffer overview, int64_t now_ms, RustBuffer space, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_KV_VISIBLE_SHARING_LABEL
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_KV_VISIBLE_SHARING_LABEL
+RustBuffer uniffi_cua_spaces_ffi_fn_func_kv_visible_sharing_label(RustBuffer overview, int64_t now_ms, RustBuffer dismissed, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_FN_FUNC_SPACESD_OPEN_MEDIA_DECODED
@@ -3027,6 +3062,12 @@ uint16_t uniffi_cua_spaces_ffi_checksum_func_app_picker_sensitive_options(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_PICKER_STATUS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_PICKER_STATUS
+uint16_t uniffi_cua_spaces_ffi_checksum_func_app_picker_status(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_PICKER_WINDOW_GRID
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_PICKER_WINDOW_GRID
 uint16_t uniffi_cua_spaces_ffi_checksum_func_app_picker_window_grid(void
@@ -3417,6 +3458,18 @@ uint16_t uniffi_cua_spaces_ffi_checksum_func_app_teleport_plan_from_json(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_TELEPORT_RUN_EVENT
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_TELEPORT_RUN_EVENT
+uint16_t uniffi_cua_spaces_ffi_checksum_func_app_teleport_run_event(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_TELEPORT_RUN_STATUS
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_TELEPORT_RUN_STATUS
+uint16_t uniffi_cua_spaces_ffi_checksum_func_app_teleport_run_status(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_THIS_MACHINE_SPACE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_APP_THIS_MACHINE_SPACE
 uint16_t uniffi_cua_spaces_ffi_checksum_func_app_this_machine_space(void
@@ -3585,6 +3638,12 @@ uint16_t uniffi_cua_spaces_ffi_checksum_func_kv_passphrase_check(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_KV_PRUNE_DISMISSED
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_KV_PRUNE_DISMISSED
+uint16_t uniffi_cua_spaces_ffi_checksum_func_kv_prune_dismissed(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_KV_RECOVERY_KEY_TEXT
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_KV_RECOVERY_KEY_TEXT
 uint16_t uniffi_cua_spaces_ffi_checksum_func_kv_recovery_key_text(void
@@ -3603,6 +3662,12 @@ uint16_t uniffi_cua_spaces_ffi_checksum_func_kv_sidebar(void
 
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_KV_SIGNED_IN_SPACES
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_KV_SIGNED_IN_SPACES
+uint16_t uniffi_cua_spaces_ffi_checksum_func_kv_signed_in_spaces(void
+
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_KV_SITE_DETAIL
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_KV_SITE_DETAIL
 uint16_t uniffi_cua_spaces_ffi_checksum_func_kv_site_detail(void
@@ -3612,6 +3677,18 @@ uint16_t uniffi_cua_spaces_ffi_checksum_func_kv_site_detail(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_KV_SITE_TOGGLE
 #define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_KV_SITE_TOGGLE
 uint16_t uniffi_cua_spaces_ffi_checksum_func_kv_site_toggle(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_KV_SPACE_ACCESS_KEY
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_KV_SPACE_ACCESS_KEY
+uint16_t uniffi_cua_spaces_ffi_checksum_func_kv_space_access_key(void
+
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_KV_VISIBLE_SHARING_LABEL
+#define UNIFFI_FFIDEF_UNIFFI_CUA_SPACES_FFI_CHECKSUM_FUNC_KV_VISIBLE_SHARING_LABEL
+uint16_t uniffi_cua_spaces_ffi_checksum_func_kv_visible_sharing_label(void
 
 );
 #endif

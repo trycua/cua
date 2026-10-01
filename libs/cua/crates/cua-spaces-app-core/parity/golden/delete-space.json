@@ -25,8 +25,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Deleting…",
-              "System: Linux",
-              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:demo",
             "previewText": "Deleting…",
@@ -45,8 +45,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Loading the desktop…",
@@ -95,8 +95,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Deleting…",
-              "System: Linux",
-              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:demo",
             "previewText": "Deleting…",
@@ -115,8 +115,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Loading the desktop…",
@@ -165,8 +165,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Deleting…",
-              "System: Linux",
-              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:demo",
             "previewText": "Deleting…",
@@ -185,8 +185,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Loading the desktop…",
@@ -235,8 +235,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Deleting…",
-              "System: Linux",
-              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:demo [copy local:demo doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:demo",
             "previewText": "Deleting…",
@@ -255,8 +255,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Loading the desktop…",
@@ -305,8 +305,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Loading the desktop…",
@@ -352,8 +352,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Loading the desktop…",
@@ -397,8 +397,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Loading the desktop…",
@@ -444,8 +444,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Deleting…",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Deleting…",
@@ -489,8 +489,8 @@
             "creditNotice": null,
             "facts": [
               "Status: Running",
-              "System: Linux",
-              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]"
+              "Identifier: local:keep [copy local:keep doc.on.doc Copy / checkmark Copied 1500ms]",
+              "System: Linux"
             ],
             "id": "local:keep",
             "previewText": "Loading the desktop…",

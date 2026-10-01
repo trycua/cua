@@ -253,6 +253,7 @@ mod tests {
                 items: 0,
                 pending: 0,
                 unlock_policy: None,
+                auto_wipe: None,
                 os_protector_available: os,
                 passphrase_available: true,
                 unlock_protectors: unlock.iter().map(|s| s.to_string()).collect(),

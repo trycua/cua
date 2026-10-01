@@ -1052,6 +1052,36 @@ pub fn app_picker_progress(state: AppPickerState) -> f64 {
     core::teleport::flow::progress(&state)
 }
 
+/// What the run is doing, in words ("Packing profile", "Uploading 12 /
+/// 80 MB"), for the line under the progress bar; none unless running.
+#[uniffi::export]
+pub fn app_picker_status(state: AppPickerState) -> Option<String> {
+    core::teleport::flow::status(&state)
+}
+
+/// [`app_picker_status`] for a run's events as the SDK delivered them.
+#[uniffi::export]
+pub fn app_teleport_run_status(events: Vec<crate::TeleportRunEvent>) -> Option<String> {
+    let events: Vec<_> = events.into_iter().map(app_teleport_run_event).collect();
+    core::teleport::flow::run_status(&events)
+}
+
+/// An SDK run event as the picker's (`AppPickerEvent.progress`).
+#[uniffi::export]
+pub fn app_teleport_run_event(event: crate::TeleportRunEvent) -> AppTeleportRunEvent {
+    use core::teleport::flow::RunPhase;
+    AppTeleportRunEvent {
+        step: event.step,
+        steps: event.steps,
+        kind: event.kind,
+        phase: serde_json::from_value(serde_json::Value::String(event.phase))
+            .unwrap_or(RunPhase::Progress),
+        detail: event.detail,
+        done_bytes: event.done_bytes,
+        total_bytes: event.total_bytes,
+    }
+}
+
 /// "12 MB".
 #[uniffi::export]
 pub fn app_format_bytes(bytes: u64) -> String {
@@ -1310,6 +1340,50 @@ pub fn kv_page(overview: KeyvaultOverview, now_ms: i64) -> KvPage {
 #[uniffi::export]
 pub fn kv_sharing_label(overview: KeyvaultOverview, now_ms: i64) -> Option<String> {
     core::keyvault::view::sharing_label(&overview, now_ms)
+}
+
+/// [`kv_sharing_label`] without the copies the user dismissed (import ids):
+/// the notch indicator.
+#[uniffi::export]
+pub fn kv_visible_sharing_label(
+    overview: KeyvaultOverview,
+    now_ms: i64,
+    dismissed: Vec<String>,
+) -> Option<String> {
+    core::keyvault::view::visible_sharing_label(&overview, now_ms, &dismissed)
+}
+
+/// The ids of `spaces` signed in through the Keyvault (a live copy is in
+/// them), less the `dismissed` copies: "Signed in" in the Spaces list
+/// (nothing dismissed), the key on notch tiles.
+#[uniffi::export]
+pub fn kv_signed_in_spaces(
+    overview: KeyvaultOverview,
+    now_ms: i64,
+    dismissed: Vec<String>,
+    spaces: Vec<AppSpace>,
+) -> Vec<String> {
+    core::keyvault::view::signed_in_spaces(&overview, now_ms, &dismissed, &spaces)
+}
+
+/// The dismissed copies still live.
+#[uniffi::export]
+pub fn kv_prune_dismissed(
+    overview: KeyvaultOverview,
+    now_ms: i64,
+    dismissed: Vec<String>,
+) -> Vec<String> {
+    core::keyvault::view::prune_dismissed(&overview, now_ms, &dismissed)
+}
+
+/// The Access row of `space`'s copies, to focus from its "Signed in" badge.
+#[uniffi::export]
+pub fn kv_space_access_key(
+    overview: KeyvaultOverview,
+    now_ms: i64,
+    space: AppSpace,
+) -> Option<String> {
+    core::keyvault::view::space_access_key(&overview, now_ms, &space)
 }
 
 /// The Passwords-style sidebar.

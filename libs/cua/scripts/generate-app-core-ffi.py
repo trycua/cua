@@ -28,7 +28,7 @@ TYPES = [
     ("notch/geometry.rs", "notch::geometry", ["WindowMode", "LogicalRect"]),
     ("teleport/drag.rs", "teleport::drag", ["DragOverlayPhase", "DragOverlayState", "DragOverlayEvent", "DragOverlayEffect", "DragOverlayTransition"]),
     ("notch/drag_trigger.rs", "notch::drag_trigger", ["DragKind", "TriggerPhase", "DragDisplay", "StillAnchor", "DragTriggerState", "DragTriggerEvent", "DragTriggerTransition"]),
-    ("notch/mod.rs", "notch", ["NotchMotion", "NotchRadii", "ScreenFacts", "NotchLayout", "NotchTile", "NotchPhase", "NotchState", "NotchEvent", "NotchEffect", "NotchTransition", "NotchPermission", "NotchTransfer", "NotchTab", "NotchButtonId", "NotchButton", "NotchHeader", "NotchActivityKind", "NotchActivity", "NotchView"]),
+    ("notch/mod.rs", "notch", ["NotchMotion", "NotchRadii", "ScreenFacts", "NotchLayout", "NotchTile", "NotchPhase", "NotchState", "NotchEvent", "NotchEffect", "NotchTransition", "NotchPermission", "NotchAccess", "NotchTransfer", "NotchTab", "NotchButtonId", "NotchButton", "NotchHeader", "NotchActivityKind", "NotchActivity", "NotchView"]),
     ("teleport/transfer.rs", "teleport::transfer", ["TransferPhase", "TransferOverlayState", "TransferStatus", "TransferSignal", "SentFileInfo"]),
     ("teleport/windows.rs", "teleport::windows", ["OpenWindow", "OpenApp", "RemoteWindow", "RemoteWindowGroup", "PickerTab", "PickerAction", "PickerPrimary"]),
     ("teleport/grid.rs", "teleport::grid", ["PickerTileIcon", "PickerTileThumbnail", "PickerTile", "PickerTileSection", "PickerGrid", "PickerGridTab", "PickerGridTabItem", "PickerGridPrimary"]),

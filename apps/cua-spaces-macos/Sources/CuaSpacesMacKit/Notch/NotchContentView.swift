@@ -182,7 +182,17 @@ struct NotchContentView: View {
             // The cue grows the notch and its tab as one, about the notch's
             // top centre.
             .frame(width: g.stage.width, alignment: .top)
-            .scaleEffect(x: shape == .cue ? motion.hoverScale : 1, y: 1, anchor: .top)
+            .scaleEffect(x: shape == .cue && !reduceMotion ? motion.hoverScale : 1,
+                         y: shape == .cue && !reduceMotion ? motion.hoverScaleY : 1, anchor: .top)
+            // Reduce Motion: the cue is a faint rim instead of a spring.
+            .overlay(alignment: .top) {
+                if shape == .cue, reduceMotion, g.notchStyle {
+                    NotchShape(top: radii.closed.top, bottom: radii.closed.bottom)
+                        .stroke(.white.opacity(0.28), lineWidth: 1)
+                        .frame(width: size.width, height: size.height)
+                        .transition(.opacity)
+                }
+            }
             .animation(.spring(response: motion.openResponse, dampingFraction: motion.closeDamping), value: g)
             // Always present, so its frame (and the clip) springs with the
             // shape; the content inside is laid out at its final size.
@@ -365,6 +375,8 @@ struct NotchContentView: View {
                 }
                 if let p = v.permission {
                     permissionRow(p).frame(height: 36, alignment: .top)
+                } else if let a = v.access {
+                    accessRow(a).frame(height: 36, alignment: .top)
                 } else if let prompt = v.prompt {
                     Text(prompt)
                         .font(.system(size: 12, weight: .medium))
@@ -461,6 +473,32 @@ struct NotchContentView: View {
         }
     }
 
+    /// Live Keyvault sign-ins: the key, what is live (opens the Access
+    /// page) and Dismiss, which only hides this.
+    private func accessRow(_ a: AppNotchAccess) -> some View {
+        HStack(spacing: 8) {
+            Button { model.send(.dismiss); controller.onOpenAccess?() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "key.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color(red: 0x34 / 255, green: 0xc7 / 255, blue: 0x59 / 255))
+                    Text(a.text)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .lineLimit(1)
+                }
+            }
+            .buttonStyle(.plain)
+            .help("Show in Keyvault")
+            Spacer(minLength: 8)
+            Button(a.dismiss) { controller.onDismissAccess?() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Hide this until something new is shared. Access stays.")
+                .accessibilityIdentifier("notch-dismiss-access")
+        }
+    }
+
     @ViewBuilder private func tiles(_ v: AppNotchView) -> some View {
         let row = HStack(alignment: .top, spacing: 12) {
             ForEach(v.tiles, id: \.id) { tile in
@@ -531,6 +569,11 @@ struct TileView: View {
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.white.opacity(0.6))
                 }
+                if tile.signedIn {
+                    SignedInKey()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .padding(5)
+                }
                 if let ghost {
                     Image(nsImage: ghost)
                         .resizable()
@@ -578,6 +621,20 @@ struct TileView: View {
         case .provisioning: return .blue
         case .suspended, .deleting: return .gray
         }
+    }
+}
+
+/// A Space signed in through the Keyvault: a small key on its thumbnail.
+struct SignedInKey: View {
+    var body: some View {
+        Image(systemName: "key.fill")
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: 16, height: 16)
+            .background(Circle().fill(.black.opacity(0.65)))
+            .overlay(Circle().strokeBorder(.white.opacity(0.18), lineWidth: 0.5))
+            .accessibilityLabel("Signed in")
+            .help("Signed in through the Keyvault")
     }
 }
 

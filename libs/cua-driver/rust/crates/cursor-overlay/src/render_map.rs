@@ -303,7 +303,7 @@ impl<S: RenderEntry, P> RenderMap<S, P> {
             return false;
         };
         let core = cursor.core_mut();
-        if !(core.cfg.enabled && core.pos.0 < -50.0) {
+        if !(core.cfg.enabled && !crate::render_state::is_placed(core.pos)) {
             return false;
         }
         core.pos = seed_position(target_x, target_y, frame);
@@ -533,6 +533,10 @@ mod tests {
         map.cursors["sessA"].pos = (30.0, 30.0);
         assert!(!map.seed_start_if_sentinel("sessA", 80.0, 80.0, frame));
         assert_eq!(map.cursors["sessA"].pos, (30.0, 30.0));
+        // A cursor placed on a monitor left of the layout origin is no sentinel.
+        map.cursors["sessA"].pos = (-2220.0, 980.0);
+        assert!(!map.seed_start_if_sentinel("sessA", 80.0, 80.0, frame));
+        assert_eq!(map.cursors["sessA"].pos, (-2220.0, 980.0));
 
         map.cursor_mut("disabled").unwrap().cfg.enabled = false;
         assert!(!map.seed_start_if_sentinel("disabled", 80.0, 80.0, frame));

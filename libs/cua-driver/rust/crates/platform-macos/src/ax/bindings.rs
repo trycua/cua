@@ -67,6 +67,7 @@ extern "C" {
         element: *mut AXUIElementRef,
     ) -> AXError;
     pub fn AXUIElementPerformAction(element: AXUIElementRef, action: CFStringRef) -> AXError;
+    pub fn AXUIElementGetPid(element: AXUIElementRef, pid: *mut i32) -> AXError;
     pub fn AXUIElementSetAttributeValue(
         element: AXUIElementRef,
         attribute: CFStringRef,
@@ -159,6 +160,12 @@ pub unsafe fn is_attribute_settable(element: AXUIElementRef, attr_name: &str) ->
     AXUIElementIsAttributeSettable(element, attr.as_concrete_TypeRef(), &mut settable)
         == kAXErrorSuccess
         && settable != 0
+}
+
+// SAFETY: `element` must be a live `AXUIElementRef` for the call.
+pub(crate) unsafe fn element_pid(element: AXUIElementRef) -> Option<i32> {
+    let mut pid = 0;
+    (AXUIElementGetPid(element, &mut pid) == kAXErrorSuccess && pid > 0).then_some(pid)
 }
 
 /// Copy a string attribute from an AX element. Returns `None` on any error.

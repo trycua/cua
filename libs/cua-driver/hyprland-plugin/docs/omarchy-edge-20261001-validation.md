@@ -115,9 +115,32 @@ candidate remain separately identified.
 
 ## Remaining gates
 
+Additional diagnostic fault runs on the replacement guest pass primary-client
+initial refusal with a new-action recovery, and same-client passive-hover
+agent conflict with owner recovery. These do not establish active-drag primary
+conflict, active-lease contention, other-lane recovery, or same-process sibling
+window behavior. Separate floating-window move and resize episodes pass
+mid-drag cancellation, own-seat input release, continuous primary isolation,
+and freshly grounded recovery. Initial target-destruction episodes fail because
+the tiled replacement changes bounds after target removal. A fresh episode with
+fixed, non-overlapping floating windows passes exact-target destruction during
+a drag, connection retirement, and a new action on a prepared distinct process.
+The test uses an advertised 2560x1080 virtual display mode because each Inkscape
+window expands to a 1078-pixel minimum width with the fixture panels open.
+Same-client recovery, PID/address reuse and active-sibling behavior remain
+unproven by this bounded case.
+
+A second current-environment package, release `4`, builds with all 20 CTests
+passing. Its measured profile differs from release `3` only in explicit labels
+and package revision. Package SHA-256 is
+`4bf905f05590a9f2bd4b25fa7d302c63dc17c71ebd2bd726b67235248d561982`;
+kit provenance is `0947837380c9af82ca9dc0d2ac4f7b1e0238a74f7677495fee4685278c8af0d3`.
+It is staged solely for the still-unproven live upgrade/rollback check.
+
 - Canonical Lume macOS verification of the shared refusal-metadata repair.
   Canonical hosted Linux and Windows pass; hosted macOS is supplemental only.
-- Primary/agent conflict, geometry and target-lifetime fault recovery.
+- Fault evidence is limited to the cases stated above; it is not arbitrary
+  application or physical-hardware certification.
 - Live removal/reinstallation, restart, upgrade and rollback evidence.
 - Bind any published kit/package to the exact passing evidence.
 - Omarchy-owned downstream acceptance and package promotion.

@@ -106,7 +106,7 @@ RUN install -d -m 0755 /etc/apt/keyrings
 # Per-arch pins: the PPA keeps only its newest build per arch, and the
 # arches do not always move together. CHROMIUM_VERSION, when set, wins.
 ARG CHROMIUM_VERSION=
-ARG CHROMIUM_VERSION_AMD64=154.0.8037.57-1xtradeb1.2404.1
+ARG CHROMIUM_VERSION_AMD64=154.0.8037.92-1xtradeb1.2404.1
 ARG CHROMIUM_VERSION_ARM64=154.0.8037.57-1xtradeb1.2404.1
 ARG CHROMIUM_PPA_KEY=5301FA4FD93244FBC6F6149982BB6851C64F6880
 RUN curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${CHROMIUM_PPA_KEY}" \

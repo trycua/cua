@@ -859,7 +859,13 @@ mod tests {
         let s = svc.sync_status().await;
         assert_eq!(s.feed, "off");
         assert_eq!(s.devices.len(), 1);
-        assert_eq!((s.backend.as_str(), s.mount.as_str()), ("fs", "off"));
+        // A build that cannot mount here (Windows) says so instead of "off".
+        let idle = if mount_method() == "none" {
+            "unsupported"
+        } else {
+            "off"
+        };
+        assert_eq!((s.backend.as_str(), s.mount.as_str()), ("fs", idle));
         assert!(
             s.cache.is_none(),
             "no cache in front of a store on this machine"

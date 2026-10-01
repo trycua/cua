@@ -800,7 +800,17 @@ mod tests {
             .env("SOMETHING", &token)
             .spawn()
             .unwrap();
-        let (_, environ) = leaks(&token);
+        // spawn() returns once the vfork'd child enters exec, which can be
+        // before the kernel has set up the new image's environment
+        // (/proc/<pid>/environ still reads empty), so poll briefly.
+        let mut environ = Vec::new();
+        for _ in 0..100 {
+            environ = leaks(&token).1;
+            if environ.contains(&child.id()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
         let _ = child.kill();
         let _ = child.wait();
         assert!(environ.contains(&child.id()), "{environ:?}");

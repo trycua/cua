@@ -608,7 +608,8 @@ fn set_remote_debugging(
                             .checked_add(i32::try_from(height / 2)?)
                             .ok_or_else(|| anyhow::anyhow!("checkbox center y overflowed"))?;
                         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-                            crate::wayland::click_desktop(center_x, center_y, 1, 1)?;
+                            let space = crate::wayland::DesktopInputSpace::current()?;
+                            crate::wayland::click_desktop(&space, center_x, center_y, 1, 1)?;
                         } else {
                             crate::input::send_click_xtest_desktop(center_x, center_y, 1, 1)?;
                         }

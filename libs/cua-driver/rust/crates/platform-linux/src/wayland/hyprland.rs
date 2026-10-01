@@ -148,6 +148,14 @@ impl DesktopFrame {
     pub fn from_layout(&self, x: i32, y: i32) -> (i32, i32) {
         (x.saturating_sub(self.x), y.saturating_sub(self.y))
     }
+
+    /// Move window geometry from layout coordinates into this frame, so it
+    /// shares an origin with a screenshot of the frame.
+    pub fn rebase_windows(&self, windows: &mut [crate::x11::WindowInfo]) {
+        for window in windows {
+            (window.x, window.y) = self.from_layout(window.x, window.y);
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -428,14 +436,25 @@ fn screen_size_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<(u32, u32,
     Ok((frame.width, frame.height, frame.scale))
 }
 
-/// Every monitor in the layout with its power state and scale, for agents
-/// that need to know which displays are actually on. Sizes and positions are
+/// The desktop frame and every monitor in the layout with its power state
+/// and scale, both from one compositor snapshot so the size and the monitor
+/// list always describe the same layout. Sizes and positions are
 /// desktop-frame (logical) pixels; positions are `None` for monitors outside
 /// the frame (standby). Mirrors are omitted: they repeat another output.
-pub fn monitor_report() -> Result<serde_json::Value> {
-    let monitors: Vec<DisplayMonitor> = query("j/monitors")?;
+pub fn screen_report() -> Result<(DesktopFrame, serde_json::Value)> {
+    screen_report_from_monitors(query("j/monitors")?)
+}
+
+fn screen_report_from_monitors(
+    monitors: Vec<DisplayMonitor>,
+) -> Result<(DesktopFrame, serde_json::Value)> {
     let frame = desktop_frame_from_monitors(monitors.clone())?;
-    Ok(serde_json::Value::Array(
+    let report = monitor_report_for(&monitors, &frame);
+    Ok((frame, report))
+}
+
+fn monitor_report_for(monitors: &[DisplayMonitor], frame: &DesktopFrame) -> serde_json::Value {
+    serde_json::Value::Array(
         monitors
             .iter()
             .filter(|m| m.in_layout())
@@ -453,7 +472,28 @@ pub fn monitor_report() -> Result<serde_json::Value> {
                 })
             })
             .collect(),
-    ))
+    )
+}
+
+/// One compositor snapshot of everything a desktop-scope action needs: the
+/// desktop frame (screenshot coordinates) and the virtual-pointer layout.
+/// `pointer` is `None` when the layout is a single output the pointer layout
+/// cannot qualify; the virtual pointer then keeps that output's own mode.
+#[derive(Clone, Debug)]
+pub struct DesktopSnapshot {
+    pub frame: DesktopFrame,
+    pub pointer: Option<(i32, i32, u32, u32)>,
+}
+
+pub fn desktop_snapshot() -> Result<DesktopSnapshot> {
+    desktop_snapshot_from_monitors(query("j/monitors")?)
+}
+
+fn desktop_snapshot_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<DesktopSnapshot> {
+    Ok(DesktopSnapshot {
+        frame: desktop_frame_from_monitors(monitors.clone())?,
+        pointer: pointer_space_from_monitors(monitors)?,
+    })
 }
 
 /// Current desktop frame spanning every powered output.
@@ -533,19 +573,47 @@ fn bounding_box(outputs: &[FrameOutput]) -> Result<(i32, i32, u32, u32)> {
 /// every enabled, unmirrored output's logical rectangle; DPMS standby does
 /// not change the layout. Returns `(x, y, width, height)` of that box in
 /// layout coordinates.
-pub fn pointer_layout() -> Result<(i32, i32, u32, u32)> {
-    pointer_layout_from_monitors(query("j/monitors")?)
-}
-
 fn pointer_layout_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<(i32, i32, u32, u32)> {
     let mut outputs = Vec::new();
     for monitor in monitors.iter().filter(|m| m.in_layout()) {
         if monitor.transform != 0 {
-            bail!("Hyprland pointer layout requires unrotated outputs");
+            bail!(
+                "Hyprland pointer layout requires unrotated outputs ({} has transform {}{})",
+                monitor.name,
+                monitor.transform,
+                if monitor.dpms_status {
+                    ""
+                } else {
+                    ", in standby"
+                }
+            );
         }
         outputs.push(frame_output(monitor)?);
     }
     bounding_box(&outputs)
+}
+
+/// Virtual-pointer layout, or `None` for a single output it cannot qualify
+/// (a rotated one), whose own mode is then the whole layout. With several
+/// outputs in the layout no single output's mode is the layout, so an
+/// unqualified output (even one in standby) is an error, not a fallback.
+pub fn pointer_space() -> Result<Option<(i32, i32, u32, u32)>> {
+    pointer_space_from_monitors(query("j/monitors")?)
+}
+
+fn pointer_space_from_monitors(
+    monitors: Vec<DisplayMonitor>,
+) -> Result<Option<(i32, i32, u32, u32)>> {
+    let in_layout = monitors.iter().filter(|m| m.in_layout()).count();
+    match pointer_layout_from_monitors(monitors) {
+        Ok(layout) => Ok(Some(layout)),
+        Err(_) if in_layout <= 1 => Ok(None),
+        // Keep the cause in the message itself: tools report only the outer
+        // error, and the agent needs to know which output blocks the action.
+        Err(error) => Err(anyhow::anyhow!(
+            "{error}; the virtual pointer spans every monitor in the layout, including ones in standby, so it cannot be sized"
+        )),
+    }
 }
 
 /// Real pointer position in layout coordinates.
@@ -566,26 +634,52 @@ pub fn cursor_position() -> Result<(i32, i32)> {
 /// with `grim -o`, scaled to its logical size, and placed at its layout
 /// offset. Areas no powered output covers stay black. The image is exactly
 /// the desktop frame.
+///
+/// The generic path is kept only once the layout is known to be a single
+/// output: if the monitor query fails, the capture fails too, rather than
+/// copying one output of what may be a multi-monitor desktop.
 pub fn composite_desktop_capture() -> Option<Result<Vec<u8>>> {
     let monitors: Vec<DisplayMonitor> = match query("j/monitors") {
         Ok(monitors) => monitors,
-        Err(error) => {
-            tracing::debug!("Hyprland desktop capture keeps the generic path: {error:#}");
-            return None;
-        }
+        Err(error) => return Some(Err(error)),
     };
+    // One output: use the generic capture. It needs no desktop frame, so
+    // pixel-only callers such as trajectory recording keep working on a
+    // rotated output, which desktop actions refuse.
     if monitors.len() <= 1 {
         return None;
     }
-    Some(desktop_frame_from_monitors(monitors).and_then(|frame| {
-        let canvas = compose_frame(&frame, |output| {
-            let png = capture_output_png(&output.name)?;
-            Ok(image::load_from_memory_with_format(&png, image::ImageFormat::Png)?.to_rgba8())
-        })?;
-        let mut encoded = std::io::Cursor::new(Vec::new());
-        image::DynamicImage::ImageRgba8(canvas).write_to(&mut encoded, image::ImageFormat::Png)?;
-        Ok(encoded.into_inner())
-    }))
+    Some(desktop_frame_from_monitors(monitors).and_then(|frame| compose_desktop_capture(&frame)))
+}
+
+/// The desktop frame and whether capturing it needs per-output composition
+/// (more than one monitor in the layout), read from one compositor snapshot.
+pub struct DesktopCapturePlan {
+    pub frame: DesktopFrame,
+    pub composite: bool,
+}
+
+pub fn desktop_capture_plan() -> Result<DesktopCapturePlan> {
+    desktop_capture_plan_from_monitors(query("j/monitors")?)
+}
+
+fn desktop_capture_plan_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<DesktopCapturePlan> {
+    let composite = monitors.len() > 1;
+    Ok(DesktopCapturePlan {
+        frame: desktop_frame_from_monitors(monitors)?,
+        composite,
+    })
+}
+
+/// Compose `frame` from per-output captures (see [`composite_desktop_capture`]).
+pub fn compose_desktop_capture(frame: &DesktopFrame) -> Result<Vec<u8>> {
+    let canvas = compose_frame(frame, |output| {
+        let png = capture_output_png(&output.name)?;
+        Ok(image::load_from_memory_with_format(&png, image::ImageFormat::Png)?.to_rgba8())
+    })?;
+    let mut encoded = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(canvas).write_to(&mut encoded, image::ImageFormat::Png)?;
+    Ok(encoded.into_inner())
 }
 
 fn capture_output_png(name: &str) -> Result<Vec<u8>> {
@@ -1324,6 +1418,94 @@ mod tests {
         assert_eq!(
             pointer_layout_from_monitors(monitors).unwrap(),
             (0, 0, 1920, 1080)
+        );
+    }
+
+    #[test]
+    fn screen_report_describes_the_same_snapshot_as_its_frame() {
+        let mut off = monitor_at("C", 1920, 0);
+        off.dpms_status = false;
+        let (frame, report) = screen_report_from_monitors(vec![
+            monitor_at("A", -1920, 0),
+            monitor_at("B", 0, 0),
+            off,
+        ])
+        .unwrap();
+        assert_eq!((frame.x, frame.width, frame.height), (-1920, 3840, 1080));
+        let report = report.as_array().unwrap();
+        assert_eq!(report.len(), 3);
+        assert_eq!(
+            (report[0]["frame_x"].as_i64(), report[1]["frame_x"].as_i64()),
+            (Some(0), Some(1920))
+        );
+        assert_eq!(
+            (
+                report[2]["powered"].as_bool(),
+                report[2]["frame_x"].as_i64()
+            ),
+            (Some(false), None)
+        );
+        assert!(screen_report_from_monitors(vec![]).is_err());
+    }
+
+    #[test]
+    fn window_geometry_is_rebased_onto_the_frame_origin() {
+        let frame =
+            desktop_frame_from_monitors(vec![monitor_at("A", -1920, 0), monitor_at("B", 0, 0)])
+                .unwrap();
+        let mut windows = vec![crate::x11::WindowInfo {
+            xid: 1,
+            pid: Some(42),
+            app_name: "fixture".into(),
+            title: "Fixture".into(),
+            is_on_screen: true,
+            z_index: None,
+            x: -1820,
+            y: 36,
+            width: 800,
+            height: 600,
+        }];
+        frame.rebase_windows(&mut windows);
+        assert_eq!((windows[0].x, windows[0].y), (100, 36));
+    }
+
+    #[test]
+    fn capture_plan_composes_every_layout_with_more_than_one_monitor() {
+        let plan = desktop_capture_plan_from_monitors(vec![monitor_at("A", 0, 0)]).unwrap();
+        assert!(!plan.composite);
+        // A second monitor, even in standby, means the generic capture (which
+        // copies one output) cannot be trusted to be the frame.
+        let mut standby = monitor_at("B", 1920, 0);
+        standby.dpms_status = false;
+        let plan =
+            desktop_capture_plan_from_monitors(vec![monitor_at("A", 0, 0), standby]).unwrap();
+        assert!(plan.composite);
+        assert_eq!((plan.frame.width, plan.frame.outputs.len()), (1920, 1));
+    }
+
+    #[test]
+    fn pointer_space_falls_back_only_for_a_single_unqualified_output() {
+        let mut rotated = monitor_at("B", 0, 0);
+        rotated.transform = 1;
+        // One rotated output: its own mode is the whole layout.
+        assert_eq!(
+            pointer_space_from_monitors(vec![rotated.clone()]).unwrap(),
+            None
+        );
+        // A rotated output in standby beside a powered one: no fallback is right.
+        rotated.dpms_status = false;
+        let monitors = vec![monitor_at("A", -1920, 0), rotated];
+        assert!(desktop_frame_from_monitors(monitors.clone()).is_ok());
+        let error = pointer_space_from_monitors(monitors.clone())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("B has transform 1, in standby"), "{error}");
+        assert!(desktop_snapshot_from_monitors(monitors).is_err());
+        // A qualified layout is used as is.
+        assert_eq!(
+            pointer_space_from_monitors(vec![monitor_at("A", -1920, 0), monitor_at("B", 0, 0)])
+                .unwrap(),
+            Some((-1920, 0, 3840, 1080))
         );
     }
 

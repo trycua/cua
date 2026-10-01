@@ -66,8 +66,12 @@ and grants at most five seconds of steady-clock technical lifetime. It first
 retires any unused previous grant. It refuses unavailable desktops, primary
 focus on the target's Wayland client, and another lane targeting that client.
 Background seats always publish a private canonical `evdev`/`pc105`/`us`
-keymap, so user layout options and remaps do not alter agent key semantics. A
-discovered address is an input to attestation, not a surface lifetime token.
+keymap, so user layout options and remaps do not alter agent key semantics.
+They advertise the user seat's key repeat rate and delay, falling back to
+Hyprland's 25 Hz and 600 ms defaults until a keyboard is active. A `KEY`
+request presses and releases every key within one compositor dispatch, so no
+agent key is held long enough to repeat. A discovered address is an input to
+attestation, not a surface lifetime token.
 Surface unmap, destruction, or replacement invalidates the binding. Geometry
 changes increment the revision and refuse stale actions.
 

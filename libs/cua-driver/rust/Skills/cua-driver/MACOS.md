@@ -135,10 +135,10 @@ When a cua-driver call surprises you, diagnose cua-driver first:
   race against a close, or the window has no backing store yet).
   Re-snapshot; if persistent, pick a different `window_id` via
   `list_windows`.
-- **`snapshot_id_required` / `stale_element_token` / no cached AX state?**
-  Re-snapshot the exact window and use the new `element_token`, or pair its
-  `snapshot_id` with the matching `element_index`. A new snapshot of that
-  window invalidates older targets immediately.
+- **`stale_element_token` / no cached AX state?**
+  Re-snapshot the exact window and use the new `element_token`. A new
+  snapshot of that window invalidates older targets immediately; the refusal
+  names the current snapshots so you can tell whether you already hold one.
 - **Sparse Chromium AX tree?** Retry `get_window_state` once — the
   tree populates on second call.
 
@@ -184,7 +184,7 @@ the surfaces that warrant it.
 Rule of thumb:
 
 - **element ax action** (default) — the element lookup before a click
-  AND the first verify after it; you address by `[N]` `element_index`
+  AND the first verify after it; you address by the `[N]` row's `element_token`
   and read the tree diff.
 - **element px action** — when the tree is unreadable / `suspected_noop`
   / `degraded` / disagrees with the pixels, or for pure visual
@@ -231,7 +231,7 @@ editor state.
      tell the user to run `cua-driver permissions grant` and approve it.
    - If Screen Recording is `false`, continue only when the task can be
      completed and verified from the AX tree. Call `get_window_state` with
-     `include_screenshot:false` and use element-indexed AX actions. Do not use
+     `include_screenshot:false` and use `element_token` AX actions. Do not use
      screenshots, pixel coordinates, or pixel-based verification.
    - If the task materially needs pixels, stop and ask the user to run
      `cua-driver permissions grant`. That command explains and deliberately
@@ -255,7 +255,7 @@ window has not appeared yet, bound retries of `list_windows`.
 entire point of cua-driver: agents drive apps in the background while
 the user keeps typing in their real foreground app. The target's
 window is initialized (AX tree fully populated, clickable via
-`element_index`, the pid appears in `list_apps`) but not drawn on
+`element_token`, the pid appears in `list_apps`) but not drawn on
 screen. The driver never activates or unhides apps on its own; that
 would violate the no-foreground contract the whole driver exists to
 protect.
@@ -297,7 +297,7 @@ breadth Windows and Linux already exposed (`type_text` / `press_key` /
 no raise, no focus steal. `"foreground"` briefly fronts the owning app,
 acts, then restores the prior frontmost — the explicit last resort for a
 surface that only accepts events while frontmost (the canvas/viewport/game
-case below). Unmodified element-indexed (AX) actions remain background-capable
+case below). Unmodified `element_token` (AX) actions remain background-capable
 and hold the no-foreground contract without the flag.
 
 A foreground window-scoped **pixel** `click`, `double_click`, or
@@ -403,7 +403,7 @@ unverified too.) Bottom line: on these surfaces **do not trust the AX
 confirm — the screenshot in the same response is the only truth.**
 
 Fix — **one call**: `type_text({pid, window_id, x, y, text})`. Passing
-`x,y` (no `element_index`) is the **element px action** form of
+`x,y` (no `element_token`) is the **element px action** form of
 `type_text` — the tool pixel-clicks at `(x,y)` to give the Chromium /
 UIKit renderer the real keyboard focus the AX layer can't, then types
 into the now-focused field. Read `x,y` straight off the screenshot in
@@ -426,7 +426,7 @@ content. Send Cmd+V only after that read-back succeeds.
 2. Only if the keystrokes _still_ drop (a focus-polling app), escalate
    that one `type_text` with `delivery_mode:"foreground"`.
 
-The `x,y` (px) form is **mutually exclusive** with `element_index`
+The `x,y` (px) form is **mutually exclusive** with `element_token`
 (ax) — pass one or the other, not both. Why not `Cmd+V` / `hotkey`: a
 keyboard combo does **not** focus a text field, and `hotkey` /
 `press_key` no longer raise the window on their own (raising is gated
@@ -505,7 +505,7 @@ starting point for new browser workflows.
 | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | macOS system-alert beep on `press_key` with no visible change | Target window is minimized; Return / Space / Tab commits don't establish real renderer focus on minimized windows | AX-click a clickable equivalent (Go button, Submit button, checkbox) instead of pressing the key; see "Keyboard commits on minimized windows" under the Browser section                                                             |
 | `Accessibility permission not granted`                        | TCC not granted                                                                                                   | Stop; tell user to grant in System Settings                                                                                                                                                                                         |
-| `Screen Recording permission not granted`                     | TCC not granted for capture                                                                                       | Screenshots and pixel actions are unavailable. If the task is AX-completable, use `get_window_state({include_screenshot:false})` and element-indexed actions; otherwise stop and ask the user to run `cua-driver permissions grant` |
+| `Screen Recording permission not granted`                     | TCC not granted for capture                                                                                       | Screenshots and pixel actions are unavailable. If the task is AX-completable, use `get_window_state({include_screenshot:false})` and `element_token` actions; otherwise stop and ask the user to run `cua-driver permissions grant` |
 
 ## Example end-to-end task (macOS)
 

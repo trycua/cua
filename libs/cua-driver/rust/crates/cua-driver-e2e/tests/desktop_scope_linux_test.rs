@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use cua_driver_testkit::e2e::{
     execute_case, recording_evidence, CaseSpec, Delivery, DriverRoute, Evidence, Observation,
-    OracleKind, Scope, Targeting,
+    OracleKind, RefusalCode, Scope, Targeting,
 };
 use cua_driver_testkit::{harness_app, Driver, McpDriver};
 
@@ -152,6 +152,13 @@ fn marker_value(snap: &serde_json::Value, marker: &str) -> Option<u64> {
         .take_while(|character| character.is_ascii_digit())
         .collect();
     digits.parse().ok()
+}
+
+fn tree_contains(snap: &serde_json::Value, marker: &str) -> bool {
+    snap["tree_markdown"]
+        .as_str()
+        .map(|tree| tree.contains(marker))
+        .unwrap_or(false)
 }
 
 fn desktop_input_route() -> DriverRoute {
@@ -445,6 +452,170 @@ fn desktop_scope_hotkey_releases_modifiers() {
             std::thread::sleep(Duration::from_millis(100));
         }
         Observation::delivered_with_fixture_state(Vec::new())
+    });
+}
+
+/// Route for a modified desktop drag. X11 holds the modifier through XTest.
+/// Every native Wayland session, including the nested cua-compositor lane,
+/// reaches desktop drags through the Wayland desktop pointer: the
+/// cua-compositor socket has no drag command, and its pointer commands carry
+/// no modifier state (its only modifier mask is transient inside a hotkey).
+fn desktop_drag_route(native_wayland: bool) -> DriverRoute {
+    if native_wayland {
+        DriverRoute::LinuxWaylandVirtualPointer
+    } else {
+        DriverRoute::LinuxXTest
+    }
+}
+
+/// X11 holds the modifier for the whole desktop drag and releases it after.
+/// Native Wayland pointer routes cannot carry keyboard modifier state, so the
+/// driver must refuse with `modified_pointer_unavailable` before dispatch: the
+/// fixture under the gesture sees no press, drag, or click, and a following
+/// plain key still arrives unmodified.
+#[test]
+#[ignore]
+fn desktop_scope_drag_holds_and_releases_modifier() {
+    let cell_id = "linux-gtk3-desktop-drag-modifier-px-foreground";
+    let native_wayland = platform_linux::wayland::wayland_input_enabled();
+    let case = CaseSpec::delivered(
+        cell_id,
+        "gtk3",
+        "gtk3",
+        "drag",
+        Targeting::Px,
+        Delivery::Foreground,
+        Scope::Desktop,
+        desktop_drag_route(native_wayland),
+        vec![OracleKind::FixtureState],
+    );
+    let case = if native_wayland {
+        case.expecting_refusal(vec![RefusalCode::ModifiedPointerUnavailable])
+    } else {
+        case
+    };
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_named(cell_id).expect("start source-built Linux driver");
+        *evidence = recording_evidence(driver.recording_dir());
+        let window_session = format!("{cell_id}-window");
+        let desktop_session = format!("{cell_id}-desktop");
+        start_scope(&mut driver, &window_session, "window");
+        start_scope(&mut driver, &desktop_session, "desktop");
+        let (pid, wid) = launch(&mut driver).expect("required GTK3 harness did not launch");
+        let posture = driver.call(
+            "bring_to_front",
+            serde_json::json!({"session": window_session, "pid": pid as i64, "window_id": wid}),
+        );
+        assert!(
+            !posture.is_error(),
+            "could not foreground GTK3 fixture: {}",
+            posture.text()
+        );
+        std::thread::sleep(Duration::from_millis(300));
+
+        let snap = ax_snapshot(&mut driver, &window_session, pid, wid);
+        let (x, y) = element_center_containing(&snap, "btn-clicktarget")
+            .expect("GTK3 drag target frame not found");
+        let before_keys = marker_value(&snap, "key_presses=").unwrap_or(0);
+        let before_drags = marker_value(&snap, "drag_events=").unwrap_or(0);
+        let before_clicks = marker_value(&snap, "clicks=").unwrap_or(0);
+        driver.start_behavior_recording();
+        let drag = driver.call(
+            "drag",
+            serde_json::json!({
+                "session": desktop_session, "scope": "desktop",
+                "from_x": x - 20, "from_y": y, "to_x": x + 20, "to_y": y,
+                "duration_ms": 250, "steps": 8, "modifier": ["ctrl"]
+            }),
+        );
+
+        let refusal = if native_wayland {
+            assert!(
+                drag.is_error(),
+                "native Wayland accepted a modified desktop drag it cannot hold: {}",
+                drag.text()
+            );
+            let code = drag.structured()["code"]
+                .as_str()
+                .and_then(RefusalCode::from_driver_code);
+            assert_eq!(
+                code,
+                Some(RefusalCode::ModifiedPointerUnavailable),
+                "native Wayland returned the wrong refusal: {}; raw={}",
+                drag.text(),
+                drag.raw
+            );
+            assert_eq!(
+                drag.text(),
+                "modified drags are unavailable on native Wayland: \
+                 the pointer route cannot carry keyboard modifier state"
+            );
+            assert_eq!(drag.structured()["effect"], "refused");
+            std::thread::sleep(Duration::from_millis(250));
+            let after = ax_snapshot(&mut driver, &window_session, pid, wid);
+            assert_eq!(
+                (
+                    marker_value(&after, "drag_events=").unwrap_or(before_drags),
+                    marker_value(&after, "clicks=").unwrap_or(before_clicks),
+                    tree_contains(&after, "drag_modifier=none"),
+                ),
+                (before_drags, before_clicks, true),
+                "refused modified drag reached the GTK3 fixture"
+            );
+            code
+        } else {
+            assert!(
+                !drag.is_error(),
+                "modified desktop drag failed: {}",
+                drag.text()
+            );
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                let state = ax_snapshot(&mut driver, &window_session, pid, wid);
+                if tree_contains(&state, "drag_modifier=ctrl") {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "GTK3 did not observe ctrl during drag: {}",
+                    drag.text()
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            None
+        };
+
+        // Delivered or refused, no modifier may be left latched.
+        let plain_key = driver.call(
+            "press_key",
+            serde_json::json!({"session": desktop_session, "scope": "desktop", "key": "f5"}),
+        );
+        assert!(
+            !plain_key.is_error(),
+            "post-drag plain F5 failed: {}",
+            plain_key.text()
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let state = ax_snapshot(&mut driver, &window_session, pid, wid);
+            if marker_value(&state, "key_presses=").unwrap_or(before_keys) > before_keys {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "plain F5 did not match after modified drag; modifier may be latched"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        match refusal {
+            Some(code) => Observation::refused(
+                code,
+                vec![OracleKind::FixtureState],
+                "native Wayland refused the modified desktop drag before dispatch",
+                Evidence::default(),
+            ),
+            None => Observation::delivered_with_fixture_state(Vec::new()),
+        }
     });
 }
 

@@ -1,9 +1,9 @@
 use super::UiaNode;
-use cua_driver_core::element_cache::{ElementCacheCore, SnapshotPayload};
+use cua_driver_core::snapshot_store::{SnapshotPayload, SnapshotStore};
 use windows::core::Interface;
 use windows::Win32::UI::Accessibility::{IAccessible, IUIAutomationElement};
 
-pub type ElementCache = ElementCacheCore<CachedSnapshot>;
+pub type Snapshots = SnapshotStore<UiaSnapshot>;
 
 #[derive(Debug)]
 pub struct RetainedElement {
@@ -95,11 +95,11 @@ pub enum SnapshotKind {
     Msaa,
 }
 
-pub struct CachedSnapshot {
+pub struct UiaSnapshot {
     elements: Vec<RetainedElement>,
 }
 
-impl CachedSnapshot {
+impl UiaSnapshot {
     pub fn from_nodes(nodes: &[UiaNode], kind: SnapshotKind) -> Self {
         Self {
             elements: nodes
@@ -117,7 +117,7 @@ impl CachedSnapshot {
     }
 }
 
-impl SnapshotPayload for CachedSnapshot {
+impl SnapshotPayload for UiaSnapshot {
     type Element = RetainedElement;
 
     fn len(&self) -> usize {
@@ -133,5 +133,5 @@ impl SnapshotPayload for CachedSnapshot {
 }
 
 #[cfg(test)]
-#[path = "cache_uaf_repro.rs"]
-mod cache_uaf_repro;
+#[path = "snapshot_uaf_repro.rs"]
+mod snapshot_uaf_repro;

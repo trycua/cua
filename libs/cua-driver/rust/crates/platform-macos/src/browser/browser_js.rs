@@ -419,9 +419,7 @@ mod tests {
 
     #[test]
     fn applescript_process_identity_accepts_only_the_requested_single_instance() {
-        assert!(
-            ensure_applescript_process_identity_in("com.google.Chrome", 4242, &[4242]).is_ok()
-        );
+        assert!(ensure_applescript_process_identity_in("com.google.Chrome", 4242, &[4242]).is_ok());
     }
 
     #[test]

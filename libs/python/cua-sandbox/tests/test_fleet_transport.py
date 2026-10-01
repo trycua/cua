@@ -1,11 +1,23 @@
-import base64
-import json
+"""FleetTransport: named services through the Fleet gateway, interfaces
+through cua-spacesd on the claim's ``env`` service (the cua SDK).
+
+The computer-server wire tests that lived here (``POST /cmd`` bodies, the
+``/pty`` routes, "connect rejects a missing service") were replaced: the
+interfaces no longer ride ``service_request``, and connecting to a bound
+claim is daemon-agnostic.
+"""
+
 from types import SimpleNamespace
 
 import cua_sandbox.transport.fleet as fleet_transport
 import pytest
+from cua_sandbox import Sandbox as CuaSandbox
+from cua_sandbox import SpacesdNotAvailable
+from cua_sandbox.transport import fleet as fleet_module
 from cua_sandbox.transport.fleet import FleetTransport, build_http_request
 from fleet_sdk import HttpHeader, HttpRequest, HttpResponse, Sandbox
+
+from tests._fake_env import FakeEnv
 
 
 class FakeSDK:
@@ -22,50 +34,69 @@ def response(status=200, body=b"{}"):
     return HttpResponse(status=status, headers=[], body=body)
 
 
-def sandbox():
-    return Sandbox(namespace="demo", claim="claim-demo", name="sandbox-demo", services=["api"])
-
-
-@pytest.mark.asyncio
-async def test_service_request_forwards_command_json():
-    sdk = FakeSDK([response(body=b'data: {"success":true,"result":"ok"}\n\n')])
-    transport = FleetTransport(sdk=sdk, bound=sandbox())
-    await transport.connect()
-
-    assert await transport.send("shell.run", timeout=15) == "ok"
-    _, service, path, request = sdk.calls[0]
-    assert (service, path, request.method) == ("api", "/cmd", "POST")
-    assert json.loads(request.body) == {"command": "shell.run", "params": {"timeout": 15}}
-    assert request.timeout_secs == 30
-
-
-@pytest.mark.asyncio
-async def test_screenshot_and_pty_use_service_request():
-    encoded = base64.b64encode(b"png-data").decode()
-    sdk = FakeSDK(
-        [
-            response(body=f'data: {{"success":true,"image_data":"{encoded}"}}\n\n'.encode()),
-            response(body=b'{"pid":42}'),
-            response(body=b'{"killed":true}'),
-        ]
+def sandbox(services=("api",)):
+    return Sandbox(
+        namespace="demo", claim="claim-demo", name="sandbox-demo", services=list(services)
     )
-    transport = FleetTransport(sdk=sdk, bound=sandbox())
-    await transport.connect()
 
-    assert await transport.screenshot() == b"png-data"
-    assert await transport.pty_create(command="bash") == {"pid": 42}
-    assert await transport.pty_kill(42) is True
-    assert [call[2] for call in sdk.calls] == ["/cmd", "/pty", "/pty/42"]
+
+class FakeFleetHandle:
+    def __init__(self, env):
+        self.env_calls = 0
+        self._env = env
+
+    async def spacesd(self, probe_timeout_ms):
+        self.env_calls += 1
+        return self._env
 
 
 @pytest.mark.asyncio
-async def test_connect_rejects_missing_service():
-    transport = FleetTransport(
-        sdk=FakeSDK([]),
-        bound=Sandbox(namespace="demo", claim="claim", name="sandbox", services=[]),
-    )
+async def test_interfaces_use_the_env_service_through_the_sdk(monkeypatch):
+    env = FakeEnv()
+    handle = FakeFleetHandle(env)
+    attached = []
+
+    async def fleet_sandbox(namespace, claim):
+        attached.append((namespace, claim))
+        return handle
+
+    monkeypatch.setattr(fleet_module, "fleet_sandbox", fleet_sandbox)
+    sdk = FakeSDK([])
+    sb = CuaSandbox(FleetTransport(sdk=sdk, bound=sandbox(["env", "mcp"])), name="sandbox-demo")
+    await sb._connect()
+
+    result = await sb.shell.run("uname -a")
+    png = await sb.screenshot()
+    await sb.mouse.click(10, 20)
+
+    assert attached == [("demo", "claim-demo")]
+    assert handle.env_calls == 1, "one spacesd connection is reused"
+    assert result.success and png.startswith(b"\x89PNG")
+    assert ("click", 10.0, 20.0) in env.calls
+    assert sdk.calls == [], "interfaces no longer ride Fleet service_request"
+
+
+@pytest.mark.asyncio
+async def test_connect_is_daemon_agnostic_and_interfaces_fail_clearly_without_env():
+    sdk = FakeSDK([response(body=b'{"ok":true}')])
+    transport = FleetTransport(sdk=sdk, bound=sandbox(["mcp"]), env_ready_timeout=0)
+    sb = CuaSandbox(transport, name="sandbox-demo")
+    await sb._connect()
+
+    # Named services work on an image without cua-spacesd ...
+    reply = await sb.services.request("mcp", method="POST", path="/mcp", json={"id": 1})
+    assert reply.status_code == 200
+    # ... and the interfaces say why they cannot.
+    with pytest.raises(SpacesdNotAvailable, match="no 'env' service"):
+        await sb.shell.run("true")
+
+
+@pytest.mark.asyncio
+async def test_unknown_named_service_is_rejected():
+    transport = FleetTransport(sdk=FakeSDK([]), bound=sandbox(["env"]))
+    await transport.connect()
     with pytest.raises(ValueError, match="does not expose service"):
-        await transport.connect()
+        await transport.request_service("mcp", method="GET", path="/")
 
 
 def test_build_http_request_constructs_the_record_through_the_builder():
@@ -175,13 +206,15 @@ async def test_service_response_over_limit_is_rejected_without_exposing_contents
 @pytest.mark.asyncio
 @pytest.mark.parametrize("default_timeout", [30, 90])
 async def test_service_timeout_override_does_not_change_existing_callers(default_timeout):
-    sdk = FakeSDK([response(), response(), response(body=b'data: {"success":true}\n\n')])
+    sdk = FakeSDK([response(), response(), response()])
     transport = FleetTransport(sdk=sdk, bound=sandbox(), timeout=default_timeout)
     await transport.connect()
 
     await transport.request_service("api", method="POST", path="/exchange", timeout=119.25)
     await transport.request_service("api", method="GET", path="/status")
-    await transport.send("shell.run", timeout=15)
+    # A later call without an override keeps the transport default (the
+    # interfaces ride cua-spacesd, so only named services use this path).
+    await transport.request_service("api", method="GET", path="/status")
 
     assert [call[3].timeout_secs for call in sdk.calls] == [120, default_timeout, default_timeout]
     assert transport._timeout == default_timeout

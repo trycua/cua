@@ -6,7 +6,7 @@ If you've been following Cua from the start, you may remember that it began with
 
 A macOS guest running through Apple's `Virtualization.framework` uses a virtual GPU backed by the host's Apple GPU. In our stock Tahoe VM, that device reported a conservative Metal capability profile. Applications use those answers to select kernels and rendering paths, which left llama.cpp running much slower GPU code.
 
-We built a small, process-scoped compatibility layer that changes selected capability answers for one guest process, allowing llama.cpp to select newer Metal kernels. This is the first result from our broader effort to connect Lume's virtualization foundation to the local computer-use environments behind [Cua Driver](https://cua.ai/docs/tutorials/drive-your-first-app) and the infrastructure behind [Cua Cloud and Fleets](https://cua.ai/signup?redirect_url=%2Fwaitlist).
+We built a small, process-scoped compatibility layer that changes selected capability answers for one guest process, allowing llama.cpp to select newer Metal kernels. This is the first result from our broader effort to connect Lume's virtualization foundation to the local computer-use environments behind [Cua Driver](https://cua.ai/docs/cua-driver/quickstart) and the infrastructure behind [Cua Cloud and Fleets](https://cua.ai/signup?redirect_url=%2Fwaitlist).
 
 We're releasing this work today as a research release under the same permissive license as Lume and Cua, so others can reproduce the results and help map which Apple Silicon chips, macOS releases, and Metal workloads benefit.
 
@@ -157,7 +157,7 @@ lume ssh my-vm \
    /path/to/metal-capabilities 1009"
 ```
 
-For a long-running inference server, renderer, or worker, use a per-workload LaunchAgent. Set `DYLD_INSERT_LIBRARIES` in that workload's environment so the login session remains stock. The [Lume guide](https://cua.ai/docs/how-to-guides/lume/gpu-passthrough) has a complete template, checksum and verification steps, and rollback instructions.
+For a long-running inference server, renderer, or worker, use a per-workload LaunchAgent. Set `DYLD_INSERT_LIBRARIES` in that workload's environment so the login session remains stock. The [Lume guide](https://cua.ai/docs/lume/guides/gpu-passthrough) has a complete template, checksum and verification steps, and rollback instructions.
 
 Removing the environment variables and restarting the workload returns it to stock behavior. To restore the host preference, stop the VM, delete `ForceUnrestrictedDeviceFeatureLevel`, and start the VM again.
 

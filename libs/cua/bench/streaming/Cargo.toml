@@ -1,0 +1,33 @@
+[package]
+name = "cua-bench-streaming"
+description = "Benchmark driver for the cua-spacesd media plane (latency, fps, bytes/s, loss recovery, CPU, audio)"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.97"
+license = "FSL-1.1-MIT"
+publish = false
+
+# Standalone workspace: a benchmark tool, not part of the SDK build. It uses
+# the SDK's media crates by path (the same code the SDK and viewer ship).
+[workspace]
+
+[dependencies]
+cua-proto = { path = "../../crates/cua-proto", default-features = false, features = ["client"] }
+cua-spacesd-client = { path = "../../crates/cua-spacesd-client" }
+cua-media-protocol = { path = "../../crates/cua-media-protocol" }
+cua-media-transport = { path = "../../crates/cua-media-transport", features = ["quic"] }
+cua-media-codec = { path = "../../crates/cua-media-codec", default-features = false, features = ["openh264", "opus"] }
+cua-media-client = { path = "../../crates/cua-media-client", features = ["media-decode"] }
+tonic = { version = "0.14", features = ["transport"] }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }
+quinn = { version = "0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+futures-util = { version = "0.3", features = ["sink"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+url = "2.5"
+
+[profile.release]
+debug = false

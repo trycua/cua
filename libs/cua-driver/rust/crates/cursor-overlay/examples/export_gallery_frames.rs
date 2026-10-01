@@ -123,8 +123,10 @@ fn main() {
 fn export_state(output: &Path, state: GalleryState) {
     fs::create_dir_all(output).expect("create frame output");
     for frame in 0..FPS * DURATION_SECS {
-        let mut config = CursorConfig::default();
-        config.cursor_id = "gallery-session".into();
+        let config = CursorConfig {
+            cursor_id: "gallery-session".into(),
+            ..CursorConfig::default()
+        };
         let mut core = RenderStateCore::new(config);
         core.motion.idle_hide_ms = 0.0;
         core.pos = (

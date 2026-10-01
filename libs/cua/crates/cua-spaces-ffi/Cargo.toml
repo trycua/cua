@@ -1,0 +1,52 @@
+[package]
+name = "cua-spaces-ffi"
+description = "The Cua Spaces app export: the cua SDK plus the Spaces app core, teleport and the Keyvault client, in one UniFFI library for the SwiftUI app."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license = "FSL-1.1-MIT"
+repository.workspace = true
+publish = false
+
+[lib]
+name = "cua_spaces_ffi"
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[dependencies]
+cua-sdk = { workspace = true, features = ["local", "spaces", "host", "media", "byoc"] }
+cua-spaces-app-core = { workspace = true, features = ["keyvault-client", "installer", "telemetry"] }
+cua-spaces-ext.workspace = true
+cua-spaces = { path = "../cua-spaces" }
+cua-teleport.workspace = true
+cua-keyvault.workspace = true
+cua-host.workspace = true
+cua-spacesd-client.workspace = true
+cua-telemetry.workspace = true
+tokio-tungstenite.workspace = true
+uniffi.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true
+base64.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
+# Decoded media (media_decode): H.264 to BGRA and audio to PCM.
+cua-media-client = { workspace = true, features = ["media-decode"] }
+
+[dev-dependencies]
+# media_decode's own tests use tokio::time::{pause,advance} and
+# Builder::start_paused; "full" (the workspace default) does not include
+# "test-util" (pre-existing gap, unrelated to teleport/relay; fixed here so
+# `cargo test -p cua-spaces-ffi` compiles at all).
+tokio = { workspace = true, features = ["test-util"] }
+futures-util.workspace = true
+cua-media-codec = { workspace = true, features = ["openh264", "opus"] }
+serde_json.workspace = true
+cua-sandbox-core = { workspace = true, features = ["testing"] }
+cua-spacesd-client = { workspace = true, features = ["testing"] }
+cua-fleet = { workspace = true, features = ["testing"] }
+cua-daemon = { workspace = true, features = ["server", "client", "test-fixtures"] }
+tempfile.workspace = true

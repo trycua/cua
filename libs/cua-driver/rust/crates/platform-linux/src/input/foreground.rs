@@ -1057,7 +1057,7 @@ mod tests {
         let display = crate::test_env::unreachable_x11_display();
         let result = with_x11_foreground_opts(0x1234, ForegroundOptions::pointer(), || Ok(()));
         drop(display);
-        let error = result.err().expect("connect must fail");
+        let error = result.expect_err("connect must fail");
         assert!(error_code(&error).is_some(), "{error}");
     }
 }

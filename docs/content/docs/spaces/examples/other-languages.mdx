@@ -1,0 +1,67 @@
+---
+title: 'Examples in other languages'
+description: 'Agent-app examples on Cua Spaces in TypeScript, Rust (Tauri) and Swift: named bots, each working on a Space you watch live.'
+keywords:
+  - Cua Spaces example
+  - TypeScript agent app
+  - Tauri agent app
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+[Cua Bots](/spaces/examples/cua-bots) is the featured example, in SwiftUI. The OpenKoalaBots samples build a smaller agent app three times, in TypeScript, Rust (Tauri) and Swift, so you can start from the language you ship in. Each one runs named bots as long-lived agent threads on a shared Space, streams the Space's desktop next to the thread, sends files into it and runs routines.
+
+![The Tauri sample: a bot's thread next to the live Space](/img/openkoalabots/openkoalabots-tauri-thread.png)
+
+## Source
+
+| Language | Sample | Built on |
+|---|---|---|
+| TypeScript | [`samples/openkoalabot-example-ts`](https://github.com/trycua/cua/tree/main/samples/openkoalabot-example-ts) | A Node server and web UI on `@trycua/cua` |
+| Rust (Tauri) | [`samples/openkoalabot-example-tauri`](https://github.com/trycua/cua/tree/main/samples/openkoalabot-example-tauri) | A Tauri 2 app on the `cua-spaces` crate |
+| Swift | [`samples/openkoalabot-example-swift`](https://github.com/trycua/cua/tree/main/samples/openkoalabot-example-swift) | A SwiftUI app on `Cua` and `CuaSpaces` |
+
+All three pass one headless test, [`samples/openkoalabot-example-scenario`](https://github.com/trycua/cua/tree/main/samples/openkoalabot-example-scenario).
+
+## Run one
+
+From a clone of [trycua/cua](https://github.com/trycua/cua). The samples build the cua SDK from source, so you need Rust.
+
+<Tabs items={['TypeScript', 'Rust + Tauri', 'Swift']}>
+  <Tab value="TypeScript">
+    ```bash skip="no-runner"
+    (cd libs/cua && cargo build --release -p cua-sdk)
+    (cd libs/cua/typescript && npm ci && npm run stage:uniffi && npm run build && npm run build:browser)
+    cd samples/openkoalabot-example-ts
+    npm ci && npm run build && npm run build:web
+    npm run serve    # open the URL it prints
+    ```
+  </Tab>
+  <Tab value="Rust + Tauri">
+    ```bash skip="no-runner"
+    cd samples/openkoalabot-example-tauri
+    pnpm install --frozen-lockfile
+    pnpm tauri build --debug --no-bundle
+    src-tauri/target/debug/openkoalabot-example-tauri
+    ```
+  </Tab>
+  <Tab value="Swift">
+    ```bash skip="no-runner"
+    (cd libs/cua && cargo build --release -p cua-sdk && node scripts/stage-uniffi-library.mjs --only=swift)
+    cd samples/openkoalabot-example-swift
+    swift build && .build/debug/OpenKoalaBotExample
+    ```
+  </Tab>
+</Tabs>
+
+Each app needs a Space: create one with **New Space**, or add one by address.
+
+## Where each part is explained
+
+| Part | Guide |
+|------|-------|
+| Create, add and delete a Space | [Add a Space](/spaces/guides/add-a-space) |
+| Live desktop and presence | [Stream a desktop](/spaces/guides/stream-a-desktop) |
+| File attachments | [Send files](/spaces/guides/send-files) |
+| Session teleport | [Teleport an app](/spaces/guides/teleport-an-app) |
+| Bots as agent threads | [Use from an agent](/spaces/guides/use-from-an-agent#run-an-agent-inside-a-space) |

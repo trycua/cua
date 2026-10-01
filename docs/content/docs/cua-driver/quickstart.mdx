@@ -1,0 +1,132 @@
+---
+title: Quickstart
+description: Install Cua Driver, connect your agent, and have it compute 6 × 7 in a desktop calculator.
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+Install Cua Driver on your computer and let your agent operate the calculator
+app, in the background.
+
+## Prerequisites
+
+- macOS 14+, Windows 10/11, or an x86_64 Linux desktop (X11 or XWayland, with AT-SPI 2)
+- An MCP-capable agent, such as Claude Code or Codex
+- A desktop calculator app
+
+## Run
+
+**1. Install and start the daemon.** No administrator access needed.
+
+<Tabs items={['macOS', 'Windows', 'Linux']}>
+  <Tab value="macOS">
+
+```bash test="cli-shape" id="cua-driver-permissions-grant"
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
+open -n -g -a CuaDriver --args serve
+cua-driver permissions grant
+```
+
+Starting through the app bundle makes macOS attribute the prompts to
+CuaDriver. Choose **Open System Settings** and switch CuaDriver on under
+**Accessibility** and **Screen & System Audio Recording**; accept the relaunch.
+Rerun `cua-driver permissions grant` if only one prompt appeared.
+
+![CuaDriver listed under Accessibility in System Settings with its toggle switched off](https://github.com/user-attachments/assets/d149fe5a-28cb-460c-8868-4eda80d540a4)
+
+  </Tab>
+  <Tab value="Windows">
+
+```powershell test="cli-shape" id="cua-driver-autostart-kick"
+irm https://cua.ai/driver/install.ps1 | iex
+cua-driver autostart kick
+```
+
+Run it from your desktop session. Over SSH, see
+[Windows over SSH](/cua-driver/guides/vms-and-remote#windows-over-ssh).
+
+  </Tab>
+  <Tab value="Linux">
+
+```bash test="cli-shape" id="cua-driver-serve"
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
+cua-driver serve
+```
+
+Run it in a terminal inside the desktop session and leave it open. On a
+minimal image, first `sudo apt install libxi6 at-spi2-core`.
+
+On GNOME, also install the bundled WinRects helper (no `sudo` needed), then
+log out and back in once so Shell loads it:
+
+```bash skip="host-install"
+~/.cua-driver/packages/current/wayland-helper/install.sh
+gnome-extensions info winrects@cua   # State: ACTIVE
+```
+
+  </Tab>
+</Tabs>
+
+**2. Check that it sees your apps** (in a second terminal):
+
+```bash test="cli-shape" id="cua-driver-call"
+cua-driver call list_apps
+```
+
+You should see the GUI apps you have open. An empty list means the driver
+cannot reach the desktop; run `cua-driver doctor`.
+
+**3. Connect your agent and ask.** To set up every agent it finds at once
+(skill and MCP server), run
+`curl -fsSL https://cua.ai/install.sh | sh -s -- --select cua-driver` instead;
+it also installs the `cua` CLI.
+
+<Tabs items={['Claude Code', 'Codex', 'Other']}>
+  <Tab value="Claude Code">
+
+```bash test="cli-shape" id="cua-driver-skills-install"
+cua-driver skills install
+```
+
+  </Tab>
+  <Tab value="Codex">
+
+```bash test="cli-shape" id="cua-driver-mcp-config-codex"
+cua-driver mcp-config --client codex
+```
+
+Run the `codex mcp add …` command it prints.
+
+  </Tab>
+  <Tab value="Other">
+
+See [Connect your agent](/cua-driver/guides/connect-your-agent).
+
+  </Tab>
+</Tabs>
+
+Start a fresh agent session and send:
+
+```text output
+Using Cua Driver, open the installed calculator app, compute 6 × 7,
+and read the displayed result back from a fresh snapshot.
+```
+
+## Result
+
+The calculator shows **42** and the agent reports it from the app. Your own
+window and pointer stay where they were: the moving cursor is the agent's
+overlay. Some apps only accept foreground input; see
+[How Cua Driver works](/cua-driver/concepts/how-cua-driver-works).
+
+## Clean up
+
+```bash test="cli-shape" id="cua-driver-stop"
+cua-driver stop
+```
+
+## Next
+
+- [Connect your agent](/cua-driver/guides/connect-your-agent): every supported harness and local models.
+- [Recipes](/cua-driver/guides/recipes): real workflows with prompts and checks.
+- [Use the SDK](/cua-driver/guides/use-the-sdk): drive apps from Python or TypeScript.

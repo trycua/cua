@@ -4,18 +4,15 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 import re
 from typing import Sequence
 
+from release_reference_docs import reference_paths
+
 
 def driver_reference_paths(root: Path) -> tuple[str, ...]:
-    config = json.loads((root / "scripts/docs-generators/config.json").read_text())
-    driver = config["generators"]["cua-driver"]
-    return tuple(
-        f"{driver['docsOutputPath']}/{output['outputFile']}" for output in driver["outputs"]
-    )
+    return reference_paths(root, "cua-driver")
 
 
 def replace_once(content: str, pattern: str, replacement: str, path: Path) -> str:
@@ -31,13 +28,6 @@ def sync_driver_release_docs(root: Path) -> None:
         path = root / relative
         content = path.read_text()
         content = replace_once(content, r"^  Version: \S+$", f"  Version: {version}", path)
-        if relative.endswith("cli-reference.mdx"):
-            content = replace_once(
-                content,
-                r"Documented against Cua Driver \*\*\S+\*\*\.",
-                f"Documented against Cua Driver **{version}**.",
-                path,
-            )
         path.write_text(content)
 
 

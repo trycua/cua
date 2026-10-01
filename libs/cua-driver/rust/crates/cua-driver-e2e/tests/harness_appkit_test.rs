@@ -440,7 +440,7 @@ fn harness_appkit_exact_activation_ignores_competing_application_window() {
         let (competing_wid, _) = driver
             .find_window(competitor.pid as i64, "CuaTestHarness AppKit")
             .expect("find competing ordinary window");
-        assert_ne!(competing_wid, u64::from(wid));
+        assert_ne!(competing_wid, wid);
         let snapshot = snapshot_elements(driver, pid, wid);
         assert!(!snapshot.is_error(), "target snapshot: {}", snapshot.text());
         let observer = NativeObserver::new();
@@ -485,7 +485,7 @@ fn harness_appkit_exact_activation_ignores_competing_application_window() {
         );
         assert_eq!(
             response.structured()["observed"]["focused_window_id"].as_u64(),
-            Some(u64::from(wid))
+            Some(wid)
         );
         let after = observer.snapshot(target).expect("observe activated target");
         assert_eq!(after.cursor_pos, before.cursor_pos, "real pointer moved");

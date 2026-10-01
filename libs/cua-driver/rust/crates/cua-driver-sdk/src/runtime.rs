@@ -26,7 +26,9 @@ use std::sync::{
 const RECORDING_IDLE_TTL_SECS_DEFAULT: u64 = 300;
 const SESSION_IDLE_TTL_SECS_DEFAULT: u64 = 300;
 #[cfg(test)]
-pub(crate) static TEST_RUNTIME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+// A tokio mutex: the async tests hold it across awaits to serialize runtime
+// ownership, and it does not poison the remaining tests when one fails.
+pub(crate) static TEST_RUNTIME_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum RuntimeCreateError {
@@ -802,7 +804,7 @@ mod tests {
 
     #[tokio::test]
     async fn authorized_dispatch_refreshes_only_the_runtime_private_activity_key() {
-        let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = TEST_RUNTIME_LOCK.lock().await;
         let runtime = DriverRuntime::create(standard_options()).unwrap();
         let public = "runtime-activity-refresh";
         let internal = runtime.compatibility_context.runtime_session_key(public);
@@ -847,7 +849,7 @@ mod tests {
 
     #[tokio::test]
     async fn idle_eviction_finalizes_the_owning_runtime_recording() {
-        let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = TEST_RUNTIME_LOCK.lock().await;
         let runtime = DriverRuntime::create(standard_options()).unwrap();
         let public = "runtime-recording-idle";
         let internal = runtime.compatibility_context.runtime_session_key(public);
@@ -895,7 +897,7 @@ mod tests {
 
     #[tokio::test]
     async fn incomplete_end_keeps_trusted_authorization_live_for_cleanup_retry() {
-        let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = TEST_RUNTIME_LOCK.lock().await;
         let runtime = DriverRuntime::create(standard_options()).unwrap();
         let public_session = "runtime-end-cleanup-retry";
         let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -973,7 +975,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_stops_lifecycle_maintenance() {
-        let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
+        let _runtime_test = TEST_RUNTIME_LOCK.lock().await;
         let runtime = DriverRuntime::create(standard_options()).unwrap();
         // The maintenance thread owns the only receiver, so sends fail once it
         // exits. This proves the thread stopped; it cannot distinguish the join

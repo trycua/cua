@@ -1,0 +1,88 @@
+---
+title: Test cua-driver in a sandbox
+description: Run a cua-driver build against a disposable Linux desktop, locally or in CI, and prove the build under test is the one that runs.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A sandbox gives cua-driver a real desktop (Xvfb, XFCE, AT-SPI) that you can
+throw away, on your machine or on a CI runner. Put your build into it with
+`--overlay`, then check that it is the one running.
+
+## On your machine
+
+Build the driver for Linux, then create a sandbox with it:
+
+```bash test="cli-shape" id="driver-sandbox-create"
+cua sb create linux --name drv --wait desktop \
+  --overlay cua-driver=./target/release/cua-driver
+```
+
+The overlay replaces `/usr/local/bin/cua-driver` in the guest, records its
+sha256 and stops any older copy still running. Check it:
+
+```bash test="cli-shape" id="driver-sandbox-doctor"
+cua doctor local:drv --no-host --only build --expect cua-driver=git:<commit sha>
+cua sb exec local:drv cua-driver doctor --json
+```
+
+`cua-driver doctor --json` and the `health_report` tool report the running
+build under `build`:
+
+- `git_sha`: the commit it was built from;
+- `exe_sha256`: the executable that actually runs.
+
+A process started before the file was replaced still reports its old hash.
+
+Run your tests against the desktop, then delete the sandbox:
+
+```bash test="cli-shape" id="driver-sandbox-run"
+cua sb cp ./tests/smoke.sh drv:/tmp/smoke.sh
+cua sb shell drv "set -a; . /run/cua-desktop/desktop.env; set +a; bash /tmp/smoke.sh"
+cua sb rm local:drv --force
+```
+
+## The driver inside cua-spacesd
+
+cua-spacesd links the driver core and serves its tools on `/mcp`. To test
+driver changes through spacesd, inject a cua-spacesd built from the same
+commit. The overlay restarts the daemon and waits until the new process runs
+it:
+
+```bash test="cli-shape" id="driver-sandbox-spacesd"
+cua sb overlay drv cua-spacesd=./target/release/cua-spacesd
+cua doctor local:drv --no-host --only build \
+  --expect cua-spacesd=git:<commit sha> --expect cua-driver=git:<commit sha>
+```
+
+With both injected, `cua-driver=git:` must hold for the linked driver and the
+standalone binary.
+
+## In GitHub Actions
+
+```yaml test="config" id="driver-sandbox-ci"
+      - uses: trycua/cua/.github/actions/cua-sandbox@main
+        with:
+          image: linux
+          overlay: cua-driver=libs/cua-driver/rust/target/release/cua-driver
+          expect: cua-driver=git:${{ github.sha }}
+          guest-setup: apt-get update -qq && apt-get install -y -qq jq ffmpeg
+          run: |
+            cua sb cp scripts/ci/linux/preflight-rust-e2e.sh "$CUA_SANDBOX:/tmp/preflight.sh"
+            cua sb shell "$CUA_SANDBOX" "set -a; . /run/cua-desktop/desktop.env; set +a;
+              export CUA_E2E_SOURCE_SHA=${{ github.sha }} CUA_TEST_DRIVER_BIN=/usr/local/bin/cua-driver;
+              bash /tmp/preflight.sh"
+```
+
+This is how the repository's own Linux driver preflight runs. The preflight
+fails with `stale driver` when the driver's embedded commit differs from
+`CUA_E2E_SOURCE_SHA`.
+
+<Callout type="info">
+On the runner, the action puts a `PATH` first where `cua-driver` is the
+injected build, and `cua-spacesd` is a stub that fails. A copy installed on
+the runner is never picked up.
+</Callout>
+
+See [Test in CI with Cua sandboxes](/cua-sdk/guides/test-in-ci) for every
+input and output.

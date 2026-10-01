@@ -1,0 +1,17 @@
+{
+  "title": "Reference",
+  "pages": [
+    "index",
+    "pool",
+    "template",
+    "claim",
+    "sandbox",
+    "secret",
+    "service-url",
+    "image",
+    "namespace",
+    "api-key",
+    "terraform",
+    "errors"
+  ]
+}

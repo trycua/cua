@@ -642,7 +642,7 @@ impl Tool for InstallExtensionTool {
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "enum": ["perception"]},
+                    "name": {"type": "string", "enum": ["perception"], "description": "Extension to preview or install. Only perception (the local visual-region parser used by parse_visual_regions) is available."},
                     "confirm": {"type": "boolean", "description": "Install the previewed extension. Omit or false for a read-only plan."}
                 },
                 "required": ["name"],
@@ -2238,7 +2238,7 @@ impl ExtensionStore {
         version: &Dir,
         manifest: &ExtensionManifest,
     ) -> Result<()> {
-        let record = read_install_record_at(&version, id, &manifest.version)?;
+        let record = read_install_record_at(version, id, &manifest.version)?;
         let Some(candidate) = record.publisher_trust else {
             return Ok(());
         };

@@ -1,0 +1,149 @@
+---
+title: Unlock Metal for a workload
+description: 'Unlock a tested Metal capability profile for one workload inside a Lume macOS VM.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A stock macOS guest reports conservative Metal capabilities, so some apps skip
+GPU paths the paravirtualized device can run. A small MIT shim, injected into
+one process, raises two answers: `supportsFamily:` up to a configured Apple
+family, and the maximum threadgroup memory. It does not pass a physical GPU
+through, patch the host, or touch the guest kernel. Background and benchmarks:
+[technical writeup](/blog/gpu-passthrough-macos-vms).
+
+<Callout type="warn">
+  Experimental. Tested on Lume 0.5.1, an M1 Ultra host on macOS 26.6.1, and the
+  Tahoe guest at macOS 26.5.2, with a capability probe, two llama.cpp workloads
+  and one MLX-LM run. Reported support is not proof every Metal API works: test
+  each workload.
+</Callout>
+
+## 1. Build the shim
+
+On an Apple silicon Mac with Xcode Command Line Tools:
+
+```bash skip="no-runner"
+git clone https://github.com/trycua/cua.git
+cd cua/libs/lume/metal-capability-shim
+./Scripts/build.sh
+./Scripts/verify.sh      # architectures, signatures, checksums
+```
+
+```text output
+dist/
+├── LumeMetalCapabilities-arm64.dylib
+├── LumeMetalCapabilities-arm64e.dylib
+├── SHA256SUMS
+└── metal-capabilities
+```
+
+Most guest workloads are `arm64`; check yours with `lipo -archs <executable>`.
+
+## 2. Enable the host feature level
+
+Applies to VMs your user launches; restart the VM so the device is recreated:
+
+```bash test="cli-shape" id="lume-stop-my-vm"
+lume stop my-vm
+defaults write com.apple.gpusw.ParavirtualizedGraphics \
+  ForceUnrestrictedDeviceFeatureLevel -bool true
+defaults read com.apple.gpusw.ParavirtualizedGraphics \
+  ForceUnrestrictedDeviceFeatureLevel
+lume run my-vm
+```
+
+`defaults read` prints `1`. Undo with `defaults delete` of the same key and a
+VM restart.
+
+## 3. Copy it into the guest
+
+```bash test="cli-shape" id="lume-ssh-my-vm"
+lume ssh my-vm "mkdir -p '/Users/lume/.local/share/lume/metal-capabilities'"
+
+VM_IP=$(lume get my-vm --format json | jq -r '.[0].ipAddress')
+scp ./dist/LumeMetalCapabilities-arm64.dylib ./dist/metal-capabilities \
+  "lume@${VM_IP}:/Users/lume/.local/share/lume/metal-capabilities/"
+```
+
+Compare `shasum -a 256` of both files on the host and in the guest.
+
+## 4. Verify with the probe
+
+```bash test="cli-shape" id="lume-ssh-my-vm-4"
+lume ssh my-vm \
+  "DYLD_INSERT_LIBRARIES='/Users/lume/.local/share/lume/metal-capabilities/LumeMetalCapabilities-arm64.dylib' \
+   LUME_METAL_APPLE_FAMILY_MAX=1009 \
+   '/Users/lume/.local/share/lume/metal-capabilities/metal-capabilities' 1009"
+```
+
+Run it once without the two variables to see the stock answers. On the tested
+guest `supportsFamily:1009` went from `false` to `true` and threadgroup memory
+from 32,768 to 65,536 bytes.
+
+| Variable | Default | Effect |
+| --- | --: | --- |
+| `LUME_METAL_APPLE_FAMILY_MAX` | required | Apple-family ceiling, `1001` to `1999`; tested `1009` (Apple 9). Missing or invalid means stock behavior. |
+| `LUME_METAL_MAX_THREADGROUP_MEMORY` | `65536` | Minimum reported threadgroup memory. |
+| `LUME_METAL_RECOMMENDED_WORKING_SET_SIZE` | unchanged | Reported working set, only when set. |
+
+## 5. Run your workload
+
+Set the same two variables on the one process (and its children) that needs
+them:
+
+```bash test="cli-shape" id="lume-ssh-my-vm-5"
+lume ssh my-vm \
+  "DYLD_INSERT_LIBRARIES='/Users/lume/.local/share/lume/metal-capabilities/LumeMetalCapabilities-arm64.dylib' \
+   LUME_METAL_APPLE_FAMILY_MAX=1009 \
+   /absolute/path/to/your-workload first-argument"
+```
+
+Never use `launchctl setenv DYLD_INSERT_LIBRARIES`; it affects the whole login
+session. For a long-running service, use a per-user LaunchAgent in the guest
+with the variables in its `EnvironmentVariables`:
+
+```xml skip="placeholder"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.trycua.lume.metal-workload</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/absolute/path/to/your-workload</string>
+    <string>first-argument</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>DYLD_INSERT_LIBRARIES</key>
+    <string>/Users/lume/.local/share/lume/metal-capabilities/LumeMetalCapabilities-arm64.dylib</string>
+    <key>LUME_METAL_APPLE_FAMILY_MAX</key>
+    <string>1009</string>
+  </dict>
+  <key>StandardErrorPath</key>
+  <string>/Users/lume/Library/Logs/Lume/metal-workload.stderr.log</string>
+</dict>
+</plist>
+```
+
+```bash skip="macos-vm"
+PLIST="$HOME/Library/LaunchAgents/com.trycua.lume.metal-workload.plist"
+mkdir -p "$HOME/Library/Logs/Lume"
+plutil -lint "$PLIST"
+launchctl bootstrap "gui/$(id -u)" "$PLIST"
+launchctl print "gui/$(id -u)/com.trycua.lume.metal-workload"
+# remove: launchctl bootout "gui/$(id -u)/com.trycua.lume.metal-workload"
+```
+
+If the workload fails, run it once without the shim before debugging further.
+
+## In Cua Spaces
+
+The GPU acceleration checkbox in New Space (Resources), `--gpu` on
+`cua spaces create`, or `gpu="paravirtual"` in the SDK does step 2 for you:
+cua sets the feature level before each start of that VM and removes it when
+the last GPU VM is deleted, if cua set it. While set, it applies to every VM
+your user starts. Steps 1 and 3 to 5 stay per workload. See
+[Add a Space](/spaces/guides/add-a-space#gpu-acceleration).

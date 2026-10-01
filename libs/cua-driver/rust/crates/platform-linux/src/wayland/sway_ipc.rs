@@ -116,9 +116,7 @@ fn parse_tree(bytes: &[u8]) -> Option<Vec<Window>> {
 }
 
 pub fn list_windows() -> Option<Vec<Window>> {
-    if std::env::var_os("SWAYSOCK").is_none() {
-        return None;
-    }
+    std::env::var_os("SWAYSOCK")?;
     let output = Command::new("swaymsg")
         .args(["-r", "-t", "get_tree"])
         .stdin(Stdio::null())

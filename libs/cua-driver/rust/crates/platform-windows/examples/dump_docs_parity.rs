@@ -1,5 +1,6 @@
 //! Parity check for `cua-driver dump-docs`.
 
+#[cfg(target_os = "windows")]
 use std::process::Command;
 
 #[cfg(target_os = "windows")]

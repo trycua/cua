@@ -1,0 +1,3284 @@
+/* SPDX-License-Identifier: FSL-1.1-MIT */
+/* Copyright (c) 2026 Cua AI, Inc. */
+
+/*
+ * The main Cua Spaces window: a plain, opaque desktop app (sidebar, toolbar,
+ * detail), styled after the Fleets dashboard: neutral greys, hairline
+ * borders, a light-blue accent used sparingly, white-on-black (or
+ * black-on-white) primary buttons. The platform system font throughout.
+ *
+ * Nothing here is translucent: no backdrop-filter, no rgba window
+ * backgrounds. Screenshots of the window come out the same every time.
+ */
+
+.dw {
+  --dw-font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --dw-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --dw-bg: #ffffff;
+  --dw-sidebar: #f7f7f8;
+  --dw-surface: #ffffff;
+  --dw-surface-2: #f4f4f5;
+  --dw-hover: #ececee;
+  --dw-selected: #e6e6e9;
+  --dw-border: #e4e4e7;
+  --dw-border-strong: #d0d0d5;
+  --dw-text: #0d0d0d;
+  --dw-text-2: #5d5d63;
+  --dw-text-3: #8e8e94;
+  --dw-accent: #1f6fd1;
+  --dw-accent-soft: #e8f1fc;
+  --dw-primary-bg: #0d0d0d;
+  --dw-primary-fg: #ffffff;
+  --dw-focus: 0 0 0 3px rgba(31, 111, 209, 0.32);
+  --dw-ok: #1a9a55;
+  --dw-warn: #b7791f;
+  --dw-danger: #d23b3b;
+  --dw-danger-soft: #fdecec;
+  --dw-shadow-sheet: 0 24px 64px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.06);
+
+  --dw-radius: 8px;
+  --dw-radius-card: 10px;
+  --dw-titlebar: 52px;
+  --dw-sidebar-w: 248px;
+
+  color-scheme: light;
+  position: fixed;
+  inset: 0;
+  display: flex;
+  background: var(--dw-bg);
+  color: var(--dw-text);
+  font: 13px/1.45 var(--dw-font);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+@media (prefers-color-scheme: dark) {
+  .dw:not([data-theme="light"]) {
+    --dw-bg: #121212;
+    --dw-sidebar: #0a0a0a;
+    --dw-surface: #181818;
+    --dw-surface-2: #1f1f1f;
+    --dw-hover: #1f1f1f;
+    --dw-selected: #262626;
+    --dw-border: #262626;
+    --dw-border-strong: #343434;
+    --dw-text: #f5f6f8;
+    --dw-text-2: #a8adb6;
+    --dw-text-3: #767b84;
+    --dw-accent: #9fd7ff;
+    --dw-accent-soft: #14222e;
+    --dw-primary-bg: #f5f6f8;
+    --dw-primary-fg: #0d0d0d;
+    --dw-focus: 0 0 0 3px rgba(159, 215, 255, 0.35);
+    --dw-ok: #7fe0a4;
+    --dw-warn: #f5c97b;
+    --dw-danger: #ff9d9d;
+    --dw-danger-soft: #2a1515;
+    --dw-shadow-sheet: 0 24px 64px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
+    color-scheme: dark;
+  }
+}
+
+.dw[data-theme="dark"] {
+  --dw-bg: #121212;
+  --dw-sidebar: #0a0a0a;
+  --dw-surface: #181818;
+  --dw-surface-2: #1f1f1f;
+  --dw-hover: #1f1f1f;
+  --dw-selected: #262626;
+  --dw-border: #262626;
+  --dw-border-strong: #343434;
+  --dw-text: #f5f6f8;
+  --dw-text-2: #a8adb6;
+  --dw-text-3: #767b84;
+  --dw-accent: #9fd7ff;
+  --dw-accent-soft: #14222e;
+  --dw-primary-bg: #f5f6f8;
+  --dw-primary-fg: #0d0d0d;
+  --dw-focus: 0 0 0 3px rgba(159, 215, 255, 0.35);
+  --dw-ok: #7fe0a4;
+  --dw-warn: #f5c97b;
+  --dw-danger: #ff9d9d;
+  --dw-danger-soft: #2a1515;
+  --dw-shadow-sheet: 0 24px 64px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  color-scheme: dark;
+}
+
+.dw *,
+.dw *::before,
+.dw *::after {
+  box-sizing: border-box;
+}
+
+.dw :focus-visible {
+  outline: none;
+  box-shadow: var(--dw-focus);
+}
+
+.dw code,
+.dw .dw-mono {
+  font-family: var(--dw-mono);
+  font-size: 12px;
+}
+
+.dw input,
+.dw textarea,
+.dw select {
+  user-select: text;
+}
+
+/* ---------- Controls ---------- */
+
+.dw-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--dw-border-strong);
+  border-radius: var(--dw-radius);
+  background: var(--dw-surface);
+  color: var(--dw-text);
+  font: 500 13px/1 var(--dw-font);
+  white-space: nowrap;
+  cursor: default;
+}
+.dw-btn:hover:not(:disabled) {
+  background: var(--dw-hover);
+}
+.dw-btn:disabled {
+  opacity: 0.45;
+}
+.dw-btn-primary {
+  border-color: var(--dw-primary-bg);
+  background: var(--dw-primary-bg);
+  color: var(--dw-primary-fg);
+}
+.dw-btn-primary:hover:not(:disabled) {
+  background: var(--dw-primary-bg);
+  opacity: 0.86;
+}
+.dw-btn-danger {
+  color: var(--dw-danger);
+}
+.dw-btn-danger:hover:not(:disabled) {
+  background: var(--dw-danger-soft);
+}
+.dw-btn-quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--dw-text-2);
+}
+.dw-btn-quiet:hover:not(:disabled) {
+  background: var(--dw-hover);
+  color: var(--dw-text);
+}
+.dw-btn-lg {
+  height: 34px;
+  padding: 0 18px;
+  font-size: 13px;
+}
+.dw-icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dw-text-2);
+}
+.dw-icon-btn:hover:not(:disabled) {
+  background: var(--dw-hover);
+  color: var(--dw-text);
+}
+.dw-icon-btn:disabled {
+  opacity: 0.4;
+}
+.dw-icon-btn svg,
+.dw-icon-btn .sf-icon,
+.dw-btn svg,
+.dw-btn .sf-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.dw-field {
+  display: grid;
+  gap: 6px;
+}
+.dw-field > span:first-child,
+.dw-label {
+  color: var(--dw-text-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+.dw-input,
+.dw-select {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--dw-border-strong);
+  border-radius: var(--dw-radius);
+  background: var(--dw-surface);
+  color: var(--dw-text);
+  font: 13px var(--dw-font);
+}
+.dw-input::placeholder {
+  color: var(--dw-text-3);
+}
+.dw-input[aria-invalid="true"] {
+  border-color: var(--dw-danger);
+}
+.dw-select {
+  appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5 5 6.5 8 3.5' fill='none' stroke='%238e8e94' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+.dw-hint {
+  margin: 0;
+  color: var(--dw-text-3);
+  font-size: 12px;
+}
+.dw-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--dw-radius);
+  background: var(--dw-danger-soft);
+  color: var(--dw-danger);
+  font-size: 12px;
+  user-select: text;
+}
+.dw-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--dw-text);
+}
+.dw-check input {
+  margin: 2px 0 0;
+  accent-color: var(--dw-accent);
+}
+
+.dw-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dw-text-3);
+}
+.dw-dot[data-status="running"],
+.dw-dot[data-status="local"] {
+  background: var(--dw-ok);
+}
+.dw-dot[data-status="approval"] {
+  background: var(--dw-warn);
+}
+.dw-dot[data-status="error"] {
+  background: var(--dw-danger);
+}
+.dw-dot[data-status="provisioning"] {
+  background: var(--dw-accent);
+  animation: dw-pulse 1.4s ease-in-out infinite;
+}
+@keyframes dw-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dw-dot[data-status="provisioning"] {
+    animation: none;
+  }
+}
+
+.dw-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--dw-border);
+  border-radius: 999px;
+  background: var(--dw-surface-2);
+  color: var(--dw-text-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* ---------- Window chrome ---------- */
+
+.dw-sidebar {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: var(--dw-sidebar-w);
+  border-right: 1px solid var(--dw-border);
+  background: var(--dw-sidebar);
+}
+.dw-sidebar-top {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: flex-end;
+  height: var(--dw-titlebar);
+  padding: 0 10px 0 86px;
+}
+.dw-sidebar-search {
+  position: relative;
+  margin: 0 10px 8px;
+}
+.dw-sidebar-search .dw-input {
+  height: 28px;
+  padding-left: 28px;
+  background: var(--dw-surface);
+}
+.dw-sidebar-search svg,
+.dw-sidebar-search .sf-icon {
+  position: absolute;
+  top: 7px;
+  left: 9px;
+  width: 14px;
+  height: 14px;
+  color: var(--dw-text-3);
+}
+.dw-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px 8px;
+}
+.dw-nav-section {
+  margin: 12px 0 4px;
+  padding: 0 8px;
+  color: var(--dw-text-3);
+  font-size: 11px;
+  font-weight: 600;
+}
+.dw-nav-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dw-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--dw-radius);
+  background: transparent;
+  color: var(--dw-text);
+  text-align: left;
+  font: inherit;
+}
+/* A Space one of your machines provides, under that machine's row. */
+.dw-row[data-nested="true"] {
+  padding-left: 26px;
+}
+.dw-row:hover {
+  background: var(--dw-hover);
+}
+.dw-row[aria-selected="true"] {
+  background: var(--dw-selected);
+}
+.dw-row-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--dw-border);
+  border-radius: 7px;
+  background: var(--dw-surface);
+  color: var(--dw-text-2);
+}
+.dw-row-icon svg,
+.dw-row-icon .sf-icon {
+  width: 16px;
+  height: 16px;
+}
+.dw-row-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+.dw-row-name {
+  overflow: hidden;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A Space in your cloud: where it runs, quiet, after the name. */
+.dw-row-place {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dw-text-3);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A Space being created: its percentage and ring; a failed create: why. */
+.dw-row-trailing {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  color: var(--dw-text-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dw-row-trailing[data-tone="error"] {
+  flex: 0 1 auto;
+  color: var(--dw-danger);
+}
+.dw-row-ring {
+  display: block;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  background: conic-gradient(
+    from 0deg,
+    var(--dw-accent) calc(var(--progress, 0) * 360deg),
+    color-mix(in srgb, var(--dw-text-3) 35%, transparent) 0
+  );
+  -webkit-mask: radial-gradient(circle closest-side, transparent 62%, #000 64%);
+  mask: radial-gradient(circle closest-side, transparent 62%, #000 64%);
+}
+.dw-row-detail {
+  overflow: hidden;
+  color: var(--dw-text-3);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dw-sidebar-foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--dw-border);
+}
+.dw-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--dw-selected);
+  color: var(--dw-text-2);
+  font-size: 11px;
+  font-weight: 600;
+}
+.dw-account {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.25;
+}
+.dw-account-name {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dw-account-detail {
+  color: var(--dw-text-3);
+  font-size: 11px;
+}
+
+.dw-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--dw-bg);
+}
+.dw-toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  height: var(--dw-titlebar);
+  padding: 0 14px 0 20px;
+  border-bottom: 1px solid var(--dw-border);
+}
+.dw-toolbar-title {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.dw-toolbar-title h1 {
+  overflow: hidden;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dw-toolbar-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+.dw-toolbar-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--dw-border);
+}
+.dw-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px 32px;
+}
+.dw-content-inner {
+  display: grid;
+  gap: 20px;
+  max-width: 860px;
+  margin: 0 auto;
+}
+
+/* ---------- Detail ---------- */
+
+/* The Space's desktop runs flush to the card's edges: a live preview sizes
+   the card to the frame (no letterbox bars), clipped by the card's radius.
+   Before the first frame the card holds the default desktop's 16:10. */
+.dw-preview {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 16 / 10;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius-card);
+  background: #000000;
+}
+.dw-preview-live {
+  aspect-ratio: auto;
+}
+.dw-preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.dw-preview-empty {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  background: var(--dw-surface-2);
+  color: var(--dw-text-3);
+  text-align: center;
+}
+.dw-preview-empty svg,
+.dw-preview-empty .sf-icon {
+  width: 28px;
+  height: 28px;
+}
+.dw-preview-actions {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  gap: 6px;
+}
+.dw-preview-actions .dw-btn {
+  border-color: transparent;
+  background: #ffffff;
+  color: #0d0d0d;
+}
+.dw-preview-actions .dw-btn:hover:not(:disabled) {
+  background: #ececee;
+}
+
+.dw-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  margin: 0;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius-card);
+  background: var(--dw-border);
+}
+.dw-fact {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 14px;
+  background: var(--dw-surface);
+}
+.dw-fact dt {
+  color: var(--dw-text-3);
+  font-size: 11px;
+  font-weight: 500;
+}
+.dw-fact dd {
+  overflow: hidden;
+  margin: 0;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.dw-section {
+  display: grid;
+  gap: 8px;
+}
+.dw-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.dw-section-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.dw-card {
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius-card);
+  background: var(--dw-surface);
+}
+.dw-card-pad {
+  padding: 14px 16px;
+}
+
+/* The shared list components (windows, agents, teleport zone) inherit the
+   app's older class names; re-skin them for the opaque desktop window. */
+.dw .swl,
+.dw .sal {
+  margin: 0;
+}
+.dw .swl-section-title,
+.dw .sal-title {
+  display: none;
+}
+.dw .swl-row,
+.dw .sal-row {
+  border-radius: var(--dw-radius);
+  color: var(--dw-text);
+}
+.dw .swl-row:hover,
+.dw .sal-row:hover {
+  background: var(--dw-hover);
+}
+.dw .swl-row-preview {
+  border-color: var(--dw-border);
+  background: var(--dw-surface-2);
+}
+.dw .swl-empty,
+.dw .sal-empty {
+  color: var(--dw-text-3);
+}
+.dw .tdz {
+  border-color: var(--dw-border-strong);
+  border-radius: var(--dw-radius-card);
+  background: var(--dw-surface);
+  color: var(--dw-text-2);
+}
+.dw .tdz .secondary-button {
+  border: 1px solid var(--dw-border-strong);
+  border-radius: var(--dw-radius);
+  background: var(--dw-surface);
+  color: var(--dw-text);
+  backdrop-filter: none;
+}
+
+.dw-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 20px 0;
+  padding: 9px 12px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius);
+  background: var(--dw-surface-2);
+  font-size: 12px;
+}
+.dw-banner[data-tone="error"] {
+  border-color: transparent;
+  background: var(--dw-danger-soft);
+  color: var(--dw-danger);
+}
+.dw-banner span {
+  flex: 1;
+  user-select: text;
+}
+
+/* ---------- Empty state ---------- */
+
+.dw-empty {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  align-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+}
+.dw-empty h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+.dw-empty p {
+  max-width: 360px;
+  margin: 0;
+  color: var(--dw-text-2);
+}
+.dw-empty-art {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--dw-border);
+  border-radius: 16px;
+  background: var(--dw-surface-2);
+  color: var(--dw-text-2);
+}
+.dw-empty-art svg,
+.dw-empty-art .sf-icon {
+  width: 28px;
+  height: 28px;
+}
+
+/* ---------- Sheet (the New Space wizard) ---------- */
+
+.dw-scrim {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: grid;
+  place-items: start center;
+  padding-top: 12px;
+  background: rgba(0, 0, 0, 0.32);
+}
+.dw-sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(640px, calc(100vw - 48px));
+  height: min(640px, calc(100vh - var(--dw-titlebar) - 24px));
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--dw-bg);
+  box-shadow: var(--dw-shadow-sheet);
+}
+
+/* ---------- Wizard ---------- */
+
+.wz {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.wz-steps {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  margin: 0;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--dw-border);
+  list-style: none;
+}
+.wz-step {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--dw-text-3);
+  font-size: 12px;
+  font-weight: 500;
+}
+.wz-step-num {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--dw-border-strong);
+  border-radius: 50%;
+  font-size: 11px;
+}
+.wz-step[data-state="current"] {
+  color: var(--dw-text);
+}
+.wz-step[data-state="current"] .wz-step-num {
+  border-color: var(--dw-primary-bg);
+  background: var(--dw-primary-bg);
+  color: var(--dw-primary-fg);
+}
+.wz-step[data-state="done"] {
+  color: var(--dw-text-2);
+}
+.wz-step[data-state="done"] .wz-step-num {
+  border-color: var(--dw-border-strong);
+  background: var(--dw-surface-2);
+}
+.wz-step-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wz-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 24px;
+}
+.wz-title {
+  margin: 0 0 4px;
+  font-size: 17px;
+  font-weight: 600;
+}
+.wz-lede {
+  margin: 0;
+  color: var(--dw-text-2);
+}
+.wz-stack {
+  display: grid;
+  gap: 14px;
+}
+.wz-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+.wz-tile {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-height: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius-card);
+  background: var(--dw-surface);
+  color: var(--dw-text);
+  text-align: left;
+  font: inherit;
+}
+.wz-tile:hover:not(:disabled) {
+  border-color: var(--dw-border-strong);
+  background: var(--dw-surface-2);
+}
+.wz-tile[aria-pressed="true"] {
+  border-color: var(--dw-text);
+  box-shadow: inset 0 0 0 1px var(--dw-text);
+}
+.wz-tile:disabled {
+  opacity: 0.45;
+}
+.wz-tile-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: var(--dw-surface-2);
+  color: var(--dw-text);
+}
+.wz-tile-icon svg,
+.wz-tile-icon .sf-icon {
+  width: 18px;
+  height: 18px;
+}
+.wz-tile-title {
+  font-weight: 600;
+}
+.wz-tile-desc {
+  color: var(--dw-text-2);
+  font-size: 12px;
+}
+.wz-image-card {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius-card);
+  background: var(--dw-surface-2);
+}
+.wz-image-card .wz-tile-icon {
+  flex: none;
+  background: var(--dw-surface);
+}
+.wz-image-meta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.wz-image-meta code {
+  color: var(--dw-text-2);
+  user-select: text;
+}
+/* The Resources step's estimate: one quiet line under the sliders. */
+.wz-price {
+  margin: 0;
+  color: var(--dw-text-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+/* The disk slider's note (wraps, never cut short) and its Reset. */
+.wz-disk {
+  display: grid;
+  gap: 6px;
+}
+.wz-disk-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.wz-help {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--dw-text-2);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+.wz-disk-note .dw-btn {
+  flex: none;
+}
+.wz-note {
+  display: flex;
+  gap: 8px;
+  padding: 9px 11px;
+  border-radius: var(--dw-radius);
+  background: var(--dw-accent-soft);
+  color: var(--dw-text);
+  font-size: 12px;
+}
+.wz-row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.wz-slider {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+}
+.wz-slider input[type="range"] {
+  width: 100%;
+  accent-color: var(--dw-text);
+}
+.wz-slider output {
+  min-width: 64px;
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.wz-summary {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  overflow: hidden;
+  margin: 0;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius-card);
+}
+.wz-summary dt,
+.wz-summary dd {
+  margin: 0;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--dw-border);
+}
+.wz-summary dt {
+  background: var(--dw-surface-2);
+  color: var(--dw-text-2);
+}
+.wz-summary dd {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.wz-summary dt:nth-last-of-type(1),
+.wz-summary dd:nth-last-of-type(1) {
+  border-bottom: 0;
+}
+.wz-fact-warning {
+  display: inline-flex;
+  margin-left: 6px;
+  color: var(--dw-warn);
+  vertical-align: -2px;
+}
+.wz-foot {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--dw-border);
+  background: var(--dw-bg);
+}
+.wz-foot-spacer {
+  flex: 1;
+}
+
+/* ---------- Welcome (first run) ---------- */
+
+.ob {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 64px 32px 24px;
+  background: var(--dw-bg);
+}
+.ob-drag {
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: var(--dw-titlebar);
+}
+.ob-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 440px;
+  text-align: center;
+}
+.ob-mark {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 22px;
+  border-radius: 18px;
+  background: var(--dw-primary-bg);
+  color: var(--dw-primary-fg);
+}
+.ob-mark svg,
+.ob-mark .sf-icon {
+  width: 34px;
+  height: 34px;
+}
+.ob-title {
+  margin: 0 0 8px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.ob-lede {
+  margin: 0 0 24px;
+  color: var(--dw-text-2);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.ob-body {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+}
+.ob-actions {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 28px;
+}
+.ob-actions .dw-btn-primary {
+  min-width: 240px;
+}
+.ob-dots {
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 28px;
+}
+.ob-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dw-border-strong);
+}
+.ob-dots span[aria-current="step"] {
+  background: var(--dw-text);
+}
+.ob-choice {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius-card);
+  background: var(--dw-surface);
+  color: var(--dw-text);
+  text-align: left;
+  font: inherit;
+}
+.ob-choice:hover {
+  border-color: var(--dw-border-strong);
+  background: var(--dw-surface-2);
+}
+.ob-choice[aria-pressed="true"] {
+  border-color: var(--dw-text);
+  box-shadow: inset 0 0 0 1px var(--dw-text);
+}
+.ob-choice-text {
+  display: grid;
+  gap: 2px;
+}
+.ob-choice-title {
+  font-weight: 600;
+}
+.ob-choice-desc {
+  color: var(--dw-text-2);
+  font-size: 12px;
+}
+.ob-path {
+  display: block;
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius);
+  background: var(--dw-surface-2);
+  user-select: text;
+}
+.ob-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ob-list li,
+.ob-list label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius);
+  background: var(--dw-surface);
+}
+.ob-list .ob-list-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+.ob-list .ob-list-sub {
+  overflow: hidden;
+  color: var(--dw-text-3);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ob-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 16px;
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius-card);
+  background: var(--dw-surface);
+}
+.ob-facts dt {
+  color: var(--dw-text-2);
+}
+.ob-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.ob-code {
+  display: inline-block;
+  padding: 6px 14px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius);
+  background: var(--dw-surface-2);
+  font: 600 18px var(--dw-mono);
+  letter-spacing: 0.12em;
+  user-select: text;
+}
+
+.dw-btn-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dw-accent);
+  font: inherit;
+  cursor: pointer;
+}
+.dw-btn-link:hover {
+  text-decoration: underline;
+}
+.wz-tile.wz-tile-row {
+  min-height: 0;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  row-gap: 2px;
+  align-items: center;
+}
+.wz-tile-row .wz-tile-icon {
+  grid-row: span 2;
+}
+
+html.is-main,
+html.is-main body {
+  background: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  html.is-main,
+  html.is-main body {
+    background: #121212;
+  }
+}
+
+/* ---------- Welcome: the installer steps, laid out like a native
+   onboarding window (one centred column, a single primary action, dots) ---------- */
+
+.dw .installer {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 460px;
+  margin: 0 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  text-align: center;
+}
+.dw .installer .create-cloud-body,
+.dw .installer .create-cloud-section,
+.dw .host-setup .create-cloud-body,
+.dw .host-setup .create-cloud-section {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: none;
+}
+.dw .onboarding-title {
+  margin: 0 0 4px;
+  color: var(--dw-text);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-align: center;
+}
+.dw .host-setup-title {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.dw .host-setup-lede {
+  margin: 0;
+  color: var(--dw-text-2);
+  font-size: 13px;
+  line-height: 1.55;
+  text-align: center;
+}
+.dw .this-machine-muted {
+  margin: 0;
+  color: var(--dw-text-3);
+  font-size: 12px;
+}
+.dw .create-cloud-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--dw-radius);
+  background: var(--dw-danger-soft);
+  color: var(--dw-danger);
+  font-size: 12px;
+  text-align: left;
+  user-select: text;
+}
+.dw .installer-path {
+  display: block;
+  padding: 8px 10px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius);
+  background: var(--dw-surface-2);
+  color: var(--dw-text);
+  text-align: left;
+  user-select: text;
+}
+.dw .create-cloud-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--dw-text);
+  text-align: left;
+}
+.dw .create-cloud-toggle input {
+  margin: 2px 0 0;
+  accent-color: var(--dw-accent);
+}
+.dw .create-cloud-field {
+  display: grid;
+  gap: 6px;
+  text-align: left;
+}
+.dw .create-cloud-field > span {
+  color: var(--dw-text-2);
+  font-size: 12px;
+  font-weight: 500;
+}
+.dw .create-cloud-field input,
+.dw .create-cloud-field select {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--dw-border-strong);
+  border-radius: var(--dw-radius);
+  background: var(--dw-surface);
+  color: var(--dw-text);
+  font: 13px var(--dw-font);
+  appearance: auto;
+}
+.dw .installer-agents {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  list-style: none;
+  text-align: left;
+}
+.dw .installer-agent {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius);
+  background: var(--dw-surface);
+}
+.dw .installer-agent > :not(input) {
+  grid-column: 2;
+}
+.dw .installer-agent-name {
+  font-weight: 500;
+}
+.dw .installer-options {
+  display: grid;
+  gap: 8px;
+  text-align: left;
+}
+.dw .installer-skills {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 4px 26px;
+  padding: 0;
+  color: var(--dw-text-2);
+  font-size: 12px;
+  list-style: none;
+}
+.dw .this-machine-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 16px;
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius-card);
+  background: var(--dw-surface);
+  text-align: left;
+}
+.dw .this-machine-facts > div {
+  display: contents;
+}
+.dw .this-machine-facts dt {
+  color: var(--dw-text-2);
+}
+.dw .this-machine-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The step footer: one primary action, the secondary one quiet beneath it. */
+.dw .installer .create-cloud-actions,
+.dw .ob .create-cloud-actions {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 28px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.dw .primary-button,
+.dw .secondary-button {
+  height: 32px;
+  padding: 0 18px;
+  border-radius: var(--dw-radius);
+  font: 500 13px/1 var(--dw-font);
+  backdrop-filter: none;
+  box-shadow: none;
+}
+.dw .ob .primary-button {
+  min-width: 240px;
+  border: 1px solid var(--dw-primary-bg);
+  background: var(--dw-primary-bg);
+  color: var(--dw-primary-fg);
+}
+.dw .ob .primary-button:disabled {
+  opacity: 0.45;
+}
+.dw .ob .secondary-button {
+  border: 0;
+  background: transparent;
+  color: var(--dw-text-2);
+}
+.dw .ob .secondary-button:hover {
+  color: var(--dw-text);
+}
+.dw .link-button {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dw-accent);
+  font: inherit;
+}
+
+/* The steps, as progress dots under the panel. */
+.dw .installer-steps {
+  display: flex;
+  order: 99;
+  gap: 8px;
+  margin: auto 0 0;
+  padding: 32px 0 0;
+  list-style: none;
+}
+.dw .installer-steps li {
+  overflow: hidden;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dw-border-strong);
+  color: transparent;
+  font-size: 0;
+}
+.dw .installer-steps li[aria-current="step"] {
+  background: var(--dw-text);
+}
+.dw .ob-hero {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  margin: 0 auto 20px;
+  border-radius: 18px;
+  background: var(--dw-primary-bg);
+  color: var(--dw-primary-fg);
+}
+.dw .ob-hero svg,
+.dw .ob-hero .sf-icon {
+  width: 32px;
+  height: 32px;
+}
+
+/* "How will you use this machine?" choices. */
+.dw .onboarding {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+.dw .new-space-cards {
+  display: grid;
+  gap: 10px;
+}
+.dw .new-space-card {
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius-card);
+  background: var(--dw-surface);
+  color: var(--dw-text);
+  text-align: left;
+  backdrop-filter: none;
+}
+.dw .new-space-card:hover {
+  border-color: var(--dw-border-strong);
+  background: var(--dw-surface-2);
+}
+.dw .new-space-card-primary {
+  border-color: var(--dw-text);
+  box-shadow: inset 0 0 0 1px var(--dw-text);
+}
+.dw .new-space-card-title {
+  font-weight: 600;
+}
+.dw .new-space-card-desc {
+  color: var(--dw-text-2);
+  font-size: 12px;
+}
+.dw .host-advanced {
+  display: grid;
+  gap: 10px;
+}
+
+/* The This machine panel inside the main window. */
+.dw .dw-host .this-machine {
+  padding: 0;
+  background: none;
+}
+.dw .ob-app-icon {
+  display: block;
+  width: fit-content;
+  margin: 0 auto 16px;
+}
+
+/* The onboarding stack mark: opaque layer fills, light and dark. */
+.stack-mark {
+  --stack-mark-back: #4b4f58;
+  --stack-mark-mid: #30333a;
+  --stack-mark-front: #17181c;
+  --stack-mark-edge: rgba(0, 0, 0, 0.12);
+  display: block;
+}
+@media (prefers-color-scheme: dark) {
+  .stack-mark {
+    --stack-mark-back: #2a2c32;
+    --stack-mark-mid: #3b3e46;
+    --stack-mark-front: #52565f;
+    --stack-mark-edge: rgba(255, 255, 255, 0.14);
+  }
+}
+
+
+/* Components shared with the notch (settings, window and agent lists, the
+   drop zone) read the older token names; map them onto this window's
+   opaque palette. */
+.dw {
+  --ink: var(--dw-text);
+  --ink-2: var(--dw-text-2);
+  --ink-3: var(--dw-text-3);
+  --hairline: var(--dw-border);
+  --fill: var(--dw-surface-2);
+  --fill-hover: var(--dw-hover);
+  --fill-active: var(--dw-selected);
+  --accent: var(--dw-primary-bg);
+  --accent-ink: var(--dw-primary-fg);
+  --acrylic-bg: var(--dw-surface);
+  --acrylic-bg-strong: var(--dw-surface);
+  --acrylic-border: var(--dw-border);
+  --acrylic-edge: transparent;
+  --glass-highlight: transparent;
+  --focus-ring: var(--dw-focus);
+}
+
+/* ---------- Settings page ---------- */
+
+.dw .dw-settings {
+  max-width: 640px;
+}
+.dw .settings-panel {
+  position: static;
+  display: block;
+  overflow: visible;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  animation: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.dw .settings-header {
+  display: none;
+}
+.dw .settings-body {
+  display: grid;
+  gap: 20px;
+  overflow: visible;
+  padding: 0;
+}
+.dw .settings-section {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius-card);
+  background: var(--dw-surface);
+}
+.dw .settings-section-title {
+  margin: 0;
+  color: var(--dw-text);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.dw .settings-hint {
+  color: var(--dw-text-2);
+  font-size: 12px;
+}
+.dw .settings-primary {
+  justify-self: start;
+  height: 28px;
+  padding: 0 14px;
+  border: 1px solid var(--dw-primary-bg);
+  border-radius: var(--dw-radius);
+  background: var(--dw-primary-bg);
+  color: var(--dw-primary-fg);
+  font: 500 13px var(--dw-font);
+}
+.dw .settings-secondary,
+.dw .settings-mcp-action {
+  justify-self: start;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--dw-border-strong);
+  border-radius: var(--dw-radius);
+  background: var(--dw-surface);
+  color: var(--dw-text);
+  font: 500 13px var(--dw-font);
+}
+.dw .settings-segmented {
+  justify-self: start;
+  border-color: var(--dw-border);
+  background: var(--dw-surface-2);
+}
+.dw .settings-segment[data-active="true"] {
+  background: var(--dw-surface);
+  box-shadow: 0 0 0 1px var(--dw-border-strong);
+}
+.dw .settings-mcp-results li,
+.dw .settings-provider {
+  min-height: 32px;
+  font-size: 13px;
+}
+
+/* ---------- The teleport picker: a standard opaque window ---------- */
+
+html.is-teleport-picker,
+html.is-teleport-picker body,
+html.is-teleport-picker #root {
+  background: #ffffff;
+}
+html.is-teleport-picker .hp-window {
+  padding: 0;
+}
+html.is-teleport-picker .hp-panel {
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+  box-shadow: none;
+  animation: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+@media (prefers-color-scheme: dark) {
+  html.is-teleport-picker,
+  html.is-teleport-picker body,
+  html.is-teleport-picker #root,
+  html.is-teleport-picker .hp-panel {
+    background: #121212;
+  }
+}
+
+/* ---------- Space viewer: scale to fit, or 1:1 ---------- */
+
+.viewer-screen {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  container-type: size;
+}
+.viewer-screen .viewer-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+/* Once the frame size is known, size the canvas box to the drawn area so
+   pointer input maps 1:1 onto the remote display. */
+.viewer-screen[style] .viewer-canvas {
+  width: min(100cqw, 100cqh * var(--frame-w) / var(--frame-h));
+  height: auto;
+  aspect-ratio: var(--frame-w) / var(--frame-h);
+}
+.viewer-screen[data-scale="actual"] {
+  display: block;
+  overflow: auto;
+}
+.viewer-screen[data-scale="actual"][style] .viewer-canvas {
+  width: calc(var(--frame-w) * 1px / var(--frame-dpr));
+  max-width: none;
+}
+
+/* The installer section carries the legacy `shelf` / `onboarding` classes;
+   make sure none of their panel chrome or grid layout applies here. */
+.dw .shelf.installer {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  animation: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.dw .shelf.installer[data-layout="center"] {
+  justify-content: center;
+}
+.dw .shelf.installer[data-layout="center"] .host-setup-lede {
+  margin-top: 4px;
+}
+.dw .shelf.installer .installer-steps {
+  justify-content: center;
+  margin: auto 0 0;
+  opacity: 1;
+}
+.dw .shelf.installer .installer-steps {
+  margin: 0;
+  position: fixed;
+  /* Centred on the bottom bar's buttons (32px tall, 20px up). */
+  bottom: calc(20px + 16px - 3.5px);
+  left: 0;
+  right: 0;
+}
+
+/* Pages 2 on: two columns like a native setup assistant. Left: title and
+   one sentence. Right: the details card. The buttons sit in the bottom
+   corners (.ob-footer). */
+.dw .shelf.installer[data-layout="split"] {
+  max-width: 900px;
+  justify-content: center;
+}
+.dw .ob-page {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  align-items: center;
+  gap: 56px;
+  width: 100%;
+  text-align: left;
+}
+.dw .ob-page-left {
+  display: grid;
+  align-content: center;
+  gap: 8px;
+}
+.dw .ob-page-icon {
+  display: none;
+}
+.dw .ob-page .onboarding-title {
+  margin: 0;
+  font-size: 22px;
+  text-align: left;
+}
+.dw .ob-page .host-setup-lede {
+  text-align: left;
+}
+/* The bottom bar, macOS Setup Assistant placement (the SwiftUI app's
+   OnboardingView matches): Back in the bottom-left corner; Skip, then the
+   primary action in the bottom-right corner. The page dots sit centred
+   between them. The host form's own Back / Set up take the same corners. */
+.dw .ob-footer,
+.dw .ob-page-card .host-setup .create-cloud-actions {
+  position: fixed;
+  left: 24px;
+  right: 24px;
+  bottom: 20px;
+  z-index: 1;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 32px;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
+}
+.dw .ob-footer-start,
+.dw .ob-footer-end {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.dw .ob-footer button,
+.dw .ob-page-card .host-setup .create-cloud-actions button {
+  pointer-events: auto;
+}
+.dw .ob-footer .primary-button,
+.dw .ob-page-card .host-setup .primary-button {
+  min-width: 0;
+}
+.dw .ob-footer .secondary-button,
+.dw .ob-page-card .host-setup .create-cloud-actions .secondary-button {
+  height: 32px;
+  padding: 0 18px;
+  border: 1px solid var(--dw-border-strong);
+  background: var(--dw-surface);
+  color: var(--dw-text);
+}
+.dw .ob-page-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 18px 20px;
+  border: 1px solid var(--dw-border);
+  border-radius: 12px;
+  background: var(--dw-surface);
+  text-align: left;
+}
+.dw .ob-page-card .host-setup-lede,
+.dw .ob-page-card p {
+  text-align: left;
+}
+.dw .ob-page-card .new-space-cards,
+.dw .ob-page-card .onboarding,
+.dw .ob-page-card .host-setup {
+  padding: 0;
+}
+@media (max-width: 760px) {
+  .dw .ob-page {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+}
+
+/* The shared lists head their own sections; the main window's section
+   titles already say what they are. */
+.dw .sl-section-label {
+  display: none;
+}
+.dw-account-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dw-sidebar-foot .dw-btn {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+/* ---------- Sidebar: the Keyvault section and badges ---------- */
+
+.dw-kv-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 4px;
+}
+.dw-kv-section .dw-row {
+  gap: 8px;
+}
+.dw-kv-section .dw-row .sf-icon,
+.dw-kv-section .dw-row svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: var(--dw-text-2);
+}
+.dw-kv-section .dw-row .dw-row-name {
+  flex: 1;
+}
+.dw-kv-section .kv-switch {
+  transform: scale(0.8);
+}
+.dw-primary-count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--dw-surface-2);
+  color: var(--dw-text-3);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+.dw-primary-count[data-tone="accent"] {
+  background: var(--dw-accent);
+  color: var(--dw-bg);
+}
+.dw-primary-count[data-tone="danger"] {
+  background: var(--dw-danger-soft);
+  color: var(--dw-danger);
+}
+
+/* ---------- Keyvault page ---------- */
+
+.kv {
+  gap: 20px;
+}
+.kv-h,
+.kv-empty {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.kv-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.kv-head .kv-h {
+  flex: 1;
+}
+.kv-col {
+  color: var(--dw-text-3);
+  font-size: 11px;
+}
+.kv-search {
+  width: 180px;
+  height: 24px;
+}
+.kv-none {
+  margin: 0;
+  color: var(--dw-text-3);
+}
+.kv-credential {
+  display: grid;
+  gap: 10px;
+  max-width: 320px;
+}
+.kv-group {
+  margin: 0;
+  padding: 0;
+  border-radius: var(--dw-radius);
+  background: var(--dw-surface-2);
+  list-style: none;
+}
+.kv-group > * + *,
+.kv-group [role="listitem"] > * + * {
+  border-top: 1px solid var(--dw-border);
+}
+.kv-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 34px;
+  padding: 5px 12px;
+}
+.kv-sub {
+  padding-left: 28px;
+}
+.kv-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kv-muted {
+  color: var(--dw-text-3);
+}
+.kv-muted[data-tone="danger"],
+.kv-trust[data-tone="danger"] {
+  color: var(--dw-danger);
+}
+.kv-trust[data-tone="warn"] {
+  color: var(--dw-warn);
+}
+.kv-state {
+  flex: none;
+  color: var(--dw-text-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.kv-state[data-kind="pending"] {
+  color: var(--dw-warn);
+}
+.kv-verb {
+  flex: none;
+  width: 110px;
+  color: var(--dw-text-2);
+}
+.kv-verb[data-tone="deny"] {
+  color: var(--dw-danger);
+}
+
+/* A macOS-style switch; `aria-checked` is the state. */
+.kv-switch {
+  position: relative;
+  flex: none;
+  width: 32px;
+  height: 19px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--dw-border-strong);
+  transition: background 0.15s;
+}
+.kv-switch::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  content: "";
+  transition: transform 0.15s;
+}
+.kv-switch[aria-checked="true"] {
+  background: var(--dw-accent);
+}
+.kv-switch[aria-checked="mixed"] {
+  background: color-mix(in srgb, var(--dw-accent) 45%, var(--dw-border-strong));
+}
+.kv-switch[aria-checked="true"]::after {
+  transform: translateX(13px);
+}
+.kv-switch[aria-checked="mixed"]::after {
+  transform: translateX(6.5px);
+}
+.kv-switch[data-tone="danger"][aria-checked="true"] {
+  background: var(--dw-danger);
+}
+.kv-switch:disabled {
+  opacity: 0.4;
+}
+@media (prefers-reduced-motion: reduce) {
+  .kv-switch,
+  .kv-switch::after {
+    transition: none;
+  }
+}
+
+/* ---------- Declutter: one line per row, grouped lists ---------- */
+
+.dw-row {
+  min-height: 28px;
+  padding: 4px 8px;
+}
+.dw-row .dw-row-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 400;
+}
+.dw-row[data-dim="true"] {
+  opacity: 0.45;
+}
+.dw-row[data-dim="true"] .dw-dot {
+  visibility: hidden;
+}
+.dw-sidebar-foot .dw-account {
+  display: block;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dw .sl-section-label {
+  display: none;
+}
+/* The main window's section title already separates Teleport; no hairline. */
+.dw .sl-teleport {
+  border-top: 0;
+  margin-top: 0;
+}
+
+/* System Settings style grouped list: label left, value right, hairlines. */
+.dw-list {
+  margin: 0;
+  border-radius: var(--dw-radius);
+  background: var(--dw-surface-2);
+}
+.dw-list > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 32px;
+  padding: 6px 12px;
+}
+.dw-list > div + div {
+  border-top: 1px solid var(--dw-border);
+}
+.dw-list dt {
+  color: var(--dw-text);
+}
+.dw-list dd {
+  overflow: hidden;
+  margin: 0;
+  color: var(--dw-text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+/* ---------- Settings: grouped rows ---------- */
+
+.dw .dw-settings-panel {
+  display: grid;
+  gap: 20px;
+  outline: none;
+}
+.st-group {
+  display: grid;
+  gap: 6px;
+}
+.st-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.st-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.st-rows {
+  margin: 0;
+  padding: 0;
+  border-radius: var(--dw-radius);
+  background: var(--dw-surface-2);
+  list-style: none;
+}
+.st-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+  padding: 5px 12px;
+}
+.st-rows > * + * {
+  border-top: 1px solid var(--dw-border);
+}
+.st-row[data-installed="false"] {
+  opacity: 0.45;
+}
+.st-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-value {
+  overflow: hidden;
+  color: var(--dw-text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-code {
+  color: var(--dw-text);
+  font-family: var(--dw-mono);
+  font-size: 14px;
+  letter-spacing: 0.05em;
+}
+.st-error {
+  margin: 0;
+  padding: 6px 12px;
+  color: var(--dw-danger);
+  font-size: 12px;
+}
+.st-segmented {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--dw-hover);
+}
+.st-segmented button {
+  height: 22px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dw-text-2);
+  font: 12px var(--dw-font);
+}
+.st-segmented button[aria-checked="true"] {
+  background: var(--dw-surface);
+  box-shadow: 0 0 0 0.5px var(--dw-border-strong);
+  color: var(--dw-text);
+}
+.st-segmented button:disabled {
+  opacity: 0.5;
+}
+
+/* Settings > Privacy and the onboarding telemetry notice. */
+.st-note,
+.onboarding-telemetry-notice,
+.onboarding-teams {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--dw-text-secondary, rgba(255, 255, 255, 0.6));
+}
+.onboarding-telemetry-notice {
+  margin-top: 8px;
+  max-width: 520px;
+}
+/* Welcome's usage-data switch, above its notice. */
+.onboarding-usage {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 20px;
+  font-size: 13px;
+}
+.onboarding-teams {
+  margin-top: 16px;
+}
+.dw-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
+/* New Space: the image field and its preset suggestions (one line a row). */
+.wz-combo {
+  position: relative;
+}
+.wz-combo-list {
+  position: absolute;
+  top: calc(100% - 2px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  max-height: 240px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius);
+  background: var(--dw-surface);
+  box-shadow: var(--dw-shadow-sheet);
+}
+.wz-combo-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wz-combo-group {
+  padding: 6px 8px 2px;
+  color: var(--dw-text-3);
+  font-size: 11px;
+  font-weight: 500;
+}
+.wz-combo-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 8px;
+  border-radius: 5px;
+  white-space: nowrap;
+  cursor: default;
+}
+.wz-combo-row[aria-selected="true"] {
+  background: var(--dw-accent);
+  color: #fff;
+}
+.wz-combo-ref {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: 12px var(--dw-mono);
+}
+.wz-combo-label {
+  margin-left: auto;
+  color: var(--dw-text-3);
+  font-size: 12px;
+}
+.wz-combo-row[aria-selected="true"] .wz-combo-label {
+  color: rgba(255, 255, 255, 0.8);
+}
+.dw-field-error {
+  margin: 0;
+  color: var(--dw-danger);
+  font-size: 12px;
+}
+
+/* Where Cua Spaces shows up: two cards stacked, full width, each a wide,
+   short animated miniature (PresentationPreview, the app core's scene and
+   frames; the SwiftUI app's PresentationPreview draws the same) over its
+   title. */
+.dw .ob-presentations {
+  display: grid;
+  gap: 10px;
+}
+.dw .ob-presentation {
+  display: grid;
+  gap: 8px;
+  padding: 8px 8px 10px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius-card);
+  background: var(--dw-surface);
+  color: var(--dw-text);
+  text-align: center;
+}
+.dw .ob-presentation:hover {
+  border-color: var(--dw-border-strong);
+}
+.dw .ob-presentation[data-selected="true"] {
+  border-color: var(--accent, var(--dw-text));
+  box-shadow: inset 0 0 0 1px var(--accent, var(--dw-text));
+}
+.dw .ob-presentation-picture {
+  display: block;
+  overflow: hidden;
+  border-radius: 6px;
+}
+.dw .ob-presentation-title {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+/* The miniature: a desktop with the menu bar along its top, across the
+   card; the stage (fixed size, the core's) centred for the notch, at the
+   trailing end for the menu. The colours match the SwiftUI app's
+   PreviewColors. */
+.dw .obp-picture {
+  --obp-wallpaper-top: #dfe6ef;
+  --obp-wallpaper-bottom: #c6d0dd;
+  --obp-menubar: rgba(255, 255, 255, 0.55);
+  position: relative;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+  background: linear-gradient(var(--obp-wallpaper-top), var(--obp-wallpaper-bottom));
+  text-align: left;
+  pointer-events: none;
+}
+.dw .obp-picture[data-preview="menu-bar"] {
+  justify-content: flex-end;
+}
+@media (prefers-color-scheme: dark) {
+  .dw:not([data-theme="light"]) .obp-picture {
+    --obp-wallpaper-top: #2a3240;
+    --obp-wallpaper-bottom: #1b212b;
+    --obp-menubar: rgba(0, 0, 0, 0.28);
+  }
+}
+.dw[data-theme="dark"] .obp-picture {
+  --obp-wallpaper-top: #2a3240;
+  --obp-wallpaper-bottom: #1b212b;
+  --obp-menubar: rgba(0, 0, 0, 0.28);
+}
+.dw .obp-stage {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+}
+.dw .obp-stage > *,
+.dw .obp-layer > *,
+.dw .obp-notch-content > * {
+  position: absolute;
+  top: 0;
+}
+.dw .obp-menubar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: var(--obp-menubar);
+}
+.dw .obp-pointer {
+  left: 0;
+  transform-origin: 0 0;
+  overflow: visible;
+  filter: drop-shadow(0 0.5px 1px rgba(0, 0, 0, 0.25));
+}
+.dw .obp-pointer polygon {
+  fill: #000;
+  stroke: #fff;
+  stroke-width: 1.6px;
+  stroke-linejoin: round;
+  paint-order: stroke;
+}
+
+/* The notch: the shape and its tab grow together (the hover cue); the
+   content is laid out at real size and scaled into the open shape. */
+.dw .obp-layer {
+  inset: 0;
+  transform-origin: 50% 0;
+}
+.dw .obp-notch,
+.dw .obp-tab svg {
+  display: block;
+  overflow: visible;
+}
+.dw .obp-notch path,
+.dw .obp-tab path {
+  fill: #000;
+}
+.dw .obp-tab-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  white-space: nowrap;
+  line-height: 1;
+}
+.dw .obp-tab-count {
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.dw .obp-tab-word {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.24px;
+  text-transform: uppercase;
+}
+.dw .obp-notch-content {
+  overflow: hidden;
+}
+.dw .obp-notch-scaled {
+  transform-origin: 50% 0;
+}
+.dw .obp-panel {
+  box-sizing: border-box;
+  transform-origin: 0 0;
+  color: #fff;
+}
+.dw .obp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.dw .obp-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 13px;
+}
+.dw .obp-search-glyph {
+  width: 12px;
+  height: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+.dw .obp-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+}
+.dw .obp-button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: rgba(255, 255, 255, 0.75);
+}
+.dw .obp-button-glyph {
+  width: 15px;
+  height: 15px;
+}
+.dw .obp-tiles {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 15px;
+}
+.dw .obp-tile {
+  display: grid;
+  gap: 6px;
+  width: 128px;
+}
+.dw .obp-tile[data-dim="true"] {
+  opacity: 0.5;
+}
+.dw .obp-tile-frame {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  height: 80px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: #212121;
+  color: rgba(255, 255, 255, 0.22);
+}
+.dw .obp-tile-frame .sf-icon {
+  width: 26px;
+  height: 26px;
+}
+.dw .obp-tile-caption {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 16px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.dw .obp-tile-caption .sf-icon {
+  width: 11px;
+  height: 11px;
+  color: rgba(255, 255, 255, 0.6);
+}
+.dw .obp-tile-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #30d158;
+}
+.dw .obp-tile-dot[data-status="approval"] {
+  background: #ff9f0a;
+}
+.dw .obp-tile-dot[data-status="provisioning"] {
+  background: #0a84ff;
+}
+.dw .obp-tile-dot[data-status="suspended"],
+.dw .obp-tile-dot[data-status="deleting"] {
+  background: #98989d;
+}
+.dw .obp-tile-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The menu bar: the status item (highlighted while pressed or open), the
+   clock, and the item's menu. */
+.dw .obp-status-highlight {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--dw-text) 14%, transparent);
+}
+.dw .obp-status-icon {
+  background: var(--dw-text);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+.dw .obp-clock {
+  display: flex;
+  align-items: center;
+  color: var(--dw-text);
+  font-size: 6.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.dw .obp-menu {
+  isolation: isolate;
+  box-sizing: border-box;
+  border: 0.5px solid var(--dw-border-strong);
+  background: var(--dw-surface);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.18);
+  color: var(--dw-text);
+}
+.dw .obp-menu > * {
+  position: absolute;
+}
+.dw .obp-menu-separator {
+  display: flex;
+  align-items: center;
+}
+.dw .obp-menu-separator::after {
+  content: "";
+  flex: 1;
+  height: 0.5px;
+  background: var(--dw-border-strong);
+}
+.dw .obp-menu-row {
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  white-space: nowrap;
+}
+.dw .obp-menu-row[data-disabled="true"],
+.dw .obp-menu-shortcut {
+  color: var(--dw-text-2);
+}
+.dw .obp-menu-label {
+  flex: 1;
+}
+.dw .obp-menu-row[data-highlighted="true"],
+.dw .obp-menu-row[data-highlighted="true"] .obp-menu-shortcut {
+  color: var(--accent-ink, #fff);
+}
+.dw .obp-menu-row[data-highlighted="true"]::before {
+  content: "";
+  position: absolute;
+  inset: 0 var(--obp-inset);
+  z-index: -1;
+  border-radius: 3px;
+  background: var(--accent, #0a7aff);
+}
+
+/* The AI agents page's background computer-use card (DriverPreview, the
+   app core's scene and frames; the SwiftUI app's DriverPreview draws the
+   same): two windows on the preview desktop, the agent's checkboxes behind,
+   the user's document in front. */
+.dw .obp-picture[data-preview="driver"],
+.dw .obp-picture[data-preview="drive"] {
+  --obdp-window: #ffffff;
+  --obdmp-sidebar: #e9eaed;
+  --obdp-titlebar: #f1f2f4;
+  --obdp-edge: rgba(0, 0, 0, 0.16);
+  --obdp-bar: rgba(0, 0, 0, 0.16);
+  --obdp-button: rgba(0, 0, 0, 0.16);
+}
+@media (prefers-color-scheme: dark) {
+  .dw:not([data-theme="light"]) .obp-picture[data-preview="driver"],
+  .dw:not([data-theme="light"]) .obp-picture[data-preview="drive"] {
+    --obdp-window: #2b2f36;
+    --obdmp-sidebar: #24272d;
+    --obdp-titlebar: #33373f;
+    --obdp-edge: rgba(255, 255, 255, 0.14);
+    --obdp-bar: rgba(255, 255, 255, 0.2);
+    --obdp-button: rgba(255, 255, 255, 0.2);
+  }
+}
+.dw[data-theme="dark"] .obp-picture[data-preview="driver"],
+.dw[data-theme="dark"] .obp-picture[data-preview="drive"] {
+  --obdp-window: #2b2f36;
+  --obdmp-sidebar: #24272d;
+  --obdp-titlebar: #33373f;
+  --obdp-edge: rgba(255, 255, 255, 0.14);
+  --obdp-bar: rgba(255, 255, 255, 0.2);
+  --obdp-button: rgba(255, 255, 255, 0.2);
+}
+.dw .obdp-window {
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 0.5px solid var(--obdp-edge);
+  background: var(--obdp-window);
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.16);
+}
+.dw .obdp-window > * {
+  position: absolute;
+}
+.dw .obdp-titlebar {
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 2.5px;
+  padding-left: 5px;
+  border-bottom: 0.5px solid var(--obdp-edge);
+  background: var(--obdp-titlebar);
+}
+.dw .obdp-titlebar i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--obdp-button);
+}
+/* The window the user is in is the key window: its buttons have colour. */
+.dw .obdp-window[data-window="front"] .obdp-titlebar i:nth-child(1) {
+  background: #ff5f57;
+}
+.dw .obdp-window[data-window="front"] .obdp-titlebar i:nth-child(2) {
+  background: #febc2e;
+}
+.dw .obdp-window[data-window="front"] .obdp-titlebar i:nth-child(3) {
+  background: #28c840;
+}
+.dw .obdp-bar {
+  border-radius: 1.5px;
+  background: var(--obdp-bar);
+}
+.dw .obdp-checkbox {
+  box-sizing: border-box;
+  display: flex;
+  border: 0.5px solid var(--obdp-edge);
+  border-radius: 2px;
+  background: color-mix(
+    in srgb,
+    var(--dw-accent) calc(var(--obdp-checked) * 100%),
+    var(--obdp-window)
+  );
+}
+.dw .obdp-checkbox svg {
+  overflow: visible;
+}
+.dw .obdp-checkbox polyline {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 1.3px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.dw .obdp-selection {
+  border-radius: 1.5px;
+  background: color-mix(in srgb, var(--dw-accent) 32%, transparent);
+}
+.dw .obdp-agent {
+  left: 0;
+  transform-origin: 0 0;
+  overflow: visible;
+}
+.dw .obdp-agent-arrow {
+  stroke: #fff;
+  stroke-width: 1.2px;
+  stroke-linejoin: round;
+  paint-order: stroke;
+}
+.dw .obdp-rays line {
+  stroke-width: 1.2px;
+  stroke-linecap: round;
+}
+
+/* The card on the AI agents page: the miniature over one checkbox line. */
+.dw .installer-driver {
+  display: grid;
+  gap: 8px;
+  padding: 8px 8px 10px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius-card);
+  background: var(--dw-surface);
+}
+.dw .installer-driver-picture {
+  display: block;
+  overflow: hidden;
+  border-radius: 6px;
+}
+.dw .installer-driver .create-cloud-toggle {
+  padding: 0 4px;
+}
+
+/* The Cua Volume page's miniature (the app core's scene and frames; the
+   SwiftUI app's DriveMountPreview draws the same): a Space beside a Finder
+   window whose sidebar gains the "Cua Volume" volume, files flying over. */
+.dw .obdmp-sidebar {
+  left: 0;
+  background: var(--obdmp-sidebar);
+}
+.dw .obdmp-volume {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--dw-accent) 28%, transparent);
+}
+.dw .obdmp-volume-icon {
+  box-sizing: border-box;
+  border: 0.75px solid var(--dw-accent);
+  border-radius: 1px;
+}
+.dw .obdmp-volume-label {
+  color: var(--dw-text);
+  white-space: nowrap;
+}
+.dw .obdmp-file {
+  overflow: visible;
+}
+.dw .obdmp-file path {
+  fill: var(--obdp-window);
+  stroke: var(--obdp-bar);
+  stroke-width: 0.75px;
+  stroke-linejoin: round;
+}
+.dw .obdmp-flight {
+  z-index: 1;
+}
+.dw .obdmp-flight path {
+  stroke: var(--dw-accent);
+}
+
+/* The card on the Cua Volume page: the miniature over one checkbox line
+   (the AI agents page's card), then the note, the error and Open System
+   Settings, one line each. */
+.dw .installer-drive .st-note,
+.dw .installer-drive .create-cloud-error {
+  margin: 0;
+  padding: 0 4px;
+}
+.dw .installer-drive .create-cloud-toggle:has(input:disabled) {
+  opacity: 0.5;
+}
+
+/* Onboarding helper and note text wraps onto more lines; it is never cut
+   short. */
+.dw .onboarding-telemetry-notice,
+.dw .ob-page .host-setup-lede,
+.dw .ob-page-card .st-note,
+.dw .ob-page-card .st-error,
+.dw .ob-page-card .create-cloud-error,
+.dw .installer-agent > span {
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+  overflow-wrap: break-word;
+}
+/* A path line (Stored in, In Finder at): one line, shortened in the middle. */
+.dw .ob-page-card .ob-path-line {
+  display: flex;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+/* Done: the example prompts under both columns, scrolling up slowly (the
+   list twice, so the loop is seamless), paused under the pointer, static
+   with reduced motion. Three rows show, fading at the edges. */
+.dw .ob-page-below {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.dw .ob-ticker {
+  height: 66px;
+  overflow: hidden;
+  color: var(--dw-text-2);
+  -webkit-mask-image: linear-gradient(transparent, #000 25%, #000 75%, transparent);
+  mask-image: linear-gradient(transparent, #000 25%, #000 75%, transparent);
+}
+.dw .ob-ticker-track {
+  animation: ob-ticker 28s linear infinite;
+}
+.dw .ob-ticker:hover .ob-ticker-track {
+  animation-play-state: paused;
+}
+.dw .ob-ticker-row {
+  height: 22px;
+  overflow: hidden;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@keyframes ob-ticker {
+  to {
+    transform: translateY(-50%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dw .ob-ticker {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .dw .ob-ticker-track {
+    animation: none;
+  }
+  .dw .ob-ticker-again {
+    display: none;
+  }
+}
+
+/* The Stream section (the core's `spaces::stream` rows): one line each, an
+   icon, the label and a picture-in-picture button, hairline separated. */
+.dw .ssr-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.dw .ssr-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 6px 0 12px;
+  color: var(--dw-text);
+  font-size: 13px;
+}
+.dw .ssr-row + .ssr-row {
+  border-top: 1px solid var(--dw-border);
+}
+.dw .ssr-icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  color: var(--dw-text-2);
+}
+.dw .ssr-icon .os-icon {
+  width: 15px;
+  height: 15px;
+}
+.dw .ssr-app-icon {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+.dw .ssr-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dw .ssr-status {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--dw-border);
+  color: var(--dw-text-3);
+  font-size: 13px;
+}
+
+/* A fact's value: an OS icon before it, a copy button after it. */
+.dw-list dd.dw-fact-value {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.dw-fact-value > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dw .dw-row-os {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: var(--dw-text-2);
+}
+.dw .dw-fact-warning {
+  flex: none;
+  display: inline-flex;
+  color: var(--dw-warn);
+}
+.dw .dw-fact-warning .sf-icon,
+.dw .dw-fact-warning svg {
+  width: 12px;
+  height: 12px;
+}
+.dw .dw-copy {
+  flex: none;
+  width: 22px;
+  height: 22px;
+}
+.dw .dw-copy .sf-icon,
+.dw .dw-copy svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ---------- Devices (Settings → Devices, enroll and approval sheets) ---------- */
+
+.dv-banner[data-tone="critical"] {
+  border-color: transparent;
+  background: var(--dw-danger-soft);
+  color: var(--dw-danger);
+}
+.dv-row {
+  min-height: 44px;
+}
+.dv-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 1px;
+}
+.dv-detail {
+  overflow: hidden;
+  color: var(--dw-text-3);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dv-notable {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--dw-danger);
+  vertical-align: middle;
+}
+.dw-sheet.dv-sheet {
+  width: min(420px, calc(100vw - 48px));
+  height: auto;
+  margin-top: 60px;
+}
+.dv-sheet-body {
+  display: grid;
+  gap: 10px;
+  padding: 20px 20px 0;
+}
+.dv-sheet-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.dv-sheet-text {
+  margin: 0;
+  color: var(--dw-text-2);
+  font-size: 12px;
+  user-select: text;
+}
+.dv-sheet-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px 20px 20px;
+}
+.dv-sheet-body .dv-sheet-actions {
+  padding: 6px 0 20px;
+}
+.dv-options {
+  display: grid;
+}
+.dv-option {
+  display: grid;
+  gap: 2px;
+  padding: 9px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--dw-text);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+.dv-option:hover {
+  background: var(--dw-hover);
+}
+.dv-code {
+  margin: 4px 0;
+  font-family: var(--dw-mono);
+  font-size: 22px;
+  letter-spacing: 0.08em;
+  text-align: center;
+  user-select: text;
+}
+.dv-code-input {
+  font-family: var(--dw-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Share sheet: one line per person, the add field on top. */
+.sh-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.sh-add .dw-input:first-child {
+  flex: 1;
+}
+.sh-rows {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  border-top: 1px solid var(--separator, rgba(128, 128, 128, 0.25));
+}
+.sh-row,
+.sh-empty {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 32px;
+  border-bottom: 1px solid var(--separator, rgba(128, 128, 128, 0.25));
+}
+.sh-empty {
+  color: var(--text-secondary, gray);
+}
+.sh-who {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Agents, Drive and Notifications: settings-style grouped lists. */
+.ag-page {
+  padding: 16px 20px;
+  overflow-y: auto;
+}
+.ag-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ag-detail-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 16px 0 8px;
+}
+.ag-detail-head h2 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+}
+.ag-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.ag-tabs [aria-selected="true"] {
+  color: var(--accent, currentColor);
+}
+.ag-file {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 240px;
+  overflow: auto;
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+}
+/* The Volume page's head: Open in Finder, and where it is mounted. */
+.ag-volume-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.ag-volume-head .st-note {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* A path shortened in the middle: the start ends in an ellipsis, the last
+   part stays whole (MiddleText). */
+.mid-text {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.mid-text-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mid-text-tail {
+  flex: none;
+}
+.st-value.mid-text {
+  justify-content: flex-end;
+}
+
+/* Settings rows: the agent prompt (read-only, selectable, wrapping, in the
+   notes' font and size) with its Copy button, and a link-style row. */
+.st-prompt {
+  display: grid;
+  gap: 2px;
+  padding-bottom: 10px;
+}
+.st-prompt > .st-row {
+  border: 0;
+}
+.st-prompt-text {
+  box-sizing: border-box;
+  width: calc(100% - 24px);
+  margin: 0 12px;
+  resize: none;
+  padding: 8px 10px;
+  border: 1px solid var(--dw-border);
+  border-radius: var(--dw-radius);
+  background: transparent;
+  color: var(--dw-text-2);
+  font: 12px/1.45 var(--dw-font);
+  white-space: pre-wrap;
+  user-select: text;
+}
+.st-link-row .st-link {
+  font-size: 12px;
+  color: var(--dw-text-2);
+}
+.st-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The Resources step's GPU row: a checkbox and a small "Learn more". */
+.wz-gpu {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.wz-gpu-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.wz-gpu .dw-check:has(input:disabled) {
+  color: var(--dw-text-2);
+}
+.wz-gpu-learn {
+  font-size: 12px;
+}
+.wz-gpu .wz-help {
+  padding-left: 21px;
+}
+
+/* ---------- Power: the button next to Delete ---------- */
+
+/* A Space row with a power button: the button sits at the row's end, shown
+ * on hover and focus, and while it runs. */
+.dw-row-wrap {
+  position: relative;
+}
+.dw-row-wrap[data-power="true"] .dw-row {
+  padding-right: 34px;
+}
+.dw-row-power {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  transform: translateY(-50%);
+  opacity: 0;
+}
+.dw-row-wrap:hover .dw-row-power,
+.dw-row-power:focus-visible,
+.dw-row-power[data-busy="true"] {
+  opacity: 1;
+}
+.dw-row-power svg,
+.dw-row-power .sf-icon {
+  width: 13px;
+  height: 13px;
+}
+.dw-row-power:disabled[data-busy="true"] {
+  opacity: 1;
+}
+/* An action running: a small ring in place of the icon. */
+.dw-spinner {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid color-mix(in srgb, var(--dw-text-3, currentColor) 45%, transparent);
+  border-top-color: var(--dw-text-2, currentColor);
+  border-radius: 50%;
+  animation: dw-spin 0.8s linear infinite;
+}
+@keyframes dw-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dw-spinner {
+    animation-duration: 2.4s;
+  }
+}
+/* Why turning a Space off or on failed, under its preview. */
+.dw-inline-error {
+  margin: 8px 0 0;
+  color: var(--dw-danger);
+  font-size: 12px;
+}

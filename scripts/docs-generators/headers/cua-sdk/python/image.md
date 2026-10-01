@@ -1,0 +1,1 @@
+Builder methods add layers and return a new `Image`. Locally, a container image is built into your container engine before boot; in the cloud the same layers run as a remote build. Both are cached by content. Layers a build cannot run (`brew_install`, `choco_install`, ...) are applied after boot through cua-spacesd, so they need an image that runs it.

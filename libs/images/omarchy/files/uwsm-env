@@ -1,0 +1,7 @@
+# Read by uwsm before Hyprland starts (libs/images/omarchy).
+# VMs have no GPU: KubeVirt's and QEMU's virtual display is a plain KMS device,
+# so Hyprland renders with Mesa llvmpipe.
+export WLR_RENDERER_ALLOW_SOFTWARE=1
+export LIBGL_ALWAYS_SOFTWARE=1
+export AQ_NO_MODIFIERS=1
+export CUA_DRIVER_RS_ENABLE_WAYLAND=1

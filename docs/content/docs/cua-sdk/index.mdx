@@ -1,0 +1,91 @@
+---
+title: Cua SDK
+description: Build agentic applications and workflows on isolated Linux, Windows and macOS desktops, on your machine or in the cloud.
+landing:
+  summary: 'Isolated Linux, Windows and macOS desktops for your app, with your agents inside.'
+  cta: Explore Cua SDK
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Build agentic apps and workflows on real desktops. Cua SDK gives your
+application isolated Linux, Windows and macOS machines, locally or in the
+cloud, runs the agents you already use inside them, and streams everything back
+so your users can watch, take over or teleport work in and out.
+[Cua Driver](/cua-driver) is how the agents drive each desktop.
+
+The same code runs on your machine (`local=True`, the default) or in the cloud
+(`local=False`). Any OCI image works; commands, services, readiness probes,
+public URLs and port forwards behave the same on both.
+
+<Tabs groupId="where" persist items={['Local', 'Cloud']}>
+  <Tab value="Local">
+
+```python test="container" id="local-ephemeral" session="local"
+from cua_sandbox import Image, Sandbox, http
+
+async with Sandbox.ephemeral(
+    Image.from_registry("python:3.12-slim"),
+    command=["python", "-m", "http.server", "8000"],
+    services={"web": 8000},
+    wait_for=http("web", "/"),
+    local=True,
+) as sb:
+    print((await sb.service("web").request("GET", "/")).status_code)  # 200
+```
+
+  </Tab>
+  <Tab value="Cloud">
+
+```python test="docs" id="cloud-ephemeral" session="cloud" prelude="fakefleet"
+from cua_sandbox import Image, Sandbox, http
+
+async with Sandbox.ephemeral(
+    Image.from_registry("python:3.12-slim"),
+    command=["python", "-m", "http.server", "8000"],
+    services={"web": 8000},
+    wait_for=http("web", "/"),
+    local=False,  # needs cloud credentials: `cua auth login`
+) as sb:
+    print((await sb.service("web").request("GET", "/")).status_code)  # 200
+```
+
+  </Tab>
+</Tabs>
+
+## Local and cloud
+
+| | Local (`local=True`) | Cloud (`local=False`) |
+| --- | --- | --- |
+| Runs on | Docker or Podman (gVisor when installed), QEMU, or Lume on this machine | Cua cloud at [run.cua.ai](https://run.cua.ai): gVisor containers, KubeVirt VMs |
+| Setup | `cua runtime doctor`, `cua runtime setup` | `cua auth login` |
+| Architecture | The host's (other architectures run emulated) | amd64 |
+| macOS | Lume VMs on Apple silicon | Not available |
+| Details | [Local runtimes](/cua-sdk/guides/local-runtimes) | [Cloud sandboxes](/cua-sdk/guides/cloud) |
+
+For named pools, fixed warm capacity or Terraform, see
+[Cua Fleets](/fleets).
+
+## Packages
+
+| Language | Package |
+| --- | --- |
+| Python | `cua-sandbox` (`from cua_sandbox import Sandbox`), over the `cua` SDK (`import cua`) |
+| TypeScript | `@trycua/cua` |
+| Rust | `cua-sdk` crate (git dependency), see [Rust crates](/cua-sdk/reference/rust) |
+| Swift | `Cua` (SwiftPM) |
+| CLI | `cua sb ...`, see [Cua CLI](/cua-cli) |
+
+## How it fits together
+
+The SDK is one Rust core with generated bindings, running in your process or
+in `cua daemon`. It starts local runtimes itself and reaches the cloud through
+the Fleet gateway. Nothing needs to run inside the image; images that ship
+[cua-spacesd](/cua-sdk/reference/protocol) (such as `Image.linux()`) also get the
+computer interfaces: `sb.shell`, `sb.files`, `sb.screen`, `sb.mouse`,
+`sb.keyboard`. See [How sandboxes work](/cua-sdk/concepts/how-sandboxes-work).
+
+To control the machine you are on instead of a sandbox, use
+[Cua Driver](/cua-driver).
+
+Next: [Your first sandbox](/cua-sdk/quickstart).

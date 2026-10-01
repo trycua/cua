@@ -242,6 +242,54 @@ func testDeleteClassifiesResizeGuardContentionWithoutMarkerAsRunning() async thr
 }
 
 @MainActor
+@Test("delete removes the VM's resize guard and no other")
+func testDeleteRemovesItsResizeGuard() async throws {
+    let tempConfigDir = try createTempDirectory()
+    let tempHomeDir = try createTempDirectory()
+
+    defer {
+        try? FileManager.default.removeItem(at: tempConfigDir)
+        try? FileManager.default.removeItem(at: tempHomeDir)
+    }
+
+    let previousXDGConfigHome = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
+    setenv("XDG_CONFIG_HOME", tempConfigDir.path, 1)
+    defer {
+        if let previousXDGConfigHome {
+            setenv("XDG_CONFIG_HOME", previousXDGConfigHome, 1)
+        } else {
+            unsetenv("XDG_CONFIG_HOME")
+        }
+    }
+
+    let settingsManager = SettingsManager(fileManager: .default)
+    try settingsManager.setHomeDirectory(path: tempHomeDir.path)
+    let home = Home(settingsManager: settingsManager, fileManager: .default)
+    let controller = LumeController(home: home, vmFactory: TestVMFactory())
+    var dirs: [VMDirectory] = []
+    for name in ["guarded", "neighbour"] {
+        let vmDir = try home.getVMDirectory(name)
+        try FileManager.default.createDirectory(at: vmDir.dir.url, withIntermediateDirectories: true)
+        try Data(repeating: 0, count: 1024).write(to: vmDir.diskPath.url)
+        try Data(repeating: 0, count: 1024).write(to: vmDir.nvramPath.url)
+        try vmDir.saveConfig(
+            VMConfig(os: "macOS", cpuCount: 1, memorySize: 1024, diskSize: 1024, display: "1024x768"))
+        // A clone or resize created the guard earlier.
+        let handle = try #require(try vmDir.tryAcquireResizeGuard(exclusive: false))
+        flock(handle.fileDescriptor, LOCK_UN)
+        try handle.close()
+        #expect(vmDir.resizeGuardPath.exists())
+        dirs.append(vmDir)
+    }
+
+    try await controller.delete(name: dirs[0].name)
+
+    #expect(!dirs[0].exists())
+    #expect(!dirs[0].resizeGuardPath.exists())
+    #expect(dirs[1].resizeGuardPath.exists())
+}
+
+@MainActor
 @Test("run rejects primary and duplicate additional disk aliases")
 func testRunRejectsAdditionalDiskAliases() async throws {
     let tempConfigDir = try createTempDirectory()

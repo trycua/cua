@@ -1,0 +1,123 @@
+{
+  "name": "devices",
+  "about": "Settings > Devices: this device during the grace period, waiting for approval with its code, then enrolled with a new device and an expired one to approve (with presence) and the recent access log; the enroll sheet by sign-in (falling back to a code) and by code, with a failure; the approval sheet needing the whole code, re-verification without one, and a stale code offering to approve the sole matching device by id instead.",
+  "now": 1800000000,
+  "pages": [
+    {
+      "step": "signed in, not enrolled, grace period",
+      "input": {
+        "devices": [
+          { "id": "dev_a", "name": "Studio", "state": "enrolled", "enrolledUntil": 1801000000, "lastSeen": 1799990000, "platform": "linux" }
+        ],
+        "enforceAfter": 1800432000
+      }
+    },
+    {
+      "step": "grace over",
+      "input": { "enforceAfter": 1799999000 }
+    },
+    {
+      "step": "waiting for approval with a code",
+      "input": {
+        "devices": [
+          { "id": "dev_m", "name": "MacBook Pro", "state": "pending", "current": true, "platform": "macos" },
+          { "id": "dev_a", "name": "Studio", "state": "enrolled", "enrolledUntil": 1801000000, "platform": "linux" }
+        ],
+        "localDeviceId": "dev_m",
+        "pendingCode": "K7QX-M2RP"
+      }
+    },
+    {
+      "step": "enrolled, a new device and an expired one ask, access log",
+      "input": {
+        "devices": [
+          { "id": "dev_p", "name": "Work laptop", "state": "pending", "platform": "windows" },
+          { "id": "dev_m", "name": "MacBook Pro", "state": "enrolled", "current": true, "enrolledUntil": 1802592000, "lastSeen": 1799999940, "platform": "macos" },
+          { "id": "dev_o", "name": "Old laptop", "state": "expired", "enrolledUntil": 1799900000, "lastSeen": 1797300000, "platform": "linux" },
+          { "id": "dev_x", "name": "Lost phone", "state": "revoked", "platform": "ios" }
+        ],
+        "audit": [
+          { "ts": 1799990000, "kind": "device_enrolled", "device": "dev_m", "subject": "dev_a" },
+          { "ts": 1799990100, "kind": "machine_access", "device": "dev_m", "machine": "m1", "detail": "owner" },
+          { "ts": 1799990200, "kind": "shared_access", "machine": "m1", "subject": "bob@example.com" },
+          { "ts": 1799990300, "kind": "device_registered", "device": "dev_p" },
+          { "ts": 1799990400, "kind": "machine_access", "machine": "m2", "subject": "unenrolled device" },
+          { "ts": 1799990500, "kind": "device_revoked", "device": "dev_m", "subject": "dev_x" }
+        ],
+        "localDeviceId": "dev_m",
+        "enforceAfter": 1799000000,
+        "machineNames": { "m1": "studio-mac", "m2": "build-box" },
+        "machines": [
+          { "id": "m1", "name": "studio-mac", "confirmed": true },
+          { "id": "m2", "name": "build-box", "confirmed": false }
+        ]
+      }
+    },
+    {
+      "step": "re-verification in two days",
+      "input": {
+        "devices": [
+          { "id": "dev_m", "name": "MacBook Pro", "state": "enrolled", "current": true, "enrolledUntil": 1800172800, "platform": "macos" }
+        ]
+      }
+    },
+    {
+      "step": "enrolled, a new device and an expired one ask (again, for the sheets)",
+      "input": {
+        "devices": [
+          { "id": "dev_p", "name": "Work laptop", "state": "pending", "platform": "windows" },
+          { "id": "dev_m", "name": "MacBook Pro", "state": "enrolled", "current": true, "enrolledUntil": 1802592000, "platform": "macos" },
+          { "id": "dev_o", "name": "Old laptop", "state": "expired", "enrolledUntil": 1799900000, "platform": "linux" }
+        ],
+        "localDeviceId": "dev_m"
+      }
+    }
+  ],
+  "enroll": [
+    {
+      "name": "sign in again, another device is enrolled",
+      "actions": [
+        { "type": "approved" },
+        { "type": "choose", "method": "sign-in" },
+        { "type": "signed-in" },
+        { "type": "registered", "enrolled": false, "code": "K7QX-M2RP" },
+        { "type": "approved" }
+      ]
+    },
+    {
+      "name": "sign in again, first device",
+      "actions": [
+        { "type": "choose", "method": "sign-in" },
+        { "type": "signed-in" },
+        { "type": "registered", "enrolled": true, "code": null }
+      ]
+    },
+    {
+      "name": "approve from another device, relay fails",
+      "actions": [
+        { "type": "choose", "method": "approve" },
+        { "type": "failed", "error": "the relay is unreachable" },
+        { "type": "back" },
+        { "type": "choose", "method": "approve" },
+        { "type": "registered", "enrolled": false, "code": "Z9WY-4TPN" }
+      ]
+    }
+  ],
+  "approve": [
+    [
+      { "type": "submit" },
+      { "type": "set-code", "code": "k7qx" },
+      { "type": "set-code", "code": "k7qx m2rp" },
+      { "type": "submit" },
+      { "type": "set-code", "code": "ignored while busy" },
+      { "type": "failed", "error": "authentication was cancelled" },
+      { "type": "set-code", "code": "z9wy4tpn" },
+      { "type": "submit" },
+      { "type": "failed", "error": "not found: relay: no device is waiting with the code Z9WY-4TPN (codes expire after 10 minutes); approve by id instead: `cua devices approve dev_p` (ids in `cua devices ls`)" },
+      { "type": "submit" }
+    ],
+    [
+      { "type": "submit" }
+    ]
+  ]
+}

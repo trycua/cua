@@ -1,0 +1,10 @@
+{
+  "comment": "A generated, synthetic Firefox profile. Runners write these files under a temp directory and hand that directory to the SDK as `teleportHome` (a FakeHost: no real profile, app or keychain is read). `{marker}` is replaced with a fresh random marker per run.",
+  "roots": ["Library/Application Support/Firefox", ".mozilla/firefox"],
+  "files": {
+    "profiles.ini": "[General]\nStartWithLastProfile=1\n\n[Profile0]\nName=default-release\nIsRelative=1\nPath=Profiles/openkoalabots.default-release\nDefault=1\n",
+    "Profiles/openkoalabots.default-release/prefs.js": "user_pref(\"openkoalabots.scenario.marker\", \"{marker}\");\n",
+    "Profiles/openkoalabots.default-release/places.sqlite": "synthetic history {marker}",
+    "Profiles/openkoalabots.default-release/cookies.sqlite": "synthetic cookies {marker}"
+  }
+}

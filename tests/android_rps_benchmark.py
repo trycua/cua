@@ -86,7 +86,7 @@ def _percentile(data: list[float], p: float) -> float:
 
 async def _provision(pool: Pool, idx: int) -> tuple[Sandbox, SandboxStats]:
     t0 = time.monotonic()
-    sb = await Sandbox.create(pool=pool)
+    sb = await Sandbox.create(pool=pool, local=False)
     elapsed = time.monotonic() - t0
     name = getattr(sb, "name", None) or f"sb-{idx}"
     print(f"  [{idx + 1:>3}] {name}  provisioned in {elapsed:.1f}s")

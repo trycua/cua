@@ -252,10 +252,12 @@ async fn resolve_cdp_port(pid: i32, cdp_port: Option<u16>, action: &str) -> anyh
              the browser to have been launched with a CDP port on a NON-default profile — \
              Chrome refuses to open --remote-debugging-port on its default data directory \
              (even if you pass --user-data-dir explicitly pointing at that same default \
-             path). Call browser_prepare for this pid: profile mode isolated_new starts a \
-             driver-owned automation profile (no existing logins/session), and \
-             existing_profile drives the browser's own remote-debugging toggle under \
-             explicit approval when the authenticated profile is required. Do not relaunch \
+             path). Call browser_prepare instead: profile.mode isolated_new with \
+             allow_launch true starts a driver-owned automation profile (no existing \
+             logins/session), and \
+             strategy.kind existing_profile with this browser's pid and window_id drives \
+             the browser's own remote-debugging toggle under explicit approval when the \
+             authenticated profile is required. Do not relaunch \
              with remote-debugging flags through launch_app — it refuses them, so that \
              route cannot succeed. Alternatively, if you already enabled Chrome's own \
              remote-debugging toggle for this profile (chrome://inspect/#remote-debugging), \

@@ -65,6 +65,21 @@ param(
     [switch]$Yes
 )
 
+# Windows PowerShell 5.1 started from PowerShell 7 (a pwsh terminal, or
+# `cua-driver update --apply` launched from one) inherits pwsh's
+# PSModulePath. Autoload then finds PowerShell 7's Core-only copies of
+# Microsoft.PowerShell.Utility / .Security / .Archive first, fails to load
+# them, and Get-FileHash, Get-AuthenticodeSignature and Expand-Archive are
+# "not recognized". Put this edition's own modules first and drop the
+# PowerShell 7 module paths before any of them is used.
+if ($PSVersionTable.PSEdition -eq 'Desktop') {
+    $desktopModules = Join-Path $PSHOME 'Modules'
+    $modulePaths = @($desktopModules) + @(($env:PSModulePath -split ';') | Where-Object {
+            $_ -and ($_ -notmatch '\\PowerShell\\') -and ($_.TrimEnd('\') -ne $desktopModules.TrimEnd('\'))
+        })
+    $env:PSModulePath = $modulePaths -join ';'
+}
+
 $Repo = if ($env:CUA_INSTALL_REPO) { $env:CUA_INSTALL_REPO } else { 'trycua/cua' }
 $BaseUrl = if ($env:CUA_INSTALL_BASE_URL) { $env:CUA_INSTALL_BASE_URL } else { "https://github.com/$Repo/releases/download" }
 $LatestTag = 'cua-install-latest'
@@ -75,6 +90,15 @@ $script:Picked = $false
 # app): a selected `spaces` is skipped with a note. Set this to $true to bring
 # the Windows app back (Install-App is kept).
 $script:SpacesSupported = $false
+
+function Get-Sha256Hex([string]$Path) {
+    # .NET directly: Get-FileHash is missing when the Utility module is not
+    # loaded (e.g. under `cua-driver update --apply` on older drivers).
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($Path)
+    try { return ([System.BitConverter]::ToString($sha.ComputeHash($stream)) -replace '-', '').ToLowerInvariant() }
+    finally { $stream.Dispose(); $sha.Dispose() }
+}
 
 function Write-Info([string]$Message) { Write-Host "cua-install: $Message" }
 function Stop-Install([string]$Message) { throw "cua-install: error: $Message" }
@@ -278,7 +302,7 @@ function Get-Artifact($Manifest, [string]$ManifestUrl, [string]$Component, [stri
     }
     Write-Info "downloading $($entry.name)"
     Get-Remote $url $dest $ManifestUrl
-    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $dest).Hash.ToLowerInvariant()
+    $actual = Get-Sha256Hex $dest
     if ($actual -ne $entry.sha256.ToLowerInvariant()) {
         Stop-Install "checksum mismatch for $($entry.name) (expected $($entry.sha256), got $actual); aborting"
     }

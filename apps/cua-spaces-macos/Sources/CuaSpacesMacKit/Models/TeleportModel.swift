@@ -369,9 +369,7 @@ public final class TeleportModel {
         do {
             let report = try await teleport.run(
                 plan: plan, space: space,
-                consent: TeleportConsent(approved: consent.approved,
-                                         acknowledgeSensitive: consent.acknowledgeSensitive,
-                                         acknowledgeRelayPlaintext: consent.acknowledgeRelayPlaintext),
+                consent: sdkConsent(consent),
                 listener: RunEvents { [weak self] event in
                     Task { @MainActor in self?.send(.progress(event: appTeleportRunEvent(event: event))) }
                 })
@@ -412,4 +410,14 @@ extension AppTeleportMove {
         case .appWithState: return "The app with its signed-in state"
         }
     }
+}
+
+/// The SDK consent for the review's confirmed consent. Every field must be
+/// carried over: `saveToKeyvault` defaults to false on the SDK type, so
+/// leaving it out silently drops the "Save to Keyvault" checkbox.
+func sdkConsent(_ consent: AppTeleportConsent) -> TeleportConsent {
+    TeleportConsent(approved: consent.approved,
+                    acknowledgeSensitive: consent.acknowledgeSensitive,
+                    saveToKeyvault: consent.saveToKeyvault,
+                    acknowledgeRelayPlaintext: consent.acknowledgeRelayPlaintext)
 }

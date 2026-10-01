@@ -49,7 +49,10 @@ class PtyManager:
         self._queues: Dict[int, List[asyncio.Queue]] = {}
         # pid → {"cols": int, "rows": int}
         self._sessions: Dict[int, dict] = {}
+        # pid → list of early output chunks buffered before subscription
+        self._early_buffers: Dict[int, List[bytes]] = {}
         self._terminal = None
+
 
     # ------------------------------------------------------------------
     # Lazy terminal access
@@ -114,15 +117,8 @@ class PtyManager:
         pid_cell[0] = session.pid
         self._queues[session.pid] = []
         self._sessions[session.pid] = {"cols": session.cols, "rows": session.rows}
+        self._early_buffers[session.pid] = early_buffer
 
-        # Flush any output that arrived before pid_cell[0] was set.
-        for chunk in early_buffer:
-            msg = {"type": "output", "data": chunk}
-            for q in list(self._queues[session.pid]):
-                try:
-                    loop.call_soon_threadsafe(q.put_nowait, msg)
-                except Exception:
-                    pass
 
         # Watch for process exit in a daemon thread, then broadcast sentinel.
         def _watch_exit() -> None:
@@ -172,6 +168,7 @@ class PtyManager:
         result = await asyncio.to_thread(terminal.kill, pid)
         # Broadcast sentinel immediately (the exit watcher will also fire,
         # but duplicate sentinels are harmless — consumers stop after the first).
+        self._early_buffers.pop(pid, None)
         sentinel = {"type": "exit", "code": -1}
         for q in list(self._queues.get(pid, [])):
             try:
@@ -192,7 +189,18 @@ class PtyManager:
         """
         q: asyncio.Queue = asyncio.Queue()
         self._queues.setdefault(pid, []).append(q)
+
+        # Flush any early output chunks buffered during session initialization
+        early_chunks = self._early_buffers.pop(pid, [])
+        for chunk in early_chunks:
+            msg = {"type": "output", "data": chunk}
+            try:
+                q.put_nowait(msg)
+            except Exception:
+                pass
+
         return q
+
 
     def unsubscribe(self, pid: int, queue: asyncio.Queue) -> None:
         """Remove *queue* from the subscriber list for *pid*."""

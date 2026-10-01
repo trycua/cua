@@ -877,7 +877,7 @@ provides-extras = ["test", "sandbox", "agent", "ui", "all"]
 
 [[package]]
 name = "cua-agent"
-version = "0.8.4"
+version = "0.9.0"
 source = { editable = "libs/python/agent" }
 dependencies = [
     { name = "aiohttp" },

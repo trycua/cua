@@ -1,0 +1,14 @@
+{
+  "name": "claude-bash-error",
+  "description": "A shell command that fails, so the tool row carries a real error result. Exercises the failed tool-call status and the agent's recovery prose.",
+  "cmd": ["claude", "--permission-mode", "acceptEdits"],
+  "steps": [
+    {"wait": 6},
+    {"send": "Run the shell command `cat /definitely/not/here.txt` and tell me the exact error."},
+    {"wait": 1.5},
+    {"key": "enter"},
+    {"expect": "No such file", "timeout": 90},
+    {"wait": 20},
+    {"wait": 10}
+  ]
+}

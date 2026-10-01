@@ -295,7 +295,9 @@ fn release_global_modifiers(
 
 fn modifier_key_code_and_flag(modifier: &str) -> Option<(u16, CGEventFlags)> {
     match modifier.to_lowercase().as_str() {
-        "cmd" | "command" => Some((55, CGEventFlags::CGEventFlagCommand)),
+        "cmd" | "command" | "super" | "meta" | "win" => {
+            Some((55, CGEventFlags::CGEventFlagCommand))
+        }
         "shift" => Some((56, CGEventFlags::CGEventFlagShift)),
         "option" | "alt" => Some((58, CGEventFlags::CGEventFlagAlternate)),
         "ctrl" | "control" => Some((59, CGEventFlags::CGEventFlagControl)),
@@ -657,7 +659,9 @@ fn modifier_flags(modifiers: &[&str]) -> CGEventFlags {
     let mut flags = CGEventFlags::CGEventFlagNull;
     for m in modifiers {
         match m.to_lowercase().as_str() {
-            "cmd" | "command" => flags |= CGEventFlags::CGEventFlagCommand,
+            "cmd" | "command" | "super" | "meta" | "win" => {
+                flags |= CGEventFlags::CGEventFlagCommand
+            }
             "shift" => flags |= CGEventFlags::CGEventFlagShift,
             "option" | "alt" => flags |= CGEventFlags::CGEventFlagAlternate,
             "ctrl" | "control" => flags |= CGEventFlags::CGEventFlagControl,
@@ -675,7 +679,7 @@ pub(super) fn key_name_to_code(key: &str) -> anyhow::Result<u16> {
         "space" => 49,
         "delete" | "backspace" => 51,
         "escape" | "esc" => 53,
-        "command" | "cmd" => 55,
+        "command" | "cmd" | "super" | "meta" | "win" => 55,
         "shift" => 56,
         "capslock" => 57,
         "option" | "alt" => 58,
@@ -758,6 +762,25 @@ pub(super) fn key_name_to_code(key: &str) -> anyhow::Result<u16> {
 mod tests {
     use super::*;
     use core_graphics::event::CGEventType;
+
+    /// cua-spacesd names the Meta key `super` (the cross-platform name), and
+    /// the macOS driver dropped it: `cua do hotkey cmd+w` pressed a bare `w`.
+    #[test]
+    fn super_meta_and_win_are_command() {
+        for name in ["cmd", "command", "super", "meta", "win", "Super"] {
+            assert_eq!(
+                modifier_key_code_and_flag(name),
+                Some((55, CGEventFlags::CGEventFlagCommand)),
+                "{name}"
+            );
+            assert_eq!(
+                modifier_flags(&[name]),
+                CGEventFlags::CGEventFlagCommand,
+                "{name}"
+            );
+            assert_eq!(key_name_to_code(name).unwrap(), 55, "{name}");
+        }
+    }
 
     #[test]
     fn physical_text_uses_flags_changed_for_balanced_shift_transitions() {

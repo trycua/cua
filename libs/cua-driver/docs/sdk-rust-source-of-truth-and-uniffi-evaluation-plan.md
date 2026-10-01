@@ -313,7 +313,7 @@ tool count.
 
 ## Workstream B: separate agent integration from SDK distribution
 
-### Agent integration: direct MCP/CLI — baseline recommendation
+### Agent integration: direct MCP/CLI (baseline recommendation)
 
 Configure each agent runtime's existing MCP client with `cua-driver mcp`, or
 use `cua-driver call` from shell-oriented agents. Do not require generated Cua
@@ -341,7 +341,7 @@ The remaining handwritten language code is a few small transport, result, and
 facade modules. This is a typed remote-client SDK, not a native implementation
 binding. Measure it against the actual application SDK requirement.
 
-### SDK option 2: UniFFI facade over a Rust daemon client — gated spike
+### SDK option 2: UniFFI facade over a Rust daemon client (gated spike)
 
 Build a platform-neutral Rust client that owns MCP framing and result
 normalization while still launching or connecting to the native driver daemon.
@@ -370,7 +370,7 @@ Rust and distribute that implementation to N runtimes. Merely moving JSON-RPC
 framing into Rust is insufficient benefit; the spike must identify the shared
 lifecycle, normalization, policy, or server-composition behavior it owns.
 
-### SDK option 3: UniFFI embedded/server implementation — separate proposal
+### SDK option 3: UniFFI embedded/server implementation (separate proposal)
 
 This is the path for application developers who want to create or embed a Cua
 server. Do not treat it as a fallback transport change. A separate proposal

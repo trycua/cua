@@ -1,0 +1,52 @@
+---
+title: Drive Lume from scripts and agents
+description: 'Drive Lume from scripts through its local HTTP API, or from an AI client through its MCP server.'
+---
+
+Both interfaces control the same VM store as the CLI. Use the API for scripts
+and services, MCP for AI clients.
+
+## HTTP API
+
+The installer runs `lume serve` at login on port 7777 (install with
+`--no-background-service` to manage it yourself):
+
+```bash test="cli-shape" id="lume-serve"
+lume serve                 # localhost:7777
+lume serve --port 7778
+```
+
+```bash skip="no-runner"
+curl http://localhost:7777/lume/vms
+```
+
+It listens on `localhost` only. Keep it there unless you have a network
+boundary and an authentication plan. Endpoints:
+[HTTP API reference](/lume/reference/http-api).
+
+## MCP server
+
+`lume serve --mcp` speaks MCP over stdio, so the client starts it. Use the path
+from `which lume`:
+
+```json test="config" id="json-config" schema="mcp-client-config"
+{
+  "mcpServers": {
+    "lume": {
+      "command": "/Users/your-name/.local/bin/lume",
+      "args": ["serve", "--mcp"]
+    }
+  }
+}
+```
+
+Restart the client. It can list, create, run, stop, clone and resize VMs and
+run SSH commands in unattended guests ([MCP tools](/lume/reference/mcp-tools)).
+Test the server with:
+
+```bash skip="third-party-cli"
+npx @modelcontextprotocol/inspector lume serve --mcp
+```
+
+The MCP server can create, delete and SSH into VMs. Configure it only for
+clients you trust, and give agents a dedicated VM.

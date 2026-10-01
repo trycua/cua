@@ -1,0 +1,327 @@
+{
+  "name": "agents-page",
+  "about": "The Agents page: two persistent agents (one running, one paused), selecting one loads its home, opening and restoring a memory file, adding a routine (an invalid time is refused), turning it off, allowing the agent on this computer (the daemon asks for presence), a declined prompt, revoking, pausing and resuming.",
+  "nowMs": 1790000000000,
+  "input": {
+    "agents": [
+      {
+        "name": "ada",
+        "harness": "hermes",
+        "space": "local:dev",
+        "spaceState": "running",
+        "runId": "run-1",
+        "savedMs": 1789999700000
+      },
+      {
+        "name": "bob",
+        "harness": "claude-code",
+        "space": "cloud:bob",
+        "paused": true,
+        "spaceState": "released",
+        "savedMs": 1789900000000
+      }
+    ],
+    "thisMachine": "relay:0123456789abcdef"
+  },
+  "steps": [
+    {
+      "step": "two agents"
+    },
+    {
+      "step": "select ada (load)",
+      "action": {
+        "type": "select",
+        "name": "ada"
+      }
+    },
+    {
+      "step": "ada's home",
+      "action": {
+        "type": "done"
+      },
+      "input": {
+        "home": [
+          {
+            "path": "agents/ada/hermes/memories/MEMORY.md",
+            "name": "MEMORY.md",
+            "size": 1830
+          },
+          {
+            "path": "agents/ada/hermes/memories/USER.md",
+            "name": "USER.md",
+            "size": 210
+          }
+        ],
+        "routines": [
+          {
+            "id": "R1",
+            "title": "Morning",
+            "label": "Every day at 8:00 AM",
+            "enabled": true
+          }
+        ],
+        "audit": [
+          {
+            "tsMs": 1789999000000,
+            "action": "denied",
+            "principal": "agent:ada",
+            "path": "relay:0123456789abcdef",
+            "detail": "call_tool click"
+          }
+        ]
+      }
+    },
+    {
+      "step": "open MEMORY.md",
+      "action": {
+        "type": "open-file",
+        "path": "agents/ada/hermes/memories/MEMORY.md"
+      }
+    },
+    {
+      "step": "its text and history",
+      "action": {
+        "type": "done"
+      },
+      "input": {
+        "file": {
+          "path": "agents/ada/hermes/memories/MEMORY.md",
+          "text": "The user likes tea.",
+          "versions": [
+            {
+              "version": "v2",
+              "modifiedMs": 1789999700000,
+              "latest": true
+            },
+            {
+              "version": "v1",
+              "modifiedMs": 1789990000000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "step": "restore v1",
+      "action": {
+        "type": "restore",
+        "version": "v1"
+      }
+    },
+    {
+      "step": "restored",
+      "action": {
+        "type": "done"
+      }
+    },
+    {
+      "step": "routines tab",
+      "action": {
+        "type": "set-tab",
+        "tab": "routines"
+      }
+    },
+    {
+      "step": "title",
+      "action": {
+        "type": "set-title",
+        "title": "Inbox sweep"
+      }
+    },
+    {
+      "step": "prompt",
+      "action": {
+        "type": "set-prompt",
+        "prompt": "Triage new issues"
+      }
+    },
+    {
+      "step": "a bad time",
+      "action": {
+        "type": "set-time",
+        "time": "25:00"
+      }
+    },
+    {
+      "step": "add is ignored",
+      "action": {
+        "type": "add-routine"
+      }
+    },
+    {
+      "step": "every 30 minutes",
+      "action": {
+        "type": "set-schedule",
+        "schedule": "every"
+      }
+    },
+    {
+      "step": "minutes",
+      "action": {
+        "type": "set-minutes",
+        "minutes": 30
+      }
+    },
+    {
+      "step": "add",
+      "action": {
+        "type": "add-routine"
+      }
+    },
+    {
+      "step": "added",
+      "action": {
+        "type": "done"
+      },
+      "input": {
+        "routines": [
+          {
+            "id": "R1",
+            "title": "Morning",
+            "label": "Every day at 8:00 AM",
+            "enabled": true
+          },
+          {
+            "id": "R2",
+            "title": "Inbox sweep",
+            "label": "Every 30 minutes",
+            "enabled": true
+          }
+        ]
+      }
+    },
+    {
+      "step": "turn Morning off",
+      "action": {
+        "type": "toggle-routine",
+        "id": "R1"
+      }
+    },
+    {
+      "step": "Morning is off",
+      "action": {
+        "type": "done"
+      },
+      "input": {
+        "routines": [
+          {
+            "id": "R1",
+            "title": "Morning",
+            "label": "Every day at 8:00 AM",
+            "enabled": false
+          },
+          {
+            "id": "R2",
+            "title": "Inbox sweep",
+            "label": "Every 30 minutes",
+            "enabled": true
+          }
+        ]
+      }
+    },
+    {
+      "step": "access tab",
+      "action": {
+        "type": "set-tab",
+        "tab": "access"
+      }
+    },
+    {
+      "step": "allow on this computer",
+      "action": {
+        "type": "allow-computer",
+        "machine": "relay:0123456789abcdef"
+      }
+    },
+    {
+      "step": "presence declined",
+      "action": {
+        "type": "failed",
+        "error": "not confirmed: you declined"
+      }
+    },
+    {
+      "step": "allow again",
+      "action": {
+        "type": "allow-computer",
+        "machine": "relay:0123456789abcdef"
+      }
+    },
+    {
+      "step": "allowed",
+      "action": {
+        "type": "done"
+      },
+      "input": {
+        "grants": [
+          {
+            "agent": "ada",
+            "machine": "relay:0123456789abcdef"
+          }
+        ]
+      }
+    },
+    {
+      "step": "revoke",
+      "action": {
+        "type": "revoke-computer",
+        "machine": "relay:0123456789abcdef"
+      }
+    },
+    {
+      "step": "revoked",
+      "action": {
+        "type": "done"
+      },
+      "input": {
+        "grants": [
+          {
+            "agent": "ada",
+            "machine": "relay:0123456789abcdef",
+            "revoked": true
+          }
+        ]
+      }
+    },
+    {
+      "step": "pause ada",
+      "action": {
+        "type": "pause",
+        "name": "ada"
+      }
+    },
+    {
+      "step": "ada paused",
+      "action": {
+        "type": "done"
+      },
+      "input": {
+        "agents": [
+          {
+            "name": "ada",
+            "harness": "hermes",
+            "space": "local:dev",
+            "paused": true,
+            "spaceState": "suspended",
+            "savedMs": 1790000000000
+          },
+          {
+            "name": "bob",
+            "harness": "claude-code",
+            "space": "cloud:bob",
+            "paused": true,
+            "spaceState": "released",
+            "savedMs": 1789900000000
+          }
+        ]
+      }
+    },
+    {
+      "step": "resume bob",
+      "action": {
+        "type": "resume",
+        "name": "bob"
+      }
+    }
+  ]
+}

@@ -1,0 +1,391 @@
+syntax = "proto3";
+
+package cua.env.v1;
+
+import "cua/env/v1/common.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// Runs and supervises guest processes.
+//
+// Processes are detached from the RPC that started them: a client disconnect
+// does not kill the process unless `StartProcessRequest.kill_on_disconnect`
+// is set. Output goes to a bounded scrollback ring so a client can reattach
+// with `ConnectProcess` (by pid or tag) and replay recent output. After a
+// process exits, its exit status and scrollback stay in a retention cache
+// (at least 10 minutes and the most recent 256 processes) so a late
+// `ConnectProcess` still observes the `ProcessEnd`.
+//
+// Output offsets: every byte a process writes to stdout, stderr or its PTY
+// is numbered in one combined, monotonically increasing byte space starting
+// at 0. `ProcessData.offset` is the offset of the chunk's first byte, which
+// lets a reconnecting client drop output it has already seen.
+service ProcessService {
+  // Starts a process and streams its lifecycle and output. The first event is
+  // always `ProcessStart`, the last is `ProcessEnd` (unless the client
+  // disconnects first). Cancelling this RPC detaches; it does not signal the
+  // process unless `kill_on_disconnect` is set.
+  rpc StartProcess(StartProcessRequest) returns (stream StartProcessResponse);
+  // Attaches to a running or recently exited process. The stream begins with
+  // `ProcessStart`, then up to `replay_bytes` of scrollback, then live
+  // output, then `ProcessEnd`.
+  rpc ConnectProcess(ConnectProcessRequest) returns (stream ConnectProcessResponse);
+  // Lists managed processes.
+  rpc ListProcesses(ListProcessesRequest) returns (ListProcessesResponse);
+  // Writes one chunk to a process's stdin or PTY. The unary, gRPC-Web-safe
+  // equivalent of `StreamInput`. Chunks may carry sequence numbers for
+  // exactly-once, in-order delivery across retries.
+  rpc SendInput(SendInputRequest) returns (SendInputResponse);
+  // Streams stdin or PTY input. Native gRPC only; gRPC-Web clients use
+  // `SendInput`. The first message must set `process`.
+  rpc StreamInput(stream StreamInputRequest) returns (StreamInputResponse);
+  // Sends a signal to a process (or its process group).
+  rpc SignalProcess(SignalProcessRequest) returns (SignalProcessResponse);
+  // Closes a process's stdin (EOF). For PTY processes, sends the terminal's
+  // EOF character instead.
+  rpc CloseStdin(CloseStdinRequest) returns (CloseStdinResponse);
+  // Resizes a PTY process's terminal (delivers SIGWINCH on Unix).
+  rpc ResizePty(ResizePtyRequest) returns (ResizePtyResponse);
+}
+
+// What to run.
+message ProcessConfig {
+  // Executable name or path. Resolved against the process's PATH. No shell
+  // is involved; to run a shell command line, pass the shell explicitly
+  // (for example `command: "/bin/bash", args: ["-lc", "echo hi"]`).
+  string command = 1;
+  // Arguments, not including argv[0].
+  repeated string args = 2;
+  // Environment variables layered over the user's login environment and the
+  // `InitRequest.env` defaults.
+  map<string, string> env = 3;
+  // Working directory. Empty means the `Init` default workdir, else the
+  // user's home directory.
+  string cwd = 4;
+  // OS user to run as. Empty means the `Init` default user. Requires the
+  // driver to run with sufficient privilege to switch users.
+  string user = 5;
+  // Wall-clock limit. When it elapses the process receives SIGTERM, then
+  // SIGKILL after 5 seconds, and `ProcessEnd.timed_out` is set. Unset means
+  // no limit.
+  google.protobuf.Duration timeout = 6;
+}
+
+// Pseudo-terminal settings. Present means "run under a PTY".
+message PtyConfig {
+  // Initial terminal size.
+  PtySize size = 1;
+  // Value of TERM. Empty means "xterm-256color".
+  string term = 2;
+}
+
+// Terminal size.
+message PtySize {
+  // Columns. Must be at least 1.
+  uint32 cols = 1;
+  // Rows. Must be at least 1.
+  uint32 rows = 2;
+  // Width in pixels, 0 when unknown.
+  uint32 pixel_width = 3;
+  // Height in pixels, 0 when unknown.
+  uint32 pixel_height = 4;
+}
+
+// Identifies a managed process.
+message ProcessSelector {
+  // Exactly one selector must be set.
+  oneof selector {
+    // Guest process id. Pids are reused by the OS; prefer `tag` for
+    // long-lived references.
+    uint32 pid = 1;
+    // Client-assigned tag from `StartProcessRequest.tag`.
+    string tag = 2;
+  }
+}
+
+// Request for `ProcessService.StartProcess`.
+message StartProcessRequest {
+  // What to run.
+  ProcessConfig config = 1;
+  // Run under a PTY when set. PTY output arrives as `ProcessData.pty` and
+  // stdout and stderr are merged into it.
+  PtyConfig pty = 2;
+  // Unique, client-assigned name for reattaching. Starting a process with a
+  // tag that belongs to a running process fails with ALREADY_EXISTS. Tags of
+  // exited processes may be reused; the old entry leaves the retention cache.
+  string tag = 3;
+  // Keep stdin open for `SendInput` / `StreamInput`. When false, stdin is
+  // connected to /dev/null (or NUL).
+  bool stdin = 4;
+  // Interval between `KeepAlive` events on this stream. Unset means 30
+  // seconds. Keep it below the idle timeout of any proxy in the path.
+  google.protobuf.Duration keepalive_interval = 5;
+  // Size of this process's scrollback ring in bytes. 0 means the server
+  // default (`Limits.default_scrollback_bytes`).
+  uint64 scrollback_bytes = 6;
+  // Kill the process (SIGTERM, then SIGKILL) when this RPC ends before the
+  // process does. Default false: processes are detached.
+  bool kill_on_disconnect = 7;
+}
+
+// One message of the `ProcessService.StartProcess` stream.
+message StartProcessResponse {
+  // The event.
+  ProcessEvent event = 1;
+}
+
+// Request for `ProcessService.ConnectProcess`.
+message ConnectProcessRequest {
+  // Which process.
+  ProcessSelector process = 1;
+  // How many bytes of scrollback to replay before live output. 0 replays
+  // nothing. Values larger than the retained scrollback replay everything
+  // retained. Use `replay_from_offset` instead to resume precisely.
+  uint64 replay_bytes = 2;
+  // When set, replay retained output starting at this combined output
+  // offset (typically the last offset the client saw plus its length; 0
+  // replays everything retained). Takes precedence over `replay_bytes`. If
+  // the offset has already been evicted from the ring, replay starts at the
+  // oldest retained byte and the first `ProcessData.offset` reveals the gap.
+  optional uint64 replay_from_offset = 3;
+  // Interval between `KeepAlive` events. Unset means 30 seconds.
+  google.protobuf.Duration keepalive_interval = 4;
+}
+
+// One message of the `ProcessService.ConnectProcess` stream.
+message ConnectProcessResponse {
+  // The event.
+  ProcessEvent event = 1;
+}
+
+// A process lifecycle or output event.
+message ProcessEvent {
+  // The event payload.
+  oneof event {
+    // The process started (or, on `ConnectProcess`, is known).
+    ProcessStart start = 1;
+    // Output bytes.
+    ProcessData data = 2;
+    // The process ended.
+    ProcessEnd end = 3;
+    // Idle stream heartbeat.
+    KeepAlive keepalive = 4;
+  }
+}
+
+// Sent first on every process stream.
+message ProcessStart {
+  // Guest process id.
+  uint32 pid = 1;
+  // Tag, if any.
+  string tag = 2;
+  // When the process started.
+  google.protobuf.Timestamp started_at = 3;
+  // Combined output offset of the oldest byte still in the scrollback ring.
+  uint64 scrollback_start_offset = 4;
+  // Combined output offset one past the newest byte produced so far.
+  uint64 output_end_offset = 5;
+}
+
+// A chunk of process output.
+message ProcessData {
+  // Combined output offset of the first byte in this chunk.
+  uint64 offset = 1;
+  // Which stream the bytes came from.
+  oneof output {
+    // Bytes written to stdout.
+    bytes stdout = 2;
+    // Bytes written to stderr.
+    bytes stderr = 3;
+    // Bytes written to the PTY (stdout and stderr merged).
+    bytes pty = 4;
+  }
+}
+
+// Sent last on every process stream once the process has exited.
+message ProcessEnd {
+  // Exit code, when the process exited normally.
+  optional int32 exit_code = 1;
+  // Terminating signal, when the process was killed by a signal.
+  Signal signal = 2;
+  // True if the process was stopped because `ProcessConfig.timeout` elapsed.
+  bool timed_out = 3;
+  // Set when the process could not be started or supervised (for example
+  // "executable not found"). `exit_code` and `signal` are unset then.
+  string error = 4;
+  // When the process ended.
+  google.protobuf.Timestamp ended_at = 5;
+}
+
+// Request for `ProcessService.ListProcesses`.
+message ListProcessesRequest {
+  // Also list exited processes still in the retention cache.
+  bool include_exited = 1;
+  // Only list processes whose tag starts with this prefix.
+  string tag_prefix = 2;
+}
+
+// Response for `ProcessService.ListProcesses`.
+message ListProcessesResponse {
+  // Matching processes, newest first.
+  repeated ProcessInfo processes = 1;
+}
+
+// A managed process.
+message ProcessInfo {
+  // Guest process id.
+  uint32 pid = 1;
+  // Tag, if any.
+  string tag = 2;
+  // How it was started. Environment values are redacted to "" when the key
+  // looks secret (contains TOKEN, SECRET, KEY or PASSWORD).
+  ProcessConfig config = 3;
+  // True if it runs under a PTY.
+  bool pty = 4;
+  // Current state.
+  ProcessState state = 5;
+  // Exit details, once exited.
+  ProcessEnd end = 6;
+  // When it started.
+  google.protobuf.Timestamp started_at = 7;
+  // Combined output offset of the oldest retained byte.
+  uint64 scrollback_start_offset = 8;
+  // Combined output offset one past the newest byte.
+  uint64 output_end_offset = 9;
+  // Number of streams currently attached (StartProcess + ConnectProcess).
+  uint32 attached_clients = 10;
+}
+
+// Lifecycle state of a managed process.
+enum ProcessState {
+  // Not reported.
+  PROCESS_STATE_UNSPECIFIED = 0;
+  // Running (or stopped by SIGSTOP).
+  PROCESS_STATE_RUNNING = 1;
+  // Exited; details in `ProcessInfo.end`.
+  PROCESS_STATE_EXITED = 2;
+}
+
+// Bytes destined for a process.
+message ProcessInput {
+  // Where the bytes go.
+  oneof input {
+    // Bytes for stdin. Requires `StartProcessRequest.stdin`.
+    bytes stdin = 1;
+    // Bytes for the PTY (keystrokes). Requires a PTY process.
+    bytes pty = 2;
+  }
+}
+
+// Request for `ProcessService.SendInput`.
+message SendInputRequest {
+  // Which process.
+  ProcessSelector process = 1;
+  // The bytes. At most `Limits.max_chunk_bytes`.
+  ProcessInput input = 2;
+  // Optional ordering and de-duplication. 0 means "unsequenced": the chunk
+  // is applied in arrival order with no retry protection. When non-zero,
+  // sequences are tracked per (process, `writer_id`): the first sequenced
+  // chunk may start at any value, each later chunk must be exactly one
+  // greater than the last applied one, a chunk at or below the last applied
+  // sequence is acknowledged as a duplicate without being written again,
+  // and a gap fails with FAILED_PRECONDITION / `ERROR_REASON_SEQUENCE_GAP`.
+  // The SDK owns this counter; applications never set it.
+  uint64 sequence = 3;
+  // Distinguishes independent sequenced writers to the same process. Empty
+  // is a valid writer id.
+  string writer_id = 4;
+}
+
+// Response for `ProcessService.SendInput`.
+message SendInputResponse {
+  // Highest sequence applied for this writer (0 for unsequenced input).
+  uint64 applied_sequence = 1;
+  // True if this chunk was a retry of an already-applied sequence and was
+  // not written again.
+  bool duplicate = 2;
+}
+
+// One message of the `ProcessService.StreamInput` client stream.
+message StreamInputRequest {
+  // Either the opening selector or data.
+  oneof message {
+    // First message only: which process to write to.
+    ProcessSelector process = 1;
+    // Subsequent messages: bytes to write, in order.
+    ProcessInput input = 2;
+    // Heartbeat from the client for long idle input streams.
+    KeepAlive keepalive = 3;
+  }
+}
+
+// Response for `ProcessService.StreamInput`, sent when the client half-closes.
+message StreamInputResponse {
+  // Total bytes written to the process.
+  uint64 bytes_written = 1;
+}
+
+// POSIX signals. On Windows only `SIGNAL_KILL` and `SIGNAL_TERM` (mapped to
+// a console close / terminate) and `SIGNAL_INT` (CTRL_C_EVENT) are
+// supported; others fail with `ERROR_REASON_FEATURE_UNSUPPORTED`. Numbers
+// follow Linux x86-64 for readability only; the server maps each value to
+// the guest's native signal number.
+enum Signal {
+  // Not set.
+  SIGNAL_UNSPECIFIED = 0;
+  // SIGHUP.
+  SIGNAL_HUP = 1;
+  // SIGINT.
+  SIGNAL_INT = 2;
+  // SIGQUIT.
+  SIGNAL_QUIT = 3;
+  // SIGKILL.
+  SIGNAL_KILL = 9;
+  // SIGUSR1.
+  SIGNAL_USR1 = 10;
+  // SIGUSR2.
+  SIGNAL_USR2 = 12;
+  // SIGTERM.
+  SIGNAL_TERM = 15;
+  // SIGCONT.
+  SIGNAL_CONT = 18;
+  // SIGSTOP.
+  SIGNAL_STOP = 19;
+  // SIGTSTP.
+  SIGNAL_TSTP = 20;
+  // SIGWINCH.
+  SIGNAL_WINCH = 28;
+}
+
+// Request for `ProcessService.SignalProcess`.
+message SignalProcessRequest {
+  // Which process.
+  ProcessSelector process = 1;
+  // Which signal.
+  Signal signal = 2;
+  // Signal the whole process group instead of the leader only.
+  bool process_group = 3;
+}
+
+// Response for `ProcessService.SignalProcess`.
+message SignalProcessResponse {}
+
+// Request for `ProcessService.CloseStdin`.
+message CloseStdinRequest {
+  // Which process.
+  ProcessSelector process = 1;
+}
+
+// Response for `ProcessService.CloseStdin`.
+message CloseStdinResponse {}
+
+// Request for `ProcessService.ResizePty`.
+message ResizePtyRequest {
+  // Which process. Must run under a PTY.
+  ProcessSelector process = 1;
+  // New terminal size.
+  PtySize size = 2;
+}
+
+// Response for `ProcessService.ResizePty`.
+message ResizePtyResponse {}

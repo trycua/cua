@@ -10,9 +10,68 @@ on:
       - "docs/scripts/check-links.test.ts"
       - "docs/scripts/fixtures/link-checks/**"
       - "docs/scripts/check-hygiene.ts"
+      - "docs/scripts/product-structure.test.ts"
+      - "docs/scripts/page-budget.test.ts"
+      - "docs/scripts/rss-budget.py"
+      - "docs/scripts/gen-doc-modules.mjs"
+      - "docs/source.config.ts"
+      - "docs/next.config.mjs"
+      - "scripts/docs-generators/config.json"
+      - "scripts/check-no-em-dash.sh"
+      - "docs/code-block-policy.json"
+      - "docs/code-block-baseline.json"
+      - "tests/e2e/cua-sdk/docs/**"
+      - "scripts/docs-generators/cli-specs/**"
+      # Tutorial excerpts must match their #region in these sources.
+      - "samples/openkoalabot-example-ts/**"
+      - "samples/openkoalabot-example-tauri/**"
+      - "samples/openkoalabot-example-swift/**"
+      - "libs/cua/crates/cua-image/schema/**"
+      - "**/*.md"
       - ".github/workflows/ci-check-docs-links.yml"
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+permissions:
+  contents: read
+
 jobs:
+  check-code-blocks:
+    name: Check docs code-block dispositions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Test the linter
+        run: python3 -m unittest discover -s tests/e2e/cua-sdk/docs -p 'test_*.py'
+
+      - name: Every fence has a disposition; the baseline only shrinks
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          args=()
+          if git show "$BASE_SHA:docs/code-block-baseline.json" > "$RUNNER_TEMP/base-baseline.json" 2>/dev/null; then
+            args=(--baseline-base "$RUNNER_TEMP/base-baseline.json")
+          fi
+          python3 tests/e2e/cua-sdk/docs/extract.py --lint "${args[@]}"
+
+      - name: CLI-shape lane (cua, cua-driver and lume commands parse)
+        run: python3 tests/e2e/cua-sdk/docs/cli_shape.py
+
+      - uses: astral-sh/setup-uv@e92bafb6253dcd438e0484186d7669ea7a8ca1cc # v6
+
+      - name: Config lane (JSON / YAML / TOML blocks parse and match their schema)
+        run: >
+          uv run --no-project --python 3.12 --with pyyaml==6.0.2 --with jsonschema==4.23.0
+          python3 tests/e2e/cua-sdk/docs/config_lane.py
+
   check-internal-links:
     name: Check Internal Links (next-validate-link)
     runs-on: ubuntu-latest
@@ -26,7 +85,7 @@ jobs:
           node-version: "20"
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - name: Install dependencies
         run: pnpm install
@@ -43,6 +102,20 @@ jobs:
       - name: Check docs hygiene
         run: pnpm docs:check-hygiene
         working-directory: docs
+
+      - name: Check product structure (sections, generated Reference, redirects, page budget)
+        run: pnpm docs:check-structure
+        working-directory: docs
+
+      # Peak RSS of the whole build process tree must stay under 6 GiB
+      # (measured about 4.9 GiB with 151 pages); scripts/rss-budget.py kills
+      # the build and exits 99 when it does not.
+      - name: Build the docs site within the memory budget
+        run: pnpm build:budget
+        working-directory: docs
+
+      - name: Check for em dashes in docs and repo Markdown
+        run: scripts/check-no-em-dash.sh
 
       - name: Show help if check failed
         if: failure()
@@ -68,7 +141,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Check external links
-        uses: lycheeverse/lychee-action@v2
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
         with:
           args: >-
             --verbose

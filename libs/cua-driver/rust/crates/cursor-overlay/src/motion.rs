@@ -1,9 +1,9 @@
-//! Motion / timing configuration — 1:1 port of `AgentCursorMotion.cs`.
+//! Motion / timing configuration.
+//! Derived from trope-cua (MIT); see THIRD_PARTY_NOTICES.md.
 
 use serde::{Deserialize, Serialize};
 
 /// Runtime-tunable timing and path-shape parameters.
-/// All clamp ranges are identical to the C# reference.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MotionConfig {
     /// Control-point offset from start, as fraction of distance. [0, 1]
@@ -46,7 +46,8 @@ impl Default for MotionConfig {
             spring: 0.72,
             glide_duration_ms: 0.0, // 0 = speed-based mode
             dwell_after_click_ms: 80.0,
-            idle_hide_ms: 20_000.0, // fade 20s after last activity (matches .NET reference)
+            // The shared agent idle timeout (presence drops an idle agent then too).
+            idle_hide_ms: cua_driver_core::agent_cursor::default_idle_hide_ms(),
             press_duration_ms: 120.0,
             peak_speed: 900.0,
             min_start_speed: 300.0,

@@ -20,10 +20,11 @@ def _get_env_registry(env_path: str) -> dict:
 
 
 def tasks_config(_arg: Optional[Callable] = None, /, *args, **kwargs) -> Callable:
-    """Decorator for the function that loads tasks.
+    """Marks the function that lists the task's variants.
 
-    Can be used as ``@cb.tasks_config`` or ``@cb.tasks_config("train")``.
-    The decorated function should return a list of Task objects.
+    The function takes no arguments and returns a list of ``cb.Task``; the
+    CLI indexes them from 0 (``--variant-id``). Use as ``@cb.tasks_config``
+    or with a split: ``@cb.tasks_config("train")`` (default ``train``).
     """
     # Two modes: bare (@cb.tasks_config) or parameterized (@cb.tasks_config("train") / split="...")
     if callable(_arg):
@@ -64,10 +65,11 @@ def tasks_config(_arg: Optional[Callable] = None, /, *args, **kwargs) -> Callabl
 
 
 def setup_task(_arg: Optional[Callable] = None, /, *args, **kwargs) -> Callable:
-    """Decorator for the function that sets up a task.
+    """Marks the function that prepares a variant's sandbox.
 
-    Can be used as ``@cb.setup_task`` or ``@cb.setup_task("train")``.
-    The decorated function receives task_cfg and should initialize the environment.
+    ``async def setup(task_cfg: cb.Task, session: cb.DesktopSession)`` runs
+    after the sandbox starts and before the agent or the oracle. Use as
+    ``@cb.setup_task`` or with a split: ``@cb.setup_task("train")``.
     """
     # Two modes: bare (@cb.setup_task) or parameterized (@cb.setup_task("train") / split="...")
     if callable(_arg):
@@ -106,10 +108,11 @@ def setup_task(_arg: Optional[Callable] = None, /, *args, **kwargs) -> Callable:
 
 
 def solve_task(_arg: Optional[Callable] = None, /, *args, **kwargs) -> Callable:
-    """Decorator for the function that solves a task.
+    """Marks the oracle: the function that solves a variant (optional).
 
-    Can be used as ``@cb.solve_task`` or ``@cb.solve_task("train")``.
-    The decorated function receives task_cfg and should execute the solution.
+    ``async def solve(task_cfg: cb.Task, session: cb.DesktopSession)`` runs
+    instead of an agent with ``--oracle`` or when no agent is given. Use as
+    ``@cb.solve_task`` or with a split: ``@cb.solve_task("train")``.
     """
     if callable(_arg):
         split_val = kwargs.get("split", "train")
@@ -147,10 +150,12 @@ def solve_task(_arg: Optional[Callable] = None, /, *args, **kwargs) -> Callable:
 
 
 def evaluate_task(_arg: Optional[Callable] = None, /, *args, **kwargs) -> Callable:
-    """Decorator for the function that evaluates a task.
+    """Marks the function that scores a variant.
 
-    Can be used as ``@cb.evaluate_task`` or ``@cb.evaluate_task("train")``.
-    The decorated function receives task_cfg and should return evaluation results.
+    ``async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession)``
+    returns the evaluation, commonly ``list[float]``; the reward is the mean
+    of its numbers. Use as ``@cb.evaluate_task`` or with a split:
+    ``@cb.evaluate_task("train")``.
     """
     if callable(_arg):
         split_val = kwargs.get("split", "train")

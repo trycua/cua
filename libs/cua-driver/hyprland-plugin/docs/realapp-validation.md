@@ -2,7 +2,7 @@
 
 On 2026-09-05, two independent Cua Driver MCP connections edited LibreOffice
 Calc and Inkscape in an Omarchy Fleet VM while a foreground fixture retained
-the primary pointer grab. Concurrent drags overlapped for 1.49–1.77 seconds.
+the primary pointer grab. Concurrent drags overlapped for 1.49-1.77 seconds.
 The parked and moving-pointer cases recorded no uncommanded primary motion,
 focus changes, foreground input leakage, or unexpected button releases.
 

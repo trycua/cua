@@ -80,10 +80,10 @@ The complete operation requests are:
 | Request | Limits |
 | --- | --- |
 | `ACTIVATE <sequence> <target> <revision>` | Capability 16; foreground bindings only. |
-| `CLICK <sequence> <target> <revision> <x> <y> <button> <count>` | Evdev buttons 272–274; count 1–2. |
-| `KEY <sequence> <target> <revision> <key> <modifiers>` | Evdev key 1–247 except lock keys 58, 69, and 70. Modifier bits: shift=1, ctrl=2, alt=4, super=8. |
+| `CLICK <sequence> <target> <revision> <x> <y> <button> <count>` | Evdev buttons 272-274; count 1-2. |
+| `KEY <sequence> <target> <revision> <key> <modifiers>` | Evdev key 1-247 except lock keys 58, 69, and 70. Modifier bits: shift=1, ctrl=2, alt=4, super=8. |
 | `SCROLL <sequence> <target> <revision> <x> <y> <axis> <value>` | Axis 0=vertical, 1=horizontal; nonzero value in [-1000,1000]. |
-| `DRAG <sequence> <target> <revision> <x1> <y1> <x2> <y2> <duration_ms>` | Left button; duration 50–2000 ms; the grant must cover the duration plus 50 ms. |
+| `DRAG <sequence> <target> <revision> <x1> <y1> <x2> <y2> <duration_ms>` | Left button; duration 50-2000 ms; the grant must cover the duration plus 50 ms. |
 
 Coordinates are finite logical surface-local values, with `0 <= x < width`
 and `0 <= y < height`. Subsurface hits refuse. Sequence numbers increase

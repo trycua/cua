@@ -69,6 +69,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_VERSIONS: ${{ inputs.versions }}
+          # The installers download from trycua/cua releases, so the versions
+          # under test come from there too, on this repository and on forks
+          # such as cua-staging whose own releases are unrelated.
+          RELEASE_REPOSITORY: trycua/cua
         run: |
           if [[ -n "$INPUT_VERSIONS" ]]; then
             VERSIONS=$(tr ', ' '\n' <<< "$INPUT_VERSIONS" |
@@ -79,7 +83,7 @@ jobs:
               .github/release-state/cua-driver-rs-withdrawn-versions |
               jq -Rsc 'split("\n") | map(select(length > 0))')
             VERSIONS=$(gh api --paginate --slurp \
-              "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+              "repos/$RELEASE_REPOSITORY/releases?per_page=100" |
               jq -c --argjson withdrawn "$WITHDRAWN" '[
                 .[][]
                 | select(.draft == false)

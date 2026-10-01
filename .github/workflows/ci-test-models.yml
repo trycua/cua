@@ -14,77 +14,56 @@ on:
   schedule:
     - cron: '0 9 * * 1'  # Every Monday at 9:00 UTC
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+permissions:
+  contents: read
+
 jobs:
+  # Single source of truth for the model list: .github/model-matrix.txt.
+  # `test-all-models` and `test-summary` both derive from this job's output, so
+  # the matrix and the summary's EXPECTED_MODELS filter cannot drift apart.
+  resolve-models:
+    runs-on: ubuntu-latest
+    outputs:
+      models: ${{ steps.list.outputs.models }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read model matrix
+        id: list
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Strip comments (whole-line and trailing) and blank lines, then emit
+          # a compact JSON array for `fromJSON`.
+          models=$(sed -e 's/[[:space:]]*#.*$//' -e 's/[[:space:]]*$//' \
+            .github/model-matrix.txt | grep -v '^$' | jq -R . | jq -sc .)
+          if [ "$models" = "[]" ]; then
+            echo "::error::.github/model-matrix.txt lists no models." >&2
+            exit 1
+          fi
+          echo "models=$models" >> "$GITHUB_OUTPUT"
+          echo "Resolved models: $models"
+
   # Test all Cua models - runs on PRs, pushes to main, or when manually triggered
   test-all-models:
+    needs: resolve-models
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        model:
-          # Claude Sonnet/Haiku
-          - anthropic/claude-sonnet-4-6
-          - anthropic/claude-sonnet-4-5-20250929
-          - anthropic/claude-haiku-4-5-20251001
-          - anthropic/claude-opus-4-6
-          - anthropic/claude-opus-4-5-20251101
-          - anthropic/claude-opus-4-1-20250805
-
-          # OpenAI CU Preview
-          - openai/computer-use-preview
-
-          # GLM-V
-          - openrouter/z-ai/glm-4.5v
-          # - huggingface-local/zai-org/GLM-4.5V  # Requires local model setup
-
-          # Gemini CU Preview
-          - gemini-2.5-computer-use-preview-10-2025
-
-          # Cua VLM Router Models (via inference.cua.ai)
-          - cua/anthropic/claude-haiku-4.5
-          - cua/anthropic/claude-sonnet-4.5
-          - cua/anthropic/claude-opus-4.5
-          - cua/microsoft/fara-7b
-          - cua/google/gemini-3-flash-preview
-          - cua/google/gemini-3-pro-preview
-
-          # InternVL
-          # - huggingface-local/OpenGVLab/InternVL3_5-1B
-          # - huggingface-local/OpenGVLab/InternVL3_5-2B
-          # - huggingface-local/OpenGVLab/InternVL3_5-4B
-          # - huggingface-local/OpenGVLab/InternVL3_5-8B
-
-          # UI-TARS (supports full computer-use, can run standalone)
-          # - huggingface-local/ByteDance-Seed/UI-TARS-1.5-7B
-
-          # Note: OpenCUA, GTA, and Holo are grounding-only models
-          # They only support predict_click(), not agent.run()
-          # See composed agents section below for testing them
-
-          # Moondream (typically used in composed agents)
-          # Format: moondream3+{any-llm-with-tools}
-          # - moondream3+anthropic/claude-sonnet-4-5-20250929 # Claude has VLM + Tools
-          # - moondream3+openai/gpt-4o  # GPT-4o has VLM + Tools
-
-          # OmniParser (typically used in composed agents)
-          # Format: omniparser+{any-vlm-with-tools}
-          - omniparser+anthropic/claude-sonnet-4-5-20250929 # Claude has VLM + Tools
-          # - omniparser+openai/gpt-4o  # GPT-4o has VLM + Tools
-
-          # Other grounding models + VLM with tools
-          # Format: {grounding-model}+{any-vlm-with-tools}
-          # These grounding-only models (OpenCUA, GTA, Holo) must be used in composed form
-          # since they only support predict_click(), not full agent.run()
-          # - huggingface-local/HelloKKMe/GTA1-7B+anthropic/claude-sonnet-4-5-20250929
-          # - huggingface-local/xlangai/OpenCUA-7B+anthropic/claude-sonnet-4-5-20250929
-          # - huggingface-local/Hcompany/Holo1.5-3B+anthropic/claude-sonnet-4-5-20250929
-
+        model: ${{ fromJSON(needs.resolve-models.outputs.models) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up uv and Python
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           python-version: "3.12"
 
@@ -119,7 +98,10 @@ jobs:
           uv venv --python 3.12
           uv pip install -e libs/python/agent -e libs/python/computer
           uv pip install -e libs/python/core
-          uv pip install "cua-agent[uitars-hf,internvl-hf,opencua-hf,moondream3,omni]"
+          uv pip install "cua-agent[uitars-hf,internvl-hf,opencua-hf,moondream3]"
+          # The omniparser+ models need cua-som (deprecated, AGPL-3.0), which
+          # cua-agent no longer pulls in; install it on its own.
+          uv pip install "cua-som>=0.1.0,<0.2.0"
           uv pip install pytest
 
       - name: Cache HuggingFace models
@@ -247,7 +229,7 @@ jobs:
       # Individual model notifications disabled - only summary is sent
       # - name: Notify Slack with test results
       #   if: always()
-      #   uses: rtCamp/action-slack-notify@v2
+      #   uses: rtCamp/action-slack-notify@33ca3be66c6f378fe1610fd1d5258632dbed5e58 # v2
       #   env:
       #     SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       #     SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}
@@ -259,7 +241,7 @@ jobs:
   # Summary job that aggregates all model test results
   test-summary:
     if: ${{ always() }}
-    needs: test-all-models
+    needs: [resolve-models, test-all-models]
     runs-on: ubuntu-latest
     steps:
       - name: Install jq
@@ -282,7 +264,7 @@ jobs:
 
           # Get list of models being tested in this run from the matrix
           # This helps filter out artifacts from previous runs when testing locally
-          EXPECTED_MODELS="${{ join(matrix.model, ' ') }}"
+          EXPECTED_MODELS="${{ join(fromJSON(needs.resolve-models.outputs.models), ' ') }}"
 
           # Aggregate all results
           PASSED_COUNT=0
@@ -376,7 +358,7 @@ jobs:
 
       - name: Send summary to Slack
         if: always()
-        uses: rtCamp/action-slack-notify@v2
+        uses: rtCamp/action-slack-notify@33ca3be66c6f378fe1610fd1d5258632dbed5e58 # v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}

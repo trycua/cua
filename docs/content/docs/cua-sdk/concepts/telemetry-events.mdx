@@ -1,0 +1,68 @@
+---
+title: Telemetry events
+description: Every usage telemetry event the Cua programs send, each property it carries, and why.
+---
+
+This is the full list behind [Telemetry and privacy](/cua-sdk/concepts/telemetry).
+`cua telemetry schema` prints the same list with every allowed value.
+
+## What is collected
+
+Every event carries: `telemetry_schema_version`, `event_version`, `product`
+(`cli`, `daemon`, `sdk_python`, `sdk_typescript`, `sdk_swift`, `sdk_kotlin`,
+`sdk_rust`, `spaces_app`, `spacesd`, `cua_bench`), `product_version`,
+`os_family`, `os_major`, `arch`, `is_ci`, `is_synthetic`, `process_session_id`
+(random per process, never stored), `sample_rate`, and the PostHog flags above.
+
+| Event | Properties | Why |
+|---|---|---|
+| `cua_first_run` | `install_channel` | Installs by channel. |
+| `cua_cli_command` | `command` (for example `sandbox.create`, never arguments), `outcome`, `error_kind`, `duration_bucket`, `json_output`, `topology` | Command adoption and reliability. |
+| `cua_sandbox_created` | `location`, `kind`, `runtime`, `image` (catalog id or `custom`), `guest_os`, `outcome`, `error_kind`, `duration_bucket`, `with_overlays`, `with_build` | Local vs cloud use, reliability by runtime, time to sandbox. |
+| `cua_sandbox_deleted` | `location`, `outcome`, `error_kind` | Cleanup reliability. |
+| `cua_api_used` | `api` (a fixed SDK entry point), `outcome`, `error_kind`, `duration_bucket` | SDK feature adoption (25% sampled). |
+| `cua_teleport_attempted` | `app` (catalog id or `other`), `capability`, `move`, `caller_kind`, `caller_kind_source`, `path` | Teleport demand per app, and how it is invoked. |
+| `cua_teleport_completed` | the above, plus `outcome` (including `requires_cua_app`), `duration_bucket`, `item_count` | Teleport success rate, and how often it needs the Cua app. |
+| `cua_keyvault_consent` | `decision` (`requested`, `approved`, `denied`, `expired`) | Consent counts only; nothing about the request. |
+| `cua_spaces_feature_used` | `feature` (a fixed Spaces app feature) | Spaces app feature adoption. |
+| `cua_stream_stats` | `transport`, `codec`, `decode` (`hw` or `sw`), `fps_bucket`, `latency_bucket`, `resolution`, `duration_bucket` | Streaming performance (50% sampled). |
+| `cua_onboarding_step` | `step`, `outcome` | Install and onboarding funnel. |
+| `cua_agent_run_completed` | `harness` (cua-agents id), `location`, `outcome`, `error_kind`, `duration_bucket` | Which agent harnesses run and how reliably. |
+| `cua_bench_run_completed` | `taskset` (cua-bench dataset or `custom`), `score_bucket`, `task_count`, `outcome` | Benchmark use and coarse scores. |
+| `cua_daemon_started` | `mode`, `outcome` | Daemon startup reliability. |
+| `cua_daemon_health` | `uptime_bucket`, `sandboxes` | Hourly aggregate health. |
+| `cua_spacesd_health` | `uptime_bucket`, `imports_failed` | In-sandbox health, hourly. |
+| `cua_spacesd_session_deliveries` | `delivery_grant` (`present` or `absent`), `count` | Session deliveries with and without a Keyvault grant. |
+| `cua_app_active` | `experiments_on` (the Cua Spaces experiments turned on in Settings, Experiments: `cua_volume`, `your_cloud`, `sharing` joined with `+`, or `none`) | Daily and weekly active installs, and retention: at most one per install per UTC day, on a day Cua is used. Also how many installs use each experiment. |
+| `cua_onboarding_page` | `page` (`welcome`, `signin`, `agents`, `presentation`, `volume`, `this_machine`, `done`), `action` (`shown`, `completed`, `skipped`, `back`), `choice` (a fixed word such as `signed_in`, `menu_bar_only`, `s3`, `host`, or `none`) | Which first-run page people leave on, and what they pick. |
+| `cua_space_wizard` | `action` (`opened`, `cancelled`, `submitted`) | How often a New Space is started and abandoned. |
+| `cua_space_create_started` | `location`, `guest_os`, `kind`, `gpu` (GPU acceleration turned on) | Which Spaces are started, and how often with GPU acceleration. |
+| `cua_space_create` | `location`, `guest_os`, `kind`, `outcome` (`ok`, `error`, or `cancelled` when Cancel was pressed while it was being created), `failed_phase` (the phase it failed or was cancelled in, or `none`), `stalled`, `time_bucket` (to ready, the failure, or the cancel finishing), `gpu` | Space create success, failure and cancel rates, time to ready, and which phase fails. |
+| `cua_volume_setup` | `surface` (`onboarding` or `settings`), `storage` (`this_mac`, `s3`, `later`), `add_to_finder`, `mount_method` (`fskit`, `nfs`, `fuse`, `none`, `unknown`), `outcome` | Cua Volume adoption. |
+| `cua_persistent_agent` | `action` (`create`, `pause`, `resume`, `routine_add`, ...), `harness`, `outcome`, `error_kind` | Persistent agents and routines adoption. |
+| `cua_host_setup` | `mode` (`relay` or `direct`), `profile` (`desktop`, `spare`, `both`), `outcome`, `error_kind` | Machines set up for access. |
+| `cua_host_space_provided` | `kind`, `guest_os`, `outcome`, `error_kind` | Spaces a host machine created for your other devices. |
+| `cua_keyvault_action` | `action` (`setup`, `unlock`, `lock`, `import`, `site_login`), `method` (`os_key_store`, which is Touch ID on a Mac, `passphrase`, `recovery_key`, `none`), `outcome` | Keyvault adoption and how it is unlocked. Nothing about what is stored. |
+| `cua_share` | `action` (`share`, `unshare`, `change_role`), `role` (`viewer`, `editor`, `none`), `outcome` | Sharing, and how often it is view-only. Never who. |
+| `cua_presence_session` | `outcome`, `participants` (bucketed), `duration_bucket` | Multiplayer sessions, their size and length. |
+| `cua_app_update` | `action` (`checked`, `found`, `not_found`, `installed`, `failed`), `channel` (`stable` or `beta`), `trigger` (`user` or `background`) | Whether people update. |
+| `cua_device_enroll` | `method` (`sign_in`, `approval`, `rekey`), `outcome` | How devices join your account's relay. |
+| `cua_experiment` | `action` (`experiment_on` or `experiment_off`), `experiment` (`cua_volume`, `your_cloud`, `sharing`) | Which Cua Spaces experiments people try, and which they turn off again. |
+
+## Teleport caller kinds
+
+`caller_kind` says who asked for a teleport: `cua_app_signed` (the Cua app or
+CLI, verified by its code signature), `embedded_sdk` (another app that embeds
+the cua SDK), `unsigned` (ad hoc or unsigned code) or `unknown` (the platform
+cannot verify signatures). With `caller_kind_source: broker_verified` it comes
+from the Keyvault broker's OS-verified caller identity; with `self_reported`
+the calling process reported it, and an SDK process only ever reports
+`embedded_sdk` or `unknown`. Paths, bundle ids and signing ids of callers are
+never sent.
+
+A modified build can remove its own telemetry. The receive-side count
+(`cua_spacesd_session_deliveries`) is recorded by cua-spacesd inside the
+sandbox, and only when the host enabled telemetry for that sandbox
+(`CUA_SPACESD_TELEMETRY=1`, which the SDK sets on local sandboxes while
+telemetry is on).
+

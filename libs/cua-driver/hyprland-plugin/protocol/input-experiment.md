@@ -49,14 +49,14 @@ labels do not grant a lane or input authority.
   operator-only signed approval on a separate connection; lifetime at most
   60 seconds. Capability bits: click=1, key=2, scroll=4, drag=8.
 - `CLICK <sequence> <target> <revision> <x> <y> <button> <count>`: one complete
-  bounded click sequence. Buttons are evdev 272–274; count is one or two.
+  bounded click sequence. Buttons are evdev 272-274; count is one or two.
 - `KEY <sequence> <target> <revision> <key> <modifiers>`: complete evdev key
   press/release with independent XKB state. Modifiers: shift=1, ctrl=2, alt=4,
   super=8. No Unicode, IME, clipboard, or arbitrary held-key stream.
 - `SCROLL <sequence> <target> <revision> <x> <y> <axis> <value>`: one bounded
   axis event; vertical=0, horizontal=1, logical value in [-1000,1000].
 - `DRAG <sequence> <target> <revision> <x1> <y1> <x2> <y2> <duration_ms>`:
-  one complete left-button drag, 50–2000 ms, scheduled in bounded steps. An
+  one complete left-button drag, 50-2000 ms, scheduled in bounded steps. An
   accepted drag first sends `{"ok":true,"phase":"started"}`, then its final
   delivery result or cancellation refusal. Driver starts the visible drag
   only after this acknowledgement; an animation is not delivery evidence.

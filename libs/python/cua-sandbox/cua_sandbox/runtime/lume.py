@@ -1,6 +1,9 @@
-"""Lume runtime — macOS VMs via Apple Virtualization.framework (macOS hosts only).
+"""Lume runtime — macOS (and Linux arm64) VMs via Apple Virtualization.framework.
 
-Requires the Lume CLI running on the host (default port 7777).
+Starts, suspends, resumes and deletes through the cua SDK's Lume backend
+(cua-vmm), which installs/starts ``lume serve`` when needed and does the
+pull-once + APFS-clone dance. Checkpoint/fork primitives and the noVNC config
+delivery talk to ``lume serve`` directly. The guest daemon is cua-spacesd.
 """
 
 from __future__ import annotations
@@ -9,22 +12,38 @@ import asyncio
 import logging
 import os
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import httpx
 from cua_sandbox.image import Image
 
 if TYPE_CHECKING:
     pass
-from cua_sandbox.runtime.base import Runtime, RuntimeInfo
-from cua_sandbox.runtime.images import (
-    LUME_API_PORT,
-    LUME_PROVIDER_PORT,
-    MACOS_SEQUOIA,
-    MACOS_VERSION_IMAGES,
-)
+from cua_sandbox.runtime.base import RuntimeInfo
+from cua_sandbox.runtime.images import LUME_API_PORT, LUME_PROVIDER_PORT
+from cua_sandbox.runtime.native import NativeRuntime
 
 logger = logging.getLogger(__name__)
+
+
+def _macos_ref(image: Image) -> str:
+    """The Lume image: the registry ref, else the canonical macOS image."""
+    from cua_sandbox.image import canonical_image
+
+    return image._registry or canonical_image("macos", image.version or None)
+
+
+# launchd label of the in-guest daemon installed by libs/lume/scripts/setup-cua.sh.
+SPACESD_LAUNCH_AGENT = "com.trycua.spacesd"
+# The label images set up before the cua-spacesd rename use.
+LEGACY_SPACESD_LAUNCH_AGENT = "com.trycua.env_driver"
+# Shell prelude (run in the guest) that sets L to whichever label is
+# installed and P to its plist.
+_SPACESD_AGENT_SH = (
+    f"L={SPACESD_LAUNCH_AGENT}; "
+    f'[ -f "$HOME/Library/LaunchAgents/$L.plist" ] || L={LEGACY_SPACESD_LAUNCH_AGENT}; '
+    'P="$HOME/Library/LaunchAgents/$L.plist"; '
+)
 
 
 def _lume_path() -> str | None:
@@ -60,8 +79,11 @@ def _has_lume() -> bool:
     return _lume_path() is not None
 
 
-class LumeRuntime(Runtime):
-    """Runs macOS VMs via the Lume CLI / API."""
+class LumeRuntime(NativeRuntime):
+    """Runs macOS VMs via Lume, through the cua SDK."""
+
+    runtime_type = "lume"
+    env_ready_timeout = 300.0
 
     def __init__(
         self,
@@ -69,54 +91,29 @@ class LumeRuntime(Runtime):
         lume_host: str = "localhost",
         lume_port: int = LUME_PROVIDER_PORT,
         api_port: int = LUME_API_PORT,
+        ephemeral: bool = True,
+        cpus: Optional[int] = None,
+        memory_mb: Optional[int] = None,
     ):
+        super().__init__(ephemeral=ephemeral, cpus=cpus, memory_mb=memory_mb)
         self.lume_host = lume_host
         self.lume_port = lume_port
         self.api_port = api_port
 
+    @property
+    def _lume_url(self) -> str:
+        return f"http://{self.lume_host}:{self.lume_port}"
+
+    def _os(self, image: Image) -> str:
+        return image.os_type or "macos"
+
+    async def _image_ref(self, image: Image, name: str, **opts) -> str:
+        oci_ref = _macos_ref(image)
+        return f"lume:{oci_ref}"
+
     async def start(self, image: Image, name: str, **opts) -> RuntimeInfo:
-        if not _has_lume():
-            raise RuntimeError(
-                "Lume CLI is not installed. "
-                "Install from https://github.com/trycua/cua/tree/main/libs/lume"
-            )
-
-        lume_url = f"http://{self.lume_host}:{self.lume_port}"
-
-        # Fast path — VM already exists
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(f"{lume_url}/lume/vms/{name}")
-            vm = resp.json() if resp.status_code == 200 else {}
-        existing_status = vm.get("status")
-        if existing_status == "running":
-            logger.info(f"Lume VM {name} already running")
-            ip = await self._wait_for_ip(name, lume_url)
-            await self._deliver_vnc_config(name, lume_url)
-            info = RuntimeInfo(host=ip, api_port=self.api_port, name=name)
-            await self.is_ready(info)
-            await self._apply_image_layers(image, info)
-            return info
-        if existing_status in ("stopped", "suspended"):
-            # Resume the existing stopped VM rather than colliding with a clone
-            logger.info(f"Lume VM {name} exists (stopped) — resuming")
-            return await self.resume(image, name, **opts)
-
-        oci_ref = image._registry or MACOS_VERSION_IMAGES.get(image.version or "") or MACOS_SEQUOIA
-
-        # Pull-once + clone: ensure a stopped base VM exists, then clone it
-        # (APFS clonefile — instant).  First call takes ~155s; subsequent calls
-        # return in <1s regardless of image size.
-        base_name = _base_vm_name(oci_ref)
-        await self.ensure_base(image, base_name)
-        await self.fork(base_name, name)
-
-        # Run the cloned VM
-        await self._run_vm(name, lume_url, opts)
-        ip = await self._wait_for_ip(name, lume_url)
-        await self._deliver_vnc_config(name, lume_url)
-        info = RuntimeInfo(host=ip, api_port=self.api_port, name=name)
-        await self.is_ready(info)
-        await self._apply_image_layers(image, info)
+        info = await super().start(image, name, **opts)
+        await self._deliver_vnc_config(name, self._lume_url)
         return info
 
     async def _run_vm(self, name: str, lume_url: str, opts: dict) -> None:
@@ -164,7 +161,7 @@ class LumeRuntime(Runtime):
                 logger.info(f"Base VM '{base_name}' already exists (stopped) — skipping pull")
                 return CheckpointInfo(name=base_name, runtime_type="lume", created_at=time.time())
 
-        oci_ref = image._registry or MACOS_VERSION_IMAGES.get(image.version or "") or MACOS_SEQUOIA
+        oci_ref = _macos_ref(image)
         logger.info(f"Pulling base image '{oci_ref}' → '{base_name}' (first time only)...")
         pull_payload: dict = {"image": oci_ref, "name": base_name}
         parts = oci_ref.split("/")
@@ -406,8 +403,8 @@ class LumeRuntime(Runtime):
             last_resp = resp
         return last_resp  # type: ignore[return-value]
 
-    async def _apply_image_layers(self, image: "Image", info: RuntimeInfo) -> None:
-        """Apply image layers (run, brew_install, env, copy, etc.) via computer-server."""
+    async def _apply_layers(self, info: RuntimeInfo, image: "Image") -> None:
+        """Apply image layers (run, brew_install, env, copy, etc.) via cua-spacesd."""
         env_items = getattr(image, "_env", ())
         file_items = getattr(image, "_files", ())
         has_work = image._layers or file_items
@@ -415,16 +412,17 @@ class LumeRuntime(Runtime):
             return
         from cua_sandbox.builder.executor import LayerExecutor
 
-        executor = LayerExecutor(f"http://{info.host}:{info.api_port}", os_type=image.os_type)
+        executor = await LayerExecutor.for_sandbox(
+            info.native, os_type=image.os_type, ready_timeout=self.env_ready_timeout
+        )
         if env_items and image.os_type != "windows":
             if image.os_type == "macos":
-                # macOS: computer-server runs under launchd with an explicit
-                # EnvironmentVariables dict in its plist.  launchctl setenv is
-                # ignored by such services, so we must add vars to the plist
-                # directly via PlistBuddy, then unload/load the service.
+                # macOS: the guest daemon (cua-spacesd) runs under launchd
+                # with an explicit EnvironmentVariables dict in its plist.
+                # launchctl setenv is ignored by such services, so we must add
+                # vars to the plist directly via PlistBuddy, then reload it.
                 import re as _re
 
-                plist = "~/Library/LaunchAgents/com.trycua.computer_server.plist"
                 for k, v in env_items:
                     # Validate key: must be a safe identifier (alphanumeric + _)
                     if not _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k):
@@ -434,15 +432,16 @@ class LumeRuntime(Runtime):
                     safe_v = v.replace("'", "'\\''")
                     # Use Set if key exists, Add otherwise
                     await executor.run_command(
-                        f"/usr/libexec/PlistBuddy -c 'Set :EnvironmentVariables:{k} {safe_v}' {plist} 2>/dev/null || "
-                        f"/usr/libexec/PlistBuddy -c 'Add :EnvironmentVariables:{k} string {safe_v}' {plist}"
+                        _SPACESD_AGENT_SH
+                        + f"/usr/libexec/PlistBuddy -c 'Set :EnvironmentVariables:{k} {safe_v}' \"$P\" 2>/dev/null || "
+                        f"/usr/libexec/PlistBuddy -c 'Add :EnvironmentVariables:{k} string {safe_v}' \"$P\""
                     )
-                # Reload via lume ssh from the host — launchctl unload would kill
-                # computer-server mid-execution if run from inside via /cmd.
+                # Reload via lume ssh from the host — bootout from inside the
+                # guest would kill the daemon that is executing this command.
                 lume_bin = _lume_path() or "lume"
                 reload_cmd = (
-                    "launchctl bootout gui/$(id -u)/com.trycua.computer_server 2>/dev/null; "
-                    f"launchctl bootstrap gui/$(id -u) {plist}"
+                    _SPACESD_AGENT_SH + 'launchctl bootout "gui/$(id -u)/$L" 2>/dev/null; '
+                    'launchctl bootstrap "gui/$(id -u)" "$P"'
                 )
                 proc = await asyncio.create_subprocess_exec(
                     lume_bin,
@@ -454,7 +453,10 @@ class LumeRuntime(Runtime):
                     stderr=asyncio.subprocess.DEVNULL,
                 )
                 await asyncio.wait_for(proc.wait(), timeout=30)
-                await self.is_ready(info)  # wait for computer-server to come back
+                # The driver restarted: reconnect once it answers again.
+                executor = await LayerExecutor.for_sandbox(
+                    info.native, os_type=image.os_type, ready_timeout=self.env_ready_timeout
+                )
             else:
                 import re as _re
                 import shlex as _shlex
@@ -481,10 +483,11 @@ class LumeRuntime(Runtime):
     async def _deliver_vnc_config(self, name: str, lume_url: str) -> None:
         """Write the current VNC port/password into ~/.vnc.env inside the VM.
 
-        Lume v0.3.x doesn't auto-deliver VNC config via VirtioFS, so the
-        computer-server inside the VM may use a stale cached port from a
-        previous run.  We push the live values via `lume ssh` so the
-        computer-server always connects to the correct VNC endpoint.
+        Lume v0.3.x doesn't auto-deliver VNC config via VirtioFS, so the noVNC
+        proxy (websockify) inside the VM may use a stale cached port from a
+        previous run.  We push the live values via `lume ssh` and restart
+        websockify so noVNC always connects to the correct VNC endpoint.
+        cua-spacesd captures the display natively and needs no VNC config.
         """
         try:
             async with httpx.AsyncClient(timeout=10) as client:
@@ -501,16 +504,16 @@ class LumeRuntime(Runtime):
                     return
                 password, port = m.group(1), m.group(2)
             vnc_env = f"VNC_PORT={port}\\nVNC_PASSWORD={password}"
-            # Write vnc.env and kill the computer-server process so launchd
-            # revives it with the new config.  launchctl kickstart -k fails
-            # silently from a non-GUI SSH session, so pkill is more reliable.
+            # Write vnc.env and kill websockify so supervisord revives it with
+            # the new config.  launchctl/supervisorctl restarts are unreliable
+            # from a non-GUI SSH session, so pkill is more reliable.
             proc = await asyncio.create_subprocess_exec(
                 _lume_path() or "lume",
                 "ssh",
                 name,
                 "--",
                 f"printf '{vnc_env}' > ~/.vnc.env && "
-                "pkill -f 'python.*computer_server' 2>/dev/null || true",
+                "pkill -f 'python.*websockify' 2>/dev/null || true",
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -533,30 +536,6 @@ class LumeRuntime(Runtime):
                     return ip
                 await asyncio.sleep(3)
         raise TimeoutError(f"Lume VM {name} did not get an IP within {timeout}s")
-
-    async def suspend(self, name: str) -> None:
-        """Stop (save state of) a Lume VM."""
-        lume_url = f"http://{self.lume_host}:{self.lume_port}"
-        async with httpx.AsyncClient(timeout=30) as client:
-            await client.post(f"{lume_url}/lume/vms/{name}/stop")
-
-    async def resume(self, image: "Image", name: str, **opts) -> RuntimeInfo:
-        """Start a stopped Lume VM and return its RuntimeInfo."""
-        lume_url = f"http://{self.lume_host}:{self.lume_port}"
-        async with httpx.AsyncClient(timeout=120) as client:
-            await client.post(
-                f"{lume_url}/lume/vms/{name}/run",
-                json={
-                    "noDisplay": opts.get("no_display", True),
-                    "sharedDirectories": opts.get("shared_directories", []),
-                },
-                timeout=120,
-            )
-        ip = await self._wait_for_ip(name, lume_url)
-        await self._deliver_vnc_config(name, lume_url)
-        info = RuntimeInfo(host=ip, api_port=self.api_port, name=name)
-        await self.is_ready(info)
-        return info
 
     async def list(self) -> list[dict]:
         """List all Lume VMs."""
@@ -588,36 +567,3 @@ class LumeRuntime(Runtime):
                 }
             )
         return result
-
-    async def stop(self, name: str) -> None:
-        lume_url = f"http://{self.lume_host}:{self.lume_port}"
-        async with httpx.AsyncClient(timeout=30) as client:
-            await client.post(f"{lume_url}/lume/vms/{name}/stop")
-
-    async def delete(self, name: str) -> None:
-        """Stop and permanently delete a Lume VM."""
-        lume_url = f"http://{self.lume_host}:{self.lume_port}"
-        async with httpx.AsyncClient(timeout=60) as client:
-            # Stop first (ignore errors — VM may already be stopped)
-            await client.post(f"{lume_url}/lume/vms/{name}/stop")
-            await client.delete(f"{lume_url}/lume/vms/{name}")
-
-    async def is_ready(self, info: RuntimeInfo, timeout: float = 120) -> bool:
-        url = f"http://{info.host}:{info.api_port}/status"
-        deadline = asyncio.get_event_loop().time() + timeout
-        async with httpx.AsyncClient(timeout=5) as client:
-            while asyncio.get_event_loop().time() < deadline:
-                try:
-                    resp = await client.get(url)
-                    if resp.status_code == 200:
-                        logger.info(f"Lume VM {info.name} computer-server is ready")
-                        return True
-                except (
-                    httpx.ConnectError,
-                    httpx.ReadTimeout,
-                    httpx.ConnectTimeout,
-                    httpx.ReadError,
-                ):
-                    pass
-                await asyncio.sleep(3)
-        raise TimeoutError(f"Lume VM {info.name} computer-server not ready after {timeout}s")

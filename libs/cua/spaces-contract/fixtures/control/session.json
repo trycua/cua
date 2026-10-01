@@ -1,0 +1,1402 @@
+{
+  "schema": "cua.control.session/1",
+  "coverage": [
+    {
+      "tool": "add_space",
+      "sdk_symbol": "Connection::add_space",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "remove_space",
+      "sdk_symbol": "Connection::remove_space",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "list_spaces",
+      "sdk_symbol": "Connection::spaces",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "create_space",
+      "sdk_symbol": "Connection::create_space",
+      "providers": [
+        "cloud",
+        "local",
+        "relay"
+      ],
+      "metering": "cloud"
+    },
+    {
+      "tool": "delete_space",
+      "sdk_symbol": "Space::delete",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "stop_space",
+      "sdk_symbol": "Space::stop",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "start_space",
+      "sdk_symbol": "Space::start",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "space_bash",
+      "sdk_symbol": "Space::bash",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "space_write",
+      "sdk_symbol": "Space::write_text",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "upload",
+      "sdk_symbol": "Space::upload",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "send_file",
+      "sdk_symbol": "Space::send_file",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "download",
+      "sdk_symbol": "Space::download",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "stream_endpoint",
+      "sdk_symbol": "Space::stream_endpoint",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "list_space_windows",
+      "sdk_symbol": "Space::windows",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "stream_space_window",
+      "sdk_symbol": "Space::stream_window_to_operator_desktop",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "show_space_pip",
+      "sdk_symbol": "Space::pin_picture_in_picture_on_operator_desktop",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "hide_space_pip",
+      "sdk_symbol": "Space::unpin_picture_in_picture_from_operator_desktop",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "open_space_viewer",
+      "sdk_symbol": "Space::open_viewer_on_operator_desktop",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "list_tools",
+      "sdk_symbol": "Space::service_catalog",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "call_tool",
+      "sdk_symbol": "Space::call_service_tool",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "agent_start",
+      "sdk_symbol": "Space::start_agent",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "agent_message",
+      "sdk_symbol": "Space::send_message",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "agent_events",
+      "sdk_symbol": "Space::events_after",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "agent_status",
+      "sdk_symbol": "Space::run_status",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "agent_interrupt",
+      "sdk_symbol": "Space::interrupt_run",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "agent_stop",
+      "sdk_symbol": "Space::stop_run",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "agent_list",
+      "sdk_symbol": "Space::runs",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "agent_capabilities",
+      "sdk_symbol": "Space::harness_capabilities",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "persistent_agent_create",
+      "sdk_symbol": "Connection::create_persistent_agent",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "persistent_agent_list",
+      "sdk_symbol": "Connection::persistent_agents",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "persistent_agent_remove",
+      "sdk_symbol": "Connection::remove_persistent_agent",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "persistent_agent_send",
+      "sdk_symbol": "Connection::send_to_persistent_agent",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "persistent_agent_save",
+      "sdk_symbol": "Connection::save_agent_home",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "agent_pause",
+      "sdk_symbol": "Connection::pause_agent",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "agent_resume",
+      "sdk_symbol": "Connection::resume_agent",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "cloud"
+    },
+    {
+      "tool": "routine_add",
+      "sdk_symbol": "Connection::add_routine",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "routine_list",
+      "sdk_symbol": "Connection::routines",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "routine_remove",
+      "sdk_symbol": "Connection::remove_routine",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "routine_set_enabled",
+      "sdk_symbol": "Connection::set_routine_enabled",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "notify_user",
+      "sdk_symbol": "Connection::notify_user",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "notifications_list",
+      "sdk_symbol": "Connection::notifications",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "notifications_ack",
+      "sdk_symbol": "Connection::mark_notifications_read",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "computer_access_grant",
+      "sdk_symbol": "Connection::allow_computer",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "computer_access_revoke",
+      "sdk_symbol": "Connection::revoke_computer",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "computer_access_list",
+      "sdk_symbol": "Connection::computer_access",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "teleport_manifest",
+      "sdk_symbol": "Space::teleport_manifest",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "teleport_app",
+      "sdk_symbol": "Space::teleport_send",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "request_site_login",
+      "sdk_symbol": "Space::request_site_login",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "hotspot_start",
+      "sdk_symbol": "Connection::hotspot_start",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "hotspot_stop",
+      "sdk_symbol": "Connection::hotspot_stop",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "hotspot_status",
+      "sdk_symbol": "Connection::hotspot_status",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_ls",
+      "sdk_symbol": "Connection::volume_ls",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_read",
+      "sdk_symbol": "Connection::volume_read",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_write",
+      "sdk_symbol": "Connection::volume_write",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_delete",
+      "sdk_symbol": "Connection::volume_delete",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_history",
+      "sdk_symbol": "Connection::volume_history",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_restore",
+      "sdk_symbol": "Connection::volume_restore",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_grant",
+      "sdk_symbol": "Connection::volume_grant",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_revoke",
+      "sdk_symbol": "Connection::volume_revoke",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_grants",
+      "sdk_symbol": "Connection::volume_grants",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_request_access",
+      "sdk_symbol": "Connection::volume_request_access",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_requests",
+      "sdk_symbol": "Connection::volume_requests",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_approve",
+      "sdk_symbol": "Connection::volume_approve",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_deny",
+      "sdk_symbol": "Connection::volume_deny",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_audit",
+      "sdk_symbol": "Connection::volume_audit",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_storage",
+      "sdk_symbol": "Connection::volume_storage",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_storage_set",
+      "sdk_symbol": "Connection::volume_storage_set",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_mount_status",
+      "sdk_symbol": "Connection::volume_mount_status",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_mount",
+      "sdk_symbol": "Connection::volume_mount",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_unmount",
+      "sdk_symbol": "Connection::volume_unmount",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_sync_status",
+      "sdk_symbol": "Connection::volume_sync_status",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_sync_events",
+      "sdk_symbol": "Connection::volume_sync_events",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_sync_resolve",
+      "sdk_symbol": "Connection::volume_sync_resolve",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_cache_stats",
+      "sdk_symbol": "Connection::volume_cache_stats",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_cache_set",
+      "sdk_symbol": "Connection::volume_cache_set",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "volume_cache_clear",
+      "sdk_symbol": "Connection::volume_cache_clear",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "share_space",
+      "sdk_symbol": "Space::share_with",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "unshare_space",
+      "sdk_symbol": "Space::unshare",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "space_shares",
+      "sdk_symbol": "Space::shares",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "relay_register_space",
+      "sdk_symbol": "Space::relay_register",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "relay_unregister_space",
+      "sdk_symbol": "Space::relay_unregister",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_status",
+      "sdk_symbol": "Connection::cloud_status",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_connect",
+      "sdk_symbol": "Connection::cloud_connect",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_test",
+      "sdk_symbol": "Connection::cloud_test",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_disconnect",
+      "sdk_symbol": "Connection::cloud_disconnect",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    },
+    {
+      "tool": "cloud_sweep",
+      "sdk_symbol": "Connection::cloud_sweep",
+      "providers": [
+        "cloud",
+        "local",
+        "direct",
+        "relay"
+      ],
+      "metering": "free"
+    }
+  ],
+  "honesty": {
+    "scheduler_is_server_backed": false,
+    "scheduler_missed_slot_policy": "collapse_to_one_firing",
+    "transfer_limits_is_server_published": false,
+    "transfer_limits_max_file_count": 6,
+    "transfer_limits_max_bytes_per_file": 26214400,
+    "transfer_limits_max_bytes_per_batch": 200000000,
+    "approvals_are_enforced": false,
+    "provider_server_backstop": [
+      {
+        "provider": "local",
+        "server_backstop": false
+      },
+      {
+        "provider": "fleet",
+        "server_backstop": false
+      },
+      {
+        "provider": "demo",
+        "server_backstop": false
+      },
+      {
+        "provider": "unknown",
+        "server_backstop": false
+      }
+    ],
+    "agent_kinds": [
+      {
+        "id": "claude-code",
+        "is_production_ready": true
+      },
+      {
+        "id": "codex",
+        "is_production_ready": true
+      },
+      {
+        "id": "cursor",
+        "is_production_ready": false
+      },
+      {
+        "id": "aider",
+        "is_production_ready": false
+      }
+    ]
+  },
+  "spaces": [
+    {
+      "id": "local:cua-space-fixture01",
+      "provider": "local",
+      "operating_system": "macos",
+      "state": "ready",
+      "raw_phase": "running",
+      "ip_address": "192.168.64.7",
+      "is_ready": true
+    },
+    {
+      "id": "fleet:cua-spaces-demo:claim-77",
+      "provider": "fleet",
+      "operating_system": "linux",
+      "state": "ready",
+      "raw_phase": "Bound",
+      "ip_address": "10.1.2.3",
+      "is_ready": true
+    },
+    {
+      "id": "local:cua-space-scratch",
+      "provider": "local",
+      "operating_system": "macos",
+      "state": "ready",
+      "raw_phase": "running",
+      "ip_address": null,
+      "is_ready": true
+    }
+  ],
+  "attached": {
+    "id": "local:cua-space-fixture01",
+    "home": "/Users/lume",
+    "default_upload_directory": "/Users/lume/Downloads",
+    "capabilities": {
+      "provider": "local",
+      "agents": true,
+      "window_list": true,
+      "upload": true,
+      "download": true,
+      "rcdp_streaming": true,
+      "teleport": true,
+      "provisioning": false,
+      "server_backstop": false,
+      "notes": [
+        "Local Spaces are invisible to get_or_create_space; attach is the only way to reach one (FRICTION.md §5).",
+        "teleport_app takes the Local branch first; this capability used to read false and was wrong."
+      ]
+    }
+  },
+  "attach_to_absent_space": {
+    "tag": "SpaceUnavailable",
+    "message": "Space fleet:not-here unavailable: not among the 3 Spaces this account can see"
+  },
+  "windows": [
+    {
+      "id": "target-172aad9a",
+      "app": "Blender",
+      "title": "untitled.blend",
+      "width_px": 2560,
+      "height_px": 1440,
+      "scale_factor_hundredths": 200,
+      "visible": true,
+      "process_id": 4211,
+      "looks_like_rcdp_target": true
+    },
+    {
+      "id": "target-58bb01c2",
+      "app": "Cua Driver Local",
+      "title": "",
+      "width_px": 1280,
+      "height_px": 800,
+      "scale_factor_hundredths": 100,
+      "visible": false,
+      "process_id": 902,
+      "looks_like_rcdp_target": true
+    }
+  ],
+  "stream_endpoint": {
+    "host": "192.168.64.7",
+    "port": 8765,
+    "driver_port": 8801,
+    "token": "boot-7f3a91"
+  },
+  "service_catalog": {
+    "service": "cua-driver",
+    "tools": [
+      {
+        "name": "screenshot",
+        "summary": "Capture the primary display."
+      },
+      {
+        "name": "left_click",
+        "summary": "Click at a point."
+      }
+    ],
+    "other_services": [
+      "unity",
+      "blender"
+    ],
+    "not_ready_warning": null,
+    "is_empty_but_reachable": false
+  },
+  "call_service_tool": [
+    {
+      "kind": "text",
+      "text": "captured 2560x1440",
+      "mime_type": "",
+      "data_base64_len": 0
+    },
+    {
+      "kind": "image",
+      "text": "",
+      "mime_type": "image/png",
+      "data_base64_len": 8
+    },
+    {
+      "kind": "other",
+      "text": "{\"type\":\"resource\",\"uri\":\"file:///tmp/x\"}",
+      "mime_type": "",
+      "data_base64_len": 0
+    }
+  ],
+  "started_run": {
+    "id": "run-84a8dc1f",
+    "agent": "claude-code",
+    "turn_model_kind": "interactive",
+    "turn_model_accepts_follow_ups": true,
+    "directory": "~/.spaces-agents/run-84a8dc1f",
+    "approvals_are_enforced": false,
+    "notes": [
+      "window suppressed by show=false"
+    ]
+  },
+  "agent_start_prompt_on_the_wire": "summarise the repository\n\n<!--cua-spaces-meta:bot=openkoala;cua.schedule=nightly-->",
+  "run_status": {
+    "id": "run-84a8dc1f",
+    "space": "local:cua-space-fixture01",
+    "agent": "claude-code",
+    "state": "running",
+    "reason": "reading the repository",
+    "accepts_message": false,
+    "exit_code": null,
+    "summary": "summarise the repository",
+    "output_tail": "opening src/lib.rs\nreading 42 files\n",
+    "output_truncated": false,
+    "created_at_ms": 1758300000250,
+    "reason_is_carried_forward": false,
+    "raw_prompt": "summarise the repository\n\n<!--cua-spaces-meta:bot=openkoala;cua.schedule=nightly-->"
+  },
+  "run_events": [
+    {
+      "line_index": 0,
+      "kind": "text",
+      "text": "opening src/lib.rs",
+      "state": null,
+      "exit_code": null,
+      "is_inferred": false
+    },
+    {
+      "line_index": 1,
+      "kind": "text",
+      "text": "reading 42 files",
+      "state": null,
+      "exit_code": null,
+      "is_inferred": false
+    },
+    {
+      "line_index": 2,
+      "kind": "state_changed",
+      "text": "[running] reading the repository",
+      "state": "running",
+      "exit_code": null,
+      "is_inferred": false
+    }
+  ],
+  "roster": [
+    {
+      "id": "run-84a8dc1f",
+      "space": "local:cua-space-fixture01",
+      "agent": "claude-code",
+      "state": "running",
+      "reason": "reading the repository",
+      "accepts_message": false,
+      "exit_code": null,
+      "summary": "summarise the repository",
+      "output_tail": null,
+      "output_truncated": false,
+      "created_at_ms": null,
+      "reason_is_carried_forward": true,
+      "raw_prompt": "summarise the repository\n\n<!--cua-spaces-meta:bot=openkoala;cua.schedule=nightly-->"
+    },
+    {
+      "id": "run-0f2b7c33",
+      "space": "local:cua-space-fixture01",
+      "agent": "codex",
+      "state": "finished",
+      "reason": "",
+      "accepts_message": false,
+      "exit_code": 0,
+      "summary": "run the tests",
+      "output_tail": null,
+      "output_truncated": false,
+      "created_at_ms": null,
+      "reason_is_carried_forward": false,
+      "raw_prompt": "run the tests"
+    }
+  ],
+  "roster_round_trips": 1,
+  "delivery_refused": {
+    "run_id": "run-84a8dc1f",
+    "accepted": false,
+    "reason": "a turn is already in flight",
+    "state_at_refusal": "running"
+  },
+  "delivery_accepted": {
+    "run_id": "run-84a8dc1f",
+    "accepted": true,
+    "reason": "queued to the pty",
+    "state_at_refusal": null
+  },
+  "stop_outcome": {
+    "stopped": true,
+    "alive": false,
+    "reason": "SIGTERM delivered; pid 4211 is gone"
+  },
+  "harness_capabilities": {
+    "statuses": [
+      "running",
+      "awaiting_input",
+      "idle",
+      "finished",
+      "failed",
+      "crashed",
+      "unknown"
+    ],
+    "harnesses": [
+      {
+        "id": "claude-code",
+        "is_production_ready": true
+      },
+      {
+        "id": "codex",
+        "is_production_ready": true
+      },
+      {
+        "id": "cursor",
+        "is_production_ready": false
+      },
+      {
+        "id": "aider",
+        "is_production_ready": false
+      }
+    ],
+    "status_classifier": "scrollback-regex"
+  },
+  "approve_run": {
+    "tag": "NotImplementedYet",
+    "message": "not implemented yet: approvals are not enforced by any shipping Spaces backend; AgentRunHandle.approvals_are_enforced is false"
+  },
+  "upload": {
+    "path": "/Users/lume/Downloads/697b9283/notes.txt",
+    "name": "notes.txt",
+    "byte_count": 2048
+  },
+  "download": "/Users/operator/Downloads/cua-spaces/report.pdf",
+  "space_write": "/Users/lume/greeting.txt",
+  "space_bash": "Darwin\n",
+  "transfer_admission": {
+    "accepted": [
+      "small.txt"
+    ],
+    "rejected": [
+      {
+        "name": "huge.mov",
+        "violation": "huge.mov is 41943040 bytes, over the 26214400 byte limit"
+      },
+      {
+        "name": "medium.zip",
+        "violation": "medium.zip is 30408704 bytes, over the 26214400 byte limit"
+      }
+    ]
+  },
+  "operator_display_calls": [
+    "show_space_pip",
+    "hide_space_pip",
+    "open_space_viewer",
+    "stream_space_window"
+  ],
+  "teleport_manifest": {
+    "app": "claude-code",
+    "display_name": "Claude Code",
+    "server_scope": "full_profile",
+    "total_estimated_bytes": 935980082,
+    "items": [
+      {
+        "relative_path": "claude/.credentials.json",
+        "label": "Logged-in session",
+        "estimated_bytes": 1024,
+        "is_sensitive": true,
+        "is_checked_by_default": true
+      },
+      {
+        "relative_path": "claude/settings.json",
+        "label": "Settings",
+        "estimated_bytes": 4096,
+        "is_sensitive": false,
+        "is_checked_by_default": true
+      },
+      {
+        "relative_path": "claude/projects/",
+        "label": "Conversation transcripts",
+        "estimated_bytes": 935974962,
+        "is_sensitive": true,
+        "is_checked_by_default": false
+      }
+    ],
+    "notes": [
+      "The logged-in session carries an OAuth token.",
+      "Transcripts are unchecked by default."
+    ],
+    "default_selection": [
+      "claude/.credentials.json",
+      "claude/settings.json"
+    ],
+    "login_only_selection": [
+      "claude/.credentials.json"
+    ]
+  },
+  "teleport_gate": {
+    "unacknowledged_sensitive": {
+      "tag": "TeleportRefused",
+      "message": "teleport refused: 1 approved entries are sensitive (claude/.credentials.json); acknowledge them explicitly to send them"
+    },
+    "path_not_in_manifest": {
+      "tag": "TeleportRefused",
+      "message": "teleport refused: approved entries that are not in this manifest: ../../etc/passwd"
+    },
+    "empty_selection": {
+      "tag": "TeleportRefused",
+      "message": "teleport refused: an empty selection is ambiguous: pass no selection at all to use the server's default set, which is never everything"
+    },
+    "wrong_space": {
+      "tag": "TeleportRefused",
+      "message": "teleport refused: this approval was granted for fleet:elsewhere, not local:cua-space-fixture01"
+    }
+  },
+  "teleport_server_default": {
+    "uses_server_default": true,
+    "approved_bytes": 5120,
+    "approved_paths": [],
+    "include_key_present_on_the_wire": false,
+    "receipt_method": "teleport",
+    "receipt_transferred_paths": []
+  },
+  "hotspot": [
+    {
+      "call": "start",
+      "is_sharing": true,
+      "space": "local:cua-space-fixture01"
+    },
+    {
+      "call": "status",
+      "is_sharing": true,
+      "space": "local:cua-space-fixture01"
+    },
+    {
+      "call": "stop",
+      "is_sharing": false,
+      "space": null
+    }
+  ],
+  "create_space_local": {
+    "id": "local:cua-space-scratch",
+    "metered": false
+  },
+  "tool_failure_is_an_error": {
+    "tag": "ToolFailed",
+    "message": "spaces tool space_bash failed: error: command exited 1"
+  },
+  "raw_tool_names": [
+    "agent_capabilities",
+    "agent_list",
+    "agent_message",
+    "agent_start",
+    "agent_status",
+    "agent_stop",
+    "call_tool",
+    "create_space",
+    "delete_space",
+    "download",
+    "hide_space_pip",
+    "hotspot_start",
+    "hotspot_status",
+    "hotspot_stop",
+    "list_space_windows",
+    "list_spaces",
+    "list_tools",
+    "open_space_viewer",
+    "show_space_pip",
+    "space_bash",
+    "space_write",
+    "stream_endpoint",
+    "stream_space_window",
+    "teleport_app",
+    "teleport_manifest",
+    "upload"
+  ]
+}

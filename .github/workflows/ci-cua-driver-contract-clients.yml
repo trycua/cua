@@ -65,6 +65,11 @@ concurrency:
   group: ci-cua-driver-contract-clients-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
 jobs:
   mcp-client-discovery:
     name: MCP discovery in pinned clients (${{ matrix.os }})
@@ -211,6 +216,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # The SDK wheel installs ran out of disk after the release build.
+      - uses: ./.github/actions/linux-rust-prep
+        with:
+          install-deps: "false"
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
@@ -321,7 +330,12 @@ jobs:
         run: npm run typecheck && CUA_DRIVER_REQUIRE_UNIFFI=1 npm test && npm audit --audit-level=high
 
       - name: Test Sandbox typed Driver against the candidate native bridge
+        # cua-sandbox depends on the in-repo cua SDK package; these carrier
+        # tests fake its native records, so its Python package is enough here.
+        # The rest of the cua-sandbox suite runs with the built SDK in
+        # ci-test-python.yml.
         run: |
+          python -m pip install ./libs/cua/python
           python -m pip install --extra-index-url https://wheels.cua.ai/simple './libs/python/cua-sandbox[dev]'
           CUA_SANDBOX_REQUIRE_NATIVE_DRIVER=1 \
           PYTHONPATH=libs/python/cua-sandbox:libs/cua-driver/python/src \
@@ -331,11 +345,7 @@ jobs:
               libs/python/cua-sandbox/tests/test_driver_mcp.py \
               libs/python/cua-sandbox/tests/test_driver_mcp_shared.py \
               libs/python/cua-sandbox/tests/test_driver_mcp_native.py \
-              libs/python/cua-sandbox/tests/test_pool.py \
-              libs/python/cua-sandbox/tests/test_fleet_transport.py \
-              libs/python/cua-sandbox/tests/test_fleet_cloud_transport.py \
-              libs/python/cua-sandbox/tests/test_sandbox_fleet_lifecycle.py \
-              libs/python/cua-sandbox/tests/test_vm_cleanup.py -q
+              libs/python/cua-sandbox/tests/test_driver_env.py -q
 
       - name: Verify Python native package contents
         working-directory: libs/cua-driver

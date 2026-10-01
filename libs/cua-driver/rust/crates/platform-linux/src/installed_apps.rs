@@ -89,7 +89,7 @@ pub fn list_installed_apps() -> Vec<InstalledApp> {
         }
     }
     let mut out: Vec<InstalledApp> = seen.into_values().collect();
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|a| a.name.to_lowercase());
     out
 }
 
@@ -139,8 +139,7 @@ fn desktop_file_id(root: &Path, path: &Path) -> String {
     };
     // Use forward slash as the canonical separator (Linux only — `Path`
     // separators are always `/` here, but normalize defensively).
-    stem.replace(std::path::MAIN_SEPARATOR, "-")
-        .replace('/', "-")
+    stem.replace([std::path::MAIN_SEPARATOR, '/'], "-")
 }
 
 /// Parse a `.desktop` file. Returns `None` for entries the caller should skip
@@ -215,11 +214,7 @@ fn string_key(section: &str, key: &str) -> Option<String> {
     // Fall back to the bare `Key=...`. We only look at the language root
     // (everything before the first `.` or `_`), so `en_US.UTF-8` matches `en`.
     let lang = std::env::var("LANG").unwrap_or_default();
-    let lang_root: String = lang
-        .split(|c: char| c == '.' || c == '@')
-        .next()
-        .unwrap_or("")
-        .to_owned();
+    let lang_root: String = lang.split(['.', '@']).next().unwrap_or("").to_owned();
     let lang_short: String = lang_root.split('_').next().unwrap_or("").to_owned();
 
     let candidates = [

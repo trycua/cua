@@ -1,10 +1,12 @@
-"""Interact command - Interactively run a task with browser visible."""
+"""``cb interact``: open a task's sandbox, run its setup and hand it to you."""
 
 import asyncio
-import tempfile
+import os
+import shutil
 import time
+import webbrowser
 from pathlib import Path
-from types import SimpleNamespace
+from typing import Any, Optional
 
 # ANSI colors
 RESET = "\033[0m"
@@ -21,108 +23,90 @@ def execute(args):
     return asyncio.run(_execute_async(args))
 
 
-def _detect_task_config(env_path: Path) -> dict:
-    """Detect provider type and os_type from task configuration.
+#: How long ``cb interact`` waits for the display page to answer.
+DISPLAY_PROBE_ATTEMPTS = 8
+DISPLAY_PROBE_INTERVAL_S = 2.0
 
-    Args:
-        env_path: Path to task environment directory
 
-    Returns:
-        Dict with "provider" and "os_type" keys
+def _wants_browser(args) -> bool:
+    """Open the display unless --no-browser, --no-wait or CUA_BENCH_NO_BROWSER=1."""
+    if getattr(args, "no_browser", False) or getattr(args, "no_wait", False):
+        return False
+    return os.environ.get("CUA_BENCH_NO_BROWSER", "").strip().lower() not in ("1", "true", "yes")
+
+
+async def _probe_display(url: str) -> Optional[str]:
+    """``None`` once the display page answers, else the last problem seen.
+
+    Bounded: at most ``DISPLAY_PROBE_ATTEMPTS`` requests.
     """
-    import importlib.util
-    import sys
+    import httpx
 
-    result = {"provider": "unknown", "os_type": "linux"}
+    problem: Optional[str] = None
+    async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+        for attempt in range(DISPLAY_PROBE_ATTEMPTS):
+            try:
+                response = await client.get(url)
+                if response.status_code < 400:
+                    return None
+                problem = f"HTTP {response.status_code}"
+            except httpx.HTTPError as error:
+                problem = f"{type(error).__name__}: {error}" if str(error) else type(error).__name__
+            if attempt + 1 < DISPLAY_PROBE_ATTEMPTS:
+                await asyncio.sleep(DISPLAY_PROBE_INTERVAL_S)
+    return problem
 
-    # Try to import and inspect the task
+
+async def _show_display(sandbox: Any, *, open_browser: bool) -> Optional[str]:
+    """Print the sandbox's ``Display:`` URL (the cua-spacesd viewer link, or
+    a legacy image's web display or VNC address) and open it; report why not."""
     try:
-        # Load main.py module
-        main_file = env_path / "main.py"
-        if not main_file.exists():
-            return result
-
-        spec = importlib.util.spec_from_file_location("env_module", main_file)
-        if spec is None or spec.loader is None:
-            return result
-
-        module = importlib.util.module_from_spec(spec)
-
-        # Add env_path to Python path temporarily for imports
-        sys.path.insert(0, str(env_path))
+        display = await sandbox.get_display_url()
+    except NotImplementedError as error:
+        print(f"{YELLOW}Display: not available ({error}){RESET}")
+        return None
+    except Exception as error:  # noqa: BLE001 - reported, the task still runs
+        print(f"{RED}Display: could not get the display URL: {type(error).__name__}: {error}{RESET}")
+        return None
+    if not display:
+        print(f"{YELLOW}Display: not available (the sandbox reports no display){RESET}")
+        return None
+    print(f"{CYAN}Display: {BOLD}{display}{RESET}")
+    web = display.startswith(("http://", "https://"))
+    if web:
+        problem = await _probe_display(display)
+        if problem:
+            print(
+                f"{YELLOW}  The display is not answering ({problem}); the image may not "
+                f"run cua-spacesd (its viewer is served on port 3211).{RESET}"
+            )
+    if open_browser and web:
         try:
-            spec.loader.exec_module(module)
-
-            # Look for tasks_config function
-            for name in dir(module):
-                obj = getattr(module, name)
-                if callable(obj) and hasattr(obj, "_td_type"):
-                    if getattr(obj, "_td_type") == "tasks_config":
-                        # Call the function to get tasks
-                        tasks = obj()
-                        if tasks and len(tasks) > 0:
-                            task = tasks[0]
-                            if hasattr(task, "computer") and task.computer:
-                                result["provider"] = task.computer.get("provider", "unknown")
-                                setup_config = task.computer.get("setup_config", {})
-                                result["os_type"] = setup_config.get("os_type", "linux")
-                                result["setup_config"] = setup_config
-
-            return result
-
-        finally:
-            sys.path.pop(0)
-            # Clean up module
-            if "env_module" in sys.modules:
-                del sys.modules["env_module"]
-
-    except Exception as e:
-        print(f"{YELLOW}Warning: Could not detect task config: {e}{RESET}")
-        return result
+            opened = webbrowser.open(display)
+        except Exception:  # noqa: BLE001 - no browser is not an error
+            opened = False
+        if not opened:
+            print(f"{GREY}  No browser could be opened; open the URL above.{RESET}")
+    return display
 
 
-def _detect_provider_type(env_path: Path) -> str:
-    """Detect provider type from task configuration.
-
-    Args:
-        env_path: Path to task environment directory
-
-    Returns:
-        Provider type ("simulated", "webtop", "native", "computer", or "unknown")
-    """
-    return _detect_task_config(env_path)["provider"]
-
-
-def _get_env_type_from_task(env_path: Path) -> str:
-    """Get env_type for task runner based on task configuration.
-
-    Args:
-        env_path: Path to task environment directory
-
-    Returns:
-        env_type for task runner (linux-docker, windows-qemu, etc.)
-    """
-    config = _detect_task_config(env_path)
-    os_type = config.get("os_type", "linux")
-
-    # Map os_type to env_type
-    if os_type in ("windows", "win11", "win10", "win7", "winxp", "win98"):
-        return "windows-qemu"
-    elif os_type == "android":
-        return "android-qemu"
-    else:
-        # Default to linux-docker for linux and other types
-        return "linux-docker"
+async def _screenshot_or_none(session):
+    try:
+        return await asyncio.wait_for(session.screenshot(), 20)
+    except Exception:  # noqa: BLE001 - not every image has a screen
+        return None
 
 
 async def _execute_async(args):
     """Execute the interact command asynchronously."""
-    from .registry import resolve_task_path
+    from .registry import resolve_dataset
 
+    default_image = None
     # Handle --dataset flag: resolve from registry
     if getattr(args, "dataset", None):
-        env_path = resolve_task_path(args.dataset, args.env_path)
-        if env_path is None:
+        dataset_dir, default_image = resolve_dataset(args.dataset)
+        env_path = dataset_dir / args.env_path if dataset_dir else None
+        if env_path is None or not env_path.exists():
             print(
                 f"{RED}Error: Task '{args.env_path}' not found in dataset '{args.dataset}'{RESET}"
             )
@@ -148,253 +132,118 @@ async def _execute_async(args):
             print(f"{RED}Error: Environment not found: {env_path}{RESET}")
             return 1
 
-    # Detect provider type
-    provider_type = _detect_provider_type(env_path)
-    print(f"{GREY}Detected provider: {provider_type}{RESET}")
-
-    # Use different execution paths based on provider type
-    if provider_type in ("native", "computer"):
-        # Native provider - use task runner for 2-container architecture
-        return await _execute_native_interactive(args, env_path, provider_type)
-    else:
-        # Simulated provider - use legacy make() approach
-        return await _execute_simulated_interactive(args, env_path)
+    return await _execute_native_interactive(args, env_path, default_image=default_image)
 
 
-async def _execute_simulated_interactive(args, env_path: Path) -> int:
-    """Execute interactive mode for simulated tasks (webtop/Playwright)."""
+async def _execute_native_interactive(
+    args, env_path: Path, default_image: Optional[str] = None
+) -> int:
+    """Open the task's sandbox (local or cloud), run setup and hand it to the user."""
+    from cua_bench import make
+    from cua_bench.computers.remote import RemoteDesktopSession
+    from cua_bench.sandboxes import CloudAuthError, cloud_auth_source, explain_error, open_sandbox
+    from cua_bench.targets import TargetError, resolve_env_spec
+
+    from .run import target_from_args
+
+    task_index = getattr(args, "variant_id", 0) or 0
+    spec = None
     try:
-        from cua_bench import make
-
-        print(f"{CYAN}Loading environment: {env_path}{RESET}")
+        target = target_from_args(args)
         env = make(str(env_path))
+        tasks = env.tasks_config_fn() if env.tasks_config_fn else []
+        if task_index >= len(tasks):
+            print(f"{RED}Error: variant {task_index} out of range ({len(tasks)}){RESET}")
+            return 1
+        task_cfg = tasks[task_index]
+        from cua_bench.sandboxes import cached_index_runtime
 
-        # Set headless to False for interactive mode (fall back if no display available)
-        import os
-        import sys
-
-        has_display = sys.platform == "darwin" or bool(
-            os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+        spec = resolve_env_spec(
+            getattr(task_cfg, "computer", None),
+            target,
+            variant_resolver=cached_index_runtime(),
+            default_image=default_image,
         )
-        if not has_display:
-            print(f"{GREY}No graphical display detected. Running in headless mode.{RESET}")
+        from cua_bench.targets import check_requirements
 
-        env.headless = not has_display
-        env.print_actions = True
-        # Apply max steps if provided
-        if getattr(args, "max_steps", None) is not None:
-            env.max_steps = int(args.max_steps)
-            print(f"{GREY}Max steps set to {env.max_steps}{RESET}")
-
-        # Determine trace behavior
-        tmp_trace_dir: Path | None = None
-        want_trace = bool(getattr(args, "trace_out", None) or getattr(args, "view", False))
-        if want_trace and getattr(args, "trace_out", None) is None:
-            tmp_trace_dir = Path(tempfile.mkdtemp(prefix="cua_trace_"))
-            args.trace_out = str(tmp_trace_dir)
-        # Start tracing if requested (either --trace-out or --view-trace)
-        if want_trace:
-            try:
-                tid = env.tracing.start()
-                print(f"{GREY}Tracing started. trajectory_id={tid}{RESET}")
-            except Exception:
-                print(f"{RED}Failed to start tracing; continuing without trace.{RESET}")
-
-        print(
-            f"{CYAN}Running task {args.variant_id} (interactive mode - browser will be visible)...{RESET}"
-        )
-        _t0 = time.perf_counter()
-        screenshot, task_cfg = await env.reset(task_id=args.variant_id)
-        _elapsed = time.perf_counter() - _t0
-
-        # Print task description
-        if hasattr(task_cfg, "description") and task_cfg.description:
-            print(f"\n{BOLD}Task: {task_cfg.description}{RESET}")
-
-        # Bold the setup time only
-        print(
-            f"{GREEN}✓ Setup complete in {BOLD}{_elapsed:.2f}s{RESET}{GREEN} "
-            f"(screenshot: {len(screenshot)} bytes){RESET}"
-        )
-
-        if args.oracle:
-            print(f"{YELLOW}Running solution...{RESET}")
-            screenshot = await env.solve()
-            print(f"{GREEN}✓ Solution complete (screenshot: {len(screenshot)} bytes){RESET}")
-
-        # Save screenshot if requested
-        if args.screenshot:
-            screenshot_path = Path(args.screenshot)
-            screenshot_path.write_bytes(screenshot)
-            print(f"{GREEN}✓ Screenshot saved to: {screenshot_path}{RESET}")
-
-        # Keep preview open for interaction (unless --no-wait)
-        if not getattr(args, "no_wait", False):
-            print(f"\n{GREY}Environment is open. Press Enter to close...{RESET}")
-            input()
-
-        # Evaluate if function exists
-        if env.evaluate_task_fn:
-            print(f"{CYAN}Running evaluation...{RESET}")
-            result = await env.evaluate()
-            print(f"{YELLOW}✓ Evaluation result: {BOLD}{result}{RESET}")
-
-        # Save trace if requested
-        if (
-            getattr(args, "trace_out", None)
-            and getattr(env, "tracing", None)
-            and env.tracing.trajectory_id
-        ):
-            try:
-                out_path = Path(args.trace_out)
-                env.tracing.save_to_disk(str(out_path))
-                print(f"{GREEN}✓ Trace saved to: {out_path}{RESET}")
-                # If --view-trace, open the viewer
-                if getattr(args, "view", False):
-                    try:
-                        from . import view_trace as _view_trace
-
-                        print(f"{CYAN}Opening trace viewer...{RESET}")
-                        _view_trace.execute(SimpleNamespace(path=str(out_path)))
-                    except Exception as _e:
-                        print(f"{RED}Failed to open trace viewer: {_e}{RESET}")
-            except Exception as _e:
-                print(f"{RED}Failed to save trace: {_e}{RESET}")
-
-        await env.close()
-        print(f"\n{GREEN}✓ Task completed successfully!{RESET}")
-        try:
-            if getattr(args, "trace_out", None):
-                out_path = Path(args.trace_out)
-                print(f"\n{CYAN}Next steps:{RESET}")
-                print(f"  • {BOLD}View trace{RESET}:\n     {YELLOW}cb{RESET} view-trace {out_path}")
-                print(
-                    f"  • {BOLD}Create replay environment{RESET}:\n     {YELLOW}cb{RESET} create-replay {out_path}"
-                )
-                print(
-                    f"  • {BOLD}Process outputs{RESET}:\n     {YELLOW}cb{RESET} process {out_path.parent} {GREY}--mode aguvis --save-dir ./outputs/processed{RESET}"
-                )
-        except Exception:
-            pass
-
-    except Exception as e:
-        print(f"{RED}Error running task: {e}{RESET}")
-        import traceback
-
-        traceback.print_exc()
+        check_requirements([spec], target)
+        if target.cloud:
+            cloud_auth_source()
+    except (TargetError, CloudAuthError) as error:
+        print(f"{RED}{error}{RESET}")
         return 1
-    finally:
+
+    print(
+        f"{CYAN}Starting {spec.os_type} {spec.kind} on {target.on} "
+        f"({spec.backend(target.on)}): {spec.image_label}{RESET}"
+    )
+
+    def on_progress(event) -> None:
+        if event.stage in ("cold_start", "ready", "claim"):
+            print(f"{GREY}  {event.message}{RESET}")
+
+    trace_out = getattr(args, "trace_out", None)
+    # A --view trace without --trace-out goes to a bounded directory (the
+    # newest few are kept), and is removed again when the run fails.
+    managed_trace = None
+    if getattr(args, "view", False) and not trace_out:
+        from cua_bench import retention
+
+        managed_trace = retention.new_interact_trace_dir()
+        trace_out = str(managed_trace)
+    if trace_out:
         try:
-            if "env" in locals():
-                await env.close()
-        except Exception:
-            pass
-
-    return 0
-
-
-async def _execute_native_interactive(args, env_path: Path, provider_type: str) -> int:
-    """Execute interactive mode for native tasks using task runner."""
-
-    from cua_bench.runner.task_runner import TaskRunner
+            print(f"{GREY}Tracing started. trajectory_id={env.tracing.start()}{RESET}")
+        except Exception:  # noqa: BLE001
+            trace_out = None
+    if getattr(args, "max_steps", None) is not None:
+        env.max_steps = int(args.max_steps)
 
     try:
-        # Get full task config including setup_config
-        task_detection = _detect_task_config(env_path)
-        setup_config = task_detection.get("setup_config", {})
+        async with open_sandbox(spec, target, on_progress=on_progress) as sandbox:
+            session = RemoteDesktopSession.attach(
+                sandbox, os_type=spec.os_type, width=spec.width, height=spec.height
+            )
+            session.env = env
+            env.session = session
+            env.current_task = task_cfg
+            print(f"\n{BOLD}Task: {task_cfg.description}{RESET}")
+            from cua_bench.runner.desktop import wait_for_desktop
 
-        # Determine env_type (linux-docker, windows-qemu, etc.) from task's os_type config
-        env_type = getattr(args, "env_type", None) or _get_env_type_from_task(env_path)
+            await wait_for_desktop(session)
+            t0 = time.perf_counter()
+            if env.setup_task_fn:
+                await env.setup_task_fn(task_cfg, session)
+            print(f"{GREEN}✓ Setup complete in {time.perf_counter() - t0:.2f}s{RESET}")
+            if trace_out:
+                shot = await _screenshot_or_none(session)
+                env.tracing.record("reset", {"task": repr(task_cfg)}, [shot] if shot else [])
+            if getattr(args, "oracle", False) and env.solve_task_fn:
+                await env.solve_task_fn(task_cfg, session)
+                print(f"{GREEN}✓ Oracle solution ran{RESET}")
 
-        print(f"{CYAN}Starting environment with task runner (env_type: {env_type})...{RESET}")
+            await _show_display(sandbox, open_browser=_wants_browser(args))
 
-        # Create task runner
-        runner = TaskRunner()
+            if getattr(args, "screenshot", None):
+                Path(args.screenshot).write_bytes(await session.screenshot())
+                print(f"{GREEN}✓ Screenshot saved to {args.screenshot}{RESET}")
 
-        # Get task index
-        task_index = getattr(args, "variant_id", 0)
+            if not getattr(args, "no_wait", False):
+                print(f"\n{GREY}Sandbox is open. Press Enter to evaluate and release it...{RESET}")
+                await asyncio.get_running_loop().run_in_executor(None, input)
 
-        # Start environment container interactively
-        vnc_url, api_url, cleanup, task_config, env, session = await runner.run_task_interactively(
-            env_type=env_type,
-            env_path=env_path,
-            task_index=task_index,
-            memory=getattr(args, "memory", "8G"),
-            cpus=getattr(args, "cpus", "8"),
-            setup_config=setup_config,
-        )
-
-        print(f"{GREEN}✓ Environment started{RESET}")
-
-        # Print task description if available
-        if task_config:
-            description = task_config.get("description")
-            if description:
-                print(f"\n{BOLD}Task: {description}{RESET}")
-
-            # Print setup info
-            setup_time = task_config.get("_setup_time")
-            screenshot_size = task_config.get("_screenshot_size")
-            if setup_time is not None:
-                print(
-                    f"{GREEN}✓ Setup complete in {BOLD}{setup_time:.2f}s{RESET}{GREEN} "
-                    f"(screenshot: {screenshot_size} bytes){RESET}"
-                )
-
-        print(f"{CYAN}VNC URL: {BOLD}{vnc_url}{RESET}")
-        print(f"{GREY}API URL: {api_url}{RESET}")
-
-        # Wait for VNC to be available
-        print(f"{CYAN}Waiting for VNC to be ready...{RESET}")
-        import urllib.request
-
-        vnc_ready = False
-        max_attempts = 30
-        for attempt in range(max_attempts):
-            try:
-                # Try to connect to the VNC URL
-                with urllib.request.urlopen(vnc_url, timeout=2) as response:
-                    if response.status == 200:
-                        vnc_ready = True
-                        break
-            except Exception:
-                pass
-
-            await asyncio.sleep(0.5)
-
-        if not vnc_ready:
-            print(f"{YELLOW}Warning: VNC may not be ready yet, but opening anyway...{RESET}")
-
-        # Open VNC in browser automatically with autoconnect and show_dot parameters
-        import webbrowser
-
-        vnc_url_with_params = f"{vnc_url}?autoconnect=true&show_dot=true"
-        webbrowser.open(vnc_url_with_params)
-        print(f"{GREEN}✓ Opened VNC in browser{RESET}")
-
-        # Keep environment running until user presses Enter
-        if not getattr(args, "no_wait", False):
-            print(f"\n{GREY}Environment is open. Press Enter to close...{RESET}")
-            input()
-
-        # Evaluate if function exists
-        if env and env.evaluate_task_fn and task_config:
-            print(f"\n{CYAN}Running evaluation...{RESET}")
-            task_cfg = task_config.get("_task_cfg")
-            if task_cfg and session:
+            if env.evaluate_task_fn:
                 result = await env.evaluate_task_fn(task_cfg, session)
                 print(f"{YELLOW}✓ Evaluation result: {BOLD}{result}{RESET}")
-
-        # Cleanup
-        print(f"\n{CYAN}Cleaning up environment...{RESET}")
-        await cleanup()
-        print(f"{GREEN}✓ Task completed successfully!{RESET}")
-
+                if trace_out:
+                    env.tracing.record("evaluate", {"result": result})
+        print(f"{GREEN}✓ Sandbox released{RESET}")
+        if trace_out:
+            env.tracing.save_to_disk(str(trace_out))
+            print(f"{GREEN}✓ Trace saved to: {trace_out}{RESET}")
         return 0
-
-    except Exception as e:
-        print(f"{RED}Error running interactive environment: {e}{RESET}")
-        import traceback
-
-        traceback.print_exc()
+    except Exception as error:  # noqa: BLE001
+        print(f"{RED}Error: {explain_error(error, spec, target)}{RESET}")
+        if managed_trace is not None:
+            shutil.rmtree(managed_trace, ignore_errors=True)
         return 1

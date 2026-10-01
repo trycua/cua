@@ -6,6 +6,9 @@ on:
     - cron: "0 4 * * 2-6"
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 jobs:
   digest:
     runs-on: ubuntu-latest
@@ -20,19 +23,11 @@ jobs:
         run: |
           # Service → tag prefix → directory
           declare -A SERVICE_TAG_DIR
-          SERVICE_TAG_DIR["pypi/cli"]="cli-v|libs/python/cua-cli/"
-          SERVICE_TAG_DIR["pypi/auto"]="auto-v|libs/python/cua-auto/"
           SERVICE_TAG_DIR["pypi/agent"]="agent-v|libs/python/agent/"
-          SERVICE_TAG_DIR["pypi/computer"]="computer-v|libs/python/computer/"
-          SERVICE_TAG_DIR["pypi/cloud"]="cloud-v|libs/python/cua-cloud/"
           SERVICE_TAG_DIR["pypi/core"]="core-v|libs/python/core/"
           SERVICE_TAG_DIR["pypi/som"]="som-v|libs/python/som/"
           SERVICE_TAG_DIR["pypi/bench"]="bench-v|libs/cua-bench/"
           SERVICE_TAG_DIR["pypi/bench-ui"]="bench-ui-v|libs/python/bench-ui/"
-          SERVICE_TAG_DIR["pypi/computer-server"]="computer-server-v|libs/python/computer-server/"
-          SERVICE_TAG_DIR["pypi/mcp-server"]="mcp-server-v|libs/python/mcp-server/"
-          SERVICE_TAG_DIR["npm/cli"]="npm-cli-v|libs/typescript/cua-cli/"
-          SERVICE_TAG_DIR["npm/computer"]="npm-computer-v|libs/typescript/computer/"
           SERVICE_TAG_DIR["npm/core"]="npm-core-v|libs/typescript/core/"
           SERVICE_TAG_DIR["npm/playground"]="npm-playground-v|libs/typescript/playground/"
           SERVICE_TAG_DIR["npm/cuabot"]="cuabot-v|libs/cuabot/"

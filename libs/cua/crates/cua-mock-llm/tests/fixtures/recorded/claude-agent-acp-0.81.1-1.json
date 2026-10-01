@@ -1,0 +1,1100 @@
+{
+ "api": "Anthropic",
+ "body": {
+  "context_management": {
+   "edits": [
+    {
+     "keep": "all",
+     "type": "clear_thinking_20251015"
+    }
+   ]
+  },
+  "max_tokens": 128000,
+  "messages": [
+   {
+    "content": [
+     {
+      "text": "<system-reminder>\nAttribution for git commits and pull requests you create from here on (this replaces Claude Code's own earlier attribution guidance, such as a previous copy of this reminder; the user's own instructions about these lines, such as a CLAUDE.md or memory rule, take precedence over this reminder, but do not add attribution lines this reminder leaves out):\n- End git commit messages with:\nCo-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>\n- End pull request descriptions with:\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n</system-reminder>\n",
+      "type": "text"
+     },
+     {
+      "text": "Please test. mock: think planning the step; say I will write a file.; shell echo hello-from-mock > proof.txt && cat proof.txt",
+      "type": "text"
+     }
+    ],
+    "role": "user"
+   },
+   {
+    "content": "# Environment\nYou have been invoked in the following environment: \n - Primary working directory: /root/runs/r1/work\n - Is a git repository: false\n - Platform: linux\n - Shell: unknown\n - OS Version: Linux 6.8.0-117-generic\n\nYou are powered by the model named Opus 5.5 (1M context). The exact model ID is claude-opus-5-5[1m]. Assistant knowledge cutoff is June 2026.\n\nAvailable agent types for the Agent tool:\n- claude: Catch-all for any task that doesn't fit a more specific agent. FleetView's default when no agent name is typed. (Tools: *)\n- Explore: Read-only search agent for broad fan-out searches \u2014 when answering means sweeping many files, directories, or naming conventions and you only need the conclusion, not the file dumps. It reads excerpts rather than whole files, so it locates code; it doesn't review or audit it. Specify search breadth: \"medium\" for moderate exploration, \"very thorough\" for multiple locations and naming conventions. (Tools: All tools except Agent, Artifact, ArtifactComments, ArtifactData, ArtifactCheck, ExitPlanMode, Edit, Write, NotebookEdit)\n- general-purpose: General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you. (Tools: *)\n- Plan: Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs. (Tools: All tools except Agent, Artifact, ArtifactComments, ArtifactData, ArtifactCheck, ExitPlanMode, Edit, Write, NotebookEdit)\n- statusline-setup: Use this agent to configure the user's Claude Code status line setting. (Tools: Read, Edit)\n\nWhen you launch multiple agents for independent work, send them in a single message with multiple tool uses so they run concurrently.\n\nThe following skills are available for use with the Skill tool:\n\n- dataviz: Use this skill whenever you are about to create ANY chart, graph, plot, dashboard, or data visualization, in ANY output medium \u2014 an HTML or React artifact, inline SVG, plotting code in any library (matplotlib, plotly, d3, Recharts, \u2026), an image/PNG you will render and upload, or a chart shared into Slack. Read it BEFORE writing the first line of chart code, choosing chart colors, building a stat tile / meter / KPI row, or laying out a dashboard. When the destination is a first-party document connector (host-designated, never self-described) that renders live charts, hand it the rows (inline, or as an uploaded data file the chart cites) rather than a rendered PNG/SVG \u2014 a picture of a chart loses hover, data inspection and per-value comments. Produces visualizations that read as one system \u2014 elegant, accessible, consistent in light and dark \u2014 using a brand-neutral placeholder palette you swap for your own. Teaches a design-system-agnostic method: a form heuristic, a color formula with a runnable validator, mark specs, and interaction rules. A validated default palette is documented in `references/palette.md` \u2014 swap that file's values for your brand's. Triggers on: \"chart\", \"graph\", \"plot\", \"data viz\", \"visualization\", \"dashboard\", \"analytics\", \"visualize data\", \"categorical colors\", \"sequential / diverging palette\", \"stat tile\", \"sparkline\", \"heatmap\", \"legend\", \"axis\", \"tooltip\", \"chart colors\", \"color by series\".\n- update-config: Use this skill to configure the Claude Code harness via settings.json. Automated behaviors (\"from now on when X\", \"each time X\", \"whenever X\", \"before/after X\") require hooks configured in settings.json - the harness executes these, not Claude, so memory/preferences cannot fulfill them. Also use for: permissions (\"allow X\", \"add permission\", \"move permission to\"), env vars (\"set X=Y\"), hook troubleshooting, or any changes to settings.json/settings.local.json files. Examples: \"allow npm commands\", \"add bq permission to global settings\", \"move permission to user settings\", \"set DEBUG=true\", \"when claude stops show X\". For simple settings like theme/model, suggest the /config command.\n- keybindings-help: Use when the user wants to customize keyboard shortcuts, rebind keys, add chord bindings, or modify ~/.claude/keybindings.json. Examples: \"rebind ctrl+s\", \"add a chord shortcut\", \"change the submit key\", \"customize keybindings\".\n- code-review: Review the current diff, or a PR number/branch/path target, for correctness bugs (plus reuse/simplification/efficiency cleanups where the model's review recipe covers them) at the given effort level (low/medium: fewer, high-confidence findings; high\u2192max: broader coverage, may include uncertain findings); with no level given, it reuses the level you typed last. Pass --comment to post findings as inline PR comments, or --fix to apply the findings to the working tree after the review.\n- simplify: Review the changed code for reuse, simplification, efficiency, and altitude cleanups, then apply the fixes. Quality only \u2014 it does not hunt for bugs; use /code-review for that.\n- fewer-permission-prompts: Scan your transcripts for common read-only Bash and MCP tool calls, then add a prioritized allowlist to project .claude/settings.json to reduce permission prompts.\n- loop: Run a prompt or slash command on a recurring interval (e.g. /loop 5m /foo). Omit the interval to let the model self-pace. - When the user wants to set up a recurring task, poll for status, or run something repeatedly on an interval (e.g. \"check the deploy every 5 minutes\", \"keep running /babysit-prs\"). Do NOT invoke for one-off tasks.\n- claude-api: Reference for the Claude API / Anthropic SDK \u2014 model ids, pricing, params, streaming, tool use, MCP, agents, caching, token counting, model migration.\nTRIGGER \u2014 read BEFORE opening the target file; don't skip because it \"looks like a one-liner\" \u2014 whenever: the prompt names Claude/Anthropic in any form (Claude, Anthropic, Fable, Opus, Sonnet, Haiku, `anthropic`, `@anthropic-ai`, `claude-*`, `us.anthropic.*`, `[1m]`); the user asks about an LLM (pricing/model choice/limits/caching) \u2014 never answer from memory; OR the task is LLM-shaped with provider unstated (agent/MCP/tool-definition/multi-agent/RAG/LLM-judge/computer-use; generate/summarize/extract/classify/rewrite/converse over NL; debugging refusals/cutoffs/streaming/tool-calls/tokens).\nSKIP only when another provider is being worked on (overrides all triggers): OpenAI/GPT/Gemini/Llama/Mistral/Cohere/Ollama named in the query; OR `grep -rE 'openai|langchain_openai|google.generativeai|genai|mistralai|cohere|ollama'` over the project hits (run this grep FIRST if no provider named \u2014 don't Read the file).\n- workflow-authoring: Reference for writing a Workflow tool script (script API and gotchas, resume, quality patterns, worked examples). Load before authoring a script for a workflow the user already opted into; it does not itself authorize running one.\n- run: Launch and drive this project's app to see a change working. Use when asked to run, start, or screenshot the app, or to confirm a change works in the real app (not just tests). First looks for a project skill that already covers launching the app; otherwise falls back to built-in patterns per project type (CLI, server, TUI, Electron, browser-driven, library).\n- init: Initialize a new CLAUDE.md file with codebase documentation\n- security-review: Complete a security review of the pending changes on the current branch\n\nToday's date is 2026-09-24.",
+    "output_config": {
+     "effort": "medium"
+    },
+    "role": "system"
+   },
+   {
+    "content": [
+     {
+      "signature": "mock-signature",
+      "thinking": "planning the step",
+      "type": "thinking"
+     },
+     {
+      "text": "I will write a file.",
+      "type": "text"
+     },
+     {
+      "id": "toolu_mock_932803bef5d34cfe",
+      "input": {
+       "command": "echo hello-from-mock > proof.txt && cat proof.txt"
+      },
+      "name": "Bash",
+      "type": "tool_use"
+     }
+    ],
+    "role": "assistant"
+   },
+   {
+    "content": [
+     {
+      "content": "hello-from-mock",
+      "is_error": false,
+      "tool_use_id": "toolu_mock_932803bef5d34cfe",
+      "type": "tool_result"
+     }
+    ],
+    "role": "user"
+   },
+   {
+    "content": [
+     {
+      "cache_control": {
+       "type": "ephemeral"
+      },
+      "text": "# Environment update\n - Additional working directories added:\n  - /root/runs/r1/work",
+      "type": "text"
+     }
+    ],
+    "role": "system"
+   }
+  ],
+  "metadata": {
+   "user_id": "{\"device_id\":\"93788a94cc6778fe5068045a9fd16bbf3baf4b767b1a9c5dcc5261891a20a7e1\",\"account_uuid\":\"\",\"session_id\":\"09e2d817-b146-4beb-934b-64565dfd9745\"}"
+  },
+  "model": "claude-opus-5-5",
+  "output_config": {
+   "effort": "medium"
+  },
+  "stream": true,
+  "system": "<trimmed>",
+  "thinking": {
+   "type": "adaptive"
+  },
+  "tools": [
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "description": {
+       "description": "A short (3-5 word) description of the task",
+       "type": "string"
+      },
+      "isolation": {
+       "description": "Isolation mode. \"worktree\" creates a temporary git worktree so the agent works on an isolated copy of the repo. \"remote\" launches the agent in a remote cloud environment (always runs in background; availability is gated).",
+       "enum": [
+        "worktree",
+        "remote"
+       ],
+       "type": "string"
+      },
+      "model": {
+       "description": "Optional model override for this agent. Takes precedence over the agent definition's model frontmatter and the configured default subagent model. If omitted, uses the agent definition's model, else the default (inherits from the parent unless a default subagent model is configured). Ignored for subagent_type: \"fork\" \u2014 forks always inherit the parent model.",
+       "enum": [
+        "sonnet",
+        "opus",
+        "haiku",
+        "fable"
+       ],
+       "type": "string"
+      },
+      "prompt": {
+       "description": "The task for the agent to perform",
+       "type": "string"
+      },
+      "run_in_background": {
+       "description": "Agents run in the background by default; you will be notified when one completes. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs \u2014 otherwise leave it in the background so the user can hand you other work.",
+       "type": "boolean"
+      },
+      "subagent_type": {
+       "description": "The type of specialized agent to use for this task",
+       "type": "string"
+      }
+     },
+     "required": [
+      "description",
+      "prompt"
+     ],
+     "type": "object"
+    },
+    "name": "Agent"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "command": {
+       "description": "The command to execute",
+       "type": "string"
+      },
+      "dangerouslyDisableSandbox": {
+       "description": "Set this to true to dangerously override sandbox mode and run commands without sandboxing.",
+       "type": "boolean"
+      },
+      "description": {
+       "description": "Clear, concise description of what this command does in active voice. Never use words like \"complex\" or \"risk\" in the description - just describe what it does.\n\nSay what the command does in plain words: do not echo the command's text, its flags, or file paths - the user reads this description, often without seeing the command.\n\nFor simple commands (git, npm, standard CLI tools), keep it brief (5-10 words):\n- ls \u2192 \"List files in current directory\"\n- git status \u2192 \"Show working tree status\"\n- npm install \u2192 \"Install package dependencies\"\n\nFor commands that are harder to parse at a glance (piped commands, obscure flags, etc.), add enough context to clarify what it does:\n- find . -name \"*.tmp\" -exec rm {} \\; \u2192 \"Find and delete all .tmp files recursively\"\n- git reset --hard origin/main \u2192 \"Discard all local changes and match remote main\"\n- curl -s url | jq '.data[]' \u2192 \"Fetch JSON from URL and extract data array elements\"",
+       "type": "string"
+      },
+      "run_in_background": {
+       "description": "Set to true to run this command in the background.",
+       "type": "boolean"
+      },
+      "timeout": {
+       "description": "Optional timeout in milliseconds (max 600000)",
+       "type": "number"
+      }
+     },
+     "required": [
+      "command"
+     ],
+     "type": "object"
+    },
+    "name": "Bash"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "cron": {
+       "description": "Standard 5-field cron expression in local time: \"M H DoM Mon DoW\" (e.g. \"*/5 * * * *\" = every 5 minutes, \"30 14 28 2 *\" = Feb 28 at 2:30pm local once).",
+       "type": "string"
+      },
+      "durable": {
+       "description": "Has no effect \u2014 durable persistence is not available. All jobs are session-only (in-memory, gone when this Claude session ends).",
+       "type": "boolean"
+      },
+      "prompt": {
+       "description": "The prompt to enqueue at each fire time.",
+       "type": "string"
+      },
+      "recurring": {
+       "description": "true (default) = fire on every cron match until deleted or auto-expired after 7 days. false = fire once at the next match, then auto-delete. Use false for \"remind me at X\" one-shot requests with pinned minute/hour/dom/month.",
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "cron",
+      "prompt"
+     ],
+     "type": "object"
+    },
+    "name": "CronCreate"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "id": {
+       "description": "Job ID returned by CronCreate.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "id"
+     ],
+     "type": "object"
+    },
+    "name": "CronDelete"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {},
+     "type": "object"
+    },
+    "name": "CronList"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "assets": {
+       "description": "register_assets: cards to register in the Design System pane. Each path must be in the finalized plan. Run after write_files succeeds. Max 256 per call.",
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "group": {
+          "description": "Free-form section label for the Design System pane (max 64 chars). Use the source design system's own categorization if it has one \u2014 e.g. Material has Buttons/Cards/Forms/etc., a corporate kit might have Actions/Forms/Navigation. Common foundational labels: \"Type\", \"Colors\", \"Spacing\", \"Components\", \"Brand\". The pane groups by the value you send.",
+          "maxLength": 64,
+          "type": "string"
+         },
+         "name": {
+          "description": "Short human-readable label (\"Primary buttons\"), not a path",
+          "maxLength": 255,
+          "minLength": 1,
+          "type": "string"
+         },
+         "path": {
+          "description": "Project-relative path to the preview/spec file this card renders",
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+         },
+         "subtitle": {
+          "description": "Variants shown (\"Primary / secondary / ghost, 3 sizes\")",
+          "maxLength": 255,
+          "type": "string"
+         },
+         "viewport": {
+          "additionalProperties": false,
+          "description": "Card dimensions in the Design System pane",
+          "properties": {
+           "height": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+           },
+           "width": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+           }
+          },
+          "required": [
+           "width"
+          ],
+          "type": "object"
+         }
+        },
+        "required": [
+         "name",
+         "path"
+        ],
+        "type": "object"
+       },
+       "maxItems": 256,
+       "type": "array"
+      },
+      "counts": {
+       "additionalProperties": false,
+       "description": "report_validate: aggregate from the final .render-check.json \u2014 counts only, no component names or paths.",
+       "properties": {
+        "bad": {
+         "maximum": 9007199254740991,
+         "minimum": 0,
+         "type": "integer"
+        },
+        "iterations": {
+         "maximum": 9007199254740991,
+         "minimum": 0,
+         "type": "integer"
+        },
+        "thin": {
+         "maximum": 9007199254740991,
+         "minimum": 0,
+         "type": "integer"
+        },
+        "total": {
+         "maximum": 9007199254740991,
+         "minimum": 0,
+         "type": "integer"
+        },
+        "variantsIdentical": {
+         "maximum": 9007199254740991,
+         "minimum": 0,
+         "type": "integer"
+        }
+       },
+       "required": [
+        "total",
+        "bad",
+        "thin",
+        "variantsIdentical",
+        "iterations"
+       ],
+       "type": "object"
+      },
+      "deletes": {
+       "description": "finalize_plan: exact paths or glob patterns that will be deleted (same syntax and limits as writes).",
+       "items": {
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+       },
+       "maxItems": 256,
+       "type": "array"
+      },
+      "files": {
+       "description": "write_files: file contents to write (max 256 per call \u2014 split larger bundles across multiple write_files calls under the same planId).",
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "data": {
+          "description": "Inline file contents (UTF-8 text, or base64 when encoding is \"base64\"). For small dynamic content only \u2014 anything you have on disk should use localPath instead.",
+          "type": "string"
+         },
+         "encoding": {
+          "description": "Set to \"base64\" for binary inline data",
+          "enum": [
+           "base64"
+          ],
+          "type": "string"
+         },
+         "localPath": {
+          "description": "Path on disk to read file contents from, relative to the localDir approved at finalize_plan. Preferred for anything you have on disk: the tool reads, encodes, and uploads directly so the contents never enter the model context. Mutually exclusive with data.",
+          "minLength": 1,
+          "type": "string"
+         },
+         "mimeType": {
+          "type": "string"
+         },
+         "path": {
+          "description": "Path within the project, e.g. components/button/index.html",
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+         }
+        },
+        "required": [
+         "path"
+        ],
+        "type": "object"
+       },
+       "maxItems": 256,
+       "type": "array"
+      },
+      "localDir": {
+       "description": "finalize_plan: directory the bundle was built into. write_files with localPath may only read files inside this directory. Defaults to the current working directory. Resolved to an absolute path and shown in the permission prompt.",
+       "minLength": 1,
+       "type": "string"
+      },
+      "method": {
+       "enum": [
+        "list_projects",
+        "get_project",
+        "list_files",
+        "get_file",
+        "finalize_plan",
+        "write_files",
+        "delete_files",
+        "register_assets",
+        "unregister_assets",
+        "create_project",
+        "report_validate"
+       ],
+       "type": "string"
+      },
+      "name": {
+       "description": "create_project: name for the new design-system project",
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      },
+      "path": {
+       "description": "get_file: file path to read",
+       "minLength": 1,
+       "type": "string"
+      },
+      "paths": {
+       "description": "delete_files: paths to delete. unregister_assets: paths whose Design System pane card should be removed. Max 256 per call \u2014 split larger batches across multiple calls under the same planId.",
+       "items": {
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+       },
+       "maxItems": 256,
+       "type": "array"
+      },
+      "planId": {
+       "description": "write_files/delete_files/register_assets/unregister_assets: token from a prior finalize_plan call",
+       "minLength": 1,
+       "type": "string"
+      },
+      "projectId": {
+       "description": "Required for all methods except list_projects and create_project",
+       "minLength": 1,
+       "type": "string"
+      },
+      "writes": {
+       "description": "finalize_plan: exact paths or glob patterns that will be written. `*` matches within a single segment, `**` matches any depth (e.g. `ui_kits/acme/**/*.html`). Max 3 `*`/`**` wildcards per pattern and max 256 entries \u2014 use broader globs to cover more files rather than enumerating paths.",
+       "items": {
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+       },
+       "maxItems": 256,
+       "type": "array"
+      }
+     },
+     "required": [
+      "method"
+     ],
+     "type": "object"
+    },
+    "name": "DesignSync"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "file_path": {
+       "description": "The absolute path to the file to modify",
+       "type": "string"
+      },
+      "new_string": {
+       "description": "The text to replace it with (must be different from old_string)",
+       "type": "string"
+      },
+      "old_string": {
+       "description": "The text to replace",
+       "type": "string"
+      },
+      "replace_all": {
+       "default": false,
+       "description": "Replace all occurrences of old_string (default false)",
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "file_path",
+      "old_string",
+      "new_string"
+     ],
+     "type": "object"
+    },
+    "name": "Edit"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {},
+     "type": "object"
+    },
+    "name": "EnterPlanMode"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "name": {
+       "description": "Optional name for a new worktree. Each \"/\"-separated segment may contain only letters, digits, dots, underscores, and dashes; max 64 chars total. A random name is generated if not provided. Mutually exclusive with `path`.",
+       "type": "string"
+      },
+      "path": {
+       "description": "Path to an existing worktree to switch into instead of creating a new one. Must appear in `git worktree list` for the current repo \u2014 or, on first entry from the launch directory, for a repo nested inside it (multi-repo workspace). Mutually exclusive with `name`.",
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "name": "EnterWorktree"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": {},
+     "properties": {
+      "allowedPrompts": {
+       "description": "Deprecated: no longer used.",
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "prompt": {
+          "description": "Semantic description of the action, e.g. \"run tests\", \"install dependencies\"",
+          "type": "string"
+         },
+         "tool": {
+          "description": "The tool this prompt applies to",
+          "enum": [
+           "Bash"
+          ],
+          "type": "string"
+         }
+        },
+        "required": [
+         "tool",
+         "prompt"
+        ],
+        "type": "object"
+       },
+       "type": "array"
+      }
+     },
+     "type": "object"
+    },
+    "name": "ExitPlanMode"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "action": {
+       "description": "\"keep\" leaves the worktree and branch on disk; \"remove\" deletes both.",
+       "enum": [
+        "keep",
+        "remove"
+       ],
+       "type": "string"
+      },
+      "discard_changes": {
+       "description": "Required true when action is \"remove\" and the worktree has uncommitted files or unmerged commits. The tool will refuse and list them otherwise.",
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "action"
+     ],
+     "type": "object"
+    },
+    "name": "ExitWorktree"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "channel": {
+       "description": "Not available in this build; leave unset.",
+       "maxLength": 256,
+       "type": "string"
+      },
+      "q": {
+       "description": "Not available in this build; leave unset.",
+       "maxLength": 256,
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "name": "ListAgents"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "command": {
+       "description": "Shell command or script. Each stdout line is an event; exit ends the watch.",
+       "type": "string"
+      },
+      "description": {
+       "description": "Short human-readable description of what you are monitoring (shown in notifications).",
+       "type": "string"
+      },
+      "timeout_ms": {
+       "default": 300000,
+       "description": "Kill the monitor after this deadline. Default 300000ms. Deadlines above 1800000ms are capped to 1800000ms. You are notified at expiry and can re-arm.",
+       "maximum": 3600000,
+       "minimum": 1000,
+       "type": "number"
+      },
+      "ws": {
+       "additionalProperties": false,
+       "description": "WebSocket to open. Each text frame is an event; binary frames are reported as a placeholder line. Socket close ends the watch. Cannot be combined with command.",
+       "properties": {
+        "protocols": {
+         "items": {
+          "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$",
+          "type": "string"
+         },
+         "type": "array"
+        },
+        "url": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "url"
+       ],
+       "type": "object"
+      }
+     },
+     "required": [
+      "description",
+      "timeout_ms"
+     ],
+     "type": "object"
+    },
+    "name": "Monitor"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "cell_id": {
+       "description": "The ID of the cell to edit. When inserting a new cell, the new cell will be inserted after the cell with this ID, or at the beginning if not specified.",
+       "type": "string"
+      },
+      "cell_type": {
+       "description": "The type of the cell (code or markdown). If not specified, it defaults to the current cell type. If using edit_mode=insert, this is required.",
+       "enum": [
+        "code",
+        "markdown"
+       ],
+       "type": "string"
+      },
+      "edit_mode": {
+       "description": "The type of edit to make (replace, insert, delete). Defaults to replace.",
+       "enum": [
+        "replace",
+        "insert",
+        "delete"
+       ],
+       "type": "string"
+      },
+      "new_source": {
+       "description": "The new source for the cell",
+       "type": "string"
+      },
+      "notebook_path": {
+       "description": "The absolute path to the Jupyter notebook file to edit (must be absolute, not relative)",
+       "type": "string"
+      }
+     },
+     "required": [
+      "notebook_path",
+      "new_source"
+     ],
+     "type": "object"
+    },
+    "name": "NotebookEdit"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "message": {
+       "description": "The notification body. Keep it under 200 characters; mobile OSes truncate.",
+       "minLength": 1,
+       "type": "string"
+      },
+      "status": {
+       "const": "proactive",
+       "type": "string"
+      }
+     },
+     "required": [
+      "message",
+      "status"
+     ],
+     "type": "object"
+    },
+    "name": "PushNotification"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "file_path": {
+       "description": "The absolute path to the file to read",
+       "type": "string"
+      },
+      "limit": {
+       "description": "The number of lines to read. Only provide if the file is too large to read at once.",
+       "exclusiveMinimum": 0,
+       "maximum": 9007199254740991,
+       "type": "integer"
+      },
+      "offset": {
+       "description": "The line number to start reading from. Only provide if the file is too large to read at once",
+       "maximum": 9007199254740991,
+       "minimum": 0,
+       "type": "integer"
+      },
+      "pages": {
+       "description": "Page range for PDF files (e.g., \"1-5\", \"3\", \"10-20\"). Only applicable to PDF files. Maximum 20 pages per request.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "file_path"
+     ],
+     "type": "object"
+    },
+    "name": "Read"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "findings": {
+       "description": "Verified findings, most-severe first; empty if none survived",
+       "items": {
+        "additionalProperties": false,
+        "properties": {
+         "category": {
+          "description": "Short kebab-case slug of the finding type, e.g. \"correctness\", \"simplification\", \"efficiency\", \"test-coverage\"",
+          "maxLength": 40,
+          "type": "string"
+         },
+         "failure_scenario": {
+          "description": "Concrete inputs/state \u2192 wrong output/crash",
+          "type": "string"
+         },
+         "file": {
+          "description": "Repo-relative path of the file the finding is in",
+          "type": "string"
+         },
+         "line": {
+          "description": "1-indexed line the finding anchors to",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer"
+         },
+         "outcome": {
+          "description": "Set ONLY when re-reporting after applying fixes: what happened to this finding",
+          "enum": [
+           "fixed",
+           "skipped",
+           "no_change_needed"
+          ],
+          "type": "string"
+         },
+         "short_summary": {
+          "description": "Compressed label for compact UI (\u226460 chars): the claim alone, no rationale or consequence clause",
+          "maxLength": 60,
+          "type": "string"
+         },
+         "summary": {
+          "description": "One-sentence statement of the defect",
+          "type": "string"
+         },
+         "verdict": {
+          "description": "Set when a verify pass ran; absent on inline-only reviews",
+          "enum": [
+           "CONFIRMED",
+           "PLAUSIBLE"
+          ],
+          "type": "string"
+         }
+        },
+        "required": [
+         "file",
+         "summary",
+         "failure_scenario"
+        ],
+        "type": "object"
+       },
+       "maxItems": 32,
+       "type": "array"
+      },
+      "level": {
+       "description": "Effort level the review ran at",
+       "enum": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+       ],
+       "type": "string"
+      }
+     },
+     "required": [
+      "findings"
+     ],
+     "type": "object"
+    },
+    "name": "ReportFindings"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "delaySeconds": {
+       "description": "Seconds from now to wake up. Clamped to [60, 3600] by the runtime. Required unless `stop` is true.",
+       "type": "number"
+      },
+      "noop": {
+       "description": "true = nothing changed (you checked and there is nothing to report). false = something happened worth keeping (edited a file, posted a message, advanced state, surfaced a finding). Consecutive noop:true ticks are collapsed in the user's terminal view and tracked as a streak. Required unless `stop` is true.",
+       "type": "boolean"
+      },
+      "prompt": {
+       "description": "The /loop input to fire on wake-up. Pass the same /loop input verbatim each turn so the next firing re-enters the skill and continues the loop. For autonomous /loop (no user prompt), pass the literal sentinel `<<autonomous-loop-dynamic>>` instead (the dynamic-pacing variant, not the CronCreate-mode `<<autonomous-loop>>`). Required unless `stop` is true.",
+       "type": "string"
+      },
+      "reason": {
+       "description": "One short sentence explaining the chosen delay. Goes to telemetry and is shown to the user. Be specific. Required unless `stop` is true.",
+       "type": "string"
+      },
+      "stop": {
+       "description": "Set to true to end the dynamic loop immediately instead of scheduling another wakeup. When true, all other fields are ignored and no further wakeups fire.",
+       "type": "boolean"
+      }
+     },
+     "type": "object"
+    },
+    "name": "ScheduleWakeup"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "message": {
+       "default": "",
+       "description": "Plain text message content. The recipient's human sees only the FIRST LINE as a one-line preview until they expand it, so make the first line a clear, self-contained sentence saying what this is about \u2014 not a greeting, preamble, or bare @-mention.",
+       "type": "string"
+      },
+      "notify_when_idle": {
+       "description": "Ask a session ON THIS MACHINE to send you ONE notice when it next goes idle (finishes its turn with nothing queued) or exits \u2014 opt-in, one-shot, no polling. With a message: deliver it now AND subscribe. Without a message (omit it): a pure subscription that costs the other session nothing.",
+       "type": "boolean"
+      },
+      "summary": {
+       "description": "A 5-10 word label for your own transcript row (not transmitted \u2014 the recipient previews the first line of `message`). Truncated to 200 characters rather than rejected.",
+       "maxLength": 200,
+       "type": "string"
+      },
+      "to": {
+       "allOf": [
+        {
+         "pattern": "^[^\\n\\r]*$"
+        },
+        {
+         "pattern": "^[\\s\\S]{0,300}$"
+        }
+       ],
+       "description": "Recipient: a name from ListAgents (append its \" [ref]\" only when a listing or an error shows one), a teammate name, \"main\", or a background agent's agentId",
+       "type": "string"
+      }
+     },
+     "required": [
+      "to",
+      "message"
+     ],
+     "type": "object"
+    },
+    "name": "SendMessage"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "args": {
+       "description": "Optional arguments for the skill",
+       "type": "string"
+      },
+      "skill": {
+       "description": "The name of a skill from the available-skills list. Do not guess names.",
+       "type": "string"
+      }
+     },
+     "required": [
+      "skill"
+     ],
+     "type": "object"
+    },
+    "name": "Skill"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "shell_id": {
+       "description": "Deprecated: use task_id instead",
+       "type": "string"
+      },
+      "task_id": {
+       "description": "The ID of the background task to stop. Agent-team teammates and named background agents are also accepted by agent ID or name.",
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "name": "TaskStop"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "prompt": {
+       "description": "The prompt to run on the fetched content",
+       "type": "string"
+      },
+      "url": {
+       "description": "The URL to fetch content from",
+       "format": "uri",
+       "type": "string"
+      }
+     },
+     "required": [
+      "url",
+      "prompt"
+     ],
+     "type": "object"
+    },
+    "name": "WebFetch"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "allowed_domains": {
+       "description": "Only include search results from these domains",
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "blocked_domains": {
+       "description": "Never include search results from these domains",
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "query": {
+       "description": "The search query to use",
+       "minLength": 2,
+       "type": "string"
+      }
+     },
+     "required": [
+      "query"
+     ],
+     "type": "object"
+    },
+    "name": "WebSearch"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "args": {
+       "description": "Optional input value exposed to the script as the global `args`, verbatim. Pass arrays/objects as actual JSON values, NOT as a JSON-encoded string \u2014 a stringified list breaks `args.filter`/`args.map` in the script. Use for parameterized named workflows (e.g. a research question)."
+      },
+      "description": {
+       "description": "Ignored \u2014 set the workflow description in the script's `meta` block.",
+       "type": "string"
+      },
+      "name": {
+       "description": "Name of a predefined workflow (built-in or from .claude/workflows/). Resolves to a self-contained script.",
+       "type": "string"
+      },
+      "resumeFromRunId": {
+       "description": "Run ID of a prior Workflow invocation to resume from. Completed agent() calls with unchanged (prompt, opts) return their cached results instantly; only edited or new calls re-run. Same-session only. Stop the prior run first (TaskStop) before resuming.",
+       "pattern": "^wf_[a-z0-9-]{6,}$",
+       "type": "string"
+      },
+      "script": {
+       "description": "Self-contained workflow script. Must begin with `export const meta = { name, description, phases }` (pure literal, no computed values) followed by the script body using agent()/parallel()/pipeline()/phase().",
+       "maxLength": 524288,
+       "type": "string"
+      },
+      "scriptPath": {
+       "description": "Path to a workflow script file on disk. Every Workflow invocation persists its script under the session directory and returns the path in the tool result. To iterate, edit that file with Write/Edit and re-invoke Workflow with the same `scriptPath` instead of re-sending the full script. Takes precedence over `script` and `name`.",
+       "type": "string"
+      },
+      "title": {
+       "description": "Ignored \u2014 set the workflow title in the script's `meta` block.",
+       "type": "string"
+      }
+     },
+     "type": "object"
+    },
+    "name": "Workflow"
+   },
+   {
+    "description": "<trimmed>",
+    "input_schema": {
+     "$schema": "https://json-schema.org/draft/2020-12/schema",
+     "additionalProperties": false,
+     "properties": {
+      "content": {
+       "description": "The content to write to the file",
+       "type": "string"
+      },
+      "file_path": {
+       "description": "The absolute path to the file to write (must be absolute, not relative)",
+       "type": "string"
+      }
+     },
+     "required": [
+      "file_path",
+      "content"
+     ],
+     "type": "object"
+    },
+    "name": "Write"
+   }
+  ]
+ },
+ "headers": {
+  "accept": "application/json",
+  "accept-encoding": "gzip, deflate, br, zstd",
+  "anthropic-beta": "claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,per-turn-control-2026-07-01,mid-conversation-tool-changes-2026-07-01,advisor-tool-2026-03-01,effort-2025-11-24,fallback-credit-2026-06-01",
+  "anthropic-dangerous-direct-browser-access": "true",
+  "anthropic-version": "2023-06-01",
+  "connection": "keep-alive",
+  "content-length": "86314",
+  "content-type": "application/json",
+  "host": "127.0.0.1:8787",
+  "user-agent": "claude-cli/2.1.280 (external, sdk-ts, agent-sdk/0.3.280)",
+  "x-api-key": "<redacted, 15 bytes>",
+  "x-app": "cli",
+  "x-claude-code-session-id": "09e2d817-b146-4beb-934b-64565dfd9745",
+  "x-stainless-arch": "arm64",
+  "x-stainless-lang": "js",
+  "x-stainless-os": "Linux",
+  "x-stainless-package-version": "0.112.1",
+  "x-stainless-retry-count": "0",
+  "x-stainless-runtime": "node",
+  "x-stainless-runtime-version": "v26.3.0",
+  "x-stainless-timeout": "600"
+ },
+ "method": "POST",
+ "note": "recorded from the real claude-agent-acp-0.81.1 (via its bundled harness) against cua-mock-llm (mock provider, scripted); system prompt and tool descriptions trimmed, auth redacted",
+ "uri": "/v1/messages?beta=true"
+}

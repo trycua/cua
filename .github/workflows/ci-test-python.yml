@@ -4,8 +4,18 @@ on:
   pull_request:
     paths:
       - "libs/python/**"
+      # cua-sandbox is a thin wrapper over the cua SDK: SDK changes can break it.
+      - "libs/cua/crates/**"
+      - "libs/cua/python/**"
+      - "libs/cua/proto/**"
+      - "libs/cua/Cargo.*"
+      # cua-test-fixtures links a real driver core.
+      - "libs/cua-spacesd/tests/spaces-e2e/**"
       - ".github/workflows/ci-test-python.yml"
   workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -18,16 +28,7 @@ jobs:
         package:
           - core
           - agent
-          - computer
-          - computer-server
-          - mcp-server
           - som
-          - cua-auto
-        include:
-          # Exercise the real pinned Driver state contract and what the VNC
-          # backend puts on the wire, using the package's own extras.
-          - package: computer-server
-            extras: "[driver,vnc]"
 
     steps:
       - name: Checkout code
@@ -47,13 +48,9 @@ jobs:
           cd libs/python/${{ matrix.package }}
           # Install the package in editable mode with dev dependencies
           if [ -f pyproject.toml ]; then
-            uv pip install --system -e ".${{ matrix.extras }}"
+            uv pip install --system -e "."
           fi
         shell: bash
-
-      - name: Install Computer SDK for server integration tests
-        if: matrix.package == 'computer-server'
-        run: uv pip install --system -e ./libs/python/computer
 
       - name: Install test dependencies
         run: |
@@ -77,7 +74,7 @@ jobs:
           CUA_TELEMETRY_ENABLED: "false" # Disable telemetry during tests
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
         if: always()
         with:
           file: ./libs/python/${{ matrix.package }}/coverage.xml
@@ -86,16 +83,73 @@ jobs:
           fail_ci_if_error: false
         continue-on-error: true
 
+  cua-sandbox:
+    # cua-sandbox drives sandboxes through the cua SDK (UniFFI over cua-sdk),
+    # so the native library and the MockServer fixture are built first. The
+    # hermetic suite never touches the host or a cloud;
+    # the live runtime/Fleet suites are excluded (they are gated separately).
+    name: Test cua-sandbox (hermetic, on the cua SDK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_BUILD_JOBS: "4"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - uses: ./.github/actions/linux-rust-prep
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-sandbox
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+
+      - name: Build the cua SDK library and the spacesd MockServer fixture
+        working-directory: libs/cua
+        run: |
+          cargo build --locked --release -p cua-sdk
+          scripts/build-test-fixtures.sh
+          node scripts/stage-uniffi-library.mjs --only=python
+
+      - name: Install cua-sandbox
+        working-directory: libs/python/cua-sandbox
+        run: uv sync --frozen --python 3.12
+
+      - name: Run the hermetic suite
+        working-directory: libs/python/cua-sandbox
+        env:
+          CUA_TELEMETRY_ENABLED: "false"
+        run: >
+          uv run --frozen pytest tests -p no:cacheprovider --timeout=120 -ra
+          --ignore=tests/live
+          --ignore=tests/test_runtime.py
+          --ignore=tests/test_snapshots.py
+          --ignore=tests/test_windows_cloud.py
+          --ignore=tests/test_windows_timing.py
+          --deselect tests/test_oci.py::TestLiveRegistry
+
   summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, cua-sandbox]
     if: always()
 
     steps:
       - name: Check test results
         run: |
-          if [ "${{ needs.test.result }}" == "failure" ]; then
+          if [ "${{ needs.test.result }}" == "failure" ] || [ "${{ needs.cua-sandbox.result }}" == "failure" ]; then
             echo "❌ Some tests failed. Please check the logs above."
             exit 1
           else

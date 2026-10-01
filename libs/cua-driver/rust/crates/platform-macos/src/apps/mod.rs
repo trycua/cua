@@ -36,11 +36,248 @@ pub struct AppInfo {
     pub last_used: Option<String>,
 }
 
-/// Enumerate running apps with NSApplicationActivationPolicyRegular.
+/// Enumerate running, user-facing apps (the `NSApplicationActivationPolicyRegular`
+/// set) from the process table.
 ///
-/// This stays entirely inside AppKit so listing or classifying an application
-/// never triggers the macOS Automation permission for System Events.
+/// Uses only the process table (libproc) and each bundle's own `Info.plist`, so
+/// listing or classifying an application still never triggers the macOS
+/// Automation permission for System Events — and, unlike AppKit's cached
+/// `runningApplications` array, cannot go stale in a daemon.
 pub fn list_running_apps() -> Vec<AppInfo> {
+    // KERNEL TRUTH FIRST. `NSWorkspace.runningApplications` is a CACHE that
+    // AppKit refreshes from workspace notifications delivered on a main run
+    // loop. A long-lived daemon (rcdpd, cua-driver serve) has no such loop
+    // servicing it, so the array freezes at the snapshot taken when it was
+    // first read: measured in a Space after 32 minutes of uptime, `list_apps`
+    // reported 2 running apps -- Finder and `Unity Hub (pid 3082)` -- while the
+    // kernel had Finder 391, Unity Hub 3690 (two launches later), Google Chrome
+    // 4062 and Blender 5539. A dead pid presented as running is worse than a
+    // slow call, and an app that is plainly on screen missing from the list
+    // sends an agent off to launch it again.
+    //
+    // The cache is not made correct by invalidating it -- nothing here owns it,
+    // and the notifications that would refresh it are never delivered. So the
+    // running set comes from the process table, which cannot go stale, and
+    // AppKit is kept only as a fallback for the case where the process table is
+    // unreadable.
+    let apps = list_running_apps_from_process_table();
+    if apps.is_empty() {
+        return list_running_apps_native();
+    }
+    apps
+}
+
+/// Every pid the kernel currently has, via `proc_listallpids` (libproc, in
+/// libSystem — no entitlement, no extra dependency).
+fn all_pids() -> Vec<i32> {
+    extern "C" {
+        fn proc_listallpids(buffer: *mut c_void, buffersize: i32) -> i32;
+    }
+    unsafe {
+        // Size probe (a null buffer returns the count), then read with headroom
+        // so a process spawned between the two calls cannot overflow us.
+        let count = proc_listallpids(std::ptr::null_mut(), 0);
+        if count <= 0 {
+            return Vec::new();
+        }
+        let capacity = (count as usize) + 64;
+        let mut pids = vec![0i32; capacity];
+        let bytes = (capacity * std::mem::size_of::<i32>()) as i32;
+        let written = proc_listallpids(pids.as_mut_ptr() as *mut c_void, bytes);
+        if written <= 0 {
+            return Vec::new();
+        }
+        pids.truncate(written as usize);
+        pids.retain(|p| *p > 0);
+        pids
+    }
+}
+
+/// The executable path of one live pid, via `proc_pidpath`. `None` when the
+/// process has already exited or its path is not readable.
+fn path_of_pid(pid: i32) -> Option<String> {
+    extern "C" {
+        fn proc_pidpath(pid: i32, buffer: *mut c_void, buffersize: u32) -> i32;
+    }
+    const PROC_PIDPATHINFO_MAXSIZE: usize = 4 * 1024;
+    let mut buf = vec![0u8; PROC_PIDPATHINFO_MAXSIZE];
+    let len = unsafe {
+        proc_pidpath(
+            pid,
+            buf.as_mut_ptr() as *mut c_void,
+            PROC_PIDPATHINFO_MAXSIZE as u32,
+        )
+    };
+    if len <= 0 {
+        return None;
+    }
+    buf.truncate(len as usize);
+    String::from_utf8(buf).ok()
+}
+
+/// The `.app` bundle a running executable belongs to, if any.
+///
+/// The INNERMOST bundle is the right answer: `Google Chrome Helper.app` lives
+/// inside `Google Chrome.app`, and it is the helper's own Info.plist
+/// (`LSUIElement`) that says it is not a user-facing app. Taking the outermost
+/// bundle would list every helper as "Google Chrome".
+fn bundle_root_of_executable(path: &str) -> Option<&str> {
+    let marker = ".app/Contents/MacOS/";
+    let at = path.rfind(marker)?;
+    Some(&path[..at + ".app".len()])
+}
+
+/// Does this bundle declare itself a background/agent process — the
+/// `NSApplicationActivationPolicyRegular` filter, read from the bundle instead
+/// of from AppKit's cache.
+fn is_background_bundle(app_path: &str) -> bool {
+    let plist = format!("{app_path}/Contents/Info.plist");
+    for key in ["LSUIElement", "LSBackgroundOnly"] {
+        let out = Command::new("/usr/bin/plutil")
+            .args(["-extract", key, "raw", "-o", "-", &plist])
+            .output();
+        if let Ok(out) = out {
+            if out.status.success() {
+                let raw = String::from_utf8_lossy(&out.stdout).trim().to_lowercase();
+                // The key is written as both a boolean and a "1"/"0" string in
+                // the wild; plutil renders the boolean as true/false.
+                if raw == "1" || raw == "true" {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Where a user-launchable application lives. Mirrors the roots
+/// `scan_installed_apps` walks, so "running" and "installed" agree on what
+/// counts as an app.
+const APP_DIRECTORY_PREFIXES: [&str; 4] = [
+    "/Applications/",
+    "/System/Applications/",
+    "/Users/Shared/Applications/",
+    "/opt/homebrew-cask/Caskroom/",
+];
+
+/// Running, user-facing apps, derived from the process table.
+fn list_running_apps_from_process_table() -> Vec<AppInfo> {
+    let pids = all_pids();
+    let live: std::collections::HashSet<i32> = pids.iter().copied().collect();
+    let processes: Vec<(i32, String)> = pids
+        .into_iter()
+        // A pid without a path exited between enumeration and lookup, or is
+        // unreadable; either way there is nothing to act on.
+        .filter_map(|pid| path_of_pid(pid).map(|path| (pid, path)))
+        .collect();
+    // `active` has the same staleness exposure as the running list:
+    // `NSWorkspace.frontmostApplication` is maintained by the same
+    // notification machinery. So AppKit's answer is used only when the kernel
+    // agrees that pid is still alive, and the fallback is the window server's
+    // own front-to-back order — which the Space evidence showed to be accurate
+    // when the app list was not (`list_space_windows` over rcdp reported
+    // reality while `list_apps` did not).
+    let front = frontmost_pid().filter(|p| live.contains(p)).or_else(|| {
+        crate::windows::visible_windows()
+            .into_iter()
+            .map(|w| w.pid)
+            .find(|p| live.contains(p))
+    });
+    let windowed: std::collections::HashSet<i32> = crate::windows::all_windows()
+        .into_iter()
+        .map(|w| w.pid)
+        .collect();
+    let mut app_roots: Vec<String> = APP_DIRECTORY_PREFIXES
+        .iter()
+        .map(|root| (*root).to_owned())
+        .collect();
+    app_roots.push(format!(
+        "{}/Applications/",
+        std::env::var("HOME").unwrap_or_default()
+    ));
+    running_apps_from_processes(&processes, front, &windowed, &app_roots)
+}
+
+/// Classify one process-table snapshot into running, user-facing apps.
+///
+/// `processes` is every live `(pid, executable path)`; `front` is the
+/// frontmost pid already checked against that snapshot; `windowed` is every
+/// pid that owns a window; `app_roots` are the directories a user launches
+/// apps from. Every reported pid comes from `processes`, so the answer can
+/// never be staler than the snapshot it was given.
+fn running_apps_from_processes(
+    processes: &[(i32, String)],
+    front: Option<i32>,
+    windowed: &std::collections::HashSet<i32>,
+    app_roots: &[String],
+) -> Vec<AppInfo> {
+    let mut background: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+    let mut meta: std::collections::HashMap<String, Option<AppInfo>> =
+        std::collections::HashMap::new();
+    // bundle path -> the pids of its live, user-facing processes.
+    let mut by_bundle: std::collections::HashMap<String, Vec<i32>> =
+        std::collections::HashMap::new();
+    let mut apps: Vec<AppInfo> = Vec::new();
+
+    for (pid, exec_path) in processes {
+        let Some(app_path) = bundle_root_of_executable(exec_path) else {
+            continue; // not an app bundle: a daemon, a CLI, a helper tool
+        };
+        let app_path = app_path.to_owned();
+        if *background
+            .entry(app_path.clone())
+            .or_insert_with(|| is_background_bundle(&app_path))
+        {
+            continue;
+        }
+        meta.entry(app_path.clone()).or_insert_with(|| {
+            let plist = format!("{app_path}/Contents/Info.plist");
+            read_app_plist(std::path::Path::new(&plist))
+        });
+        by_bundle.entry(app_path).or_default().push(*pid);
+    }
+
+    // Apps a user could have launched live in the app directories. Everything
+    // else that happens to be bundled -- `sociallayerd.app`,
+    // `UserNotificationCenter.app`, a framework's `Python.app` -- is a system
+    // service that sets its activation policy in code rather than in its
+    // Info.plist, so the plist filter alone cannot see it. Admit those only
+    // when they actually own a window, which is the same evidence a user has
+    // for calling something a running app. Finder is the standing exception:
+    // it lives in CoreServices and may legitimately have no window open.
+    for (app_path, mut pids) in by_bundle {
+        let Some(Some(info)) = meta.get(&app_path).cloned() else {
+            continue; // no bundle id / name: not a launchable app
+        };
+        let in_app_dir = app_roots.iter().any(|root| app_path.starts_with(root));
+        let is_finder = info.bundle_id.as_deref() == Some("com.apple.finder");
+        if !in_app_dir && !is_finder && !pids.iter().any(|p| windowed.contains(p)) {
+            continue;
+        }
+        // One entry per bundle, matching NSWorkspace's shape. When an app has
+        // several user-facing processes, report the frontmost one if it is among
+        // them and otherwise the lowest pid — the parent, since children are
+        // spawned later. Never report a pid the caller cannot act on.
+        pids.sort_unstable();
+        let pid = front.filter(|f| pids.contains(f)).unwrap_or(pids[0]);
+        apps.push(AppInfo {
+            name: info.name,
+            pid,
+            bundle_id: info.bundle_id,
+            running: true,
+            active: front == Some(pid),
+            launch_path: Some(app_path),
+            kind: Some("desktop".to_owned()),
+            last_used: None,
+        });
+    }
+    apps.sort_by(|a, b| a.name.cmp(&b.name));
+    apps
+}
+
+/// AppKit's view of the running apps: the fallback when the process table
+/// is unreadable.
+fn list_running_apps_native() -> Vec<AppInfo> {
     enumerate_running_apps().0
 }
 
@@ -461,7 +698,19 @@ fn bundle_id_for_app_path(app_path: &str) -> Option<String> {
 ///   * `launch_path` (filesystem `.app` path when known, else `None`),
 ///   * `kind` (`"desktop"` on macOS).
 pub fn list_all_apps() -> Vec<AppInfo> {
-    let (running, running_states) = enumerate_running_apps();
+    // The running list comes from the process table (kernel truth). AppKit
+    // supplies the all-policies state for installed apps that run as
+    // accessories (#3060), kept only for pids the kernel still has, since
+    // its cache can go stale in a long-lived daemon.
+    let running = list_running_apps();
+    let live: std::collections::HashSet<i32> = all_pids().into_iter().collect();
+    let (_, mut running_states) = enumerate_running_apps();
+    if !live.is_empty() {
+        for entries in running_states.values_mut() {
+            entries.retain(|(pid, _, _)| live.contains(pid));
+        }
+        running_states.retain(|_, entries| !entries.is_empty());
+    }
     let installed = scan_installed_apps();
     merge_app_lists(running, installed, &running_states)
 }
@@ -783,7 +1032,11 @@ pub fn format_app_list(apps: &[AppInfo]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{finder_folder_handoff, merge_app_lists, AppInfo};
+    use super::{
+        all_pids, bundle_root_of_executable, finder_folder_handoff, merge_app_lists, path_of_pid,
+        running_apps_from_processes, AppInfo,
+    };
+    use std::collections::HashSet;
 
     fn app(name: &str, pid: i32, bundle: Option<&str>, running: bool) -> AppInfo {
         AppInfo {
@@ -917,11 +1170,159 @@ mod tests {
     fn finder_folder_handoff_is_narrowly_selected() {
         let folder = std::env::temp_dir().to_string_lossy().into_owned();
 
-        assert!(finder_folder_handoff("com.apple.finder", &[folder.clone()]));
+        assert!(finder_folder_handoff(
+            "com.apple.finder",
+            std::slice::from_ref(&folder)
+        ));
         assert!(!finder_folder_handoff("com.apple.TextEdit", &[folder]));
         assert!(!finder_folder_handoff(
             "com.apple.finder",
             &["https://example.com".to_owned()]
         ));
+    }
+
+    /// Write a minimal `.app` bundle under `root` and return its executable
+    /// path. Nothing is executed: the classifier only reads the bundle's
+    /// Info.plist, so no process, window, or LaunchServices record appears.
+    fn synthetic_bundle(root: &std::path::Path, name: &str, extra_plist: &str) -> String {
+        let bundle = root.join(format!("{name}.app"));
+        let macos = bundle.join("Contents/MacOS");
+        std::fs::create_dir_all(&macos).expect("create bundle");
+        std::fs::write(
+            bundle.join("Contents/Info.plist"),
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.trycua.test.{name}</string>
+<key>CFBundleName</key><string>{name}</string>
+<key>CFBundleExecutable</key><string>{name}</string>
+{extra_plist}
+</dict></plist>
+"#
+            ),
+        )
+        .expect("write Info.plist");
+        macos.join(name).to_str().expect("utf-8 path").to_owned()
+    }
+
+    fn pid_of(apps: &[AppInfo], name: &str) -> Option<i32> {
+        let bundle_id = format!("com.trycua.test.{name}");
+        apps.iter()
+            .find(|app| app.bundle_id.as_deref() == Some(bundle_id.as_str()))
+            .map(|app| app.pid)
+    }
+
+    /// The regression this file exists for: the running list is derived from
+    /// the process-table snapshot it is given, never from a cache, so an app
+    /// appears with the pid that snapshot holds and disappears as soon as a
+    /// snapshot no longer holds it (the stale-pid bug).
+    #[test]
+    fn running_apps_follow_the_process_snapshot() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let root = format!("{}/", temp.path().display());
+        let regular = synthetic_bundle(temp.path(), "CuaAppProbe", "");
+        let roots = [root];
+        let nothing = HashSet::new();
+
+        let launched = [(4242, regular.clone()), (4243, "/usr/bin/ssh".to_owned())];
+        let apps = running_apps_from_processes(&launched, None, &nothing, &roots);
+        assert_eq!(pid_of(&apps, "CuaAppProbe"), Some(4242));
+        assert_eq!(
+            apps.len(),
+            1,
+            "a non-bundled process is not an app: {apps:?}"
+        );
+        assert!(!apps[0].active);
+
+        let exited = [(4243, "/usr/bin/ssh".to_owned())];
+        let apps = running_apps_from_processes(&exited, None, &nothing, &roots);
+        assert_eq!(
+            pid_of(&apps, "CuaAppProbe"),
+            None,
+            "an app missing from the snapshot must not be reported (stale pid)"
+        );
+    }
+
+    /// One entry per bundle: the frontmost pid when it belongs to the bundle,
+    /// otherwise the lowest (parent) pid. Every reported pid is one the
+    /// snapshot holds.
+    #[test]
+    fn one_entry_per_bundle_prefers_the_front_pid() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let exe = synthetic_bundle(temp.path(), "CuaMulti", "");
+        let roots = [format!("{}/", temp.path().display())];
+        let nothing = HashSet::new();
+        let processes = [(900, exe.clone()), (700, exe.clone()), (800, exe)];
+
+        let apps = running_apps_from_processes(&processes, None, &nothing, &roots);
+        assert_eq!(apps.len(), 1, "{apps:?}");
+        assert_eq!((apps[0].pid, apps[0].active), (700, false));
+
+        let apps = running_apps_from_processes(&processes, Some(800), &nothing, &roots);
+        assert_eq!((apps[0].pid, apps[0].active), (800, true));
+
+        let apps = running_apps_from_processes(&processes, Some(1), &nothing, &roots);
+        assert_eq!((apps[0].pid, apps[0].active), (700, false));
+    }
+
+    /// Agent and background bundles are never apps; a bundle outside the app
+    /// directories counts only once it owns a window.
+    #[test]
+    fn background_and_windowless_system_bundles_are_filtered() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let agent = synthetic_bundle(temp.path(), "CuaAgent", "<key>LSUIElement</key><true/>");
+        let background = synthetic_bundle(
+            temp.path(),
+            "CuaBackground",
+            "<key>LSBackgroundOnly</key><string>1</string>",
+        );
+        let service = synthetic_bundle(temp.path(), "CuaService", "");
+        let processes = [(10, agent), (11, background), (12, service)];
+        let in_roots = [format!("{}/", temp.path().display())];
+
+        let apps = running_apps_from_processes(&processes, None, &HashSet::new(), &in_roots);
+        assert_eq!(
+            apps.iter().map(|app| app.pid).collect::<Vec<_>>(),
+            vec![12],
+            "agent and background-only bundles must be filtered: {apps:?}"
+        );
+
+        let elsewhere = ["/Applications/".to_owned()];
+        let apps = running_apps_from_processes(&processes, None, &HashSet::new(), &elsewhere);
+        assert!(
+            apps.is_empty(),
+            "windowless system bundle admitted: {apps:?}"
+        );
+        let apps = running_apps_from_processes(&processes, None, &HashSet::from([12]), &elsewhere);
+        assert_eq!(pid_of(&apps, "CuaService"), Some(12));
+    }
+
+    /// The process-table readers see this very process at its own path. This
+    /// reads only the kernel's record of the test process: no window server,
+    /// no LaunchServices, no other application.
+    #[test]
+    fn process_table_reports_this_process() {
+        let own = std::process::id() as i32;
+        assert!(all_pids().contains(&own));
+        let path = path_of_pid(own).expect("own executable path");
+        let expected = std::fs::canonicalize(std::env::current_exe().expect("current exe"))
+            .expect("canonical exe");
+        assert_eq!(std::path::Path::new(&path), expected);
+    }
+
+    #[test]
+    fn bundle_root_takes_the_innermost_bundle() {
+        assert_eq!(
+            bundle_root_of_executable(
+                "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/1/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper"
+            ),
+            Some("/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/1/Helpers/Google Chrome Helper.app")
+        );
+        assert_eq!(
+            bundle_root_of_executable("/Applications/Blender.app/Contents/MacOS/Blender"),
+            Some("/Applications/Blender.app")
+        );
+        assert_eq!(bundle_root_of_executable("/usr/bin/ssh"), None);
     }
 }

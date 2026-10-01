@@ -44,6 +44,7 @@
 #                                    (default %LOCALAPPDATA%\Programs\Cua\cua-driver\bin)
 #   $env:CUA_DRIVER_RS_HOME          override the package home
 #                                    (default %USERPROFILE%\.cua-driver)
+#   $env:CUA_DRIVER_RS_REQUIRE_SIGNATURE=1  same as -RequireSignature
 #   $env:CUA_DRIVER_RS_KEEP_VERSIONS keep the N most recent per-version
 #                                    release dirs after install; older ones
 #                                    are deleted (default 5; set 0 to
@@ -65,6 +66,11 @@
 #               to function. Default off; the post-install message prints
 #               the registration command so you can opt in later. Safe to
 #               re-run: existing task is replaced.
+#   -RequireSignature
+#               fail unless the release zip's Sigstore bundle verifies with
+#               cosign (needs cosign on PATH). Every zip is always checked
+#               against the release's SHA256SUMS, and every staged .exe
+#               must carry a valid Cua AI, Inc. Authenticode signature.
 #   -NoPathUpdate
 #               skip the auto-append of $VisibleBinDir to the User PATH.
 #               Default off — the installer auto-adds the bin dir so
@@ -93,7 +99,8 @@ param(
     # that specifically don't want a scheduled task registered.
     [switch]$AutoStart = $true,
     [switch]$NoAutoStart,
-    [switch]$NoPathUpdate
+    [switch]$NoPathUpdate,
+    [switch]$RequireSignature
 )
 # `-NoAutoStart` is the explicit opt-out and takes precedence over
 # the default-true `-AutoStart`.
@@ -140,6 +147,21 @@ $Script:CuaDriverRsBakedVersion = "0.31.0" # published-installer-version
 $Script:CuaDriverRsWithdrawnVersions = @('0.28.3') # withdrawn-installer-versions
 # ~~~ END_WITHDRAWN_VERSIONS ~~~
 $CursorThemeRequiredFrom = [version]"0.12.7"
+
+# Release integrity. Stable releases from $ChecksumsRequiredFrom on publish a
+# checksum file: SHA256SUMS, or (0.31.0, from the older release workflow)
+# checksums.txt, the same "<sha256>  <asset>" lines inside a Markdown fence.
+# From $SigstoreRequiredFrom on they also publish a keyless Sigstore bundle
+# (<asset>.sigstore.json) per asset, issued to cd-rust-cua-driver.yml at that
+# exact tag. A missing one fails the install. Older releases and nightlies are
+# checked when the files exist and otherwise install with a warning. Windows
+# binaries are Authenticode-signed from $AuthenticodeRequiredFrom on (stable
+# and nightly), as CD verifies.
+$ChecksumsRequiredFrom = [version]"0.31.0"
+$SigstoreRequiredFrom = [version]"0.31.1"
+$AuthenticodeRequiredFrom = [version]"0.22.0"
+$CosignOidcIssuer = "https://token.actions.githubusercontent.com"
+if ($env:CUA_DRIVER_RS_REQUIRE_SIGNATURE -eq '1') { $RequireSignature = $true }
 
 # ---------- Path resolution ------------------------------------------------
 
@@ -1172,6 +1194,132 @@ function Get-ReleaseZip([string]$version, [string]$archLabel, [string]$destDir) 
     }
 }
 
+function Get-BaseVersion([string]$version) {
+    # 0.31.0-nightly.20260928.1 -> 0.31.0
+    return [version]($version -split '-', 2)[0]
+}
+
+function Get-ReleaseFile([string]$name, [string]$destPath) {
+    # Returns $true when fetched, $false on HTTP 404; exits on anything else.
+    $url = "https://github.com/$Repo/releases/download/$Script:CuaDriverRsReleaseTag/$name"
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $destPath -UseBasicParsing
+            return $true
+        }
+        catch {
+            Remove-Item -LiteralPath $destPath -Force -ErrorAction SilentlyContinue
+            $statusCode = Get-HttpStatusCode $_.Exception
+            if ($statusCode -eq 404) { return $false }
+            if ((Test-TransientDownloadFailure $statusCode) -and $attempt -lt 3) {
+                Start-Sleep -Seconds $attempt
+                continue
+            }
+            Write-ErrorStep "could not download ${url}: $($_.Exception.Message)"
+            exit 1
+        }
+    }
+}
+
+function Assert-ReleaseZipIntegrity([string]$zipPath, [string]$version) {
+    $zipName = Split-Path -Leaf $zipPath
+    $tag = $Script:CuaDriverRsReleaseTag
+    $required = $tag.StartsWith($TagPrefix) -and ((Get-BaseVersion $version) -ge $ChecksumsRequiredFrom)
+    $signedRequired = $tag.StartsWith($TagPrefix) -and ((Get-BaseVersion $version) -ge $SigstoreRequiredFrom)
+    $destDir = Split-Path -Parent $zipPath
+
+    # SHA256SUMS, else the older release workflow's checksums.txt.
+    $sumsName = $null
+    foreach ($candidate in @("SHA256SUMS", "checksums.txt")) {
+        if (Get-ReleaseFile $candidate (Join-Path $destDir $candidate)) {
+            $sumsName = $candidate
+            break
+        }
+    }
+    if ($sumsName) {
+        $expected = $null
+        foreach ($line in Get-Content -LiteralPath (Join-Path $destDir $sumsName)) {
+            $parts = $line.Trim() -split '\s+', 2
+            if ($parts.Count -eq 2 -and ($parts[1] -eq $zipName -or $parts[1] -eq "*$zipName")) {
+                $expected = $parts[0].ToLowerInvariant()
+                break
+            }
+        }
+        if (-not $expected -and $sumsName -eq "checksums.txt" -and -not $required) {
+            Write-WarningStep "$zipName is not listed in $tag's checksums.txt; installing it without a checksum check"
+        }
+        elseif (-not $expected) {
+            Write-ErrorStep "$zipName is not listed in $tag's $sumsName; refusing to install it."
+            exit 1
+        }
+        else {
+            $actual = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) {
+                Write-ErrorStep "$zipName does not match $tag's $sumsName (expected $expected, got $actual); refusing to install it."
+                exit 1
+            }
+            Write-Step "verified $zipName against $sumsName"
+        }
+    }
+    elseif ($required) {
+        Write-ErrorStep "$tag has no SHA256SUMS; releases from $ChecksumsRequiredFrom on must publish one. Refusing to install."
+        exit 1
+    }
+    else {
+        Write-WarningStep "$tag predates published SHA256SUMS; installing $zipName without a checksum check"
+    }
+
+    $bundlePath = "$zipPath.sigstore.json"
+    if (Get-ReleaseFile "$zipName.sigstore.json" $bundlePath) {
+        $cosign = Get-Command cosign -ErrorAction SilentlyContinue
+        if ($cosign) {
+            $identity = "https://github.com/$Repo/.github/workflows/cd-rust-cua-driver.yml@refs/tags/$tag"
+            & $cosign verify-blob --bundle $bundlePath `
+                --certificate-identity $identity `
+                --certificate-oidc-issuer $CosignOidcIssuer $zipPath *> $null
+            if ($LASTEXITCODE -ne 0) {
+                Write-ErrorStep "the Sigstore signature of $zipName did not verify for $tag; refusing to install it."
+                exit 1
+            }
+            Write-Step "verified the Sigstore signature of $zipName"
+        }
+        elseif ($RequireSignature) {
+            Write-ErrorStep "-RequireSignature needs cosign on PATH to verify $zipName."
+            exit 1
+        }
+        else {
+            Write-WarningStep "$zipName is signed, but cosign is not installed; verified its sha256 only (install cosign, or pass -RequireSignature to insist)"
+        }
+    }
+    elseif ($RequireSignature) {
+        Write-ErrorStep "$tag publishes no Sigstore bundle for $zipName; -RequireSignature cannot be met."
+        exit 1
+    }
+    elseif ($signedRequired) {
+        Write-ErrorStep "$tag has no Sigstore bundle for $zipName; releases from $SigstoreRequiredFrom on must publish one. Refusing to install."
+        exit 1
+    }
+}
+
+function Assert-StagedAuthenticode([string]$stageDir, [string]$version) {
+    if ((Get-BaseVersion $version) -lt $AuthenticodeRequiredFrom) {
+        Write-WarningStep "$Script:CuaDriverRsReleaseTag predates signed Windows binaries; skipping the Authenticode check"
+        return
+    }
+    foreach ($file in Get-ChildItem -LiteralPath $stageDir -Recurse -File -Filter *.exe) {
+        $signature = Get-AuthenticodeSignature -FilePath $file.FullName
+        if ($signature.Status -ne 'Valid') {
+            Write-ErrorStep "invalid Authenticode signature on $($file.Name): $($signature.StatusMessage); refusing to install it."
+            exit 1
+        }
+        if ($signature.SignerCertificate.Subject -notmatch 'CN="?Cua AI, Inc\."?') {
+            Write-ErrorStep "unexpected Authenticode signer on $($file.Name): $($signature.SignerCertificate.Subject); refusing to install it."
+            exit 1
+        }
+    }
+    Write-Step "verified the Authenticode signatures of the staged executables"
+}
+
 function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir) {
     # Returns @{ StageDir; Version }. Version can differ from the requested one
     # when a baked version had no downloadable asset and the API named a
@@ -1237,6 +1385,7 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
     $version = $resolvedVersion
     $zipPath = $download.ZipPath
     $zipName = Split-Path -Leaf $zipPath
+    Assert-ReleaseZipIntegrity $zipPath $version
 
     Write-Step "extracting $zipName"
     $extractDir = Join-Path $destDir "extracted"
@@ -1246,7 +1395,7 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
     Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDir -Force
 
     # Directory zip from the CD workflow expands to
-    # cua-driver-rs-<v>-<arch>\cua-driver.exe (+ LICENSE).
+    # cua-driver-rs-<v>-<arch>\cua-driver.exe (+ LICENSE, THIRD_PARTY_NOTICES.md).
     $stage = "cua-driver-rs-$version-$archLabel"
     $stageDir = Join-Path $extractDir $stage
     if (-not (Test-Path -LiteralPath (Join-Path $stageDir $BinaryName))) {
@@ -1254,6 +1403,7 @@ function Get-ReleaseAsset([string]$version, [string]$archLabel, [string]$destDir
         Get-ChildItem $extractDir -Recurse | ForEach-Object { Write-Host "  $($_.FullName)" }
         exit 1
     }
+    Assert-StagedAuthenticode $stageDir $version
     return @{ StageDir = $stageDir; Version = $version }
 }
 

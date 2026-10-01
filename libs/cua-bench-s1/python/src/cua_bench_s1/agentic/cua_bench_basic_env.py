@@ -17,35 +17,22 @@ exactly three things:
 2. episode bookkeeping (step count, action history, terminal/truncated
    flags) and a single real success/failure signal per episode, taken from
    the env's own `@cb.evaluate_task` reward;
-3. a provider override so rollouts can run on cua-bench's own `simulated`
-   (Playwright) provider instead of the bundled envs' declared `native`
-   (Docker/QEMU) provider.
+3. an optional provider override (`provider=`); `None`, the default, keeps
+   what each env declares (`native`).
 
-### Honest note on the `simulated` provider
+### Where episodes run
 
-The bundled envs declare `provider: "native"`. `provider="simulated"` (the
-default here, because it needs no Docker/QEMU/GPU) runs the real pages in
-Playwright. Two real caveats:
-
-1. That provider renders its window-content iframe ~150px tall whatever
-   height the env asked for, clipping most of each page. `reset()` therefore
-   applies `fit_window_layout` by default (`fit_layout=False` to opt out),
-   which resizes the provider's own container iframe -- not the task page --
-   to the size the env requested. Leave it on; with it off, most of each
-   widget UI is neither visible nor clickable.
-2. Even then, only 7 of the 13 envs' own reference solutions can earn reward
-   under `simulated`: `click-button`, `click-icon`, `color-picker`,
-   `right-click-menu`, `spreadsheet-cell`, `toggle-switch` and
-   `typing-input` score 1.0 on every real parameterization, while
-   `date-picker`, `drag-drop`, `fill-form`, `select-dropdown` and
-   `video-player` score 0.0 on every one, and `drag-slider` on 4 of 5 --
-   that provider cannot actuate native `<select>` popups, HTML5
-   drag-and-drop, native date inputs or `<video>` playback. **Reward is
-   effectively unreachable on those six, so do not train on them under
-   `simulated`**: pass `provider="native"` (or `provider=None` to keep
-   whatever the env declares) instead. `oracle_reward_check()` measures this
-   for any env/parameterization you care about rather than making you trust
-   this paragraph.
+cua-bench 0.3 runs every task in a real sandbox: the bundled envs declare
+`provider: "native"` and run in the local Linux container by default (`--on
+cloud` / `CUA_BENCH_ON=cloud` for Fleet). The pages open with
+`session.launch_window`, which needs bench-ui in the image. cua-bench's
+Playwright `simulated` provider was removed in 0.3 (a task that still asks
+for it runs on the Linux container with a deprecation warning), so
+`fit_window_layout`, a workaround for that provider's clipped windows, is off
+by default and a no-op on a real desktop. Numbers measured under `simulated`
+(only 7 of the 13 envs' reference solutions could earn reward there) do not
+carry over; `oracle_reward_check()` measures any env/parameterization on the
+current provider.
 
 ## Minimal usage
 
@@ -59,7 +46,7 @@ async def main():
         "click-button",
         dataset_dir="libs/cua-bench/datasets/cua-bench-basic",
         task_index=0,              # which real tasks_config parameterization
-        provider="simulated",      # or "native" / None
+        provider=None,             # keep the env's own provider (native)
         max_steps=20,
     ) as env:
         obs = await env.reset()            # obs.screenshot: PNG bytes
@@ -130,8 +117,8 @@ ENV_NAMES = (
     "video-player",
 )
 
-#: Envs whose own reference solution does not earn reward under the
-#: `simulated` (Playwright) provider. See the module docstring.
+#: Envs whose own reference solution did not earn reward under cua-bench's
+#: retired `simulated` (Playwright) provider (history; see the module docstring).
 SIMULATED_UNSUPPORTED = (
     "date-picker",
     "drag-drop",
@@ -230,11 +217,11 @@ class CuaBenchBasicEnv:
         *,
         dataset_dir: str | Path | None = None,
         task_index: int = 0,
-        provider: str | None = "simulated",
+        provider: str | None = None,
         split: str = "train",
         max_steps: int = MAX_STEPS,
         headless: bool = True,
-        fit_layout: bool = True,
+        fit_layout: bool = False,
     ) -> None:
         root = Path(dataset_dir) if dataset_dir is not None else _default_dataset_dir()
         self.env_dir = root / env_name if (root / env_name).is_dir() else root
@@ -280,9 +267,8 @@ class CuaBenchBasicEnv:
 
         screenshot, task_cfg = await env.reset(task_id=self.task_index)
         if self.fit_layout:
-            # cua-bench's `simulated` provider renders its window-content
-            # iframe ~150px tall regardless of the size the env asked for,
-            # clipping most of every one of these widget pages. See
+            # Only did something on cua-bench's retired `simulated` provider
+            # (clipped window iframes); a no-op on a real desktop. See
             # `cua_bench_s1.datagen.cua_bench_basic.fit_window_layout`.
             from ..datagen.cua_bench_basic import fit_window_layout
 
@@ -438,7 +424,7 @@ async def rollout(
     policy: Callable[[StepResult], Awaitable[Any]],
     dataset_dir: str | Path | None = None,
     task_index: int = 0,
-    provider: str | None = "simulated",
+    provider: str | None = None,
     split: str = "train",
     max_steps: int = MAX_STEPS,
 ) -> EpisodeResult:
@@ -488,7 +474,7 @@ async def oracle_reward_check(
     *,
     dataset_dir: str | Path | None = None,
     task_index: int = 0,
-    provider: str | None = "simulated",
+    provider: str | None = None,
     split: str = "train",
 ) -> float | None:
     """Real measurement of whether this env's own reference solution actually

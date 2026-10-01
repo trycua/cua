@@ -117,6 +117,20 @@ $ErrorActionPreference = "Stop"
 # over PowerShell ISE and Windows PowerShell 5 — silence it. Restored
 # nowhere on purpose: this script is a one-shot, the user can re-set it.
 $ProgressPreference = "SilentlyContinue"
+# Windows PowerShell 5.1 started from PowerShell 7 (a pwsh terminal, or
+# `cua-driver update --apply` launched from one) inherits pwsh's
+# PSModulePath. Autoload then finds PowerShell 7's Core-only copies of
+# Microsoft.PowerShell.Utility / .Security / .Archive first, fails to load
+# them, and Get-FileHash, Get-AuthenticodeSignature and Expand-Archive are
+# "not recognized". Put this edition's own modules first and drop the
+# PowerShell 7 module paths before any of them is used.
+if ($PSVersionTable.PSEdition -eq 'Desktop') {
+    $desktopModules = Join-Path $PSHOME 'Modules'
+    $modulePaths = @($desktopModules) + @(($env:PSModulePath -split ';') | Where-Object {
+            $_ -and ($_ -notmatch '\\PowerShell\\') -and ($_.TrimEnd('\') -ne $desktopModules.TrimEnd('\'))
+        })
+    $env:PSModulePath = $modulePaths -join ';'
+}
 
 $Repo       = "trycua/cua"
 $TagPrefix  = "cua-driver-rs-v"

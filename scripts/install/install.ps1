@@ -65,6 +65,21 @@ param(
     [switch]$Yes
 )
 
+# Windows PowerShell 5.1 started from PowerShell 7 (a pwsh terminal, or
+# `cua-driver update --apply` launched from one) inherits pwsh's
+# PSModulePath. Autoload then finds PowerShell 7's Core-only copies of
+# Microsoft.PowerShell.Utility / .Security / .Archive first, fails to load
+# them, and Get-FileHash, Get-AuthenticodeSignature and Expand-Archive are
+# "not recognized". Put this edition's own modules first and drop the
+# PowerShell 7 module paths before any of them is used.
+if ($PSVersionTable.PSEdition -eq 'Desktop') {
+    $desktopModules = Join-Path $PSHOME 'Modules'
+    $modulePaths = @($desktopModules) + @(($env:PSModulePath -split ';') | Where-Object {
+            $_ -and ($_ -notmatch '\\PowerShell\\') -and ($_.TrimEnd('\') -ne $desktopModules.TrimEnd('\'))
+        })
+    $env:PSModulePath = $modulePaths -join ';'
+}
+
 $Repo = if ($env:CUA_INSTALL_REPO) { $env:CUA_INSTALL_REPO } else { 'trycua/cua' }
 $BaseUrl = if ($env:CUA_INSTALL_BASE_URL) { $env:CUA_INSTALL_BASE_URL } else { "https://github.com/$Repo/releases/download" }
 $LatestTag = 'cua-install-latest'

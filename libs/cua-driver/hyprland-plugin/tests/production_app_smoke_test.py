@@ -9,11 +9,12 @@ import zipfile
 
 import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 from production_app_smoke import (
-    GroundingUnavailable, check_delivery, create_documents, ground, input_step,
-    kernel_file_identity, launch_arguments, mapped_plugin, package_owner,
+    GroundingUnavailable, OBSERVATION_TIMEOUT_MS, OPEN_OBJECTS_DESCRIPTION, OFFSCREEN_DESCRIPTION, check_delivery,
+    create_documents, ground, inkscape_app_id_tag, input_step, kernel_file_identity,
+    launch_arguments, mapped_plugin, observe, package_owner, prepare_inkscape_objects,
     require_background_target, require_enabled_plugin, run_app, verify_calc, verify_inkscape,
 )
-from proof_fixtures import CALC, INKSCAPE, INKSCAPE_SELECTED, changed_ods
+from proof_fixtures import CALC as CALC_STATE, INKSCAPE_SELECTED, changed_ods
 
 
 TARGET = {'pid': 123, 'window_id': 456}
@@ -21,6 +22,44 @@ GOOD_DELIVERY = {'structuredContent': {'route': 'synthetic_events',
                                       'effect': 'unverifiable',
                                       'delivery': {'mode': 'background'}}}
 WINDOWS = {'structuredContent': {'windows': [TARGET]}}
+
+
+def complete(state):
+    """Mark a fixture as a full walk under the explicit observation budget."""
+    return {**state, 'truncated': False, 'elements_complete': True,
+            'timeout_ms': OBSERVATION_TIMEOUT_MS}
+
+
+def observed(state):
+    return [{'structuredContent': state}, WINDOWS]
+
+
+CALC = complete(CALC_STATE)
+# The pinned closed Edit menu omits its Select All child.
+INKSCAPE = complete({
+    'window_title': 'cua-smoke-inkscape.svg - Inkscape',
+    'elements': [
+        {'element_index': 10, 'role': 'menu', 'label': 'Edit', 'enabled': True},
+        {'element_index': 12, 'role': 'table cell', 'label': 'smoke-rectangle', 'enabled': True,
+         'selected': False}],
+    'tree_markdown': '\n'.join([
+        '  - [10] menu "Edit" [actions=[click]]',
+        '  - [12] table cell "smoke-rectangle" [actions=[activate]]',
+        '  - label = "No objects selected. Click, Shift+click, Alt+scroll mouse on top of '
+        'objects, or drag around objects to select."'])})
+# Objects panel not yet open: only the semantic opener exists.
+INKSCAPE_NO_OBJECTS = complete({
+    'window_title': 'cua-smoke-inkscape.svg - Inkscape',
+    'elements': [
+        {'element_index': 10, 'role': 'menu', 'label': 'Edit', 'enabled': True},
+        {'element_index': 20, 'element_token': 'token-20', 'role': 'button',
+         'label': OPEN_OBJECTS_DESCRIPTION, 'description': OPEN_OBJECTS_DESCRIPTION,
+         'enabled': True, 'actions': ['click']}],
+    'tree_markdown': '\n'.join([
+        '  - [10] menu "Edit" [actions=[click]]',
+        '  - [20] button "Open Objects" [actions=[click]]'])})
+SETUP_CLICK = {'structuredContent': {'route': 'accessibility', 'effect': 'unverifiable',
+                                   'delivery': {'mode': 'background'}}}
 
 
 class FixtureTests(unittest.TestCase):
@@ -174,10 +213,16 @@ class InputTests(unittest.TestCase):
             require_background_target(TARGET, Path('/evidence'))
             read.assert_called_once_with(['hyprctl', '-j', 'activewindow'])
 
-    def test_inkscape_launch_uses_supported_positional_document(self):
-        self.assertEqual(launch_arguments('inkscape', Path('/docs/smoke.svg'), Path('/evidence')),
-                         {'launch_path': '/usr/bin/inkscape',
-                          'additional_arguments': ['/docs/smoke.svg']})
+    def test_inkscape_launch_uses_run_unique_app_id_tag_and_positional_document(self):
+        launch = launch_arguments('inkscape', Path('/docs/smoke.svg'), Path('/evidence/a/inkscape'))
+        tag = inkscape_app_id_tag(Path('/evidence/a/inkscape'))
+        self.assertRegex(tag, r'^cua-smoke-[0-9a-f]{16}$')
+        self.assertEqual(launch, {'launch_path': '/usr/bin/inkscape',
+                                  'additional_arguments': [f'--app-id-tag={tag}', '/docs/smoke.svg']})
+        self.assertNotEqual(tag, inkscape_app_id_tag(Path('/evidence/b/inkscape')))
+        self.assertTrue(all('app-id-tag' not in word for word in
+                            launch_arguments('calc', Path('/docs/a.ods'), Path('/evidence/calc'))
+                            ['additional_arguments']))
 
     def test_calc_formula_name_field_requires_matching_toolbar_and_rows(self):
         state = {'elements': [
@@ -212,15 +257,19 @@ class InputTests(unittest.TestCase):
 
     def test_inkscape_requires_document_command_and_exact_initial_status(self):
         ground(INKSCAPE, 'inkscape', 'select')
+        # A closed menu has no Select All child; an open one with it still grounds.
+        ground({**INKSCAPE, 'elements': INKSCAPE['elements'] + [
+            {'element_index': 11, 'parent_index': 10, 'role': 'menu item',
+             'label': 'Select All', 'enabled': True}]}, 'inkscape', 'select')
         for index, replacement in [(0, {'role': 'label'}), (0, {'enabled': False}),
-                                   (1, {'parent_index': 99}), (1, {'enabled': False}),
-                                   (1, {'label': 'Select All in All Layers'}),
-                                   (2, {'label': 'other-rectangle'}), (2, {'role': 'label'})]:
+                                   (0, {'label': 'File'}),
+                                   (1, {'label': 'other-rectangle'}), (1, {'role': 'label'}),
+                                   (1, {'enabled': False}), (1, {'selected': True})]:
             bad = copy.deepcopy(INKSCAPE)
             bad['elements'][index].update(replacement)
             with self.subTest(index=index, replacement=replacement), self.assertRaises(GroundingUnavailable):
                 ground(bad, 'inkscape', 'select')
-        for old, new in [('[10]', '[99]'), ('[11]', '[99]'), ('[12]', '[99]'),
+        for old, new in [('[10]', '[99]'), ('[12]', '[99]'),
                          ('No objects selected.', '1 object selected.'), ('- label =', '- button =')]:
             with self.subTest(old=old), self.assertRaises(GroundingUnavailable):
                 ground({**INKSCAPE, 'tree_markdown': INKSCAPE['tree_markdown'].replace(old, new)},
@@ -292,6 +341,32 @@ class InputTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in calls],
                          ['get_window_state', 'list_windows', 'type_text', 'get_window_state', 'list_windows'])
         self.assertEqual(calls[2].args[1], {**TARGET, 'text': 'abc', 'delivery_mode': 'background'})
+        for call in (calls[0], calls[3]):
+            self.assertEqual(call.args[1], {**TARGET, 'timeout_ms': OBSERVATION_TIMEOUT_MS})
+        self.assertEqual(OBSERVATION_TIMEOUT_MS, 15000)
+
+    def test_truncated_or_unproven_tree_sends_no_input(self):
+        for change in ({'truncated': True}, {'elements_complete': False}, {'degraded': True},
+                       {'timeout_ms': 1000}, {'truncated': None}, {'timeout_ms': None}):
+            mcp = Mock()
+            mcp.tool.side_effect = observed({**CALC, **change})
+            with self.subTest(change=change), self.assertRaisesRegex(GroundingUnavailable, 'not proven complete'):
+                input_step(mcp, TARGET, 'cua-smoke-calc.ods', 'calc', 'insert', 'type_text', {'text': 'abc'})
+            self.assertEqual([call.args[0] for call in mcp.tool.call_args_list], ['get_window_state'])
+        for missing in ('truncated', 'elements_complete', 'timeout_ms'):
+            state = {key: value for key, value in CALC.items() if key != missing}
+            mcp = Mock()
+            mcp.tool.side_effect = observed(state)
+            with self.subTest(missing=missing), self.assertRaises(GroundingUnavailable):
+                input_step(mcp, TARGET, 'cua-smoke-calc.ods', 'calc', 'insert', 'type_text', {'text': 'abc'})
+            self.assertEqual(mcp.tool.call_count, 1)
+
+    def test_truncated_tree_after_input_still_fails_delivery_check_first(self):
+        mcp = Mock()
+        partial = {'structuredContent': {**GOOD_DELIVERY['structuredContent'], 'effect': 'partial'}}
+        mcp.tool.side_effect = [*observed(CALC), partial, *observed({**CALC, 'truncated': True})]
+        with self.assertRaisesRegex(AssertionError, 'partial/refused input cannot pass'):
+            input_step(mcp, TARGET, 'cua-smoke-calc.ods', 'calc', 'insert', 'type_text', {'text': 'abc'})
 
     def test_missing_grounding_sends_no_input(self):
         mcp = Mock()
@@ -317,6 +392,166 @@ class InputTests(unittest.TestCase):
             with self.assertRaises(TimeoutError):
                 input_step(mcp, TARGET, 'cua-smoke-calc.ods', 'calc', 'insert', 'type_text', {'text': 'abc'})
         self.assertEqual(mcp.tool.call_count, 3)
+
+
+class ObjectsSetupTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.directory = Path(self.temp.name).resolve()
+
+    def prepare(self, side_effect):
+        mcp = Mock()
+        mcp.directory = self.directory
+        mcp.tool.side_effect = side_effect
+        return mcp, lambda: prepare_inkscape_objects(mcp, TARGET, 'cua-smoke-inkscape.svg', self.directory)
+
+    @staticmethod
+    def names(mcp):
+        return [call.args[0] for call in mcp.tool.call_args_list]
+
+    def test_existing_object_needs_no_setup_click(self):
+        mcp, run = self.prepare(observed(INKSCAPE))
+        self.assertEqual(run(), {'performed': False})
+        self.assertEqual(self.names(mcp), ['get_window_state', 'list_windows'])
+
+    def test_missing_object_uses_one_semantic_background_click_then_fresh_verification(self):
+        mcp, run = self.prepare([*observed(INKSCAPE_NO_OBJECTS), SETUP_CLICK, *observed(INKSCAPE)])
+        setup = run()
+        self.assertEqual(self.names(mcp), ['get_window_state', 'list_windows', 'click',
+                                           'get_window_state', 'list_windows'])
+        self.assertEqual(mcp.tool.call_args_list[2].args[1],
+                         {**TARGET, 'element_token': 'token-20', 'delivery_mode': 'background'})
+        self.assertEqual((setup['kind'], setup['plugin_input_proof'], setup['performed']),
+                         ('accessibility_setup', False, True))
+        self.assertTrue((self.directory / 'objects-panel-setup.json').is_file())
+
+    def test_ungrounded_opener_sends_nothing(self):
+        def mutate(**change):
+            state = copy.deepcopy(INKSCAPE_NO_OBJECTS)
+            state['elements'][1].update(change)
+            return state
+        duplicate = copy.deepcopy(INKSCAPE_NO_OBJECTS)
+        duplicate['elements'].append({**duplicate['elements'][1], 'element_index': 21})
+        cases = [mutate(description='Open Objects'), mutate(description=OPEN_OBJECTS_DESCRIPTION + ' '),
+                 mutate(role='menu item'), mutate(enabled=False), mutate(actions=[]),
+                 mutate(element_token=''), mutate(element_index=99), duplicate]
+        cases.append({**INKSCAPE_NO_OBJECTS, 'elements': INKSCAPE_NO_OBJECTS['elements'][:1]})
+        cases.append({**INKSCAPE_NO_OBJECTS, 'tree_markdown': INKSCAPE_NO_OBJECTS['tree_markdown'].replace(
+            'button', 'label')})
+        for state in cases:
+            mcp, run = self.prepare(observed(state))
+            with self.subTest(state=state), self.assertRaises(GroundingUnavailable):
+                run()
+            self.assertEqual(self.names(mcp), ['get_window_state', 'list_windows'])
+
+    def test_exact_offscreen_annotation_allows_semantic_setup(self):
+        state = copy.deepcopy(INKSCAPE_NO_OBJECTS)
+        state['elements'][1]['description'] += OFFSCREEN_DESCRIPTION
+        mcp, run = self.prepare([*observed(state), SETUP_CLICK, *observed(INKSCAPE)])
+        self.assertTrue(run()['performed'])
+        self.assertEqual(self.names(mcp).count('click'), 1)
+
+    def test_setup_refuses_incomplete_or_nonsemantic_delivery(self):
+        for change in ({'effect': 'partial'}, {'effect': 'refused'}, {'effect': 'unknown'},
+                       {'route': 'synthetic_events'}, {'delivery': None},
+                       {'delivery': {'mode': 'unknown'}}):
+            response = {'structuredContent': {**SETUP_CLICK['structuredContent'], **change}}
+            mcp, run = self.prepare([*observed(INKSCAPE_NO_OBJECTS), response])
+            with self.subTest(change=change), self.assertRaises(AssertionError):
+                run()
+            self.assertEqual(self.names(mcp).count('click'), 1)
+
+    def test_setup_requires_complete_tree_single_window_and_no_dialog(self):
+        mcp, run = self.prepare(observed({**INKSCAPE_NO_OBJECTS, 'truncated': True}))
+        with self.assertRaisesRegex(GroundingUnavailable, 'not proven complete'):
+            run()
+        self.assertEqual(self.names(mcp), ['get_window_state'])
+        extra = {'structuredContent': {'windows': [TARGET, {'pid': 123, 'window_id': 789}]}}
+        mcp, run = self.prepare([{'structuredContent': INKSCAPE_NO_OBJECTS}, extra])
+        with self.assertRaisesRegex(GroundingUnavailable, 'extra app window'):
+            run()
+        self.assertNotIn('click', self.names(mcp))
+        dialog = {**INKSCAPE_NO_OBJECTS,
+                  'elements': INKSCAPE_NO_OBJECTS['elements'] + [{'role': 'dialog'}]}
+        mcp, run = self.prepare(observed(dialog))
+        with self.assertRaisesRegex(GroundingUnavailable, 'unexpected dialog'):
+            run()
+        self.assertNotIn('click', self.names(mcp))
+
+    def test_ambiguous_or_disabled_existing_object_is_not_setup(self):
+        for rows in ([INKSCAPE['elements'][1], {**INKSCAPE['elements'][1], 'element_index': 13}],
+                     [{**INKSCAPE['elements'][1], 'enabled': False}]):
+            mcp, run = self.prepare(observed({**INKSCAPE, 'elements': rows}))
+            with self.assertRaisesRegex(GroundingUnavailable, 'ambiguous or disabled'):
+                run()
+            self.assertEqual(self.names(mcp), ['get_window_state', 'list_windows'])
+
+    def test_click_result_must_be_background_and_never_retried(self):
+        for response in ({'structuredContent': {'delivery': {'mode': 'foreground'}}},
+                         {'isError': True, 'structuredContent': {}}):
+            mcp, run = self.prepare([*observed(INKSCAPE_NO_OBJECTS), response])
+            with self.assertRaises(AssertionError):
+                run()
+            self.assertEqual(self.names(mcp).count('click'), 1)
+        mcp, run = self.prepare([*observed(INKSCAPE_NO_OBJECTS), TimeoutError('unknown')])
+        with patch('production_app_smoke.read', side_effect=OSError('unavailable')), \
+                self.assertRaises(TimeoutError):
+            run()
+        self.assertEqual(self.names(mcp).count('click'), 1)
+        self.assertEqual(mcp.tool.call_count, 3)
+
+    def test_unverified_result_after_click_fails_closed(self):
+        duplicate = {**INKSCAPE, 'elements': INKSCAPE['elements'] + [
+            {**INKSCAPE['elements'][1], 'element_index': 13}]}
+        for after in (INKSCAPE_NO_OBJECTS, duplicate, {**INKSCAPE, 'truncated': True},
+                      {**INKSCAPE, 'elements': [{**INKSCAPE['elements'][1], 'enabled': False}]}):
+            mcp, run = self.prepare([*observed(INKSCAPE_NO_OBJECTS), SETUP_CLICK, *observed(after)])
+            with self.subTest(after=after), self.assertRaises(GroundingUnavailable):
+                run()
+            self.assertEqual(self.names(mcp).count('click'), 1)
+            self.assertNotIn('hotkey', self.names(mcp))
+
+    def test_inkscape_run_sets_up_before_raw_input_and_marks_it_not_plugin_proof(self):
+        document = create_documents(self.directory, 'inkscape-only')['inkscape']
+        mcp = Mock()
+        mcp.directory = self.directory
+        mcp.tool.side_effect = [{'structuredContent': {}},
+                                *observed(INKSCAPE_NO_OBJECTS), SETUP_CLICK, *observed(INKSCAPE),
+                                *observed(INKSCAPE), TimeoutError('unknown hotkey')]
+        with patch('production_app_smoke.Path.iterdir', return_value=iter([])), \
+                patch('production_app_smoke.discover', return_value=(TARGET, {})) as discover, \
+                patch('production_app_smoke.read', return_value='{"pid": 999}'), \
+                self.assertRaises(TimeoutError):
+            run_app(mcp, 'inkscape', document, self.directory)
+        self.assertEqual(self.names(mcp), ['launch_app', 'get_window_state', 'list_windows', 'click',
+                                           'get_window_state', 'list_windows',
+                                           'get_window_state', 'list_windows', 'hotkey'])
+        tag = inkscape_app_id_tag(self.directory)
+        launch = mcp.tool.call_args_list[0].args[1]
+        self.assertEqual(launch['additional_arguments'], [f'--app-id-tag={tag}', str(document)])
+        self.assertEqual(discover.call_args.args[4], [f'--app-id-tag={tag}'])
+        self.assertEqual(mcp.tool.call_args_list[8].args[1],
+                         {**TARGET, 'keys': ['ctrl', 'a'], 'delivery_mode': 'background'})
+
+    def test_calc_run_has_no_setup_click(self):
+        document = create_documents(self.directory)['calc']
+        mcp = Mock()
+        mcp.directory = self.directory
+        mcp.tool.side_effect = [{'structuredContent': {}}, *observed(CALC), TimeoutError('unknown')]
+        with patch('production_app_smoke.Path.iterdir', return_value=iter([])), \
+                patch('production_app_smoke.discover', return_value=(TARGET, {})), \
+                patch('production_app_smoke.read', return_value='{"pid": 999}'), \
+                self.assertRaises(TimeoutError):
+            run_app(mcp, 'calc', document, self.directory)
+        self.assertNotIn('click', self.names(mcp))
+
+    def test_observation_helper_requests_explicit_budget(self):
+        mcp = Mock()
+        mcp.tool.side_effect = observed(INKSCAPE)
+        observe(mcp, TARGET, 'cua-smoke-inkscape.svg')
+        self.assertEqual(mcp.tool.call_args_list[0].args,
+                         ('get_window_state', {**TARGET, 'timeout_ms': 15000}))
 
 
 if __name__ == '__main__':

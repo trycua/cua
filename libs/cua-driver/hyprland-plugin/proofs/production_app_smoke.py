@@ -33,6 +33,10 @@ NS = {'office': 'urn:oasis:names:tc:opendocument:xmlns:office:1.0',
       'table': 'urn:oasis:names:tc:opendocument:xmlns:table:1.0',
       'text': 'urn:oasis:names:tc:opendocument:xmlns:text:1.0',
       'svg': 'http://www.w3.org/2000/svg'}
+# Default 1000 ms truncates the pinned Inkscape tree; a full walk took ~2.2 s.
+OBSERVATION_TIMEOUT_MS = 15000
+OPEN_OBJECTS_DESCRIPTION = 'Open Objects\nView Objects (Shift+Ctrl+L)'
+OFFSCREEN_DESCRIPTION = '; off-screen: scroll it into view before a pixel action; element actions still reach it'
 LIMITS = {'cursor_isolation': False, 'concurrency': False,
           'plugin_transport_attribution': False,
           'all_operations': False, 'full_desktop_matrix': False}
@@ -383,23 +387,39 @@ def calc_formula_selection(snapshot, elements, expected='A1'):
                     for row in elements))
 
 
+def inkscape_objects(elements):
+    return [row for row in elements if row.get('role') == 'table cell'
+            and row.get('label') == 'smoke-rectangle' and row.get('enabled') is True]
+
+
+def open_objects_button(elements, lines):
+    """The one exactly described, enabled, actionable Open Objects button."""
+    descriptions = (OPEN_OBJECTS_DESCRIPTION, OPEN_OBJECTS_DESCRIPTION + OFFSCREEN_DESCRIPTION)
+    described = [row for row in elements if row.get('description') in descriptions]
+    if len(described) != 1:
+        return None
+    button = described[0]
+    index = button.get('element_index')
+    if (button.get('role') != 'button' or button.get('enabled') is not True
+            or type(index) is not int or not button.get('actions')
+            or not isinstance(button.get('element_token'), str) or not button['element_token']
+            or sum(line.startswith(f'- [{index}] button ') for line in lines) != 1):
+        return None
+    return button
+
+
 def inkscape_selection_command(snapshot, elements):
     """Ground Ctrl+A in the pinned document UI, which exposes no canvas role.
 
     The non-actionable selection status exists only in tree_markdown. Require
-    the exact initial status, the fixture's object row, and Edit > Select All
-    in both projections; a label mentioning a canvas is not evidence.
+    the exact initial status, the fixture's unselected object row, and the Edit
+    menu in both projections. A closed menu omits its children, so Select All
+    is not required; a label mentioning a canvas is not evidence.
     """
     menus = [row for row in elements if row.get('role') == 'menu'
              and row.get('label') == 'Edit' and row.get('enabled') is True]
-    objects = [row for row in elements if row.get('role') == 'table cell'
-               and row.get('label') == 'smoke-rectangle' and row.get('enabled') is True]
-    if len(menus) != 1 or len(objects) != 1:
-        return False
-    commands = [row for row in elements if row.get('role') == 'menu item'
-                and row.get('label') == 'Select All' and row.get('enabled') is True
-                and row.get('parent_index') == menus[0].get('element_index')]
-    if len(commands) != 1:
+    objects = inkscape_objects(elements)
+    if len(menus) != 1 or len(objects) != 1 or objects[0].get('selected') is True:
         return False
     lines = [line.strip() for line in snapshot.get('tree_markdown', '').splitlines()]
     status = ('- label = "No objects selected. Click, Shift+click, Alt+scroll mouse '
@@ -407,7 +427,7 @@ def inkscape_selection_command(snapshot, elements):
     return lines.count(status) == 1 and all(
         sum(line.startswith(f'- [{row.get("element_index")}] {row["role"]} "{row["label"]}" ')
             for line in lines) == 1
-        for row in (menus[0], objects[0], commands[0]))
+        for row in (menus[0], objects[0]))
 
 
 def inkscape_selected_rectangle(snapshot, elements):
@@ -423,8 +443,7 @@ def inkscape_selected_rectangle(snapshot, elements):
               'scale/rotation handles."')
     if lines.count(status) != 1 or any('No objects selected.' in line for line in lines):
         return False
-    objects = [row for row in elements if row.get('role') == 'table cell'
-               and row.get('label') == 'smoke-rectangle' and row.get('enabled') is True]
+    objects = inkscape_objects(elements)
     if len(objects) != 1 or sum(line.startswith(
             f'- [{objects[0].get("element_index")}] table cell "smoke-rectangle" ')
             for line in lines) != 1:
@@ -461,15 +480,80 @@ def ground(snapshot, app, stage):
                 raise GroundingUnavailable('cannot prove the single rectangle is selected before Right')
 
 
-def snapshot(mcp, target, filename, app, stage):
-    result = content(mcp.tool('get_window_state', target))
+def require_complete(state):
+    """A truncated, degraded or unreported tree cannot authorize any action."""
+    if (state.get('truncated') is not False or state.get('elements_complete') is not True
+            or state.get('degraded') or state.get('timeout_ms') != OBSERVATION_TIMEOUT_MS):
+        raise GroundingUnavailable('accessibility tree is truncated, degraded or not proven complete')
+
+
+def observe(mcp, target, filename):
+    """One complete, single-window observation with no stage grounding."""
+    result = content(mcp.tool('get_window_state', {**target, 'timeout_ms': OBSERVATION_TIMEOUT_MS}))
     assert filename in result.get('window_title', ''), 'snapshot is not the synthetic document'
+    require_complete(result)
     windows = content(mcp.tool('list_windows', {}))['windows']
     owned = [row for row in windows if row.get('pid') == target['pid']]
     if len(owned) != 1 or owned[0]['window_id'] != target['window_id']:
         raise GroundingUnavailable('extra app window or dialog; inspect fresh snapshot and window list')
+    rows(result)
+    return result
+
+
+def snapshot(mcp, target, filename, app, stage):
+    result = observe(mcp, target, filename)
     ground(result, app, stage)
     return result
+
+
+def retain_unknown_outcome(mcp):
+    # DirectMCP forbids all RPC after an unknown result, including a snapshot.
+    # A best-effort compositor observation retains state without replaying input.
+    try:
+        save_json(mcp.directory, 'unknown-outcome-windows.json',
+                  json.loads(read(['hyprctl', '-j', 'clients'])))
+    except Exception:
+        pass
+
+
+def prepare_inkscape_objects(mcp, target, filename, directory):
+    """Open the Objects panel semantically only when the fixture row is absent.
+
+    This is accessibility setup, not plugin input proof: it never counts toward
+    the raw-input stages. The result is checked from a fresh observation before
+    any raw key is sent, and the click is never retried.
+    """
+    before = observe(mcp, target, filename)
+    elements = before['elements']
+    named = [row for row in elements if row.get('label') == 'smoke-rectangle']
+    if named:
+        if len(named) != 1 or len(inkscape_objects(elements)) != 1:
+            raise GroundingUnavailable('ambiguous or disabled smoke-rectangle object row')
+        return {'performed': False}
+    lines = [line.strip() for line in before.get('tree_markdown', '').splitlines()]
+    button = open_objects_button(elements, lines)
+    if button is None:
+        raise GroundingUnavailable('Objects panel absent and Open Objects button is not exactly grounded')
+    try:
+        response = mcp.tool('click', {**target, 'element_token': button['element_token'],
+                                      'delivery_mode': 'background'})
+    except BaseException:
+        retain_unknown_outcome(mcp)
+        raise
+    value = content(response)
+    delivery = value.get('delivery')
+    assert value.get('route') == 'accessibility', 'setup click did not use accessibility'
+    assert value.get('effect') in ('confirmed', 'unverifiable'), 'partial/refused setup cannot pass'
+    assert isinstance(delivery, dict) and delivery.get('mode') == 'background', 'setup click was not background'
+    after = observe(mcp, target, filename)
+    named = [row for row in after['elements'] if row.get('label') == 'smoke-rectangle']
+    if len(named) != 1 or len(inkscape_objects(after['elements'])) != 1:
+        raise GroundingUnavailable('Objects panel did not expose exactly one smoke-rectangle row')
+    setup = {'performed': True, 'kind': 'accessibility_setup', 'plugin_input_proof': False,
+             'action': 'click Open Objects button', 'element_index': button['element_index'],
+             'delivery': delivery}
+    save_json(directory, 'objects-panel-setup.json', setup)
+    return setup
 
 
 def input_step(mcp, target, filename, app, stage, tool, arguments):
@@ -477,13 +561,7 @@ def input_step(mcp, target, filename, app, stage, tool, arguments):
     try:
         response = mcp.tool(tool, {**target, **arguments, 'delivery_mode': 'background'})
     except BaseException:
-        # DirectMCP forbids all RPC after an unknown result, including a snapshot.
-        # A best-effort compositor observation retains state without replaying input.
-        try:
-            save_json(mcp.directory, 'unknown-outcome-windows.json',
-                      json.loads(read(['hyprctl', '-j', 'clients'])))
-        except Exception:
-            pass
+        retain_unknown_outcome(mcp)
         raise
     try:
         snapshot(mcp, target, filename, app, 'after')
@@ -492,7 +570,7 @@ def input_step(mcp, target, filename, app, stage, tool, arguments):
         check_delivery(response)
 
 
-def discover(mcp, app, document, old_pids):
+def discover(mcp, app, document, old_pids, arguments=()):
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         windows = content(mcp.tool('list_windows', {}))['windows']
@@ -504,8 +582,10 @@ def discover(mcp, app, document, old_pids):
             pid = window['pid']
             executable = Path(f'/proc/{pid}/exe').resolve(strict=True)
             assert executable == EXECUTABLES[app].resolve(strict=True), 'noncanonical running executable'
-            assert str(document).encode() in Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0'), \
-                'running process is not bound to the new document'
+            argv = Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0')
+            assert str(document).encode() in argv, 'running process is not bound to the new document'
+            assert all(argument.encode() in argv for argument in arguments), \
+                'running process is not bound to its independent launch arguments'
             clients = json.loads(read(['hyprctl', '-j', 'clients']))
             native = [row for row in clients if row.get('pid') == pid]
             assert len(native) == 1 and native[0].get('xwayland') is False, 'not one native Wayland app window'
@@ -527,10 +607,15 @@ def discover(mcp, app, document, old_pids):
         try:
             executable = Path(f'/proc/{pid}/exe').resolve(strict=True)
             if executable == EXECUTABLES[app].resolve(strict=True):
-                mcp.tool('get_window_state', {key: window[key] for key in ('pid', 'window_id')})
+                mcp.tool('get_window_state', {**{key: window[key] for key in ('pid', 'window_id')},
+                                              'timeout_ms': OBSERVATION_TIMEOUT_MS})
         except OSError:
             continue
     raise GroundingUnavailable('launched document window not discovered; inspect launch and window evidence')
+
+
+def inkscape_app_id_tag(directory):
+    return 'cua-smoke-' + hashlib.sha256(str(Path(directory).resolve()).encode()).hexdigest()[:16]
 
 
 def launch_arguments(app, document, directory):
@@ -540,9 +625,11 @@ def launch_arguments(app, document, directory):
         launch['additional_arguments'] = [f'-env:UserInstallation={(directory / "calc-profile").as_uri()}',
                                            '--norestore', '--nologo', '--calc', str(document)]
     else:
-        # Inkscape 1.4.4 accepts positional documents, not --new-instance.
-        # discover() still requires a new PID, exact executable and document.
-        launch['additional_arguments'] = [str(document)]
+        # Inkscape 1.4.4 accepts positional documents, not --new-instance. A
+        # run-unique --app-id-tag keeps D-Bus from handing the document to a
+        # retained earlier process; discover() still requires a new PID,
+        # exact executable, tag and document.
+        launch['additional_arguments'] = [f'--app-id-tag={inkscape_app_id_tag(directory)}', str(document)]
     return launch
 
 
@@ -564,11 +651,14 @@ def run_app(mcp, app, document, directory):
     old_pids = {int(path.name) for path in Path('/proc').iterdir() if path.name.isdigit()}
     before = document.read_bytes()
     (directory / ('before' + document.suffix)).write_bytes(before)
-    content(mcp.tool('launch_app', launch_arguments(app, document, directory)))
-    target, identity = discover(mcp, app, document, old_pids)
+    launch = launch_arguments(app, document, directory)
+    content(mcp.tool('launch_app', launch))
+    target, identity = discover(mcp, app, document, old_pids,
+                                launch['additional_arguments'][:-1] if app == 'inkscape' else ())
     save_json(directory, 'target.json', identity)
     try:
         require_background_target(target, directory)
+        setup = prepare_inkscape_objects(mcp, target, document.name, directory) if app == 'inkscape' else None
         if app == 'calc':
             steps = [('insert', 'type_text', {'text': 'abc'}),
                      ('commit', 'press_key', {'key': 'Return'}),
@@ -591,7 +681,8 @@ def run_app(mcp, app, document, directory):
                     raise
                 time.sleep(0.1)
         snapshot(mcp, target, document.name, app, 'saved')
-        return {'result': 'passed', 'target': target, 'saved_document': result}
+        return {'result': 'passed', 'target': target, 'saved_document': result,
+                **({'setup': setup} if setup is not None else {})}
     finally:
         if document.exists():
             (directory / ('after' + document.suffix)).write_bytes(document.read_bytes())

@@ -229,6 +229,7 @@ class QEMUBaremetalRuntime(Runtime):
         arch: str = "x86_64",
         qmp_port: int = 4444,
         use_qmp_transport: bool = False,
+        network_restrict: bool = True,
         extra_args: Optional[list[str]] = None,
     ):
         self.api_port = api_port
@@ -238,6 +239,7 @@ class QEMUBaremetalRuntime(Runtime):
         self.arch = arch
         self.qmp_port = qmp_port
         self.use_qmp_transport = use_qmp_transport
+        self.network_restrict = network_restrict
         self.extra_args = extra_args or []
         self._processes: dict[str, subprocess.Popen] = {}
 
@@ -390,11 +392,12 @@ class QEMUBaremetalRuntime(Runtime):
                     f"if=pflash,format=raw,file={efivars}",
                 ]
 
+            network_restrict = "on" if self.network_restrict else "off"
             cmd += [
                 "-drive",
                 f"file={disk_path},format={disk_fmt},if=virtio",
                 "-netdev",
-                f"user,id=net0,restrict=on,"
+                f"user,id=net0,restrict={network_restrict},"
                 f"hostfwd=tcp:127.0.0.1:{hostfwd_port}-:{guest_port}{extra_hostfwd}",
                 "-device",
                 "virtio-net-pci,netdev=net0,mac=52:55:00:d1:55:01",
@@ -488,6 +491,7 @@ class QEMUBaremetalRuntime(Runtime):
                 memory_mb=memory,
                 cpu_count=cpus,
                 arch=self.arch,
+                network_restrict=self.network_restrict,
                 status="running",
             )
 
@@ -727,12 +731,13 @@ class QEMUBaremetalRuntime(Runtime):
             disk_ext, "raw"
         )
         guest_port = 8000
+        network_restrict = "on" if state.get("network_restrict", self.network_restrict) else "off"
 
         cmd += [
             "-drive",
             f"file={disk_path},format={disk_fmt},if=virtio",
             "-netdev",
-            f"user,id=net0,restrict=on,hostfwd=tcp:127.0.0.1:{api_port}-:{guest_port}",
+            f"user,id=net0,restrict={network_restrict},hostfwd=tcp:127.0.0.1:{api_port}-:{guest_port}",
             "-device",
             "virtio-net-pci,netdev=net0,mac=52:55:00:d1:55:01",
             "-vnc",

@@ -1572,9 +1572,16 @@ mod tests {
         assert_eq!(off.actions[0].id, HostActionId::SetUp);
         // Before setup the page explains itself and shows the form's two
         // choices inline.
-        assert!(off.intro.as_deref().is_some_and(|t| !t.contains('\u{2014}')));
+        assert!(
+            off.intro
+                .as_deref()
+                .is_some_and(|t| !t.contains('\u{2014}'))
+        );
         assert_eq!(
-            off.setup_choices.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            off.setup_choices
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
             ["desktop", "spare"]
         );
         let on = panel(Some(&HostState {

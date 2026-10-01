@@ -1263,22 +1263,6 @@ Write-Step "cua-driver-rs installer (Windows)"
 Write-Step "  install dir : $VisibleBinDir"
 Write-Step "  package home: $HomeDir"
 
-function Get-AncestorProcessIds {
-    # PIDs of this process and its ancestors, so cleanup never kills the caller.
-    # `cua-driver update --apply` runs the installer as a child of cua-driver.exe.
-    $ids = @()
-    $seen = @{}
-    $currentPid = $PID
-    while ($currentPid -and -not $seen.ContainsKey([int]$currentPid)) {
-        $seen[[int]$currentPid] = $true
-        $ids += $currentPid
-        $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$currentPid" -ErrorAction SilentlyContinue
-        if (-not $proc -or -not $proc.ParentProcessId) { break }
-        $currentPid = $proc.ParentProcessId
-    }
-    return $ids
-}
-
 function Remove-LegacyInstall {
     # Best-effort cleanup of v0.2.13-and-earlier install paths. Runs before
     # any new install when default paths are in use (so users who override
@@ -1301,54 +1285,16 @@ function Remove-LegacyInstall {
 
     Write-Step "detected legacy install layout (v0.2.13 or earlier); migrating to Cua\cua-driver"
 
-    # 1. End the running daemon. Order matters:
-    #
-    #    a. `schtasks /End` first — Task Scheduler runs as SYSTEM and can
-    #       terminate elevated (RunLevel=Highest, High IL) processes that a
-    #       Medium-IL Stop-Process from the user's shell cannot. This is
-    #       the case any time the legacy daemon was spawned via the
-    #       AtLogon trigger of the v0.2.13 autostart task on a non-RID-500
-    #       admin account (e.g. cuademo). Without this, Step 4 below fails
-    #       with "Access to the path 'cua-driver.exe' is denied" because
-    #       the legacy binary is held open by an unkillable elevated
-    #       process. Discovered during the cuademo v0.2.13 → v0.2.14
-    #       migration dogfood.
-    #    b. taskkill /F /IM as a backstop for any cua-driver process that
-    #       wasn't task-attached (manual `cua-driver serve`, legacy uia
-    #       worker, etc.). taskkill is more permissive than Stop-Process
-    #       for cross-IL termination.
-    #    c. Stop-Process last — catches anything taskkill missed.
-    $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    # Never kill the process tree we are running inside: when the installer is
-    # launched by `cua-driver update --apply`, our own parent IS a cua-driver.exe,
-    # and an unfiltered kill terminates the update mid-flight (the script dies
-    # right after the step banner above). Both cleanup passes below skip these.
-    $ancestorPids = @(Get-AncestorProcessIds)
-    try {
-        # Ends the running task instance. Returns non-zero when the task
-        # isn't running or doesn't exist, both of which we swallow.
-        & schtasks.exe /End /TN "cua-driver-serve" 2>$null | Out-Null
-        Start-Sleep -Milliseconds 250
-        # Force-kill via taskkill — handles High-IL processes that
-        # Stop-Process can't touch from a Medium-IL caller.
-        $selfFilters = @()
-        foreach ($ancestorPid in $ancestorPids) {
-            $selfFilters += '/FI'
-            $selfFilters += "PID ne $ancestorPid"
-        }
-        & taskkill.exe /F /IM "cua-driver.exe" /T @selfFilters 2>$null | Out-Null
-        & taskkill.exe /F /IM "cua-driver-uia.exe" /T @selfFilters 2>$null | Out-Null
-    } finally {
-        $ErrorActionPreference = $prevEAP
-    }
-    $procs = Get-Process -Name "cua-driver","cua-driver-uia" -ErrorAction SilentlyContinue
-    if ($procs) {
-        foreach ($p in $procs) {
-            if ($ancestorPids -contains $p.Id) { continue }
-            try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
-        }
-    }
+    # 1. End the running daemon through the shared cleanup in
+    #    _install-common.psm1. Its `schtasks /End` terminates elevated
+    #    (RunLevel=Highest, High IL) daemons that a Medium-IL kill cannot.
+    #    Without this, Step 4 below fails with "Access to the path
+    #    'cua-driver.exe' is denied" because the legacy binary is held open
+    #    by an unkillable elevated process (found in the cuademo v0.2.13 ->
+    #    v0.2.14 migration dogfood). It never stops this installer's own
+    #    process tree: `cua-driver update --apply` launches the installer
+    #    from a cua-driver.exe and waits for it (#2803).
+    $null = Stop-CuaDriverDaemons
     Start-Sleep -Milliseconds 500
 
     # 2. Unregister the autostart Scheduled Task if present. Idempotent —

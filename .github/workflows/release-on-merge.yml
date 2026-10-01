@@ -55,7 +55,7 @@ jobs:
                   )
               ]
               | last
-              | .event == "labeled" and .actor.login == "f-trycua"
+              | .event == "labeled" and (.actor.login == "f-trycua" or .actor.login == "ddupont808")
             ' <<< "$LABEL_EVENTS" > /dev/null
           }
 
@@ -63,13 +63,13 @@ jobs:
           BUMP_TYPE="patch"
           if echo "$LABELS" | grep -q '"bump:major"'; then
             if ! label_was_applied_by_release_owner "bump:major"; then
-              echo "::warning::bump:major was not applied by f-trycua; skipping auto-release."
+              echo "::warning::bump:major was not applied by a release owner; skipping auto-release."
               exit 0
             fi
             BUMP_TYPE="major"
           elif echo "$LABELS" | grep -q '"bump:minor"'; then
             if ! label_was_applied_by_release_owner "bump:minor"; then
-              echo "::warning::bump:minor was not applied by f-trycua; skipping auto-release."
+              echo "::warning::bump:minor was not applied by a release owner; skipping auto-release."
               exit 0
             fi
             BUMP_TYPE="minor"
@@ -129,7 +129,7 @@ jobs:
               if label_was_applied_by_release_owner "$release_label"; then
                 LABELED+=("$svc")
               else
-                echo "::warning::$release_label was not applied by f-trycua; ignoring it."
+                echo "::warning::$release_label was not applied by a release owner; ignoring it."
               fi
             fi
           done

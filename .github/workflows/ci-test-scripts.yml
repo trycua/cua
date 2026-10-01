@@ -107,6 +107,9 @@ jobs:
       - name: Test Windows release uninstall reporting
         shell: powershell
         run: '& ./libs/cua-driver/scripts/tests/uninstall-windows-regression.ps1'
+      - name: Test Windows installer daemon cleanup spares its launcher
+        shell: powershell
+        run: '& ./libs/cua-driver/scripts/tests/install-common-windows-regression.ps1'
 
   test:
     runs-on: ubuntu-latest

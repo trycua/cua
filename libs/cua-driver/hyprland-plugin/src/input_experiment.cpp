@@ -9,6 +9,7 @@
 #include "seat_lifetime.hpp"
 #include "owned_socket_path.hpp"
 #include "foreground_route.hpp"
+#include "keymap_equivalence.hpp"
 
 #include <src/Compositor.hpp>
 #include <src/devices/IKeyboard.hpp>
@@ -218,7 +219,10 @@ struct InputExperiment::Impl {
     xkb_keymap* physical_keymap = nullptr;
     xkb_state* physical_keyboard_state = nullptr;
     int keymap_fd = -1;
-    bool retired = false, suspended = true, us_keymap = false, physical_keymap_present = false;
+    // Hyprland's input:repeat_rate and input:repeat_delay defaults, advertised
+    // until an active keyboard reports the user's values.
+    int repeat_rate = 25, repeat_delay = 600;
+    bool retired = false, suspended = true, typing_keymap = false, physical_keymap_present = false;
     WP<IKeyboard> physical_keyboard;
     CHyprSignalListener keymap_listener;
     unsigned lane;
@@ -248,19 +252,6 @@ struct InputExperiment::Impl {
         // No private key or input-enabled default exists in this component.
     }
 
-    static bool canonical_us_keymap(xkb_context* context, xkb_keymap* map) {
-        // Compare canonical compiled content, not a layout display name. This
-        // deliberately excludes variants, options, remaps, and multiple groups.
-        const xkb_rule_names names{kAgentKeymap.rules.data(), kAgentKeymap.model.data(),
-            kAgentKeymap.layout.data(), kAgentKeymap.variant.data(), kAgentKeymap.options.data()};
-        auto* reference = xkb_keymap_new_from_names(context, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
-        if (!reference) return false;
-        char* actual = xkb_keymap_get_as_string(map, XKB_KEYMAP_FORMAT_TEXT_V1);
-        char* expected = xkb_keymap_get_as_string(reference, XKB_KEYMAP_FORMAT_TEXT_V1);
-        const bool matches = actual && expected && std::strcmp(actual, expected) == 0;
-        std::free(actual); std::free(expected); xkb_keymap_unref(reference);
-        return matches;
-    }
     static int create_keymap_file(std::string_view text) {
         const auto fd = memfd_create("cua-agent-keymap", MFD_CLOEXEC);
         std::string payload(text);
@@ -313,12 +304,38 @@ struct InputExperiment::Impl {
     bool layout_qualified() const {
         if (!kProduction) return true;
         const auto keyboard = g_pSeatManager->m_keyboard.lock();
-        return physical_keymap_present && us_keymap && physical_keyboard_state && keyboard &&
+        return physical_keymap_present && typing_keymap && physical_keyboard_state && keyboard &&
             keyboard->m_xkbKeymapV1FD.get() >= 0 && keyboard->m_xkbKeymapV1String == physical_keymap_text;
+    }
+    // Agent keyboards advertise the user seat's wl_keyboard.repeat_info. A zero
+    // rate is valid Wayland, but a single-seat client that binds an agent seat
+    // may divide by it: imv 5.0.1 raised SIGFPE on repeat_info(0, 0) (#4257).
+    //
+    // A real rate cannot make Driver typing repeat. Protocol v3 has no key-down
+    // or key-up request. One KEY request presses the key and its modifiers,
+    // releases them, and leaves keyboard focus in a single synchronous handler
+    // on the compositor thread, with no event-loop iteration in between. The
+    // client gets the release together with the press and handles both in one
+    // dispatch, so a repeat timer armed by the press is cancelled before the
+    // client's event loop can run it; the wl_keyboard.leave that follows also
+    // requires the client to stop repeating. The hold is therefore bounded by
+    // that handler, not by the user's delay. DRAG holds only a pointer button.
+    // A request that holds a key across dispatches would have to keep the
+    // advertised delay above its longest hold.
+    //
+    // Like the user seat, keep the last values while no keyboard is active.
+    void sync_key_repeat(const SP<IKeyboard>& keyboard) {
+        if (!keyboard) return;
+        const auto rate = std::max(0, keyboard->m_repeatRate), delay = std::max(0, keyboard->m_repeatDelay);
+        if (rate == repeat_rate && delay == repeat_delay) return;
+        repeat_rate = rate; repeat_delay = delay;
+        for (auto& k : keyboards)
+            if (!k->dead && k->wl->resource() && k->wl->version() >= 4) k->wl->sendRepeatInfo(rate, delay);
     }
     void sync_keymap() {
         initialize_agent_keymap();
         const auto keyboard = g_pSeatManager->m_keyboard.lock();
+        sync_key_repeat(keyboard);
         if (physical_keyboard != keyboard) {
             if (physical_keymap_present) desktop_transition();
             keymap_listener.reset();
@@ -352,7 +369,10 @@ struct InputExperiment::Impl {
         if (physical_keymap) xkb_keymap_unref(physical_keymap);
         if (physical_xkb_context) xkb_context_unref(physical_xkb_context);
         physical_keyboard_state = state; physical_keymap = map; physical_xkb_context = context;
-        us_keymap = !kProduction || canonical_us_keymap(context, map);
+        // Keyboard qualification: every key the KEY command can press must type the
+        // same keysym as the canonical agent keymap. Checked once per keymap, so a
+        // different layout refuses before activation rather than mid-string.
+        typing_keymap = !kProduction || typing_keymap_equivalent(map, keymap);
         physical_keymap_text = keyboard->m_xkbKeymapV1String;
     }
     void start() {
@@ -488,7 +508,7 @@ struct InputExperiment::Impl {
         k->wl->setRelease([entry](CWlKeyboard*) { entry->dead = true; });
         k->wl->setOnDestroy([entry](CWlKeyboard*) { entry->dead = true; });
         k->wl->sendKeymap(WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1, keymap_fd, keymap_text.size() + 1);
-        if (seat->version() >= 4) k->wl->sendRepeatInfo(0, 0);
+        if (seat->version() >= 4) k->wl->sendRepeatInfo(repeat_rate, repeat_delay);
         keyboards.push_back(std::move(k));
     }
     void add_touch(CWlSeat* seat, std::uint32_t id) {
@@ -833,6 +853,37 @@ struct InputExperiment::Impl {
             .exact_pointer_focus = root && g_pSeatManager->m_state.pointerFocus == root,
         };
     }
+    // Hyprland reports each keyboard's raw masks in that keyboard's own keymap
+    // encoding and merges shared keyboards into the primary state. Refuse a
+    // keyboard action under any state other than neutral or an unambiguous
+    // Num Lock, and name Caps Lock explicitly.
+    std::array<std::uint32_t, 4> capture_foreground_modifiers(bool needs_keyboard) const {
+        const auto physical = g_pSeatManager->m_keyboard.lock();
+        if (!physical) throw ForegroundFailure{ForegroundFailureReason::physical_keyboard};
+        std::array<std::uint32_t, 4> result{};
+        const auto observe = [&](const auto& kb, bool primary) {
+            const std::array<std::uint32_t, 4> state{kb->m_modifiersState.depressed, kb->m_modifiersState.latched,
+                kb->m_modifiersState.locked, kb->m_modifiersState.group};
+            if (needs_keyboard) {
+                const auto failure = foreground_key_modifier_failure(state, foreground_numlock_mask(kb->m_xkbKeymap),
+                    foreground_caps_mask(kb->m_xkbKeymap));
+                if (failure != ForegroundFailureReason::none) throw ForegroundFailure{failure};
+                // A lock from a different encoding must not be reinterpreted
+                // as the primary keymap's Num Lock.
+                if (state[2] && state[2] != foreground_numlock_mask(physical_keymap))
+                    throw ForegroundFailure{ForegroundFailureReason::keyboard_locked};
+            }
+            for (unsigned i = 0; i < 3; ++i) result[i] |= state[i];
+            if (primary) result[3] = state[3];
+        };
+        observe(physical, true);
+        for (const auto& kb : g_pInputManager->m_keyboards) {
+            if (kb == physical || !kb->m_enabled || !kb->shareStates() ||
+                (kb->isVirtual() && g_pInputManager->shouldIgnoreVirtualKeyboard(kb))) continue;
+            observe(kb, false);
+        }
+        return result;
+    }
     void require_foreground(Client& c) {
         if (lease != &c) throw ForegroundFailure{ForegroundFailureReason::lease};
         if (c.dead) throw ForegroundFailure{ForegroundFailureReason::client_dead};
@@ -840,6 +891,11 @@ struct InputExperiment::Impl {
         if (!input_layout_qualified(c.route, foreground_needs_keyboard, layout_qualified()))
             throw ForegroundFailure{ForegroundFailureReason::unsupported_layout};
         if (Clock::now() >= expires) throw ForegroundFailure{ForegroundFailureReason::lease_expired};
+        // The chord was admitted under the human keyboard's state. A lock or
+        // modifier change during the action, including one caused by
+        // activation, changes what the remaining events mean.
+        if (foreground_needs_keyboard && capture_foreground_modifiers(true) != foreground_modifiers)
+            throw ForegroundFailure{ForegroundFailureReason::keyboard_state};
         const auto failure = foreground_guard(c).dispatch_failure(foreground_needs_pointer);
         if (failure != ForegroundFailureReason::none) throw ForegroundFailure{failure};
     }
@@ -855,19 +911,26 @@ struct InputExperiment::Impl {
                     p->sendButton(event_ms(), held_button, WL_POINTER_BUTTON_STATE_RELEASED);
                     p->sendFrame();
                 }
-        if (foreground_keyboard_used && root && root->good() && g_pSeatManager->m_state.keyboardFocus == root)
+        if (foreground_keyboard_used && root && root->good() && g_pSeatManager->m_state.keyboardFocus == root) {
+            // Synthetic keys change only private state. If human input cancelled
+            // the action, restore the human keyboard's current state, not the
+            // state captured at admission.
+            const auto restore = g_pSeatManager->m_keyboard.lock() ?
+                capture_foreground_modifiers(false) : foreground_modifiers;
             for (const auto& weak : foreground_keyboards)
                 if (const auto k = weak.lock(); k && k->good()) {
                     for (auto code : held_keys) k->sendKey(event_ms(), code, WL_KEYBOARD_KEY_STATE_RELEASED);
-                    k->sendMods(foreground_modifiers[0], foreground_modifiers[1], foreground_modifiers[2], foreground_modifiers[3]);
+                    k->sendMods(restore[0], restore[1], restore[2], restore[3]);
                 }
+        }
         held_button = 0; held_keys.clear();
         foreground_pointers.clear(); foreground_keyboards.clear(); foreground_surface.reset(); foreground_seat.reset();
         foreground_started = false;
         foreground_keyboard_used = false;
         foreground_needs_keyboard = false;
     }
-    void start_foreground(Client& c, double x, double y, bool needs_pointer, bool needs_keyboard) {
+    void start_foreground(Client& c, double x, double y, bool needs_pointer, bool needs_keyboard,
+                          const std::array<std::uint32_t, 4>& modifiers) {
         const auto root = c.surface.lock();
         const auto physical = g_pSeatManager->m_keyboard.lock();
         const auto failure = foreground_guard(c).activation_failure();
@@ -887,17 +950,9 @@ struct InputExperiment::Impl {
             throw ForegroundFailure{ForegroundFailureReason::keyboard_resources};
         foreground_modifiers = {};
         if (needs_keyboard) {
-            foreground_modifiers = {physical->m_modifiersState.depressed, physical->m_modifiersState.latched,
-                physical->m_modifiersState.locked, physical->m_modifiersState.group};
-            for (const auto& kb : g_pInputManager->m_keyboards) {
-                if (!kb->m_enabled || !kb->shareStates() ||
-                    (kb->isVirtual() && g_pInputManager->shouldIgnoreVirtualKeyboard(kb))) continue;
-                foreground_modifiers[0] |= kb->m_modifiersState.depressed;
-                foreground_modifiers[1] |= kb->m_modifiersState.latched;
-                foreground_modifiers[2] |= kb->m_modifiersState.locked;
-            }
-            const auto modifier_failure = foreground_key_modifier_failure(foreground_modifiers);
-            if (modifier_failure != ForegroundFailureReason::none) throw ForegroundFailure{modifier_failure};
+            // Keep the human keyboard's modifiers and locks. The caller admitted
+            // this chord under exactly this state before consuming the grant.
+            foreground_modifiers = modifiers;
             xkb_state_update_mask(physical_keyboard_state, foreground_modifiers[0], foreground_modifiers[1],
                 foreground_modifiers[2], 0, 0, foreground_modifiers[3]);
         }
@@ -1177,6 +1232,7 @@ struct InputExperiment::Impl {
             if (code == 0 || code > 247 || mods > 15 || code == 58 || code == 69 || code == 70) { send(c, refusal("unsupported")); return; }
             if (!consume_grant(c, cap)) return;
             if (!keyboard_enter(c)) { send(c, refusal("client_not_bound")); return; }
+            // Every key is released in this handler; sync_key_repeat relies on it.
             const std::array<std::uint32_t, 4> keys{42, 29, 56, 125};
             for (unsigned i = 0; i < 4; ++i) if ((mods & (1u << i)) && keys[i] != code) key(keys[i], true);
             key(code, true); key(code, false);
@@ -1242,8 +1298,19 @@ struct InputExperiment::Impl {
                 if (Clock::now() + std::chrono::milliseconds(duration + 50) >= expires) { send(c, refusal("lease_expired")); return; }
             }
         }
+        std::array<std::uint32_t, 4> modifiers{};
+        if (command == "KEY") {
+            // Simulate the whole chord under the human keyboard's live state
+            // before consuming the grant or changing focus. Num Lock and Caps
+            // Lock stay as they are; a chord whose meaning they or the layout
+            // would change refuses with its specific reason.
+            modifiers = capture_foreground_modifiers(true);
+            const auto failure = foreground_chord_failure(physical_keymap, keymap, static_cast<std::uint32_t>(code),
+                static_cast<std::uint32_t>(mods), modifiers);
+            if (failure != ForegroundFailureReason::none) throw ForegroundFailure{failure};
+        }
         if (!consume_grant(c, cap)) return;
-        start_foreground(c, x, y, command != "KEY" && command != "ACTIVATE", command == "KEY");
+        start_foreground(c, x, y, command != "KEY" && command != "ACTIVATE", command == "KEY", modifiers);
         if (command == "KEY") {
             const std::array<std::uint32_t, 4> keys{42, 29, 56, 125};
             for (unsigned i = 0; i < 4; ++i) if ((mods & (1u << i)) && keys[i] != code) foreground_key(c, keys[i], true);

@@ -174,6 +174,11 @@ export type VisualStatus = {
   region_count?: number;
 };
 
+export type CandidatePhaseTiming = {
+  visualObserveMs: number;
+  candidateBuildMs: number;
+};
+
 /**
  * Build the redacted per-step visual record written to the JSONL log. It never
  * contains screenshots, screenshot references, region text, or secrets.
@@ -271,22 +276,37 @@ export async function taskCandidatesForStep(
   captureBoundClick: boolean,
   visualMode: VisualMode = 'auto',
   visualDelivery: VisualDelivery = 'background'
-): Promise<{ candidates: Candidate[]; sources: TaskSources; status: VisualStatus }> {
+): Promise<{
+  candidates: Candidate[];
+  sources: TaskSources;
+  status: VisualStatus;
+  timing: CandidatePhaseTiming;
+}> {
   // Whether a control missing from the page structure can still be found
   // through a capture-bound visual region; reported in the task state.
   const visualPath = captureBoundClick && visualMode !== 'off';
+  let candidateBuildStarted = performance.now();
   let sources = fixtureSources(snapshot, undefined, captureBoundClick, visualDelivery, visualPath);
   let candidates = task.candidates(sources);
+  let candidateBuildMs = performance.now() - candidateBuildStarted;
+  let visualObserveMs = 0;
   if (visualMode === 'off') {
-    return { candidates, sources, status: visualStatus('skipped', undefined, undefined, 'disabled') };
+    return {
+      candidates,
+      sources,
+      status: visualStatus('skipped', undefined, undefined, 'disabled'),
+      timing: { visualObserveMs, candidateBuildMs },
+    };
   }
   if (visualMode === 'auto' && hasExecutableCandidate(candidates)) {
     return {
       candidates,
       sources,
       status: visualStatus('skipped', undefined, undefined, 'page_structure_candidate'),
+      timing: { visualObserveMs, candidateBuildMs },
     };
   }
+  const visualStarted = performance.now();
   const { visual, status } = await observeVisual(
     driver,
     pid,
@@ -294,11 +314,14 @@ export async function taskCandidatesForStep(
     availableTools,
     captureBoundClick
   );
+  visualObserveMs = performance.now() - visualStarted;
   if (visual) {
+    candidateBuildStarted = performance.now();
     sources = fixtureSources(snapshot, visual, captureBoundClick, visualDelivery, visualPath);
     candidates = task.candidates(sources);
+    candidateBuildMs += performance.now() - candidateBuildStarted;
   }
-  return { candidates, sources, status };
+  return { candidates, sources, status, timing: { visualObserveMs, candidateBuildMs } };
 }
 
 /** Build one step's fixture-task candidates; see taskCandidatesForStep. */
@@ -350,6 +373,22 @@ async function writeEvent(path: string | undefined, event: Record<string, unknow
   if (path) await appendFile(path, `${line}\n`, 'utf8');
 }
 
+export function decisionTimingFields(args: {
+  decisionMs: number;
+  semanticObserveMs: number;
+  visualObserveMs: number;
+  candidateBuildMs: number;
+  providerDecisionMs: number;
+}): Record<string, number> {
+  return {
+    decision_ms: args.decisionMs,
+    semantic_observe_ms: Math.round(args.semanticObserveMs * 100) / 100,
+    visual_observe_ms: Math.round(args.visualObserveMs * 100) / 100,
+    candidate_build_ms: Math.round(args.candidateBuildMs * 100) / 100,
+    provider_decision_ms: Math.round(args.providerDecisionMs * 100) / 100,
+  };
+}
+
 async function run(args: Arguments): Promise<Outcome> {
   const token = args.token ?? `jev-${randomUUID().replaceAll('-', '').slice(0, 10)}`;
   const task: Task = new FixtureFormTask(token, args.fixtureUrl, args.maxSteps);
@@ -398,15 +437,18 @@ async function run(args: Arguments): Promise<Outcome> {
       }
 
       const decisionStarted = performance.now();
+      const semanticStarted = performance.now();
       const snapshot = (await driver.call('get_browser_state', {
         target_id: targetId,
         tab_id: tabId,
         snapshot_format: 'semantic_v2',
       })) as BrowserSnapshot;
+      const semanticObserveMs = performance.now() - semanticStarted;
       const {
         candidates,
         sources,
         status: visualRecord,
+        timing: candidateTiming,
       } = await taskCandidatesForStep(
         driver,
         task,
@@ -428,13 +470,22 @@ async function run(args: Arguments): Promise<Outcome> {
         return 'abstained';
       }
       const visual = sources.visual?.observation;
+      const providerStarted = performance.now();
       const answer =
         args.provider === 'mock'
           ? chooseMockForTask(task, sources, candidates, history)
           : await chooseLiveForTask(task, sources, candidates, history);
+      const providerDecisionMs = performance.now() - providerStarted;
       if (!answer.choice) return 'abstained';
       const candidate = validateChoice(answer.choice, candidates, visual?.captureId);
       const decisionMs = Math.round((performance.now() - decisionStarted) * 100) / 100;
+      const timing = decisionTimingFields({
+        decisionMs,
+        semanticObserveMs,
+        visualObserveMs: candidateTiming.visualObserveMs,
+        candidateBuildMs: candidateTiming.candidateBuildMs,
+        providerDecisionMs,
+      });
 
       if (candidate.id === 'reobserve') {
         const event = {
@@ -443,8 +494,9 @@ async function run(args: Arguments): Promise<Outcome> {
           candidate: candidate.id,
           confidence: answer.confidence,
           probabilities: answer.probabilities,
-          decision_ms: decisionMs,
+          ...timing,
           action_ms: 0,
+          total_step_ms: Math.round((performance.now() - decisionStarted) * 100) / 100,
           dry_run: args.dryRun,
           tool: null,
           visual: visualRecord,
@@ -484,8 +536,9 @@ async function run(args: Arguments): Promise<Outcome> {
               candidate: candidate.id,
               confidence: answer.confidence,
               probabilities: answer.probabilities,
-              decision_ms: decisionMs,
+              ...timing,
               action_ms: Math.round((performance.now() - actionStarted) * 100) / 100,
+              total_step_ms: Math.round((performance.now() - decisionStarted) * 100) / 100,
               dry_run: args.dryRun,
               tool: candidate.tool,
               delivery_mode: 'background',
@@ -516,8 +569,9 @@ async function run(args: Arguments): Promise<Outcome> {
         candidate: candidate.id,
         confidence: answer.confidence,
         probabilities: answer.probabilities,
-        decision_ms: decisionMs,
+        ...timing,
         action_ms: actionMs,
+        total_step_ms: Math.round((performance.now() - decisionStarted) * 100) / 100,
         dry_run: args.dryRun,
         tool: candidate.tool,
         delivery_mode: candidate.arguments.delivery_mode ?? null,

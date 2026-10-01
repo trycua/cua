@@ -69,6 +69,7 @@ RAW_ROLES: Mapping[Platform, Mapping[RoleClass, tuple[str, ...]]] = {
         "link": ("AXLink",),
         "text_input": ("AXTextField", "AXTextArea", "AXSearchField", "AXSecureTextField"),
     },
+    # UIA control types; the WPF and WinUI3 harnesses report the same ones.
     "windows": {
         "button": ("Button", "SplitButton"),
         "toggle": (),

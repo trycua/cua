@@ -605,7 +605,10 @@ impl RenderStateCore {
         }
         let idle_hide_ms = self.motion.idle_hide_ms;
         if idle_hide_ms > 0.0 {
-            let moving = self.path.is_some() || self.spring.is_some() || self.click_t.is_some();
+            let moving = self.path.is_some()
+                || self.spring.is_some()
+                || self.click_t.is_some()
+                || self.visual.resolved_action != CursorAction::Idle;
             if moving {
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
@@ -777,6 +780,10 @@ impl RenderStateCore {
                 target,
             } => {
                 self.visual.begin(action, delivery, target);
+                // A semantic cue re-reveals an idle-faded cursor that already
+                // has a position; `tick_idle` keeps it visible until the cue ends.
+                self.idle_secs = 0.0;
+                self.idle_alpha = 1.0;
                 self.badge_modifiers = if delivery.is_some() || target.is_some() {
                     Some((delivery, target))
                 } else {
@@ -1097,6 +1104,43 @@ mod session_badge_and_action_tests {
             crate::anchor_for_pointer(40.0, 60.0, core.heading)
         );
         assert_eq!(core.idle_alpha, 1.0);
+    }
+
+    #[test]
+    fn semantic_cue_re_reveals_an_idle_hidden_cursor_until_it_ends() {
+        let frame = 1.0 / 60.0;
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.motion.idle_hide_ms = 200.0;
+        core.apply_command_base(
+            OverlayCommand::ClickPulse { x: 40.0, y: 60.0 },
+            false,
+            false,
+        );
+        for _ in 0..120 {
+            core.tick_motion(frame);
+        }
+        assert_eq!(core.idle_alpha, 0.0, "the positioned cursor idles out");
+
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Text,
+                delivery: None,
+                target: None,
+            },
+            false,
+            false,
+        );
+        assert_eq!(core.idle_alpha, 1.0, "a keyboard cue re-reveals it");
+        for _ in 0..120 {
+            core.tick_motion(frame);
+        }
+        assert_eq!(core.idle_alpha, 1.0, "it stays visible while the cue runs");
+
+        core.apply_command_base(OverlayCommand::EndAction(CursorAction::Text), false, false);
+        for _ in 0..120 {
+            core.tick_motion(frame);
+        }
+        assert_eq!(core.idle_alpha, 0.0, "it idles out again after the cue");
     }
 
     #[test]

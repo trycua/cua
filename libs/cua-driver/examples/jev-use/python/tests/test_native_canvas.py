@@ -62,7 +62,7 @@ def canvas_sources(platform: str, *, visual: bool = True, foreground_ids=frozens
     regions += (VisualRegion("r9", "text", "CHOOSE A SIGNAL", None, 0.95, False, 40, 30, 300, 30),)
     parsed = VisualObservation(
         observed.capture_id or "", "ref", 762, 492, observed.pid, observed.window_id,
-        0.0, 0.0, 1.0, 1.0, regions,
+        (1.0, 0.0, 0.0, 1.0, 0.0, 0.0), regions,
     )
     return TaskSources(
         ax=ax,
@@ -85,7 +85,7 @@ class ApplicationElementsTest(unittest.TestCase):
                 self.assertEqual(ax.controls, ())
 
     def test_recorded_harness_trees_have_application_elements(self) -> None:
-        for harness in ("appkit", "wpf", "gtk3"):
+        for harness in ("appkit", "wpf", "winui3", "gtk3"):
             with self.subTest(harness=harness):
                 self.assertTrue(has_application_elements(observation(harness), HARNESSES[harness].platform))
 

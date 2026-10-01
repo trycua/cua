@@ -64,6 +64,7 @@ export const RAW_ROLES: Readonly<Record<Platform, Readonly<Record<RoleClass, rea
     link: ['AXLink'],
     text_input: ['AXTextField', 'AXTextArea', 'AXSearchField', 'AXSecureTextField'],
   },
+  // UIA control types; the WPF and WinUI3 harnesses report the same ones.
   windows: {
     button: ['Button', 'SplitButton'],
     toggle: [],

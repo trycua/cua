@@ -146,6 +146,20 @@ must check its compositor epoch, protocol version, advertised capabilities,
 socket path, discovery-only state, and ABI identity before connecting. A loaded
 module alone is not evidence that target discovery or mutation is available.
 
+The opt-in v3 build also reports two keyboard fields, whether or not input is
+enabled, so an installer can tell an updated module from an older one still
+loaded in the running compositor before it enables input:
+
+- `keyboard_layout_independent: true`: the agent seats use their own canonical
+  keymap, and foreground pointer-only actions do not depend on the physical
+  keyboard layout.
+- `foreground_numlock_compatible: true`: foreground keyboard actions keep the
+  human keyboard's Num Lock and admit a key only when it means the same thing
+  under it. Caps Lock, and keypad keys that Num Lock changes, refuse explicitly.
+
+Neither field says that the current physical keymap qualifies for foreground
+typing; each foreground key is still checked when it is sent.
+
 The local transport is also disabled by default. To exercise negotiation in a
 disposable session, set the following and reload the configuration after the
 plugin loads. For Omarchy's Lua configuration, add:

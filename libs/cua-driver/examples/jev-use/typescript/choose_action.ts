@@ -8,7 +8,9 @@ import { ROLE_CLASSES, type RoleClass } from './native_roles.js';
 
 export const REQUEST_SCHEMA = 'cua.jev_choice_request_v1';
 // Additive over v1 (RFC #4268): per-candidate `source`, an optional root
-// `snapshot_id`, and an optional compact `elements` list of native controls.
+// `snapshot_id`, an optional compact `elements` list of native controls, and
+// an optional `progress` list of task steps counted from the runner's own
+// performed actions (#4313).
 export const REQUEST_SCHEMA_V2 = 'cua.jev_choice_request_v2';
 export const RESPONSE_SCHEMA = 'cua.jev_choice_v1';
 const MAX_INPUT_BYTES = 65_536;
@@ -16,6 +18,8 @@ const MAX_CANDIDATES = 32;
 const MAX_REGIONS = 100;
 const MAX_HISTORY = 16;
 export const MAX_ELEMENTS = 64;
+export const MAX_PROGRESS = 16;
+export const MAX_PROGRESS_COUNT = 64;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const RESERVED_IDS = new Set(['reobserve', 'abstain']);
 export type CandidateSourceKind = 'page' | 'ax' | 'visual';
@@ -38,10 +42,11 @@ const ELEMENT_STATES = new Set<string>([
   'has_text',
 ]);
 const V1_ROOT_KEYS = ['candidates', 'capture_id', 'goal', 'history', 'regions', 'schema'];
-const V2_OPTIONAL_ROOT_KEYS = ['elements', 'snapshot_id'];
+const V2_OPTIONAL_ROOT_KEYS = ['elements', 'progress', 'snapshot_id'];
 
 type JsonRecord = Record<string, unknown>;
 export type CompactElement = { role_class: RoleClass; label: string; state: ElementState };
+export type ProgressItem = { step: string; done: number; required: number };
 export type ValidatedCandidate = { id: string; description: string; source?: CandidateSourceKind };
 export type ValidatedRequest = {
   schema: typeof REQUEST_SCHEMA | typeof REQUEST_SCHEMA_V2;
@@ -52,6 +57,7 @@ export type ValidatedRequest = {
   candidates: ValidatedCandidate[];
   snapshot_id?: string | null;
   elements?: CompactElement[];
+  progress?: ProgressItem[];
 };
 
 function record(value: unknown, message: string): JsonRecord {
@@ -104,11 +110,40 @@ function validateElements(value: unknown): CompactElement[] {
   });
 }
 
+function count(value: unknown, name: string, minimum: number): number {
+  if (!Number.isInteger(value) || Number(value) < minimum || Number(value) > MAX_PROGRESS_COUNT) {
+    throw new Error(`${name} must be an integer from ${minimum} to ${MAX_PROGRESS_COUNT}`);
+  }
+  return Number(value);
+}
+
+/**
+ * Validate task steps and how often this run has performed each one. `done`
+ * is counted from the runner's own performed actions, never read from the
+ * application, so progress carries no application values.
+ */
+function validateProgress(value: unknown): ProgressItem[] {
+  if (!Array.isArray(value) || value.length > MAX_PROGRESS) {
+    throw new Error(`progress must be an array of at most ${MAX_PROGRESS} items`);
+  }
+  return value.map((item) => {
+    const raw = record(item, 'progress item must be an object');
+    if (!exactKeys(raw, ['done', 'required', 'step'])) {
+      throw new Error('progress item may contain only step, done, and required');
+    }
+    return {
+      step: boundedString(raw.step, 'progress step', 200),
+      done: count(raw.done, 'progress done', 0),
+      required: count(raw.required, 'progress required', 1),
+    };
+  });
+}
+
 /**
  * Validate a cua.jev_choice_request_v1 or _v2 request strictly. v1 is
  * unchanged, so any v2 field in a v1 request is rejected. v2 may add a root
- * snapshot_id and elements and a per-candidate source; reserved candidates
- * never carry a source.
+ * snapshot_id, elements, and progress and a per-candidate source; reserved
+ * candidates never carry a source.
  */
 export function validateRequest(value: unknown): ValidatedRequest {
   const root = record(value, 'request must be a JSON object');
@@ -269,13 +304,15 @@ export function validateRequest(value: unknown): ValidatedRequest {
         ? null
         : boundedString(root.snapshot_id, 'snapshot_id', 64);
     validated.elements = validateElements(root.elements ?? []);
+    validated.progress = validateProgress(root.progress ?? []);
   }
   return validated;
 }
 
 /**
  * The observation a provider sees. A v1 request keeps its exact v1
- * observation; v2 adds the snapshot, compact elements, and candidate sources.
+ * observation; v2 adds the snapshot, compact elements, and candidate sources,
+ * plus progress when the request carries any.
  */
 export function providerObservation(validated: ValidatedRequest): JsonRecord {
   const observation: JsonRecord = {
@@ -289,6 +326,7 @@ export function providerObservation(validated: ValidatedRequest): JsonRecord {
     observation.candidate_sources = Object.fromEntries(
       validated.candidates.filter((item) => item.source).map((item) => [item.id, item.source])
     );
+    if (validated.progress?.length) observation.progress = validated.progress;
   }
   return observation;
 }

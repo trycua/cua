@@ -47,8 +47,7 @@ function canvasSources(
   ];
   const parsed: VisualObservation = {
     captureId: observed.captureId ?? '', screenshotReference: 'ref', screenshotWidth: 762, screenshotHeight: 492,
-    pid: observed.pid, windowId: observed.windowId, actionOriginX: 0, actionOriginY: 0,
-    actionUnitsPerPixelX: 1, actionUnitsPerPixelY: 1, regions,
+    pid: observed.pid, windowId: observed.windowId, screenshotToAction: [1, 0, 0, 1, 0, 0], regions,
   };
   return { ax, visual: new VisualRegionSource(parsed, 'background', true), visualPath: true, foregroundIds };
 }
@@ -61,7 +60,7 @@ test('recorded canvas trees have no application elements', () => {
     assert.equal(hasApplicationElements(observed, platform), false, platform);
     assert.deepEqual(NativeAccessibilitySource.fromObservation(observed, platform).controls, [], platform);
   }
-  for (const harness of ['appkit', 'wpf', 'gtk3']) {
+  for (const harness of ['appkit', 'wpf', 'winui3', 'gtk3']) {
     assert.equal(hasApplicationElements(observe(windowState(harness)), HARNESSES[harness].platform), true, harness);
   }
   // Linux has no chrome rule, so the same title-bar buttons count as application elements.

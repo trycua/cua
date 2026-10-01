@@ -81,6 +81,25 @@ impl Harness {
         pointer_oracle: Option<&Path>,
         keep_ordered_front: bool,
     ) -> Self {
+        let harness = Self::spawn(command_oracle, pointer_oracle, keep_ordered_front, None);
+        // Settle for window creation + activation.
+        std::thread::sleep(Duration::from_millis(800));
+        harness.await_presented();
+        harness
+    }
+
+    /// Launch a harness that holds off entering its run loop for `delay`
+    /// after registering its window, without waiting for its launch posture.
+    fn launch_slowly(delay: Duration) -> Self {
+        Self::spawn(None, None, false, Some(delay))
+    }
+
+    fn spawn(
+        command_oracle: Option<&Path>,
+        pointer_oracle: Option<&Path>,
+        keep_ordered_front: bool,
+        launch_delay: Option<Duration>,
+    ) -> Self {
         let exe = harness_exe();
         assert!(
             exe.exists(),
@@ -100,15 +119,38 @@ impl Harness {
         if keep_ordered_front {
             command.env("CUA_APPKIT_KEEP_ORDERED_FRONT", "1");
         }
+        if let Some(delay) = launch_delay {
+            command.env("CUA_APPKIT_LAUNCH_DELAY_MS", delay.as_millis().to_string());
+        }
         let app = command
             .spawn()
             .unwrap_or_else(|error| panic!("launch AppKit harness {exe:?}: {error}"));
         let pid = app.id();
-        // Settle for window creation + activation.
-        std::thread::sleep(Duration::from_millis(800));
         Self { _app: app, pid }
     }
+
+    /// Wait until the harness has finished launching and shows its window.
+    ///
+    /// Its window is registered with WindowServer before the app enters its
+    /// run loop, so `find_window` can succeed while every accessibility
+    /// request still fails. On a cold hosted runner the first launch spends
+    /// seconds in that state; a case must not start there.
+    fn await_presented(&self) {
+        let deadline = Instant::now() + HARNESS_LAUNCH_TIMEOUT;
+        while !cua_driver_testkit::observer::macos::application_presented(self.pid) {
+            assert!(
+                Instant::now() < deadline,
+                "AppKit harness pid {} did not finish launching and show its window within {:?}",
+                self.pid,
+                HARNESS_LAUNCH_TIMEOUT
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
 }
+
+/// Upper bound for a harness launch, cold first launches included.
+const HARNESS_LAUNCH_TIMEOUT: Duration = Duration::from_secs(20);
 
 impl Drop for Harness {
     fn drop(&mut self) {
@@ -616,6 +658,95 @@ fn harness_appkit_smoke() {
     );
 }
 
+/// AppKit registers a window with WindowServer when the app constructs it, but
+/// the app answers accessibility only once it enters its run loop; a cold
+/// launch can sit between the two for seconds. The first snapshot waits for
+/// the launch within `timeout_ms`, and a launch that outlasts the budget is
+/// reported as such instead of as an unexplained empty tree.
+#[test]
+#[ignore]
+fn harness_appkit_first_snapshot_waits_for_a_launching_app() {
+    let case = native_readonly_case(
+        "appkit",
+        "launching_app_snapshot",
+        Targeting::Ax,
+        DriverRoute::AxRead,
+        vec![OracleKind::AxState],
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named("appkit-launching-app-snapshot")
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        driver.start_behavior_recording();
+        let snapshot = |driver: &mut McpDriver, pid: u32, wid: u64, timeout_ms: u64| {
+            driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "timeout_ms": timeout_ms,
+                    "include_screenshot": false
+                }),
+            )
+        };
+        let launching_window = |driver: &mut McpDriver, harness: &Harness| {
+            let (wid, _) = driver
+                .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+                .expect("a launching AppKit window is listed before it can answer AX");
+            assert!(
+                !cua_driver_testkit::observer::macos::application_presented(harness.pid),
+                "the harness must still be launching when the snapshot starts"
+            );
+            wid
+        };
+
+        let stalled = Harness::launch_slowly(Duration::from_secs(4));
+        let wid = launching_window(&mut driver, &stalled);
+        let early = snapshot(&mut driver, stalled.pid, wid, 300);
+        let state = early.structured();
+        assert!(
+            !early.is_error(),
+            "a launching app degrades; it does not error: {}",
+            early.text()
+        );
+        assert_eq!(state["truncated"], true, "{state}");
+        assert_eq!(state["truncation_reason"], "app_lookup_timeout", "{state}");
+        assert_eq!(state["degraded"], true, "{state}");
+        assert!(
+            state["degraded_reason"]
+                .as_str()
+                .is_some_and(|reason| reason.starts_with("ax_app_launching")),
+            "{state}"
+        );
+        assert_eq!(state["elements"], serde_json::json!([]), "{state}");
+        assert!(
+            state.get("snapshot_id").is_none(),
+            "an unresolved launch must not publish element tokens: {state}"
+        );
+        drop(stalled);
+
+        let slow = Harness::launch_slowly(Duration::from_millis(2500));
+        let wid = launching_window(&mut driver, &slow);
+        let started = Instant::now();
+        let first = snapshot(&mut driver, slow.pid, wid, 10_000);
+        let waited = started.elapsed();
+        let state = first.structured();
+        assert!(!first.is_error(), "first snapshot: {}", first.text());
+        assert!(state.get("degraded").is_none(), "{state}");
+        assert_eq!(state["truncated"], false, "{state}");
+        for aid in ["wnd-main", "btn-increment", "btn-clicktarget", "txt-input"] {
+            assert!(
+                has_id(first.tree_text(), aid),
+                "first snapshot of a launching app is missing {aid}: {}",
+                first.tree_text()
+            );
+        }
+        assert!(first.tree_text().contains("slider_value=0"));
+        println!("first snapshot of a launching app returned the whole window after {waited:?}");
+        Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+    });
+}
+
 #[test]
 #[ignore]
 fn harness_appkit_query_projects_structured_elements() {
@@ -704,8 +835,7 @@ fn harness_appkit_stale_element_token_fails_closed() {
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "snapshot_id": first.snapshot_id(),
-                    "element_index": index
+                    "element_token": first.element_token(index)
                 }),
             );
             assert!(
@@ -844,8 +974,7 @@ fn harness_appkit_text_input() {
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "element_index": idx,
-                    "snapshot_id": snap_pre.snapshot_id(),
+                    "element_token": snap_pre.element_token(idx),
                     "value": "hello-cua"
                 }),
             );
@@ -1229,8 +1358,7 @@ fn harness_appkit_type_text_background() {
             let resp = driver.call(
                 "type_text",
                 serde_json::json!({
-                    "pid": pid as i64, "window_id": wid, "element_index": idx,
-                    "snapshot_id": snap_pre.snapshot_id(),
+                    "pid": pid as i64, "window_id": wid, "element_token": snap_pre.element_token(idx),
                     "text": "kbd-cua", "delivery_mode": "background"
                 }),
             );
@@ -1271,8 +1399,7 @@ fn harness_appkit_scroll_foreground() {
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "element_index": index,
-                    "snapshot_id": pre.snapshot_id(),
+                    "element_token": pre.element_token(index),
                     "direction": "down",
                     "amount": 5,
                     "delivery_mode": "foreground"
@@ -1311,8 +1438,7 @@ fn harness_appkit_scroll_background() {
             serde_json::json!({
                 "pid": pid as i64,
                 "window_id": wid,
-                "element_index": index,
-                "snapshot_id": pre.snapshot_id(),
+                "element_token": pre.element_token(index),
                 "direction": "down",
                 "amount": 5,
                 "delivery_mode": "background"
@@ -1362,8 +1488,7 @@ fn harness_appkit_counter() {
                 serde_json::json!({
                     "pid": pid as i64,
                     "window_id": wid,
-                    "element_index": idx,
-                    "snapshot_id": snap_pre.snapshot_id(),
+                    "element_token": snap_pre.element_token(idx),
                     "action": "press",
                     "delivery_mode": "background"
                 }),

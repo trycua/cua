@@ -27,10 +27,12 @@ class DecisionRequest:
     regions: tuple[Mapping[str, Any], ...]
     history: tuple[Mapping[str, str], ...]
     candidates: tuple[Mapping[str, str], ...]
-    # v2 only (RFC #4268): native snapshot and compact accessibility elements.
+    # v2 only (RFC #4268): native snapshot and compact accessibility elements,
+    # and task steps counted from the runner's own performed actions (#4313).
     schema: str = REQUEST_SCHEMA
     snapshot_id: str | None = None
     elements: tuple[Mapping[str, str], ...] = ()
+    progress: tuple[Mapping[str, Any], ...] = ()
 
     @classmethod
     def from_validated(cls, request: Mapping[str, Any]) -> "DecisionRequest":
@@ -43,6 +45,7 @@ class DecisionRequest:
             schema=request.get("schema", REQUEST_SCHEMA),
             snapshot_id=request.get("snapshot_id"),
             elements=tuple(MappingProxyType(dict(item)) for item in request.get("elements", ())),
+            progress=tuple(MappingProxyType(dict(item)) for item in request.get("progress", ())),
         )
 
     @property
@@ -61,6 +64,7 @@ class DecisionRequest:
         if self.schema == REQUEST_SCHEMA_V2:
             validated["snapshot_id"] = self.snapshot_id
             validated["elements"] = [dict(item) for item in self.elements]
+            validated["progress"] = [dict(item) for item in self.progress]
         return provider_observation(validated)
 
 
@@ -219,7 +223,8 @@ def native_elements_as_text(request: DecisionRequest) -> str:
     """Render a v2 request's native elements as an accessibility tree for S1.
 
     Each line is one supplied native control: its role class, label, and state.
-    Visual regions from the same capture, if any, follow as a separate section.
+    Visual regions from the same capture, if any, follow as a separate section,
+    then the prior decisions and, when supplied, the task progress.
     """
     lines = [
         f"Accessibility tree for snapshot {json.dumps(request.snapshot_id)} "
@@ -237,6 +242,20 @@ def native_elements_as_text(request: DecisionRequest) -> str:
     if request.history:
         lines.append("Prior bounded decisions:")
         lines.extend(json.dumps(item, ensure_ascii=False) for item in request.history)
+    if request.progress:
+        lines.append(progress_as_text(request.progress))
+    return "\n".join(lines)
+
+
+def progress_as_text(progress: tuple[Mapping[str, Any], ...]) -> str:
+    """Render task progress; counts come from the run's actions, not the app."""
+    lines = [
+        "Task progress (counted from this run's own completed actions, not read from the app):"
+    ]
+    for item in progress:
+        done, required = item["done"], item["required"]
+        status = f"{required - done} remaining" if done < required else "complete"
+        lines.append(f"- {item['step']}: done {done} of {required} times; {status}")
     return "\n".join(lines)
 
 

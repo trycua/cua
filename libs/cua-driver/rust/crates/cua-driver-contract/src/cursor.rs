@@ -262,8 +262,7 @@ pub fn classify_cursor_semantics(name: &str, args: &Value) -> Option<CursorSeman
     } else if matches!(name, "set_window_frame" | "invoke_menu") {
         Some(CursorTarget::Desktop)
     } else if args
-        .get("element_index")
-        .or_else(|| args.get("element_token"))
+        .get("element_token")
         .is_some_and(|value| !value.is_null())
     {
         Some(CursorTarget::Ax)
@@ -320,7 +319,7 @@ mod tests {
         assert_eq!(
             classify_cursor_semantics(
                 "click",
-                &json!({"element_index":"ax:1","delivery_mode":"background"})
+                &json!({"element_token":"s00000001:1","delivery_mode":"background"})
             ),
             Some(CursorSemantics {
                 action: CursorAction::Click,

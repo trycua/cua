@@ -30,10 +30,11 @@ fn def() -> &'static ToolDef {
         description: "Walk a running app's AX tree and return BOTH a structured \
             `elements` array (preferred) AND a Markdown rendering of the same tree \
             (back-compat). Every actionable element is tagged with [element_index N] \
-            in the markdown and as `element_index` in the structured array — pass \
-            those indices to click, type_text, press_key, etc.\n\n\
+            in the markdown and as `element_index` in the structured array; pass \
+            each element's `element_token` to click, type_text, press_key, etc.\n\n\
             INVARIANT: call get_window_state once per turn per (pid, window_id) before any \
-            element-indexed action. The index map is replaced by the next snapshot.\n\n\
+            element action. The next snapshot of the window replaces this one, stales its \
+            element tokens, and lists the replaced ids in `invalidated_snapshot_ids`.\n\n\
             PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
             indexed row with `element_index`, `role`, `label`, `value` (the \
             element's text/AXValue when present — use it to verify what a field \
@@ -46,7 +47,7 @@ fn def() -> &'static ToolDef {
             both and cross-check (the tree lies on some surfaces: Electron \
             echo-confirms, Catalyst null values, virtualized off-viewport rows \
             with `h:1` frames). You choose the modality at ACTION time, not here: \
-            an element ax action (pass `element_index`/`element_token` → the \
+            an element ax action (pass `element_token` → the \
             accessibility rung) or an element px action (pass `x`,`y` → the pixel \
             rung, read straight off this screenshot). `capture_mode` is deprecated \
             and ignored. Pass `include_screenshot:false` to skip the grab and get \
@@ -71,7 +72,11 @@ fn def() -> &'static ToolDef {
             this pid but its accessibility surface can't be resolved, the tree comes back \
             EMPTY with `degraded_reason: ax_window_unresolved` and the screenshot of the \
             requested window; background input is refused until it resolves, so \
-            re-snapshot or act with `delivery_mode:\"foreground\"`. A window on another \
+            re-snapshot or act with `delivery_mode:\"foreground\"`. When that pid is an \
+            app still launching (its window exists before it answers accessibility), the \
+            walk first waits up to `timeout_ms` for it; if it never answers, the tree comes \
+            back EMPTY with `degraded_reason: ax_app_launching`, `truncated: true` and \
+            `truncation_reason: app_lookup_timeout`. A window on another \
             Space still resolves by its exact CGWindowID. This tool never returns another \
             surface's elements under your window_id. Before exposing a screenshot, \
             its raw dimensions are validated as a coherent 1x/2x representation of \
@@ -308,10 +313,13 @@ impl Tool for GetWindowStateTool {
                     max_depth,
                     cua_driver_core::walk_budget::WalkBudget::new(timeout_ms, max_elements),
                 );
-                let payload = crate::ax::cache::CachedSnapshot::from_nodes(&tree.nodes);
+                let payload = crate::ax::snapshot::AxSnapshot::from_nodes(&tree.nodes);
                 (tree, payload)
             });
-            let backstop = std::time::Duration::from_millis(timeout_ms) + AX_WALK_BACKSTOP_GRACE;
+            // A launching app is waited on for up to `timeout_ms` before the
+            // walk's own `timeout_ms` starts (see `ax::launch`).
+            let backstop =
+                std::time::Duration::from_millis(timeout_ms) * 2 + AX_WALK_BACKSTOP_GRACE;
             match tokio::time::timeout(backstop, walk_future).await {
                 Ok(Ok((tree, payload))) => (Some(tree), Some(payload)),
                 Ok(Err(e)) => return ToolResult::error(format!("AX tree walk failed: {e}")),
@@ -342,9 +350,9 @@ impl Tool for GetWindowStateTool {
         // this tool never does — so treat that as resolved.
         let scope_matched = window_scope.as_ref().is_none_or(|s| s.is_matched());
 
-        if !scope_matched && !observation_only {
-            self.state.element_cache.remove(pid, u64::from(window_id));
-        }
+        let removed = (!scope_matched && !observation_only)
+            .then(|| self.state.snapshots.remove(pid, u64::from(window_id)))
+            .flatten();
 
         // Capture the screenshot and deliver it alongside the tree — the
         // grounding frame the agent cross-checks the (sometimes-lying) tree
@@ -520,24 +528,20 @@ impl Tool for GetWindowStateTool {
         let snapshot_payload = prepared_snapshot.or_else(|| {
             screenshot_resize_scale
                 .is_some()
-                .then(|| crate::ax::cache::CachedSnapshot::from_nodes(&[]))
+                .then(|| crate::ax::snapshot::AxSnapshot::from_nodes(&[]))
         });
-        let snapshot_id = snapshot_payload
+        let (snapshot_id, replaced) = snapshot_payload
             .filter(|_| scope_matched && !observation_only)
             .and_then(|payload| {
-                self.state.element_cache.publish_for_session(
+                self.state.snapshots.publish_for_session(
                     pid,
                     u64::from(window_id),
                     payload,
                     session_id.as_deref(),
                     screenshot_resize_scale,
                 )
-            });
-        if let Some(snapshot_id) = snapshot_id {
-            self.state
-                .zoom_registry
-                .retire_replaced(pid, u64::from(window_id), snapshot_id);
-        }
+            })
+            .unzip();
         let capture_id = match (snapshot_id, screenshot.as_ref()) {
             (Some(_), Some((png, _, width, height, native_width, native_height, _, _))) => {
                 match self.state.capture_bindings.publish_window(
@@ -617,9 +621,19 @@ impl Tool for GetWindowStateTool {
         // registered (unresolved window scope).
         if let Some(sid) = snapshot_id {
             structured["snapshot_id"] =
-                serde_json::json!(cua_driver_core::element_token::token_for(sid, 0)
-                    .trim_end_matches(":0")
-                    .to_string());
+                serde_json::json!(cua_driver_core::element_token::format_snapshot_id(sid));
+        }
+        let invalidated: Vec<String> = removed
+            .into_iter()
+            .chain(replaced.into_iter().flatten())
+            .map(cua_driver_core::element_token::format_snapshot_id)
+            .collect();
+        if !invalidated.is_empty() {
+            content.push(Content::text(format!(
+                "Invalidated snapshots {}: their element_tokens are stale.",
+                invalidated.join(", ")
+            )));
+            structured["invalidated_snapshot_ids"] = serde_json::json!(invalidated);
         }
         if let Some(capture_id) = capture_id {
             structured["capture_id"] = serde_json::json!(capture_id);
@@ -630,7 +644,15 @@ impl Tool for GetWindowStateTool {
         // the screenshot already in this response and click by pixel (x,y).
         // macOS can pixel-target in the background, so the recommendation is
         // `px`, not `foreground`.
-        match degradation_for(tree_result.is_some(), element_count, window_scope.as_ref()) {
+        let app_lookup_timed_out = tree_result
+            .as_ref()
+            .is_some_and(|r| r.walk.reason() == Some("app_lookup_timeout"));
+        match degradation_for(
+            tree_result.is_some(),
+            element_count,
+            window_scope.as_ref(),
+            app_lookup_timed_out,
+        ) {
             Degradation::None => {}
             Degradation::AxTreeEmpty => {
                 structured["degraded"] = serde_json::json!(true);
@@ -646,6 +668,24 @@ impl Tool for GetWindowStateTool {
                     "recommended": "px",
                     "reason": "non-AX surface — act by pixel (x,y) off the screenshot \
                                in this response (an element px action)."
+                });
+            }
+            Degradation::AxAppLaunching => {
+                structured["degraded"] = serde_json::json!(true);
+                structured["degraded_reason"] = serde_json::json!(format!(
+                    "ax_app_launching: window_id {window_id} exists and is owned by pid \
+                     {pid}, but that app has not finished launching and did not answer \
+                     accessibility within the {timeout_ms} ms timeout_ms budget. The tree is \
+                     returned EMPTY because the window's accessibility surface is not \
+                     available yet."
+                ));
+                structured["escalation"] = serde_json::json!({
+                    "recommended": "foreground",
+                    "reason": "observation-only until the app finishes launching: re-snapshot \
+                               in a moment or with a larger timeout_ms. Background input \
+                               (including px) is refused while the window's AX surface is \
+                               unresolved; act with delivery_mode:\"foreground\" only if \
+                               you cannot wait."
                 });
             }
             Degradation::AxWindowUnresolved { ax_window_count } => {
@@ -753,7 +793,7 @@ impl Tool for GetWindowStateTool {
 /// clicked by `element_index`. Both refusals name the exact retry, matching the
 /// remedy-in-the-refusal shape the rest of the driver uses.
 ///
-/// The owner pid is REPORTED, not followed: `element_cache`, the element-token
+/// The owner pid is REPORTED, not followed: `snapshots`, the element-token
 /// registry and snapshot-owned screenshot transform are keyed on the caller-supplied pid, so
 /// walking under `owner_pid` while echoing the requested pid would hand back
 /// indices the caller replays against the wrong key. One retry with the named
@@ -819,6 +859,9 @@ enum Degradation {
     /// The requested window is live and owned by this pid, but no AXWindow
     /// claims its CGWindowID, so the walk deliberately covered nothing.
     AxWindowUnresolved { ax_window_count: usize },
+    /// The window scope is unresolved because the app is still launching and
+    /// did not answer accessibility within the caller's budget.
+    AxAppLaunching,
 }
 
 /// Decide the degradation rung. Pure: `walk_attempted` is false in the
@@ -829,11 +872,15 @@ fn degradation_for(
     walk_attempted: bool,
     element_count: usize,
     scope: Option<&crate::ax::WindowScope>,
+    app_lookup_timed_out: bool,
 ) -> Degradation {
     if !walk_attempted {
         return Degradation::None;
     }
     if let Some(crate::ax::WindowScope::AxUnresolved { ax_window_count }) = scope {
+        if app_lookup_timed_out {
+            return Degradation::AxAppLaunching;
+        }
         return Degradation::AxWindowUnresolved {
             ax_window_count: *ax_window_count,
         };
@@ -1039,9 +1086,30 @@ mod window_scope_contract_tests {
             degradation_for(
                 true,
                 0,
-                Some(&WindowScope::AxUnresolved { ax_window_count: 3 })
+                Some(&WindowScope::AxUnresolved { ax_window_count: 3 }),
+                false
             ),
             Degradation::AxWindowUnresolved { ax_window_count: 3 }
+        );
+    }
+
+    /// A window that exists before its app answers accessibility is not an
+    /// unscoped window: the degradation names the launch instead.
+    #[test]
+    fn a_launch_that_outlasts_the_budget_degrades_as_app_launching() {
+        assert_eq!(
+            degradation_for(
+                true,
+                0,
+                Some(&WindowScope::AxUnresolved { ax_window_count: 0 }),
+                true
+            ),
+            Degradation::AxAppLaunching
+        );
+        // A walk cut short for another reason after resolving keeps its rung.
+        assert_eq!(
+            degradation_for(true, 0, Some(&WindowScope::Matched), true),
+            Degradation::AxTreeEmpty
         );
     }
 
@@ -1049,7 +1117,7 @@ mod window_scope_contract_tests {
     fn empty_tree_still_degrades_as_ax_tree_empty() {
         // Back-compat with the pre-existing rung.
         assert_eq!(
-            degradation_for(true, 0, Some(&WindowScope::Matched)),
+            degradation_for(true, 0, Some(&WindowScope::Matched), false),
             Degradation::AxTreeEmpty
         );
     }
@@ -1057,14 +1125,14 @@ mod window_scope_contract_tests {
     #[test]
     fn resolved_window_with_elements_is_not_degraded() {
         assert_eq!(
-            degradation_for(true, 42, Some(&WindowScope::Matched)),
+            degradation_for(true, 42, Some(&WindowScope::Matched), false),
             Degradation::None
         );
     }
 
     #[test]
     fn screenshot_only_path_does_not_degrade() {
-        assert_eq!(degradation_for(false, 0, None), Degradation::None);
+        assert_eq!(degradation_for(false, 0, None, false), Degradation::None);
     }
 
     #[test]
@@ -1074,6 +1142,8 @@ mod window_scope_contract_tests {
             "window_id_not_found",
             "window_owner_pid_mismatch",
             "ax_window_unresolved",
+            "ax_app_launching",
+            "app_lookup_timeout",
         ] {
             assert!(
                 description.contains(code),
@@ -1427,14 +1497,14 @@ mod tests {
 
     #[test]
     fn build_elements_array_with_token_emits_element_token_per_row() {
-        let cache = crate::ax::cache::ElementCache::new();
+        let cache = crate::ax::snapshot::Snapshots::new();
         let pid = 0x6abc_0001_i32;
         let nodes = vec![
             node(Some(0), "AXButton", Some("A"), 1, None, None, vec![]),
             node(Some(1), "AXButton", Some("B"), 1, None, None, vec![]),
             node(Some(2), "AXButton", Some("C"), 1, None, None, vec![]),
         ];
-        let sid = cache.publish(pid, 9, crate::ax::cache::CachedSnapshot::from_nodes(&nodes));
+        let sid = cache.publish(pid, 9, crate::ax::snapshot::AxSnapshot::from_nodes(&nodes));
         let entries = build_elements_array_with_token(&nodes, Some(sid));
         assert_eq!(entries.len(), 3);
         // Every entry must have BOTH fields (additive contract).
@@ -1454,7 +1524,7 @@ mod tests {
             let idx = e["element_index"].as_u64().unwrap() as usize;
             let tok = e["element_token"].as_str().unwrap();
             let (resolved_idx, wid, _) = cache
-                .resolve_element_args(pid, None, Some(tok), None, None, "click")
+                .resolve(pid, &serde_json::json!({ "element_token": tok }))
                 .expect("token must resolve")
                 .into_parts(None);
             assert_eq!(wid, Some(9));

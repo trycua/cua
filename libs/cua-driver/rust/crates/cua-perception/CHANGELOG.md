@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Cua Perception release candidates are documented here.
+All notable changes to Cua Perception releases are documented here.
 
 ## [0.2.1](https://github.com/trycua/cua/compare/cua-perception-v0.2.0...cua-perception-v0.2.1) (2026-09-25)
 

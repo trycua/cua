@@ -137,7 +137,7 @@ five-minute idle TTL provides the same cleanup for abandoned live transports.
 
 ## Lifetimes and memory
 
-The proxy and one-shot CLI processes may come and go, but the daemon owns element-index caches, active recordings, configuration, policy, and cursor state. This makes the execution identity and permission-policy boundary stable across client reconnects.
+The proxy and one-shot CLI processes may come and go, but the daemon owns accessibility snapshots, active recordings, configuration, policy, and cursor state. This makes the execution identity and permission-policy boundary stable across client reconnects.
 
 If the daemon disappears, daemon-backed clients fail closed. They do not
 construct a fresh tool registry or continue with partial state.

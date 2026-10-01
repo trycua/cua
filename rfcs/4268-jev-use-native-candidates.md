@@ -3,8 +3,8 @@ title: Native accessibility candidates for jev-use decision loops
 authors:
   - f-trycua
 created: 2026-09-27
-last_updated: 2026-09-28
-status: accepted
+last_updated: 2026-09-29
+status: completed
 discussion: https://github.com/trycua/cua/issues/4268
 rfc_pr: https://github.com/trycua/cua/pull/4269
 implementation:
@@ -16,6 +16,10 @@ implementation:
   - https://github.com/trycua/cua/pull/4298
   - https://github.com/trycua/cua/pull/4301
   - https://github.com/trycua/cua/pull/4299
+  - https://github.com/trycua/cua/pull/4324
+  - https://github.com/trycua/cua/pull/4329
+  - https://github.com/trycua/cua/pull/4330
+  - https://github.com/trycua/cua/pull/4354
 supersedes:
 superseded_by:
 ---
@@ -359,7 +363,12 @@ risky-action policy, caps the executable candidates at 24, and appends
 `reobserve` and `abstain`. The limit of 24 plus 2 fits the S1 26-option limit
 and the v1 schema's 32-candidate limit. A step that would exceed the cap
 drops the lowest-priority candidates and records the count dropped in the log.
-It never truncates silently.
+It never truncates silently. Priority is by task relevance
+([#4312](https://github.com/trycua/cua/issues/4312)): candidates that perform
+the task's declared steps first, then controls whose label shares a word with
+the goal, then the rest, each tier in depth-first order. The kept candidates
+are still presented in depth-first order, and a set within the cap is
+unchanged.
 
 ### Task spec
 
@@ -562,7 +571,13 @@ to v1:
 - the root may include `snapshot_id` alongside the required `capture_id`; and
 - the root may include `elements`, a compact, redacted list of at most 64
   native elements (`role_class`, `label`, `state`). S1's text adapter renders
-  it as a genuine accessibility tree.
+  it as a genuine accessibility tree; and
+- the root may include `progress`, at most 16 task steps
+  (`step`, `done`, `required`), added by
+  [#4324](https://github.com/trycua/cua/pull/4324). `done` counts only the
+  runner's own successful actions and is never read from the application, so
+  it carries no field values. `provider_observation` adds it only when it is
+  present.
 
 The v1 schema, validators, and fixtures remain supported unchanged. A v2
 request that has no `source`, `snapshot_id`, or `elements` is semantically
@@ -750,9 +765,13 @@ TypeScript parity in the same change.
   `max_elements`, and task-supplied `query` when the task names its controls.
   Is a task-supplied subtree anchor also needed, given that `query` matching is
   substring-only?
-- **Accuracy at scale.** Jev and S1 accuracy with about 24 candidates, compared
-  with about 4 today. Should the composer rank by task relevance before capping,
-  or keep strict depth-first order for determinism?
+- **Resolved: accuracy at scale.** Jev and S1 chose correctly in every live
+  decision at about 4, 12, and 24 candidates on macOS, Windows (WPF and
+  WinUI3), and Linux, with both the Python and TypeScript runners. The composer
+  ranks by task relevance before capping and keeps depth-first presentation
+  order; strict depth-first capping dropped every task control behind the
+  distractors and led both models to press look-alike controls (see the
+  #4312 evidence in the decision record).
 - **Electron and Catalyst.** These report misleading accessibility values. The
   proposal excludes `in_web_content` elements from the native source. Should
   Electron applications with a reachable CDP endpoint route through the browser
@@ -846,13 +865,31 @@ Implementation:
   to Cancel.
 - Phase 4, [#4299](https://github.com/trycua/cua/pull/4299): the native
   apps guide and the `skills/jev-use` update.
+- S1 reliability, [#4324](https://github.com/trycua/cua/pull/4324) for
+  [#4313](https://github.com/trycua/cua/issues/4313): each built-in task
+  declares its ordered steps. The request's `progress` reports how often this
+  run has performed each step, and each step's candidate description names an
+  unfinished earlier step (Save waits for the note), says the step is done, or
+  says how many more times it is due. Choose-size's two steps are unordered,
+  as its oracle is. The runners log an S1 service failure as an outcome, not
+  a stack trace.
+- WinUI3, [#4329](https://github.com/trycua/cua/pull/4329) for
+  [#4314](https://github.com/trycua/cua/issues/4314): the WinUI3 harness gained
+  an opt-in `CUA_WINUI3_TASK_STATE` task window with the same labeled controls
+  and state file, `verify_native.py --harness winui3`, and a
+  `Windows native WinUI3 mock E2E` job on GitHub-hosted Windows. WinUI3's
+  automation peers report the same UIA control types as WPF (`Button`,
+  `CheckBox`, `RadioButton`, `Edit`, and the `TitleBar` chrome), so the Windows
+  role table needed no new row. WinUI3 also exposes its static counter label
+  as `Text`, which stays an unknown role and never becomes a candidate.
 
 Phase 3 live evidence (released Driver 0.30.2, cua-perception 0.2.1,
 `cua-s1-4b-0.2@16818868`; each run verified by the harness's own state file):
 
 - Live Jev passed 5/5 in every native row (AppKit, WPF, GTK3 × three tasks
-  × Python and TypeScript) except GTK3 `save-note`, blocked by #4291 until
-  Driver 0.30.3 ships.
+  × Python and TypeScript). GTK3 `save-note` ran on released Driver 0.30.4,
+  which includes the #4291 fix, from the canonical Linux installer: live Jev
+  and S1 each passed 5/5 in Python and 5/5 in TypeScript (20/20 runs).
 - S1 missed six of 82 native runs: three `counter` runs where it abstained
   after two increments (the value-free request makes it count from history),
   two macOS `save-note` runs where it pressed Save before typing, and one
@@ -865,7 +902,192 @@ Phase 3 live evidence (released Driver 0.30.2, cua-perception 0.2.1,
   Windows.
 - The tasks produce 3–7 candidates. Jev chose correctly in 220/220 decisions
   and S1 in 211/216.
+- Cause of the S1 misses, reproduced by replaying the recorded AppKit states
+  with the failing runs' capture IDs: after two increments S1 split 0.45/0.44
+  between abstain and Increment; at the first save-note step it split
+  0.39/0.38 between setting the note and Save; and the service error was that
+  same split landing on an exact fp16 logit tie, which `choose()` refuses.
 
-Acceptance criteria not yet met, which keep this RFC `accepted`: S1 5/5 in
-every native row, GTK3 `save-note` on a released Driver, WinUI3 coverage,
-and accuracy at about 12 and 24 candidates.
+S1 reliability evidence for #4324 (released Driver 0.30.4, same checkpoint):
+
+- Offline replay of the AppKit, WPF, and GTK3 fixtures at eight mid-task
+  states, eight capture IDs each, plus the three recorded failing captures:
+  S1 was correct in 191/195 decisions on `main` (two abstains, one Save
+  before the note, and one tie error) and 195/195 with progress. Its lowest confidence after two increments rose
+  from 0.45 to 0.81, and at the first save-note step from 0.38 to 0.79. Jev
+  was correct in 195/195 either way.
+- Live on macOS in a Lume worker, recorded: AppKit counter, save-note, and
+  choose-size passed 5/5 for S1 and 5/5 for Jev in both Python and TypeScript
+  (60/60 runs, 140 decisions, all correct). S1's lowest confidence per task
+  was 0.83, 0.79, and 0.65.
+- Live on Windows WPF (Azure VM, interactive RDP session) and Linux GTK3
+  (Azure VM, X11 with AT-SPI), recorded, on `main` at 97c0d49c7 with Driver
+  0.30.4 from the canonical installers: counter, save-note, and choose-size
+  passed 5/5 for S1 and 5/5 for Jev in both Python and TypeScript on each
+  platform (120/120 runs, 280 decisions, all correct). S1's lowest confidence
+  per task was 0.81, 0.95, and 0.70 on both platforms. Median decide time was
+  about 0.22 s for Jev and 2.2 s for S1; median observe time was 0.09 s on
+  Linux and 0.31 s on Windows. With the macOS row, S1 and Jev now pass 5/5
+  in every native row on all three platforms.
+
+WinUI3 live evidence for #4329 (released Driver 0.30.4 from the canonical
+`install.ps1`, same checkpoint, Azure VM in an interactive RDP session, each
+run recorded and verified by the harness's own state file):
+
+- Counter, save-note, and choose-size passed 5/5 for S1 and 5/5 for Jev in both
+  Python and TypeScript (60/60 runs, 140 decisions, all correct). S1's lowest
+  confidence per task was 0.81, 0.95, and 0.70, the same as on WPF.
+- Median per-turn observe / decide / act was 421 / 203 / 46 ms for Jev and
+  422 / 4249 / 45 ms for S1. Another client shared the S1 service during the
+  run, which roughly doubled its decide time relative to the WPF run.
+
+Accuracy at about 12 and 24 candidates, [#4330](https://github.com/trycua/cua/pull/4330)
+for [#4312](https://github.com/trycua/cua/issues/4312) (released Driver 0.30.4
+from the canonical installers, `cua-s1-4b-0.2@16818868`, Python runners; each
+run verified by the harness's own state file):
+
+- The AppKit and GTK3 harnesses gained an opt-in `CUA_<HARNESS>_TASK_DENSITY`
+  of `12` or `24`, in task mode only. It adds benign distractors before the
+  task controls, the way a toolbar and sidebar precede the content in a
+  document app: buttons, labeled text fields, checkboxes, and radio groups
+  with the same labels on both platforms. None matches a risk phrase. Some are
+  unrelated to every task; some are close to a task control ("Save draft",
+  "Increase font size", "Note title", "Large icons"). Density 12 gives 11 to 16
+  candidates. Density 24 makes 28 to 33 eligible, so the cap binds at 24 plus
+  `reobserve` and `abstain`. Ordinary launches and the existing task mode are
+  unchanged. [#4354](https://github.com/trycua/cua/pull/4354) later added
+  the same mode to WPF and WinUI3 (see below).
+- The runners log each decision's due steps (`expected_ids`) and whether the
+  set offered one. `measure_native.py` scores those logs, or replays captured
+  fixtures offline, into a table by set size, including the full set with the
+  two reserved candidates: `~4` (up to 8), `~12` (9 to 18), and `~24`.
+- Live, recorded (the first repetition of every row has a video): 5
+  repetitions × 3 tasks × 3 densities × 2 providers per platform. All 180 runs
+  passed, and all 420 decisions were correct:
+
+  | Provider | Size | Platform | Candidates | Decisions | Correct | Confidence median / min | Decide median / p95 |
+  | -------- | ---- | -------- | ---------- | --------- | ------- | ----------------------- | ------------------- |
+  | Jev      | ~4   | macOS    | 5–7        | 35        | 35      | 1.00 / 0.95             | 240 / 331 ms        |
+  | Jev      | ~4   | Linux    | 4–6        | 35        | 35      | 0.99 / 0.94             | 209 / 294 ms        |
+  | Jev      | ~12  | macOS    | 11–16      | 35        | 35      | 0.99 / 0.96             | 232 / 288 ms        |
+  | Jev      | ~12  | Linux    | 11–14      | 35        | 35      | 1.00 / 0.96             | 197 / 255 ms        |
+  | Jev      | ~24  | macOS    | 26         | 35        | 35      | 0.99 / 0.94             | 242 / 286 ms        |
+  | Jev      | ~24  | Linux    | 26         | 35        | 35      | 0.99 / 0.94             | 212 / 288 ms        |
+  | S1       | ~4   | macOS    | 5–7        | 35        | 35      | 0.83 / 0.65             | 4.5 / 7.0 s         |
+  | S1       | ~4   | Linux    | 4–6        | 35        | 35      | 0.91 / 0.70             | 5.5 / 7.7 s         |
+  | S1       | ~12  | macOS    | 11–16      | 35        | 35      | 0.89 / 0.59             | 5.2 / 7.5 s         |
+  | S1       | ~12  | Linux    | 11–14      | 35        | 35      | 0.88 / 0.57             | 6.7 / 8.9 s         |
+  | S1       | ~24  | macOS    | 26         | 35        | 35      | 0.81 / 0.68             | 7.5 / 9.8 s         |
+  | S1       | ~24  | Linux    | 26         | 35        | 35      | 0.81 / 0.65             | 9.3 / 11.2 s        |
+
+  S1 decide times include queueing: an offline replay and another client
+  shared the one S1 service during these runs. Its lowest confidence at the
+  cap stayed at 0.65, close to the 0.65 to 0.70 seen at about 4.
+- Offline replay of the captured AppKit and GTK3 fixtures (5 capture IDs per
+  decision point, 7 decision points per platform, 1,120 decisions): with
+  relevance capping, Jev was correct in 420/420 and S1 in 419/420. The one S1
+  miss was a `model_error` at a base-size choose-size step, where Large and
+  I agree are both correct. Shuffling the offered candidates into a seeded
+  random order changed nothing else, so position does not drive the choice.
+- Strict depth-first capping at density 24 kept only distractors in every one
+  of 140 decision points: the due step was never offered. Jev then abstained
+  or reobserved in 96 of 140 decisions, but pressed a wrong control in 44,
+  mostly the look-alikes "Large icons" and "Save draft". S1 pressed a wrong
+  control in 137 of 140 and never abstained; the other 3 were model errors. Its median confidence was 0.26
+  to 0.31, compared with 0.82 to 0.86 with relevance capping.
+- Decision: rank by task relevance before capping. Tier 0 is a candidate that
+  performs a declared step or clicks a declared visual target. Tier 1 is a
+  control whose label shares a word with the goal. Tier 2 is everything else,
+  and each tier keeps depth-first order. The kept candidates are presented in
+  depth-first order, so ranking decides only which candidates survive. The
+  ranking uses only task-authored text and labels, never values, and it is
+  deterministic. A set within the cap is unchanged, so the ordinary AppKit,
+  WPF, WinUI3, and GTK3 tasks send the same requests as before, and the
+  browser path, which does not use this composer, still sends byte-identical
+  v1 requests. A task with no declared steps and a goal that names no control
+  still falls back to depth-first order.
+- CI: jev-use now also runs the AppKit and GTK3 tasks at density 24 with the
+  mock provider.
+
+All acceptance criteria have shipped, so this RFC is `completed`. The live
+accuracy rows above ran the Python runners only; the next section adds Windows
+and the TypeScript runners.
+
+Accuracy on Windows and with the TypeScript runners,
+[#4354](https://github.com/trycua/cua/pull/4354) for
+[#4312](https://github.com/trycua/cua/issues/4312) (released Driver 0.30.4
+from the canonical installers, `cua-s1-4b-0.2@16818868`, runners and harnesses
+at `4fc8e7321`; each run verified by the harness's own state file):
+
+- The WPF and WinUI3 task windows gained `CUA_WPF_TASK_DENSITY` and
+  `CUA_WINUI3_TASK_DENSITY` (`12` or `24`, task mode only), with the same
+  distractor labels and counts as AppKit and GTK3 in a panel before the task
+  controls. The candidate sets match GTK3: 12, 14, and 12 candidates at
+  density 12, and 26 at density 24, where the cap drops 4 to 7 candidates.
+  The window stays within a 1024x768 display. Ordinary launches and the
+  existing task mode are unchanged. CI: jev-use now runs the WPF and WinUI3
+  tasks at density 24 with the mock provider too.
+- Live, recorded (the first repetition of every row has a video): 5
+  repetitions × 3 tasks × 3 densities × 2 providers for each harness and
+  language. Windows ran both runners on an Azure VM in an interactive RDP
+  session. macOS (Lume guest) and Linux (Azure VM, X11 with XFCE) ran the
+  TypeScript runners. All 540 runs passed and all 1,260 decisions were correct.
+  Three Windows runs failed before any decision (twice the harness did not
+  publish its initial state within 10 seconds, and once the oracle read the
+  state file while the harness was replacing it) and passed on rerun:
+
+  | Provider | Size | Harness | Runner | Candidates | Decisions | Correct | Confidence median / min | Decide median / p95 |
+  | -------- | ---- | ------- | ------ | ---------- | --------- | ------- | ----------------------- | ------------------- |
+  | Jev      | ~4   | WPF     | Python | 4–6        | 35        | 35      | 0.99 / 0.95             | 196 / 579 ms        |
+  | Jev      | ~4   | WPF     | TS     | 4–6        | 35        | 35      | 0.99 / 0.93             | 193 / 306 ms        |
+  | Jev      | ~4   | WinUI3  | Python | 4–6        | 35        | 35      | 0.99 / 0.94             | 192 / 533 ms        |
+  | Jev      | ~4   | WinUI3  | TS     | 4–6        | 35        | 35      | 0.99 / 0.93             | 196 / 338 ms        |
+  | Jev      | ~4   | AppKit  | TS     | 5–7        | 35        | 35      | 0.99 / 0.93             | 222 / 294 ms        |
+  | Jev      | ~4   | GTK3    | TS     | 4–6        | 35        | 35      | 0.99 / 0.93             | 200 / 285 ms        |
+  | Jev      | ~12  | WPF     | Python | 11–14      | 35        | 35      | 1.00 / 0.95             | 216 / 550 ms        |
+  | Jev      | ~12  | WPF     | TS     | 11–14      | 35        | 35      | 0.99 / 0.94             | 198 / 441 ms        |
+  | Jev      | ~12  | WinUI3  | Python | 11–14      | 35        | 35      | 1.00 / 0.95             | 231 / 587 ms        |
+  | Jev      | ~12  | WinUI3  | TS     | 11–14      | 35        | 35      | 0.99 / 0.95             | 194 / 368 ms        |
+  | Jev      | ~12  | AppKit  | TS     | 11–16      | 35        | 35      | 0.99 / 0.94             | 234 / 289 ms        |
+  | Jev      | ~12  | GTK3    | TS     | 11–14      | 35        | 35      | 0.99 / 0.94             | 181 / 323 ms        |
+  | Jev      | ~24  | WPF     | Python | 26         | 35        | 35      | 0.99 / 0.95             | 244 / 566 ms        |
+  | Jev      | ~24  | WPF     | TS     | 26         | 35        | 35      | 0.99 / 0.94             | 206 / 312 ms        |
+  | Jev      | ~24  | WinUI3  | Python | 26         | 35        | 35      | 0.99 / 0.95             | 202 / 553 ms        |
+  | Jev      | ~24  | WinUI3  | TS     | 26         | 35        | 35      | 0.99 / 0.93             | 191 / 310 ms        |
+  | Jev      | ~24  | AppKit  | TS     | 26         | 35        | 35      | 0.99 / 0.93             | 244 / 308 ms        |
+  | Jev      | ~24  | GTK3    | TS     | 26         | 35        | 35      | 0.99 / 0.93             | 165 / 304 ms        |
+  | S1       | ~4   | WPF     | Python | 4–6        | 35        | 35      | 0.92 / 0.70             | 3.5 / 9.3 s         |
+  | S1       | ~4   | WPF     | TS     | 4–6        | 35        | 35      | 0.91 / 0.70             | 3.2 / 7.5 s         |
+  | S1       | ~4   | WinUI3  | Python | 4–6        | 35        | 35      | 0.91 / 0.71             | 3.6 / 6.9 s         |
+  | S1       | ~4   | WinUI3  | TS     | 4–6        | 35        | 35      | 0.91 / 0.70             | 3.4 / 6.9 s         |
+  | S1       | ~4   | AppKit  | TS     | 5–7        | 35        | 35      | 0.83 / 0.65             | 3.6 / 8.0 s         |
+  | S1       | ~4   | GTK3    | TS     | 4–6        | 35        | 35      | 0.91 / 0.70             | 4.8 / 8.9 s         |
+  | S1       | ~12  | WPF     | Python | 11–14      | 35        | 35      | 0.88 / 0.59             | 5.8 / 9.5 s         |
+  | S1       | ~12  | WPF     | TS     | 11–14      | 35        | 35      | 0.87 / 0.59             | 6.3 / 8.4 s         |
+  | S1       | ~12  | WinUI3  | Python | 11–14      | 35        | 35      | 0.87 / 0.60             | 4.1 / 7.5 s         |
+  | S1       | ~12  | WinUI3  | TS     | 11–14      | 35        | 35      | 0.87 / 0.59             | 4.0 / 7.5 s         |
+  | S1       | ~12  | AppKit  | TS     | 11–16      | 35        | 35      | 0.90 / 0.60             | 4.7 / 9.6 s         |
+  | S1       | ~12  | GTK3    | TS     | 11–14      | 35        | 35      | 0.88 / 0.57             | 6.1 / 11.9 s        |
+  | S1       | ~24  | WPF     | Python | 26         | 35        | 35      | 0.81 / 0.69             | 9.0 / 12.9 s        |
+  | S1       | ~24  | WPF     | TS     | 26         | 35        | 35      | 0.81 / 0.69             | 8.8 / 10.9 s        |
+  | S1       | ~24  | WinUI3  | Python | 26         | 35        | 35      | 0.81 / 0.69             | 6.8 / 10.6 s        |
+  | S1       | ~24  | WinUI3  | TS     | 26         | 35        | 35      | 0.81 / 0.69             | 6.7 / 10.5 s        |
+  | S1       | ~24  | AppKit  | TS     | 26         | 35        | 35      | 0.81 / 0.68             | 7.4 / 11.8 s        |
+  | S1       | ~24  | GTK3    | TS     | 26         | 35        | 35      | 0.81 / 0.65             | 7.3 / 13.6 s        |
+
+  Every TypeScript row is fully correct, like the Python rows, and on each
+  harness its median confidence is within 0.01 of the Python row's. S1 decide times
+  include queueing: the macOS, Linux, and Windows runs and an offline replay
+  shared the one S1 service. On Windows the Jev p95 is higher with the Python
+  runner (533 to 587 ms) than with TypeScript (306 to 441 ms).
+- Offline replay of the WPF and WinUI3 fixtures (5 capture IDs per decision
+  point, element and shuffled order, 1,120 decisions): with relevance capping,
+  Jev was correct in 420/420 and S1 in 419/420. The S1 miss pressed "Save
+  note" before writing the note (confidence 0.53) at WinUI3 density 12 in
+  shuffled order. Strict depth-first capping at density 24 again never offered
+  the due step: Jev pressed a wrong control in 40 of 140 decisions and
+  abstained or reobserved in the rest, and S1 pressed a wrong control in 138
+  of 140, with 2 model errors.
+
+Accuracy at about 4, 12, and 24 candidates is now measured on every native
+harness with both runners.

@@ -168,6 +168,9 @@ fn tools_list_schema_shape() {
         "hotkey",
         "scroll",
         "browser_dialog",
+        // macOS set_value has no delivery ladder.
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        "set_value",
     ];
     for tool in DELIVERY_MODE_TOOLS {
         let delivery = &properties(tool)["delivery_mode"];

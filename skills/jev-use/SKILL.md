@@ -22,7 +22,8 @@ probabilities. Invoke the Python interpreter and absolute chooser path directly
 without a shell.
 For native desktop applications, use `NativeAccessibilitySource` and
 `cua.jev_choice_request_v2`, which adds a per-candidate `source` (`page`, `ax`,
-or `visual`) and compact value-free `elements`. Browser tasks keep sending v1.
+or `visual`), compact value-free `elements`, and optional `progress` counted
+from the runner's own performed actions. Browser tasks keep sending v1.
 Prefer browser DOM and semantic evidence. The optional visual adapter consumes
 the public `cua.visual_regions_v1` result only when Driver advertises both
 `parse_visual_regions` and the capture-bound `click.capture_id` input.

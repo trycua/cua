@@ -410,7 +410,10 @@ The shared and native action matrices should test left click, right click,
 double click, typing, keys, hotkeys, scroll, child windows, and drag across
 AX/PX and foreground/background combinations where the driver supports them.
 Unsupported background routes require an explicit refusal contract with an
-allowed structured code and desktop-side-effect oracles. A refusal fails a
+allowed structured code and desktop-side-effect oracles. A desktop-scope
+gesture that the platform's pointer route cannot carry uses the same contract
+with the fixture under the gesture as its oracle; today that is only a modified
+drag on native Wayland (`modified_pointer_unavailable`). A refusal fails a
 cell that requires delivery. There should not be a separate "delivery" family
 whose only purpose is to repeat those same actions in the background.
 
@@ -646,7 +649,7 @@ Perception tests have four owners, and each tests different code:
 | `libs/cua-driver/rust/crates/cua-perception/scripts/tests/` | Model artifact tooling and quality measurement scripts | `ci-cua-perception-release.yml` |
 | `libs/cua-driver/tests/perception-demo/` | Visual demo evidence sanitizing, caching, and envelopes | `ci-test-scripts.yml` |
 | `.github/scripts/tests/test_cua_perception_*.py`, `test_perception_release.py` | Perception release, review-trigger, and review-pipeline workflows and `.github/scripts` helpers | `ci-test-scripts.yml`, `ci-cua-perception-release.yml` |
-| `libs/cua-driver/rust/crates/cua-driver-e2e/tests/perception_capture_loop_test.rs` | Driver's desktop capture, parse, capture-bound click, and reobserve loop with a deterministic developer-only worker | Capture lane of the canonical macOS, Windows, and Linux X11 desktop E2E |
+| `libs/cua-driver/rust/crates/cua-driver-e2e/tests/perception_capture_loop_test.rs` | Driver's desktop capture, parse, capture-bound click, and reobserve loop, with a deterministic developer-only worker and with the published extension installed from its signed release catalog | Capture lane of the canonical macOS, Windows, and Linux X11 desktop E2E |
 | `libs/cua-driver/rust/crates/cua-driver-e2e/tests/perception_s1_decision_loop_test.rs` | The same loop with the published extension (OmniParser) and a resident Cua-S1-4B choosing the region, plus consumed and expired capture refusals | `s1-perception` lane of the Linux X11 runner, selected only by `ci-cua-s1-weights.yml` |
 
 Add a perception test to the directory that owns the code it exercises.

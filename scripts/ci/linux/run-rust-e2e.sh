@@ -406,10 +406,11 @@ if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
         --test perception_capture_loop_test -- \
         --ignored --nocapture --test-threads=1
   else
-    # The perception loop is certified in the canonical X11 lane. Wayland
-    # window capture and pointer routes differ per compositor and are not yet
-    # part of this row, so record the coverage gap instead of a vacuous pass.
-    limitation="The perception capture-loop row is certified on X11; Wayland compositor lanes do not run it yet."
+    # The perception loop, including the published-catalog row, is certified
+    # in the canonical X11 lane. Wayland window capture and pointer routes
+    # differ per compositor and are not yet part of these rows, so record the
+    # coverage gap instead of a vacuous pass.
+    limitation="The perception capture-loop rows (swatch contract and published cua-perception catalog) are certified on X11; Wayland compositor lanes do not run them yet."
     jq -n \
       --arg reason "${limitation}" \
       '{

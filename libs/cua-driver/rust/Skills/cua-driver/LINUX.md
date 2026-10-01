@@ -115,7 +115,7 @@ through the core keyboard (`path: "xtest_core_grab"`, the result names the
 popup and states that the core focus and active window were verified
 unchanged), or — when another application holds the core focus — are refused
 with `code: "popup_keyboard_grab"` and a hint: dismiss the popup (click
-outside it, or click one of its rows by element_index after
+outside it, or click one of its rows by element_token after
 `get_window_state(pid, window_id=<popup>)`) and retry. Typing an absolute path
 into a Qt file dialog opens its completer after the first `/`; prefer
 `set_value` on the "File name" field, which writes the path in one go.
@@ -161,7 +161,7 @@ native `do_action` acknowledgement alone is not task completion.
 
 ## AT-SPI needs the session bus (headless / containers / `runuser`)
 
-AT-SPI — the accessibility tree behind `get_window_state`, element-indexed
+AT-SPI — the accessibility tree behind `get_window_state`, `element_token`
 clicks, and focus-free `type_text` — lives **entirely on the desktop
 session's D-Bus**. cua-driver reaches it via `DBUS_SESSION_BUS_ADDRESS`. When
 the daemon is started _inside_ a normal desktop login that variable is already
@@ -199,7 +199,7 @@ Each input rung and its stable public route:
 
 | Modality                        | `delivery_mode`           | `route`                                                              | Postcondition proof                                      |
 | ------------------------------- | ------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------- |
-| Element click (`element_index`) | `background`              | `accessibility`                                                      | Use `verify_state`; invocation alone is not confirmation |
+| Element click (`element_token`) | `background`              | `accessibility`                                                      | Use `verify_state`; invocation alone is not confirmation |
 | **element px action (x,y)**     | `background`              | `accessibility` when AT-SPI-at-point lands, otherwise `global_input` | Use `verify_state` or multimodal reading                 |
 | Pixel (px) click, escalated     | `foreground`              | `global_input`                                                       | Use `verify_state` or multimodal reading                 |
 | `type_text` into editable       | `background`              | `accessibility`                                                      | `confirmed` only with `value_readback` evidence          |
@@ -314,8 +314,14 @@ held physical input, grabs, constraints, drag-and-drop, ambiguous primary seat
 bindings, and non-neutral keyboard modifiers. Background refusal never selects
 this route automatically. Driver expands bounded ASCII text under the exact
 US keymap; Unicode and IME remain outside its raw-input scope. Foreground
-pointer-only actions are layout-independent, but foreground keyboard actions
-still require the canonical physical US map.
+pointer-only actions are layout-independent. Foreground keyboard actions leave
+the user's Num Lock and Caps Lock untouched. They work with Num Lock on and with
+keymap options that leave every typing and modifier key unchanged, such as
+`compose:caps`. They refuse before any input under Caps Lock
+(`foreground_keyboard_caps_lock`), for a keypad key that Num Lock changes
+(`foreground_keyboard_numlock_keypad`), and for a different layout or remapped
+key (`foreground_unsupported_layout`). Ask the user to turn Caps Lock off, or
+use the equivalent non-keypad key, instead of retrying the same call.
 
 The retained bounded app evidence at source
 `f180e8828b8f31cc153e3c44eaa89a9c13c5bc68` includes instrumented Calc/Inkscape

@@ -3,13 +3,19 @@
  * python/native_tasks.py: a NativeTask declares goal, parameters (the only
  * source of text), window scope, allowed action kinds, opt-in risks,
  * foreground permission, step budget, and an app-owned oracle. The built-in
- * tasks drive the AppKit, WPF, and GTK3 harnesses in task mode
- * (CUA_APPKIT_TASK_STATE, CUA_WPF_TASK_STATE, CUA_GTK3_TASK_STATE), whose JSON
- * state file is the oracle.
+ * tasks drive the AppKit, WPF, WinUI3, and GTK3 harnesses in task mode
+ * (CUA_APPKIT_TASK_STATE, CUA_WPF_TASK_STATE, CUA_WINUI3_TASK_STATE,
+ * CUA_GTK3_TASK_STATE), whose JSON state file is the oracle.
  */
 import { readFile } from 'node:fs/promises';
 
-import { MAX_ELEMENTS, REQUEST_SCHEMA_V2 } from './choose_action.js';
+import {
+  MAX_ELEMENTS,
+  MAX_PROGRESS,
+  MAX_PROGRESS_COUNT,
+  REQUEST_SCHEMA_V2,
+  type ProgressItem,
+} from './choose_action.js';
 import {
   PARAMETER_NAME_PATTERN,
   elementState,
@@ -50,6 +56,22 @@ export const NATIVE_RESERVED: readonly Candidate[] = [
     arguments: {},
   }),
 ];
+
+// Words too common to make a control relevant to a goal (#4312).
+const RELEVANCE_STOPWORDS = new Set([
+  'the', 'and', 'then', 'once', 'per', 'step', 'stop', 'into', 'with', 'for', 'from',
+  'this', 'that', 'its', 'each', 'exactly', 'starts', 'set', 'option', 'field', 'button',
+]);
+
+function relevanceWords(text: string): Set<string> {
+  return new Set(
+    (text.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
+      (word) => word.length >= 3 && !RELEVANCE_STOPWORDS.has(word)
+    )
+  );
+}
+
+export type CapOrder = 'relevance' | 'depth_first';
 
 const VERBS: Readonly<Record<string, string>> = {
   press: 'pressed',
@@ -119,13 +141,18 @@ export type ComposeStats = Readonly<{
  * Merge source outputs in the order page, ax, visual: first source wins on a
  * duplicate ID, unallowed risk categories are removed, at most `cap`
  * executable candidates remain (the drop count is reported), and the reserved
- * candidates are appended.
+ * candidates are appended. Without `relevance`, the first `cap` in
+ * depth-first order are kept. With `relevance` (lower is more relevant), a set
+ * over the cap keeps the `cap` lowest `(relevance, position)` candidates and
+ * still presents them in depth-first order (#4312). A set within the cap is
+ * unchanged.
  */
 export function compose(
   groups: Partial<Record<(typeof SOURCE_ORDER)[number], readonly Candidate[]>>,
   allowedRisks: ReadonlySet<string>,
   reserved: readonly Candidate[] = NATIVE_RESERVED,
-  cap = MAX_EXECUTABLE_CANDIDATES
+  cap = MAX_EXECUTABLE_CANDIDATES,
+  relevance?: (candidate: Candidate) => number
 ): { candidates: Candidate[]; stats: ComposeStats } {
   const seen = new Set(reserved.map((candidate) => candidate.id));
   const merged: Candidate[] = [];
@@ -146,7 +173,18 @@ export function compose(
       merged.push(candidate);
     }
   }
-  const kept = merged.slice(0, cap);
+  let kept: Candidate[];
+  if (!relevance || merged.length <= cap) {
+    kept = merged.slice(0, cap);
+  } else {
+    const ranked = merged
+      .map((candidate, index) => ({ index, rank: relevance(candidate) }))
+      .sort((a, b) => a.rank - b.rank || a.index - b.index)
+      .slice(0, cap)
+      .map((entry) => entry.index)
+      .sort((a, b) => a - b);
+    kept = ranked.map((index) => merged[index]);
+  }
   const counts: Record<string, number> = { page: 0, ax: 0, visual: 0 };
   for (const candidate of kept) {
     if (candidate.source && candidate.source in counts) counts[candidate.source] += 1;
@@ -158,6 +196,33 @@ export function compose(
 }
 
 export type CompactElement = { role_class: string; label: string; state: string };
+
+/**
+ * One step a task requires, counted from the runner's own performed actions.
+ * `candidateId` names the candidate that performs the step; its `:foreground`
+ * variant counts too. The description is task-authored and value-free. A step
+ * with `afterPrevious` (the default) waits for every earlier step to be done.
+ */
+export type TaskStep = Readonly<{
+  description: string;
+  candidateId: string;
+  times?: number;
+  afterPrevious?: boolean;
+}>;
+
+/**
+ * Count the actions this run dispatched successfully, by candidate ID. Only
+ * entries marked `performed` count; nothing is read from the application.
+ */
+export function performedCounts(history: readonly HistoryEntry[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const item of history) {
+    if (item.performed !== true) continue;
+    const base = item.selected_id.replace(/:foreground$/, '');
+    counts[base] = (counts[base] ?? 0) + 1;
+  }
+  return counts;
+}
 
 export type NativeStep = Readonly<{
   candidates: Candidate[];
@@ -185,6 +250,8 @@ export type NativeTaskSpec = Readonly<{
   visualTargets?: readonly string[];
   visualMinConfidence?: number;
   mockPreferences?: readonly string[];
+  steps?: readonly TaskStep[];
+  capOrder?: CapOrder;
 }>;
 
 export class NativeTask implements Task {
@@ -203,6 +270,18 @@ export class NativeTask implements Task {
   /** OCR confidence a visual target must reach; exact-text uniqueness still applies. */
   readonly visualMinConfidence: number;
   readonly mockPreferences: readonly string[];
+  /**
+   * Ordered steps the task requires (#4313). The request reports how often
+   * this run has performed each, and a step's candidate names any earlier
+   * step that is not done yet. Empty means the request carries no progress.
+   */
+  readonly steps: readonly TaskStep[];
+  /**
+   * How a set over the cap is cut (#4312): 'relevance' keeps the declared
+   * steps' candidates first; 'depth_first' keeps the first `cap` in element
+   * order, as before. Both present the kept candidates in element order.
+   */
+  readonly capOrder: CapOrder;
   /** The oracle is polled after every action, so no candidate is special. */
   readonly completionCandidateIds: ReadonlySet<string> = new Set();
 
@@ -221,6 +300,11 @@ export class NativeTask implements Task {
     this.visualTargets = spec.visualTargets ?? [];
     this.visualMinConfidence = spec.visualMinConfidence ?? 0.8;
     this.mockPreferences = spec.mockPreferences ?? [];
+    this.steps = spec.steps ?? [];
+    this.capOrder = spec.capOrder ?? 'relevance';
+    if (this.capOrder !== 'relevance' && this.capOrder !== 'depth_first') {
+      throw new Error('capOrder must be relevance or depth_first');
+    }
     const unknown = [...this.allowedActions].filter((action) => !ACTION_KINDS.has(action));
     if (unknown.length) throw new Error(`unknown action kinds: ${unknown.sort().join(', ')}`);
     for (const parameter of this.parameters) {
@@ -229,6 +313,13 @@ export class NativeTask implements Task {
       }
     }
     if (!Number.isInteger(this.maxSteps) || this.maxSteps < 1) throw new Error('maxSteps must be positive');
+    if (this.steps.length > MAX_PROGRESS) throw new Error(`a task declares at most ${MAX_PROGRESS} steps`);
+    for (const taskStep of this.steps) {
+      const times = taskStep.times ?? 1;
+      if (!Number.isInteger(times) || times < 1 || times > MAX_PROGRESS_COUNT) {
+        throw new Error(`step times must be from 1 to ${MAX_PROGRESS_COUNT}`);
+      }
+    }
   }
 
   get allowedActionKinds(): ReadonlySet<string> {
@@ -251,6 +342,7 @@ export class NativeTask implements Task {
   private nativeCandidates(ax: NativeAccessibilitySource, foregroundIds: ReadonlySet<string>) {
     const candidates: Candidate[] = [];
     const outcomes: Record<string, string> = {};
+    const labels: Record<string, string> = {};
     for (const native of ax.controls) {
       if (!this.allowedActions.has(native.action)) continue;
       const control = ax.control(native);
@@ -269,6 +361,7 @@ export class NativeTask implements Task {
             )
           );
           outcomes[id] = `set ${label} to parameter ${parameter.name}`;
+          labels[id] = native.label;
         }
         continue;
       }
@@ -286,8 +379,9 @@ export class NativeTask implements Task {
       }
       candidates.push(ax.click(control, id, description, delivery));
       outcomes[id] = `${VERBS[native.action]} ${label}`;
+      labels[id] = native.label;
     }
-    return { candidates, outcomes };
+    return { candidates, outcomes, labels };
   }
 
   static describe(native: NativeControl, label: string): string {
@@ -332,13 +426,52 @@ export class NativeTask implements Task {
     return { candidates, outcomes };
   }
 
+  /**
+   * Rank candidates for the cap only (#4312); lower is more relevant. Tier 0
+   * performs a declared step or clicks a declared visual target; tier 1 has a
+   * label sharing a word with the goal; tier 2 is everything else. Uses only
+   * task-authored text and labels, never values.
+   */
+  relevance(labels: Readonly<Record<string, string>>): (candidate: Candidate) => number {
+    const declared = new Set([
+      ...this.steps.map((taskStep) => taskStep.candidateId),
+      ...this.visualTargets.map((target) => `visual:${slug(target)}`),
+    ]);
+    const goalWords = relevanceWords(this.goal);
+    return (candidate) => {
+      if (declared.has(candidate.id.replace(/:foreground$/, ''))) return 0;
+      for (const word of relevanceWords(labels[candidate.id] ?? '')) if (goalWords.has(word)) return 1;
+      return 2;
+    };
+  }
+
+  /**
+   * The candidate IDs that correctly advance the task now, for measurement: a
+   * declared step performed fewer times than required whose earlier steps
+   * (for a step that waits) are done. Counted from this run's own actions.
+   */
+  expectedNext(history: readonly HistoryEntry[]): string[] {
+    const counts = performedCounts(history);
+    const due: string[] = [];
+    this.steps.forEach((taskStep, index) => {
+      if ((counts[taskStep.candidateId] ?? 0) >= (taskStep.times ?? 1)) return;
+      const earlier = taskStep.afterPrevious === false ? [] : this.steps.slice(0, index);
+      if (earlier.every((step) => (counts[step.candidateId] ?? 0) >= (step.times ?? 1))) {
+        due.push(taskStep.candidateId);
+      }
+    });
+    return due;
+  }
+
   plan(sources: TaskSources): NativeStep {
     const outcomes: Record<string, string> = {};
+    let labels: Record<string, string> = {};
     let axCandidates: Candidate[] = [];
     let elements: CompactElement[] = [];
     if (sources.ax) {
       const native = this.nativeCandidates(sources.ax, sources.foregroundIds ?? new Set());
       axCandidates = native.candidates;
+      labels = native.labels;
       Object.assign(outcomes, native.outcomes);
       elements = sources.ax.controls.slice(0, MAX_ELEMENTS).map((control) => ({
         role_class: control.roleClass,
@@ -348,7 +481,13 @@ export class NativeTask implements Task {
     }
     const visual = this.visualCandidates(sources);
     Object.assign(outcomes, visual.outcomes);
-    const { candidates, stats } = compose({ ax: axCandidates, visual: visual.candidates }, this.allowedRisks);
+    const { candidates, stats } = compose(
+      { ax: axCandidates, visual: visual.candidates },
+      this.allowedRisks,
+      NATIVE_RESERVED,
+      MAX_EXECUTABLE_CANDIDATES,
+      this.capOrder === 'relevance' ? this.relevance(labels) : undefined
+    );
     for (const candidate of candidates) {
       if (candidate.tool !== null && !this.allowedActionKinds.has(candidate.tool)) {
         throw new Error(`task ${this.id} does not allow action kind ${candidate.tool}`);
@@ -378,7 +517,46 @@ export class NativeTask implements Task {
         : candidateId === 'reobserve'
           ? 'took no action and requested a fresh observation'
           : (options.outcome ?? 'completed');
-    return { step, selected_id: candidateId, outcome: (this.redact(text) as string).slice(0, 128) };
+    const performed =
+      !options.stale && refusal === undefined && candidateId !== 'reobserve' && candidateId !== 'abstain';
+    return {
+      step,
+      selected_id: candidateId,
+      outcome: (this.redact(text) as string).slice(0, 128),
+      ...(performed ? { performed: true as const } : {}),
+    };
+  }
+
+  /** Each declared step and how often this run has performed it. */
+  progress(history: readonly HistoryEntry[]): ProgressItem[] {
+    const counts = performedCounts(history);
+    return this.steps.map((taskStep) => ({
+      step: this.redact(taskStep.description) as string,
+      done: Math.min(counts[taskStep.candidateId] ?? 0, MAX_PROGRESS_COUNT),
+      required: taskStep.times ?? 1,
+    }));
+  }
+
+  /**
+   * A sentence stating a candidate's place in the task's declared steps: a
+   * done step says so; a step with an earlier step not yet done names it; a
+   * due step says how many more times the task requires it.
+   */
+  stepNote(candidateId: string, history: readonly HistoryEntry[]): string {
+    const base = candidateId.replace(/:foreground$/, '');
+    const counts = performedCounts(history);
+    const index = this.steps.findIndex((taskStep) => taskStep.candidateId === base);
+    if (index < 0) return '';
+    const taskStep = this.steps[index];
+    const times = taskStep.times ?? 1;
+    if ((counts[base] ?? 0) >= times) {
+      return ` This run already did this the ${times} time(s) the task requires.`;
+    }
+    const pending = (taskStep.afterPrevious === false ? [] : this.steps.slice(0, index))
+      .filter((earlier) => (counts[earlier.candidateId] ?? 0) < (earlier.times ?? 1))
+      .map((earlier) => earlier.description);
+    if (pending.length) return ` The task requires this only after: ${pending.join('; ')} (not done yet).`;
+    return ` The task still requires this ${times - (counts[base] ?? 0)} more time(s).`;
   }
 
   async reset(): Promise<void> {
@@ -419,7 +597,11 @@ export function visualFallbackReason(
   return undefined;
 }
 
-/** Build the cua.jev_choice_request_v2 the provider receives; no tokens, values, or pixels. */
+/**
+ * Build the cua.jev_choice_request_v2 the provider receives; no tokens,
+ * values, or pixels. A task that declares steps adds the progress counted
+ * from this run's performed actions.
+ */
 export function nativeChoiceRequest(
   task: NativeTask,
   sources: TaskSources,
@@ -449,14 +631,15 @@ export function nativeChoiceRequest(
     history: history.slice(-MAX_HISTORY).map((item) => ({ selected_id: item.selected_id, outcome: item.outcome })),
     candidates: step.candidates.map((candidate) => ({
       id: candidate.id,
-      description: task.redact(candidate.description),
+      description: task.redact(candidate.description + task.stepNote(candidate.id, history)),
       ...(candidate.source ? { source: candidate.source } : {}),
     })),
+    ...(task.steps.length ? { progress: task.progress(history) } : {}),
   };
 }
 
 // Harness tasks. The same three tasks run on every repository harness that has
-// a task mode: AppKit (macOS AX), WPF (Windows UIA), and GTK3 (Linux AT-SPI).
+// a task mode: AppKit (macOS AX), WPF and WinUI3 (Windows UIA), and GTK3 (Linux AT-SPI).
 // Each shows the same labeled controls and rewrites the same app-owned JSON
 // state file, so task semantics, candidate IDs, and mock choices are identical
 // across platforms. Only the window, the state schema, and the role table differ.
@@ -480,8 +663,9 @@ export const HARNESSES: Readonly<Record<string, HarnessSpec>> = {
     stateEnv: 'CUA_APPKIT_TASK_STATE',
     bundleId: 'com.trycua.harness.appkit',
   },
-  // WPF and GTK3 show a dedicated task window in task mode: their ordinary
-  // main windows scroll, so most controls would be off screen (and excluded).
+  // WPF, WinUI3, and GTK3 show a dedicated task window in task mode: their
+  // ordinary main windows scroll, so most controls would be off screen (and
+  // excluded).
   wpf: {
     name: 'wpf',
     platform: 'windows',
@@ -489,6 +673,14 @@ export const HARNESSES: Readonly<Record<string, HarnessSpec>> = {
     stateSchema: 'cua.wpf_task_state_v1',
     stateEnv: 'CUA_WPF_TASK_STATE',
     processName: 'CuaTestHarness.Wpf',
+  },
+  winui3: {
+    name: 'winui3',
+    platform: 'windows',
+    windowTitle: 'CuaTestHarness WinUI3 Tasks',
+    stateSchema: 'cua.winui3_task_state_v1',
+    stateEnv: 'CUA_WINUI3_TASK_STATE',
+    processName: 'CuaTestHarness.WinUI3',
   },
   gtk3: {
     name: 'gtk3',
@@ -588,6 +780,9 @@ export function nativeTask(taskId: string, statePath: string, options: HarnessTa
       allowForeground,
       maxSteps: COUNTER_TARGET + 3,
       mockPreferences: ['ax:button:increment'],
+      steps: [
+        { description: 'Press the button labeled "Increment"', candidateId: 'ax:button:increment', times: COUNTER_TARGET },
+      ],
     });
   }
   if (kind === 'save-note') {
@@ -604,6 +799,13 @@ export function nativeTask(taskId: string, statePath: string, options: HarnessTa
       allowForeground,
       maxSteps: 5,
       mockPreferences: ['ax:text_input:note:set:note', 'ax:button:save-note'],
+      steps: [
+        {
+          description: 'Set the text field "Note" to the task parameter "note"',
+          candidateId: 'ax:text_input:note:set:note',
+        },
+        { description: 'Press the button labeled "Save note"', candidateId: 'ax:button:save-note' },
+      ],
     });
   }
   return new NativeTask({
@@ -616,6 +818,11 @@ export function nativeTask(taskId: string, statePath: string, options: HarnessTa
     allowForeground,
     maxSteps: 5,
     mockPreferences: ['ax:radio:large', 'ax:checkbox:i-agree'],
+    steps: [
+      { description: 'Select the radio option "Large"', candidateId: 'ax:radio:large' },
+      // The oracle accepts either order, so neither step waits for the other.
+      { description: 'Toggle the checkbox "I agree"', candidateId: 'ax:checkbox:i-agree', afterPrevious: false },
+    ],
   });
 }
 

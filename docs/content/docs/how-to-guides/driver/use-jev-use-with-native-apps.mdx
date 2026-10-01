@@ -33,7 +33,9 @@ builds a closed list of candidates:
   path of actionable ancestors, not from element indexes that change between
   observations.
 - **Bounded and safe.** At most 24 actions are offered, plus `reobserve` and
-  `abstain`. Controls whose labels suggest deleting, sending, purchasing, or
+  `abstain`. In a window with more controls, the ones that perform the task's
+  declared steps are kept first, and the offered actions keep their accessibility-tree
+  order. Controls whose labels suggest deleting, sending, purchasing, or
   closing are left out unless the task allows that risk. Typed text comes
   only from the task's parameters.
 
@@ -56,8 +58,10 @@ try background delivery first. If Driver refuses that, the next step offers a
 separate foreground click when the task allows it.
 
 Native requests use the `cua.jev_choice_request_v2` contract, which adds a
-`source` to each candidate (`page`, `ax`, or `visual`). Browser tasks keep
-sending `cua.jev_choice_request_v1`.
+`source` to each candidate (`page`, `ax`, or `visual`). The built-in tasks
+also send `progress`: each required step and how many times this run has
+performed it. The runner counts its own successful actions and never reads the
+count from the app. Browser tasks keep sending `cua.jev_choice_request_v1`.
 
 ## Before you start
 
@@ -104,6 +108,9 @@ session:
 ..\..\tests\fixtures\build\windows.ps1 -Targets wpf
 uv run --frozen python verify_native.py --harness wpf --typescript --output-dir runs/native-mock
 ```
+
+The same tasks also run on a WinUI3 harness. Build it with `-Targets winui3`
+and pass `--harness winui3`.
 
   </Tab>
   <Tab value="Linux">

@@ -207,7 +207,7 @@ fn harness_lo_vcl_font_color_expand_opens_picker() {
         "click",
         serde_json::json!({
             "pid": pid as i64, "window_id": wid,
-            "element_index": idx, "snapshot_id": snap.snapshot_id(),
+            "element_token": snap.element_token(idx),
             "action": "expand"
         }),
     );

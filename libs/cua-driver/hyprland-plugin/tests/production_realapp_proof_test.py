@@ -12,9 +12,10 @@ from unittest.mock import Mock, patch
 import zipfile
 
 import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
+import production_pointer_grounding as pointer
 from production_realapp_proof import (SMOKE_STEPS, app_process_identity, provenance,
                                     assert_no_dispatch, assert_primary_state, check_response,
-                                    capacity_lane, verify_capacity, check_manifest_refusal,
+                                    bound_drag_lanes, capacity_lane, verify_capacity, check_manifest_refusal,
                                     manifest_tool_messages, verify_policy_cache,
                                     passive_focus_evidence,
                                     expected_primary_motion, move_primary, primary_acknowledgement,
@@ -22,7 +23,7 @@ from production_realapp_proof import (SMOKE_STEPS, app_process_identity, provena
                                     PRIMARY_LIFETIME_MS, POINTER_EPISODES, run, trace_interval, validate_plan,
                                     verify_output)
 from proof_fixtures import (INKSCAPE, INKSCAPE_SELECTED, START, STOP, assert_rejects, capacity_events, capacity_plan,
-                            harness_args, inkscape_plan, lane, lane_status, patch_module, plan,
+                            harness_args, ink, inkscape_plan, lane, lane_status, patch_module, plan,
                             policy_cache_plan, primary_trace as trace, run_replacements)
 from production_app_smoke import OBSERVATION_TIMEOUT_MS
 
@@ -384,6 +385,70 @@ class PolicyCacheTests(unittest.TestCase):
                     self.assertRegex(result['error'] if where == 'error' else cleanup[where], pattern)
                 if failure in ('transport', 'dead_runtime', 'changed_runtime', 'gap_input', 'next_snapshot_input'):
                     self.assertEqual(mutations, ['click', 'press_key'])
+
+
+class DragLaneBindingTests(unittest.TestCase):
+    def test_overlap_requires_serial_unique_selections_before_drags(self):
+        candidate = inkscape_plan()
+        candidate['require_overlap'] = True
+        selections = [{'agent': i, 'tool': 'hotkey', 'arguments': {'keys': ['ctrl', 'a']},
+                       'smoke_stage': 'select'} for i in range(2)]
+        drags = {'parallel': [{'agent': i, 'tool': 'drag', 'arguments': {},
+                              'pointer_stage': 'move_rectangle'} for i in range(2)]}
+        candidate['phases'] = [*selections, drags]
+        validate_plan(candidate)
+        for phases in ([drags, *selections], [selections[0], drags],
+                       [*selections, selections[0], drags], [{'parallel': selections}, drags]):
+            with self.subTest(phases=phases), self.assertRaises(AssertionError):
+                validate_plan({**candidate, 'phases': phases})
+
+    @staticmethod
+    def selects(*lanes):
+        return [{'agent': i, 'tool': 'hotkey', 'smoke_stage': 'select', 'compositor_lane': lane}
+                for i, lane in enumerate(lanes)]
+
+    def test_binding_comes_from_each_agents_own_select_evidence_not_order(self):
+        self.assertEqual(bound_drag_lanes(self.selects(1, 2)), {0: 1, 1: 2})
+        self.assertEqual(bound_drag_lanes(self.selects(2, 1)), {0: 2, 1: 1})
+        # Unbound plans record no lane evidence; overlap enforcement rejects that at cleanup.
+        rows = [{'agent': 0, 'tool': 'hotkey', 'smoke_stage': 'select'},
+                {'agent': 1, 'tool': 'drag', 'pointer_stage': 'move_rectangle'}]
+        self.assertEqual(bound_drag_lanes(rows), {})
+
+    def test_shared_duplicate_or_invalid_lane_evidence_is_rejected(self):
+        for rows in (self.selects(1, 1), self.selects(1, 2) + self.selects(1), self.selects(0),
+                     self.selects(3), self.selects(True), self.selects('1'), self.selects(None)):
+            with self.subTest(rows=rows), self.assertRaises(AssertionError):
+                bound_drag_lanes(rows)
+
+    def test_identical_coordinate_drags_are_ambiguous_without_but_exact_with_binding(self):
+        args, oracle = pointer.action(*ink(), 'inkscape', 'move_rectangle')
+        effect = pointer.verify(*ink(dx=35, dy=27), oracle)
+        rows = []
+        for lane_number in (1, 2):
+            rows += [('pointer_motion', 100, 200, lane_number, 0), ('agent_drag_start', 100, 200, lane_number, 0),
+                     ('pointer_button', 100, 200, lane_number, 1)] + \
+                    [('pointer_motion', 100, 200, lane_number, 0)] * 3 + \
+                    [('pointer_button', 100, 200, lane_number, 0), ('agent_drag_end', 100, 200, lane_number, 0)]
+        data = trace(START, *rows, STOP)
+        for base in (1, 9):  # Same local coordinates in both windows.
+            for offset, xy in ((0, [145, 165]), (3, [149, 168]), (4, [165, 180]), (5, [185, 195])):
+                data['events'][base + offset].extend(xy)
+        with self.assertRaisesRegex(AssertionError, 'missing or ambiguous'):
+            pointer.verify_drag_trace(data, args, effect)
+        # Swapped independently proven bindings select swapped lanes, never agent order.
+        for agents in (self.selects(1, 2), self.selects(2, 1)):
+            lanes = bound_drag_lanes(agents)
+            for agent, lane_number in lanes.items():
+                self.assertEqual(pointer.verify_drag_trace(data, args, effect, expected_lane=lanes[agent])['lane'],
+                                 lane_number)
+
+    def test_absent_or_ambiguous_select_trace_cannot_bind_a_lane(self):
+        before = {**trace(START), 'active': True}
+        two_lanes = {**trace(START, *capacity_events(1), *capacity_events(2)), 'active': True}
+        for after in (before, two_lanes):
+            with self.subTest(after=after['events']), self.assertRaisesRegex(AssertionError, 'exactly one compositor lane'):
+                capacity_lane(before, after, 'click')
 
 
 class CapacityTests(unittest.TestCase):

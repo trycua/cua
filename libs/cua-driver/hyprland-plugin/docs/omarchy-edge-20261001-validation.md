@@ -49,13 +49,14 @@ page scrolling, keyboard-first cursor placement, GTK3 pixel geometry, desktop
 scope, and encrypted history setup. Product repairs are isolated in #4396;
 the guest function-key helper and Secret Service setup were also corrected.
 The manual foreground safety suite passed three tests. The manual observation
-test returned before its behavioral-video boundary, so its zero exit status is
-not counted as native behavioral proof.
+test also passed its identity and input assertions, but does not call the
+behavioral-video boundary; its missing video remains an evidence gap, not proof
+that the test skipped its actions.
 
 ## Remaining gates
 
 - Pass the complete native Linux all-suite on the final repaired candidate and
-  resolve the manual observation test's pre-behavior return.
+  retain the manual observation test's behavioral video.
 - Review any bounded smoke grounding repair and replay it natively.
 - Two independent app lanes, traced overlap/capacity/refusal and cleanup proof.
 - Independent primary-input isolation and negative control on production bytes.

@@ -84,8 +84,10 @@ async fn client(url: &str, transport: TransportPreference) -> SpacesdClient {
 fn fake_chrome(home: &Path) {
     let profile = home.join(".config/google-chrome/Default");
     std::fs::create_dir_all(profile.join("Sessions")).unwrap();
-    // A real (empty) Chrome cookie store: the sender reads it as SQLite.
-    rusqlite::Connection::open(profile.join("Cookies"))
+    std::fs::create_dir_all(profile.join("Network")).unwrap();
+    // A real (empty) Chrome cookie store in modern Chrome's layout
+    // (`Network/Cookies`, no root `Cookies`): the sender reads it as SQLite.
+    rusqlite::Connection::open(profile.join("Network/Cookies"))
         .unwrap()
         .execute_batch(
             "CREATE TABLE cookies (creation_utc INTEGER NOT NULL, host_key TEXT NOT NULL,
@@ -228,9 +230,11 @@ async fn cookies_land_in_a_chrome_that_was_never_launched() {
     {
         let key = crypto::derive_key(crypto::LINUX_V10_PASSWORD, crypto::LINUX_V10_PBKDF2_ROUNDS);
         let blob = crypto::encrypt_v10(&key, b"fresh-session-value");
-        let conn =
-            rusqlite::Connection::open(src.path().join(".config/google-chrome/Default/Cookies"))
-                .unwrap();
+        let conn = rusqlite::Connection::open(
+            src.path()
+                .join(".config/google-chrome/Default/Network/Cookies"),
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO cookies (creation_utc, host_key, name, value, encrypted_value, path,
              expires_utc, is_secure, is_httponly, samesite)

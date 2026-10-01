@@ -1,12 +1,12 @@
 ---
 title: Quickstart
-description: Your first sandbox. Run a web server in a sandbox on your machine, call it, then run the same code in the cloud.
+description: Your first sandbox. Run a web server in a sandbox on your machine and call it.
 ---
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-Run a web server in a sandbox on your machine and call it. The cloud variant
-changes one line: `local=False`.
+Run a web server in a sandbox on your machine and call it. Sandboxes run
+locally by default, so the code passes no location.
 
 ## Prerequisites
 
@@ -16,7 +16,7 @@ changes one line: `local=False`.
 pip install cua-sandbox
 ```
 
-- Locally, a container engine (Docker, Podman or Colima). Check the host and
+- A container engine (Docker, Podman or Colima). Check the host and
   install what is missing:
 
 ```bash test="cli-shape" id="cua-runtime-doctor"
@@ -24,13 +24,10 @@ cua runtime doctor
 cua runtime setup
 ```
 
-- For the cloud, sign in once with `cua auth login`
-  ([credentials](/cua-sdk/guides/cloud#credentials)).
-
 ## Run
 
-<Tabs groupId="quickstart-run" persist items={['Local', 'Cloud', 'CLI', 'TypeScript']}>
-  <Tab value="Local">
+<Tabs groupId="quickstart-run" persist items={['Python', 'CLI', 'TypeScript']}>
+  <Tab value="Python">
 
 ```python title="quickstart.py" test="container" id="local-server" session="local"
 import asyncio
@@ -44,31 +41,6 @@ async def main():
         command=["python", "-m", "http.server", "8000"],
         services={"web": 8000},
         wait_for=http("web", "/"),
-        local=True,
-    ) as sb:
-        print((await sb.service("web").request("GET", "/")).status_code)
-        print(await sb.service("web").url())
-
-
-asyncio.run(main())
-```
-
-  </Tab>
-  <Tab value="Cloud">
-
-```python title="quickstart.py" test="docs,fleet" id="cloud-server" session="cloud" prelude="fakefleet"
-import asyncio
-
-from cua_sandbox import Image, Sandbox, http
-
-
-async def main():
-    async with Sandbox.ephemeral(
-        Image.from_registry("python:3.12-slim"),
-        command=["python", "-m", "http.server", "8000"],
-        services={"web": 8000},
-        wait_for=http("web", "/"),
-        local=False,
     ) as sb:
         print((await sb.service("web").request("GET", "/")).status_code)
         print(await sb.service("web").url())
@@ -83,7 +55,7 @@ asyncio.run(main())
 ```bash test="cli-shape" id="cua-sb-create"
 cua sb create python:3.12-slim --name web \
   --service web=8000 --wait http:web/ \
-  -- python -m http.server 8000        # add --on cloud for the cloud
+  -- python -m http.server 8000
 cua sb url web web
 ```
 
@@ -95,7 +67,6 @@ import { embedded, http, SandboxCreateOptions } from '@trycua/cua';
 
 const sb = await embedded().sandboxes().create(
   SandboxCreateOptions.create({
-    on: 'local', // 'cloud' for the cloud
     image: 'python:3.12-slim',
     command: ['python', '-m', 'http.server', '8000'],
     services: new Map([['web', 8000]]),
@@ -116,8 +87,7 @@ await sb.delete_();
 http://127.0.0.1:53817
 ```
 
-In the cloud the URL is a short-lived signed `https://` URL, and the first
-start of an image can take a few minutes.
+The first start of an image pulls it, which can take a few minutes.
 
 ## Clean up
 
@@ -153,8 +123,7 @@ Tahoe and `Image.macos("15")` Sequoia, both local only on Apple silicon.
 
 ## Adapter benchmark images
 
-Each has a container tag and a `-disk` VM tag, and runs locally or in the
-cloud with `cb run`.
+Each has a container tag and a `-disk` VM tag, and runs locally with `cb run`.
 
 {/* GENERATED:catalog-benchmarks:start */}
 | Benchmark | What | Tasks | Image |
@@ -170,4 +139,4 @@ cloud with `cb run`.
 
 - [Control the desktop](/cua-sdk/guides/desktop)
 - [Run a service](/cua-sdk/guides/services)
-- [Run sandboxes in the cloud](/cua-sdk/guides/cloud)
+- [Reach another machine](/cua-sdk#reach-another-machine)

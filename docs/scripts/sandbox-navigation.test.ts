@@ -49,10 +49,10 @@ test('the Cua SDK has its task guides and one concept page', async () => {
   }
 });
 
-test('the quickstart runs locally first and lists the images and benchmark images', async () => {
+test('the quickstart runs locally and lists the images and benchmark images', async () => {
   const body = await readFile(path.join(content, 'cua-sdk/quickstart.mdx'), 'utf8');
-  const local = body.indexOf('<Tab value="Local">');
-  assert.ok(local > 0 && local < body.indexOf('<Tab value="Cloud">'), 'local before cloud');
+  assert.ok(body.includes('<Tab value="Python">'), 'the quickstart leads with Python');
+  assert.ok(!body.includes('local=False') && !body.includes('<Tab value="Cloud">'), 'local only');
   for (const ref of [
     'ghcr.io/trycua/linux:24.04',
     'ghcr.io/trycua/linux:24.04-disk',

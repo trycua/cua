@@ -14,8 +14,8 @@ const content = path.join(docs, 'content/docs');
 const PRODUCTS: Array<[string, string]> = [
   ['cua-sdk', 'Cua SDK'],
   ['cua-driver', 'Cua Driver'],
-  ['fleets', 'Cua Fleets'],
   ['spaces', 'Cua Spaces'],
+  ['fleets', 'Cua Fleets'],
   ['cua-bench', 'Cua Bench'],
   ['lume', 'Lume'],
   ['cua-cli', 'Cua CLI'],

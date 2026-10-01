@@ -102,7 +102,6 @@ sb = await Sandbox.create(
     Image.from_registry("python:3.12-slim"),
     command=["sleep", "infinity"],
     runtime="runc",
-    local=True,
     overlay={"tool": (tool, "/usr/local/bin/tool")},
 )
 [result] = await sb.overlay({"tool": (tool, "/usr/local/bin/tool")})

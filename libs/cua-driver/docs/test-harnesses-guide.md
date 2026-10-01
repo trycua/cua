@@ -410,7 +410,10 @@ The shared and native action matrices should test left click, right click,
 double click, typing, keys, hotkeys, scroll, child windows, and drag across
 AX/PX and foreground/background combinations where the driver supports them.
 Unsupported background routes require an explicit refusal contract with an
-allowed structured code and desktop-side-effect oracles. A refusal fails a
+allowed structured code and desktop-side-effect oracles. A desktop-scope
+gesture that the platform's pointer route cannot carry uses the same contract
+with the fixture under the gesture as its oracle; today that is only a modified
+drag on native Wayland (`modified_pointer_unavailable`). A refusal fails a
 cell that requires delivery. There should not be a separate "delivery" family
 whose only purpose is to repeat those same actions in the background.
 

@@ -86,7 +86,10 @@ Only enabled, on-screen, labeled, native (not `in_web_content`) elements
 become candidates; a label equal to the element's value counts as unlabeled.
 Candidate IDs come from the role class, label, and actionable-ancestor path,
 never `element_index`. At most 24 action candidates are offered, plus
-`reobserve` and `abstain`. Labels that suggest deleting, sending, purchasing,
+`reobserve` and `abstain`. When more are eligible, the candidates that perform
+the task's declared steps are kept first, then controls whose label shares a
+word with the goal, then the rest in element order; the kept candidates are
+still presented in element order, and the number dropped is logged. Labels that suggest deleting, sending, purchasing,
 or closing are excluded unless the task allows that risk. Text comes only from
 task parameters. Actions are element-bound `click`, `set_value`, or
 `type_text` with background delivery first; a stale token leads to a fresh
@@ -162,6 +165,39 @@ no `value` for a named text field
 ([#4291](https://github.com/trycua/cua/issues/4291)). With those Drivers,
 `gtk3-save-note` cannot observe its own write, so it keeps offering the write
 until the step budget runs out.
+
+#### Measure accuracy at larger candidate sets
+
+The task-mode harnesses show only a few controls, so each step offers 4 to 7
+candidates. `CUA_APPKIT_TASK_DENSITY`, `CUA_WPF_TASK_DENSITY`,
+`CUA_WINUI3_TASK_DENSITY`, or `CUA_GTK3_TASK_DENSITY` set to `12` or `24`,
+together with the task-state variable, adds benign distractor controls
+(toolbar-style buttons, labeled text fields, checkboxes, and radio groups, some
+close to a task control such as "Save draft" or "Note title") before the task
+controls, which fills the set to about 12 or to the 24-candidate cap.
+`verify_native.py --density 12` or `--density 24` launches the harness that
+way and checks that the harness reports the density. Each runner step logs
+`candidate_count`, `expected_ids` (the declared steps that are due), and
+`expected_offered`, next to the choice, confidence, and `decide_ms`.
+`measure_native.py` turns those logs, or an offline replay of captured
+fixtures through any provider, into an accuracy table by set size:
+
+```bash
+# Score the runner logs of live runs
+uv run --frozen python measure_native.py logs /tmp/jev-native-proof --out /tmp/jev-native-accuracy
+# Replay recorded window states through Cua-S1, comparing depth-first and relevance capping
+uv run --frozen python measure_native.py replay --provider s1 --reps 5 \
+  --fixture gtk3:24:fixtures/native/gtk3-window-state-density-24-v1.json \
+  --cap-order depth_first --cap-order relevance --order element --order shuffled \
+  --out /tmp/jev-native-replay --group-by density,cap_order,order,bucket
+```
+
+`fixtures/native/` has density 12 and 24 captures for all four harnesses
+(`appkit`, `wpf`, `winui3`, and `gtk3`). Measured live with Cua Driver 0.30.4
+on macOS, Windows, and Linux, with both the Python and TypeScript runners,
+TypeSafe Jev and Cua-S1 chose correctly in all 1,680 decisions at about 4,
+12, and 24 candidates. The per-harness tables are in the
+[RFC 4268 decision record](../../../../rfcs/4268-jev-use-native-candidates.md).
 
 #### Choose with Cua-S1
 

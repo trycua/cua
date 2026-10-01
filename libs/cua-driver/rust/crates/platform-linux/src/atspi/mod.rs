@@ -9,12 +9,13 @@
 //! When the AT-SPI bus is unavailable (or the app exposes no a11y tree) we
 //! fall back to a minimal X11 property tree (window title + role) via x11rb.
 
+use self::snapshot as cache;
 use anyhow::Result;
 
-pub mod cache;
 pub mod native;
-pub use cache::ElementCache;
+pub mod snapshot;
 pub use native::ensure_listener_active;
+pub use snapshot::Snapshots;
 
 /// Stable address on one AT-SPI bus connection, including the owning frame.
 /// Unique bus names prevent a restarted process from reusing an observed path.

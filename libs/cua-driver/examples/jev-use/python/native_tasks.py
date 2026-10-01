@@ -26,6 +26,7 @@ schema name.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping
@@ -68,6 +69,20 @@ NATIVE_RESERVED = (
         {},
     ),
 )
+
+# Words too common to make a control relevant to a goal (#4312).
+_RELEVANCE_STOPWORDS = frozenset(
+    {"the", "and", "then", "once", "per", "step", "stop", "into", "with", "for", "from",
+     "this", "that", "its", "each", "exactly", "starts", "set", "option", "field", "button"}
+)
+
+
+def _relevance_words(text: str) -> frozenset[str]:
+    return frozenset(
+        word for word in re.findall(r"[a-z0-9]+", text.lower())
+        if len(word) >= 3 and word not in _RELEVANCE_STOPWORDS
+    )
+
 
 _VERBS = {
     "press": "pressed",
@@ -153,14 +168,22 @@ def compose(
     allowed_risks: frozenset[str],
     reserved: tuple[Candidate, ...] = NATIVE_RESERVED,
     cap: int = MAX_EXECUTABLE_CANDIDATES,
+    relevance: Callable[[Candidate], int] | None = None,
 ) -> tuple[list[Candidate], ComposeStats]:
     """Merge source outputs in the order page, ax, visual.
 
     Duplicate IDs are dropped deterministically (first source wins). A
     candidate tagged with a risk category the task did not allow is removed.
-    At most ``cap`` executable candidates remain, in source then element
-    order; the count dropped is reported, never silently truncated. The
-    reserved ``reobserve`` and ``abstain`` candidates are always appended.
+    At most ``cap`` executable candidates remain; the count dropped is
+    reported, never silently truncated. The reserved ``reobserve`` and
+    ``abstain`` candidates are always appended.
+
+    Without ``relevance``, the first ``cap`` candidates in source then element
+    (depth-first) order are kept. With ``relevance`` (lower is more relevant),
+    a set over the cap keeps the ``cap`` candidates with the lowest
+    ``(relevance, depth-first position)`` and still presents them in
+    depth-first order (#4312), so ranking decides only which candidates
+    survive, never where they appear. A set within the cap is unchanged.
     """
     seen: set[str] = {candidate.id for candidate in reserved}
     merged: list[Candidate] = []
@@ -178,7 +201,11 @@ def compose(
                     risk_excluded[category] = risk_excluded.get(category, 0) + 1
                 continue
             merged.append(candidate)
-    kept = merged[:cap]
+    if relevance is None or len(merged) <= cap:
+        kept = merged[:cap]
+    else:
+        ranked = sorted(range(len(merged)), key=lambda index: (relevance(merged[index]), index))
+        kept = [merged[index] for index in sorted(ranked[:cap])]
     counts = {source: 0 for source in SOURCE_ORDER}
     for candidate in kept:
         if candidate.source in counts:
@@ -256,6 +283,10 @@ class NativeTask:
     # step that is not done yet, so a model need not infer order or count
     # from history. Empty means the request carries no progress.
     steps: tuple[TaskStep, ...] = ()
+    # How a set over the cap is cut (#4312): "relevance" keeps the declared
+    # steps' candidates first; "depth_first" keeps the first ``cap`` in element
+    # order, as before. Both present the kept candidates in element order.
+    cap_order: Literal["relevance", "depth_first"] = "relevance"
     # The oracle is polled after every action, so no candidate is special.
     completion_candidate_ids: frozenset[str] = field(default=frozenset(), init=False)
 
@@ -266,6 +297,8 @@ class NativeTask:
         for parameter in self.parameters:
             if not PARAMETER_NAME_PATTERN.fullmatch(parameter.name):
                 raise ValueError("parameter names must match [a-z][a-z0-9_]{0,7}")
+        if self.cap_order not in ("relevance", "depth_first"):
+            raise ValueError("cap_order must be relevance or depth_first")
         if self.max_steps < 1:
             raise ValueError("max_steps must be positive")
         if len(self.steps) > MAX_PROGRESS:
@@ -297,9 +330,10 @@ class NativeTask:
 
     def _native_candidates(
         self, ax: NativeAccessibilitySource, foreground_ids: frozenset[str]
-    ) -> tuple[list[Candidate], dict[str, str]]:
+    ) -> tuple[list[Candidate], dict[str, str], dict[str, str]]:
         candidates: list[Candidate] = []
         outcomes: dict[str, str] = {}
+        labels: dict[str, str] = {}
         for native in ax.controls:
             if native.action not in self.allowed_actions:
                 continue
@@ -324,6 +358,7 @@ class NativeTask:
                         )
                     )
                     outcomes[candidate_id] = f"set {label} to parameter {parameter.name}"
+                    labels[candidate_id] = native.label
                 continue
             if native.action == "select" and native.selected:
                 continue  # selecting an already selected option is a no-op
@@ -343,7 +378,8 @@ class NativeTask:
                 ax.click(control, candidate_id=candidate_id, description=description, delivery=delivery)
             )
             outcomes[candidate_id] = f"{_VERBS[native.action]} {label}"
-        return candidates, outcomes
+            labels[candidate_id] = native.label
+        return candidates, outcomes, labels
 
     @staticmethod
     def _describe(native: NativeControl, label: str) -> str:
@@ -398,13 +434,37 @@ class NativeTask:
                 outcomes[candidate_id] = f"clicked the visual region {_quoted(target)}"
         return candidates, outcomes
 
+    def relevance(self, labels: Mapping[str, str]) -> Callable[[Candidate], int]:
+        """Rank candidates for the cap only (#4312); lower is more relevant.
+
+        Tier 0 is a candidate that performs one of the task's declared steps or
+        clicks a declared visual target (a ``:foreground`` variant counts).
+        Tier 1 is a control whose label shares a word with the goal. Tier 2 is
+        everything else. The rank uses only task-authored text and control
+        labels, never values, and never changes the presented order.
+        """
+        declared = {task_step.candidate_id for task_step in self.steps} | {
+            f"visual:{slug(target)}" for target in self.visual_targets
+        }
+        goal_words = _relevance_words(self.goal)
+
+        def tier(candidate: Candidate) -> int:
+            if candidate.id.removesuffix(":foreground") in declared:
+                return 0
+            if _relevance_words(labels.get(candidate.id, "")) & goal_words:
+                return 1
+            return 2
+
+        return tier
+
     def plan(self, sources: TaskSources) -> NativeStep:
         """Build the step's closed candidate set, stats, and compact elements."""
         groups: dict[str, list[Candidate]] = {}
         outcomes: dict[str, str] = {}
+        labels: dict[str, str] = {}
         elements: list[dict[str, str]] = []
         if sources.ax is not None:
-            groups["ax"], native_outcomes = self._native_candidates(
+            groups["ax"], native_outcomes, labels = self._native_candidates(
                 sources.ax, sources.foreground_ids
             )
             outcomes.update(native_outcomes)
@@ -418,7 +478,11 @@ class NativeTask:
             ]
         groups["visual"], visual_outcomes = self._visual_candidates(sources)
         outcomes.update(visual_outcomes)
-        candidates, stats = compose(groups, allowed_risks=self.allowed_risks)
+        candidates, stats = compose(
+            groups,
+            allowed_risks=self.allowed_risks,
+            relevance=self.relevance(labels) if self.cap_order == "relevance" else None,
+        )
         for candidate in candidates:
             if candidate.tool is not None and candidate.tool not in self.allowed_action_kinds:
                 raise ValueError(f"task {self.id} does not allow action kind {candidate.tool}")
@@ -503,6 +567,24 @@ class NativeTask:
             remaining = task_step.times - counts.get(base, 0)
             return f" The task still requires this {remaining} more time(s)."
         return ""
+
+    def expected_next(self, history: list[Mapping[str, Any]]) -> list[str]:
+        """The candidate IDs that correctly advance the task now, for measurement.
+
+        A declared step is due when this run has performed it fewer times than
+        required and, for a step that waits, every earlier step is done. Empty
+        when the task declares no steps or every step is done. Counted only
+        from the runner's own performed actions, like ``progress``.
+        """
+        counts = performed_counts(history)
+        due = []
+        for index, task_step in enumerate(self.steps):
+            if counts.get(task_step.candidate_id, 0) >= task_step.times:
+                continue
+            earlier = self.steps[:index] if task_step.after_previous else ()
+            if all(counts.get(step.candidate_id, 0) >= step.times for step in earlier):
+                due.append(task_step.candidate_id)
+        return due
 
     def reset(self) -> None:
         """The harness starts fresh for every run; there is nothing to reset."""

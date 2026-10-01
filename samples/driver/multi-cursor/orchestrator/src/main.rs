@@ -189,19 +189,22 @@ fn main() {
             let ax = format!(r#"{{"pid":{pid},"window_id":{hwnd_addr},"capture_mode":"ax","session":"{session}"}}"#);
             let mut seen_records: i64 = -1;
             for act in rx {
-                // Re-discover element indices on a FRESH snapshot each action —
-                // a11y vs pixel is decided per action (Chromium's tree appears
-                // late and re-numbers as rows are added; GDI never has a tree).
+                // Re-read the window before each action: element tokens are
+                // bound to the snapshot that read minted, and a11y vs pixel is
+                // decided per action (Chromium's tree appears late and
+                // re-numbers as rows are added; GDI never has a tree).
                 let tree = run_call_out(&cua, "get_window_state", &ax);
-                let field = find_idx(&tree, |l| l.contains("] Edit"));
-                let submit = find_idx(&tree, |l| l.contains("] Button") && l.to_uppercase().contains("ADD RECORD"));
+                let field = find_idx(&tree, |l| l.contains("] Edit"))
+                    .and_then(|idx| element_token(&tree, idx));
+                let submit = find_idx(&tree, |l| l.contains("] Button") && l.to_uppercase().contains("ADD RECORD"))
+                    .and_then(|idx| element_token(&tree, idx));
                 match act {
                     Action::Type { text } => {
                         let ok = match field {
-                            // a11y: plain type_text with element_index — cua-driver
+                            // a11y: plain type_text with element_token — cua-driver
                             // auto-routes to UIA ValuePattern.SetValue on its own.
-                            Some(idx) => run_call(&cua, "type_text", &format!(
-                                r#"{{"pid":{pid},"window_id":{hwnd_addr},"element_index":{idx},"text":"{}","session":"{session}"}}"#, json_escape(&text))),
+                            Some(token) => run_call(&cua, "type_text", &format!(
+                                r#"{{"pid":{pid},"window_id":{hwnd_addr},"element_token":"{}","text":"{}","session":"{session}"}}"#, json_escape(&token), json_escape(&text))),
                             // no a11y (GDI): focus the field by pixel, then WM_CHAR.
                             None => {
                                 if let Some((x, y)) = client_rel_to_local_px(hwnd, FIELD_FRAC.0, FIELD_FRAC.1) {
@@ -216,8 +219,8 @@ fn main() {
                     }
                     Action::Click { rx, ry } => {
                         let ok = match submit {
-                            Some(idx) => run_call(&cua, "click", &format!(
-                                r#"{{"pid":{pid},"window_id":{hwnd_addr},"element_index":{idx},"session":"{session}"}}"#)),
+                            Some(token) => run_call(&cua, "click", &format!(
+                                r#"{{"pid":{pid},"window_id":{hwnd_addr},"element_token":"{}","session":"{session}"}}"#, json_escape(&token))),
                             None => {
                                 if let Some((x, y)) = client_rel_to_local_px(hwnd, rx, ry) {
                                     run_call(&cua, "click", &format!(
@@ -493,6 +496,18 @@ fn find_idx(tree: &str, pred: impl Fn(&str) -> bool) -> Option<u64> {
         if let Ok(n) = line[st..en].trim().parse() { return Some(n); }
     }
     None
+}
+
+/// The `element_token` that get_window_state minted for row `[idx]`. Actions
+/// address elements only by this token, which is bound to that read.
+fn element_token(state: &str, idx: u64) -> Option<String> {
+    let state: serde_json::Value = serde_json::from_str(state).ok()?;
+    state["elements"]
+        .as_array()?
+        .iter()
+        .find(|element| element["element_index"].as_u64() == Some(idx))?["element_token"]
+        .as_str()
+        .map(str::to_owned)
 }
 
 /// Parse the "Records: N" counter from a window-state tree (status bar).

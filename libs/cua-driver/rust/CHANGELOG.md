@@ -6,6 +6,27 @@
 
 * **cua-driver:** deliver X11 key-down before the tap delay and finish background keyboard delivery before closing the input connection.
 
+## [0.31.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.30.4...cua-driver-rs-v0.31.0) (2026-09-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cua-driver:** resolve element tokens against a snapshot store invalidated on read ([#3873](https://github.com/trycua/cua/issues/3873))
+
+### Bug Fixes
+
+* **cua-driver:** accept every Enter-key spelling in the Linux terminal gate ([#3658](https://github.com/trycua/cua/issues/3658)) ([f1d8388](https://github.com/trycua/cua/commit/f1d8388714bb300da9f01775154a7d064ccead3e))
+* **cua-driver:** allow Hyprland foreground typing with Num Lock and keymap options ([#3970](https://github.com/trycua/cua/issues/3970)) ([7954a1c](https://github.com/trycua/cua/commit/7954a1c089b386e15aa22d30cf004c7b175ccae1))
+* **cua-driver:** honor modifiers during X11 drags ([#3618](https://github.com/trycua/cua/issues/3618)) ([8157888](https://github.com/trycua/cua/commit/815788869898c2df14d102802899f0cf51b04631))
+* **cua-driver:** keep the Windows autostart task when an isolated install or failed registration would remove it ([#4284](https://github.com/trycua/cua/issues/4284)) ([f7469d3](https://github.com/trycua/cua/commit/f7469d3fd6bd18c572d599f8f79bcf0b6c0060a4))
+* **cua-driver:** report live running state for accessory apps ([#3456](https://github.com/trycua/cua/issues/3456)) ([0d61146](https://github.com/trycua/cua/commit/0d61146a4c6be5ed3c4b2f47e5628fbe96560eca))
+* **cua-driver:** report native Wayland modified-drag refusals with a stable code ([#4360](https://github.com/trycua/cua/issues/4360)) ([62cdfbc](https://github.com/trycua/cua/commit/62cdfbcd9356cf2e1b47ab09fee94eddd1d881cc))
+* **cua-driver:** resolve element tokens against a snapshot store invalidated on read ([#3873](https://github.com/trycua/cua/issues/3873)) ([61f1c0a](https://github.com/trycua/cua/commit/61f1c0ab255a1a39e675d93341cd50c0ceb2027e))
+* **cua-driver:** reveal the agent cursor for keyboard-first actions ([#4287](https://github.com/trycua/cua/issues/4287)) ([2d0431f](https://github.com/trycua/cua/commit/2d0431fb00962c50349ca1a25247e8b502db679b))
+* **cua-driver:** send a real key repeat rate on Hyprland agent keyboards ([#4358](https://github.com/trycua/cua/issues/4358)) ([065a660](https://github.com/trycua/cua/commit/065a660f21fdd315928cd7afedfbb9d778f6eb65)), closes [#4257](https://github.com/trycua/cua/issues/4257)
+* **cua-driver:** ship the Hyprland plugin keyboard sources in release kits and test them in CI ([#4310](https://github.com/trycua/cua/issues/4310)) ([0e7ad50](https://github.com/trycua/cua/commit/0e7ad50a5796846a10d9b1c53ce2d29591027d8b))
+* **cua-driver:** wait for a launching macOS app before its first snapshot ([#4309](https://github.com/trycua/cua/issues/4309)) ([1cb7b6f](https://github.com/trycua/cua/commit/1cb7b6fb2415b6d12978d2dfa3ecda0b07075c72))
+
 ## [0.30.4](https://github.com/trycua/cua/compare/cua-driver-rs-v0.30.3...cua-driver-rs-v0.30.4) (2026-09-28)
 
 

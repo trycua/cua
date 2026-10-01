@@ -316,6 +316,7 @@ pub enum RefusalCode {
     BrowserReconnectExhausted,
     BrowserInputIncomplete,
     BrowserActionUnavailable,
+    ModifiedPointerUnavailable,
     WindowMinimized,
 }
 
@@ -341,6 +342,7 @@ impl RefusalCode {
             "browser_reconnect_exhausted" => Some(Self::BrowserReconnectExhausted),
             "browser_input_incomplete" => Some(Self::BrowserInputIncomplete),
             "browser_action_unavailable" => Some(Self::BrowserActionUnavailable),
+            "modified_pointer_unavailable" => Some(Self::ModifiedPointerUnavailable),
             "window_minimized" => Some(Self::WindowMinimized),
             _ => None,
         }
@@ -580,24 +582,35 @@ impl CaseSpec {
                 && self.scope == Scope::Window
                 && self.driver_route == DriverRoute::WindowState
                 && allowed_codes == &[RefusalCode::BringToFrontExactWindowUnverified];
-            if self.delivery != Delivery::Background && !exact_activation_refusal {
+            // A desktop pointer route that cannot carry keyboard modifier
+            // state (native Wayland) must refuse a modified gesture before
+            // dispatch. The fixture under the gesture is the oracle that
+            // nothing reached it.
+            let desktop_modifier_refusal = self.delivery == Delivery::Foreground
+                && self.scope == Scope::Desktop
+                && allowed_codes == &[RefusalCode::ModifiedPointerUnavailable];
+            if self.delivery != Delivery::Background
+                && !exact_activation_refusal
+                && !desktop_modifier_refusal
+            {
                 return Err(format!(
-                    "{}: only background delivery or exact-window activation may declare refusal",
+                    "{}: only background delivery, exact-window activation, or a desktop modified-pointer limitation may declare refusal",
                     self.cell_id
                 ));
             }
             if allowed_codes.is_empty() {
                 return Err(format!("{}: refusal has no allowed code", self.cell_id));
             }
-            let required_oracles: &[OracleKind] = if exact_activation_refusal {
-                &[OracleKind::FixtureState]
-            } else {
-                &[
-                    OracleKind::Focus,
-                    OracleKind::ZOrder,
-                    OracleKind::NoLeakedInput,
-                ]
-            };
+            let required_oracles: &[OracleKind] =
+                if exact_activation_refusal || desktop_modifier_refusal {
+                    &[OracleKind::FixtureState]
+                } else {
+                    &[
+                        OracleKind::Focus,
+                        OracleKind::ZOrder,
+                        OracleKind::NoLeakedInput,
+                    ]
+                };
             for required in required_oracles {
                 if !self.oracles.contains(required) {
                     return Err(format!(
@@ -2320,6 +2333,61 @@ mod tests {
             Some(RefusalCode::BackgroundUnavailable)
         );
         assert_eq!(RefusalCode::from_driver_code("background_timeout"), None);
+    }
+
+    #[test]
+    fn desktop_refusal_is_limited_to_the_modified_pointer_limitation() {
+        assert_eq!(
+            RefusalCode::from_driver_code("modified_pointer_unavailable"),
+            Some(RefusalCode::ModifiedPointerUnavailable)
+        );
+        let desktop_drag = |code| {
+            CaseSpec::delivered(
+                "desktop-modified-drag",
+                "gtk3",
+                "gtk3",
+                "drag",
+                Targeting::Px,
+                Delivery::Foreground,
+                Scope::Desktop,
+                DriverRoute::LinuxWaylandVirtualPointer,
+                vec![OracleKind::FixtureState],
+            )
+            .expecting_refusal(vec![code])
+        };
+        let case = desktop_drag(RefusalCode::ModifiedPointerUnavailable);
+        case.validate()
+            .expect("a desktop modified-pointer limitation may be declared");
+        assert!(desktop_drag(RefusalCode::BackgroundUnavailable)
+            .validate()
+            .is_err());
+        let mut window_scoped = case.clone();
+        window_scoped.scope = Scope::Window;
+        assert!(window_scoped.validate().is_err());
+        let mut without_fixture = case.clone();
+        without_fixture.oracles = vec![OracleKind::Protocol];
+        assert!(without_fixture.validate().is_err());
+
+        let refused = CaseResult::evaluate(
+            case.clone(),
+            Observation::refused(
+                RefusalCode::ModifiedPointerUnavailable,
+                vec![OracleKind::FixtureState],
+                "",
+                Evidence::default(),
+            ),
+            Duration::from_millis(1),
+        );
+        assert_eq!(refused.test_status, TestStatus::Pass);
+        let delivered = CaseResult::evaluate(
+            case,
+            Observation::delivered_with_fixture_state(Vec::new()),
+            Duration::from_millis(1),
+        );
+        assert_eq!(delivered.test_status, TestStatus::Fail);
+        assert!(delivered
+            .message
+            .contains("unexpected delivery requires contract review"));
     }
 
     #[test]

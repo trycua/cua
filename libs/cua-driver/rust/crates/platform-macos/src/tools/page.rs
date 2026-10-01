@@ -267,7 +267,7 @@ async fn execute_js(js: &str, bundle_id: &str, pid: i32, window_id: u64) -> anyh
     if BrowserJs::supports(bundle_id) {
         let window_id = u32::try_from(window_id)
             .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
-        return BrowserJs::execute(js, bundle_id, window_id).await;
+        return BrowserJs::execute(js, bundle_id, pid, window_id).await;
     }
     let is_electron = tokio::task::spawn_blocking(move || ElectronJs::is_electron(pid)).await?;
     if is_electron {

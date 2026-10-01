@@ -46,7 +46,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "prepack": "npm run build",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc --noEmit --strict --skipLibCheck --target ES2022 --module NodeNext test/fleet-types.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc --noEmit --strict --skipLibCheck --target ES2022 --module NodeNext test/fleet-types.ts && npm run typecheck:docs",
+    "typecheck:docs": "node test/docs-types.mjs",
     "test": "npm run build && node --test test/*.test.mjs",
     "generate:uniffi": "node ../scripts/generate-uniffi-bindings.mjs",
     "generate:uniffi:check": "node ../scripts/generate-uniffi-bindings.mjs --check",

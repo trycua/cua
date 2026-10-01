@@ -1,0 +1,35 @@
+name: "Docs: Cua Driver TypeScript examples"
+
+on:
+  pull_request:
+    paths:
+      - docs/content/docs/how-to-guides/driver/use-sdk-in-process.mdx
+      - docs/content/docs/how-to-guides/driver/expose-mcp-from-desktop-app.mdx
+      - docs/content/docs/reference/cua-driver/embedding.mdx
+      - libs/cua-driver/typescript/**
+      - .github/workflows/docs-driver-typescript.yml
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: libs/cua-driver/typescript
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Install locked dependencies without native install scripts
+        run: npm ci --ignore-scripts
+      - name: Typecheck the SDK and documentation examples
+        run: npm run typecheck

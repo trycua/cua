@@ -68,7 +68,9 @@ the SDK client and host:
 
 ```ts
 await driver.shutdown();
-driver.uniffiDestroy();
+if (CuaDriver.instanceOf(driver)) {
+  driver.uniffiDestroy();
+}
 await host.stop();
 host.uniffiDestroy();
 ```

@@ -77,7 +77,7 @@ run_bounded_command codesign --force --timestamp=none --sign "$identity" --keych
 run_bounded_command codesign --verify --strict "$binary"
 codesign -d --verbose=4 "$binary" > "$FIXTURE_DIR/signature.txt" 2>&1
 [[ "$(cat "$FIXTURE_DIR/signature.txt")" == *'Identifier=com.trycua.fixture.embedded-sdk-window'* ]]
-codesign -d --extract-certificates "$FIXTURE_DIR/signing-cert" "$binary"
+codesign -d --extract-certificates="$FIXTURE_DIR/signing-cert" "$binary"
 [[ "$(shasum "$FIXTURE_DIR/signing-cert0" | cut -d ' ' -f 1 | tr '[:lower:]' '[:upper:]')" == "$identity" ]]
 signature_verified=true
 binary_before="$(shasum -a 256 "$binary" | cut -d ' ' -f 1)"

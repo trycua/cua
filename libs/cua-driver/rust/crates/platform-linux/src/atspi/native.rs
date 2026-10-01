@@ -3683,6 +3683,7 @@ pub fn element_bounds_ref(
     let display = (!crate::wayland::is_wayland())
         .then(x11_display_size)
         .flatten();
+    let origin_attested = native_wayland_origin_attested(pid, xid);
     bounded_for(
         REF_ACTION_BUDGET,
         async {
@@ -3700,7 +3701,7 @@ pub fn element_bounds_ref(
             };
             if coord == CoordType::Window {
                 if let Some(Ok(raw)) = call(component.get_extents(CoordType::Screen)).await {
-                    if screen_answer_overrides_window(raw, display, compositor_origin_attested()) {
+                    if screen_answer_overrides_window(raw, display, origin_attested) {
                         return project_screen_extents(raw, (0, 0), None)
                             .ok_or_else(|| anyhow!("cached element reports no on-screen extents"));
                     }
@@ -3993,8 +3994,7 @@ async fn frame_screen_origin(
     let display = (!crate::wayland::is_wayland())
         .then(x11_display_size)
         .flatten();
-    screen_answer_overrides_window(raw, display, compositor_origin_attested())
-        .then_some((raw.0, raw.1))
+    screen_extents_trusted(raw, display).then_some((raw.0, raw.1))
 }
 
 /// Largest offset between an X11 client origin and the toolkit's own frame
@@ -5556,20 +5556,28 @@ pub(crate) fn screen_extents_trusted(
 }
 
 /// Whether a `CoordType::Screen` answer may override the Window-relative
-/// reconstruction. On a Hyprland session the compositor attests the window
-/// origin, while GTK3 on native Wayland reports window-local values as
-/// `Screen` (no display bounds exist to reject them), so the attested origin
-/// plus `Window` extents must win there.
+/// reconstruction. GTK3 on native Wayland reports window-local values as
+/// `Screen` (no display bounds exist to reject them), so a compositor-attested
+/// native client's origin plus `Window` extents must win. XWayland clients
+/// report true screen extents and are never attested.
 fn screen_answer_overrides_window(
     raw: (i32, i32, i32, i32),
     display: Option<(u32, u32)>,
-    compositor_origin_attested: bool,
+    native_origin_attested: bool,
 ) -> bool {
-    !compositor_origin_attested && screen_extents_trusted(raw, display)
+    !native_origin_attested && screen_extents_trusted(raw, display)
 }
 
-fn compositor_origin_attested() -> bool {
-    crate::wayland::is_wayland() && crate::wayland::hyprland::is_session()
+/// True only when the Hyprland compositor identifies this exact client
+/// (nonzero address `xid` AND `pid`) as native Wayland, not XWayland. Missing,
+/// mismatched, or unreported clients fail closed, so `Screen` extents keep
+/// winning, which is correct for XWayland GTK and LibreOffice. Performs
+/// blocking compositor IPC: async callers must use `bounded_blocking`.
+fn native_wayland_origin_attested(pid: u32, xid: u64) -> bool {
+    xid != 0
+        && crate::wayland::is_wayland()
+        && crate::wayland::hyprland::is_session()
+        && crate::wayland::hyprland::native_client_attested(xid, pid)
 }
 
 pub(crate) fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
@@ -6097,7 +6105,9 @@ async fn element_bounds_for_visited(
     // Bounds are independent read-only queries. Overlap a bounded number of
     // calls instead of serializing thousands of unrealized menu components.
     // Preserve original indices, all extents checks, and per-call timeouts.
-    let origin_attested = compositor_origin_attested();
+    let origin_attested = bounded_blocking(move || native_wayland_origin_attested(pid, xid))
+        .await
+        .unwrap_or(false);
     let queries = scoped_component_nodes(&action_nodes, scoped_frame, |node| {
         (node.frame_ordinal, node.has_component)
     })
@@ -6234,6 +6244,28 @@ mod screen_override_tests {
             project_screen_extents(local, (955, 349), None),
             Some((967, 560, 917, 34))
         );
+    }
+
+    #[test]
+    fn xwayland_or_unattested_screen_answer_wins() {
+        // XWayland GTK/LibreOffice report true screen extents; without an
+        // exact native-client attestation they must not be discarded. A zero
+        // address never attests, without consulting the compositor.
+        assert!(!super::native_wayland_origin_attested(1, 0));
+        assert!(super::screen_answer_overrides_window(
+            (967, 560, 917, 34),
+            None,
+            super::native_wayland_origin_attested(1, 0)
+        ));
+    }
+
+    #[test]
+    fn native_attested_window_local_screen_answer_loses_to_window_extents() {
+        assert!(!super::screen_answer_overrides_window(
+            (10, 20, 800, 600),
+            None,
+            true
+        ));
     }
 
     #[test]

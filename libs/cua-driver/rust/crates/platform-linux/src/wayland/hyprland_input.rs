@@ -110,7 +110,7 @@ pub(crate) fn text_actions(text: &str) -> Result<Vec<Action>> {
 }
 
 /// Wheel detents per `by: "page"` unit. This is the same documented
-/// approximation the Windows foreground fallback uses (page ≈ 3 detents); it is
+/// approximation the Windows foreground fallback uses (page = 3 detents); it is
 /// not a toolkit-measured viewport fraction, and callers must not treat a page
 /// as an exact viewport.
 pub(crate) const PAGE_WHEEL_DETENTS: usize = 3;

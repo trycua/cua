@@ -2,8 +2,9 @@
 # (_install-common.psm1; #2803, #4388).
 #
 # `cua-driver update --apply` launches the installer from cua-driver.exe and
-# waits for its exit code. Stand-in executables rebuild that process tree: a
-# cua-driver.exe "updater" runs a Windows PowerShell "installer" that calls
+# waits for its exit code. Like the shipped CLI, which runs finite commands in
+# a wrapped cua-driver.exe child, the stand-in updater is two cua-driver.exe
+# processes deep. It runs a Windows PowerShell "installer" that calls
 # Stop-CuaDriverDaemonsWithHealth, next to an unrelated cua-driver.exe daemon
 # with a child process and a cua-driver-uia.exe worker. Cleanup must stop the
 # daemon, its child, and the worker, report no survivors, and leave the
@@ -34,11 +35,13 @@ $module = Join-Path (Split-Path -Parent $PSScriptRoot) '_install-common.psm1'
 $root = Join-Path ([System.IO.Path]::GetTempPath()) ('cua-driver-cleanup-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root | Out-Null
 
-# One stand-in program, three modes:
+# One stand-in program, four modes:
 #   (no arguments)  idle, like a daemon
 #   spawn <exe>     start <exe>, then idle (a daemon with a child)
 #   run <script>    run <script> in Windows PowerShell, wait, and return its
 #                   exit code, as `cua-driver update --apply` does
+#   wrap <args>     run itself with <args>, wait, and return its exit code,
+#                   as the CLI's telemetry wrapper does
 $source = @'
 using System;
 using System.Diagnostics;
@@ -46,16 +49,25 @@ using System.IO;
 using System.Threading;
 
 public static class StandIn {
+    static int RunAndWait(string file, string arguments) {
+        ProcessStartInfo start = new ProcessStartInfo(file, arguments);
+        start.UseShellExecute = false;
+        using (Process child = Process.Start(start)) {
+            child.WaitForExit();
+            return child.ExitCode;
+        }
+    }
+
     public static int Main(string[] args) {
+        if (args.Length > 1 && args[0] == "wrap") {
+            string[] quoted = new string[args.Length - 1];
+            for (int i = 1; i < args.Length; i++) quoted[i - 1] = "\"" + args[i] + "\"";
+            return RunAndWait(Process.GetCurrentProcess().MainModule.FileName, string.Join(" ", quoted));
+        }
         if (args.Length == 2 && args[0] == "run") {
             string powershell = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
-            ProcessStartInfo start = new ProcessStartInfo(powershell,
+            return RunAndWait(powershell,
                 "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + args[1] + "\"");
-            start.UseShellExecute = false;
-            using (Process installer = Process.Start(start)) {
-                installer.WaitForExit();
-                return installer.ExitCode;
-            }
         }
         if (args.Length == 2 && args[0] == "spawn") {
             ProcessStartInfo start = new ProcessStartInfo(args[1]);
@@ -112,7 +124,7 @@ Import-Module -Name '$($module.Replace("'", "''"))' -Force
     Assert-True ($null -ne $daemonChild) 'daemon stand-in did not start its child'
     $daemonChildId = [int]$daemonChild.ProcessId
 
-    $updater = Start-StandIn $driverExe "run `"$installerPath`""
+    $updater = Start-StandIn $driverExe "wrap run `"$installerPath`""
     Assert-True ($updater.WaitForExit(120000)) 'updater stand-in did not exit within 120 seconds'
 
     Assert-True ($updater.ExitCode -eq 0) `

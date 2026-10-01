@@ -98,7 +98,7 @@ function Stop-CuaDriverDaemons {
         Where-Object { $ancestorIds -contains $_.Id })
     if ($kept.Count -gt 0) {
         $keptIds = ($kept | ForEach-Object { $_.Id }) -join ', '
-        Write-Host "Leaving cua-driver pid $keptIds running: it launched this installer." -ForegroundColor DarkGray
+        Write-Host "Leaving the cua-driver process(es) that launched this installer running (pid: $keptIds)." -ForegroundColor DarkGray
     }
     Start-Sleep -Milliseconds 200
     return (Get-CuaDriverProcesses -ExcludeIds $ancestorIds)

@@ -89,8 +89,7 @@ try {
     $install = Invoke-Native $windowsPowerShell @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $installer,
         '-Release', $from, '-NoPathUpdate')
     $install.Output | Set-Content -LiteralPath (Join-Path $EvidenceDir 'cua-driver-update-from-install.txt')
-    Write-Host $install.Output
-    Assert-True ($install.ExitCode -eq 0) "installing $from failed with exit $($install.ExitCode)"
+    Assert-True ($install.ExitCode -eq 0) "installing $from failed with exit $($install.ExitCode): $($install.Output)"
     $binDir = Join-Path $env:LOCALAPPDATA 'Programs\Cua\cua-driver\bin'
     $bin = Join-Path $binDir 'cua-driver.exe'
     $before = Invoke-Native $bin @('--version')

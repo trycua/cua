@@ -108,6 +108,75 @@ test('visual fixture builds a candidate without claiming interactivity', () => {
   });
 });
 
+test('Retina affine mapping keeps the original screenshot point (#4289)', () => {
+  // Driver reports a non-identity capture as `affine` (never `scaled_top_left`).
+  // A Retina-like 2x capture of a window at (100, 200) maps pixels to points
+  // with scale 0.5 plus that offset.
+  const payload = fixture('parse-visual-regions-submit-v1.json');
+  assert.equal(payload.capture.action_coordinate_space.kind, 'affine');
+  const visual = parseVisualRegions(payload, 'capture-submit', 7, 9);
+  assert.deepEqual(visual.screenshotToAction, [0.5, 0, 0, 0.5, 100, 200]);
+  const page = snapshot('expected');
+  page.refs = page.refs.slice(0, 1);
+  const selected = validateChoice(
+    'submit-form',
+    buildCandidates(page, 'expected', visual, true),
+    'capture-submit'
+  );
+  // Driver applies the mapping for the capture ID, so the click carries the
+  // region center in screenshot pixels, not the mapped (275, 330).
+  assert.deepEqual(
+    [selected.arguments.x, selected.arguments.y, selected.arguments.capture_id],
+    [350, 260, 'capture-submit']
+  );
+
+  // The reporter's observed macOS Retina mapping from #4289.
+  payload.capture.action_coordinate_space = {
+    kind: 'affine',
+    m11: 1.530612244897959,
+    m12: 0,
+    m21: 0,
+    m22: 1.5304487179487178,
+    tx: 0,
+    ty: 0,
+  };
+  assert.equal(parseVisualRegions(payload, 'capture-submit', 7, 9).screenshotToAction[0], 1.530612244897959);
+});
+
+test('identity screenshot_pixels mapping', () => {
+  const visual = parseVisualRegions(fixture('parse-visual-regions-ambiguous-v1.json'), 'capture-ambiguous', 7, 9);
+  assert.deepEqual(visual.screenshotToAction, [1, 0, 0, 1, 0, 0]);
+});
+
+test('unrepresentable coordinate mappings fail closed', () => {
+  const affine = fixture('parse-visual-regions-submit-v1.json').capture.action_coordinate_space;
+  const { ty: _ty, ...missing } = affine;
+  const cases: Record<string, unknown> = {
+    'non-invertible': { ...affine, m11: 0, m22: 0 },
+    singular: { ...affine, m11: 1, m12: 2, m21: 2, m22: 4 },
+    nan: { ...affine, m11: Number.NaN },
+    infinite: { ...affine, tx: Number.POSITIVE_INFINITY },
+    'missing coefficient': missing,
+    'boolean coefficient': { ...affine, m12: false },
+    'string coefficient': { ...affine, m12: '0' },
+    overflowing: { ...affine, m11: 1e308, m22: 1e308 },
+    scaled_top_left: {
+      kind: 'scaled_top_left',
+      action_origin_x: 100,
+      action_origin_y: 200,
+      action_units_per_pixel_x: 0.5,
+      action_units_per_pixel_y: 0.5,
+    },
+    'unknown kind': { kind: 'projective' },
+    absent: undefined,
+  };
+  for (const [name, space] of Object.entries(cases)) {
+    const payload = fixture('parse-visual-regions-submit-v1.json');
+    payload.capture.action_coordinate_space = space;
+    assert.throws(() => parseVisualRegions(payload, 'capture-submit', 7, 9), /coordinate/, name);
+  }
+});
+
 test('submit path depends on the DOM button ref', () => {
   const visual = parseVisualRegions(
     fixture('parse-visual-regions-submit-v1.json'),

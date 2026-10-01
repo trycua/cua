@@ -126,12 +126,14 @@ class SubmitStepObservationTest(unittest.TestCase):
         criteria = {candidate.id: candidate.description for candidate in candidates}
         self.assertEqual(list(criteria), ["submit-form", "reobserve", "abstain"])
         self.assertIn("already contains the required token", criteria["submit-form"])
-        self.assertIn("stale, incomplete", criteria["reobserve"])
+        self.assertIn("stale or contradicts", criteria["reobserve"])
         self.assertNotIn(TOKEN, json.dumps(criteria))
 
     def test_visual_text_is_redacted_too(self) -> None:
         region = VisualRegion("r1", "text", TOKEN, None, 0.9, False, 1, 1, 10, 10)
-        visual = VisualObservation("cap", "ref", 100, 100, 7, 9, 0.0, 0.0, 1.0, 1.0, (region,))
+        visual = VisualObservation(
+            "cap", "ref", 100, 100, 7, 9, (1.0, 0.0, 0.0, 1.0, 0.0, 0.0), (region,)
+        )
         state = decision_state(AFTER, visual, [], TOKEN)
         self.assertEqual(state["observation"]["visual"]["regions"][0]["text"], REDACTED_TOKEN)
         self.assertNotIn(TOKEN, json.dumps(state))

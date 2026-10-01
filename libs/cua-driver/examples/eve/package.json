@@ -1,0 +1,22 @@
+{
+  "name": "cua-driver-eve-example",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "eve dev",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@trycua/cua-driver": "0.30.2",
+    "ai": "7.0.118",
+    "eve": "0.67.2",
+    "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.0",
+    "typescript": "5.9.2"
+  }
+}

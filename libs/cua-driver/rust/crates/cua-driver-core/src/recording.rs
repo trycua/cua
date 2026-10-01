@@ -453,6 +453,25 @@ pub struct PendingTurn {
     dispatch_click: Option<Arc<DispatchClickScope>>,
 }
 
+/// Trusted identity of the call that may reserve a turn.
+///
+/// `session` is the call's runtime session (its explicit `session` label, or
+/// the transport lease when it has none) and `transport` is the connection
+/// that carried it. A recording owned by a session keeps calls from that
+/// session. A recording started without a label is owned by its transport's
+/// lease, so it also keeps the same connection's named-session calls.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RecordingCaller<'a> {
+    pub session: Option<&'a str>,
+    pub transport: Option<&'a str>,
+}
+
+impl RecordingCaller<'_> {
+    fn within(self, owner: &str) -> bool {
+        self.session == Some(owner) || self.transport == Some(owner)
+    }
+}
+
 /// Persistent recording session state owned by one tool registry.
 pub struct RecordingSession {
     inner: Mutex<RecordingInner>,
@@ -821,9 +840,15 @@ impl RecordingSession {
     }
 
     /// Reserve a turn and capture its target immediately before tool dispatch.
-    /// No-op when recording is disabled.
-    pub fn begin_turn(&self, tool_name: &str, args: &Value, start_ms: u64) -> Option<PendingTurn> {
-        self.begin_turn_with_capture(tool_name, args, start_ms, true, None)
+    /// No-op when disabled or when `caller` is outside the recording's scope.
+    pub fn begin_turn(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        start_ms: u64,
+        caller: RecordingCaller<'_>,
+    ) -> Option<PendingTurn> {
+        self.begin_turn_with_capture(tool_name, args, start_ms, caller, true, None)
     }
 
     /// [`Self::begin_turn`] for a call the dispatcher already knows the tool
@@ -837,9 +862,10 @@ impl RecordingSession {
         tool_name: &str,
         args: &Value,
         start_ms: u64,
+        caller: RecordingCaller<'_>,
         predicted_refusal: Option<&'static str>,
     ) -> Option<PendingTurn> {
-        self.begin_turn_with_capture(tool_name, args, start_ms, true, predicted_refusal)
+        self.begin_turn_with_capture(tool_name, args, start_ms, caller, true, predicted_refusal)
     }
 
     /// Reserve a turn while deliberately suppressing visual and accessibility
@@ -851,15 +877,18 @@ impl RecordingSession {
         tool_name: &str,
         args: &Value,
         start_ms: u64,
+        caller: RecordingCaller<'_>,
     ) -> Option<PendingTurn> {
-        self.begin_turn_with_capture(tool_name, args, start_ms, false, None)
+        self.begin_turn_with_capture(tool_name, args, start_ms, caller, false, None)
     }
 
+    /// Scope-check and reserve under one lock; ownerless recordings accept all callers.
     fn begin_turn_with_capture(
         &self,
         tool_name: &str,
         args: &Value,
         start_ms: u64,
+        caller: RecordingCaller<'_>,
         capture_visual_state: bool,
         predicted_refusal: Option<&'static str>,
     ) -> Option<PendingTurn> {
@@ -867,6 +896,11 @@ impl RecordingSession {
             let mut inner = self.inner.lock().unwrap();
             if !inner.enabled {
                 return None;
+            }
+            if let Some(owner) = inner.owner.as_deref() {
+                if !caller.within(owner) {
+                    return None;
+                }
             }
             let out = inner.output_dir.clone()?;
             let idx = inner.next_turn;
@@ -1017,8 +1051,15 @@ impl RecordingSession {
     /// Compatibility helper for callers that only report completed calls.
     /// New dispatch paths should use `begin_turn` and `finish_turn` so the
     /// before phase is captured before the action changes application state.
-    pub fn record(&self, tool_name: &str, args: &Value, result_text: &str, start_ms: u64) {
-        let Some(pending) = self.begin_turn(tool_name, args, start_ms) else {
+    pub fn record(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        result_text: &str,
+        start_ms: u64,
+        caller: RecordingCaller<'_>,
+    ) {
+        let Some(pending) = self.begin_turn(tool_name, args, start_ms, caller) else {
             return;
         };
         self.finish_turn(pending, result_text);
@@ -1244,10 +1285,9 @@ fn semantic_action_without_point(action: &Value) -> bool {
         && action["result_error"] == false
         && action.get("click_point").is_none()
         && action.get("click_point_image").is_none()
-        && (args["element_index"].as_u64().is_some()
-            || args["element_token"]
-                .as_str()
-                .is_some_and(|token| !token.is_empty()))
+        && args["element_token"]
+            .as_str()
+            .is_some_and(|token| !token.is_empty())
         && args.get("x").is_none()
         && args.get("y").is_none()
         && args.get("raw").is_none_or(|value| value == false)
@@ -1572,6 +1612,7 @@ mod tests {
                     "click",
                     &serde_json::json!({"pid": 1, "window_id": 2, "x": 3, "y": 4}),
                     now_ms(),
+                    RecordingCaller::default(),
                 )
                 .unwrap()
                 .click_point
@@ -1608,7 +1649,7 @@ mod tests {
     fn semantic_click_fixture() -> Value {
         serde_json::json!({
             "tool": "click", "result_error": false,
-            "arguments": {"pid": 1, "window_id": 2, "element_index": 3},
+            "arguments": {"pid": 1, "window_id": 2, "element_token": "s00000001:3"},
             "action_truth": {
                 "effect": "unverifiable", "transport": "linux_at_spi_action",
                 "route": "accessibility", "requested_delivery": "background",
@@ -1623,7 +1664,7 @@ mod tests {
             generation: 0,
             turn_dir: root.to_path_buf(),
             tool_name: "click".into(),
-            args: serde_json::json!({"pid": 901, "window_id": 902, "element_index": 3}),
+            args: serde_json::json!({"pid": 901, "window_id": 902, "element_token": "s00000001:3"}),
             start_ms: 0,
             session_start_ms: 0,
             window_id: Some(902),
@@ -1666,14 +1707,16 @@ mod tests {
         .await;
 
         let session = RecordingSession::new();
-        assert!(session.begin_turn("click", &pending.args, 0).is_none());
+        assert!(session
+            .begin_turn("click", &pending.args, 0, RecordingCaller::default())
+            .is_none());
         {
             let mut inner = session.inner.lock().unwrap();
             inner.enabled = true;
             inner.output_dir = Some(root.path().to_path_buf());
         }
         let private = session
-            .begin_private_turn("click", &pending.args, 0)
+            .begin_private_turn("click", &pending.args, 0, RecordingCaller::default())
             .unwrap();
         scope_dispatch_click_capture(Some(&private), async {
             capture_dispatch_click_target(902, 901, forbidden);
@@ -1755,9 +1798,10 @@ mod tests {
             .begin_turn(
                 "click",
                 &serde_json::json!({
-                    "pid":901, "window_id":902, "element_index":3,
+                    "pid":901, "window_id":902, "element_token": "s00000001:3",
                 }),
                 0,
+                RecordingCaller::default(),
             )
             .unwrap();
         scope_dispatch_click_capture(Some(&pending), async {
@@ -1876,11 +1920,6 @@ mod tests {
             original["action_truth"]["transport"] = serde_json::json!(transport);
             assert!(semantic_action_without_point(&original));
             let mut token = original.clone();
-            token["arguments"]
-                .as_object_mut()
-                .unwrap()
-                .remove("element_index");
-            token["arguments"]["element_token"] = serde_json::json!("e:fixture");
             token["action_truth"]["requested_delivery"] = serde_json::json!("foreground");
             token["action_truth"]["actual_delivery"] = serde_json::json!("foreground");
             token["action_truth"]["effect"] = serde_json::json!("confirmed");
@@ -1919,7 +1958,7 @@ mod tests {
                     "/action_truth/attempts",
                     serde_json::json!([[{}], [{}, {}]]),
                 ),
-                ("/arguments/element_index", serde_json::json!([null, -1])),
+                ("/arguments/element_token", serde_json::json!([null, ""])),
             ] {
                 for replacement in replacements.as_array().unwrap() {
                     let mut action = original.clone();
@@ -2011,7 +2050,7 @@ mod tests {
                 generation: 0,
                 turn_dir: root.path().to_path_buf(),
                 tool_name: "click".into(),
-                args: serde_json::json!({"pid":1,"element_index":3}),
+                args: serde_json::json!({"pid":1,"element_token": "s00000001:3"}),
                 start_ms: 0,
                 session_start_ms: 0,
                 window_id: None,
@@ -2071,7 +2110,7 @@ mod tests {
                 let args = if pixel {
                     serde_json::json!({"pid":1,"x":point.0,"y":point.1})
                 } else {
-                    serde_json::json!({"pid":1,"element_index":3})
+                    serde_json::json!({"pid":1,"element_token": "s00000001:3"})
                 };
                 write_turn(
                     PendingTurn {
@@ -2161,20 +2200,10 @@ mod tests {
         });
         setup_test_marker();
         set_element_bounds_fn(|pid, args, capture_point| {
-            use crate::tool_args::ArgsExt;
-            let cache = crate::element_cache::current_runtime_cache::<
+            let cache = crate::snapshot_store::current_runtime_store::<
                 crate::snapshot_test_support::Payload,
             >()?;
-            let target = cache
-                .resolve_element_args(
-                    pid as i32,
-                    args.opt_u64("element_index").map(|index| index as usize),
-                    args.get("element_token").and_then(Value::as_str),
-                    args.get("snapshot_id").and_then(Value::as_str),
-                    args.opt_u64("window_id"),
-                    "recording",
-                )
-                .ok()?;
+            let target = cache.resolve(pid as i32, args).ok()?;
             let (index, window, _) = target.into_parts(None);
             let window = window?;
             Some((
@@ -2201,6 +2230,7 @@ mod tests {
                 "click",
                 &serde_json::json!({"pid": 1, "window_id": 2, "x": 3, "y": 4}),
                 now_ms(),
+                RecordingCaller::default(),
             )
             .expect("recording should reserve a turn");
         let turn = output_dir.join("turn-00001");
@@ -2241,6 +2271,7 @@ mod tests {
                 "click",
                 &serde_json::json!({"pid": 1, "element_token": token}),
                 now_ms(),
+                RecordingCaller::default(),
             )
             .expect("token-only click should reserve a targeted turn");
         session.finish_turn(pending, "token click");
@@ -2261,6 +2292,7 @@ mod tests {
                 "click",
                 &serde_json::json!({"pid": 1, "element_token": stale_token}),
                 now_ms(),
+                RecordingCaller::default(),
             )
             .expect("stale-token refusal should reserve an evidence turn");
         session.finish_turn_with_outcome(pending, "stale token", None, true);
@@ -2287,6 +2319,7 @@ mod tests {
                 "click",
                 &serde_json::json!({"pid": 1, "window_id": 2, "x": 3, "y": 4}),
                 now_ms(),
+                RecordingCaller::default(),
             )
             .expect("resolved refusal should reserve an evidence turn");
         let refusal_record = crate::action_record::ActionExecutionRecord::builder(
@@ -2394,7 +2427,12 @@ mod tests {
             inner.session_start_ms = now_ms();
         }
         let pending = session
-            .begin_turn("click", &serde_json::json!({"x": 1, "y": 2}), now_ms())
+            .begin_turn(
+                "click",
+                &serde_json::json!({"x": 1, "y": 2}),
+                now_ms(),
+                RecordingCaller::default(),
+            )
             .expect("reserve first generation turn");
         session.inner.lock().unwrap().generation = 2;
         session.finish_turn(pending, "must be discarded");
@@ -2597,6 +2635,7 @@ mod tests {
                 "browser_prepare",
                 &serde_json::json!({"pid": 1, "window_id": 2}),
                 now_ms(),
+                RecordingCaller::default(),
             )
             .expect("reserve private consent turn");
         session.finish_turn(pending, "attached");
@@ -2707,5 +2746,146 @@ mod tests {
         })
         .expect("finalized nonempty output must pass");
         let _ = std::fs::remove_dir_all(output_dir);
+    }
+
+    #[test]
+    fn owned_recording_reserves_turns_only_for_its_owning_session() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let output_dir = root.path().join("owned");
+        let session = RecordingSession::new();
+        session
+            .start(
+                output_dir.to_str().expect("utf-8 output dir"),
+                false,
+                Some("owner"),
+            )
+            .expect("start an owned recording");
+
+        // Avoid the (pid 1, window 2) target whose screenshot phase another test counts.
+        let args = serde_json::json!({"pid": 41, "window_id": 42, "x": 3, "y": 4});
+        assert!(
+            session
+                .begin_turn(
+                    "click",
+                    &args,
+                    now_ms(),
+                    RecordingCaller {
+                        session: Some("other"),
+                        transport: None
+                    }
+                )
+                .is_none(),
+            "another session's call must not be recorded"
+        );
+        assert!(
+            session
+                .begin_turn("click", &args, now_ms(), RecordingCaller::default())
+                .is_none(),
+            "a sessionless call must not be recorded"
+        );
+
+        let pending = session
+            .begin_turn(
+                "click",
+                &args,
+                now_ms(),
+                RecordingCaller {
+                    session: Some("owner"),
+                    transport: None,
+                },
+            )
+            .expect("the owning session's call reserves a turn");
+        session.finish_turn(pending, "clicked");
+        session.stop_owner(None).expect("stop owned recording");
+
+        let action: Value = serde_json::from_slice(
+            &std::fs::read(output_dir.join("turn-00001").join("action.json"))
+                .expect("read the owner's turn"),
+        )
+        .expect("parse action.json");
+        assert_eq!(action["tool"], "click");
+        assert!(
+            !output_dir.join("turn-00002").exists(),
+            "foreign calls must not leave turn folders"
+        );
+    }
+
+    #[test]
+    fn unlabelled_recording_keeps_named_sessions_on_its_own_transport() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let output_dir = root.path().join("transport-owned");
+        let session = RecordingSession::new();
+        // An unlabelled start is owned by the transport lease that carried it.
+        session
+            .start(
+                output_dir.to_str().expect("utf-8 output dir"),
+                false,
+                Some("transport-1"),
+            )
+            .expect("start a transport-owned recording");
+
+        // Avoid the (pid 1, window 2) target whose screenshot phase another test counts.
+        let args = serde_json::json!({"pid": 41, "window_id": 42, "x": 3, "y": 4});
+        assert!(
+            session
+                .begin_turn(
+                    "click",
+                    &args,
+                    now_ms(),
+                    RecordingCaller {
+                        session: Some("demo"),
+                        transport: Some("transport-2"),
+                    },
+                )
+                .is_none(),
+            "a named session on another transport must not be recorded"
+        );
+        let pending = session
+            .begin_turn(
+                "click",
+                &args,
+                now_ms(),
+                RecordingCaller {
+                    session: Some("demo"),
+                    transport: Some("transport-1"),
+                },
+            )
+            .expect("a named session on the owning transport reserves a turn");
+        session.finish_turn(pending, "clicked");
+        session
+            .stop_owner(None)
+            .expect("stop transport-owned recording");
+
+        assert!(output_dir.join("turn-00001").join("action.json").exists());
+        assert!(!output_dir.join("turn-00002").exists());
+    }
+
+    #[test]
+    fn anonymous_recording_stays_daemon_wide() {
+        let root = tempfile::tempdir().expect("temp dir");
+        let output_dir = root.path().join("anonymous");
+        let session = RecordingSession::new();
+        session
+            .start(output_dir.to_str().expect("utf-8 output dir"), false, None)
+            .expect("start an anonymous recording");
+
+        // Avoid the (pid 1, window 2) target whose screenshot phase another test counts.
+        let args = serde_json::json!({"pid": 41, "window_id": 42, "x": 3, "y": 4});
+        for caller in [
+            RecordingCaller {
+                session: Some("some-session"),
+                transport: None,
+            },
+            RecordingCaller::default(),
+        ] {
+            let pending = session
+                .begin_turn("click", &args, now_ms(), caller)
+                .expect("an anonymous recording records every caller");
+            session.finish_turn(pending, "clicked");
+        }
+        session.stop_owner(None).expect("stop anonymous recording");
+
+        assert!(output_dir.join("turn-00001").join("action.json").exists());
+        assert!(output_dir.join("turn-00002").join("action.json").exists());
     }
 }

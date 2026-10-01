@@ -47,22 +47,30 @@ def _add(tar: tarfile.TarFile, name: str, data: bytes = b"\xcf\xfa\xed\xfe") -> 
     tar.addfile(info, io.BytesIO(data))
 
 
+STANDALONE_MACHO = (
+    "cua-driver",
+    "cua-cursor-theme",
+    "libcua_driver_sdk.dylib",
+    "cua_driver_node_runtime.node",
+)
+
+
 def make_darwin_artifacts(root: Path, version: str = VERSION, *, omit: str = "") -> Path:
     root.mkdir(parents=True, exist_ok=True)
     for label in ("darwin-arm64", "darwin-x86_64", "darwin-universal"):
         stage = f"cua-driver-rs-{version}-{label}"
         with tarfile.open(root / f"{stage}.tar.gz", "w:gz") as tar:
-            for name in ("cua-driver", "cua-cursor-theme", "libcua_driver_sdk.dylib"):
+            for name in STANDALONE_MACHO:
                 if name != omit:
                     _add(tar, f"{stage}/{name}")
-            _add(tar, f"{stage}/cua_driver_node_runtime.node")
             if omit != "CuaDriver.app":
                 _add(tar, f"{stage}/CuaDriver.app/Contents/Info.plist", b"<plist/>")
                 _add(tar, f"{stage}/CuaDriver.app/Contents/MacOS/cua-driver")
                 _add(tar, f"{stage}/CuaDriver.app/Contents/MacOS/cua-cursor-theme")
     with tarfile.open(root / f"cua-driver-rs-{version}-darwin-universal-binary.tar.gz", "w:gz") as tar:
-        for name in ("cua-driver", "cua-cursor-theme", "libcua_driver_sdk.dylib"):
-            _add(tar, name)
+        for name in STANDALONE_MACHO:
+            if name != omit:
+                _add(tar, name)
     return root
 
 
@@ -76,9 +84,11 @@ class FakeMacTools:
         notarized: bool = True,
         stapled: bool = True,
         adhoc_names: tuple[str, ...] = (),
+        unsigned_names: tuple[str, ...] = (),
         team: str = TEAM,
     ) -> None:
         self.signed = signed
+        self.unsigned_names = unsigned_names
         self.notarized = notarized
         self.stapled = stapled
         self.adhoc_names = adhoc_names
@@ -95,7 +105,7 @@ class FakeMacTools:
             return CommandResult(0, "")
         adhoc = not self.signed or target.name in self.adhoc_names
         if tool == "codesign" and "--verify" in argv:
-            if not self.signed:
+            if not self.signed or target.name in self.unsigned_names:
                 return CommandResult(1, f"{target}: code object is not signed at all")
             return CommandResult(0, f"{target}: valid on disk")
         if tool == "codesign":
@@ -122,10 +132,34 @@ def test_notarized_release_passes(tmp_path: Path) -> None:
     assert all(call[:5] == ["spctl", "-a", "-vvv", "-t", "exec"] for call in spctl)
     deep = [call for call in tools.calls if "--deep" in call]
     assert all(Path(call[-1]).name == "CuaDriver.app" for call in deep) and len(deep) == 3
-    # Every archive's standalone Mach-O copies are checked too.
-    verified = {Path(call[-1]).name for call in tools.calls if "--verify" in call}
-    assert {"cua-driver", "cua-cursor-theme", "libcua_driver_sdk.dylib"} <= verified
-    assert "cua_driver_node_runtime.node" not in verified
+    # Every archive's standalone Mach-O copies are checked too, including the
+    # Node runtime (#4168).
+    verified = [
+        Path(call[-1]).name
+        for call in tools.calls
+        if "--verify" in call and "CuaDriver.app" not in Path(call[-1]).parts
+    ]
+    for name in STANDALONE_MACHO:
+        assert verified.count(name) == 4, name
+
+
+def test_unsigned_node_runtime_fails_unless_checking_a_legacy_release(tmp_path: Path) -> None:
+    # 0.28.2 through 0.30.2 shipped a notarized app next to an unsigned
+    # cua_driver_node_runtime.node (#4168).
+    root = make_darwin_artifacts(tmp_path / "a")
+    tools = FakeMacTools(unsigned_names=("cua_driver_node_runtime.node",))
+
+    report = verify_macos(root, VERSION, run=tools)
+    assert len(report.failures) == 4
+    assert all(
+        "cua_driver_node_runtime.node: codesign --verify failed" in failure
+        for failure in report.failures
+    )
+
+    tools = FakeMacTools(unsigned_names=("cua_driver_node_runtime.node",))
+    report = verify_macos(root, VERSION, legacy_unsigned_node_runtime=True, run=tools)
+    assert report.failures == []
+    assert not any(Path(call[-1]).name == "cua_driver_node_runtime.node" for call in tools.calls)
 
 
 def test_unsigned_release_like_0_28_3_fails(tmp_path: Path) -> None:
@@ -149,6 +183,10 @@ def test_unsigned_release_like_0_28_3_fails(tmp_path: Path) -> None:
         (FakeMacTools(team="ZZZZZZZZZZ"), "team identifier is not YCK386LBJ7"),
         (FakeMacTools(adhoc_names=("CuaDriver.app",)), "signature is ad hoc"),
         (FakeMacTools(adhoc_names=("libcua_driver_sdk.dylib",)), "hardened runtime is not enabled"),
+        (
+            FakeMacTools(adhoc_names=("cua_driver_node_runtime.node",)),
+            "cua_driver_node_runtime.node: team identifier is not YCK386LBJ7",
+        ),
     ],
 )
 def test_each_macos_signature_requirement_is_enforced(
@@ -158,7 +196,9 @@ def test_each_macos_signature_requirement_is_enforced(
     assert any(message in failure for failure in report.failures), report.failures
 
 
-@pytest.mark.parametrize("omit", ["CuaDriver.app", "cua-driver", "libcua_driver_sdk.dylib"])
+@pytest.mark.parametrize(
+    "omit", ["CuaDriver.app", "cua-driver", "libcua_driver_sdk.dylib", "cua_driver_node_runtime.node"]
+)
 def test_missing_bundle_or_binary_fails(tmp_path: Path, omit: str) -> None:
     report = verify_macos(
         make_darwin_artifacts(tmp_path / "a", omit=omit), VERSION, run=FakeMacTools()
@@ -282,6 +322,14 @@ def test_cli_exit_status_and_annotations(tmp_path: Path, monkeypatch, capsys) ->
     err = capsys.readouterr().err
     assert "::error" not in err
     assert "must not be published or installed" in err
+
+    legacy = FakeMacTools(unsigned_names=("cua_driver_node_runtime.node",))
+    monkeypatch.setattr(gate, "run_command", legacy)
+    assert main(["macos", "--artifacts", str(root), "--version", VERSION]) == 1
+    assert (
+        main(["macos", "--artifacts", str(root), "--version", VERSION, "--legacy-unsigned-node-runtime"])
+        == 0
+    )
 
 
 def test_cli_fails_when_no_archive_matches(tmp_path: Path) -> None:

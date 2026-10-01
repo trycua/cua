@@ -9,31 +9,31 @@ import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from driver_env import driver_environment
 from core import (
-    SUBMIT_IDS,
     Candidate,
     VisualDelivery,
     VisualObservation,
     VisualObservationError,
-    build_candidates,
-    classify,
-    history_entry,
     has_executable_candidate,
     parse_visual_regions,
     validate_choice,
 )
-from jev_adapter import choose_live, choose_mock_adapter
+from jev_adapter import choose_live_for_task, choose_mock_for_task
+from tasks import (
+    FixtureFormTask,
+    Task,
+    TaskSources,
+    fixture_sources,
+    fixture_state,
+    reset_fixture,
+)
 
-
-def fixture_state(fixture_url: str) -> dict[str, str | None]:
-    with urlopen(f"{fixture_url.rstrip('/')}/state", timeout=2) as response:
-        return json.loads(response.read())
+__all__ = ["fixture_state", "reset_fixture"]
 
 
 def validate_fixture_url(value: str) -> str:
@@ -58,13 +58,6 @@ def select_tab_id(tabs: list[dict[str, Any]]) -> str:
         raise RuntimeError("isolated browser has no tabs")
     selected = next((tab for tab in tabs if tab.get("active")), tabs[0])
     return str(selected["tab_id"])
-
-
-def reset_fixture(fixture_url: str) -> None:
-    request = Request(f"{fixture_url.rstrip('/')}/reset", method="POST", data=b"")
-    with urlopen(request, timeout=2) as response:
-        if response.status != 204:
-            raise RuntimeError(f"fixture reset failed: HTTP {response.status}")
 
 
 class DriverToolError(RuntimeError):
@@ -92,6 +85,9 @@ class Driver:
             structured = getattr(result, "structuredContent", None)
             structured = structured if isinstance(structured, dict) else {}
             code = structured.get("code")
+            refusal = structured.get("refusal")
+            if not code and isinstance(refusal, dict):
+                code = refusal.get("code")
             escalation = structured.get("escalation")
             recommended = escalation.get("recommended") if isinstance(escalation, dict) else None
             raise DriverToolError(
@@ -103,7 +99,13 @@ class Driver:
         if not isinstance(data, dict):
             raise RuntimeError(f"{name} returned no structured result")
         if data.get("status") == "refused" or data.get("refusal"):
-            raise RuntimeError(f"{name} refused: {data.get('refusal', data)}")
+            refusal = data.get("refusal")
+            code = refusal.get("code") if isinstance(refusal, dict) else None
+            # DriverToolError is a RuntimeError, so existing handlers still match.
+            raise DriverToolError(
+                f"{name} refused: {data.get('refusal', data)}",
+                code if isinstance(code, str) and code else None,
+            )
         return data
 
 
@@ -223,6 +225,76 @@ async def optional_visual_observation(
     return visual
 
 
+async def task_candidates_for_step(
+    driver: Driver,
+    task: Task,
+    snapshot: dict[str, Any],
+    pid: int,
+    window_id: int,
+    available_tools: set[str],
+    capture_bound_click: bool,
+    *,
+    visual_mode: str = "auto",
+    visual_delivery: VisualDelivery = "background",
+    phase_timings: dict[str, float] | None = None,
+) -> tuple[list[Candidate], TaskSources, dict[str, Any]]:
+    """Build one step's sources and candidates, parsing visual regions only when useful.
+
+    In ``auto`` mode the capture and parse run only when the page structure
+    offers no executable candidate, because only then can a visual region add
+    one. ``always`` restores the per-step parse; ``off`` never parses.
+    """
+    # Whether a control missing from the page structure can still be found
+    # through a capture-bound visual region; reported in the task state.
+    visual_path = capture_bound_click and visual_mode != "off"
+    candidate_build_started = time.perf_counter()
+    sources = fixture_sources(
+        snapshot,
+        None,
+        capture_bound_click=capture_bound_click,
+        visual_delivery=visual_delivery,
+        visual_path=visual_path,
+    )
+    candidates = task.candidates(sources)
+    candidate_build_ms = (time.perf_counter() - candidate_build_started) * 1000
+    visual_observe_ms = 0.0
+
+    def record_phase_timings() -> None:
+        if phase_timings is not None:
+            phase_timings.update(
+                {
+                    "visual_observe_ms": round(visual_observe_ms, 2),
+                    "candidate_build_ms": round(candidate_build_ms, 2),
+                }
+            )
+
+    if visual_mode == "off":
+        record_phase_timings()
+        return candidates, sources, visual_status("skipped", reason="disabled")
+    if visual_mode == "auto" and has_executable_candidate(candidates):
+        record_phase_timings()
+        return candidates, sources, visual_status("skipped", reason="page_structure_candidate")
+
+    visual_started = time.perf_counter()
+    visual, record = await observe_visual(
+        driver, pid, window_id, available_tools, capture_bound_click
+    )
+    visual_observe_ms = (time.perf_counter() - visual_started) * 1000
+    if visual is not None:
+        candidate_build_started = time.perf_counter()
+        sources = fixture_sources(
+            snapshot,
+            visual,
+            capture_bound_click=capture_bound_click,
+            visual_delivery=visual_delivery,
+            visual_path=visual_path,
+        )
+        candidates = task.candidates(sources)
+        candidate_build_ms += (time.perf_counter() - candidate_build_started) * 1000
+    record_phase_timings()
+    return candidates, sources, record
+
+
 async def candidates_for_step(
     driver: Driver,
     snapshot: dict[str, Any],
@@ -235,34 +307,19 @@ async def candidates_for_step(
     visual_mode: str = "auto",
     visual_delivery: VisualDelivery = "background",
 ) -> tuple[list[Candidate], VisualObservation | None, dict[str, Any]]:
-    """Build one step's candidates, parsing visual regions only when useful.
-
-    In ``auto`` mode the capture and parse run only when the page structure
-    offers no executable candidate, because only then can a visual region add
-    one. ``always`` restores the per-step parse; ``off`` never parses.
-    """
-    candidates = build_candidates(
+    """Build one step's fixture-task candidates; see ``task_candidates_for_step``."""
+    candidates, sources, record = await task_candidates_for_step(
+        driver,
+        FixtureFormTask(token),
         snapshot,
-        token,
-        None,
-        capture_bound_click=capture_bound_click,
+        pid,
+        window_id,
+        available_tools,
+        capture_bound_click,
+        visual_mode=visual_mode,
         visual_delivery=visual_delivery,
     )
-    if visual_mode == "off":
-        return candidates, None, visual_status("skipped", reason="disabled")
-    if visual_mode == "auto" and has_executable_candidate(candidates):
-        return candidates, None, visual_status("skipped", reason="page_structure_candidate")
-    visual, record = await observe_visual(
-        driver, pid, window_id, available_tools, capture_bound_click
-    )
-    if visual is not None:
-        candidates = build_candidates(
-            snapshot,
-            token,
-            visual,
-            capture_bound_click=capture_bound_click,
-            visual_delivery=visual_delivery,
-        )
+    visual = sources.visual.observation if sources.visual is not None else None
     return candidates, visual, record
 
 
@@ -287,8 +344,27 @@ def write_event(log_path: Path | None, event: dict[str, Any]) -> None:
             stream.write(line + "\n")
 
 
+def decision_timing_fields(
+    *,
+    decision_ms: float,
+    semantic_observe_ms: float,
+    visual_observe_ms: float,
+    candidate_build_ms: float,
+    provider_decision_ms: float,
+) -> dict[str, float]:
+    """Stable phase fields for one observe → decide boundary."""
+    return {
+        "decision_ms": decision_ms,
+        "semantic_observe_ms": semantic_observe_ms,
+        "visual_observe_ms": visual_observe_ms,
+        "candidate_build_ms": candidate_build_ms,
+        "provider_decision_ms": provider_decision_ms,
+    }
+
+
 async def run(args: argparse.Namespace) -> str:
     token = args.token or f"jev-{uuid.uuid4().hex[:10]}"
+    task: Task = FixtureFormTask(token, args.fixture_url, args.max_steps)
     label = f"jev-python-{uuid.uuid4().hex[:8]}"
     # Compact what-happened record for the decision model. The full telemetry
     # events (timings, probabilities) go only to the JSONL log.
@@ -297,7 +373,7 @@ async def run(args: argparse.Namespace) -> str:
     log_path = Path(args.log) if args.log else None
     if log_path:
         log_path.write_text("", encoding="utf-8")
-    reset_fixture(args.fixture_url)
+    task.reset()
 
     params = StdioServerParameters(
         command=os.getenv("CUA_DRIVER_BIN", "cua-driver"), args=["mcp"], env=driver_environment()
@@ -325,14 +401,14 @@ async def run(args: argparse.Namespace) -> str:
                 {"target_id": target_id, "tab_id": tab_id, "url": args.fixture_url},
             )
 
-            for step in range(1, args.max_steps + 1):
-                oracle = fixture_state(args.fixture_url)
-                current = classify(oracle.get("submitted"), token, steps=step - 1, max_steps=args.max_steps)
+            for step in range(1, task.max_steps + 1):
+                current = task.classify(task.read_oracle(), steps=step - 1)
                 if current in {"verified", "refuted"}:
                     write_event(log_path, {"event": "outcome", "outcome": current, "token": token})
                     return current
 
                 started = time.perf_counter()
+                phase_started = time.perf_counter()
                 snapshot = await driver.call(
                     "get_browser_state",
                     {
@@ -341,16 +417,19 @@ async def run(args: argparse.Namespace) -> str:
                         "snapshot_format": "semantic_v2",
                     },
                 )
-                candidates, visual, visual_record = await candidates_for_step(
+                semantic_observe_ms = round((time.perf_counter() - phase_started) * 1000, 2)
+                candidate_phase: dict[str, float] = {}
+                candidates, sources, visual_record = await task_candidates_for_step(
                     driver,
+                    task,
                     snapshot,
-                    token,
                     pid,
                     int(window["window_id"]),
                     available_tools,
                     capture_bound_click,
                     visual_mode=args.visual_observation,
                     visual_delivery=visual_delivery,
+                    phase_timings=candidate_phase,
                 )
                 if not candidates:
                     write_event(
@@ -359,14 +438,19 @@ async def run(args: argparse.Namespace) -> str:
                     )
                     return "abstained"
 
+                visual = sources.visual.observation if sources.visual is not None else None
+                provider_started = time.perf_counter()
                 if args.provider == "mock":
-                    choice, confidence, probabilities = choose_mock_adapter(
-                        candidates, snapshot, visual, history, token
+                    choice, confidence, probabilities = choose_mock_for_task(
+                        task, sources, candidates, history
                     )
                 else:
                     choice, confidence, probabilities = await asyncio.to_thread(
-                        choose_live, candidates, snapshot, visual, history, token
+                        choose_live_for_task, task, sources, candidates, history
                     )
+                provider_decision_ms = round(
+                    (time.perf_counter() - provider_started) * 1000, 2
+                )
                 if choice is None:
                     return "abstained"
                 candidate = validate_choice(
@@ -375,6 +459,13 @@ async def run(args: argparse.Namespace) -> str:
                     current_capture_id=visual.capture_id if visual else None,
                 )
                 decision_ms = round((time.perf_counter() - started) * 1000, 2)
+                timing = decision_timing_fields(
+                    decision_ms=decision_ms,
+                    semantic_observe_ms=semantic_observe_ms,
+                    visual_observe_ms=candidate_phase.get("visual_observe_ms", 0.0),
+                    candidate_build_ms=candidate_phase.get("candidate_build_ms", 0.0),
+                    provider_decision_ms=provider_decision_ms,
+                )
 
                 if candidate.id == "reobserve":
                     event = {
@@ -383,13 +474,14 @@ async def run(args: argparse.Namespace) -> str:
                         "candidate": candidate.id,
                         "confidence": confidence,
                         "probabilities": probabilities,
-                        "decision_ms": decision_ms,
+                        **timing,
                         "action_ms": 0.0,
+                        "total_step_ms": round((time.perf_counter() - started) * 1000, 2),
                         "dry_run": args.dry_run,
                         "tool": None,
                         "visual": visual_record,
                     }
-                    history.append(history_entry(step, candidate.id))
+                    history.append(task.history_entry(step, candidate.id))
                     write_event(log_path, event)
                     continue
 
@@ -424,8 +516,9 @@ async def run(args: argparse.Namespace) -> str:
                                 "candidate": candidate.id,
                                 "confidence": confidence,
                                 "probabilities": probabilities,
-                                "decision_ms": decision_ms,
+                                **timing,
                                 "action_ms": round((time.perf_counter() - action_started) * 1000, 2),
+                                "total_step_ms": round((time.perf_counter() - started) * 1000, 2),
                                 "dry_run": args.dry_run,
                                 "tool": candidate.tool,
                                 "delivery_mode": "background",
@@ -437,7 +530,7 @@ async def run(args: argparse.Namespace) -> str:
                                 },
                                 "visual": visual_record,
                             }
-                            history.append(history_entry(step, candidate.id, refusal=refusal))
+                            history.append(task.history_entry(step, candidate.id, refusal=refusal))
                             write_event(log_path, event)
                             continue
                         write_event(
@@ -462,23 +555,21 @@ async def run(args: argparse.Namespace) -> str:
                     "candidate": candidate.id,
                     "confidence": confidence,
                     "probabilities": probabilities,
-                    "decision_ms": decision_ms,
+                    **timing,
                     "action_ms": action_ms,
+                    "total_step_ms": round((time.perf_counter() - started) * 1000, 2),
                     "dry_run": args.dry_run,
                     "tool": candidate.tool,
                     "delivery_mode": candidate.arguments.get("delivery_mode"),
                     "visual": visual_record,
                 }
-                history.append(history_entry(step, candidate.id))
+                history.append(task.history_entry(step, candidate.id))
                 write_event(log_path, event)
                 if args.dry_run:
                     return "unknown"
-                if candidate.id in SUBMIT_IDS:
+                if candidate.id in task.completion_candidate_ids:
                     for _ in range(20):
-                        oracle = fixture_state(args.fixture_url)
-                        outcome = classify(
-                            oracle.get("submitted"), token, steps=step, max_steps=args.max_steps
-                        )
+                        outcome = task.classify(task.read_oracle(), steps=step)
                         if outcome in {"verified", "refuted"}:
                             write_event(
                                 log_path, {"event": "outcome", "outcome": outcome, "token": token}
@@ -486,10 +577,7 @@ async def run(args: argparse.Namespace) -> str:
                             return outcome
                         await asyncio.sleep(0.1)
 
-            oracle = fixture_state(args.fixture_url)
-            outcome = classify(
-                oracle.get("submitted"), token, steps=args.max_steps, max_steps=args.max_steps
-            )
+            outcome = task.classify(task.read_oracle(), steps=task.max_steps)
             write_event(log_path, {"event": "outcome", "outcome": outcome, "token": token})
             return outcome
 

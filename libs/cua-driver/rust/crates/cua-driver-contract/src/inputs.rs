@@ -6,7 +6,7 @@
 //! These types are transport-free. The contract generator derives JSON Schema
 //! from them, and live Rust handlers deserialize the same types before acting.
 
-use crate::CursorThemeSelection;
+use crate::{schema_settings, CursorThemeSelection};
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
@@ -19,11 +19,9 @@ pub trait ToolInput: Serialize + DeserializeOwned + JsonSchema {
     }
 
     fn input_schema() -> Value {
-        let settings = schemars::generate::SchemaSettings::draft2020_12().with(|settings| {
-            settings.meta_schema = None;
-            settings.inline_subschemas = true;
-        });
-        let schema = settings.into_generator().into_root_schema_for::<Self>();
+        let schema = schema_settings()
+            .into_generator()
+            .into_root_schema_for::<Self>();
         let mut value = serde_json::to_value(schema).expect("tool input schema serializes");
         normalize_schema(&mut value);
         value
@@ -226,11 +224,7 @@ pub enum ActionTarget {
 }
 
 pub fn action_target_schema() -> Value {
-    let settings = schemars::generate::SchemaSettings::draft2020_12().with(|settings| {
-        settings.meta_schema = None;
-        settings.inline_subschemas = true;
-    });
-    let schema = settings
+    let schema = schema_settings()
         .into_generator()
         .into_root_schema_for::<ActionTarget>();
     let mut value = serde_json::to_value(schema).expect("action target schema serializes");
@@ -920,7 +914,12 @@ impl ToolInput for PressKeyInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HotkeyInput {
+    // Enforced by the parser as well as the schema so a typed input can never
+    // carry a combination the platform runtimes would refuse. Not a doc
+    // comment: that would become a schema description and change the
+    // published contract.
     #[schemars(length(min = 2))]
+    #[serde(deserialize_with = "at_least_two_keys")]
     pub keys: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ActionTarget>,
@@ -939,11 +938,44 @@ impl ToolInput for HotkeyInput {
     const TOOL_NAME: &'static str = "hotkey";
 }
 
+fn at_least_two_keys<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    let keys = Vec::<String>::deserialize(deserializer)?;
+    if keys.len() < 2 {
+        return Err(serde::de::Error::custom(
+            "hotkey.keys must contain at least two keys",
+        ));
+    }
+    Ok(keys)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
+
+    /// Found by the tool-call boundary fuzzer: the published schema and every
+    /// platform runtime require at least two keys, but the contract parser
+    /// accepted any count, so `{"keys": []}` passed typed validation.
+    #[test]
+    fn hotkey_parser_enforces_the_published_two_key_minimum() {
+        for keys in [json!([]), json!(["ctrl"])] {
+            let error = serde_json::from_value::<HotkeyInput>(json!({"keys": keys}))
+                .expect_err("fewer than two keys must be rejected");
+            assert!(
+                error.to_string().contains("at least two keys"),
+                "unexpected error for {keys}: {error}"
+            );
+        }
+        let parsed: HotkeyInput = serde_json::from_value(json!({"keys": ["ctrl", "c"]})).unwrap();
+        assert_eq!(parsed.keys, vec!["ctrl", "c"]);
+        assert_eq!(
+            HotkeyInput::input_schema()["properties"]["keys"]["minItems"],
+            2
+        );
+    }
 
     #[test]
     fn typed_click_round_trips_flat_native_wire_and_exact_window_id() {

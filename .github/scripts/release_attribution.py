@@ -120,6 +120,10 @@ class ConventionalEntry:
     breaking: bool
 
 
+# The pull request commits endpoint lists at most 250 commits.
+PULL_COMMITS_ENDPOINT_CAP = 250
+MAX_COMPARE_PAGES = 100
+
 class GitHubClient:
     """Small GitHub REST client with explicit, testable endpoints."""
 
@@ -166,6 +170,49 @@ class GitHubClient:
             if len(batch) < 100:
                 return commits
         raise ReleaseError(f"pull request #{number} has too many commits to validate safely")
+
+    def compare_commits(self, repository: str, base: str, head: str) -> tuple[list[dict[str, Any]], int]:
+        """Every commit in ``base...head`` and GitHub's total, paging the compare API.
+
+        The pull request commits endpoint stops at 250 commits; the compare
+        endpoint pages through all of them.
+        """
+        commits: list[dict[str, Any]] = []
+        spec = f"{quote(base, safe='')}...{quote(head, safe='')}"
+        total = -1
+        for page in range(1, MAX_COMPARE_PAGES + 1):
+            payload = self.get(f"repos/{repository}/compare/{spec}?per_page=100&page={page}")
+            total = int(payload.get("total_commits") or 0)
+            batch = list(payload.get("commits") or [])
+            commits.extend(batch)
+            if not batch or len(commits) >= total:
+                return commits, total
+        raise ReleaseError(f"{base}...{head} has too many commits to validate safely")
+
+    def all_pull_commits(self, repository: str, pull: Mapping[str, Any]) -> list[dict[str, Any]]:
+        """Every commit of a pull request, including past the endpoint's 250 cap."""
+        number = int(pull.get("number") or 0)
+        expected = int(pull.get("commits") or 0)
+        if expected <= PULL_COMMITS_ENDPOINT_CAP:
+            commits = self.pull_commits(repository, number)
+            expected = expected or len(commits)
+        else:
+            base_ref = str((pull.get("base") or {}).get("ref") or "")
+            head_sha = str((pull.get("head") or {}).get("sha") or "")
+            if not base_ref or not head_sha:
+                raise ReleaseError(f"pull request #{number} has no readable base or head")
+            commits, total = self.compare_commits(repository, base_ref, head_sha)
+            if total != expected:
+                raise ReleaseError(
+                    f"GitHub compares {total} commits but pull request #{number} has "
+                    f"{expected}; refusing partial attribution validation"
+                )
+        if len(commits) != expected or len({c.get("sha") for c in commits}) != expected:
+            raise ReleaseError(
+                f"GitHub returned {len(commits)} of {expected} commits for pull request "
+                f"#{number}; refusing partial attribution validation"
+            )
+        return commits
 
     def file_json(self, repository: str, path: str, ref: str) -> Mapping[str, Any]:
         encoded_path = quote(path.strip("/"), safe="/")
@@ -1347,13 +1394,7 @@ def validate_pr_command(args: argparse.Namespace) -> None:
     if not head_repository or not head_sha:
         raise ReleaseError(f"pull request #{number} has no readable head repository")
 
-    commits = client.pull_commits(repository, number)
-    expected_commits = int(pull.get("commits") or len(commits))
-    if len(commits) != expected_commits:
-        raise ReleaseError(
-            f"GitHub returned {len(commits)} of {expected_commits} commits for pull request "
-            f"#{number}; refusing partial attribution validation"
-        )
+    commits = client.all_pull_commits(repository, {**pull, "number": number})
 
     base_config = json.loads(args.config.read_text())
     head_config = client.file_json(head_repository, args.config.as_posix(), head_sha)

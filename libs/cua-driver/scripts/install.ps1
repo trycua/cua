@@ -98,6 +98,11 @@ param(
 # `-NoAutoStart` is the explicit opt-out and takes precedence over
 # the default-true `-AutoStart`.
 if ($NoAutoStart) { $AutoStart = $false }
+# Whether the caller passed `-AutoStart` itself rather than relying on the
+# default. `irm | iex` runs have no bound parameters.
+$AutoStartRequested = [bool]$AutoStart -and
+    (Test-Path variable:PSBoundParameters) -and
+    $PSBoundParameters.ContainsKey('AutoStart')
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -123,7 +128,7 @@ $ThemeBinaryName = "cua-cursor-theme.exe"
 # where the baked line hasn't been updated yet.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-$Script:CuaDriverRsBakedVersion = "0.30.1" # published-installer-version
+$Script:CuaDriverRsBakedVersion = "0.31.0" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 #
 # Withdrawn releases (for example, a release published without valid
@@ -1717,11 +1722,33 @@ Write-Host "Stopping any previous cua-driver processes (best-effort; High-IL nee
 # instructions, same as the previous behavior.
 $null = Repair-CuaDriverStaleDaemon
 
-if ($AutoStart) {
+# Tracks whether registration actually happened, so the closing summary
+# reports the outcome instead of merely restating that -AutoStart was
+# requested. A declined UAC prompt used to leave the summary claiming the
+# task was registered (trycua/cua#3179).
+$AutoStartRegistered = $false
+
+# An isolated install (CUA_DRIVER_RS_HOME or CUA_DRIVER_RS_INSTALL_DIR set)
+# must not register, re-register, or remove the machine's single autostart
+# task unless the caller explicitly passed -AutoStart (#4090). The legacy
+# cleanup above skips these installs for the same reason.
+$IsolatedInstall = [bool]($env:CUA_DRIVER_RS_INSTALL_DIR -or $env:CUA_DRIVER_RS_HOME)
+$SkipIsolatedAutostart = $IsolatedInstall -and -not $AutoStartRequested
+
+if ($SkipIsolatedAutostart) {
+    if ($AutoStart) {
+        Write-Host ""
+        Write-Host "Isolated install (CUA_DRIVER_RS_HOME/CUA_DRIVER_RS_INSTALL_DIR set) - leaving the autostart task unchanged." -ForegroundColor Yellow
+        Write-Host "  The autostart task is shared by the whole machine. Pass -AutoStart explicitly to point it"
+        Write-Host "  at this isolated binary, or pass -NoAutoStart to suppress this notice."
+    }
+}
+elseif ($AutoStart) {
     Write-Host ""
     Write-Host "Registering auto-start (cua-driver autostart enable)..." -ForegroundColor Cyan
     try {
         Register-CuaDriverAutostart -InstalledBinary $installedBinary
+        $AutoStartRegistered = $true
         Write-Host "  cua-driver serve will auto-start at every interactive logon (RunLevel=Highest)." -ForegroundColor Green
     }
     catch {
@@ -1735,7 +1762,8 @@ if ($AutoStart) {
     # registered, re-register it against the fresh binary. Otherwise
     # the task <Command> still points at the previous release dir + an
     # older binary that may be missing the hidden-console wrapper (#1654)
-    # or any later autostart-shape fix.
+    # or any later autostart-shape fix. Never reached by an isolated
+    # install, which must not touch the task owned by the default install.
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
@@ -1777,11 +1805,22 @@ catch {
 
 # Windows-specific autostart hint (kept inline; OS-natural location).
 Write-Host ""
-if ($AutoStart) {
+if ($SkipIsolatedAutostart) {
+    Write-Host "Auto-start: unchanged for this isolated install (the task is shared by the whole machine)." -ForegroundColor Cyan
+    Write-Host "  install.ps1 -AutoStart         (point the task at this isolated binary)" -ForegroundColor Cyan
+    Write-Host "  cua-driver autostart status    (inspect)" -ForegroundColor Cyan
+}
+elseif ($AutoStartRegistered) {
     Write-Host "Auto-start: 'cua-driver-serve' is registered at RunLevel=Highest." -ForegroundColor Cyan
     Write-Host "  cua-driver autostart status    (inspect)" -ForegroundColor Cyan
     Write-Host "  cua-driver autostart disable   (remove)" -ForegroundColor Cyan
     Write-Host "  cua-driver autostart kick      (start now without re-logging)" -ForegroundColor Cyan
+} elseif ($AutoStart) {
+    # Requested but not registered — the failure was already reported above.
+    # Never claim the task exists here (trycua/cua#3179).
+    Write-Host "Auto-start: 'cua-driver-serve' is NOT registered - registration failed above." -ForegroundColor Yellow
+    Write-Host "  cua-driver autostart enable    (retry; accept the UAC prompt)" -ForegroundColor Yellow
+    Write-Host "  cua-driver autostart status    (inspect)" -ForegroundColor Yellow
 } else {
     Write-Host "Auto-start at logon (NOT enabled - re-run without -NoAutoStart to register, or:):" -ForegroundColor Cyan
     Write-Host "  cua-driver autostart enable    (Scheduled Task at RunLevel=Highest)" -ForegroundColor Cyan

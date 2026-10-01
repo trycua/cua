@@ -35,7 +35,8 @@ command in `export_omniparser_detector.py`. `conversion-recipe.json` is the
 machine-readable authority for parameters and expected output. No local patch
 was applied. These principal sources do not include every transitive build or
 host dependency, so successful reproduction must still match the recorded
-ONNX digest and does not by itself complete the pending license review.
+ONNX digest. The license review for this artifact concluded on 2026-09-24, and
+`scripts/artifacts.lock.json` marks it `release-verified`.
 
 ## PP-OCRv5 detector
 
@@ -81,7 +82,7 @@ identity expose this limitation so a caller can decide whether it is suitable.
 
 ## ONNX Runtime CPU library
 
-The reviewed candidate lock pins official CPU-only archives at immutable tag
+The artifact lock pins official CPU-only archives at immutable tag
 `v1.26.0` for all three targets. The assembler verifies each platform archive,
 extracts exactly one target member, and verifies its digest:
 

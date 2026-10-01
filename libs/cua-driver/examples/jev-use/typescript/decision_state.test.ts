@@ -114,7 +114,7 @@ test('after typing the observation states the filled form', () => {
   );
   assert.deepEqual(Object.keys(criteria), ['submit-form', 'reobserve', 'abstain']);
   assert.ok(criteria['submit-form'].includes('already contains the required token'));
-  assert.ok(criteria.reobserve.includes('stale, incomplete'));
+  assert.ok(criteria.reobserve.includes('stale or contradicts'));
   assert.equal(JSON.stringify(criteria).includes(TOKEN), false);
 });
 
@@ -126,10 +126,7 @@ test('visual text is redacted too', () => {
     screenshotHeight: 100,
     pid: 7,
     windowId: 9,
-    actionOriginX: 0,
-    actionOriginY: 0,
-    actionUnitsPerPixelX: 1,
-    actionUnitsPerPixelY: 1,
+    screenshotToAction: [1, 0, 0, 1, 0, 0],
     regions: [
       {
         id: 'r1',

@@ -1187,7 +1187,7 @@ mod tests {
             "screen_recording_capturable` is `null",
             "direct_capture_status` is `\"not_checked\"",
             "include_screenshot:false",
-            "element-indexed AX actions",
+            "`element_token` AX actions",
         ] {
             assert!(
                 macos.contains(required),

@@ -4039,7 +4039,7 @@ fn cli_docs_json() -> serde_json::Value {
             {
                 "name": "serve",
                 "abstract": "Run Cua Driver as a long-running daemon.",
-                "discussion": "The daemon owns per-process state such as element-index caches, recording state, and cursor overlay state.",
+                "discussion": "The daemon owns per-process state such as accessibility snapshots, recording state, and cursor overlay state.",
                 "arguments": no_args,
                 "options": [
                     {"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true},

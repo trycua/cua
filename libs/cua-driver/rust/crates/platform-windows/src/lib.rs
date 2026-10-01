@@ -65,6 +65,10 @@ mod browser_launch_token;
 #[cfg(target_os = "windows")]
 mod browser_standard_user;
 
+// De-elevated `launch_app` for an elevated Driver (#3607).
+#[cfg(target_os = "windows")]
+pub mod standard_user_launch;
+
 #[cfg(target_os = "windows")]
 mod browser_consent_ui;
 #[cfg(target_os = "windows")]

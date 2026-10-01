@@ -2,13 +2,19 @@ import { choice, TypeSafeClient } from '@typesafe-ai/sdk';
 
 import {
   chooseMock,
-  formState,
-  redactToken,
   type BrowserSnapshot,
   type HistoryEntry,
   type Candidate,
   type VisualObservation,
 } from './core.js';
+import {
+  FIXTURE_GOAL,
+  FixtureFormTask,
+  fixtureSources,
+  requirePage,
+  type Task,
+  type TaskSources,
+} from './tasks.js';
 
 type TypeSafeClientLike = Pick<TypeSafeClient, 'systemOne'>;
 
@@ -99,48 +105,63 @@ export function visualDecisionState(visual?: VisualObservation) {
   };
 }
 
-export const GOAL =
-  'Enter the required verification token into the verification field, then submit the form.';
+export const GOAL = FIXTURE_GOAL;
 
 /**
- * Build the compact, deterministic, token-redacted state sent to Jev. `form`
- * states the field and Submit status the runner verified from the page
- * structure; the token is replaced everywhere, including outline and visual text.
+ * Build the compact, deterministic, secret-redacted state sent to Jev. `form`
+ * is the task's state summary, which states what the runner verified from its
+ * candidate sources, so the model does not have to infer it from the outline.
+ * Every secret task parameter is replaced everywhere, including outline and
+ * visual text.
  */
-export function decisionState(
-  snapshot: BrowserSnapshot,
-  visual: VisualObservation | undefined,
-  history: readonly HistoryEntry[],
-  token: string
+export function taskDecisionState(
+  task: Task,
+  sources: TaskSources,
+  history: readonly HistoryEntry[]
 ) {
+  const snapshot = requirePage(sources).snapshot;
   return {
-    goal: GOAL,
+    goal: task.goal,
     observation: {
-      page: JSON.stringify(redactToken(snapshot.page ?? null, token)),
-      form: JSON.stringify(formState(snapshot, token)),
-      outline: redactToken(snapshot.outline ?? '', token) as string,
-      visual: JSON.stringify(redactToken(visualDecisionState(visual), token)),
+      page: JSON.stringify(task.redact(snapshot.page ?? null)),
+      form: JSON.stringify(task.stateSummary(sources)),
+      outline: task.redact(snapshot.outline ?? '') as string,
+      visual: JSON.stringify(task.redact(visualDecisionState(sources.visual?.observation))),
     },
     history: JSON.stringify(history),
   };
 }
 
-export async function chooseWithTypeSafe(
-  client: TypeSafeClientLike,
-  candidates: Candidate[],
+/** Build the fixture task's decision state; see taskDecisionState. */
+export function decisionState(
   snapshot: BrowserSnapshot,
   visual: VisualObservation | undefined,
   history: readonly HistoryEntry[],
-  token: string
+  token: string,
+  visualPath = false
+) {
+  return taskDecisionState(
+    new FixtureFormTask(token),
+    fixtureSources(snapshot, visual, false, 'background', visualPath),
+    history
+  );
+}
+
+export const DRIVER_ACTION_INSTRUCTIONS =
+  'Which complete executable action should Cua Driver run next?';
+
+export async function chooseForTask(
+  client: TypeSafeClientLike,
+  task: Task,
+  sources: TaskSources,
+  candidates: Candidate[],
+  history: readonly HistoryEntry[]
 ) {
   const criteria = candidateCriteria(candidates);
   const response = await client.systemOne({
-    state: decisionState(snapshot, visual, history, token),
+    state: taskDecisionState(task, sources, history),
     questions: {
-      driver_action: choice(
-        'Which complete executable action should Cua Driver run next?',
-        criteria
-      ),
+      driver_action: choice(DRIVER_ACTION_INSTRUCTIONS, criteria),
     },
   });
   const answer = response.answers.driver_action;
@@ -151,14 +172,73 @@ export async function chooseWithTypeSafe(
   return answer;
 }
 
+export function chooseWithTypeSafe(
+  client: TypeSafeClientLike,
+  candidates: Candidate[],
+  snapshot: BrowserSnapshot,
+  visual: VisualObservation | undefined,
+  history: readonly HistoryEntry[],
+  token: string,
+  visualPath = false
+) {
+  return chooseForTask(
+    client,
+    new FixtureFormTask(token),
+    fixtureSources(snapshot, visual, false, 'background', visualPath),
+    candidates,
+    history
+  );
+}
+
+export function chooseLiveForTask(
+  task: Task,
+  sources: TaskSources,
+  candidates: Candidate[],
+  history: readonly HistoryEntry[]
+) {
+  return chooseForTask(new TypeSafeClient(), task, sources, candidates, history);
+}
+
+/**
+ * Deterministic mock provider. A task may declare mockPreferences: the first
+ * preferred ID present wins (a refused control's `<id>:foreground` variant
+ * counts as its ID), otherwise reobserve. Tasks without preferences keep the
+ * fixed browser-fixture order.
+ */
+export function chooseMockForTask(
+  task: Task,
+  _sources: TaskSources,
+  candidates: Candidate[],
+  _history: readonly HistoryEntry[]
+) {
+  const preferences = (task as { mockPreferences?: readonly string[] }).mockPreferences ?? [];
+  if (!preferences.length) return chooseMock(candidates);
+  const ids = candidates.map((candidate) => candidate.id);
+  const selected =
+    preferences
+      .flatMap((preferred) => [preferred, `${preferred}:foreground`])
+      .find((id) => ids.includes(id)) ?? (ids.includes('reobserve') ? 'reobserve' : null);
+  return {
+    choice: selected,
+    confidence: selected ? 1 : 0,
+    probabilities: Object.fromEntries(ids.map((id) => [id, Number(id === selected)])),
+  };
+}
+
 export function chooseLive(
   candidates: Candidate[],
   snapshot: BrowserSnapshot,
   visual: VisualObservation | undefined,
   history: readonly HistoryEntry[],
-  token: string
+  token: string,
+  visualPath = false
 ) {
-  return chooseWithTypeSafe(new TypeSafeClient(), candidates, snapshot, visual, history, token);
+  return chooseLiveForTask(
+    new FixtureFormTask(token),
+    fixtureSources(snapshot, visual, false, 'background', visualPath),
+    candidates,
+    history
+  );
 }
 
 export function chooseMockAdapter(
@@ -166,7 +246,8 @@ export function chooseMockAdapter(
   _snapshot: BrowserSnapshot,
   _visual: VisualObservation | undefined,
   _history: readonly HistoryEntry[],
-  _token: string
+  _token: string,
+  _visualPath = false
 ) {
   return chooseMock(candidates);
 }

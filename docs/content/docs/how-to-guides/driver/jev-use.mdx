@@ -1,11 +1,11 @@
 ---
 title: 'Use jev-use with Cua Driver'
-description: 'Try the jev-use public preview: TypeSafe Jev chooses bounded actions and Cua Driver fills and submits a browser form.'
+description: 'Use jev-use: TypeSafe Jev chooses bounded actions and Cua Driver fills and submits a browser form.'
 ---
 
 import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
 
-`jev-use` is a public-preview recipe for bounded computer use. In this example,
+`jev-use` is a recipe for bounded computer use. In this example,
 [TypeSafe Jev](https://typesafe.ai/) chooses between action IDs supplied by the
 application, and Cua Driver performs the selected action in the browser.
 
@@ -264,6 +264,11 @@ shell call until it finishes. The command manages the test server itself.
 | API authentication or quota error | Check your TypeSafe key and account access. The connection check can pass even when live access fails. |
 | Output directory already exists | Choose another `--output-dir` to keep the previous result. |
 | Run fails or reports `"complete": false` | Read the action log before retrying. Failure does not prove that nothing happened; an action may already have landed. |
+
+## Native desktop apps
+
+To choose from a desktop app's accessibility tree instead of a web page, see
+[Use jev-use with native apps](/how-to-guides/driver/use-jev-use-with-native-apps).
 
 ## Adapt the example
 

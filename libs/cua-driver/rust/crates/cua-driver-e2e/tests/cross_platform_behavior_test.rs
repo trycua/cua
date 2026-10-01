@@ -764,10 +764,9 @@ fn action_target_args(
     });
     let object = args.as_object_mut().expect("action arguments object");
     if addressing == "ax" {
-        object.insert("element_index".to_owned(), serde_json::json!(index));
         object.insert(
-            "snapshot_id".to_owned(),
-            serde_json::json!(state.snapshot_id()),
+            "element_token".to_owned(),
+            serde_json::json!(state.element_token(index)),
         );
     } else {
         let origin = window_origin(fixture, state);
@@ -855,7 +854,10 @@ fn sdk_window_input(fixture: &Fixture) -> GetWindowStateInput {
         include_screenshot: Some(false),
         screenshot_out_file: None,
         max_elements: None,
-        timeout_ms: None,
+        // The first walk after launch can meet a cold Chromium accessibility
+        // tree. The 1 s default then returns a partial tree without the click
+        // target on slow hosts (#4149), so use the documented retry budget.
+        timeout_ms: Some(5000),
         max_depth: None,
         max_dimension: None,
         max_image_dimension: None,
@@ -877,7 +879,13 @@ fn sdk_click_token(state: &WindowStateOutput) -> String {
             .find(|element| element.label.as_deref() == Some(label))
             .and_then(|element| element.element_token.clone())
     })
-    .unwrap_or_else(|| panic!("typed click target has no snapshot-bound token: {elements:?}"))
+    .unwrap_or_else(|| {
+        panic!(
+            "typed click target has no snapshot-bound token (truncated={:?}, \
+             truncation_reason={:?}, elements_complete={:?}): {elements:?}",
+            state.truncated, state.truncation_reason, state.elements_complete
+        )
+    })
 }
 
 #[test]

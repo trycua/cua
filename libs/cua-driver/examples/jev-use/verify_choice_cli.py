@@ -10,11 +10,15 @@ from pathlib import Path
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--live", action="store_true")
+    parser.add_argument(
+        "--request-version", choices=("v1", "v2"), default="v1",
+        help="v2 sends the native cua.jev_choice_request_v2 fixture",
+    )
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parent
     request = json.loads(
-        (root / "fixtures/jev-choice-request-v1.json").read_text(encoding="utf-8")
+        (root / f"fixtures/jev-choice-request-{args.request_version}.json").read_text(encoding="utf-8")
     )
     command = [sys.executable, str((root / "python/choose_action.py").resolve())]
     if not args.live:

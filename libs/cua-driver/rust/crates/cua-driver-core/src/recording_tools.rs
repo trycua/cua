@@ -45,9 +45,14 @@ impl Tool for StartRecordingTool {
     fn def(&self) -> &ToolDef {
         START_REC_DEF.get_or_init(|| ToolDef {
             name: "start_recording".into(),
-            description: "Start trajectory recording. Every subsequent action-tool \
+            description: "Start trajectory recording for the calling session. Each action-tool \
                 invocation (click, right_click, scroll, type_text, press_key, hotkey, \
-                set_value) writes a turn folder under `output_dir`:\n\n\
+                set_value) from that session writes a turn folder under `output_dir`. \
+                Without `session`, every call on the same connection is recorded, \
+                including named-session calls. Other connections and session lifecycle \
+                calls (`start_session` / `end_session`) are not recorded. CLI recordings started with \
+                `cua-driver recording start` are daemon-wide.\n\n\
+                Each turn folder holds:\n\n\
                 - `before_state.json` / `after_state.json` — application AX/UIA/AT-SPI \
                   state immediately before and after the action.\n\
                 - `before.png` / `after.png` — target-window screenshots immediately \
@@ -135,6 +140,12 @@ impl Tool for StartRecordingTool {
                             before/after accessibility walks entirely; screenshots, \
                             click markers and action.json are still recorded and state \
                             is classified `state_capture_disabled`."
+                    },
+                    "session": {
+                        "type": "string",
+                        "description": "For multi-call work, prefer a short public session label \
+                            and repeat it on every call that accepts it. Omit it to use the \
+                            authenticated transport's implicit lifecycle session."
                     }
                 },
                 "additionalProperties": false
@@ -345,8 +356,8 @@ impl Tool for ReplayTrajectoryTool {
                 recorded tool is called with its recorded `arguments` via the same dispatch \
                 path an MCP / CLI call uses.\n\n\
                 Caveats:\n\
-                - Element-indexed actions (`click({pid, element_index})` etc.) will fail \
-                  because element indices are per-snapshot and don't survive across \
+                - Element-token actions (`click({pid, element_token})` etc.) will fail \
+                  because element tokens are per-snapshot and don't survive across \
                   sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools \
                   replay cleanly. Failures are reported but don't stop replay unless \
                   `stop_on_error` is true.\n\

@@ -1,15 +1,46 @@
 //! Pure `tools/list` schema-shape assertions.
 //!
-//! These never invoke a tool — they only inspect the advertised inputSchemas:
-//! that every tool keeps its top-level schema provider-compatible, that
-//! `type_text_chars` is hidden, the `list_windows.on_screen_only` knob, the
-//! `set_agent_cursor_motion` Bezier knobs, delivery and scope enums, and the
-//! `set_config.capture_mode` enum and the per-session capture-scope contract.
+//! These never invoke a tool — they only inspect the advertised schemas: that
+//! every tool keeps its top-level schema provider-compatible, that every
+//! advertised `enum` is string-only, that `type_text_chars` is hidden, the
+//! `list_windows.on_screen_only` knob, the `set_agent_cursor_motion` Bezier
+//! knobs, delivery and scope enums, and the `set_config.capture_mode` enum and
+//! the per-session capture-scope contract.
 
 #![cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 
 use cua_driver_testkit::{Driver, McpDriver, RawDriver};
 use std::collections::BTreeSet;
+
+/// Gemini function calling accepts `enum` only on string schemas and rejects
+/// the whole request otherwise, so one boolean or numeric enum in any
+/// advertised schema breaks every call from that client (#4220).
+fn assert_string_enums(value: &serde_json::Value, path: &str) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(values) = map.get("enum") {
+                let values = values
+                    .as_array()
+                    .unwrap_or_else(|| panic!("{path}.enum must be an array: {values}"));
+                for (index, item) in values.iter().enumerate() {
+                    assert!(
+                        item.is_string(),
+                        "{path}.enum[{index}] must be a string for Gemini-compatible clients: {item}"
+                    );
+                }
+            }
+            for (key, child) in map {
+                assert_string_enums(child, &format!("{path}.{key}"));
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                assert_string_enums(item, &format!("{path}[{index}]"));
+            }
+        }
+        _ => {}
+    }
+}
 
 #[test]
 fn tools_list_schema_shape() {
@@ -48,6 +79,9 @@ fn tools_list_schema_shape() {
                 schema.get(unsupported).is_none(),
                 "{name} top-level {unsupported} is rejected by Bedrock: {schema}"
             );
+        }
+        for field in ["inputSchema", "outputSchema"] {
+            assert_string_enums(&tool[field], &format!("{name}.{field}"));
         }
     }
     let enum_contains = |schema: &serde_json::Value, expected: &str| {
@@ -134,6 +168,9 @@ fn tools_list_schema_shape() {
         "hotkey",
         "scroll",
         "browser_dialog",
+        // macOS set_value has no delivery ladder.
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        "set_value",
     ];
     for tool in DELIVERY_MODE_TOOLS {
         let delivery = &properties(tool)["delivery_mode"];

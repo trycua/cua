@@ -1,7 +1,7 @@
 ---
 name: cua-driver
 description: Drive a native GUI app (macOS, Windows, Linux) via the cua-driver CLI (default) or MCP server; snapshot its accessibility tree, act through snapshot-bound element tokens, native menu paths, exact window geometry, or pixel coordinates, and verify from fresh state. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real application on the host, or to continue, resume, or recall recent Cua activity.
-version: 0.30.1 # x-release-please-version
+version: 0.31.0 # x-release-please-version
 metadata:
   openclaw:
     requires:
@@ -58,7 +58,7 @@ Check the installed version and advertised schema before using unfamiliar parame
 
 1. Select the exact target on each action. A session is lifecycle metadata, not capture scope or permission authority.
 2. Observe before input and verify after it. `effect:"unverifiable"` and a successful exit are not task success; never replay a partial, canceled, or unknown action blindly.
-3. Use returned tokens, never invented indices. A fresh snapshot replaces prior element handles; prefer `element_token` over `element_index` plus `snapshot_id`.
+3. Use returned tokens, never invented indices. A fresh snapshot replaces prior element handles and lists them in `invalidated_snapshot_ids`; act with `element_token`.
 4. Keep background window actions non-interfering. Foreground delivery and desktop input require authorization for visible control; an unavailable route is not permission to escalate.
 5. Never infer pixels from a missing image, a different window, or an unaccounted-for resized preview. Capture failure and an empty accessibility tree are different failures.
 6. Keep one controller for a shared desktop. Distinct sessions/cursors do not isolate focus, keyboard input, application state, or snapshot caches.

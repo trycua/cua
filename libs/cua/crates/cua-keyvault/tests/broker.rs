@@ -11,10 +11,11 @@ use std::time::Duration;
 use cua_keyvault::broker::{
     AccessRequest, ApproveOptions, Backend, Broker, BrokerConfig, Candidate, Captured, Decision,
     DeliveryOutcome, FakePresence, ImportSpec, InitRequest, Inventory, RuleSpec, Selector,
-    SiteChoice, TeleportRequest, UnlockRequest,
+    SiteChoice, TeleportRequest, TeleportStage, UnlockRequest,
 };
 use cua_keyvault::model::{
-    CookieInfo, ItemKind, ItemMeta, ItemPayload, ItemPolicy, ItemSummary, PayloadEntry, RuleCaller,
+    CookieInfo, ItemKind, ItemMeta, ItemPayload, ItemPolicy, ItemSummary, NO_EXPIRY, PayloadEntry,
+    RuleCaller,
 };
 use cua_keyvault::protector::ProtectorKind;
 use cua_keyvault::{CallerIdentity, Error, Signing};
@@ -153,6 +154,22 @@ impl Backend for FakeBackend {
             skipped: vec![],
             launched: false,
         })
+    }
+
+    async fn deliver_with_progress(
+        &self,
+        target: &str,
+        provider_id: &str,
+        payloads: Vec<ItemPayload>,
+        expires_ms: u64,
+        stage: cua_keyvault::broker::StageSink,
+    ) -> cua_keyvault::Result<DeliveryOutcome> {
+        stage(TeleportStage::Packing);
+        stage(TeleportStage::Uploading { done: 0, total: 8 });
+        stage(TeleportStage::Uploading { done: 8, total: 8 });
+        stage(TeleportStage::Importing);
+        self.deliver(target, provider_id, payloads, expires_ms)
+            .await
     }
 
     async fn wipe(&self, target: &str, import_id: &str) -> cua_keyvault::Result<Vec<String>> {
@@ -852,9 +869,117 @@ async fn deliveries_supersede_and_release_wipes() {
     assert_eq!(live.len(), 1);
     let wiped = r.broker.release(&r.cua, "dev-1").await.unwrap();
     assert_eq!(wiped, vec!["imp-2".to_string()]);
-    // TTL: the delivery expires at the item's TTL (default 1 h).
-    let ttl_ms = delivered[0].3.saturating_sub(cua_keyvault::now_ms());
-    assert!(ttl_ms > 3500 * 1000 && ttl_ms <= 3600 * 1000, "{ttl_ms}");
+    // Auto-wipe is off by default: the copies carry no expiry and stay
+    // until wiped (the receiver reads 0 as never).
+    assert!(delivered.iter().all(|d| d.3 == NO_EXPIRY), "{delivered:?}");
+}
+
+async fn teleport_to(r: &Rig, id: &str, target: &str) {
+    r.broker
+        .teleport(
+            &r.cua,
+            TeleportRequest {
+                token: None,
+                items: vec![id.to_string()],
+                target: target.into(),
+            },
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn auto_wipe_is_off_by_default_and_the_setting_picks_the_expiry() {
+    let r = rig().await;
+    let status = r.broker.status(&r.cua).await;
+    assert_eq!(status.auto_wipe, Some(false), "off by default");
+    // Third parties never learn the setting, nor change it.
+    assert_eq!(r.broker.status(&r.koala).await.auto_wipe, None);
+    assert!(r.broker.set_auto_wipe(&r.koala, true).await.is_err());
+    let items = import_sites(&r, &["github.com", "gitlab.com"]).await;
+    // Off: no expiry, and the copy stays live (it is superseded, not
+    // dropped, by the next delivery to the same Space).
+    teleport_to(&r, &items[0].id, "dev-1").await;
+    let live = r
+        .broker
+        .list_deliveries(&r.cua)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|d| d.live(cua_keyvault::now_ms()))
+        .count();
+    assert_eq!(live, 1);
+    // On: turning it on needs no presence; the item's TTL applies again.
+    let asked = r.presence.asked.lock().unwrap().len();
+    r.broker.set_auto_wipe(&r.cua, true).await.unwrap();
+    assert_eq!(r.presence.asked.lock().unwrap().len(), asked);
+    assert_eq!(r.broker.status(&r.cua).await.auto_wipe, Some(true));
+    teleport_to(&r, &items[0].id, "dev-2").await;
+    // A shorter per-item TTL is respected.
+    let mut short = items[1].policy.clone();
+    short.ttl_secs = 600;
+    r.broker
+        .set_item_policy(&r.cua, &items[1].id, short)
+        .await
+        .unwrap();
+    teleport_to(&r, &items[1].id, "dev-3").await;
+    let delivered = r.backend.delivered.lock().unwrap().clone();
+    let now = cua_keyvault::now_ms();
+    assert_eq!(delivered[0].3, NO_EXPIRY);
+    let hour = delivered[1].3.saturating_sub(now);
+    assert!(hour > 3500 * 1000 && hour <= 3600 * 1000, "{hour}");
+    let ten = delivered[2].3.saturating_sub(now);
+    assert!(ten > 500 * 1000 && ten <= 600 * 1000, "{ten}");
+    // Turning it off keeps copies longer: it asks for presence, and a
+    // declined prompt changes nothing.
+    r.presence.set(false);
+    assert!(r.broker.set_auto_wipe(&r.cua, false).await.is_err());
+    assert_eq!(r.broker.status(&r.cua).await.auto_wipe, Some(true));
+    r.presence.set(true);
+    r.broker.set_auto_wipe(&r.cua, false).await.unwrap();
+    assert_eq!(r.broker.status(&r.cua).await.auto_wipe, Some(false));
+    let tail = r.broker.audit_tail(&r.cua, 100).await.unwrap();
+    assert!(
+        tail.iter()
+            .any(|e| e.event.kind == "settings.update" && e.event.detail == "auto_wipe=false")
+    );
+}
+
+#[tokio::test]
+async fn a_copy_without_expiry_still_goes_on_wipe_delete_and_the_kill_switch() {
+    let r = rig().await;
+    let items = import_sites(&r, &["github.com", "gitlab.com"]).await;
+    teleport_to(&r, &items[0].id, "dev-1").await;
+    teleport_to(&r, &items[1].id, "dev-2").await;
+    teleport_to(&r, &items[1].id, "dev-3").await;
+    let live = |ds: Vec<cua_keyvault::model::Delivery>| -> Vec<String> {
+        let now = cua_keyvault::now_ms() + 365 * 24 * 3600 * 1000;
+        let mut t: Vec<String> = ds
+            .into_iter()
+            .filter(|d| d.live(now))
+            .map(|d| d.target)
+            .collect();
+        t.sort();
+        t
+    };
+    // A year on, nothing expired by itself.
+    assert_eq!(
+        live(r.broker.list_deliveries(&r.cua).await.unwrap()),
+        ["dev-1", "dev-2", "dev-3"]
+    );
+    // Wipe.
+    r.broker.release(&r.cua, "dev-1").await.unwrap();
+    assert_eq!(
+        live(r.broker.list_deliveries(&r.cua).await.unwrap()),
+        ["dev-2", "dev-3"]
+    );
+    // Deleting the item wipes its copies.
+    r.broker.delete_item(&r.cua, &items[1].id).await.unwrap();
+    assert!(live(r.broker.list_deliveries(&r.cua).await.unwrap()).is_empty());
+    // The kill switch wipes the rest.
+    teleport_to(&r, &items[0].id, "dev-4").await;
+    r.broker.set_disabled(&r.cua, true).await.unwrap();
+    assert!(live(r.broker.list_deliveries(&r.cua).await.unwrap()).is_empty());
 }
 
 #[tokio::test]
@@ -1576,6 +1701,45 @@ async fn deliveries_are_authorized_in_the_log_and_the_kill_switch_wipes_them() {
         2
     );
     assert!(r.broker.verify_audit(&r.cua).await.unwrap().ok());
+}
+
+/// A direct teleport says where it is: reading (when macOS asks for the
+/// Keychain), saving only when asked, then the backend's packing, upload
+/// and import. Without a sink nothing changes.
+#[tokio::test]
+async fn import_and_teleport_reports_its_stages_in_order() {
+    let r = rig().await;
+    let spec = || ImportSpec {
+        app: "chrome".into(),
+        sites: vec![SiteChoice {
+            site: "github.com".into(),
+            include_storage: false,
+            include_passwords: false,
+        }],
+        ..Default::default()
+    };
+    for save in [true, false] {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = {
+            let seen = seen.clone();
+            Arc::new(move |s: TeleportStage| seen.lock().unwrap().push(s))
+        };
+        r.broker
+            .import_and_teleport_with_progress(&r.cua, spec(), "dev-1".into(), save, Some(sink))
+            .await
+            .unwrap();
+        let mut want = vec![TeleportStage::Reading];
+        if save {
+            want.push(TeleportStage::Saving);
+        }
+        want.extend([
+            TeleportStage::Packing,
+            TeleportStage::Uploading { done: 0, total: 8 },
+            TeleportStage::Uploading { done: 8, total: 8 },
+            TeleportStage::Importing,
+        ]);
+        assert_eq!(*seen.lock().unwrap(), want, "save={save}");
+    }
 }
 
 /// `import_and_teleport` is what a direct (non-MCP) teleport uses instead of

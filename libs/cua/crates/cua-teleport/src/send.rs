@@ -203,7 +203,9 @@ pub struct SendOptions {
     /// session has a TTL on the target even if the host never calls
     /// `WipeImport` (design 5.9).
     pub expires_at_ms: u64,
-    /// Upload progress.
+    /// Upload progress: bytes the Space has, of the total. It reports the
+    /// total as the last chunk goes out, so `sent == total` means the Space
+    /// is importing (the call returns once it has).
     pub progress: Option<Progress>,
     /// Marks a delivery the Keyvault broker authorized
     /// (`ImportOptions.broker_grant`); `None` for direct sends.
@@ -673,6 +675,11 @@ pub async fn upload_bundle(
     for _ in 0..max_calls {
         let end = (offset + chunk).min(total);
         let commit = end == total;
+        if commit {
+            // The last chunk carries the import: everything is on its way,
+            // and the Space imports while this call runs.
+            progress(end);
+        }
         let request = pb::ImportSessionRequest {
             import_id: import_id.to_string(),
             app: provider_id.to_string(),

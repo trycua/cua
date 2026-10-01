@@ -162,8 +162,8 @@
         "confirm": "Remove 10.0.0.5:3211? | It is only removed from the list. | Remove / Keep",
         "facts": [
           "Status: Running",
-          "System: Windows",
-          "Identifier: direct:10.0.0.5:3211 [copy direct:10.0.0.5:3211 doc.on.doc Copy / checkmark Copied 1500ms]"
+          "Identifier: direct:10.0.0.5:3211 [copy direct:10.0.0.5:3211 doc.on.doc Copy / checkmark Copied 1500ms]",
+          "System: Windows"
         ],
         "isHost": false,
         "previewText": "Loading the desktop…",
@@ -183,8 +183,8 @@
         "confirm": "Delete This machine? | Its sandbox is deleted. | Delete Space / Keep",
         "facts": [
           "Status: This Mac",
-          "System: macOS",
-          "Identifier: this-mac [copy this-mac doc.on.doc Copy / checkmark Copied 1500ms]"
+          "Identifier: this-mac [copy this-mac doc.on.doc Copy / checkmark Copied 1500ms]",
+          "System: macOS"
         ],
         "isHost": true,
         "previewText": "Not reachable",
@@ -207,8 +207,8 @@
         "facts": [
           "Status: Running",
           "Location: AWS · us-west-2",
-          "System: Linux",
-          "Identifier: relay:cloud-0000000000000a01 [copy relay:cloud-0000000000000a01 doc.on.doc Copy / checkmark Copied 1500ms]"
+          "Identifier: relay:cloud-0000000000000a01 [copy relay:cloud-0000000000000a01 doc.on.doc Copy / checkmark Copied 1500ms]",
+          "System: Linux"
         ],
         "isHost": false,
         "previewText": "Loading the desktop…",
@@ -235,8 +235,8 @@
         "facts": [
           "Status: offline",
           "Location: Google Cloud · us-central1",
-          "System: Linux",
-          "Identifier: relay:cloud-0000000000000e01 [copy relay:cloud-0000000000000e01 doc.on.doc Copy / checkmark Copied 1500ms]"
+          "Identifier: relay:cloud-0000000000000e01 [copy relay:cloud-0000000000000e01 doc.on.doc Copy / checkmark Copied 1500ms]",
+          "System: Linux"
         ],
         "isHost": false,
         "previewText": "Not reachable",
@@ -258,8 +258,8 @@
         "confirm": "Delete Aurora? | Its sandbox is deleted. | Delete Space / Keep",
         "facts": [
           "Status: Running",
-          "System: Linux",
-          "Identifier: local:aurora [copy local:aurora doc.on.doc Copy / checkmark Copied 1500ms]"
+          "Identifier: local:aurora [copy local:aurora doc.on.doc Copy / checkmark Copied 1500ms]",
+          "System: Linux"
         ],
         "isHost": false,
         "previewText": "Loading the desktop…",
@@ -285,8 +285,8 @@
         "confirm": "Delete Builder? | Its sandbox is deleted. | Delete Space / Keep",
         "facts": [
           "Status: timed out",
-          "System: Linux",
-          "Identifier: cloud:builder [copy cloud:builder doc.on.doc Copy / checkmark Copied 1500ms]"
+          "Identifier: cloud:builder [copy cloud:builder doc.on.doc Copy / checkmark Copied 1500ms]",
+          "System: Linux"
         ],
         "isHost": false,
         "previewText": "Not reachable",
@@ -1170,9 +1170,9 @@
           "notch: tiles macos-qa,ubuntu-ci,windows-11; tab 3 Spaces; 232x82 loop 4000",
           "0: pointer 1717,656 open 0 content 0 tab 1000 hover 0 pressed false active false highlighted -",
           "850: pointer 1458,368 open 0 content 0 tab 1000 hover 0 pressed false active false highlighted -",
-          "1350: pointer 1200,79 open 0 content 0 tab 1000 hover 219 pressed false active false highlighted -",
-          "1550: pointer 1200,79 open 0 content 0 tab 1000 hover 999 pressed false active false highlighted -",
-          "1700: pointer 1200,79 open 497 content 0 tab 503 hover 508 pressed false active false highlighted -",
+          "1350: pointer 1200,79 open 0 content 0 tab 1000 hover 336 pressed false active false highlighted -",
+          "1550: pointer 1200,79 open 0 content 0 tab 1000 hover 1043 pressed false active false highlighted -",
+          "1700: pointer 1200,79 open 497 content 0 tab 503 hover 501 pressed false active false highlighted -",
           "2400: pointer 1200,79 open 1000 content 1000 tab 0 hover 0 pressed false active false highlighted -",
           "2750: pointer 1201,80 open 1000 content 1000 tab 0 hover 0 pressed false active false highlighted -",
           "3150: pointer 1544,463 open 1000 content 500 tab 0 hover 0 pressed false active false highlighted -",

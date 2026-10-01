@@ -314,6 +314,10 @@ public final class TeleportModel {
     public var review: AppReviewView? { appPickerReview(state: state) }
     public var canPlan: Bool { appPickerCanPlan(state: state) }
     public var progress: Double { appPickerProgress(state: state) }
+    /// What the run is doing, in words, under the bar (the core's reading
+    /// of the SDK's step events): "Reading Chrome cookies (macOS will ask
+    /// for Keychain access)…", "Uploading 12 / 80 MB".
+    public var status: String? { appPickerStatus(state: state) }
 
     public func send(_ event: AppPickerEvent) {
         state = appPickerReduce(state: state, event: event)
@@ -365,10 +369,10 @@ public final class TeleportModel {
         do {
             let report = try await teleport.run(
                 plan: plan, space: space,
-                consent: TeleportConsent(approved: consent.approved,
-                                         acknowledgeSensitive: consent.acknowledgeSensitive,
-                                         acknowledgeRelayPlaintext: consent.acknowledgeRelayPlaintext),
-                listener: nil)
+                consent: sdkConsent(consent),
+                listener: RunEvents { [weak self] event in
+                    Task { @MainActor in self?.send(.progress(event: appTeleportRunEvent(event: event))) }
+                })
             send(.finished(report: AppTeleportRunReport(
                 appId: report.appId, installed: report.installed, sent: report.sent,
                 imported: report.imported, skipped: report.skipped, launched: report.launched)))
@@ -381,6 +385,13 @@ public final class TeleportModel {
         let text = LiveSpacesBackend.words(error)
         send(.failed(message: text, causeTexts: [text], causeInstalled: false))
     }
+}
+
+/// The SDK's run events, on its worker thread, handed to `handler`.
+final class RunEvents: TeleportRunListener, @unchecked Sendable {
+    let handler: @Sendable (TeleportRunEvent) -> Void
+    init(_ handler: @escaping @Sendable (TeleportRunEvent) -> Void) { self.handler = handler }
+    func onEvent(event: TeleportRunEvent) { handler(event) }
 }
 
 extension AppTeleportMove {
@@ -399,4 +410,14 @@ extension AppTeleportMove {
         case .appWithState: return "The app with its signed-in state"
         }
     }
+}
+
+/// The SDK consent for the review's confirmed consent. Every field must be
+/// carried over: `saveToKeyvault` defaults to false on the SDK type, so
+/// leaving it out silently drops the "Save to Keyvault" checkbox.
+func sdkConsent(_ consent: AppTeleportConsent) -> TeleportConsent {
+    TeleportConsent(approved: consent.approved,
+                    acknowledgeSensitive: consent.acknowledgeSensitive,
+                    saveToKeyvault: consent.saveToKeyvault,
+                    acknowledgeRelayPlaintext: consent.acknowledgeRelayPlaintext)
 }

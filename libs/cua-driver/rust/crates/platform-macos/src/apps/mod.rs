@@ -254,24 +254,39 @@ fn running_apps_from_processes(
         if !in_app_dir && !is_finder && !pids.iter().any(|p| windowed.contains(p)) {
             continue;
         }
-        // One entry per bundle, matching NSWorkspace's shape. When an app has
-        // several user-facing processes, report the frontmost one if it is among
-        // them and otherwise the lowest pid — the parent, since children are
-        // spawned later. Never report a pid the caller cannot act on.
+        // NSWorkspace lists every running instance of an app, not one per
+        // bundle: two copies of one bundle (`open -n`, a second Electron
+        // window process, a test fixture next to a sentinel built from the
+        // same app) are separate apps with separate pids an agent acts on.
+        // So report every process of the bundle that owns a window, plus the
+        // frontmost one. A bundle none of whose processes qualifies is still
+        // running (Finder with no window, an app between windows): report its
+        // lowest pid -- the parent, since children are spawned later. Never
+        // report a pid the caller cannot act on.
         pids.sort_unstable();
-        let pid = front.filter(|f| pids.contains(f)).unwrap_or(pids[0]);
-        apps.push(AppInfo {
-            name: info.name,
-            pid,
-            bundle_id: info.bundle_id,
-            running: true,
-            active: front == Some(pid),
-            launch_path: Some(app_path),
-            kind: Some("desktop".to_owned()),
-            last_used: None,
-        });
+        pids.dedup();
+        let mut selected: Vec<i32> = pids
+            .iter()
+            .copied()
+            .filter(|p| windowed.contains(p) || front == Some(*p))
+            .collect();
+        if selected.is_empty() {
+            selected.push(pids[0]);
+        }
+        for pid in selected {
+            apps.push(AppInfo {
+                name: info.name.clone(),
+                pid,
+                bundle_id: info.bundle_id.clone(),
+                running: true,
+                active: front == Some(pid),
+                launch_path: Some(app_path.clone()),
+                kind: Some("desktop".to_owned()),
+                last_used: None,
+            });
+        }
     }
-    apps.sort_by(|a, b| a.name.cmp(&b.name));
+    apps.sort_by(|a, b| a.name.cmp(&b.name).then(a.pid.cmp(&b.pid)));
     apps
 }
 
@@ -1244,11 +1259,11 @@ mod tests {
         );
     }
 
-    /// One entry per bundle: the frontmost pid when it belongs to the bundle,
-    /// otherwise the lowest (parent) pid. Every reported pid is one the
-    /// snapshot holds.
+    /// A bundle with no windowed process is one entry: the frontmost pid when
+    /// it belongs to the bundle, otherwise the lowest (parent) pid. Every
+    /// reported pid is one the snapshot holds.
     #[test]
-    fn one_entry_per_bundle_prefers_the_front_pid() {
+    fn windowless_bundle_is_one_entry_preferring_the_front_pid() {
         let temp = tempfile::tempdir().expect("temp dir");
         let exe = synthetic_bundle(temp.path(), "CuaMulti", "");
         let roots = [format!("{}/", temp.path().display())];
@@ -1260,10 +1275,30 @@ mod tests {
         assert_eq!((apps[0].pid, apps[0].active), (700, false));
 
         let apps = running_apps_from_processes(&processes, Some(800), &nothing, &roots);
+        assert_eq!(apps.len(), 1, "{apps:?}");
         assert_eq!((apps[0].pid, apps[0].active), (800, true));
 
         let apps = running_apps_from_processes(&processes, Some(1), &nothing, &roots);
+        assert_eq!(apps.len(), 1, "{apps:?}");
         assert_eq!((apps[0].pid, apps[0].active), (700, false));
+    }
+
+    /// Two windowed instances of one bundle are two apps, as NSWorkspace
+    /// reports them. A frontmost second instance must not hide the first
+    /// (the E2E fixture vs. foreground-sentinel regression: both are
+    /// CuaTestHarness.Electron.app, the sentinel is frontmost).
+    #[test]
+    fn every_windowed_instance_of_a_bundle_is_listed() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let exe = synthetic_bundle(temp.path(), "CuaTwin", "");
+        // Outside the app roots, so only windowed processes qualify.
+        let roots = ["/nonexistent-app-root/".to_owned()];
+        let windowed: HashSet<i32> = [700, 800].into_iter().collect();
+        let processes = [(700, exe.clone()), (800, exe.clone()), (900, exe)];
+
+        let apps = running_apps_from_processes(&processes, Some(800), &windowed, &roots);
+        let listed: Vec<(i32, bool)> = apps.iter().map(|a| (a.pid, a.active)).collect();
+        assert_eq!(listed, vec![(700, false), (800, true)], "{apps:?}");
     }
 
     /// Agent and background bundles are never apps; a bundle outside the app

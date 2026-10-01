@@ -725,8 +725,8 @@ pub fn arch_fact(space: &Space, host_arch: Option<&str>) -> Option<Fact> {
     })
 }
 
-/// Status, Image, System (the full OS string), Kind, Architecture, Memory,
-/// Storage, Identifier: each only when known.
+/// Status, Image, Identifier, System (the full OS string), Kind,
+/// Architecture, Memory, Storage: each only when known.
 fn detail_facts(
     space: &Space,
     status: String,
@@ -753,6 +753,13 @@ fn detail_facts(
             ..fact("Image", image.to_string())
         });
     }
+    // Directly below the Image. A Space being created has no identifier yet.
+    if space.progress.is_none() {
+        facts.push(Fact {
+            copy: Some(fact_copy(&space.id)),
+            ..fact("Identifier", space.id.clone())
+        });
+    }
     let system = system_text(space);
     facts.push(Fact {
         help: Some(system.clone()),
@@ -769,13 +776,6 @@ fn detail_facts(
         if u.disk_limited && u.disk_total > 0 {
             facts.push(fact("Storage", usage_text(u.disk_used, u.disk_total)));
         }
-    }
-    // A Space being created has no identifier yet.
-    if space.progress.is_none() {
-        facts.push(Fact {
-            copy: Some(fact_copy(&space.id)),
-            ..fact("Identifier", space.id.clone())
-        });
     }
     facts
 }
@@ -1061,10 +1061,10 @@ mod tests {
             [
                 "Status",
                 "Image",
+                "Identifier",
                 "System",
                 "Kind",
-                "Architecture",
-                "Identifier"
+                "Architecture"
             ]
         );
         // The same platform as this Mac: no warning.

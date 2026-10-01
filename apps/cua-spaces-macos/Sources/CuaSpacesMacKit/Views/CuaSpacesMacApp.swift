@@ -204,6 +204,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.activate()
             controller?.showMain?()
         }
+        controller.onOpenAccess = { [weak controller] in
+            model.selection = .keyvault(.category(category: .access))
+            NSApp.activate()
+            controller?.showMain?()
+        }
+        controller.onDismissAccess = { model.keyvault.dismiss() }
         controller.onTeleport = { [weak controller] spaceId, entry in
             model.select(spaceId)
             model.pendingTeleport = PendingTeleport(spaceId: spaceId, entry: entry, files: [])

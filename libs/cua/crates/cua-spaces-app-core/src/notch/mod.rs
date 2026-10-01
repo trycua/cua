@@ -60,6 +60,9 @@ pub struct NotchMotion {
     pub hover_damping: f64,
     /// Horizontal scale of the closed notch (and its tab) under the pointer.
     pub hover_scale: f64,
+    /// Vertical scale of the closed notch under the pointer (a few points
+    /// taller, anchored at the top).
+    pub hover_scale_y: f64,
     /// The content starts fading in this long after the shape starts
     /// opening (ms).
     pub content_delay_ms: u32,
@@ -80,9 +83,10 @@ pub const MOTION: NotchMotion = NotchMotion {
     close_response: 0.4,
     close_damping: 1.0,
     reduced_duration: 0.15,
-    hover_response: 0.38,
-    hover_damping: 0.8,
+    hover_response: 0.3,
+    hover_damping: 0.65,
     hover_scale: 1.08,
+    hover_scale_y: 1.12,
     content_delay_ms: 90,
     content_in: 0.22,
     content_out: 0.1,
@@ -301,6 +305,9 @@ pub struct NotchTile {
     /// While it is being created: the phase in words ("Starting…"), or
     /// "Failed"; while it is being deleted, "Deleting…".
     pub progress_label: Option<String>,
+    /// Signed in through the Keyvault (and not dismissed): the key badge.
+    #[serde(default)]
+    pub signed_in: bool,
 }
 
 /// Linux distributions with their own icon: a word in the reported OS
@@ -450,6 +457,7 @@ pub fn tiles_matching(spaces: &[Space], targeted: Option<&str>, query: &str) -> 
             } else {
                 s.progress.as_ref().map(|p| p.label.clone())
             },
+            signed_in: false,
             id: s.id,
             name: s.name,
             os: s.os,
@@ -498,6 +506,11 @@ pub struct NotchState {
     /// [`crate::keyvault::view::sharing_label`]), so access is never silent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyvault: Option<String>,
+    /// The Spaces signed in through the Keyvault, less the copies the user
+    /// dismissed ([`crate::keyvault::view::signed_in_spaces`]): their tiles
+    /// carry the key.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub signed_in: Vec<String>,
     /// "Spaces tab in the notch: Hide" (menu bar only): nothing shows in
     /// the notch, and hover, clicks and window drags do nothing.
     #[serde(default)]
@@ -528,6 +541,7 @@ impl Default for NotchState {
             hotspot: false,
             transfer: None,
             keyvault: None,
+            signed_in: vec![],
             hidden: false,
         }
     }
@@ -589,6 +603,9 @@ pub enum NotchEvent {
         /// The sharing label, if any.
         #[serde(default)]
         label: Option<String>,
+        /// The Space ids signed in (their tiles carry the key).
+        #[serde(default, rename = "signedIn")]
+        signed_in: Vec<String>,
     },
 }
 
@@ -734,8 +751,9 @@ pub fn reduce(state: &NotchState, event: &NotchEvent) -> NotchTransition {
             s.hotspot = *hotspot;
             s.transfer = transfer.clone();
         }
-        NotchEvent::Keyvault { label } => {
+        NotchEvent::Keyvault { label, signed_in } => {
             s.keyvault = label.clone();
+            s.signed_in = signed_in.clone();
         }
     }
     // A closed panel forgets its search.
@@ -779,6 +797,22 @@ pub struct NotchView {
     pub hover_cue: bool,
     /// One line in the open panel when window drags cannot be detected.
     pub permission: Option<NotchPermission>,
+    /// One line in the open panel while Keyvault sign-ins are live in a
+    /// Space (and not dismissed): what is live, and Dismiss.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<NotchAccess>,
+}
+
+/// The live-access line and its button. Dismiss hides the indicator and
+/// the tiles' key; it revokes and wipes nothing (the Keyvault's Access page
+/// does that).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotchAccess {
+    /// "Keyvault sign-ins live in dev-1" (opens the Access page).
+    pub text: String,
+    /// "Dismiss".
+    pub dismiss: String,
 }
 
 /// The missing-permission line and its button.
@@ -1103,11 +1137,14 @@ pub fn view(state: &NotchState, spaces: &[Space]) -> NotchView {
     };
     // A drag drops on any Space: the search only narrows browsing.
     let query = if drop_mode { "" } else { state.query.trim() };
-    let visible = if phase == NotchPhase::Tiles {
+    let mut visible = if phase == NotchPhase::Tiles {
         tiles_matching(spaces, state.drag.target_space_id.as_deref(), query)
     } else {
         Vec::new()
     };
+    for t in &mut visible {
+        t.signed_in = state.signed_in.contains(&t.id);
+    }
     let n = visible.len();
     let remote = remote_count(spaces);
     let searching = !query.is_empty();
@@ -1131,6 +1168,13 @@ pub fn view(state: &NotchState, spaces: &[Space]) -> NotchView {
             action: "Open Settings".into(),
             pane: "accessibility".into(),
         });
+    let access = (phase == NotchPhase::Tiles && !drop_mode && permission.is_none())
+        .then(|| state.keyvault.clone())
+        .flatten()
+        .map(|text| NotchAccess {
+            text,
+            dismiss: "Dismiss".into(),
+        });
     let (show_tab, hover_cue, activity) = if state.hidden {
         (false, false, None)
     } else {
@@ -1150,6 +1194,7 @@ pub fn view(state: &NotchState, spaces: &[Space]) -> NotchView {
         show_tab,
         hover_cue,
         permission,
+        access,
         phase,
         label: match phase {
             NotchPhase::Closed => "Cua Spaces".into(),
@@ -1503,6 +1548,7 @@ mod tests {
             &NotchState::default(),
             &NotchEvent::Keyvault {
                 label: Some(label.into()),
+                signed_in: vec![],
             },
         )
         .state;
@@ -1510,8 +1556,73 @@ mod tests {
             view(&on, &[]).activity.unwrap().kind,
             NotchActivityKind::Keyvault
         );
-        let off = reduce(&on, &NotchEvent::Keyvault { label: None }).state;
+        let off = reduce(
+            &on,
+            &NotchEvent::Keyvault {
+                label: None,
+                signed_in: vec![],
+            },
+        )
+        .state;
         assert!(view(&off, &[]).activity.is_none());
+    }
+
+    #[test]
+    fn signed_in_spaces_carry_the_key_on_their_tiles() {
+        let mut a = space("a", "a", SpaceOs::Linux, SpaceStatus::Running);
+        a.last_used_at = 10;
+        let mut b = space("b", "b", SpaceOs::Linux, SpaceStatus::Running);
+        b.last_used_at = 5;
+        let spaces = vec![a, b];
+        let mut s = reduce(
+            &NotchState::default(),
+            &NotchEvent::Keyvault {
+                label: Some("Keyvault sign-ins live in a".into()),
+                signed_in: vec!["a".into()],
+            },
+        )
+        .state;
+        s.open = true;
+        let v = view(&s, &spaces);
+        let keyed: Vec<(&str, bool)> = v
+            .tiles
+            .iter()
+            .map(|t| (t.id.as_str(), t.signed_in))
+            .collect();
+        assert_eq!(keyed, [("a", true), ("b", false)]);
+        // Dismissed (the shell sends the rest): no key, no indicator.
+        let s = reduce(
+            &s,
+            &NotchEvent::Keyvault {
+                label: None,
+                signed_in: vec![],
+            },
+        )
+        .state;
+        let v = view(&s, &spaces);
+        assert!(v.tiles.iter().all(|t| !t.signed_in));
+        assert!(v.activity.is_none());
+        assert!(v.access.is_none(), "dismissed: no line either");
+    }
+
+    #[test]
+    fn the_open_panel_names_live_access_with_a_dismiss() {
+        let label = "Keyvault sign-ins live in dev-1";
+        let mut s = reduce(
+            &NotchState::default(),
+            &NotchEvent::Keyvault {
+                label: Some(label.into()),
+                signed_in: vec![],
+            },
+        )
+        .state;
+        assert!(view(&s, &[]).access.is_none(), "closed: the indicator only");
+        s.open = true;
+        let a = view(&s, &[]).access.unwrap();
+        assert_eq!((a.text.as_str(), a.dismiss.as_str()), (label, "Dismiss"));
+        // A drop hint takes the line.
+        s.drop_targeted = true;
+        assert!(view(&s, &[]).access.is_none());
     }
 
     #[test]
@@ -1711,6 +1822,11 @@ mod tests {
         assert!(m.content_delay_ms > 0, "content follows the shape");
         assert!(m.content_out < m.close_response, "content leaves first");
         assert!(m.hover_scale > 1.0 && m.hover_scale < 1.15);
+        // The cue answers the pointer at once with a little bounce, a few
+        // points wider and taller, well before the dwell opens it.
+        assert!(m.hover_scale_y > 1.0 && m.hover_scale_y < 1.2);
+        assert!(m.hover_response <= 0.3 && m.hover_damping >= 0.6 && m.hover_damping <= 0.7);
+        assert!(m.hover_response * 1000.0 <= f64::from(m.hover_dwell_ms));
     }
 
     #[test]

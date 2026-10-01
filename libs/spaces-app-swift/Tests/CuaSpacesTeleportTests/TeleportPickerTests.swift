@@ -71,6 +71,28 @@ let firefox = fixtureEntry("firefox", "Firefox", .full, moves: [.appOnly, .appWi
 let safari = fixtureEntry("com.apple.Safari", "Safari", .unsupported, moves: [], reason: "no Linux build")
 
 @Suite @MainActor struct TeleportPickerTests {
+    /// The line under the bar reads the SDK's step events through the app
+    /// core: the Keychain prompt is named before it appears, and bytes show
+    /// while they move.
+    @Test func theRunSaysWhichStepItIsOn() {
+        func ev(_ phase: String, _ detail: String, _ done: UInt64 = 0, _ total: UInt64 = 0) -> TeleportRunEvent {
+            TeleportRunEvent(step: 0, steps: 1, kind: "state", phase: phase, detail: detail,
+                             doneBytes: done, totalBytes: total)
+        }
+        let reading = "Reading Chrome cookies (macOS will ask for Keychain access)\u{2026}"
+        var events = [ev("started", "Preparing the sign-in")]
+        #expect(appTeleportRunStatus(events: events) == "Preparing the sign-in")
+        events.append(ev("progress", reading))
+        #expect(appTeleportRunStatus(events: events) == reading)
+        events.append(ev("progress", "Uploading", 12 << 20, 80 << 20))
+        #expect(appTeleportRunStatus(events: events) == "Uploading 12 / 80 MB")
+        events.append(ev("progress", "Importing into the Space"))
+        #expect(appTeleportRunStatus(events: events) == "Importing into the Space")
+        events.append(TeleportRunEvent(step: 1, steps: 1, kind: "done", phase: "done", detail: "Chrome",
+                                       doneBytes: 0, totalBytes: 0))
+        #expect(appTeleportRunStatus(events: events) == nil)
+    }
+
     /// The Keyvault refuses session teleport from an embedded SDK by design
     /// (`requires_cua_app`); the model shows the Install Cua prompt instead.
     @Test func requiresCuaAppBecomesTheInstallPrompt() async throws {

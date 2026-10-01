@@ -47,8 +47,47 @@ public final class KeyvaultModel {
     /// when nothing is): the notch indicator and the menu bar line.
     public var sharingLabel: String? { kvSharingLabel(overview: overview, nowMs: nowMs) }
 
-    /// Told the sharing label after every refresh.
+    /// Told the sharing label after every refresh (and after a dismissal).
     public var onSharing: (@MainActor (String?) -> Void)?
+
+    /// Copies (import ids) the user dismissed from the notch. Dismiss hides
+    /// the indicator and the tiles' key; it revokes and wipes nothing.
+    public var dismissed: [String] = []
+    /// Told the dismissed copies when they change (the app saves them).
+    public var onDismissed: (@MainActor ([String]) -> Void)?
+    /// The Access row to bring forward (a Space's "Signed in" badge).
+    public var focusKey: String?
+
+    /// The notch's indicator: the sharing label without dismissed copies.
+    public var notchLabel: String? {
+        kvVisibleSharingLabel(overview: overview, nowMs: nowMs, dismissed: dismissed)
+    }
+
+    /// The ids of `spaces` signed in through the Keyvault: all of them
+    /// (`notch: false`, the Spaces list), or less the dismissed copies.
+    public func signedIn(_ spaces: [AppSpace], notch: Bool = false) -> [String] {
+        kvSignedInSpaces(overview: overview, nowMs: nowMs, dismissed: notch ? dismissed : [], spaces: spaces)
+    }
+
+    /// The Access row of `space`'s copies.
+    public func accessKey(for space: AppSpace) -> String? {
+        kvSpaceAccessKey(overview: overview, nowMs: nowMs, space: space)
+    }
+
+    /// Hides `imports` (or every live copy) from the notch.
+    public func dismiss(_ imports: [String]? = nil) {
+        let ids = imports ?? overview.deliveries.map(\.importId)
+        let next = dismissed + ids.filter { !dismissed.contains($0) }
+        guard next != dismissed else { return }
+        dismissed = next
+        onDismissed?(dismissed)
+        onSharing?(sharingLabel)
+    }
+
+    /// Whether every copy of an Access row is dismissed.
+    public func isDismissed(_ row: KvAccessRow) -> Bool {
+        !row.imports.isEmpty && row.imports.allSatisfy(dismissed.contains)
+    }
     public var sidebar: KvSidebar { kvSidebar(overview: overview, nowMs: nowMs) }
     public var list: KvListView { kvList(overview: overview, selection: selection, nowMs: nowMs, query: query) }
 
@@ -64,6 +103,15 @@ public final class KeyvaultModel {
     public func refresh() async {
         guard let client else { return }
         overview = await client.overview()
+        // Forget dismissals of copies that were wiped or expired (only
+        // when the broker answered: an unavailable page lists none).
+        if overview.availability == "ready" {
+            let live = kvPruneDismissed(overview: overview, nowMs: nowMs, dismissed: dismissed)
+            if live != dismissed {
+                dismissed = live
+                onDismissed?(live)
+            }
+        }
         onSharing?(sharingLabel)
         // The recovery key is shown once: never again after the vault locks.
         if overview.availability == "locked" { recoveryKey = nil }
@@ -147,6 +195,12 @@ public final class KeyvaultModel {
     // MARK: - Actions (each one broker request)
 
     public func setDisabled(_ disabled: Bool) async { await run(.setDisabled(disabled: disabled)) }
+
+    /// Auto-wipe of access given to Spaces (off by default; turning it off
+    /// makes the daemon ask for Touch ID).
+    public var autoWipe: Bool? { overview.status?.autoWipe }
+
+    public func setAutoWipe(_ on: Bool) async { await run(.setAutoWipe(on: on)) }
 
     public func setUnattended(itemIds: [String], on: Bool) async {
         await run(.setUnattended(itemIds: itemIds, unattended: on))

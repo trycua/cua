@@ -1352,6 +1352,9 @@ pub struct AppNotchMotion {
     pub hover_damping: f64,
     /// Horizontal scale of the closed notch (and its tab) under the pointer.
     pub hover_scale: f64,
+    /// Vertical scale of the closed notch under the pointer (a few points
+    /// taller, anchored at the top).
+    pub hover_scale_y: f64,
     /// The content starts fading in this long after the shape starts
     /// opening (ms).
     pub content_delay_ms: u32,
@@ -1451,6 +1454,8 @@ pub struct AppNotchTile {
     /// While it is being created: the phase in words ("Starting…"), or
     /// "Failed"; while it is being deleted, "Deleting…".
     pub progress_label: Option<String>,
+    /// Signed in through the Keyvault (and not dismissed): the key badge.
+    pub signed_in: bool,
 }
 
 /// What the panel shows.
@@ -1489,6 +1494,10 @@ pub struct AppNotchState {
     /// Keyvault sign-ins are live in a Space right now (the core's
     /// [`crate::keyvault::view::sharing_label`]), so access is never silent.
     pub keyvault: Option<String>,
+    /// The Spaces signed in through the Keyvault, less the copies the user
+    /// dismissed ([`crate::keyvault::view::signed_in_spaces`]): their tiles
+    /// carry the key.
+    pub signed_in: Vec<String>,
     /// "Spaces tab in the notch: Hide" (menu bar only): nothing shows in
     /// the notch, and hover, clicks and window drags do nothing.
     pub hidden: bool,
@@ -1548,6 +1557,8 @@ pub enum AppNotchEvent {
     Keyvault {
         /// The sharing label, if any.
         label: Option<String>,
+        /// The Space ids signed in (their tiles carry the key).
+        signed_in: Vec<String>,
     },
 }
 
@@ -1594,6 +1605,18 @@ pub struct AppNotchPermission {
     pub action: String,
     /// Which settings pane the button opens (`accessibility`).
     pub pane: String,
+}
+
+/// The live-access line and its button. Dismiss hides the indicator and
+/// the tiles' key; it revokes and wipes nothing (the Keyvault's Access page
+/// does that).
+pub type AppNotchAccess = core::notch::NotchAccess;
+#[uniffi::remote(Record)]
+pub struct AppNotchAccess {
+    /// "Keyvault sign-ins live in dev-1" (opens the Access page).
+    pub text: String,
+    /// "Dismiss".
+    pub dismiss: String,
 }
 
 /// A transfer in flight: bytes sent of the total, when known.
@@ -1731,6 +1754,9 @@ pub struct AppNotchView {
     pub hover_cue: bool,
     /// One line in the open panel when window drags cannot be detected.
     pub permission: Option<AppNotchPermission>,
+    /// One line in the open panel while Keyvault sign-ins are live in a
+    /// Space (and not dismissed): what is live, and Dismiss.
+    pub access: Option<AppNotchAccess>,
 }
 
 /// Active or failed.
@@ -3652,7 +3678,7 @@ pub struct KvDelivery {
     pub caller_fp: String,
     /// Delivered.
     pub delivered_ms: u64,
-    /// Wiped at.
+    /// Wiped at ([`KV_NO_EXPIRY`]: only when wiped).
     pub expires_ms: u64,
     /// Already wiped.
     pub wiped: bool,
@@ -3706,6 +3732,9 @@ pub struct KvStatus {
     pub pending: u32,
     /// `auto` or `presence`.
     pub unlock_policy: Option<String>,
+    /// Delivered copies wipe themselves after their TTL (off by default;
+    /// none: not told, a broker before the setting or a third party).
+    pub auto_wipe: Option<bool>,
     /// The daemon can create the OS key store protector (setup offers Touch
     /// ID); false for a development daemon, which is passphrase-only.
     pub os_protector_available: bool,
@@ -3795,6 +3824,11 @@ pub enum KvCommand {
     RemoveRule {
         /// Id.
         id: String,
+    },
+    /// Auto-wipe of delivered copies (turning it off asks for Touch ID).
+    SetAutoWipe {
+        /// On.
+        on: bool,
     },
     /// Wipe a Space's copies.
     Release {
@@ -3983,6 +4017,9 @@ pub struct KvAccessRow {
     pub action_label: String,
     /// What the button sends.
     pub command: KvCommand,
+    /// A Space's copies: their import ids, which Dismiss hides from the
+    /// notch (empty for grants and rules).
+    pub imports: Vec<String>,
 }
 
 /// The Keyvault's fixed words.
@@ -5552,6 +5589,10 @@ pub struct AppSettings {
     /// Settings, Experiments: every switch off unless turned on
     /// ([`crate::experiments`]).
     pub experiments: AppExperiments,
+    /// Keyvault copies (import ids) the user dismissed from the notch: it no
+    /// longer shows them, nothing is revoked or wiped
+    /// ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
+    pub dismissed_access: Vec<String>,
 }
 
 /// A pressed key combination.
@@ -5633,6 +5674,9 @@ pub struct AppSettingsInput {
     pub login_item: Option<AppLoginItemInput>,
     /// Settings, Experiments (what the page mentions follows them).
     pub experiments: AppExperiments,
+    /// The Keyvault's auto-wipe, once the broker told it (none: no
+    /// Keyvault section).
+    pub keyvault_auto_wipe: Option<bool>,
 }
 
 /// How a Settings row draws.

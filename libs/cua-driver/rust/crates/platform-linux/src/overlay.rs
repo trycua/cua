@@ -2171,7 +2171,8 @@ fn cursor_tile_bounds(
 
     let screen_width = i32::try_from(screen_width).ok()?;
     let screen_height = i32::try_from(screen_height).ok()?;
-    let horizontal_margin = if core.session_badge_is_visible() {
+    let badged = core.session_badge_is_visible();
+    let horizontal_margin = if badged {
         X11_BADGED_CURSOR_HORIZONTAL_MARGIN
     } else {
         X11_CURSOR_TILE_MARGIN
@@ -2189,6 +2190,19 @@ fn cursor_tile_bounds(
         return None;
     }
 
+    // Screen-edge clamping can move a badge away from its cursor. Keep the
+    // complete, bounded badge tile inside the screen rather than shrinking
+    // away the space its clamped label needs.
+    let (left, top, right, bottom) = if badged {
+        let width = ((horizontal_margin * 2.0).ceil() as i32).min(screen_width);
+        let height = ((X11_CURSOR_TILE_MARGIN * 2.0).ceil() as i32).min(screen_height);
+        let left = left.min(screen_width - width);
+        let top = top.min(screen_height - height);
+        (left, top, left + width, top + height)
+    } else {
+        (left, top, right, bottom)
+    };
+
     Some(X11TileBounds {
         x: i16::try_from(left).ok()?,
         y: i16::try_from(top).ok()?,
@@ -2199,6 +2213,14 @@ fn cursor_tile_bounds(
 
 #[cfg(target_os = "linux")]
 fn render_x11_tiles(map: &RenderMap) -> Vec<X11PaintTile> {
+    let Some(viewport) = tiny_skia::Rect::from_xywh(
+        0.0,
+        0.0,
+        map.platform.scr_w as f32,
+        map.platform.scr_h as f32,
+    ) else {
+        return Vec::new();
+    };
     let mut bounds = Vec::new();
     for rs in map.cursors.values() {
         if let Some(tile) = cursor_tile_bounds(&rs.core, map.platform.scr_w, map.platform.scr_h) {
@@ -2218,13 +2240,14 @@ fn render_x11_tiles(map: &RenderMap) -> Vec<X11PaintTile> {
             // backdrops, because every root read for a frame is issued before
             // any upload.
             for rs in map.cursors.values() {
-                cursor_overlay::paint_cursor(
+                cursor_overlay::paint_cursor_in_viewport(
                     &mut pixmap,
                     &rs.core,
                     f64::from(bounds.x),
                     f64::from(bounds.y),
                     None,
                     1.0,
+                    viewport,
                 );
             }
             Some(X11PaintTile { bounds, pixmap })
@@ -4134,28 +4157,76 @@ mod tests {
     }
 
     #[test]
-    fn distant_cursors_use_independent_small_tiles() {
-        let mut map = default_render_map();
-        map.platform.scr_w = 7680;
-        map.platform.scr_h = 2160;
-        map.cursors.get_mut("default").unwrap().core.pos = (100.0, 100.0);
-        let mut other = map.state_for_key("other");
-        other.core.pos = (7400.0, 1800.0);
-        map.cursors.insert("other".to_owned(), other);
-
-        let tiles = render_x11_tiles(&map);
-
-        assert_eq!(tiles.len(), 2);
-        assert!(tiles
-            .iter()
-            .all(|tile| tile.bounds.width <= 128 && tile.bounds.height <= 128));
-        assert_eq!(
-            tiles
+    fn cursor_tiles_match_full_frame_with_overlaps_and_edge_badges() {
+        for (positions, label, with_chips) in [
+            ([(160.0, 160.0), (320.0, 240.0)], "Research session", true),
+            ([(160.0, 160.0), (300.0, 160.0)], "Research session", true),
+            ([(130.0, 100.0), (820.0, 600.0)], "Research session", true),
+            ([(10.0, 12.0), (1020.0, 760.0)], "Research session", true),
+            // The second tile cuts through a glyph whose local x is -1.5.
+            ([(200.0, 160.0), (288.0, 160.0)], "M", false),
+        ] {
+            let mut map = default_render_map();
+            map.platform.scr_w = 1024;
+            map.platform.scr_h = 768;
+            map.cursors.clear();
+            for (index, position) in positions.into_iter().enumerate() {
+                let key = format!("cursor-{index}");
+                let mut cursor = map.state_for_key(&key);
+                cursor.core.pos = position;
+                cursor.apply_command(OverlayCommand::SetSessionLabel(if with_chips {
+                    format!("{label} {index}")
+                } else {
+                    label.to_owned()
+                }));
+                cursor.apply_command(OverlayCommand::BeginAction {
+                    action: CursorAction::Text,
+                    delivery: with_chips.then_some(cursor_overlay::DeliveryModifier::Background),
+                    target: with_chips.then_some(cursor_overlay::TargetModifier::Ax),
+                });
+                map.cursors.insert(key, cursor);
+            }
+            let mut full = tiny_skia::Pixmap::new(1024, 768).unwrap();
+            for cursor in map.cursors.values() {
+                cursor_overlay::paint_cursor(&mut full, &cursor.core, 0.0, 0.0, None, 1.0);
+            }
+            assert!(full.pixels().iter().any(|pixel| pixel.alpha() > 0));
+            let tiles = render_x11_tiles(&map);
+            assert_eq!(tiles.len(), 2);
+            assert!(tiles
                 .iter()
-                .map(|tile| tile.pixmap.data().len())
-                .sum::<usize>(),
-            2 * 128 * 128 * 4
-        );
+                .all(|tile| { tile.bounds.width <= 208 && tile.bounds.height <= 128 }));
+            // XPutImage replaces each tile, including its transparent pixels.
+            // Compare that composition with a single-screen render: this also
+            // detects misplaced labels and gaps in edge-badge coverage.
+            let mut composed = tiny_skia::Pixmap::new(1024, 768).unwrap();
+            for tile in tiles {
+                for y in 0..usize::from(tile.bounds.height) {
+                    let source = y * usize::from(tile.bounds.width) * 4;
+                    let target = ((y + tile.bounds.y as usize) * 1024 + tile.bounds.x as usize) * 4;
+                    let width = usize::from(tile.bounds.width) * 4;
+                    composed.data_mut()[target..target + width]
+                        .copy_from_slice(&tile.pixmap.data()[source..source + width]);
+                }
+            }
+            // tiny-skia's clipped floating-point strokes are not bit-identical
+            // after translation. Allow 1/8 coverage per channel, per pixel;
+            // misplaced badges and glyphs must not disappear into a frame-wide
+            // average dominated by the transparent background.
+            for (index, (expected, actual)) in
+                full.pixels().iter().zip(composed.pixels()).enumerate()
+            {
+                assert!(
+                    expected.alpha().abs_diff(actual.alpha()) <= 32
+                        && expected.red().abs_diff(actual.red()) <= 32
+                        && expected.green().abs_diff(actual.green()) <= 32
+                        && expected.blue().abs_diff(actual.blue()) <= 32,
+                    "positions={positions:?} pixel=({}, {}) expected={expected:?} actual={actual:?}",
+                    index % 1024,
+                    index / 1024,
+                );
+            }
+        }
     }
 
     #[test]

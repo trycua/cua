@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Optional
 
 from cua_bench.runner.docker_utils import allocate_ports, generate_task_id
+from cua_bench.reward import try_parse_reward
 
 # Telemetry imports (optional)
 try:
@@ -149,13 +150,9 @@ async def _cmd_list_async(args) -> int:
                     # Fallback: extract from logs
                     try:
                         logs = await docker_provider.get_session_logs(session_id, tail=100)
-                        match = re.search(r"✓ Evaluation result: \[([^\]]+)\]", logs)
-                        if match:
-                            reward_str = match.group(1)
-                            try:
-                                rewards.append(float(reward_str))
-                            except ValueError:
-                                pass
+                        parsed_reward = try_parse_reward(logs)
+                        if parsed_reward is not None:
+                            rewards.append(parsed_reward)
                     except Exception:
                         pass
             elif status == "failed":
@@ -490,13 +487,10 @@ async def _cmd_watch_async(
                 if status == "completed":
                     try:
                         logs = await docker_provider.get_session_logs(session_id, tail=100)
-                        match = re.search(r"✓ Evaluation result: \[([^\]]+)\]", logs)
-                        if match:
-                            reward = match.group(1)
-                            try:
-                                rewards.append(float(reward))
-                            except ValueError:
-                                pass
+                        parsed_reward = try_parse_reward(logs)
+                        if parsed_reward is not None:
+                            reward = f"{parsed_reward:g}"
+                            rewards.append(parsed_reward)
                     except Exception:
                         pass
                 elif status == "failed":
@@ -789,13 +783,10 @@ async def _cmd_info_async(args) -> int:
         if status == "completed":
             try:
                 logs = await docker_provider.get_session_logs(session_id, tail=100)
-                match = re.search(r"✓ Evaluation result: \[([^\]]+)\]", logs)
-                if match:
-                    reward = match.group(1)
-                    try:
-                        rewards.append(float(reward))
-                    except ValueError:
-                        pass
+                parsed_reward = try_parse_reward(logs)
+                if parsed_reward is not None:
+                    reward = f"{parsed_reward:g}"
+                    rewards.append(parsed_reward)
             except Exception:
                 pass
         elif status == "failed":
@@ -1623,16 +1614,10 @@ async def _cmd_run_dataset_async(args) -> int:
                 reward_str = "?"
                 reward_color = ""
                 if result.agent_logs:
-                    import re
-
-                    match = re.search(r"Evaluation result: \[([^\]]+)\]", result.agent_logs)
-                    if match:
-                        reward_str = match.group(1)
-                        try:
-                            reward_val = float(reward_str)
-                            reward_color = GREEN if reward_val >= 0.5 else RED
-                        except ValueError:
-                            pass
+                    parsed_reward = try_parse_reward(result.agent_logs)
+                    if parsed_reward is not None:
+                        reward_str = f"{parsed_reward:g}"
+                        reward_color = GREEN if parsed_reward >= 0.5 else RED
 
                 # Update session status
                 final_status = "completed" if result.success else "failed"

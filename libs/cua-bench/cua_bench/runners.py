@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .core import Task, make
 from .environment import Environment
+from .reward import DEFAULT_SUCCESS_THRESHOLD
 from .types import Action, DoneAction
 
 
@@ -147,7 +148,7 @@ async def run_single_task(
         return TaskResult(
             task_path=str(env_path),
             variant_id=task_index,
-            success=reward >= 0.5,  # Common threshold
+            success=reward >= DEFAULT_SUCCESS_THRESHOLD,
             reward=reward,
             steps=step_count,
         )

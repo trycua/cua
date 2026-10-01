@@ -4,6 +4,35 @@ Framework for benchmarking Computer-Use Agents with verifiable cross-platform en
 
 **[Documentation](https://cua.ai/docs/cuabench)** - Installation, guides, and API reference.
 
+## Using CUA-S1 as a form-filling agent
+
+[cua-s1](../cua-s1) is a research project for small, specialist computer-use
+models whose first checkpoint (`cua-s1-form-v0`) targets form-oriented
+interface tasks. Form-filling tasks here — for example the
+`datasets/cua-bench-basic/fill-form` environment — are a natural fit for
+driving a cua-bench task with a cua-s1 planner rather than a general-purpose
+agent.
+
+Install cua-s1 and start its MCP server, then point a cua-bench agent at that
+server:
+
+```bash
+uv sync --project libs/cua-s1/python --extra mcp --extra pdf
+```
+
+```python
+import cua_bench
+
+env = cua_bench.make("libs/cua-bench/datasets/cua-bench-basic/fill-form")
+# Drive env with the cua-s1 planner/driver instead of a generic agent loop.
+```
+
+See the [cua-s1 README](../cua-s1/README.md) for checkpoint scope, the safety
+boundary, and the required `CUA_S1_*` host settings. Because cua-s1 execution
+fails closed when the connected Cua Driver cannot advertise token-based value
+mutation, treat a failed fill as an explicit contract limitation rather than a
+task failure.
+
 ## Running Tests
 
 The test suite covers the core gym interface, worker system, and benchmark runners.

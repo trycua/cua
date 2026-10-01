@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, Literal, Optional, Tuple
 
 from .bot import Bot
 from .computers import DesktopSession, DesktopSetupConfig, get_session
+from .reward import DEFAULT_SUCCESS_THRESHOLD
 from .tracing import Tracing
 from .types import Action
 
@@ -399,7 +400,7 @@ class Environment:
             duration = time.time() - self._execution_start_time if self._execution_start_time else 0
             success = False
             if isinstance(result, (int, float)):
-                success = result >= 0.5  # Common threshold for success
+                success = result >= DEFAULT_SUCCESS_THRESHOLD
             elif isinstance(result, bool):
                 success = result
             elif isinstance(result, dict) and "success" in result:

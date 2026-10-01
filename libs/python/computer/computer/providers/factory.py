@@ -154,13 +154,9 @@ class VMProviderFactory:
                 ) from e
         elif provider_type == VMProviderType.DOCKER:
             try:
-                from .docker import HAS_DOCKER, DockerProvider
+                from .docker import DockerProvider
 
-                if not HAS_DOCKER:
-                    raise ImportError(
-                        "Docker is required for DockerProvider. "
-                        "Please install Docker and ensure it is running."
-                    )
+                runtime = kwargs.get("runtime") or kwargs.get("container_runtime")
                 return DockerProvider(
                     host=host,
                     storage=storage,
@@ -170,6 +166,7 @@ class VMProviderFactory:
                     ephemeral=ephemeral,
                     vnc_port=noVNC_port,
                     api_port=api_port,
+                    runtime=runtime,
                 )
             except ImportError as e:
                 logger.error(f"Failed to import DockerProvider: {e}")

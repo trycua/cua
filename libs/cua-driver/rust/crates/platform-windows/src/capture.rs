@@ -531,7 +531,7 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
 
     let pw_ok = PrintWindow(hwnd, mem_dc, PW_RENDERFULLCONTENT);
     if !pw_ok.as_bool() {
-        let blt_result = BitBlt(mem_dc, 0, 0, w, h, screen_dc, 0, 0, SRCCOPY);
+        BitBlt(mem_dc, 0, 0, w, h, screen_dc, 0, 0, SRCCOPY)?;
     }
 
     // Compute the DWM-extended-frame bounds. On Win10+ the OS draws an
@@ -743,7 +743,7 @@ pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
             ReleaseDC(HWND::default(), screen_dc);
             bail!("SelectObject failed to select the capture bitmap");
         }
-        BitBlt(mem_dc, 0, 0, w, h, screen_dc, 0, 0, SRCCOPY)?;
+        let blt_result = BitBlt(mem_dc, 0, 0, w, h, screen_dc, 0, 0, SRCCOPY);
         let mut bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,

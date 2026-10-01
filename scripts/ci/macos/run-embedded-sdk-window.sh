@@ -117,10 +117,56 @@ export CUA_E2E_SOURCE_SHA="$source_sha"
 launch_fixture_app() {
   local KEYCHAIN_COMMAND_TIMEOUT_SECONDS="$1" phase="$2"
   shift 2
-  # A bounded open timeout fails the run; canonical owned-VM shutdown is final cleanup.
-  run_bounded_command /usr/bin/open -n -W -a "$APP" \
+  # Every caller ends its arguments with --evidence and a new report path.
+  local report="${@: -1}" mode="$1"
+  [[ ! -e "$report" && ! -L "$report" ]] || {
+    echo 'Refusing existing fixture report' >&2
+    return 2
+  }
+  # Do not use open -W: a short-lived app can exit before its kevent registration.
+  run_bounded_command /usr/bin/open -n -a "$APP" \
     --env "CUA_E2E_SOURCE_SHA=$source_sha" --stdout "$FIXTURE_DIR/$phase.stdout" \
-    --stderr "$FIXTURE_DIR/$phase.stderr" --args "$@"
+    --stderr "$FIXTURE_DIR/$phase.stderr" --args "$@" || return 2
+  python3 - "$report" "$source_sha" "$APP" "$binary" "$mode" "$KEYCHAIN_COMMAND_TIMEOUT_SECONDS" <<'PYWAIT'
+import json, os, pathlib, sys, time
+path, sha, app, binary, mode, timeout = sys.argv[1:]
+deadline = time.monotonic() + float(timeout)
+expected = 'preflight' if mode == '--status-only' else 'pass'
+pid = None
+while time.monotonic() < deadline:
+    try:
+        r = json.loads(pathlib.Path(path).read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        # The fixture writes in place; never accept a partial or absent report.
+        time.sleep(0.1)
+        continue
+    try:
+        p = r['process']
+        assert r['schema'] == 'cua-driver/embedded-sdk-window@1' and r['source_sha'] == sha
+        assert p['bundle_path'] == app and p['bundle_id'] == 'com.trycua.fixture.embedded-sdk-window'
+        assert p['executable'] == binary and p['appkit_main_thread'] is True
+        assert type(p['pid']) is int and p['pid'] > 0 and type(p['ax_trusted']) is bool
+        assert pid is None or pid == p['pid']
+        pid = p['pid']
+        assert r['status'] in (expected, 'running')
+    except (AssertionError, KeyError, TypeError):
+        print('Invalid fixture launch report', file=sys.stderr)
+        sys.exit(2)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        # Read again after exit: the terminal write can race the earlier read.
+        final = json.loads(pathlib.Path(path).read_text())
+        if final == r and r['status'] == expected:
+            sys.exit(0)
+        if final == r:
+            print('Fixture exited without a successful terminal report', file=sys.stderr)
+            sys.exit(2)
+        continue
+    time.sleep(0.1)
+print('Timed out waiting for fresh fixture report and process exit', file=sys.stderr)
+sys.exit(2)
+PYWAIT
 }
 
 read_preflight_trust() {

@@ -534,6 +534,10 @@ def prepare_inkscape_objects(mcp, target, filename, directory):
     button = open_objects_button(elements, lines)
     if button is None:
         raise GroundingUnavailable('Objects panel absent and Open Objects button is not exactly grounded')
+    setup = {'performed': False, 'attempted': True, 'kind': 'accessibility_setup',
+             'plugin_input_proof': False, 'action': 'click Open Objects button',
+             'element_index': button['element_index'], 'outcome': 'unknown'}
+    save_json(directory, 'objects-panel-setup.json', setup)
     try:
         response = mcp.tool('click', {**target, 'element_token': button['element_token'],
                                       'delivery_mode': 'background'})
@@ -542,6 +546,9 @@ def prepare_inkscape_objects(mcp, target, filename, directory):
         raise
     value = content(response)
     delivery = value.get('delivery')
+    setup.update(performed=True, outcome='returned', delivery=delivery,
+                 effect=value.get('effect'), route=value.get('route'))
+    save_json(directory, 'objects-panel-setup.json', setup)
     assert value.get('route') == 'accessibility', 'setup click did not use accessibility'
     assert value.get('effect') in ('confirmed', 'unverifiable'), 'partial/refused setup cannot pass'
     assert isinstance(delivery, dict) and delivery.get('mode') == 'background', 'setup click was not background'
@@ -549,9 +556,7 @@ def prepare_inkscape_objects(mcp, target, filename, directory):
     named = [row for row in after['elements'] if row.get('label') == 'smoke-rectangle']
     if len(named) != 1 or len(inkscape_objects(after['elements'])) != 1:
         raise GroundingUnavailable('Objects panel did not expose exactly one smoke-rectangle row')
-    setup = {'performed': True, 'kind': 'accessibility_setup', 'plugin_input_proof': False,
-             'action': 'click Open Objects button', 'element_index': button['element_index'],
-             'delivery': delivery}
+    setup['outcome'] = 'verified'
     save_json(directory, 'objects-panel-setup.json', setup)
     return setup
 

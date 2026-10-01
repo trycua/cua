@@ -18,13 +18,13 @@
 //! 3. re-encrypts each cookie value under it and writes the row into the
 //!    destination's real `Cookies` SQLite database ([`install_cookies`]).
 //!
-//! [`install_cookies`] expects the browser to have run at least once on this
-//! machine already, so its `Cookies` database and table exist with whatever
-//! columns that Chrome version created (the "after Chrome's first run"
-//! design: this module never invents Chromium's schema, it discovers the
-//! live one via `PRAGMA table_info` and only ever sets the columns it knows
-//! the semantics of). A profile with no `Cookies` database yet fails with a
-//! named error telling the caller to launch the browser once first.
+//! [`install_cookies`] writes into the browser's own `Cookies` database when
+//! one exists, discovering its live columns via `PRAGMA table_info` and only
+//! ever setting the columns it knows the semantics of. When the browser has
+//! never been launched on this machine (a fresh Space), there is no database
+//! yet, so [`create_cookies_db`] creates one in Chrome's current schema with
+//! the `meta` version Chrome expects; Chrome then adopts it as its own on
+//! first launch instead of discarding or migrating it.
 
 use std::path::Path;
 
@@ -125,6 +125,8 @@ const KNOWN_COLUMNS: &[&str] = &[
     "is_httponly",
     "samesite",
     "creation_utc",
+    "has_expires",
+    "is_persistent",
 ];
 
 /// Microseconds since the Windows/Chrome epoch (1601-01-01 UTC) for the
@@ -172,10 +174,11 @@ fn plaintext_for(digest: bool, host_key: &str, value: &[u8]) -> Vec<u8> {
 /// is the first cookie ever installed for that browser here). Returns how
 /// many rows were written.
 ///
+/// A profile with no `Cookies` database yet (the browser was never launched
+/// here) gets one created in Chrome's current schema first
+/// ([`create_cookies_db`]); an existing database is written into as it is.
+///
 /// Fails with a named error, rather than guessing a schema, when:
-/// - `profile_dir` has no `Cookies` database yet (the browser must run once
-///   first so IT creates its own, real schema and, typically, its own Safe
-///   Storage item);
 /// - the `cookies` table is missing a column this module needs to identify a
 ///   row (`host_key`, `name`, `path` -- Chromium's own unique index).
 pub fn install_cookies(
@@ -194,18 +197,16 @@ pub fn install_cookies(
             "re-encrypting cookies for a Windows destination (DPAPI) is not supported yet".into(),
         ));
     }
-    let db = profile_dir.join("Cookies");
-    if !db.is_file() {
-        return Err(TeleportError::Provider(format!(
-            "{} has no Cookies database yet; launch the browser once on this \
-             machine before installing cookies into it",
-            profile_dir.display()
-        )));
-    }
+    let db = cookies_db_path(profile_dir);
     let secret = ensure_safe_storage_secret(host, platform, service, record)
         .map_err(|e| TeleportError::Provider(format!("Safe Storage key for {service}: {e}")))?;
     let key = chromium_crypto::derive_key(&secret, pbkdf2_rounds_for(platform));
 
+    if !db.is_file() {
+        // Never-launched browser: create the database Chrome itself would.
+        create_cookies_db(&db)
+            .map_err(|e| TeleportError::Provider(format!("creating Cookies failed: {e}")))?;
+    }
     let conn = rusqlite::Connection::open(&db)
         .map_err(|e| TeleportError::Provider(format!("opening Cookies failed: {e}")))?;
     let present = existing_columns(&conn, "cookies")
@@ -256,6 +257,9 @@ pub fn install_cookies(
                 "is_secure" => (item.is_secure as i64).into(),
                 "is_httponly" => (item.is_httponly as i64).into(),
                 "samesite" => item.samesite.into(),
+                // Chrome's own invariant: a persistent cookie has an expiry,
+                // a session cookie (`expires_utc == 0`) does not.
+                "has_expires" | "is_persistent" => ((item.expires_utc != 0) as i64).into(),
                 // Chrome stamps this at insert time; this import IS the
                 // creation event on this machine, so "now" is correct, not a
                 // placeholder.
@@ -275,6 +279,87 @@ pub fn install_cookies(
         written += 1;
     }
     Ok(written)
+}
+
+/// The `Cookies` meta version this module creates fresh databases at: the
+/// first one with the `host_key` digest ([`HOST_KEY_DIGEST_META_VERSION`]),
+/// i.e. Chrome 130+, which [`install_cookies`] then encrypts for.
+const CREATED_META_VERSION: i64 = HOST_KEY_DIGEST_META_VERSION;
+
+/// `last_compatible_version` Chrome's cookie store writes (its
+/// `kCompatibleVersionNumber`): any Chrome at or above it opens the file.
+const CREATED_META_COMPATIBLE_VERSION: i64 = 5;
+
+/// Where `profile_dir`'s cookie database lives or should be created. Chrome 96+
+/// keeps it at `Network/Cookies`; older Chrome (and some Chromium forks) at
+/// `Cookies` in the profile root. An existing database wins, newest layout
+/// first; with none, the current layout is used.
+fn cookies_db_path(profile_dir: &Path) -> std::path::PathBuf {
+    let network = profile_dir.join("Network").join("Cookies");
+    let legacy = profile_dir.join("Cookies");
+    if !network.is_file() && legacy.is_file() {
+        legacy
+    } else {
+        network
+    }
+}
+
+/// Creates an empty `Cookies` database at `db` the way a first Chrome launch
+/// would (Chrome's current `cookies` table plus its `meta` table at
+/// [`CREATED_META_VERSION`]), so a later real launch adopts it. Every column
+/// Chrome fills itself has a default, so [`install_cookies`]'s partial
+/// `INSERT` is valid. Safe to call if another writer created it first.
+fn create_cookies_db(db: &Path) -> std::io::Result<()> {
+    if let Some(parent) = db.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let err = |e: rusqlite::Error| std::io::Error::other(e.to_string());
+    let conn = rusqlite::Connection::open(db).map_err(err)?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS meta (key LONGVARCHAR NOT NULL UNIQUE PRIMARY KEY, value LONGVARCHAR);
+         CREATE TABLE IF NOT EXISTS cookies (
+            creation_utc INTEGER NOT NULL,
+            host_key TEXT NOT NULL,
+            top_frame_site_key TEXT NOT NULL DEFAULT '',
+            name TEXT NOT NULL,
+            value TEXT NOT NULL DEFAULT '',
+            encrypted_value BLOB NOT NULL DEFAULT X'',
+            path TEXT NOT NULL,
+            expires_utc INTEGER NOT NULL,
+            is_secure INTEGER NOT NULL,
+            is_httponly INTEGER NOT NULL,
+            last_access_utc INTEGER NOT NULL DEFAULT 0,
+            has_expires INTEGER NOT NULL DEFAULT 1,
+            is_persistent INTEGER NOT NULL DEFAULT 1,
+            priority INTEGER NOT NULL DEFAULT 1,
+            samesite INTEGER NOT NULL DEFAULT -1,
+            source_scheme INTEGER NOT NULL DEFAULT 0,
+            source_port INTEGER NOT NULL DEFAULT -1,
+            last_update_utc INTEGER NOT NULL DEFAULT 0,
+            source_type INTEGER NOT NULL DEFAULT 0,
+            has_cross_site_ancestor INTEGER NOT NULL DEFAULT 0,
+            UNIQUE (host_key, top_frame_site_key, has_cross_site_ancestor, name, path, source_scheme, source_port)
+         );
+         CREATE INDEX IF NOT EXISTS domain ON cookies(host_key);",
+    )
+    .map_err(err)?;
+    for (key, value) in [
+        ("version", CREATED_META_VERSION),
+        ("last_compatible_version", CREATED_META_COMPATIBLE_VERSION),
+    ] {
+        conn.execute(
+            "INSERT OR IGNORE INTO meta (key, value) VALUES (?1, ?2)",
+            rusqlite::params![key, value.to_string()],
+        )
+        .map_err(err)?;
+    }
+    drop(conn);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(db, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
 }
 
 /// Lowercased column names of `table`, via `PRAGMA table_info` (never guessed
@@ -503,12 +588,80 @@ mod tests {
         assert!(record.keychain_items.is_empty());
     }
 
+    /// Cookies for a browser that was never launched: the database is
+    /// created in Chrome's current schema (at the `Network/Cookies` path
+    /// current Chrome reads), and the rows read back with the Linux key.
     #[test]
-    fn missing_cookies_database_fails_with_a_named_error() {
+    fn never_launched_profile_gets_a_chrome_schema_database_and_the_cookies() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("Default");
+        let host = Arc::new(FakeHost::new());
+        let mut record = ImportRecord::default();
+        let written = install_cookies(
+            host.as_ref(),
+            &profile,
+            "Chrome Safe Storage",
+            Platform::Linux,
+            &[item(".github.com", "user_session", "gh-session-abc")],
+            &mut record,
+        )
+        .unwrap();
+        assert_eq!(written, 1);
+        let db = profile.join("Network/Cookies");
+        assert!(db.is_file());
+        assert!(!profile.join("Cookies").exists());
+        assert_eq!(record.cookie_rows.len(), 1);
+        assert_eq!(record.cookie_rows[0].db, db);
+
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        assert_eq!(cookies_meta_version(&conn), CREATED_META_VERSION);
+        let compat: String = conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'last_compatible_version'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(compat, "5");
+        let columns = existing_columns(&conn, "cookies").unwrap();
+        for c in [
+            "top_frame_site_key",
+            "has_cross_site_ancestor",
+            "source_type",
+        ] {
+            assert!(columns.contains(c), "missing {c}");
+        }
+        // Readable as Chrome reads it: v10 under the fixed Linux key, host
+        // digest in front of the value (meta version 24).
+        let encrypted: Vec<u8> = conn
+            .query_row(
+                "SELECT encrypted_value FROM cookies WHERE host_key = '.github.com'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let key = chromium_crypto::derive_key(
+            chromium_crypto::LINUX_V10_PASSWORD,
+            chromium_crypto::LINUX_V10_PBKDF2_ROUNDS,
+        );
+        let plain = chromium_crypto::decrypt_prefixed(&key, &encrypted)
+            .unwrap()
+            .1;
+        assert_eq!(
+            &plain[..32],
+            <sha2::Sha256 as sha2::Digest>::digest(b".github.com").as_slice()
+        );
+        assert_eq!(&plain[32..], b"gh-session-abc");
+        // Nothing was installed in a keychain on Linux.
+        assert!(host.calls().is_empty());
+    }
+
+    #[test]
+    fn never_launched_profile_creates_the_keychain_key_on_macos() {
         let dir = tempfile::tempdir().unwrap();
         let host = keychain_fake();
         let mut record = ImportRecord::default();
-        let err = install_cookies(
+        install_cookies(
             host.as_ref(),
             dir.path(),
             "Chrome Safe Storage",
@@ -516,9 +669,42 @@ mod tests {
             &[item("a.test", "n", "v")],
             &mut record,
         )
-        .unwrap_err()
-        .to_string();
-        assert!(err.contains("launch the browser once"), "{err}");
+        .unwrap();
+        assert!(dir.path().join("Network/Cookies").is_file());
+        assert_eq!(record.keychain_items.len(), 1);
+    }
+
+    #[test]
+    fn an_existing_legacy_database_is_written_into_not_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = {
+            let db = dir.path().join("Cookies");
+            let conn = rusqlite::Connection::open(&db).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE cookies (creation_utc INTEGER NOT NULL, host_key TEXT NOT NULL,
+                 name TEXT NOT NULL, value TEXT NOT NULL DEFAULT '', encrypted_value BLOB NOT NULL DEFAULT '',
+                 path TEXT NOT NULL, expires_utc INTEGER NOT NULL, is_secure INTEGER NOT NULL DEFAULT 0,
+                 is_httponly INTEGER NOT NULL DEFAULT 0, samesite INTEGER NOT NULL DEFAULT -1);",
+            )
+            .unwrap();
+            db
+        };
+        let mut record = ImportRecord::default();
+        install_cookies(
+            &FakeHost::new(),
+            dir.path(),
+            "Chrome Safe Storage",
+            Platform::Linux,
+            &[item("a.test", "n", "v")],
+            &mut record,
+        )
+        .unwrap();
+        assert!(!dir.path().join("Network").exists());
+        let n: i64 = rusqlite::Connection::open(&legacy)
+            .unwrap()
+            .query_row("SELECT count(*) FROM cookies", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
     }
 
     #[test]

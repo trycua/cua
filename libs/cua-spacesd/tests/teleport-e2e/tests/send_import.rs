@@ -43,7 +43,18 @@ async fn guest() -> Guest {
         ..ServerConfig::default()
     };
     let ctx = ServerContext::new(config, Some(TOKEN.into()));
-    let receiver_host = Arc::new(cua_spacesd_teleport::FakeHost::new());
+    // A guest that has never held a Chrome Safe Storage item: reading the
+    // secret fails (so the receiver creates one), every other `security`
+    // call succeeds. Only a macOS receiver ever asks.
+    let receiver_host = Arc::new(cua_spacesd_teleport::FakeHost::new().with_responder(|c| {
+        let reads_secret =
+            c.args.iter().any(|a| a == "find-generic-password") && c.args.iter().any(|a| a == "-w");
+        if c.program != "security" || reads_secret {
+            Ok(cua_spacesd_teleport::HostOutput::failed())
+        } else {
+            Ok(cua_spacesd_teleport::HostOutput::ok(""))
+        }
+    }));
     let receiver = Arc::new(cua_spacesd_teleport::Receiver::with_host(
         dest_home.path().to_path_buf(),
         receiver_host.clone(),
@@ -73,8 +84,10 @@ async fn client(url: &str, transport: TransportPreference) -> SpacesdClient {
 fn fake_chrome(home: &Path) {
     let profile = home.join(".config/google-chrome/Default");
     std::fs::create_dir_all(profile.join("Sessions")).unwrap();
-    // A real (empty) Chrome cookie store: the sender reads it as SQLite.
-    rusqlite::Connection::open(profile.join("Cookies"))
+    std::fs::create_dir_all(profile.join("Network")).unwrap();
+    // A real (empty) Chrome cookie store in modern Chrome's layout
+    // (`Network/Cookies`, no root `Cookies`): the sender reads it as SQLite.
+    rusqlite::Connection::open(profile.join("Network/Cookies"))
         .unwrap()
         .execute_batch(
             "CREATE TABLE cookies (creation_utc INTEGER NOT NULL, host_key TEXT NOT NULL,
@@ -199,6 +212,85 @@ async fn chrome_session_lands_in_the_guest_home_over_both_transports() {
             .args
             .iter()
             .any(|a| a.starts_with("--user-data-dir=")));
+    }
+}
+
+/// The receiving Space's Chrome was never launched: its profile has no
+/// `Cookies` database at all. The teleport must still land the signed-in
+/// cookies, in a database Chrome adopts on its first real launch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cookies_land_in_a_chrome_that_was_never_launched() {
+    use cua_teleport_bundle::chromium_crypto as crypto;
+
+    let g = guest().await;
+    // Nothing exists under the guest home: not the profile, not `Cookies`.
+    assert_eq!(std::fs::read_dir(g.dest_home.path()).unwrap().count(), 0);
+    let src = tempfile::tempdir().unwrap();
+    fake_chrome(src.path());
+    {
+        let key = crypto::derive_key(crypto::LINUX_V10_PASSWORD, crypto::LINUX_V10_PBKDF2_ROUNDS);
+        let blob = crypto::encrypt_v10(&key, b"fresh-session-value");
+        let conn = rusqlite::Connection::open(
+            src.path()
+                .join(".config/google-chrome/Default/Network/Cookies"),
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cookies (creation_utc, host_key, name, value, encrypted_value, path,
+             expires_utc, is_secure, is_httponly, samesite)
+             VALUES (1, '.github.com', 'user_session', '', ?1, '/', 13400000000000000, 1, 1, 1)",
+            [blob],
+        )
+        .unwrap();
+    }
+    let (_, teleporter) = sender(src.path());
+    let env = client(&g.url, TransportPreference::Native).await;
+    teleporter
+        .send(
+            &env,
+            &chrome(),
+            TransferScope::FullProfile,
+            Selection::All,
+            Arc::new(AutoApprove),
+        )
+        .await
+        .unwrap();
+
+    let user_data = if cfg!(target_os = "macos") {
+        "Library/Application Support/Google/Chrome"
+    } else {
+        ".config/google-chrome"
+    };
+    let db = g
+        .dest_home
+        .path()
+        .join(user_data)
+        .join("Default/Network/Cookies");
+    assert!(db.is_file(), "no cookies database was created");
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    let version: String = conn
+        .query_row("SELECT value FROM meta WHERE key = 'version'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert!(version.parse::<i64>().unwrap() >= 24, "{version}");
+    let encrypted: Vec<u8> = conn
+        .query_row(
+            "SELECT encrypted_value FROM cookies WHERE host_key = '.github.com'
+             AND name = 'user_session'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(encrypted.starts_with(b"v10"));
+    // On a Linux guest the key is Chrome's fixed one, so the value can be
+    // read back exactly as Chrome would (digest of host_key, then value). A
+    // macOS guest's key lives in a Keychain the fake host does not hold.
+    if cfg!(not(target_os = "macos")) {
+        let key = crypto::derive_key(crypto::LINUX_V10_PASSWORD, crypto::LINUX_V10_PBKDF2_ROUNDS);
+        let plain = crypto::decrypt_prefixed(&key, &encrypted).unwrap().1;
+        assert!(plain.ends_with(b"fresh-session-value"));
+        assert_eq!(plain.len(), 32 + b"fresh-session-value".len());
     }
 }
 

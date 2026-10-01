@@ -5,9 +5,8 @@ This reduces the tool-schema context sent to a model. It is not an authorization
 boundary; use Cua Driver permission policies to enforce tool access.
 
 With --text-only, tool results also stay usable by a model that cannot accept
-images: get_window_state is asked for the tree without a screenshot, image
-content blocks are replaced by a short text note, and the snapshot_id is copied
-into the text so the model can pass it with element_index.
+images: get_window_state is asked for the tree without a screenshot, and image
+content blocks are replaced by a short text note.
 """
 
 from __future__ import annotations
@@ -78,32 +77,16 @@ def text_only_result(result: dict[str, Any]) -> bool:
         return False
     kept = [block for block in content if not is_image_block(block)]
     omitted = len(content) - len(kept)
-    changed = omitted > 0
-
-    structured = result.get("structuredContent")
-    snapshot_id = structured.get("snapshot_id") if isinstance(structured, dict) else None
-    texts = [block for block in kept if isinstance(block, dict) and block.get("type") == "text"]
-    if (
-        isinstance(snapshot_id, str)
-        and snapshot_id
-        and not any(snapshot_id in str(block.get("text", "")) for block in texts)
-    ):
-        header = f"snapshot_id={snapshot_id}"
-        if texts:
-            texts[0]["text"] = f"{header}\n{texts[0].get('text', '')}"
-        else:
-            kept.insert(0, {"type": "text", "text": header})
-        changed = True
-
-    if omitted:
-        kept.append(
-            {
-                "type": "text",
-                "text": f"[{omitted} image block(s) omitted: this session is text-only]",
-            }
-        )
+    if not omitted:
+        return False
+    kept.append(
+        {
+            "type": "text",
+            "text": f"[{omitted} image block(s) omitted: this session is text-only]",
+        }
+    )
     result["content"] = kept
-    return changed
+    return True
 
 
 def main() -> int:

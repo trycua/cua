@@ -28,8 +28,8 @@ fails the same way.
 Spark-X2.5 can still operate applications through the accessibility tree. Run Cua Driver behind the
 [MCP schema filter](/how-to-guides/driver/run-with-local-model#install-the-mcp-schema-filter) with
 `--text-only`. The filter requests `get_window_state` without a screenshot, replaces any remaining
-image content with a short text note, and copies the `snapshot_id` into the text so the model can
-pass it with `element_index`.
+image content with a short text note. The model still acts through the `element_token` values in
+each `get_window_state` result.
 
 Create `spark-cua-mcp.json`:
 

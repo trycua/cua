@@ -187,7 +187,7 @@ browser_prepare({
 ```
 
 If the browser has no DevTools endpoint, the driver opens a temporary tab at
-`chrome://inspect/#remote-debugging` (or `edge://…`), turns on **Allow remote
+`chrome://inspect/#remote-debugging` (or `edge://…`, `brave://…`), turns on **Allow remote
 debugging for this browser instance**, proves the new listener is loopback and
 owned by that process, and closes the tab. It presses only the browser's own
 consent button. On Chrome 144 and later it connects through the running
@@ -203,7 +203,8 @@ ids are invalid. The grant lives in memory: it expires after 30 minutes idle or
 off Chrome's remote-debugging setting; do that in Chrome.
 
 Supported: Chrome and Edge on macOS, Windows, and Linux X11; Chrome on GNOME
-Wayland; Chrome, Edge, and Chromium on Sway. On Linux, start the browser
+Wayland; Chrome, Edge, and Chromium on Sway; Brave on macOS. Brave's Windows
+and Linux routes use the same setup but are not yet validated. On Linux, start the browser
 with `--force-renderer-accessibility`. On macOS, setup recognizes English UI labels only. On Windows, setup does not depend on the UI language. On Linux, setup accepts a localized browser, but the browser's internal setup page must show its English heading and checkbox.
 
 On macOS 27 and later, reading the Chrome and Edge profile folders needs Full

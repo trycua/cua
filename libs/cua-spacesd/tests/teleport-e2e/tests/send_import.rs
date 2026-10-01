@@ -73,7 +73,21 @@ async fn client(url: &str, transport: TransportPreference) -> SpacesdClient {
 fn fake_chrome(home: &Path) {
     let profile = home.join(".config/google-chrome/Default");
     std::fs::create_dir_all(profile.join("Sessions")).unwrap();
-    std::fs::write(profile.join("Cookies"), b"cookie-bytes").unwrap();
+    // A real (empty) Chrome cookie store: the sender reads it as SQLite.
+    rusqlite::Connection::open(profile.join("Cookies"))
+        .unwrap()
+        .execute_batch(
+            "CREATE TABLE cookies (creation_utc INTEGER NOT NULL, host_key TEXT NOT NULL,
+             top_frame_site_key TEXT NOT NULL DEFAULT '', name TEXT NOT NULL,
+             value TEXT NOT NULL, encrypted_value BLOB NOT NULL DEFAULT '',
+             path TEXT NOT NULL, expires_utc INTEGER NOT NULL, is_secure INTEGER NOT NULL,
+             is_httponly INTEGER NOT NULL, last_access_utc INTEGER NOT NULL DEFAULT 0,
+             has_expires INTEGER NOT NULL DEFAULT 1, is_persistent INTEGER NOT NULL DEFAULT 1,
+             priority INTEGER NOT NULL DEFAULT 1, samesite INTEGER NOT NULL DEFAULT -1,
+             source_scheme INTEGER NOT NULL DEFAULT 0, source_port INTEGER NOT NULL DEFAULT -1,
+             UNIQUE (host_key, top_frame_site_key, name, path));",
+        )
+        .unwrap();
     std::fs::write(profile.join("Preferences"), b"{\"p\":1}").unwrap();
     std::fs::write(profile.join("Bookmarks"), b"{\"roots\":{}}").unwrap();
     // Big enough to span several 1 KiB upload chunks.
@@ -170,10 +184,8 @@ async fn chrome_session_lands_in_the_guest_home_over_both_transports() {
             ".config/google-chrome"
         };
         let profile = g.dest_home.path().join(user_data).join("Default");
-        assert_eq!(
-            std::fs::read(profile.join("Cookies")).unwrap(),
-            b"cookie-bytes"
-        );
+        // Cookies travel as decrypted rows and are re-encrypted for the guest
+        // (unit-tested in cua-spacesd-teleport); this store is empty.
         assert_eq!(
             std::fs::read(profile.join("Sessions/Session_1")).unwrap(),
             vec![7u8; 5000]

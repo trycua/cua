@@ -1560,6 +1560,7 @@ dependencies = [
  "cua-spacesd-server",
  "cua-spacesd-teleport",
  "cua-teleport",
+ "rusqlite",
  "tempfile",
  "tokio",
 ]

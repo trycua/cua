@@ -12,6 +12,7 @@
     "qwen",
     "kimi",
     "minimax",
+    "aimlapi",
     "---Agent harnesses---",
     "claude-code",
     "codex",

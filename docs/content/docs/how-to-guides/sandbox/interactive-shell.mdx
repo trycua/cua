@@ -1,13 +1,13 @@
 ---
-title: Open an interactive shell in a sandbox
-description: Open an interactive PTY session inside the code half of a sandbox from the CLI or Python SDK.
+title: Open an interactive shell in a local sandbox
+description: Open an interactive PTY session in a local sandbox from the CLI or Python SDK.
 ---
 
-A **Cua Sandbox** is a full isolated computer where an agent can run code and drive the GUI. Use `cua do shell` or the Sandbox SDK terminal API to open an interactive PTY session in the code half of that sandbox, similar to SSH but without network setup. The same sandbox is also driven through the GUI via computer-use with screenshots, clicks, and typing. Because both share one machine, you can run code and automate the UI against the same filesystem and state.
+Use `cua do shell` or the Sandbox SDK terminal API to open an interactive PTY session in a local sandbox, similar to SSH but without network setup. The same sandbox is also driven through the GUI via computer-use with screenshots, clicks, and typing. Because both share one machine, you can run code and automate the UI against the same filesystem and state.
 
 ## From the CLI
 
-Switch to the sandbox target first.
+Switch to the target first. The Docker target opens a shell in the selected container. The host target runs directly on your host computer; it is not an isolated guest.
 
 ```bash
 # Switch to a target first
@@ -30,7 +30,7 @@ The shell is fully interactive: arrow keys, tab completion, and Ctrl+C work. Whe
 
 ## From the Python SDK
 
-Create a sandbox, open a PTY session with `sb.terminal.create`, send input as text, read session info, then close the session.
+Create a local sandbox with `local=True`, open a PTY session with `sb.terminal.create`, send input as text, read session info, then close the session.
 
 ```python
 from cua import Sandbox, Image

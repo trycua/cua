@@ -2,6 +2,41 @@
 
 Background computer-use driver for any agents. Speaks MCP over stdio; drives native macOS apps without stealing focus.
 
+See [MCP protocol and skills](docs/mcp-protocol-and-skills.md) for the modern
+stdio profile, legacy compatibility, bundled skill resources, and HTTP limits.
+
+## Optional visual perception
+
+The default MIT-licensed Driver works without model artifacts. An explicitly
+installed `cua-perception` extension can parse one retained native window or
+desktop screenshot into model-neutral text and icon regions. Capture and input
+authority remain in Driver, and a region-derived pixel click must carry the
+same one-use `capture_id` as the observation.
+
+See the [extension and runtime contract](docs/perception-extension.md) for
+installation, failure, capture, and action boundaries.
+
+> [!WARNING]
+> The extension is not MIT licensed. Its OmniParser icon detector is
+> AGPL-3.0-only. Installing the extension does not change the Driver's MIT
+> license. However, redistributing the extension, or offering it to users over a
+> network, can require you to provide the AGPL corresponding source. If your
+> organization does not accept AGPL components, do not install the extension.
+> Read the [third-party notices and precautions](docs/perception-third-party-notices.md)
+> before you install, redistribute, or host it.
+
+For offline inspection of an existing PNG, the CLI also provides a local-only
+mode:
+
+```bash
+cua-driver perception parse --image /tmp/window.png --capture /tmp/capture.json --json
+```
+
+This mode never registers the file as a Driver capture and its output cannot
+authorize a Driver action. Its required JSON mode returns failures as
+`{"ok":false,"error":{"code":"...","message":"...","retryable":false}}`;
+see the extension contract for the stable codes.
+
 **[Documentation](https://cua.ai/docs/cua-driver)** - Installation, guides, and API reference.
 
 ## Integration surfaces
@@ -20,11 +55,33 @@ language-native MCP facade and have no `/sdk`, `/mcp`, or `/native` public
 suffix. MCP remains implemented by the `cua-driver` executable as the
 runtime-neutral agent boundary.
 
+## Computer History macOS preview
+
+Nightly macOS builds can provide an opt-in, encrypted history of actions
+performed through Cua Driver. The preview stores a strict metadata allowlist,
+stays local, and exposes permission-gated `history_status` and `history_query`
+tools for read-only agent hydration. It never stores screenshots, typed text,
+clipboard contents, raw arguments or results, accessibility trees, paths,
+window titles, or URLs.
+
+See [Try the Computer History macOS
+preview](docs/computer-history-preview.md) for installation, lifecycle,
+inspection, deletion, and stable-channel return instructions. The [architecture
+and staged plan](docs/computer-history-architecture.md) defines the format,
+security boundary, release gates, and later NVIDIA OpenShell integration.
+
 ## Permission modes
 
 `standard` is the promptless default for normal automation. `bounded` admits
 only the tools and resources in a reviewed manifest. `unrestricted` requires
 `--dangerously-bypass-approvals`.
+
+The mode belongs to the process that owns the runtime and is fixed at launch:
+`cua-driver serve` takes the flags, while `cua-driver mcp` and embedding hosts
+use the matching `CUA_DRIVER_PERMISSION_MODE`,
+`CUA_DRIVER_CAPABILITY_MANIFEST_FILE`, and
+`CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED` variables. Choose it before starting
+the daemon; a running daemon must be restarted to change it.
 
 Attaching to an existing logged-in Chromium profile remains explicit:
 
@@ -48,11 +105,12 @@ reference](https://cua.ai/docs/reference/cua-driver/permission-modes).
 | `contract/`                     | Experimental generated SDK contract and fixtures                       |
 | `typescript/`                   | Generated TypeScript SDK                                               |
 | `tests/fixtures/`               | Source-built GUI harness apps and shared fixtures                      |
-| `rust/crates/cua-driver/tests/` | Rust integration tests for the driver and GUI harnesses                |
+| `rust/crates/cua-driver/tests/` | Hermetic Rust integration tests for the driver                         |
+| `rust/crates/cua-driver-e2e/tests/` | Desktop E2E suites for the GUI harnesses                       |
 | `scripts/`                      | Install, uninstall, local build, and VM sync helpers                   |
 | `docs/`                         | Small repo-local specs that are not part of the hosted docs site       |
 
-Start with `rust/README.md`, `rust/crates/cua-driver/tests/README.md`, and
+Start with `rust/README.md`, `rust/crates/cua-driver-e2e/tests/README.md`, and
 `tests/fixtures/README.md` when changing driver behavior or tests.
 
 The contract-first SDK architecture is documented in

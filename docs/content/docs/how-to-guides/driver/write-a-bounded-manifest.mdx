@@ -1,18 +1,18 @@
 ---
-title: Write a bounded manifest
-description: Run Cua Driver unattended with an explicit tool and resource boundary.
+title: Write a capability manifest
+description: Narrow any Cua Driver permission profile to explicit tools and resources.
 ---
 
-Use `bounded` mode when an agent should work without runtime prompts but must
-stay inside a reviewed set of applications, browser origins, files, and tools.
+Use a capability manifest when a Cua Driver runtime should stay inside a
+reviewed set of applications, browser origins, files, and tools. The manifest
+is optional in `standard` and `unrestricted` and required in `bounded`.
 
 ## 1. Create the manifest
 
-Save this as `cua-session.yaml` and replace the example paths:
+Save this as `cua-capabilities.yaml` and replace the example paths:
 
 ```yaml
-version: 2
-mode: bounded
+version: 3
 expires_after: 8h
 idle_timeout: 30m
 
@@ -65,7 +65,7 @@ path.
 
 ## 2. Select browser access
 
-A bounded manifest that drives a browser is a separate, typed-browser-only
+A capability manifest that drives a browser is a separate, typed-browser-only
 manifest. It cannot also allow generic input or window observation.
 
 Every navigation is checked against `resources.browser.origins`, so a browser
@@ -78,7 +78,7 @@ tools that could reach a page without crossing the typed browser adapter:
 refused when the runtime starts:
 
 ```text
-authorization startup error: origin-scoped bounded manifests cannot allow
+authorization startup error: origin-scoped capability manifests cannot allow
 'click' because it bypasses the typed browser origin adapter
 ```
 
@@ -89,8 +89,7 @@ application scope contains no browser. Use `list_windows` rather than
 For a driver-owned browser profile:
 
 ```yaml
-version: 2
-mode: bounded
+version: 3
 expires_after: 8h
 idle_timeout: 30m
 
@@ -130,9 +129,10 @@ resources:
       - https://app.example.com
 ```
 
-An existing-profile entry authorizes attachment under bounded mode without a
-Cua modal or host callback. The typed browser tools still validate the live
-top-level origin before input.
+An existing-profile entry supplies resource scope. In `bounded`, the in-scope
+attachment is unattended. In `standard`, the normal launch grant or trusted
+host decision is still required. The typed browser tools validate the live
+top-level origin before input in every profile.
 
 An agent that needs both a browser and generic desktop input needs two
 runtimes: this manifest for the browser, and a separate application-scoped
@@ -140,12 +140,12 @@ manifest for the desktop work.
 
 Scope that second runtime so it cannot reach a browser window. A runtime that
 can click the browser makes the first runtime's origin list decorative, because
-nothing checks an origin on the generic input path. Give it a bounded manifest
+nothing checks an origin on the generic input path. Give it a capability manifest
 naming only the non-browser applications it needs, and keep
 `desktop.display: false`. A standard-mode runtime is not a substitute: standard
 allows input against any application, including the browser.
 
-## 3. Choose desktop scope
+## 3. Authorize display access
 
 Application entries with `windows: all` authorize observation and input for
 windows belonging to that application.
@@ -176,7 +176,7 @@ resources:
 ```
 
 `recursive: false` allows direct children only. Existing version 1 manifests
-may still list exact path strings, but version 2 directory roots are more
+may still list exact path strings, but version 2 and 3 directory roots are more
 practical for unattended output.
 
 ## 5. Start Cua Driver
@@ -184,12 +184,19 @@ practical for unattended output.
 ```bash
 cua-driver serve \
   --permission-mode bounded \
-  --session-policy ./cua-session.yaml \
-  --approve-session-policy
+  --capability-manifest ./cua-capabilities.yaml \
+  --approve-capability-manifest
 ```
 
 The approval flag confirms that the trusted launcher reviewed this exact file.
 It is not accepted from a tool call.
+
+To narrow `standard`, use the same flags with `--permission-mode standard`.
+Routine standard behavior remains promptless, while residual boundaries such
+as existing-profile attachment still require their normal grant. To narrow
+`unrestricted`, add the manifest flags alongside
+`--dangerously-bypass-approvals`; the approval bypass then applies only inside
+the manifest.
 
 For MCP, point the client at the running daemon:
 
@@ -224,14 +231,15 @@ cua-driver revoke --all
 ```
 
 `revoke --all` suspends the complete runtime generation. Restart the daemon
-before starting a new bounded run.
+before starting a new run.
 
 ## Know what the manifest is worth
 
 A manifest bounds one runtime's tool surface. It is not a sandbox around your
 machine, your browser, or your logged-in accounts. Another Cua Driver runtime,
-or any other process running as the same user, is unaffected by it — including
-a standard-mode runtime, which allows input against every application.
+or any other process running as the same user, is unaffected by it. A
+standard-mode runtime without its own capability manifest allows input against
+every application.
 
 Read [Permission modes](/reference/cua-driver/permission-modes#origin-scope-excludes-generic-input)
 before relying on a manifest as a security boundary rather than as a reviewed
@@ -246,8 +254,7 @@ statement of what one agent run may do.
 - Declaring browser origins excludes generic input and window observation from
   the same manifest.
 - `terminate: driver_launched` requires a fresh process fingerprint match.
-- `ask.tools` is denied in unattended use because an agent cannot approve its
-  own request.
+- Version 3 has no `ask.tools`; legacy version 1/2 `ask.tools` entries are deny.
 - Keep expiry and idle timeouts as short as the task permits.
 
 See [Permission modes](/reference/cua-driver/permission-modes) for the complete

@@ -1,17 +1,15 @@
 /** Narrow agent-tool adapter over the same-process Cua Driver TypeScript SDK. */
 
-import { randomUUID } from 'node:crypto';
-
 import {
-  CaptureScope,
+  ActionTarget,
+  ActionResult,
   ClickButton,
   ClickInput,
+  ClickPosition,
   CuaDriver,
-  DesktopScope,
-  EndSessionInput,
   GetDesktopStateInput,
+  InputDeliveryMode,
   PressKeyInput,
-  StartSessionInput,
   ToolResult,
   TypeTextInput,
 } from '@trycua/cua-driver';
@@ -27,47 +25,25 @@ export type NativeToolResult = {
 
 export class NativeDesktopTools {
   readonly driver = CuaDriver.create(undefined);
-  readonly session = `claude-native-${randomUUID().slice(0, 12)}`;
-  private started = false;
+  readonly desktopTarget = new ActionTarget.Desktop({ displayId: 'primary' });
 
   constructor(private readonly timeoutMs = 30_000) {}
 
-  async start(): Promise<void> {
-    await this.bounded(
-      this.driver.startSession(
-        StartSessionInput.new({
-          session: this.session,
-          captureScope: CaptureScope.Desktop,
-        })
-      ),
-      'start_session'
-    );
-    this.started = true;
-  }
-
   async close(): Promise<void> {
     try {
-      if (this.started) {
-        await this.bounded(
-          this.driver.endSession(EndSessionInput.new({ session: this.session })),
-          'end_session'
-        );
-        this.started = false;
-      }
+      await this.driver.shutdown();
     } finally {
-      try {
-        await this.driver.shutdown();
-      } finally {
-        // Generated UniFFI bindings expose deterministic handle release
-        // separately from asynchronous runtime shutdown.
-        (this.driver as unknown as { uniffiDestroy(): void }).uniffiDestroy();
+      // Generated UniFFI bindings expose deterministic handle release
+      // separately from asynchronous runtime shutdown.
+      if ('uniffiDestroy' in this.driver && typeof this.driver.uniffiDestroy === 'function') {
+        this.driver.uniffiDestroy();
       }
     }
   }
 
   async observe(): Promise<NativeToolResult> {
     const result = await this.bounded(
-      this.driver.getDesktopState(GetDesktopStateInput.new({ session: this.session })),
+      this.driver.getDesktopState(GetDesktopStateInput.new({})),
       'get_desktop_state'
     );
     return this.content(result);
@@ -77,10 +53,9 @@ export class NativeDesktopTools {
     return await this.mutateThenObserve(() =>
       this.driver.click(
         ClickInput.new({
-          x,
-          y,
-          scope: DesktopScope.Desktop,
-          session: this.session,
+          position: new ClickPosition.Coordinates({ x, y }),
+          target: this.desktopTarget,
+          deliveryMode: InputDeliveryMode.Foreground,
           button: ClickButton.Left,
           count: 1,
         })
@@ -93,8 +68,7 @@ export class NativeDesktopTools {
       this.driver.typeText(
         TypeTextInput.new({
           text,
-          scope: DesktopScope.Desktop,
-          session: this.session,
+          target: this.desktopTarget,
         })
       )
     );
@@ -105,18 +79,19 @@ export class NativeDesktopTools {
       this.driver.pressKey(
         PressKeyInput.new({
           key,
-          scope: DesktopScope.Desktop,
-          session: this.session,
+          target: this.desktopTarget,
         })
       )
     );
   }
 
-  private async mutateThenObserve(operation: () => Promise<ToolResult>): Promise<NativeToolResult> {
+  private async mutateThenObserve(
+    operation: () => Promise<ToolResult | ActionResult>
+  ): Promise<NativeToolResult> {
     let unknownDetail: string | undefined;
     try {
       const result = await this.bounded(operation(), 'desktop action');
-      if (result.isError) {
+      if ('isError' in result && result.isError) {
         unknownDetail =
           `Action reported an error and its outcome may be unknown (${result.text}). ` +
           'A fresh observation follows. Do not retry until the observation proves ' +

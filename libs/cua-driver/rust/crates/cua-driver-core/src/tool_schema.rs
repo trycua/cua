@@ -15,24 +15,32 @@
 //!     required-set spec. Each platform calls it from a test against its own
 //!     registry, so CI fails the moment a platform drifts.
 //!
-//! Descriptions are intentionally NOT compared — prose can legitimately vary
+//! Descriptions are generally not compared because prose can legitimately vary
 //! per tool (a `delivery_mode` blurb mentioning "PIXEL click" vs "AX insert").
-//! The gate enforces *shape* (`type` / `enum` / `items`), which is what governs
-//! client compatibility.
+//! The `session` guidance is the exception: action tools must tell callers that
+//! public labels are preferred for multi-call work and must be repeated on each
+//! call. Lifecycle-management tools keep their resource-specific wording.
 
 use serde_json::{json, Value};
 
 // ── Fragments ────────────────────────────────────────────────────────────────
 
-/// `session` — the per-run agent-cursor identity. Uniform across every tool.
+/// `session` is an optional public lifecycle label. Uniform across every tool.
 pub fn session_schema() -> Value {
     json!({
         "type": "string",
-        "description": "Optional session id: declares/uses the agent cursor and \
-            per-session state for this run. The same id works over MCP, the CLI, \
-            or the raw socket, and follows the run across apps/windows. Omit to \
-            run cursor-less."
+        "description": cua_driver_contract::MULTI_CALL_SESSION_DESCRIPTION
     })
+}
+
+/// Canonical lifecycle guidance plus a tool-specific ownership or precedence note.
+pub fn session_schema_with(note: &str) -> Value {
+    let mut schema = session_schema();
+    schema["description"] = Value::String(format!(
+        "{} {note}",
+        cua_driver_contract::MULTI_CALL_SESSION_DESCRIPTION
+    ));
+    schema
 }
 
 /// `delivery_mode` — the best-effort-background ladder rung. The prose varies by
@@ -83,35 +91,65 @@ pub fn scope_schema() -> Value {
     })
 }
 
-/// `element_index` — the integer handle from the last get_window_state.
-pub fn element_index_schema() -> Value {
-    json!({
-        "type": "integer",
-        "description": "Element index from get_window_state. Cua Driver 0.17 \
-            requires the matching `snapshot_id` alongside it. Prefer \
-            `element_token`, which carries both values."
-    })
-}
-
-/// `snapshot_id` — the snapshot handle paired with a numeric element index.
-pub fn snapshot_id_schema() -> Value {
-    json!({
-        "type": "string",
-        "pattern": "^s[0-9a-f]{8}$",
-        "description": "Snapshot handle from get_window_state. Required when \
-            targeting by element_index; stale snapshots fail closed."
-    })
-}
-
 /// `element_token` — the opaque, validity-checked handle from get_window_state.
 pub fn element_token_schema() -> Value {
     json!({
         "type": "string",
         "description": "Opaque per-snapshot element handle from \
-            `structuredContent.elements[].element_token`. If element_index, \
-            snapshot_id, or window_id are also supplied they must agree. Returns \
-            an explicit stale error once a newer snapshot supersedes it."
+            `structuredContent.elements[].element_token`. Returns an explicit \
+            stale error naming the current snapshots once a newer read \
+            supersedes it."
     })
+}
+
+/// Default and bounds for the per-call accessibility-walk budget
+/// (`timeout_ms`), the same on every platform.
+pub const TIMEOUT_MS_DEFAULT: u64 = 1000;
+pub const TIMEOUT_MS_MIN: u64 = 100;
+pub const TIMEOUT_MS_MAX: u64 = 120_000;
+
+/// Shared `timeout_ms` parameter: wall-clock budget for the accessibility walk
+/// behind an observation tool, with the same default, bounds, and partial-tree
+/// semantics on every platform (see [`crate::walk_budget`]).
+pub fn timeout_ms_schema() -> Value {
+    json!({
+        "type": "integer",
+        "minimum": TIMEOUT_MS_MIN,
+        "maximum": TIMEOUT_MS_MAX,
+        "default": TIMEOUT_MS_DEFAULT,
+        "description": format!(
+            "Wall-clock budget in milliseconds for the accessibility-tree walk \
+             (default {TIMEOUT_MS_DEFAULT}, min {TIMEOUT_MS_MIN}, max {TIMEOUT_MS_MAX}). \
+             Bounds the WHOLE walk. When the budget runs out the tool returns the PARTIAL tree \
+             it has, flagged with `truncated: true`, `truncation_reason`, `nodes_visited`, \
+             `nodes_pending` and `elements_complete: false`; retry with a larger value \
+             (e.g. 5000) or narrow with `query` / `max_depth`."
+        )
+    })
+}
+
+/// Shared `get_desktop_state.max_image_dimension`: an opt-in long-edge cap
+/// whose downsizing is mapped back for later desktop-scope actions
+/// (`crate::desktop_capture_scale`) and by the capture's `capture_id`.
+pub fn desktop_max_image_dimension_schema() -> Value {
+    json!({
+        "type": "integer",
+        "minimum": 0,
+        "description": "Optional long-edge cap for the returned PNG, in pixels (aspect ratio \
+            preserved). Omitted or 0 returns the full-size capture. When the cap downsizes \
+            the image, the response reports `screenshot_original_width/height`, and x/y read \
+            off it for this session's later scope:\"desktop\" actions (or passed with its \
+            `capture_id`) are mapped back to the full-size frame automatically."
+    })
+}
+
+/// Clamp a caller-supplied `timeout_ms` to the shared bounds, or apply the
+/// default when absent / not an integer.
+pub fn resolve_timeout_ms(value: Option<&Value>) -> u64 {
+    value
+        .and_then(Value::as_u64)
+        .map(|v| v.clamp(TIMEOUT_MS_MIN, TIMEOUT_MS_MAX))
+        .unwrap_or(TIMEOUT_MS_DEFAULT)
 }
 
 // ── The gate ─────────────────────────────────────────────────────────────────
@@ -127,10 +165,9 @@ fn shared_param_canonical(name: &str) -> Option<Value> {
         "modifier" => modifier_schema(),
         "button" => button_schema(),
         "scope" => scope_schema(),
-        "element_index" => element_index_schema(),
         "element_token" => element_token_schema(),
-        "snapshot_id" => snapshot_id_schema(),
         "capture_mode" => crate::capture_mode::capture_mode_schema(),
+        "timeout_ms" => timeout_ms_schema(),
         _ => return None,
     };
     Some(structural(&v))
@@ -171,6 +208,33 @@ fn structural(schema: &Value) -> Value {
     Value::Object(out)
 }
 
+fn session_guidance_is_exempt(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "start_session"
+            | "end_session"
+            | "get_session"
+            | "get_session_state"
+            | "list_sessions"
+            | "escalate_session"
+            | "set_agent_cursor_enabled"
+            | "set_agent_cursor_motion"
+            | "set_agent_cursor_theme"
+            | "get_agent_cursor_state"
+    )
+}
+
+fn session_description_has_multi_call_guidance(schema: &Value) -> bool {
+    schema
+        .get("description")
+        .and_then(Value::as_str)
+        .map(|description| description.split_whitespace().collect::<Vec<_>>().join(" "))
+        .is_some_and(|description| {
+            description.contains("prefer a short public session label")
+                && description.contains("repeat it on every call that accepts it")
+        })
+}
+
 /// Check one tool's `input_schema` against the shared canon. Returns a list of
 /// human-readable violation strings (empty == consistent). Each platform calls
 /// this for every tool in its registry from a test.
@@ -187,6 +251,15 @@ pub fn shared_schema_violations(tool_name: &str, input_schema: &Value) -> Vec<St
                         "{tool_name}.{pname}: shape {got} diverges from shared canon {canon}"
                     ));
                 }
+            }
+            if pname == "session"
+                && !session_guidance_is_exempt(tool_name)
+                && !session_description_has_multi_call_guidance(pschema)
+            {
+                violations.push(format!(
+                    "{tool_name}.session: description must prefer a short public session label \
+                     for multi-call work and tell callers to repeat it on every accepting call"
+                ));
             }
         }
     }
@@ -221,10 +294,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn timeout_ms_resolves_default_and_clamps() {
+        assert_eq!(resolve_timeout_ms(None), TIMEOUT_MS_DEFAULT);
+        assert_eq!(resolve_timeout_ms(Some(&json!("fast"))), TIMEOUT_MS_DEFAULT);
+        assert_eq!(resolve_timeout_ms(Some(&json!(5))), TIMEOUT_MS_MIN);
+        assert_eq!(resolve_timeout_ms(Some(&json!(5_000))), 5_000);
+        assert_eq!(resolve_timeout_ms(Some(&json!(10_000_000))), TIMEOUT_MS_MAX);
+        let schema = timeout_ms_schema();
+        assert_eq!(schema["default"], TIMEOUT_MS_DEFAULT);
+        assert!(shared_schema_violations(
+            "get_window_state",
+            &json!({"type":"object","properties":{"timeout_ms": schema}})
+        )
+        .is_empty());
+    }
+
+    #[test]
     fn structural_strips_description_keeps_type_and_enum() {
         let with_prose = json!({ "type": "string", "enum": ["a", "b"], "description": "x" });
         let s = structural(&with_prose);
         assert_eq!(s, json!({ "type": "string", "enum": ["a", "b"] }));
+    }
+
+    #[test]
+    fn action_session_description_without_repeat_guidance_is_flagged() {
+        let tool = json!({
+            "type": "object",
+            "properties": {
+                "session": { "type": "string", "description": "Optional session id." }
+            }
+        });
+        let violations = shared_schema_violations("clipboard_write", &tool);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].contains("repeat it on every accepting call"));
+    }
+
+    #[test]
+    fn lifecycle_session_tools_keep_resource_specific_descriptions() {
+        let tool = json!({
+            "type": "object",
+            "properties": {
+                "session": { "type": "string", "description": "Public label to end." }
+            }
+        });
+        assert!(shared_schema_violations("end_session", &tool).is_empty());
     }
 
     #[test]

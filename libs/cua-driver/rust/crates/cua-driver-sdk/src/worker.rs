@@ -233,6 +233,10 @@ impl PrivateWorkerClient {
         self.request_async("list", None, None, None).await
     }
 
+    pub(crate) async fn list_host_sessions(self: &Arc<Self>) -> Result<Value, DriverError> {
+        self.request_async("sessions_list", None, None, None).await
+    }
+
     pub(crate) async fn invoke(
         self: &Arc<Self>,
         name: &str,
@@ -550,7 +554,10 @@ mod tests {
         for name in [
             "CUA_DRIVER_DISABLE_UNRESTRICTED",
             "CUA_DRIVER_MANAGED_POLICY_FILE",
+            "CUA_DRIVER_CAPABILITY_MANIFEST_FILE",
+            "CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED",
             "CUA_DRIVER_SESSION_POLICY_FILE",
+            "CUA_DRIVER_SESSION_POLICY_APPROVED",
         ] {
             assert!(inherited_managed_environment_name(name));
             assert!(

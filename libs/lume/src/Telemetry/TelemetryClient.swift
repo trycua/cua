@@ -402,7 +402,7 @@ final class TelemetryClient: @unchecked Sendable {
     switch raw {
     case "create", "pull", "push", "convert", "images", "clone", "get", "set", "run",
       "stop", "ssh", "sip", "ipsw", "serve", "delete", "prune", "config", "logs",
-      "update", "setup":
+      "update", "setup", "channel":
       return raw
     case "ls": return "list"
     case "check-update": return "check_update"

@@ -80,7 +80,17 @@ pub struct OSGymSandboxStatus {
     pub reset_vmi_uid: Option<String>,
 }
 
-#[derive(CustomResource, Clone, Debug, Deserialize, Serialize, JsonSchema, uniffi::Record)]
+#[derive(
+    CustomResource,
+    Clone,
+    Debug,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SchemaBuildError)]
 #[kube(
     group = "osgym.cua.ai",
     version = "v1alpha1",

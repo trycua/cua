@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react"
-import { FlashbarProps } from "@cloudscape-design/components/flashbar"
+import type { FlashbarProps } from "@cloudscape-design/components/flashbar"
 
 export type FlashMsg = Omit<
   FlashbarProps.MessageDefinition,

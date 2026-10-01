@@ -30,6 +30,56 @@ type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 const CALL_TIMEOUT: Duration = Duration::from_secs(20);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Connection-scoped command policy. Grant-owned personal-profile sockets
+/// always use the reviewed set below; callers cannot opt out or relax it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CdpMethodPolicy {
+    Unrestricted,
+    ExistingProfile,
+}
+
+const EXISTING_PROFILE_METHODS: &[&str] = &[
+    "Accessibility.getFullAXTree",
+    "Browser.getWindowBounds",
+    "Browser.getWindowForTarget",
+    "Browser.setDownloadBehavior",
+    "DOM.describeNode",
+    "DOM.focus",
+    "DOM.getBoxModel",
+    "DOM.getDocument",
+    "DOM.resolveNode",
+    "DOM.scrollIntoViewIfNeeded",
+    "DOM.setFileInputFiles",
+    "DOMSnapshot.captureSnapshot",
+    "Emulation.setFocusEmulationEnabled",
+    "Input.dispatchKeyEvent",
+    "Input.dispatchMouseEvent",
+    "Input.insertText",
+    "Page.bringToFront",
+    "Page.captureScreenshot",
+    "Page.enable",
+    "Page.getFrameTree",
+    "Page.getLayoutMetrics",
+    "Page.handleJavaScriptDialog",
+    "Page.navigate",
+    "Runtime.callFunctionOn",
+    "Runtime.evaluate",
+    "Target.activateTarget",
+    "Target.attachToTarget",
+    "Target.detachFromTarget",
+    "Target.getTargets",
+    "Target.setAutoAttach",
+];
+
+impl CdpMethodPolicy {
+    fn allows(self, method: &str) -> bool {
+        match self {
+            Self::Unrestricted => true,
+            Self::ExistingProfile => EXISTING_PROFILE_METHODS.binary_search(&method).is_ok(),
+        }
+    }
+}
+
 /// Validate that `url` is a plain-`ws` loopback WebSocket URL.
 /// Anything else — `wss`, remote hosts, hostnames that merely *resolve*
 /// to loopback — is rejected; the endpoint contract is a literal
@@ -192,6 +242,7 @@ pub struct CdpConnection {
     writer: Mutex<SplitSink<WsStream, Message>>,
     demux: Arc<Demux>,
     next_id: AtomicU64,
+    existing_profile_policy: AtomicBool,
     reader: tokio::task::JoinHandle<()>,
 }
 
@@ -223,8 +274,23 @@ impl CdpConnection {
             writer: Mutex::new(write),
             demux,
             next_id: AtomicU64::new(1),
+            existing_profile_policy: AtomicBool::new(false),
             reader,
         })
+    }
+
+    pub fn method_policy(&self) -> CdpMethodPolicy {
+        if self.existing_profile_policy.load(Ordering::SeqCst) {
+            CdpMethodPolicy::ExistingProfile
+        } else {
+            CdpMethodPolicy::Unrestricted
+        }
+    }
+
+    /// Monotonic restriction: once a socket is claimed for a personal
+    /// profile it can never return to the unrestricted command surface.
+    pub fn restrict_to_existing_profile(&self) {
+        self.existing_profile_policy.store(true, Ordering::SeqCst);
     }
 
     /// Whether the reader observed the socket close. A closed connection
@@ -290,6 +356,12 @@ impl CdpConnection {
         method: &str,
         params: Value,
     ) -> anyhow::Result<Value> {
+        let policy = self.method_policy();
+        if !policy.allows(method) {
+            anyhow::bail!(
+                "existing-profile CDP policy refused method {method}; the reviewed personal-profile command set cannot be bypassed"
+            );
+        }
         if self.is_closed() {
             anyhow::bail!("CDP socket closed before {method}");
         }
@@ -421,6 +493,7 @@ impl CdpPool {
             Some(_) => anyhow::bail!("the approved browser socket closed before it was claimed"),
             None => Arc::new(CdpConnection::connect(ws_url).await?),
         };
+        conn.restrict_to_existing_profile();
         conns.insert(
             ws_url.to_owned(),
             PoolEntry {
@@ -481,6 +554,7 @@ impl CdpPool {
         // hold the pool mutex across that wait: grant revocation must remain
         // able to remove the old generation when consent is refused.
         let conn = Arc::new(CdpConnection::connect(ws_url).await?);
+        conn.restrict_to_existing_profile();
         let mut conns = self.conns.lock().await;
         if let Some(entry) = conns.get(ws_url) {
             if entry
@@ -620,6 +694,11 @@ mod tests {
         let initial = pool.get(&url).await.unwrap();
         let claimed = pool.claim_existing(&url, 1).await.unwrap();
         assert!(Arc::ptr_eq(&initial, &claimed), "claim must not redial");
+        assert_eq!(
+            claimed.method_policy(),
+            CdpMethodPolicy::ExistingProfile,
+            "claiming a personal-profile socket must restrict it in place"
+        );
         assert!(pool.get(&url).await.is_err(), "legacy access must refuse");
         assert!(pool.get_existing(&url, 2).await.is_err());
         let reused = pool.get_existing(&url, 1).await.unwrap();
@@ -629,6 +708,45 @@ mod tests {
             pool.get(&url).await.is_ok(),
             "session cleanup releases ownership"
         );
+    }
+
+    #[tokio::test]
+    async fn existing_profile_policy_rejects_fingerprint_and_interception_methods() {
+        let seen = StdArc::new(StdMutex::new(Vec::<String>::new()));
+        let server_seen = seen.clone();
+        let server = MockCdpServer::start(StdArc::new(move |call| {
+            server_seen.lock().unwrap().push(call.method.clone());
+            MockReply::ok(json!({}))
+        }))
+        .await;
+        let conn = CdpConnection::connect(&server.ws_url()).await.unwrap();
+        conn.restrict_to_existing_profile();
+
+        for method in [
+            "Runtime.enable",
+            "Target.setDiscoverTargets",
+            "Page.addScriptToEvaluateOnNewDocument",
+            "Network.enable",
+            "Fetch.enable",
+            "Emulation.setUserAgentOverride",
+            "Emulation.setDeviceMetricsOverride",
+            "Emulation.setTimezoneOverride",
+        ] {
+            let error = conn.call(None, method, json!({})).await.unwrap_err();
+            assert!(
+                error.to_string().contains("policy refused"),
+                "{method}: {error}"
+            );
+        }
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "refused methods must not reach the browser socket"
+        );
+
+        conn.call(None, "Target.getTargets", json!({}))
+            .await
+            .expect("reviewed method remains available");
+        assert_eq!(&*seen.lock().unwrap(), &["Target.getTargets"]);
     }
 
     #[tokio::test]

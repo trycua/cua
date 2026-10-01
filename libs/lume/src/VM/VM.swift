@@ -58,10 +58,27 @@ class VM {
     private var scopedSharedDirectoryURLs: [URL] = []
     private var clipboardTransferInProgress = false
     private var sessionCleanedUp = true
+    /// Policy of the session currently owned by this object. Cleanup needs it
+    /// because a VNC-disabled session's marker is not owned by `vncService`.
+    private var activeVNCPolicy: VNCPolicy = .enabled
+    private var activeNoVNCSession: VNCSession?
     internal let virtualizationServiceFactory:
         (VMVirtualizationServiceContext) throws -> VMVirtualizationService
     private let vncServiceFactory: (VMDirectory) -> VNCService
     private let displayPresenterFactory: @MainActor (DisplayMode, VNCService) -> VMDisplayPresenter
+    /// Resolves the config-file run-lock owner during cross-process `stop`.
+    // Lifecycle commands may run while the host is under VM boot I/O. Give
+    // their one-shot lock lookup more time than list/get's latency-bound probe.
+    private let runLockProbe: RunLockProbe = LsofRunLockProbe(timeout: 10)
+
+    /// Default number of seconds a graceful `stop` waits for the owning process
+    /// to exit before escalating to a forced power-off.
+    nonisolated static let defaultStopTimeout: TimeInterval = 10
+
+    /// Signal handlers that let an external `stop` (SIGTERM) or an interactive
+    /// Ctrl-C (SIGINT) shut this run down cleanly. Installed only by the process
+    /// that actually owns the running VM.
+    private var shutdownSignalSources: [DispatchSourceSignal] = []
 
     // MARK: - Initialization
 
@@ -167,8 +184,20 @@ class VM {
         displayMode: DisplayMode = .vnc, sharedDirectories: [SharedDirectory], mount: Path?,
         vncPort: Int = 0, vncPassword: String? = nil, recoveryMode: Bool = false,
         usbMassStoragePaths: [Path]? = nil, additionalDiskPaths: [Path]? = nil,
-        networkMode: NetworkMode? = nil, clipboard: Bool = false
+        networkMode: NetworkMode? = nil, clipboard: Bool = false,
+        vncPolicy: VNCPolicy = .enabled
     ) async throws {
+        // Defense in depth: the CLI and the controller reject these combinations
+        // first, but no caller may reach a VNC-dependent path with VNC disabled.
+        if let option = VNCPolicy.conflictingOption(
+            policy: vncPolicy,
+            displayMode: displayMode,
+            vncPort: vncPort,
+            vncPassword: vncPassword
+        ) {
+            throw VMError.vncDisabledConflict(option)
+        }
+
         guard let resizeGuard = try vmDirContext.dir.tryAcquireResizeGuard(exclusive: false) else {
             throw DiskResizeError.resizeInProgress(vmDirContext.name)
         }
@@ -181,6 +210,7 @@ class VM {
             metadata: [
                 "name": vmDirContext.name,
                 "displayMode": displayMode.rawValue,
+                "vncPolicy": vncPolicy.rawValue,
                 "recoveryMode": "\(recoveryMode)",
             ])
 
@@ -252,6 +282,8 @@ class VM {
             try? fileHandle.close()
         }
         sessionCleanedUp = false
+        activeVNCPolicy = vncPolicy
+        activeNoVNCSession = nil
         activeSharedDirectories = sharedDirectories
 
         Logger.info(
@@ -273,15 +305,20 @@ class VM {
             // host directory contents, so the guest will see the file once written).
             let lumeConfigDir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("lume-config-\(vmDirContext.name)")
-            try? FileManager.default.createDirectory(at: lumeConfigDir, withIntermediateDirectories: true)
             // Remove stale vnc.env from a previous run so the guest doesn't
-            // read outdated port/password before the new file is written.
+            // read outdated port/password before the new file is written. A
+            // VNC-disabled run does the same removal so nothing left by an
+            // earlier VNC-enabled run of this VM can leak into the guest.
             try? FileManager.default.removeItem(
                 at: lumeConfigDir.appendingPathComponent("vnc.env"))
-            let lumeConfigSharedDir = SharedDirectory(
-                hostPath: lumeConfigDir.path, tag: "lume-config", readOnly: true)
             var allSharedDirectories = sharedDirectories
-            allSharedDirectories.append(lumeConfigSharedDir)
+            if vncPolicy.isEnabled {
+                try? FileManager.default.createDirectory(
+                    at: lumeConfigDir, withIntermediateDirectories: true)
+                allSharedDirectories.append(
+                    SharedDirectory(
+                        hostPath: lumeConfigDir.path, tag: "lume-config", readOnly: true))
+            }
 
             Logger.info(
                 "Creating virtualization service context", metadata: ["name": vmDirContext.name])
@@ -315,35 +352,54 @@ class VM {
             let presenter = displayPresenterFactory(displayMode, vncService)
             displayPresenter = presenter
 
-            // VNC remains active for automation and late remote attachment in every
-            // display mode, including the in-process native viewer.
-            Logger.info(
-                "Setting up VNC",
-                metadata: [
-                    "name": vmDirContext.name,
-                    "displayMode": displayMode.rawValue,
-                    "port": "\(vncPort)",
-                ])
-            let vncInfo = try await setupSession(
-                port: vncPort, password: vncPassword, sharedDirectories: sharedDirectories)
-
-            // Parse VNC port and password from the VNC URL for config distribution.
-            // URL format: vnc://:password@host:port — URLComponents needs http:// to parse correctly.
+            // Parsed from the VNC URL for config distribution; both stay nil for
+            // a VNC-disabled run so no credential is ever written or sent.
             var vncPortValue: Int?
             var vncPasswordValue: String?
-            if let components = URLComponents(string: vncInfo.replacingOccurrences(of: "vnc://", with: "http://")),
-               let port = components.port {
-                vncPortValue = port
-                vncPasswordValue = components.password ?? ""
-                let envContent = "VNC_PORT=\(port)\nVNC_PASSWORD=\(vncPasswordValue!)\n"
-                try? envContent.write(
-                    to: lumeConfigDir.appendingPathComponent("vnc.env"),
-                    atomically: true, encoding: .utf8)
-                Logger.info("Wrote VNC config to shared directory", metadata: [
-                    "port": "\(port)", "path": lumeConfigDir.path])
+            let vncInfo: String?
+
+            if vncPolicy.isEnabled {
+                // VNC remains active for automation and late remote attachment in every
+                // display mode, including the in-process native viewer.
+                Logger.info(
+                    "Setting up VNC",
+                    metadata: [
+                        "name": vmDirContext.name,
+                        "displayMode": displayMode.rawValue,
+                        "port": "\(vncPort)",
+                    ])
+                let url = try await setupSession(
+                    port: vncPort, password: vncPassword, sharedDirectories: sharedDirectories)
+                vncInfo = url
+
+                // URL format: vnc://:password@host:port — URLComponents needs http:// to parse correctly.
+                if let components = URLComponents(
+                    string: url.replacingOccurrences(of: "vnc://", with: "http://")),
+                   let port = components.port {
+                    vncPortValue = port
+                    vncPasswordValue = components.password ?? ""
+                    let envContent = "VNC_PORT=\(port)\nVNC_PASSWORD=\(vncPasswordValue!)\n"
+                    try? envContent.write(
+                        to: lumeConfigDir.appendingPathComponent("vnc.env"),
+                        atomically: true, encoding: .utf8)
+                    Logger.info("Wrote VNC config to shared directory", metadata: [
+                        "port": "\(port)", "path": lumeConfigDir.path])
+                }
+                Logger.info(
+                    "VNC setup successful", metadata: ["name": vmDirContext.name, "vncInfo": url])
+            } else {
+                vncInfo = nil
+                // No listener, no credentials, no vnc.env. The session marker
+                // still records the owning process so a detached `get`/`list`
+                // in another process can prove this VM is running.
+                saveNoVNCSessionData(sharedDirectories: sharedDirectories)
+                Logger.info(
+                    "VNC disabled for this run; no VNC server will be started",
+                    metadata: [
+                        "name": vmDirContext.name,
+                        "displayMode": displayMode.rawValue,
+                    ])
             }
-            Logger.info(
-                "VNC setup successful", metadata: ["name": vmDirContext.name, "vncInfo": vncInfo])
 
             // Start the VM
             Logger.info(
@@ -419,6 +475,11 @@ class VM {
                             "error": error.localizedDescription,
                         ])
                 }
+
+                // The AppKit run loop swallows SIGINT, so install explicit
+                // handlers that turn an external `stop` (SIGTERM) or an
+                // interactive Ctrl-C (SIGINT) into a clean shutdown.
+                installShutdownSignalHandlers()
             }
 
             // Write VNC config into VM via SSH (background task).
@@ -603,8 +664,12 @@ class VM {
             scopedSharedDirectoryURLs.append(url)
         }
         activeSharedDirectories = updated
-        if let sessionURL = vncService.url {
-            saveSessionData(url: sessionURL, sharedDirectories: updated)
+        if activeVNCPolicy.isEnabled {
+            if let sessionURL = vncService.url {
+                saveSessionData(url: sessionURL, sharedDirectories: updated)
+            }
+        } else if activeNoVNCSession != nil {
+            saveNoVNCSessionData(sharedDirectories: updated)
         }
     }
 
@@ -651,9 +716,52 @@ class VM {
             ])
     }
 
+    /// Installs SIGTERM/SIGINT handlers that request a clean VM shutdown. Only
+    /// the process that owns the running VM calls this. Ignoring the default
+    /// disposition first lets the dispatch source observe the signal instead of
+    /// the process being terminated (or, for SIGINT under AppKit, ignored).
+    @MainActor
+    private func installShutdownSignalHandlers() {
+        guard shutdownSignalSources.isEmpty else { return }
+        for signalNumber in [SIGTERM, SIGINT] {
+            signal(signalNumber, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
+            source.setEventHandler { [weak self] in
+                Task { @MainActor in
+                    await self?.requestGracefulShutdown()
+                }
+            }
+            source.resume()
+            shutdownSignalSources.append(source)
+        }
+    }
+
+    @MainActor
+    private func removeShutdownSignalHandlers() {
+        for source in shutdownSignalSources {
+            source.cancel()
+        }
+        shutdownSignalSources.removeAll()
+    }
+
+    /// Stops the running VM in response to a shutdown signal. Returning from the
+    /// framework's stop lets `run`'s lifecycle wait complete, which drives the
+    /// normal session teardown and process exit.
+    @MainActor
+    private func requestGracefulShutdown() async {
+        Logger.info(
+            "Received shutdown signal; stopping VM", metadata: ["name": vmDirContext.name])
+        guard let service = virtualizationService else { return }
+        if service.state == .running || service.state == .paused {
+            try? await service.stop()
+        }
+    }
+
     private func cleanupSession() async {
         guard !sessionCleanedUp else { return }
         sessionCleanedUp = true
+
+        removeShutdownSignalHandlers()
 
         // Detach native display before releasing the framework VM.
         if nativeAttachRegistered {
@@ -671,18 +779,41 @@ class VM {
         scopedSharedDirectoryURLs.removeAll()
         activeSharedDirectories.removeAll()
         vncService.stop()
+        if !activeVNCPolicy.isEnabled {
+            // No VNC service owns this run's marker, so drop it here. Doing it
+            // unconditionally also covers a failed start that never booted.
+            vmDirContext.dir.clearSession()
+            activeNoVNCSession = nil
+        }
         virtualizationService = nil
     }
 
     @MainActor
     func stop() async throws {
+        try await stop(force: false, timeout: VM.defaultStopTimeout)
+    }
+
+    /// Stops the VM.
+    ///
+    /// When this process owns the running VM, the framework stops it directly.
+    /// Otherwise `stop` resolves the process holding the config-file run lock
+    /// (typically a detached `lume run`) and signals it: by default it requests
+    /// a graceful shutdown and waits up to `timeout` seconds before escalating to
+    /// a forced power-off. `force` skips the graceful phase and powers the VM off
+    /// immediately.
+    @MainActor
+    func stop(force: Bool, timeout: TimeInterval) async throws {
         guard vmDirContext.initialized else {
             throw VMError.notInitialized(vmDirContext.name)
         }
 
-        Logger.info("Attempting to stop VM", metadata: ["name": vmDirContext.name])
+        Logger.info(
+            "Attempting to stop VM",
+            metadata: ["name": vmDirContext.name, "force": "\(force)"])
 
-        // If we have a virtualization service, try to stop it cleanly first
+        // If we own the running VM in this process, stop it directly. The
+        // framework's stop is an immediate power-off, so it serves both the
+        // graceful and forced requests.
         if let service = virtualizationService {
             do {
                 Logger.info(
@@ -706,49 +837,24 @@ class VM {
             }
         }
 
-        // Try to open config file to get file descriptor
+        // Cross-process stop: another process owns the VM and holds the
+        // config-file run lock. Resolve that owner directly from the lock probe.
+        // We intentionally do not open the config file ourselves first: doing so
+        // would make this process a second holder and pollute the lsof probe.
         Logger.info(
-            "Attempting to access config file lock",
+            "Resolving process holding the config-file run lock",
             metadata: [
                 "path": vmDirContext.dir.configPath.path,
                 "name": vmDirContext.name,
             ])
-        let fileHandle = try? FileHandle(forReadingFrom: vmDirContext.dir.configPath.url)
-        guard let fileHandle = fileHandle else {
-            Logger.info(
-                "Failed to open config file - VM may not be running",
-                metadata: ["name": vmDirContext.name])
-
-            // Even though we couldn't open the file, try to force unlock anyway
-            unlockConfigFile()
-
-            throw VMError.notRunning(vmDirContext.name)
-        }
-
-        // Get the PID of the process holding the lock using lsof command
-        Logger.info(
-            "Finding process holding lock on config file", metadata: ["name": vmDirContext.name])
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        task.arguments = ["-F", "p", vmDirContext.dir.configPath.path]
-
-        let outputPipe = Pipe()
-        task.standardOutput = outputPipe
-
-        try task.run()
-        task.waitUntilExit()
-
-        let outputData = try outputPipe.fileHandleForReading.readToEnd() ?? Data()
-        guard let outputString = String(data: outputData, encoding: .utf8),
-            let pidString = outputString.split(separator: "\n").first?.dropFirst(),  // Drop the 'p' prefix
-            let pid = pid_t(pidString)
+        guard let pid = runLockProbe.lockOwnerPID(ofFileAt: vmDirContext.dir.configPath.path),
+            pid > 0, pid != getpid()
         else {
-            try? fileHandle.close()
             Logger.info(
-                "Failed to find process holding lock - VM may not be running",
+                "No live process holds the run lock - VM is not running",
                 metadata: ["name": vmDirContext.name])
 
-            // Even though we couldn't find the process, try to force unlock
+            // Clear any stale advisory lock so a later run can reacquire it.
             unlockConfigFile()
 
             throw VMError.notRunning(vmDirContext.name)
@@ -758,70 +864,90 @@ class VM {
             "Found process \(pid) holding lock on config file",
             metadata: ["name": vmDirContext.name])
 
-        // First try graceful shutdown with SIGINT
-        if kill(pid, SIGINT) == 0 {
-            Logger.info("Sent SIGINT to VM process \(pid)", metadata: ["name": vmDirContext.name])
-        }
-
-        // Wait for process to stop with timeout
-        var attempts = 0
-        while attempts < 10 {
+        if force {
             Logger.info(
-                "Waiting for process \(pid) to terminate (attempt \(attempts + 1)/10)",
+                "Force stop requested; powering off process \(pid) immediately",
                 metadata: ["name": vmDirContext.name])
-            try await Task.sleep(nanoseconds: 1_000_000_000)
-
-            // Check if process still exists
-            if kill(pid, 0) != 0 {
-                // Process is gone, do final cleanup
-                Logger.info("Process \(pid) has terminated", metadata: ["name": vmDirContext.name])
-                virtualizationService = nil
-                vncService.stop()
-                try? fileHandle.close()
-
-                // Force unlock the config file
-                unlockConfigFile()
-
-                Logger.info(
-                    "VM stopped successfully via process termination",
-                    metadata: ["name": vmDirContext.name])
-                return
-            }
-            attempts += 1
+            try await forcePowerOff(pid: pid)
+            return
         }
 
-        // If graceful shutdown failed, force kill the process
+        // Graceful first: ask the owner to shut down. SIGTERM is honored by the
+        // run process (its handler triggers a clean stop); even without a handler
+        // its default disposition terminates the process, so unlike SIGINT — which
+        // the AppKit run loop swallows — the VM never lingers.
+        if kill(pid, SIGTERM) == 0 {
+            Logger.info(
+                "Sent SIGTERM to VM process \(pid) for graceful shutdown",
+                metadata: ["name": vmDirContext.name])
+        }
+
+        if await waitForProcessExit(pid: pid, timeout: timeout) {
+            Logger.info(
+                "Process \(pid) exited after graceful shutdown",
+                metadata: ["name": vmDirContext.name])
+            finalizeCrossProcessStop()
+            Logger.info(
+                "VM stopped successfully via process termination",
+                metadata: ["name": vmDirContext.name])
+            return
+        }
+
         Logger.info(
-            "Graceful shutdown failed, forcing termination of process \(pid)",
+            "Graceful shutdown did not complete within \(Int(timeout))s; forcing power-off of process \(pid)",
             metadata: ["name": vmDirContext.name])
-        if kill(pid, SIGKILL) == 0 {
-            Logger.info("Sent SIGKILL to process \(pid)", metadata: ["name": vmDirContext.name])
+        try await forcePowerOff(pid: pid)
+    }
 
-            // Wait a moment for the process to be fully killed
-            try await Task.sleep(nanoseconds: 2_000_000_000)
+    /// Polls until `pid` is no longer signalable or `timeout` elapses.
+    /// Returns `true` if the process exited within the budget.
+    @MainActor
+    private func waitForProcessExit(pid: pid_t, timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(max(timeout, 0))
+        repeat {
+            if kill(pid, 0) != 0 {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        } while Date() < deadline
+        return kill(pid, 0) != 0
+    }
 
-            // Do final cleanup
-            virtualizationService = nil
-            vncService.stop()
-            try? fileHandle.close()
+    /// SIGKILLs `pid`, confirms it is gone, and releases this VM's local state.
+    @MainActor
+    private func forcePowerOff(pid: pid_t) async throws {
+        if kill(pid, 0) != 0 {
+            // The owner already exited between resolving it and now.
+            finalizeCrossProcessStop()
+            Logger.info(
+                "Process \(pid) already terminated", metadata: ["name": vmDirContext.name])
+            return
+        }
 
-            // Force unlock the config file
-            unlockConfigFile()
+        _ = kill(pid, SIGKILL)
+        Logger.info("Sent SIGKILL to process \(pid)", metadata: ["name": vmDirContext.name])
 
+        if await waitForProcessExit(pid: pid, timeout: 5) {
+            finalizeCrossProcessStop()
             Logger.info("VM forcefully stopped", metadata: ["name": vmDirContext.name])
             return
         }
 
-        // If we get here, something went very wrong
-        try? fileHandle.close()
+        // SIGKILL cannot be caught, so surviving it means the process is wedged
+        // in the kernel. Release our side anyway so the run lock is not orphaned.
+        finalizeCrossProcessStop()
         Logger.error(
-            "Failed to stop VM - could not terminate process \(pid)",
+            "Failed to stop VM - process \(pid) did not terminate",
             metadata: ["name": vmDirContext.name])
+        throw VMError.internalError("Failed to stop VM process \(pid)")
+    }
 
-        // As a last resort, try to force unlock
+    /// Releases the resources a cross-process stop is responsible for cleaning up.
+    @MainActor
+    private func finalizeCrossProcessStop() {
+        virtualizationService = nil
+        vncService.stop()
         unlockConfigFile()
-
-        throw VMError.internalError("Failed to stop VM process")
     }
 
     // Helper method to forcibly clear any locks on the config file
@@ -1109,6 +1235,33 @@ class VM {
                 ])
         } catch {
             Logger.error("Failed to save VNC session", metadata: ["error": "\(error)"])
+        }
+    }
+
+    /// Persists the session marker for a run started with `--vnc disabled`.
+    ///
+    /// There is no URL or port to record, so the marker carries this process's
+    /// PID and start time. `get`/`list` in another process treat the VM as
+    /// running only after proving that PID still holds the config-file run lock.
+    private func saveNoVNCSessionData(sharedDirectories: [SharedDirectory]) {
+        let session = VNCSession.vncDisabled(
+            pid: activeNoVNCSession?.pid ?? getpid(),
+            startedAt: activeNoVNCSession?.startedAt ?? Date().timeIntervalSince1970,
+            sharedDirectories: sharedDirectories.isEmpty ? nil : sharedDirectories
+        )
+        do {
+            try vmDirContext.dir.saveSession(session)
+            activeNoVNCSession = session
+            Logger.info(
+                "Saved VNC-disabled session marker",
+                metadata: [
+                    "name": vmDirContext.name,
+                    "pid": "\(session.pid ?? 0)",
+                    "sessionsPath": vmDirContext.dir.sessionsPath.path,
+                ])
+        } catch {
+            Logger.error(
+                "Failed to save VNC-disabled session marker", metadata: ["error": "\(error)"])
         }
     }
 

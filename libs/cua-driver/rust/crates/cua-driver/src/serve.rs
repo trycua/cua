@@ -21,7 +21,7 @@
 //! Source-installed local builds use the corresponding `cua-driver-local`
 //! namespace on every platform.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
 pub use cua_driver_core::daemon::{
@@ -31,8 +31,121 @@ pub use cua_driver_core::daemon::{
 
 static ACTIVE_PROXY_SESSIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
+#[derive(Clone, Debug)]
+struct TrustedResumeRecord {
+    options: cua_driver_sdk::TrustedSessionOptions,
+    transport_session: String,
+    expires_at: std::time::Instant,
+}
+
+struct TrustedConnectionSession {
+    session: std::sync::Arc<cua_driver_sdk::CuaDriverSession>,
+    options: cua_driver_sdk::TrustedSessionOptions,
+    transport_session: String,
+    resume_credential: String,
+}
+
+type TrustedResumeRegistry =
+    std::sync::Arc<tokio::sync::Mutex<HashMap<String, TrustedResumeRecord>>>;
+
+fn new_resume_credential() -> String {
+    format!("resume-{}", uuid::Uuid::new_v4())
+}
+
+fn resume_expiry(options: &cua_driver_sdk::TrustedSessionOptions) -> std::time::Instant {
+    std::time::Instant::now() + std::time::Duration::from_secs(options.idle_ttl_seconds.max(1))
+}
+
+fn bind_trusted_connection(
+    sdk: &crate::sdk_adapter::SdkAdapter,
+    options: cua_driver_sdk::TrustedSessionOptions,
+    transport_session: String,
+) -> Result<TrustedConnectionSession, String> {
+    let session = sdk.create_trusted_session_for_transport(options.clone(), &transport_session)?;
+    Ok(TrustedConnectionSession {
+        session,
+        options,
+        transport_session,
+        resume_credential: new_resume_credential(),
+    })
+}
+
+async fn resume_trusted_connection(
+    sdk: &crate::sdk_adapter::SdkAdapter,
+    registry: &TrustedResumeRegistry,
+    credential: &str,
+) -> Result<TrustedConnectionSession, String> {
+    let record = take_trusted_resume_record(registry, credential).await?;
+    bind_trusted_connection(sdk, record.options, record.transport_session)
+}
+
+async fn take_trusted_resume_record(
+    registry: &TrustedResumeRegistry,
+    credential: &str,
+) -> Result<TrustedResumeRecord, String> {
+    // Remove before validation so every presented credential is single use,
+    // including expired or otherwise invalid attempts.
+    let now = std::time::Instant::now();
+    let record = {
+        let mut records = registry.lock().await;
+        let record = records.remove(credential);
+        records.retain(|_, candidate| candidate.expires_at > now);
+        record
+    }
+    .ok_or_else(|| "trusted session resume credential is unavailable or already used".to_owned())?;
+    if now >= record.expires_at {
+        return Err("trusted session resume credential expired".to_owned());
+    }
+    Ok(record)
+}
+
+async fn detach_trusted_connection(
+    registry: &TrustedResumeRegistry,
+    connection: TrustedConnectionSession,
+) {
+    connection.session.close();
+    let now = std::time::Instant::now();
+    let mut records = registry.lock().await;
+    records.retain(|_, candidate| candidate.expires_at > now);
+    records.insert(
+        connection.resume_credential,
+        TrustedResumeRecord {
+            expires_at: resume_expiry(&connection.options),
+            options: connection.options,
+            transport_session: connection.transport_session,
+        },
+    );
+}
+
+async fn end_trusted_connection(connection: &TrustedConnectionSession) -> Result<(), String> {
+    let result = connection
+        .session
+        .call_tool(
+            "end_session".to_owned(),
+            serde_json::json!({"session": connection.options.public_session}).to_string(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    if result.is_error {
+        return Err(if result.text.is_empty() {
+            "trusted session cleanup did not complete".to_owned()
+        } else {
+            result.text
+        });
+    }
+    Ok(())
+}
+
 fn active_proxy_sessions() -> &'static Mutex<HashSet<String>> {
     ACTIVE_PROXY_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn release_active_proxy_sessions() {
+    if let Some(sessions) = ACTIVE_PROXY_SESSIONS.get() {
+        let mut sessions = sessions.lock().unwrap();
+        sessions.clear();
+        sessions.shrink_to_fit();
+    }
 }
 
 fn is_active_proxy_session(session: Option<&str>) -> bool {
@@ -40,14 +153,6 @@ fn is_active_proxy_session(session: Option<&str>) -> bool {
 }
 
 fn inject_browser_approvals(tool_name: &str, args: &mut serde_json::Value, session: Option<&str>) {
-    if tool_name == "browser_prepare" && is_active_proxy_session(session) {
-        if let Some(arguments) = args.as_object_mut() {
-            arguments.insert(
-                cua_driver_core::browser::approval::MCP_HOST_APPROVAL_ARG.to_owned(),
-                serde_json::Value::Bool(true),
-            );
-        }
-    }
     if tool_name == "browser_download" && is_active_proxy_session(session) {
         if let Some(arguments) = args.as_object_mut() {
             arguments.insert(
@@ -58,53 +163,163 @@ fn inject_browser_approvals(tool_name: &str, args: &mut serde_json::Value, sessi
     }
 }
 
-/// Resolve + apply the session identity for a tool call at the daemon boundary.
-///
-/// A session is a **caller-declared** identity (the public `session` arg), not a
-/// property of the MCP connection. We mirror an explicit `session` into the
-/// reserved `_session_id` key that every session-aware tool already reads
-/// (cursor key, per-session config override, recording owner). When no `session`
-/// was declared we fall back to the per-connection minted id for `_session_id`
-/// ONLY — that preserves connection-EOF cleanup of recording / config as before.
-/// The cursor is deliberately NOT driven by that fallback: `resolve_cursor_key`
-/// reads the explicit `session`/`cursor_id` arg only, so a cursor appears
-/// exactly when a run declares its session (explicit-required).
-///
-/// The registry refreshes the runtime-private idle-TTL key after authorization;
-/// this transport helper only returns the effective `_session_id` for the
-/// resurrection guard.
-fn apply_session_identity(args: &mut serde_json::Value, minted: &Option<String>) -> Option<String> {
-    let explicit = args
-        .as_object()
-        .and_then(|o| o.get("session"))
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_owned());
-    if let Some(obj) = args.as_object_mut() {
-        obj.remove("_session_id");
-        obj.remove("_transport_session_id");
-        if let Some(id) = explicit.clone().or_else(|| minted.clone()) {
-            obj.insert("_session_id".to_owned(), serde_json::Value::String(id));
-        }
-        if let Some(id) = minted.clone() {
-            obj.insert(
-                "_transport_session_id".to_owned(),
-                serde_json::Value::String(id),
-            );
-        }
-    }
-    args.as_object()
-        .and_then(|o| o.get("_session_id"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_owned())
-}
-
 /// Whether `tool_name` manages session lifecycle and so must be EXEMPT from the
 /// resurrection guard. `start_session` revives an ended id (the explicit,
 /// caller-intended way to reuse one) and `end_session` is idempotent — both
 /// would be wrongly rejected if the guard gated them on an already-ended id.
 fn is_session_lifecycle_tool(tool_name: &str) -> bool {
     matches!(tool_name, "start_session" | "end_session")
+}
+
+fn history_control_response(
+    registry: &crate::sdk_adapter::SdkAdapter,
+    request: &DaemonRequest,
+    trusted_cli_request: bool,
+) -> DaemonResponse {
+    if !trusted_cli_request
+        || request.client_kind != Some(cua_driver_core::daemon::DaemonClientKind::Cli)
+        || request.observation_origin != Some(ToolObservationOrigin::Direct)
+    {
+        return DaemonResponse::err("history_control_requires_local_cli", 77);
+    }
+    let operation = request
+        .args
+        .as_ref()
+        .and_then(|value| value.get("operation"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("status");
+    let Some(history) = registry.history() else {
+        return if operation == "status" {
+            DaemonResponse::ok(serde_json::json!({
+                "supported": cfg!(any(
+                    target_os = "macos",
+                    target_os = "windows",
+                    target_os = "linux"
+                )),
+                "admitted": false,
+                "enabled": false,
+                "paused": false,
+                "encrypted": true,
+                "health": "not_admitted"
+            }))
+        } else {
+            DaemonResponse::err("history_preview_not_admitted", 77)
+        };
+    };
+    let result: Result<serde_json::Value, cua_driver_core::history::HistoryError> = match operation
+    {
+        "status" => serde_json::to_value(history.status()).map_err(|_| {
+            cua_driver_core::history::HistoryError::new(
+                cua_driver_core::history::HistoryHealthCategory::StorageCorrupt,
+            )
+        }),
+        "enable" => history.enable().and_then(|status| {
+            serde_json::to_value(status).map_err(|_| {
+                cua_driver_core::history::HistoryError::new(
+                    cua_driver_core::history::HistoryHealthCategory::StorageCorrupt,
+                )
+            })
+        }),
+        "disable" => history.disable().and_then(|status| {
+            serde_json::to_value(status).map_err(|_| {
+                cua_driver_core::history::HistoryError::new(
+                    cua_driver_core::history::HistoryHealthCategory::StorageCorrupt,
+                )
+            })
+        }),
+        "pause" => history.pause().and_then(|status| {
+            serde_json::to_value(status).map_err(|_| {
+                cua_driver_core::history::HistoryError::new(
+                    cua_driver_core::history::HistoryHealthCategory::StorageCorrupt,
+                )
+            })
+        }),
+        "resume" => history.resume().and_then(|status| {
+            serde_json::to_value(status).map_err(|_| {
+                cua_driver_core::history::HistoryError::new(
+                    cua_driver_core::history::HistoryHealthCategory::StorageCorrupt,
+                )
+            })
+        }),
+        "flush" => history.flush().and_then(|status| {
+            serde_json::to_value(status).map_err(|_| {
+                cua_driver_core::history::HistoryError::new(
+                    cua_driver_core::history::HistoryHealthCategory::StorageCorrupt,
+                )
+            })
+        }),
+        "delete" => history.delete_all().and_then(|status| {
+            serde_json::to_value(status).map_err(|_| {
+                cua_driver_core::history::HistoryError::new(
+                    cua_driver_core::history::HistoryHealthCategory::StorageCorrupt,
+                )
+            })
+        }),
+        "list" | "show" => {
+            let args = request.args.as_ref().unwrap_or(&serde_json::Value::Null);
+            let sequence = (operation == "show")
+                .then(|| args.get("sequence").and_then(serde_json::Value::as_u64))
+                .flatten();
+            let limit = if operation == "show" {
+                Some(1)
+            } else {
+                args.get("limit")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|value| value as usize)
+            };
+            history
+                .query(
+                    cua_driver_core::history::HistoryQuery {
+                        limit,
+                        session_id: None,
+                        since_sequence: sequence,
+                        until_sequence: sequence,
+                    },
+                    cua_driver_core::history::HistoryAccessOperation::LocalCli,
+                )
+                .map(|events| serde_json::json!({"events": events, "metadata_only": true}))
+        }
+        _ => return DaemonResponse::err("unknown_history_operation", 64),
+    };
+    match result {
+        Ok(value) => DaemonResponse::ok(value),
+        Err(error) => DaemonResponse::err(error.code(), 1),
+    }
+}
+
+async fn history_control_response_async(
+    registry: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
+    request: DaemonRequest,
+    trusted_cli_request: bool,
+) -> DaemonResponse {
+    // Native credential stores are synchronous at this boundary. Linux's
+    // Secret Service adapter may drive its own async runtime internally, which
+    // must not be entered from a Tokio request worker. Keep key creation,
+    // deletion, and encrypted-store I/O off the daemon's async executor on all
+    // platforms so one control request cannot stall unrelated clients.
+    tokio::task::spawn_blocking(move || {
+        history_control_response(&registry, &request, trusted_cli_request)
+    })
+    .await
+    .unwrap_or_else(|error| {
+        DaemonResponse::err(format!("history_control_worker_failed: {error}"), 1)
+    })
+}
+
+fn history_relaunch_state_response(
+    request: &DaemonRequest,
+    trusted_cli_request: bool,
+) -> DaemonResponse {
+    if !trusted_cli_request
+        || request.client_kind != Some(cua_driver_core::daemon::DaemonClientKind::Cli)
+        || request.observation_origin != Some(ToolObservationOrigin::Direct)
+    {
+        return DaemonResponse::err("history_relaunch_state_requires_local_cli", 77);
+    }
+    DaemonResponse::ok(
+        serde_json::to_value(crate::history_runtime::daemon_launch_state())
+            .expect("daemon launch state is serializable"),
+    )
 }
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
@@ -216,6 +431,9 @@ async fn invoke_daemon_tool(
     sdk: &std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     req: DaemonRequest,
 ) -> DaemonResponse {
+    if let Some(response) = permission_gate_pending_response(&req) {
+        return response;
+    }
     let observation_transport = daemon_observation_transport(&req);
     let direct_client_kind = req.client_kind;
     let raw_name = req.name.as_deref().unwrap_or("").to_owned();
@@ -232,7 +450,8 @@ async fn invoke_daemon_tool(
         .args
         .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
     cua_driver_core::tool_args::sanitize_reserved_args(&mut args);
-    let effective_session = apply_session_identity(&mut args, &req.session_id);
+    let effective_session =
+        cua_driver_core::tool_args::apply_session_identity(&mut args, req.session_id.as_deref());
     let operation = cua_driver_core::server::tool_operation(&tool_name, Some(&args));
     let observation = observation_transport.map(|transport| {
         (
@@ -250,12 +469,18 @@ async fn invoke_daemon_tool(
     if let Some(sid) = &effective_session {
         if !is_session_lifecycle_tool(&tool_name) && sdk.is_session_ended(sid) {
             observe_daemon_error(observation, 1);
-            return DaemonResponse::err(
+            // An unnamed call's lifecycle id is the transport session, which
+            // is not a label the caller can pass back to start_session.
+            let recovery = if req.session_id.as_deref() == Some(sid.as_str()) {
+                "Call start_session without a session label to start a new unnamed session."
+                    .to_owned()
+            } else {
                 format!(
-                    "session '{sid}' has ended; tool call '{tool_name}' was rejected. \
-                     Call start_session with this id to revive it before issuing further \
-                     actions, or use a new session id."
-                ),
+                    "Call start_session with session '{sid}' to start it again, or use a new session label."
+                )
+            };
+            return DaemonResponse::err(
+                format!("session has ended; tool call '{tool_name}' was rejected. {recovery}"),
                 1,
             );
         }
@@ -390,10 +615,79 @@ fn prepare_embedded_socket_path(socket_path: &str, embedded: bool) -> anyhow::Re
     }
 }
 
+static PERMISSION_GATE_PENDING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Mark whether the macOS first-launch gate is still waiting for TCC grants.
+/// The daemon socket and lifecycle diagnostics remain reachable, but tool calls
+/// are rejected before execution until fresh child-process probes confirm grants.
+pub fn set_permission_gate_pending(pending: bool) {
+    PERMISSION_GATE_PENDING.store(pending, std::sync::atomic::Ordering::Release);
+}
+
+fn permission_gate_pending_response(request: &DaemonRequest) -> Option<DaemonResponse> {
+    permission_gate_response_for_state(
+        request,
+        PERMISSION_GATE_PENDING.load(std::sync::atomic::Ordering::Acquire),
+    )
+}
+
+fn permission_gate_response_for_state(
+    _request: &DaemonRequest,
+    pending: bool,
+) -> Option<DaemonResponse> {
+    if !pending {
+        return None;
+    }
+    Some(DaemonResponse::err(
+        "permissions_pending: macOS Accessibility or Screen Recording permission is still pending; no action started, retry after the permission gate completes",
+        75,
+    ))
+}
+
 fn daemon_metadata_response() -> DaemonResponse {
     DaemonResponse::ok(
         serde_json::to_value(cua_driver_core::daemon::current_daemon_metadata())
             .expect("daemon metadata is serializable"),
+    )
+}
+
+fn shutdown_response(request: &DaemonRequest) -> (DaemonResponse, bool) {
+    if request.method == "shutdown" {
+        return (
+            DaemonResponse::ok(serde_json::json!({"shutdown": true})),
+            true,
+        );
+    }
+    let expected_pid = request
+        .args
+        .as_ref()
+        .and_then(|args| args.get("expected_pid"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|pid| u32::try_from(pid).ok())
+        .filter(|pid| *pid != 0);
+    let Some(expected_pid) = expected_pid else {
+        return (
+            DaemonResponse::err(
+                "shutdown_if_pid requires a positive integer expected_pid",
+                64,
+            ),
+            false,
+        );
+    };
+    let actual_pid = std::process::id();
+    if expected_pid != actual_pid {
+        return (
+            DaemonResponse::err(
+                format!("daemon pid mismatch (expected {expected_pid}, found {actual_pid})"),
+                1,
+            ),
+            false,
+        );
+    }
+    (
+        DaemonResponse::ok(serde_json::json!({"shutdown": true})),
+        true,
     )
 }
 
@@ -446,6 +740,70 @@ fn authenticate_embedded_host_connection(stream: &tokio::net::UnixStream) -> any
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn history_cli_executable_path(
+    stream: &tokio::net::UnixStream,
+) -> anyhow::Result<std::path::PathBuf> {
+    use std::os::unix::ffi::OsStringExt as _;
+
+    let peer_pid = stream
+        .peer_cred()
+        .map_err(|error| anyhow::anyhow!("read history control peer credentials: {error}"))?
+        .pid()
+        .ok_or_else(|| anyhow::anyhow!("history control peer PID is unavailable"))?;
+    let mut buffer = vec![0_u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    let length =
+        unsafe { libc::proc_pidpath(peer_pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    if length <= 0 {
+        anyhow::bail!("history control peer executable path is unavailable");
+    }
+    let path_length = buffer[..length as usize]
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(length as usize);
+    buffer.truncate(path_length);
+    Ok(std::path::PathBuf::from(std::ffi::OsString::from_vec(
+        buffer,
+    )))
+}
+
+#[cfg(target_os = "linux")]
+fn history_cli_executable_path(
+    stream: &tokio::net::UnixStream,
+) -> anyhow::Result<std::path::PathBuf> {
+    let peer_pid = stream
+        .peer_cred()
+        .map_err(|error| anyhow::anyhow!("read history control peer credentials: {error}"))?
+        .pid()
+        .ok_or_else(|| anyhow::anyhow!("history control peer PID is unavailable"))?;
+    std::fs::read_link(format!("/proc/{peer_pid}/exe"))
+        .map_err(|error| anyhow::anyhow!("history control peer executable is unavailable: {error}"))
+}
+
+fn history_cli_authentication_path(
+    method: &str,
+    executable_path: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    if !matches!(method, "history_control" | "history_relaunch_state") {
+        return None;
+    }
+    executable_path.map(std::path::Path::to_path_buf)
+}
+
+async fn authenticate_history_cli_request(
+    method: &str,
+    executable_path: Option<&std::path::Path>,
+) -> bool {
+    let Some(executable_path) = history_cli_authentication_path(method, executable_path) else {
+        return false;
+    };
+    tokio::task::spawn_blocking(move || {
+        crate::history_runtime::verify_history_cli_executable_path(&executable_path).is_ok()
+    })
+    .await
+    .unwrap_or(false)
+}
+
 fn service_authorization_status(trusted_host_connection: bool) -> serde_json::Value {
     let mut status = cua_driver_core::authorization::status_json_with_provider(None);
     if trusted_host_connection {
@@ -474,7 +832,10 @@ fn service_authorization_status(trusted_host_connection: bool) -> serde_json::Va
 
 #[cfg(all(test, unix))]
 mod peer_authentication_tests {
-    use super::{authenticate_unix_peer, authenticate_unix_uid};
+    use super::{
+        authenticate_unix_peer, authenticate_unix_uid, history_cli_authentication_path,
+        history_relaunch_state_response, shutdown_response, DaemonRequest, ToolObservationOrigin,
+    };
 
     #[tokio::test]
     async fn same_user_unix_peer_is_accepted() {
@@ -487,6 +848,80 @@ mod peer_authentication_tests {
     fn foreign_unix_uid_is_rejected_before_request_parsing() {
         let error = authenticate_unix_uid(501, 502).unwrap_err();
         assert!(error.to_string().contains("reject Unix peer uid 502"));
+    }
+
+    #[test]
+    fn only_history_methods_select_the_peer_for_authentication() {
+        let path = std::path::Path::new("/installed/cua-driver");
+        for method in [
+            "list",
+            "metadata",
+            "authorization_status",
+            "call",
+            "shutdown",
+        ] {
+            assert_eq!(history_cli_authentication_path(method, Some(path)), None);
+        }
+        for method in ["history_control", "history_relaunch_state"] {
+            assert_eq!(
+                history_cli_authentication_path(method, Some(path)).as_deref(),
+                Some(path)
+            );
+            assert_eq!(history_cli_authentication_path(method, None), None);
+        }
+    }
+
+    #[test]
+    fn forged_cli_metadata_does_not_authenticate_history_control() {
+        let request = DaemonRequest {
+            method: "history_relaunch_state".to_owned(),
+            name: None,
+            args: None,
+            session_id: None,
+            observation_origin: Some(ToolObservationOrigin::Direct),
+            client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
+        };
+        let response = history_relaunch_state_response(&request, false);
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.as_deref(),
+            Some("history_relaunch_state_requires_local_cli")
+        );
+        assert!(history_relaunch_state_response(&request, true).ok);
+    }
+
+    fn shutdown_request(expected_pid: serde_json::Value) -> DaemonRequest {
+        DaemonRequest {
+            method: "shutdown_if_pid".to_owned(),
+            name: None,
+            args: Some(serde_json::json!({"expected_pid": expected_pid})),
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        }
+    }
+
+    #[test]
+    fn pid_bound_shutdown_accepts_only_the_current_process() {
+        let (response, should_shutdown) =
+            shutdown_response(&shutdown_request(std::process::id().into()));
+        assert!(response.ok);
+        assert!(should_shutdown);
+
+        let wrong_pid = if std::process::id() == 1 { 2 } else { 1 };
+        let (response, should_shutdown) = shutdown_response(&shutdown_request(wrong_pid.into()));
+        assert!(!response.ok);
+        assert!(!should_shutdown);
+        assert!(response.error.unwrap().contains("daemon pid mismatch"));
+    }
+
+    #[test]
+    fn pid_bound_shutdown_rejects_malformed_pid() {
+        let (response, should_shutdown) =
+            shutdown_response(&shutdown_request(serde_json::json!("1")));
+        assert!(!response.ok);
+        assert!(!should_shutdown);
+        assert_eq!(response.exit_code, Some(64));
     }
 }
 
@@ -504,6 +939,9 @@ pub async fn run_serve(
     use tokio::net::UnixListener;
 
     cua_driver_core::authorization::validate_startup_authorization()?;
+
+    #[cfg(target_os = "linux")]
+    platform_linux::recover_orphaned_mpx_devices();
 
     // Create parent directory.
     if let Some(dir) = std::path::Path::new(socket_path).parent() {
@@ -533,6 +971,9 @@ pub async fn run_serve(
     // Shutdown channel.
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
+    let trusted_resume_registry: TrustedResumeRegistry =
+        std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+    let mut connection_tasks = tokio::task::JoinSet::new();
     let parent_liveness = async {
         if cua_driver_core::parent_liveness_stdin_enabled() {
             wait_for_parent_stdin_eof().await;
@@ -548,6 +989,11 @@ pub async fn run_serve(
         crate::mcp_http::spawn(sdk.clone(), port)?;
     }
 
+    let _envelope_http = match crate::driver_service_http::configured_port()? {
+        Some(port) => Some(crate::driver_service_http::start(sdk.clone(), port).await?),
+        None => None,
+    };
+
     loop {
         tokio::select! {
             result = listener.accept() => {
@@ -558,10 +1004,12 @@ pub async fn run_serve(
                 }
                 let trusted_host_connection =
                     authenticate_embedded_host_connection(&stream).is_ok();
+                let history_cli_executable_path = history_cli_executable_path(&stream).ok();
                 let reg = sdk.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
+                let trusted_resume_registry = trusted_resume_registry.clone();
 
-                tokio::spawn(async move {
+                connection_tasks.spawn(async move {
                     let (reader, mut writer) = stream.into_split();
                     let mut lines = BufReader::new(reader).lines();
 
@@ -572,9 +1020,7 @@ pub async fn run_serve(
                     // connection EOFs (graceful proxy exit OR kill -9, both
                     // kernel-guaranteed), the post-loop block reaps the session.
                     let mut control_session_id: Option<String> = None;
-                    let mut trusted_session: Option<
-                        std::sync::Arc<cua_driver_sdk::CuaDriverSession>,
-                    > = None;
+                    let mut trusted_session: Option<TrustedConnectionSession> = None;
 
                     while let Ok(Some(line)) = lines.next_line().await {
                         let req: DaemonRequest = match serde_json::from_str(&line) {
@@ -590,18 +1036,41 @@ pub async fn run_serve(
                             }
                         };
 
+                        let trusted_history_cli_request = authenticate_history_cli_request(
+                            &req.method,
+                            history_cli_executable_path.as_deref(),
+                        ).await;
+
                         match req.method.as_str() {
+                            "mcp_envelope_stream" if control_session_id.is_none() && trusted_session.is_none() => {
+                                // Existing local-peer authentication already passed.
+                                // Registry and session lifetime belong to this stream.
+                                let _ = crate::mcp_envelope::accept(reg.clone(), lines.into_inner(), writer).await;
+                                return;
+                            }
                             "metadata" => {
                                 let resp = daemon_metadata_response();
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
                             }
-                            "shutdown" => {
-                                let resp = DaemonResponse::ok(serde_json::json!({"shutdown": true}));
+                            "history_relaunch_state" => {
+                                let resp = history_relaunch_state_response(
+                                    &req,
+                                    trusted_history_cli_request,
+                                );
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
+                            }
+                            "shutdown" | "shutdown_if_pid" => {
+                                let (resp, should_shutdown) = shutdown_response(&req);
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                                if !should_shutdown {
+                                    continue;
+                                }
                                 let mut guard = shutdown_tx2.lock().await;
                                 if let Some(tx) = guard.take() {
                                     let _ = tx.send(());
@@ -648,6 +1117,16 @@ pub async fn run_serve(
                                     DaemonResponse::ok(service_authorization_status(
                                         trusted_host_connection,
                                     ));
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "history_control" => {
+                                let resp = history_control_response_async(
+                                    reg.clone(),
+                                    req,
+                                    trusted_history_cli_request,
+                                ).await;
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -707,12 +1186,21 @@ pub async fn run_serve(
                                             serde_json::from_value(value)
                                                 .map_err(|error| format!("invalid trusted session options: {error}"))
                                         });
-                                    match options.and_then(|options| reg.create_trusted_session(options)) {
-                                        Ok(session) => {
-                                            trusted_session = Some(session);
+                                    match options.and_then(|options| {
+                                        bind_trusted_connection(
+                                            &reg,
+                                            options,
+                                            format!("trusted-{}", uuid::Uuid::new_v4()),
+                                        )
+                                    }) {
+                                        Ok(connection) => {
+                                            let resume_credential =
+                                                connection.resume_credential.clone();
+                                            trusted_session = Some(connection);
                                             DaemonResponse::ok(serde_json::json!({
                                                 "bound": true,
                                                 "connection_bound": true,
+                                                "resume_credential": resume_credential,
                                             }))
                                         }
                                         Err(error) => DaemonResponse::err(error, 77),
@@ -722,14 +1210,58 @@ pub async fn run_serve(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
                             }
+                            "trusted_session_resume" => {
+                                let resp = if !trusted_host_connection {
+                                    DaemonResponse::err(
+                                        "trusted service sessions require the original authenticated embedded host connection",
+                                        77,
+                                    )
+                                } else if trusted_session.is_some() {
+                                    DaemonResponse::err(
+                                        "this accepted connection already owns a trusted session",
+                                        65,
+                                    )
+                                } else {
+                                    let credential = req.args
+                                        .as_ref()
+                                        .and_then(|value| value.get("resume_credential"))
+                                        .and_then(serde_json::Value::as_str)
+                                        .filter(|value| !value.is_empty());
+                                    match credential {
+                                        Some(credential) => match resume_trusted_connection(
+                                            &reg,
+                                            &trusted_resume_registry,
+                                            credential,
+                                        ).await {
+                                            Ok(connection) => {
+                                                let rotated = connection.resume_credential.clone();
+                                                trusted_session = Some(connection);
+                                                DaemonResponse::ok(serde_json::json!({
+                                                    "bound": true,
+                                                    "connection_bound": true,
+                                                    "resume_credential": rotated,
+                                                }))
+                                            }
+                                            Err(error) => DaemonResponse::err(error, 77),
+                                        },
+                                        None => DaemonResponse::err(
+                                            "trusted_session_resume omitted resume credential",
+                                            65,
+                                        ),
+                                    }
+                                };
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
                             "trusted_session_call" => {
                                 let resp = match trusted_session.as_ref() {
-                                    Some(session) => {
+                                    Some(connection) => {
                                         let name = req.name.unwrap_or_default();
                                         let arguments = req.args.unwrap_or_else(|| {
                                             serde_json::Value::Object(serde_json::Map::new())
                                         });
-                                        match session.call_tool(name, arguments.to_string()).await {
+                                        match connection.session.call_tool(name, arguments.to_string()).await {
                                             Ok(result) => match serde_json::from_str(&result.raw_json) {
                                                 Ok(value) => DaemonResponse::ok(value),
                                                 Err(error) => DaemonResponse::err(
@@ -750,12 +1282,24 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "trusted_session_end" => {
-                                if let Some(session) = trusted_session.take() {
-                                    session.close();
-                                }
-                                let resp = DaemonResponse::ok(
-                                    serde_json::json!({"closed": true})
-                                );
+                                let resp = match trusted_session.as_ref() {
+                                    Some(connection) => match end_trusted_connection(connection).await {
+                                        Ok(()) => {
+                                            if let Some(connection) = trusted_session.take() {
+                                                connection.session.close();
+                                            }
+                                            DaemonResponse::ok(serde_json::json!({"closed": true}))
+                                        }
+                                        Err(error) => DaemonResponse::err(error, 77),
+                                    },
+                                    None => DaemonResponse::ok(serde_json::json!({"closed": true})),
+                                };
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "sessions_list" => {
+                                let resp = DaemonResponse::ok(reg.operator_sessions_json());
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -791,8 +1335,10 @@ pub async fn run_serve(
                                 // proxies never send it — the control-connection
                                 // EOF is the single teardown path. Always ACK ok.
                                 if let Some(sid) = req.session_id.as_deref() {
-                                    if let Err(error) = reg.end_session(sid).await {
-                                        tracing::warn!("legacy session_end failed: {error}");
+                                    if reg.end_transport_sessions(sid) == 0 {
+                                        if let Err(error) = reg.end_session(sid).await {
+                                            tracing::warn!("legacy session_end failed: {error}");
+                                        }
                                     }
                                 }
                                 let resp = DaemonResponse::ok(
@@ -824,12 +1370,10 @@ pub async fn run_serve(
                     // benign.
                     if let Some(sid) = control_session_id {
                         active_proxy_sessions().lock().unwrap().remove(&sid);
-                        if let Err(error) = reg.end_session(&sid).await {
-                            tracing::warn!("control-session cleanup failed: {error}");
-                        }
+                        reg.end_transport_sessions(&sid);
                     }
-                    if let Some(session) = trusted_session {
-                        session.close();
+                    if let Some(connection) = trusted_session {
+                        detach_trusted_connection(&trusted_resume_registry, connection).await;
                     }
                 });
             }
@@ -843,6 +1387,11 @@ pub async fn run_serve(
             }
         }
     }
+
+    // Accepted connections may still own SDK/session state after the listener
+    // stops. Abort and join them before tearing down the SDK runtime.
+    connection_tasks.shutdown().await;
+    release_active_proxy_sessions();
 
     // Do not unlink a replacement socket created after this listener was bound.
     remove_owned_socket(socket_path, bound_socket);
@@ -1119,8 +1668,6 @@ pub async fn run_serve(
 
     cua_driver_core::authorization::validate_startup_authorization()?;
 
-    eprintln!("Cua Driver daemon listening on {socket_path}");
-
     // Build the current-user descriptor once and reuse it for every pipe
     // instance. Both service and embedded mode fail closed if the ACL cannot
     // be created; an Everyone ACL would expose the desktop-action endpoint to
@@ -1147,6 +1694,8 @@ pub async fn run_serve(
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
+    let trusted_resume_registry: TrustedResumeRegistry =
+        std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()));
     let parent_liveness = async {
         if cua_driver_core::parent_liveness_stdin_enabled() {
             wait_for_parent_stdin_eof().await;
@@ -1161,29 +1710,86 @@ pub async fn run_serve(
         crate::mcp_http::spawn(sdk.clone(), port)?;
     }
 
+    let _envelope_http = match crate::driver_service_http::configured_port()? {
+        Some(port) => Some(crate::driver_service_http::start(sdk.clone(), port).await?),
+        None => None,
+    };
+
+    // A failure to create or connect a later pipe instance must not end the
+    // daemon: connections already being served keep their instances, and the
+    // next instance usually succeeds. Only the first instance is fatal, since
+    // it proves the daemon owns the name. A daemon that cannot recover exits
+    // after `PIPE_INSTANCE_FAILURE_LIMIT` consecutive failures so its
+    // supervisor can restart it instead of leaving a live PID behind an
+    // unreachable pipe.
     let mut first_pipe = true;
+    let mut consecutive_failures: u32 = 0;
+    let mut fatal_error: Option<anyhow::Error> = None;
     loop {
+        if consecutive_failures > 0 {
+            if consecutive_failures >= PIPE_INSTANCE_FAILURE_LIMIT {
+                fatal_error = Some(anyhow::anyhow!(
+                    "named pipe {socket_path}: {consecutive_failures} consecutive pipe instance failures"
+                ));
+                break;
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(PIPE_INSTANCE_RETRY_DELAY) => {}
+                _ = &mut shutdown_rx => {
+                    eprintln!("Cua Driver daemon shutting down.");
+                    break;
+                }
+                _ = &mut parent_liveness => {
+                    eprintln!("Cua Driver embedded host closed its lifetime pipe; shutting down.");
+                    break;
+                }
+            }
+        }
+
         // All daemons use the current-user descriptor. Embedded daemons also
         // reserve the pipe name with their first instance.
         let first_pipe_instance = embedded && first_pipe;
-        let server = if sec_attrs_ptr.is_null() {
+        let created = if sec_attrs_ptr.is_null() {
             ServerOptions::new()
                 .first_pipe_instance(first_pipe_instance)
                 .create(socket_path)
-                .map_err(|e| anyhow::anyhow!("create named pipe {socket_path}: {e}"))?
         } else {
             unsafe {
                 ServerOptions::new()
                     .first_pipe_instance(first_pipe_instance)
                     .create_with_security_attributes_raw(socket_path, sec_attrs_ptr)
-                    .map_err(|e| anyhow::anyhow!("create named pipe {socket_path}: {e}"))?
             }
         };
-        first_pipe = false;
+        let server = match created {
+            Ok(server) => server,
+            Err(error) if first_pipe => {
+                anyhow::bail!("create named pipe {socket_path}: {error}");
+            }
+            Err(error) => {
+                consecutive_failures += 1;
+                eprintln!(
+                    "Cua Driver: create named pipe {socket_path} failed ({consecutive_failures} consecutive): {error}; retrying"
+                );
+                continue;
+            }
+        };
+        if first_pipe {
+            first_pipe = false;
+            // Announce only after the name is bound, so the banner never
+            // claims a pipe that failed to open.
+            eprintln!("Cua Driver daemon listening on {socket_path}");
+        }
 
         tokio::select! {
             result = server.connect() => {
-                result.map_err(|e| anyhow::anyhow!("named pipe connect: {e}"))?;
+                if let Err(error) = result {
+                    consecutive_failures += 1;
+                    eprintln!(
+                        "Cua Driver: named pipe connect on {socket_path} failed ({consecutive_failures} consecutive): {error}; recreating the instance"
+                    );
+                    continue;
+                }
+                consecutive_failures = 0;
                 let expected_sid = unsafe { current_user_sid_string() };
                 let client_process_id =
                     unsafe { named_pipe_client_process_id(server.as_raw_handle().cast()) };
@@ -1208,9 +1814,12 @@ pub async fn run_serve(
                         expected_host_process_id,
                         client_process_id,
                     );
+                let history_cli_executable_path =
+                    client_process_id.and_then(platform_windows::history::process_executable_path);
 
                 let reg = sdk.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
+                let trusted_resume_registry = trusted_resume_registry.clone();
 
                 tokio::spawn(async move {
                     let (reader, mut writer) = tokio::io::split(server);
@@ -1222,9 +1831,7 @@ pub async fn run_serve(
                     // ERROR_BROKEN_PIPE on the next read, ending the while-let
                     // loop equally reliably.
                     let mut control_session_id: Option<String> = None;
-                    let mut trusted_session: Option<
-                        std::sync::Arc<cua_driver_sdk::CuaDriverSession>,
-                    > = None;
+                    let mut trusted_session: Option<TrustedConnectionSession> = None;
 
                     while let Ok(Some(line)) = lines.next_line().await {
                         let req: DaemonRequest = match serde_json::from_str(&line) {
@@ -1238,18 +1845,40 @@ pub async fn run_serve(
                             }
                         };
 
+                        let trusted_history_cli_request = authenticate_history_cli_request(
+                            &req.method,
+                            history_cli_executable_path.as_deref(),
+                        ).await;
+
                         match req.method.as_str() {
+                            "mcp_envelope_stream" if control_session_id.is_none() && trusted_session.is_none() => {
+                                // Same transport-owned receiver as the Unix branch.
+                                let _ = crate::mcp_envelope::accept(reg.clone(), lines.into_inner(), writer).await;
+                                return;
+                            }
                             "metadata" => {
                                 let resp = daemon_metadata_response();
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
                             }
-                            "shutdown" => {
-                                let resp = DaemonResponse::ok(serde_json::json!({"shutdown": true}));
+                            "history_relaunch_state" => {
+                                let resp = history_relaunch_state_response(
+                                    &req,
+                                    trusted_history_cli_request,
+                                );
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
+                            }
+                            "shutdown" | "shutdown_if_pid" => {
+                                let (resp, should_shutdown) = shutdown_response(&req);
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                                if !should_shutdown {
+                                    continue;
+                                }
                                 let mut guard = shutdown_tx2.lock().await;
                                 if let Some(tx) = guard.take() { let _ = tx.send(()); }
                                 return;
@@ -1279,6 +1908,16 @@ pub async fn run_serve(
                                     DaemonResponse::ok(service_authorization_status(
                                         trusted_host_connection,
                                     ));
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "history_control" => {
+                                let resp = history_control_response_async(
+                                    reg.clone(),
+                                    req,
+                                    trusted_history_cli_request,
+                                ).await;
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -1338,12 +1977,20 @@ pub async fn run_serve(
                                             serde_json::from_value(value)
                                                 .map_err(|error| format!("invalid trusted session options: {error}"))
                                         });
-                                    match options.and_then(|options| reg.create_trusted_session(options)) {
-                                        Ok(session) => {
-                                            trusted_session = Some(session);
+                                    match options.and_then(|options| {
+                                        bind_trusted_connection(
+                                            &reg,
+                                            options,
+                                            format!("trusted-{}", uuid::Uuid::new_v4()),
+                                        )
+                                    }) {
+                                        Ok(connection) => {
+                                            let resume_credential = connection.resume_credential.clone();
+                                            trusted_session = Some(connection);
                                             DaemonResponse::ok(serde_json::json!({
                                                 "bound": true,
                                                 "connection_bound": true,
+                                                "resume_credential": resume_credential,
                                             }))
                                         }
                                         Err(error) => DaemonResponse::err(error, 77),
@@ -1353,14 +2000,58 @@ pub async fn run_serve(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
                             }
+                            "trusted_session_resume" => {
+                                let resp = if !trusted_host_connection {
+                                    DaemonResponse::err(
+                                        "trusted service sessions require the original authenticated embedded host connection",
+                                        77,
+                                    )
+                                } else if trusted_session.is_some() {
+                                    DaemonResponse::err(
+                                        "this accepted connection already owns a trusted session",
+                                        65,
+                                    )
+                                } else {
+                                    let credential = req.args
+                                        .as_ref()
+                                        .and_then(|value| value.get("resume_credential"))
+                                        .and_then(serde_json::Value::as_str)
+                                        .filter(|value| !value.is_empty());
+                                    match credential {
+                                        Some(credential) => match resume_trusted_connection(
+                                            &reg,
+                                            &trusted_resume_registry,
+                                            credential,
+                                        ).await {
+                                            Ok(connection) => {
+                                                let rotated = connection.resume_credential.clone();
+                                                trusted_session = Some(connection);
+                                                DaemonResponse::ok(serde_json::json!({
+                                                    "bound": true,
+                                                    "connection_bound": true,
+                                                    "resume_credential": rotated,
+                                                }))
+                                            }
+                                            Err(error) => DaemonResponse::err(error, 77),
+                                        },
+                                        None => DaemonResponse::err(
+                                            "trusted_session_resume omitted resume credential",
+                                            65,
+                                        ),
+                                    }
+                                };
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
                             "trusted_session_call" => {
                                 let resp = match trusted_session.as_ref() {
-                                    Some(session) => {
+                                    Some(connection) => {
                                         let name = req.name.unwrap_or_default();
                                         let arguments = req.args.unwrap_or_else(|| {
                                             serde_json::Value::Object(serde_json::Map::new())
                                         });
-                                        match session.call_tool(name, arguments.to_string()).await {
+                                        match connection.session.call_tool(name, arguments.to_string()).await {
                                             Ok(result) => match serde_json::from_str(&result.raw_json) {
                                                 Ok(value) => DaemonResponse::ok(value),
                                                 Err(error) => DaemonResponse::err(
@@ -1381,12 +2072,24 @@ pub async fn run_serve(
                                 ).await;
                             }
                             "trusted_session_end" => {
-                                if let Some(session) = trusted_session.take() {
-                                    session.close();
-                                }
-                                let resp = DaemonResponse::ok(
-                                    serde_json::json!({"closed": true})
-                                );
+                                let resp = match trusted_session.as_ref() {
+                                    Some(connection) => match end_trusted_connection(connection).await {
+                                        Ok(()) => {
+                                            if let Some(connection) = trusted_session.take() {
+                                                connection.session.close();
+                                            }
+                                            DaemonResponse::ok(serde_json::json!({"closed": true}))
+                                        }
+                                        Err(error) => DaemonResponse::err(error, 77),
+                                    },
+                                    None => DaemonResponse::ok(serde_json::json!({"closed": true})),
+                                };
+                                let _ = writer.write_all(
+                                    (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
+                                ).await;
+                            }
+                            "sessions_list" => {
+                                let resp = DaemonResponse::ok(reg.operator_sessions_json());
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
@@ -1415,8 +2118,10 @@ pub async fn run_serve(
                                 // connection; control_session_id stays None so no
                                 // EOF double-fire. fire_session_end is idempotent.
                                 if let Some(sid) = req.session_id.as_deref() {
-                                    if let Err(error) = reg.end_session(sid).await {
-                                        tracing::warn!("legacy session_end failed: {error}");
+                                    if reg.end_transport_sessions(sid) == 0 {
+                                        if let Err(error) = reg.end_session(sid).await {
+                                            tracing::warn!("legacy session_end failed: {error}");
+                                        }
                                     }
                                 }
                                 let resp = DaemonResponse::ok(
@@ -1442,12 +2147,10 @@ pub async fn run_serve(
                     // control_session_id None.
                     if let Some(sid) = control_session_id {
                         active_proxy_sessions().lock().unwrap().remove(&sid);
-                        if let Err(error) = reg.end_session(&sid).await {
-                            tracing::warn!("control-session cleanup failed: {error}");
-                        }
+                        reg.end_transport_sessions(&sid);
                     }
-                    if let Some(session) = trusted_session {
-                        session.close();
+                    if let Some(connection) = trusted_session {
+                        detach_trusted_connection(&trusted_resume_registry, connection).await;
                     }
                 });
             }
@@ -1468,8 +2171,20 @@ pub async fn run_serve(
     sdk.shutdown()
         .await
         .map_err(|error| anyhow::anyhow!("shut down SDK runtime: {error}"))?;
-    Ok(())
+    match fatal_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
+
+/// Pause between attempts to replace a named-pipe instance that failed.
+#[cfg(target_os = "windows")]
+const PIPE_INSTANCE_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Consecutive instance failures (about one minute of retries) after which
+/// the daemon gives up and exits.
+#[cfg(target_os = "windows")]
+const PIPE_INSTANCE_FAILURE_LIMIT: u32 = 120;
 
 #[cfg(all(test, target_os = "windows"))]
 mod named_pipe_authentication_tests {
@@ -1567,7 +2282,11 @@ pub fn run_serve_cmd(
             std::process::exit(1);
         }
     };
-    if let Err(e) = rt.block_on(run_serve(sdk, &socket_path, pid_file_path.as_deref())) {
+    let result = rt.block_on(run_serve(sdk, &socket_path, pid_file_path.as_deref()));
+    rt.shutdown_timeout(std::time::Duration::from_secs(30));
+    cua_driver_core::session_authorization::release_configured_registry_for_shutdown();
+    cua_driver_core::session::release_process_state_for_shutdown();
+    if let Err(e) = result {
         eprintln!("cua-driver serve error: {e}");
         std::process::exit(1);
     }
@@ -1621,13 +2340,6 @@ pub fn run_stop_cmd(socket_path: &str) {
 /// `cua-driver status` implementation.
 pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
     if is_daemon_listening(socket_path) {
-        println!("Cua Driver daemon is running");
-        println!("  socket: {socket_path}");
-        if let Some(pid) = read_pid_file(pid_file_path) {
-            println!("  pid: {pid}");
-        } else {
-            println!("  pid: unknown (no pid file)");
-        }
         let request = DaemonRequest {
             method: "authorization_status".to_owned(),
             name: None,
@@ -1636,7 +2348,26 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
             observation_origin: Some(ToolObservationOrigin::Direct),
             client_kind: None,
         };
-        if let Ok(response) = send_request(socket_path, &request) {
+        let response = send_request(socket_path, &request);
+        if let Err(error) = &response {
+            eprintln!("Cua Driver daemon endpoint exists but is not reachable");
+            eprintln!("  socket: {socket_path}");
+            eprintln!("  error: {error}");
+            #[cfg(target_os = "windows")]
+            eprintln!(
+                "  hint: the named pipe accepts only the Windows account that owns the daemon. \
+                 Run `whoami /user` in this shell and in the interactive desktop; the SIDs must match."
+            );
+            std::process::exit(1);
+        }
+        println!("Cua Driver daemon is running");
+        println!("  socket: {socket_path}");
+        if let Some(pid) = read_pid_file(pid_file_path) {
+            println!("  pid: {pid}");
+        } else {
+            println!("  pid: unknown (no pid file)");
+        }
+        if let Ok(response) = response {
             if let Some(status) = response.result {
                 println!(
                     "  permission mode: {} ({})",
@@ -1675,18 +2406,20 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
                         .unwrap_or("unavailable")
                 );
                 println!(
-                    "  session policy: configured={}, approved_at_startup={}, valid={}",
-                    status["session_policy_configured"]
+                    "  capability manifest: configured={}, approved_at_startup={}, valid={}",
+                    status["capability_manifest_configured"]
                         .as_bool()
                         .unwrap_or(false),
-                    status["session_policy_approved_at_startup"]
+                    status["capability_manifest_approved_at_startup"]
                         .as_bool()
                         .unwrap_or(false),
-                    status["session_policy_valid"].as_bool().unwrap_or(false),
+                    status["capability_manifest_valid"]
+                        .as_bool()
+                        .unwrap_or(false),
                 );
-                if let Some(manifest) = status["session_policy"].as_object() {
+                if let Some(manifest) = status["capability_manifest"].as_object() {
                     println!(
-                        "  session policy sha256: {}",
+                        "  capability manifest sha256: {}",
                         manifest
                             .get("sha256")
                             .and_then(serde_json::Value::as_str)
@@ -1698,6 +2431,65 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
     } else {
         eprintln!("Cua Driver daemon is not running");
         std::process::exit(1);
+    }
+}
+
+/// `cua-driver sessions list` implementation. This is an operator surface,
+/// not an MCP tool: the daemon returns only content-free lifecycle metadata
+/// and redacts transport ownership to a short correlation id.
+pub fn run_sessions_list_cmd(socket_path: &str, json: bool) {
+    let request = DaemonRequest {
+        method: "sessions_list".to_owned(),
+        name: None,
+        args: None,
+        session_id: None,
+        observation_origin: Some(ToolObservationOrigin::Direct),
+        client_kind: None,
+    };
+    match send_request(socket_path, &request) {
+        Ok(response) if response.ok => {
+            let result = response
+                .result
+                .unwrap_or_else(|| serde_json::json!({"sessions": [], "count": 0}));
+            if json {
+                println!("{}", serde_json::to_string(&result).unwrap());
+                return;
+            }
+            let sessions = result
+                .get("sessions")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if sessions.is_empty() {
+                println!("No live sessions.");
+                return;
+            }
+            println!("STATE\tTRANSPORT\tCLIENT\tSESSION\tOWNER\tIDLE");
+            for session in sessions {
+                println!(
+                    "{}\t{}\t{}\t{}\t{}\t{}s",
+                    session["state"].as_str().unwrap_or("unknown"),
+                    session["transport"].as_str().unwrap_or("unknown"),
+                    session["client_kind"].as_str().unwrap_or("unknown"),
+                    session["session"].as_str().unwrap_or("(implicit)"),
+                    session["owner_short_id"].as_str().unwrap_or("unknown"),
+                    session["idle_seconds"].as_u64().unwrap_or(0),
+                );
+            }
+        }
+        Ok(response) => {
+            eprintln!(
+                "{}",
+                response
+                    .error
+                    .unwrap_or_else(|| "session listing failed".to_owned())
+            );
+            std::process::exit(response.exit_code.unwrap_or(1));
+        }
+        Err(error) => {
+            eprintln!("session listing failed: {error}");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -1963,8 +2755,8 @@ mod gate_tests {
         let start = DaemonRequest {
             method: "call".into(),
             name: Some("start_session".into()),
-            // Session policy is caller-declared. The transport session id is
-            // cleanup/ownership metadata and must not grant policy authority.
+            // The public lifecycle label is caller-declared. The transport
+            // session id is cleanup metadata and cannot grant authority.
             args: Some(serde_json::json!({ "session": s3b.clone() })),
             session_id: Some(s3b),
             observation_origin: None,
@@ -2071,6 +2863,40 @@ mod gate_tests {
 }
 
 #[cfg(test)]
+mod permission_gate_routing_tests {
+    use super::{permission_gate_response_for_state, DaemonRequest};
+
+    fn call(name: &str) -> DaemonRequest {
+        DaemonRequest {
+            method: "call".into(),
+            name: Some(name.into()),
+            args: Some(serde_json::json!({})),
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        }
+    }
+
+    #[test]
+    fn pending_gate_rejects_desktop_calls_with_typed_retry() {
+        let response = permission_gate_response_for_state(&call("list_windows"), true)
+            .expect("pending gate must reject desktop calls");
+        assert!(!response.ok);
+        assert!(response
+            .error
+            .as_deref()
+            .is_some_and(|message| message.starts_with("permissions_pending:")));
+        assert_eq!(response.exit_code, Some(75));
+    }
+
+    #[test]
+    fn calls_resume_only_after_the_gate_completes() {
+        assert!(permission_gate_response_for_state(&call("check_permissions"), true).is_some());
+        assert!(permission_gate_response_for_state(&call("list_windows"), false).is_none());
+    }
+}
+
+#[cfg(test)]
 mod telemetry_routing_tests {
     use super::*;
 
@@ -2115,6 +2941,59 @@ mod telemetry_routing_tests {
 }
 
 #[cfg(test)]
+mod trusted_resume_tests {
+    use super::{take_trusted_resume_record, TrustedResumeRecord, TrustedResumeRegistry};
+    use cua_driver_sdk::{SessionPermissionMode, TrustedSessionOptions};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+    use tokio::sync::Mutex;
+
+    fn record(expires_at: Instant, transport_session: &str) -> TrustedResumeRecord {
+        TrustedResumeRecord {
+            options: TrustedSessionOptions {
+                public_session: "public-test".into(),
+                mode: SessionPermissionMode::Standard,
+                ttl_seconds: 60,
+                idle_ttl_seconds: 30,
+                capability_manifest_path: None,
+                bounded_manifest_path: None,
+            },
+            transport_session: transport_session.into(),
+            expires_at,
+        }
+    }
+
+    #[tokio::test]
+    async fn resume_credentials_are_single_use_expiring_and_prune_orphans() {
+        let now = Instant::now();
+        let registry: TrustedResumeRegistry = Arc::new(Mutex::new(HashMap::from([
+            ("expired-target".into(), record(now, "expired-target-lease")),
+            ("expired-orphan".into(), record(now, "expired-orphan-lease")),
+            (
+                "live".into(),
+                record(now + Duration::from_secs(60), "live-lease"),
+            ),
+        ])));
+
+        let error = take_trusted_resume_record(&registry, "expired-target")
+            .await
+            .expect_err("expired credential must fail closed");
+        assert!(error.contains("expired"));
+        assert!(!registry.lock().await.contains_key("expired-orphan"));
+
+        let live = take_trusted_resume_record(&registry, "live")
+            .await
+            .expect("live credential is consumed once");
+        assert_eq!(live.transport_session, "live-lease");
+        let replay = take_trusted_resume_record(&registry, "live")
+            .await
+            .expect_err("consumed credential must not replay");
+        assert!(replay.contains("unavailable or already used"));
+    }
+}
+
+#[cfg(test)]
 mod service_authorization_status_tests {
     use super::service_authorization_status;
 
@@ -2139,84 +3018,13 @@ mod service_authorization_status_tests {
 
 #[cfg(test)]
 mod session_boundary_tests {
-    use super::{active_proxy_sessions, apply_session_identity, inject_browser_approvals};
-    use cua_driver_core::browser::approval::MCP_HOST_APPROVAL_ARG;
+    use super::{active_proxy_sessions, inject_browser_approvals};
     use cua_driver_core::browser::download::MCP_HOST_DOWNLOAD_APPROVAL_ARG;
     use serde_json::json;
 
     #[test]
-    fn explicit_session_becomes_session_id_and_is_returned() {
-        let mut args = json!({ "x": 1, "session": "research-1" });
-        let eff = apply_session_identity(&mut args, &None);
-        assert_eq!(eff.as_deref(), Some("research-1"));
-        assert_eq!(args["_session_id"], "research-1");
-        assert!(args.get("_transport_session_id").is_none());
-    }
-
-    #[test]
-    fn public_and_transport_sessions_remain_independent() {
-        let mut args = json!({ "session": "capability-session" });
-        let eff = apply_session_identity(&mut args, &Some("proxy-session".to_owned()));
-        assert_eq!(eff.as_deref(), Some("capability-session"));
-        assert_eq!(args["_session_id"], "capability-session");
-        assert_eq!(args["_transport_session_id"], "proxy-session");
-    }
-
-    #[test]
-    fn no_session_falls_back_to_minted_for_session_id_only() {
-        // The minted per-connection id drives `_session_id` (recording / config
-        // lifecycle) but there is NO explicit `session`, so the cursor resolver
-        // — which reads `session`/`cursor_id`, not `_session_id` — sees nothing.
-        let mut args = json!({ "x": 1 });
-        let eff = apply_session_identity(&mut args, &Some("mcp-123".to_owned()));
-        assert_eq!(args["_session_id"], "mcp-123");
-        assert_eq!(eff.as_deref(), Some("mcp-123"));
-        assert_eq!(args["_transport_session_id"], "mcp-123");
-        assert!(args.get("session").is_none());
-    }
-
-    #[test]
-    fn anonymous_when_no_session_and_no_minted() {
-        let mut args = json!({ "x": 1 });
-        let eff = apply_session_identity(&mut args, &None);
-        assert!(eff.is_none());
-        assert!(args.get("_session_id").is_none());
-    }
-
-    #[test]
-    fn caller_set_session_id_is_replaced_by_minted() {
-        let mut args = json!({ "_session_id": "caller-set" });
-        let eff = apply_session_identity(&mut args, &Some("mcp-999".to_owned()));
-        assert_eq!(args["_session_id"], "mcp-999");
-        assert_eq!(args["_transport_session_id"], "mcp-999");
-        assert_eq!(eff.as_deref(), Some("mcp-999"));
-    }
-
-    #[test]
-    fn browser_prepare_approval_requires_a_live_proxy_session() {
+    fn browser_download_approval_requires_a_live_proxy_session() {
         let session = "approval-boundary-test";
-        let mut raw_args = json!({"pid": 42});
-        inject_browser_approvals("browser_prepare", &mut raw_args, Some(session));
-        assert!(raw_args.get(MCP_HOST_APPROVAL_ARG).is_none());
-
-        active_proxy_sessions()
-            .lock()
-            .unwrap()
-            .insert(session.to_owned());
-        let mut proxy_args = json!({"pid": 42});
-        inject_browser_approvals("browser_prepare", &mut proxy_args, Some(session));
-        active_proxy_sessions().lock().unwrap().remove(session);
-        assert_eq!(proxy_args[MCP_HOST_APPROVAL_ARG], true);
-
-        let mut other_tool = json!({"pid": 42});
-        active_proxy_sessions()
-            .lock()
-            .unwrap()
-            .insert(session.to_owned());
-        inject_browser_approvals("get_browser_state", &mut other_tool, Some(session));
-        active_proxy_sessions().lock().unwrap().remove(session);
-        assert!(other_tool.get(MCP_HOST_APPROVAL_ARG).is_none());
-
         let mut raw_download = json!({"destination_root": "/private/path"});
         inject_browser_approvals("browser_download", &mut raw_download, Some(session));
         assert!(raw_download.get(MCP_HOST_DOWNLOAD_APPROVAL_ARG).is_none());

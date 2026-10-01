@@ -91,11 +91,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn process_names_match_documented_terminals() {
-        for n in TERMINAL_PROCESS_NAMES {
+    fn known_terminal_process_names_match() {
+        // Literal names, not the helper's own table: Ghostty was the report's
+        // primary regression.
+        for n in ["ghostty", "alacritty", "kitty", "konsole", "xterm"] {
             assert!(
                 is_terminal_process_name(n),
-                "documented terminal process {n:?} must match"
+                "terminal process {n:?} must match"
             );
         }
     }
@@ -117,6 +119,8 @@ mod tests {
             ("alacritty", "Alacritty"),
             ("kitty", "kitty"),
             ("ghostty", "Ghostty"),
+            ("Ghostty", ""),
+            ("", "ghostty"),
             ("Konsole", "konsole"),
             ("gnome-terminal-server", "Gnome-terminal"),
             ("xterm", "XTerm"),
@@ -145,15 +149,5 @@ mod tests {
                 "WM_CLASS=({instance:?}, {class:?}) must not match a terminal"
             );
         }
-    }
-
-    #[test]
-    fn ghostty_matches() {
-        // Spot-check Ghostty across casing / field positions — that was
-        // the report's primary regression.
-        assert!(wm_class_matches_terminal("ghostty", "Ghostty"));
-        assert!(wm_class_matches_terminal("Ghostty", ""));
-        assert!(wm_class_matches_terminal("", "ghostty"));
-        assert!(is_terminal_process_name("ghostty"));
     }
 }

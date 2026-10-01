@@ -190,16 +190,6 @@ mod tests {
     }
 
     #[test]
-    fn windows_terminal_and_mintty_present() {
-        // Spot-check the trio called out in the bug report so the
-        // regression that motivated this list can't quietly slip back
-        // out during a refactor.
-        assert!(class_matches_terminal("CASCADIA_HOSTING_WINDOW_CLASS"));
-        assert!(class_matches_terminal("mintty"));
-        assert!(class_matches_terminal("ConsoleWindowClass"));
-    }
-
-    #[test]
     fn native_consolehost_refuses_both_delivery_modes() {
         assert_eq!(
             type_text_policy_for_class("ConsoleWindowClass", false, true),

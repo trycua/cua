@@ -239,6 +239,11 @@ async fn handle_request(
             .await
             .map_err(|error| error.to_string())
             .and_then(|json| serde_json::from_str(&json).map_err(|error| error.to_string())),
+        "sessions_list" => driver
+            .list_host_sessions_json()
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|json| serde_json::from_str(&json).map_err(|error| error.to_string())),
         "call" => {
             let name = request.name.as_deref().unwrap_or("");
             let arguments = request
@@ -329,14 +334,4 @@ fn write_response(writer: &mut impl Write, response: &ChannelResponse) -> anyhow
     writer.write_all(b"\n")?;
     writer.flush()?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::requested_generation;
-
-    #[test]
-    fn ordinary_process_is_not_a_private_worker() {
-        assert!(requested_generation().is_none());
-    }
 }

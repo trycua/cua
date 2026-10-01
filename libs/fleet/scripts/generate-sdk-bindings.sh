@@ -5,8 +5,9 @@ usage() {
   cat >&2 <<'USAGE'
 Usage: generate-sdk-bindings.sh [--check]
 
-Generate checked-in UniFFI Python, Kotlin, Swift, and Ruby bindings. --check
-compares fresh output to the checked-in generated source without modifying it.
+Generate all checked-in UniFFI bindings, including Go, Node TypeScript, and
+browser TypeScript compatibility targets. --check compares fresh output to the
+checked-in generated source without modifying it.
 USAGE
 }
 
@@ -21,11 +22,13 @@ if [ "$#" -gt 1 ]; then
   exit 2
 fi
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-workspace_dir="$repo_root/cyclops-cs"
+workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 workspace="$workspace_dir/Cargo.toml"
 bindings_dir="$workspace_dir/sdk-bindings"
 languages="python kotlin swift ruby"
+binding_roots="$languages go-uniffi ts-uniffi ts-uniffi-browser"
+go_bindgen_version="uniffi-bindgen 0.7.1+v0.31.0"
+typescript_bindgen_package="uniffi-bindgen-react-native@0.31.0-3"
 manifest_name=".cyclops-sdk-generated-files"
 
 if cargo_bin="$(command -v cargo)" && [ -n "$cargo_bin" ]; then
@@ -35,10 +38,25 @@ else
   exit 127
 fi
 
+if go_bindgen_bin="$(command -v uniffi-bindgen-go)" && \
+  [ "$($go_bindgen_bin --version)" = "$go_bindgen_version" ]; then
+  :
+else
+  echo "error: uniffi-bindgen-go $go_bindgen_version must be available on PATH" >&2
+  exit 127
+fi
+
 if rustc_bin="$(command -v rustc)" && [ -n "$rustc_bin" ]; then
   :
 else
   echo "error: rustc must be available on PATH" >&2
+  exit 127
+fi
+
+if npx_bin="$(command -v npx)" && [ -n "$npx_bin" ]; then
+  :
+else
+  echo "error: npx must be available on PATH" >&2
   exit 127
 fi
 
@@ -120,6 +138,7 @@ ruby_method_names() {
   source_file="$1"
   method_prefix="$2"
   case "$method_prefix" in
+    alloc) pattern='alloc_from_(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
     check_lower) pattern='check_lower_[A-Za-z0-9_]+' ;;
     read) pattern='read(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
     write) pattern='write_(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
@@ -131,6 +150,7 @@ ruby_defined_method_names() {
   source_file="$1"
   method_prefix="$2"
   case "$method_prefix" in
+    alloc) pattern='alloc_from_(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
     check_lower) pattern='check_lower_[A-Za-z0-9_]+' ;;
     read) pattern='read(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
     write) pattern='write_(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
@@ -154,7 +174,7 @@ write_ruby_facade() {
   sdk_file="$1"
   schema_file="$2"
   facade_file="$3"
-  for method_prefix in check_lower read write; do
+  for method_prefix in alloc check_lower read write; do
     references="$temporary_output/ruby-$method_prefix-references"
     definitions="$temporary_output/ruby-$method_prefix-definitions"
     schema_definitions="$temporary_output/ruby-schema-$method_prefix-definitions"
@@ -185,6 +205,7 @@ module FleetSdk
     const_set(name, CyclopsSdkSchema.const_get(name)) unless const_defined?(name, false)
   end
 RUBY_FACADE_HEADER
+  write_ruby_method_array "SCHEMA_ALLOC_METHODS" "$temporary_output/ruby-alloc-external" "$facade_file"
   write_ruby_method_array "SCHEMA_CHECK_LOWER_METHODS" "$temporary_output/ruby-check_lower-external" "$facade_file"
   write_ruby_method_array "SCHEMA_READ_METHODS" "$temporary_output/ruby-read-external" "$facade_file"
   write_ruby_method_array "SCHEMA_WRITE_METHODS" "$temporary_output/ruby-write-external" "$facade_file"
@@ -192,6 +213,20 @@ RUBY_FACADE_HEADER
 
   schema_rust_buffer = CyclopsSdkSchema::RustBuffer
   schema_stream = CyclopsSdkSchema.const_get(:RustBufferStream, false)
+
+  SCHEMA_ALLOC_METHODS.each do |method_name|
+    RustBuffer.define_singleton_method(method_name) do |value|
+      buffer = schema_rust_buffer.public_send(method_name, value)
+      begin
+        RustBuffer.allocWithBuilder do |builder|
+          builder.write(buffer.data.read_bytes(buffer.len))
+          builder.finalize
+        end
+      ensure
+        buffer.free
+      end
+    end
+  end
 
   SCHEMA_CHECK_LOWER_METHODS.each do |method_name|
     RustBuffer.define_singleton_method(method_name) do |value|
@@ -221,7 +256,8 @@ RUBY_FACADE_HEADER
     end
   end
 
-  private_constant :SCHEMA_CHECK_LOWER_METHODS, :SCHEMA_READ_METHODS, :SCHEMA_WRITE_METHODS
+  private_constant :SCHEMA_ALLOC_METHODS, :SCHEMA_CHECK_LOWER_METHODS,
+                   :SCHEMA_READ_METHODS, :SCHEMA_WRITE_METHODS
 end
 RUBY_FACADE_FOOTER
 }
@@ -231,9 +267,11 @@ write_python_facade() {
   schema_file="$2"
   facade_file="$3"
   private_exports="$temporary_output/python-schema-private-exports"
+  converter_adapters="$temporary_output/python-schema-converter-adapters"
 
   grep_matches_or_empty 'fleet_sdk\._[A-Za-z_][A-Za-z0-9_]*' "$sdk_file" \
     | sed 's/^fleet_sdk\.//' | LC_ALL=C sort -u > "$private_exports"
+  : > "$converter_adapters"
 
   cat > "$facade_file" <<'PYTHON_FACADE_HEADER'
 from . import _schema as _schema_component
@@ -245,22 +283,71 @@ PYTHON_FACADE_HEADER
       echo "error: generated Python SDK references missing schema symbol: $symbol" >&2
       return 1
     fi
-    printf '%s = _schema_component.%s\n' "$symbol" "$symbol" >> "$facade_file"
+    case "$symbol" in
+      _UniffiFfiConverterType*)
+        if grep -Fq "class $symbol(_UniffiConverterRustBuffer):" "$schema_file"; then
+          cat >> "$converter_adapters" <<PYTHON_CONVERTER_ADAPTER
+class $symbol(_sdk_component._UniffiConverterRustBuffer):
+    check_lower = staticmethod(_schema_component.$symbol.check_lower)
+    read = staticmethod(_schema_component.$symbol.read)
+    write = staticmethod(_schema_component.$symbol.write)
+
+PYTHON_CONVERTER_ADAPTER
+        else
+          printf '%s = _schema_component.%s\n' "$symbol" "$symbol" >> "$converter_adapters"
+        fi
+        ;;
+      *) printf '%s = _schema_component.%s\n' "$symbol" "$symbol" >> "$facade_file" ;;
+    esac
   done < "$private_exports"
-  cat >> "$facade_file" <<'PYTHON_FACADE_FOOTER'
+  {
+    cat <<'PYTHON_SDK_IMPORT'
 
 from . import _sdk as _sdk_component
 from ._sdk import *
-
+PYTHON_SDK_IMPORT
+    cat "$converter_adapters"
+    cat <<'PYTHON_FACADE_FOOTER'
 __all__ = [*_schema_component.__all__, *_sdk_component.__all__]
 
 del _schema_component
 del _sdk_component
 PYTHON_FACADE_FOOTER
+  } >> "$facade_file"
+}
+
+normalize_browser_bridge_order() {
+  python3 - "$temporary_output/generated/ts-uniffi-browser/cpp/fleet_sdk_module.rs" <<'PYTHON_BROWSER_ORDER'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+lines = text.splitlines(keepends=True)
+starts = []
+for index, line in enumerate(lines):
+    if re.match(r"^mod [a-z0-9_]+ \{", line):
+        if index > 0 and lines[index - 1].rstrip("\n") == "#[allow(non_snake_case)]":
+            starts.append(index - 1)
+        else:
+            starts.append(index)
+if not starts:
+    raise SystemExit("expected browser callback module section")
+prefix = "".join(lines[:starts[0]])
+blocks = ["".join(lines[block_start:block_end]) for block_start, block_end in zip(starts, starts[1:] + [len(lines)])]
+def module_name(block: str) -> str:
+    match = re.search(r"(?m)^mod ([a-z0-9_]+) \{", block)
+    if match is None:
+        raise SystemExit("unexpected browser callback module name")
+    return match.group(1)
+blocks.sort(key=module_name)
+path.write_text(prefix + "".join(blocks))
+PYTHON_BROWSER_ORDER
 }
 
 normalize_generated_text() {
-  for language in $languages; do
+  for language in $binding_roots; do
     find -P "$temporary_output/generated/$language" -type f -print | while IFS= read -r file; do
       normalized="$file.normalized"
       awk '
@@ -447,7 +534,7 @@ prepare_complete_replacement_root() {
 
   replacement_root="$(mktemp -d "$workspace_dir/.sdk-bindings.new.XXXXXX")"
   cp -pR "$bindings_dir/." "$replacement_root/"
-  for language in $languages; do
+  for language in $binding_roots; do
     prepare_replacement_root "$language"
   done
 }
@@ -594,11 +681,22 @@ fi
 raw_output="$temporary_output/raw"
 generated_root="$temporary_output/generated"
 mkdir -p "$raw_output" "$generated_root/python/fleet_sdk" "$generated_root/kotlin" \
-  "$generated_root/swift" "$generated_root/ruby/cyclops_sdk"
+  "$generated_root/swift" "$generated_root/ruby/cyclops_sdk" \
+  "$generated_root/go-uniffi" "$generated_root/ts-uniffi" \
+  "$generated_root/ts-uniffi-browser/ts" "$generated_root/ts-uniffi-browser/cpp"
 "$cargo_bin" run --locked --manifest-path "$workspace" -p cyclops-sdk-bindgen --target "$host_triple" -- \
   generate --library "$library" \
   --language python --language kotlin --language swift --language ruby \
   --out-dir "$raw_output" --no-format
+
+"$go_bindgen_bin" "$library" --library --out-dir "$generated_root/go-uniffi"
+"$npx_bin" --yes --package "$typescript_bindgen_package" ubrn \
+  generate napi bindings "$library" --library --no-format \
+  --ts-dir "$generated_root/ts-uniffi" --lib-colocated
+"$npx_bin" --yes --package "$typescript_bindgen_package" ubrn \
+  generate wasm bindings "$library" --library --no-format \
+  --ts-dir "$generated_root/ts-uniffi-browser/ts" \
+  --cpp-dir "$generated_root/ts-uniffi-browser/cpp"
 
 mv "$raw_output/fleet_sdk.py" "$generated_root/python/fleet_sdk/_sdk.py"
 mv "$raw_output/cyclops_sdk_schema.py" "$generated_root/python/fleet_sdk/_schema.py"
@@ -796,9 +894,10 @@ if future_runtime_anchor not in text:
     raise SystemExit("expected Ruby error helper declaration not found")
 text = text.replace(future_runtime_anchor, future_runtime, 1)
 
-buffer_pattern = r"(?m)^(\s*)result = FleetSdk\.rust_call_with_error\(([^,]+),:([a-z0-9_]+),(.*)\)$"
+buffer_pattern = r"(?m)^(\s*)result = FleetSdk\.rust_call_with_error\(([^,]+),:((?![a-z0-9_]*builder_build\b)[a-z0-9_]+),(.*)\)$"
 def replace_buffer(match):
     indent, error_module, function, arguments = match.groups()
+    arguments = arguments.rstrip().removesuffix(",")
     return (
         f"{indent}result = FleetSdk.uniffi_rust_future_rust_buffer(\n"
         f"{indent}  {error_module},\n"
@@ -806,12 +905,15 @@ def replace_buffer(match):
         f"{indent})"
     )
 text, buffer_replacements = re.subn(buffer_pattern, replace_buffer, text)
-if buffer_replacements != 17:
-    raise SystemExit(f"expected 17 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
+if buffer_replacements != 36:
+    raise SystemExit(f"expected 36 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
+if len(re.findall(r"result = FleetSdk\.rust_call_with_error\(SdkBuildError,:uniffi_[a-z0-9_]*builder_build,", text)) != 9:
+    raise SystemExit("expected nine synchronous Ruby SDK builder build calls")
 
 void_pattern = r"(?m)^(\s*)FleetSdk\.rust_call_with_error\(([^,]+),:([a-z0-9_]+),(.*)\)$"
 def replace_void(match):
     indent, error_module, function, arguments = match.groups()
+    arguments = arguments.rstrip().removesuffix(",")
     return (
         f"{indent}FleetSdk.uniffi_rust_future_void(\n"
         f"{indent}  {error_module},\n"
@@ -819,8 +921,8 @@ def replace_void(match):
         f"{indent})"
     )
 text, void_replacements = re.subn(void_pattern, replace_void, text)
-if void_replacements != 3:
-    raise SystemExit(f"expected 3 Ruby void future wrappers, found {void_replacements}")
+if void_replacements != 8:
+    raise SystemExit(f"expected 8 Ruby void future wrappers, found {void_replacements}")
 
 handle_map_anchor = """def self.uniffi_bytes(v)
   raise TypeError, \"no implicit conversion of #{v} into String\" unless v.respond_to?(:to_str)
@@ -1021,8 +1123,30 @@ write_ruby_facade \
   "$generated_root/ruby/cyclops_sdk/schema.rb" \
   "$generated_root/ruby/cyclops_sdk.rb"
 
+python3 - "$workspace_dir/scripts/normalize-compat-sdk-bindings.py" "$generated_root" <<'PYTHON_COMPAT'
+import importlib.util
+import pathlib
+import sys
+
+spec = importlib.util.spec_from_file_location("compat", sys.argv[1])
+compat = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(compat)
+root = pathlib.Path(sys.argv[2])
+for component in ("cyclops_sdk_schema", "fleet_sdk"):
+    schema = component == "cyclops_sdk_schema"
+    for path, normalize in (
+        (root / "go-uniffi" / component / f"{component}.go", compat.normalize_go),
+        (root / "ts-uniffi" / f"{component}.ts", compat.normalize_node),
+    ):
+        normalized = normalize(path.read_text(), schema=schema)
+        compat.check_no_builders(normalized, path)
+        path.write_text(normalized)
+PYTHON_COMPAT
+
+rustfmt --edition 2021 "$generated_root/ts-uniffi-browser/cpp/"*.rs
+normalize_browser_bridge_order
 normalize_generated_text
-for language in $languages; do
+for language in $binding_roots; do
   find -P "$generated_root/$language" -type d -exec chmod 755 {} \;
   find -P "$generated_root/$language" -type f -exec chmod 644 {} \;
   write_manifest "$generated_root/$language" "$temporary_output/$language.manifest"
@@ -1032,7 +1156,7 @@ done
 
 if "$check_only"; then
   check_failed=false
-  for language in $languages; do
+  for language in $binding_roots; do
     if ! compare_root "$generated_root/$language" "$bindings_dir/$language" "$language"; then
       check_failed=true
     fi

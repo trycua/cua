@@ -23,10 +23,20 @@ import (
 // OSGymSandboxTemplate it references, both named after the pool.
 const templateNameSuffix = "-template"
 
+const defaultMaxPoolSize uint32 = 50
+
+const (
+	poolScalingModeDiagnosticSummary     = "Invalid pool scaling configuration"
+	poolScalingModeExactlyOneMessage     = "exactly one of replicas or autoscaling must be configured"
+	poolScalingModeUnknownAtApplyMessage = "replicas and autoscaling must be known before apply"
+)
+
 type poolResource struct {
 	client     *fleet_sdk.CyclopsClient
 	legacyType bool
 }
+
+var _ resource.ResourceWithValidateConfig = (*poolResource)(nil)
 
 func NewPoolResource() resource.Resource { return &poolResource{} }
 
@@ -54,10 +64,65 @@ func (r *poolResource) Configure(_ context.Context, req resource.ConfigureReques
 	r.client = apiClient
 }
 
+func (r *poolResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var config poolResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if err := validatePoolScalingModeDuringPlan(config); err != nil {
+		addPoolScalingModeDiagnostic(&resp.Diagnostics, err)
+	}
+}
+
+func validatePoolScalingModeDuringPlan(config poolResourceModel) error {
+	if config.Replicas.IsUnknown() || config.Autoscaling.IsUnknown() {
+		return nil
+	}
+	if config.Replicas.IsNull() == config.Autoscaling.IsNull() {
+		return errors.New(poolScalingModeExactlyOneMessage)
+	}
+	return nil
+}
+
+func validatePoolScalingModeAtApply(config, plan poolResourceModel) error {
+	replicasPresent, replicasKnown := resolvedConfigurationPresence(config.Replicas, plan.Replicas)
+	autoscalingPresent, autoscalingKnown := resolvedConfigurationPresence(config.Autoscaling, plan.Autoscaling)
+	if !replicasKnown || !autoscalingKnown {
+		return errors.New(poolScalingModeUnknownAtApplyMessage)
+	}
+	if replicasPresent == autoscalingPresent {
+		return errors.New(poolScalingModeExactlyOneMessage)
+	}
+	return nil
+}
+
+func resolvedConfigurationPresence(config, plan attr.Value) (present, known bool) {
+	if config.IsNull() {
+		return false, true
+	}
+	if !config.IsUnknown() {
+		return true, true
+	}
+	if plan.IsUnknown() {
+		return false, false
+	}
+	return !plan.IsNull(), true
+}
+
+func addPoolScalingModeDiagnostic(diagnostics *diag.Diagnostics, err error) {
+	diagnostics.AddError(poolScalingModeDiagnosticSummary, err.Error())
+}
+
 func (r *poolResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan poolResourceModel
+	var config, plan poolResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if err := validatePoolScalingModeAtApply(config, plan); err != nil {
+		addPoolScalingModeDiagnostic(&resp.Diagnostics, err)
 		return
 	}
 	poolRequest := plan.toSDKCreatePoolRequest(ctx, &resp.Diagnostics)
@@ -118,8 +183,16 @@ func (r *poolResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 }
 
 func (r *poolResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state poolResourceModel
+	var config, plan, state poolResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if err := validatePoolScalingModeAtApply(config, plan); err != nil {
+		addPoolScalingModeDiagnostic(&resp.Diagnostics, err)
+		return
+	}
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -223,21 +296,69 @@ func (m poolResourceModel) toSDKPool(ctx context.Context, diagnostics *diag.Diag
 }
 
 func (m poolResourceModel) toSDKPoolSpec(ctx context.Context, diagnostics *diag.Diagnostics) cyclops_sdk_schema.OsGymSandboxWarmPoolSpec {
+	replicas := uint32(m.Replicas.ValueInt64())
 	var autoscaling *cyclops_sdk_schema.WarmPoolAutoscaling
 	var autoscalingValue autoscalingModel
 	if objectValue(ctx, m.Autoscaling, &autoscalingValue, diagnostics) {
 		minPoolSize := uint32(autoscalingValue.MinPoolSize.ValueInt64())
 		initialPoolSize := uint32(autoscalingValue.InitialPoolSize.ValueInt64())
-		maxPoolSize := uint32(autoscalingValue.MaxPoolSize.ValueInt64())
+		maxPoolSize := defaultMaxPoolSize
+		if !autoscalingValue.MaxPoolSize.IsNull() && !autoscalingValue.MaxPoolSize.IsUnknown() {
+			maxPoolSize = uint32(autoscalingValue.MaxPoolSize.ValueInt64())
+		}
 		autoscaling = &cyclops_sdk_schema.WarmPoolAutoscaling{
 			MinPoolSize: &minPoolSize, InitialPoolSize: &initialPoolSize, MaxPoolSize: &maxPoolSize,
 		}
+		replicas = initialPoolSize
 	}
 	return cyclops_sdk_schema.OsGymSandboxWarmPoolSpec{
-		Replicas:           uint32(m.Replicas.ValueInt64()),
-		SandboxTemplateRef: cyclops_sdk_schema.SandboxTemplateRef{Name: m.templateName()},
-		Autoscaling:        autoscaling,
+		Replicas:               replicas,
+		SandboxTemplateRef:     cyclops_sdk_schema.SandboxTemplateRef{Name: m.templateName()},
+		Autoscaling:            autoscaling,
+		TtlSecondsAfterCreated: configuredUint32(m.TTLSecondsAfterCreated),
+		IdleTtlSeconds:         configuredUint32(m.IdleTTLSeconds),
+		TtlPolicy:              configuredTTLPolicy(m.TTLPolicy),
 	}
+}
+
+func configuredUint32(value types.Int64) *uint32 {
+	if value.IsNull() || value.IsUnknown() {
+		return nil
+	}
+	configured := uint32(value.ValueInt64())
+	return &configured
+}
+
+func configuredTTLPolicy(value types.String) *cyclops_sdk_schema.WarmPoolTtlPolicy {
+	var policy cyclops_sdk_schema.WarmPoolTtlPolicy
+	switch {
+	case value.IsNull() || value.IsUnknown():
+		return nil
+	case value.ValueString() == "Cascade":
+		policy = cyclops_sdk_schema.WarmPoolTtlPolicyCascade
+	default:
+		policy = cyclops_sdk_schema.WarmPoolTtlPolicyRetain
+	}
+	return &policy
+}
+
+func configuredBool(value types.Bool) *bool {
+	if value.IsNull() || value.IsUnknown() {
+		return nil
+	}
+	configured := value.ValueBool()
+	return &configured
+}
+
+// configuredStrings keeps an explicit empty list distinct from an omitted one
+// so what Terraform sends is exactly what it reads back.
+func configuredStrings(ctx context.Context, value types.List, diagnostics *diag.Diagnostics) *[]string {
+	if value.IsNull() || value.IsUnknown() {
+		return nil
+	}
+	configured := []string{}
+	diagnostics.Append(value.ElementsAs(ctx, &configured, false)...)
+	return &configured
 }
 
 func (m poolResourceModel) toSDKTemplateSpec(ctx context.Context, diagnostics *diag.Diagnostics) cyclops_sdk_schema.OsGymSandboxTemplateSpec {
@@ -269,19 +390,26 @@ func (m poolResourceModel) toSDKTemplateSpec(ctx context.Context, diagnostics *d
 		value := cyclops_sdk_schema.FirmwareEfi
 		firmware = &value
 	}
-	imagePullSecret := m.ImagePullSecret.ValueString()
-	if imagePullSecret == "" {
-		imagePullSecret = "ecr-credentials"
-	}
+	imagePullSecret := configuredImagePullSecret(m.ImagePullSecret)
 	cpuCores := uint32(m.CPUCores.ValueInt64())
 	memory := m.Memory.ValueString()
 	probes := m.toSDKProbes(diagnostics)
 	return cyclops_sdk_schema.OsGymSandboxTemplateSpec{
 		VmTemplate: cyclops_sdk_schema.VmTemplate{
-			Runtime: runtime, ContainerDiskImage: m.ContainerDiskImage.ValueString(), ImagePullSecret: &imagePullSecret,
+			Runtime: runtime, ContainerDiskImage: m.ContainerDiskImage.ValueString(), ImagePullSecret: imagePullSecret,
 			CpuCores: &cpuCores, Memory: &memory, Firmware: firmware, Probes: probes, Services: &services,
+			Command:      configuredStrings(ctx, m.Command, diagnostics),
+			ClaimSecrets: configuredBool(m.ClaimSecrets),
 		},
 	}
+}
+
+func configuredImagePullSecret(value types.String) *string {
+	if value.IsNull() || value.IsUnknown() {
+		return nil
+	}
+	configured := value.ValueString()
+	return &configured
 }
 
 func (m poolResourceModel) toSDKProbes(diagnostics *diag.Diagnostics) **cyclops_sdk_schema.PreservedJson {
@@ -317,7 +445,10 @@ func (m poolResourceModel) templateName() string {
 func (m poolResourceModel) warmPoolAttributesEqual(other poolResourceModel) bool {
 	return m.Replicas.Equal(other.Replicas) &&
 		m.TemplateName.Equal(other.TemplateName) &&
-		m.Autoscaling.Equal(other.Autoscaling)
+		m.Autoscaling.Equal(other.Autoscaling) &&
+		m.TTLSecondsAfterCreated.Equal(other.TTLSecondsAfterCreated) &&
+		m.IdleTTLSeconds.Equal(other.IdleTTLSeconds) &&
+		m.TTLPolicy.Equal(other.TTLPolicy)
 }
 
 func (m poolResourceModel) templateAttributesEqual(other poolResourceModel) bool {
@@ -329,6 +460,8 @@ func (m poolResourceModel) templateAttributesEqual(other poolResourceModel) bool
 		m.Firmware.Equal(other.Firmware) &&
 		m.ReadinessProbeJSON.Equal(other.ReadinessProbeJSON) &&
 		m.LivenessProbeJSON.Equal(other.LivenessProbeJSON) &&
+		m.Command.Equal(other.Command) &&
+		m.ClaimSecrets.Equal(other.ClaimSecrets) &&
 		m.Services.Equal(other.Services)
 }
 
@@ -336,8 +469,13 @@ func (m *poolResourceModel) fromSDKPool(pool fleet_sdk.Pool, diagnostics *diag.D
 	m.ID = types.StringValue(pool.Metadata.Name)
 	m.Name = types.StringValue(pool.Metadata.Name)
 	m.Namespace = types.StringValue(pool.Metadata.Namespace)
-	m.Replicas = types.Int64Value(int64(pool.Spec.Replicas))
 	m.TemplateName = types.StringValue(pool.Spec.SandboxTemplateRef.Name)
+	m.Replicas = types.Int64Value(int64(pool.Spec.Replicas))
+	// Absent lifecycle fields read back as null, so pools created before these
+	// attributes existed plan with no diff.
+	m.TTLSecondsAfterCreated = optionalInt64Value(pool.Spec.TtlSecondsAfterCreated)
+	m.IdleTTLSeconds = optionalInt64Value(pool.Spec.IdleTtlSeconds)
+	m.TTLPolicy = ttlPolicyValue(pool.Spec.TtlPolicy)
 	if pool.Spec.Autoscaling == nil {
 		m.Autoscaling = types.ObjectNull(autoscalingObjectType())
 	} else {
@@ -369,8 +507,18 @@ func (m *poolResourceModel) fromSDKTemplate(ctx context.Context, template *fleet
 	m.CPUCores = types.Int64Value(optionalUint32(vmTemplate.CpuCores))
 	m.Memory = types.StringValue(optionalString(vmTemplate.Memory))
 	m.ContainerDiskImage = types.StringValue(vmTemplate.ContainerDiskImage)
-	m.ImagePullSecret = types.StringValue(defaultString(vmTemplate.ImagePullSecret, "ecr-credentials"))
+	if vmTemplate.ImagePullSecret == nil {
+		m.ImagePullSecret = types.StringNull()
+	} else {
+		m.ImagePullSecret = types.StringValue(*vmTemplate.ImagePullSecret)
+	}
 	m.Runtime = types.StringValue(runtimeString(vmTemplate.Runtime))
+	m.Command = stringListValue(vmTemplate.Command, diagnostics)
+	if vmTemplate.ClaimSecrets == nil {
+		m.ClaimSecrets = types.BoolNull()
+	} else {
+		m.ClaimSecrets = types.BoolValue(*vmTemplate.ClaimSecrets)
+	}
 	m.Firmware = types.StringValue(firmwareString(vmTemplate.Firmware))
 	probes := sdkProbes(vmTemplate.Probes, diagnostics)
 	m.ReadinessProbeJSON = encodeProbe(probes["readinessProbe"], diagnostics)
@@ -407,6 +555,37 @@ func optionalUint32(value *uint32) int64 {
 		return 0
 	}
 	return int64(*value)
+}
+
+func optionalInt64Value(value *uint32) types.Int64 {
+	if value == nil {
+		return types.Int64Null()
+	}
+	return types.Int64Value(int64(*value))
+}
+
+func ttlPolicyValue(value *cyclops_sdk_schema.WarmPoolTtlPolicy) types.String {
+	switch {
+	case value == nil:
+		return types.StringNull()
+	case *value == cyclops_sdk_schema.WarmPoolTtlPolicyCascade:
+		return types.StringValue("Cascade")
+	default:
+		return types.StringValue("Retain")
+	}
+}
+
+func stringListValue(value *[]string, diagnostics *diag.Diagnostics) types.List {
+	if value == nil {
+		return types.ListNull(types.StringType)
+	}
+	elements := make([]attr.Value, 0, len(*value))
+	for _, item := range *value {
+		elements = append(elements, types.StringValue(item))
+	}
+	list, diags := types.ListValue(types.StringType, elements)
+	diagnostics.Append(diags...)
+	return list
 }
 
 func optionalString(value *string) string {

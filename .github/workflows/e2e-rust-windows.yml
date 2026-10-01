@@ -1,6 +1,24 @@
 name: "E2E: Rust Windows interactive"
 
 on:
+  # Stable Cua Driver tag runs call this matrix as a release gate. Keep the
+  # inputs in sync with workflow_dispatch; only `inputs.*` is read below.
+  workflow_call:
+    inputs:
+      ref:
+        description: "Full 40-character commit SHA to certify"
+        required: true
+        type: string
+      runner:
+        description: "Runner label; release gates use the GitHub-hosted default"
+        required: false
+        type: string
+        default: "windows-latest"
+      lane:
+        description: "Diagnostic lane; release gates use all"
+        required: false
+        type: string
+        default: all
   workflow_dispatch:
     inputs:
       ref:
@@ -27,10 +45,17 @@ permissions:
   contents: read
   actions: read
 
+# Identical dispatches queue behind the running certification instead of
+# racing it. In-progress runs are never cancelled.
+concurrency:
+  group: e2e-rust-windows-${{ github.ref }}-${{ inputs.ref }}-${{ inputs.runner }}-${{ inputs.lane }}
+  cancel-in-progress: false
+
 jobs:
   source:
     name: "Resolve exact source"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
     steps:
@@ -60,6 +85,17 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.source.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: e2e-shared
+          save-if: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha && inputs.runner == 'windows-latest' }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha && inputs.runner == 'windows-latest' && 'npm' || '' }}
+          cache-dependency-path: libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
         run: .\scripts\ci\windows\setup-ffmpeg.ps1
@@ -94,6 +130,17 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.source.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: e2e-native
+          save-if: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha && inputs.runner == 'windows-latest' }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha && inputs.runner == 'windows-latest' && 'npm' || '' }}
+          cache-dependency-path: libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
         run: .\scripts\ci\windows\setup-ffmpeg.ps1
@@ -128,6 +175,17 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.source.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: e2e-capture
+          save-if: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha && inputs.runner == 'windows-latest' }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha && inputs.runner == 'windows-latest' && 'npm' || '' }}
+          cache-dependency-path: libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json
       - name: Ensure FFmpeg for trajectory video
         shell: pwsh
         run: .\scripts\ci\windows\setup-ffmpeg.ps1
@@ -162,7 +220,12 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.source.outputs.sha }}
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: e2e-installer
+          save-if: ${{ github.ref_type == 'branch' && needs.source.outputs.sha == github.sha }}
       - name: Verify installer runner is interactive
         shell: pwsh
         run: .\scripts\ci\windows\verify-user-session.ps1
@@ -280,15 +343,20 @@ jobs:
       - name: Download lane results
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4
         with:
+          # Release gates share the caller's run; skip its build artifacts.
+          pattern: rust-windows-*
           path: artifacts
       - name: Publish matrix summary
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
         run: |
           summary_path=matrix-summary.md
           {
             echo "# CUA Rust Windows E2E matrix"
+            echo
+            echo "Source commit: \`$SOURCE_SHA\`"
             echo
             echo "The lane jobs above are independent; a failure in one lane does not hide the others."
             echo
@@ -310,6 +378,59 @@ jobs:
             fi
             echo >> "$summary_path"
           done < <(find artifacts -type f -name summary.md -print | sort)
+
+          while IFS= read -r results; do
+            artifact_dir=$(dirname "$results")
+            if [[ -f "$artifact_dir/summary.md" ]]; then
+              continue
+            fi
+            found=1
+            artifact=$(basename "$artifact_dir")
+            artifact_id=$(jq -r --arg name "$artifact" \
+              '.artifacts[] | select(.name == $name) | .id' <<< "$artifacts_json" | head -n 1)
+            if [[ -n "$artifact_id" && "$artifact_id" != "null" ]]; then
+              artifact_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts/$artifact_id"
+              artifact_link="[Download $artifact]($artifact_url)"
+            else
+              artifact_url=""
+              artifact_link="Artifact link unavailable"
+            fi
+
+            echo "## $artifact" >> "$summary_path"
+            echo >> "$summary_path"
+            echo "The lane did not produce \`summary.md\`. Results recovered from \`results.jsonl\`: $artifact_link." >> "$summary_path"
+            echo >> "$summary_path"
+            result_count=$(jq -s 'length' "$results")
+            pass_count=$(jq -s '[.[] | select(.test_status == "pass")] | length' "$results")
+            fail_count=$(jq -s '[.[] | select(.test_status == "fail")] | length' "$results")
+            other_count=$((result_count - pass_count - fail_count))
+            echo "Records: $result_count; pass: $pass_count; fail: $fail_count; other: $other_count." >> "$summary_path"
+            if ((result_count == 0)); then
+              echo >> "$summary_path"
+              echo "No behavioral result records were written before the lane stopped." >> "$summary_path"
+            elif ((fail_count + other_count > 0)); then
+              {
+                echo
+                echo "| Non-passing cell | Status | Observed | Message | Evidence |"
+                echo "| --- | --- | --- | --- | --- |"
+              } >> "$summary_path"
+              while IFS=$'\t' read -r cell status observed message evidence; do
+                cell=${cell//|/\\|}
+                status=${status//|/\\|}
+                observed=${observed//|/\\|}
+                message=${message//|/\\|}
+                evidence=${evidence//|/\\|}
+                if [[ -n "$artifact_url" && "$evidence" != "-" ]]; then
+                  evidence="[$evidence]($artifact_url)"
+                fi
+                echo "| $cell | $status | $observed | $message | $evidence |" >> "$summary_path"
+              done < <(jq -r 'select(.test_status != "pass") | [.cell_id // "(missing cell_id)", .test_status // "unknown", .observed_behavior // "unknown", ((.message // "-") | if . == "" then "-" else . end), (.evidence.video // "-")] | @tsv' "$results")
+            else
+              echo >> "$summary_path"
+              echo "All recovered behavioral records passed; the lane failed before its Markdown report was produced." >> "$summary_path"
+            fi
+            echo >> "$summary_path"
+          done < <(find artifacts -type f -name results.jsonl -print | sort)
           if [[ "$found" == 0 ]]; then
             echo "No lane summary artifact was produced." >> "$summary_path"
           fi
@@ -356,3 +477,93 @@ jobs:
           name: rust-windows-matrix-summary
           path: matrix-summary.md
           if-no-files-found: error
+
+  certify:
+    # success() requires every job this one depends on to have succeeded;
+    # combined with the lane=='all' check this keeps certification fail-closed
+    # against both lane failures and diagnostic-lane dispatches. The runner
+    # policy check below additionally refuses to certify an Azure RDP parity
+    # replay: per scripts/ci/README.md that replay is not itself a source of
+    # behavioral truth, only the GitHub-hosted preflighted-interactive lane is.
+    # Manual dispatches and release-gate calls certify the same matrix.
+    if: success() && inputs.lane == 'all'
+    needs: [source, shared, native, capture, installer]
+    name: "Windows / canonical certification"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Determine approved runner policy class
+        id: runner_policy
+        shell: bash
+        env:
+          CUA_E2E_RUNNER_INPUT: ${{ inputs.runner }}
+        run: |
+          set -euo pipefail
+          case "$CUA_E2E_RUNNER_INPUT" in
+            windows-latest|windows-2022|windows-2025)
+              echo "class=github-hosted" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Runner '$CUA_E2E_RUNNER_INPUT' is not on the approved canonical runner policy (github-hosted: windows-latest, windows-2022, windows-2025); an Azure RDP parity replay is not certifiable evidence, refusing to certify." >&2
+              exit 1
+              ;;
+          esac
+      - name: Emit canonical certification record
+        shell: bash
+        env:
+          CUA_E2E_REQUESTED_REF: ${{ inputs.ref }}
+          CUA_E2E_SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          CUA_E2E_HEAD_SHA: ${{ github.sha }}
+          CUA_E2E_RUNNER_INPUT: ${{ inputs.runner }}
+          CUA_E2E_RUNNER_POLICY_CLASS: ${{ steps.runner_policy.outputs.class }}
+        run: |
+          set -euo pipefail
+          certified_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n \
+            --arg schema "cua-driver/e2e-certification/v1" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg workflow "$GITHUB_WORKFLOW" \
+            --arg workflow_ref "$GITHUB_WORKFLOW_REF" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg event_name "$GITHUB_EVENT_NAME" \
+            --arg platform "windows" \
+            --arg lane "all" \
+            --argjson canonical true \
+            --arg requested_ref "$CUA_E2E_REQUESTED_REF" \
+            --arg source_sha "$CUA_E2E_SOURCE_SHA" \
+            --arg head_sha "$CUA_E2E_HEAD_SHA" \
+            --arg runner_input "$CUA_E2E_RUNNER_INPUT" \
+            --arg runner_policy_class "$CUA_E2E_RUNNER_POLICY_CLASS" \
+            --arg certified_at "$certified_at" \
+            '{
+              schema: $schema,
+              repository: $repository,
+              workflow: $workflow,
+              workflow_ref: $workflow_ref,
+              run_id: $run_id,
+              run_attempt: $run_attempt,
+              event_name: $event_name,
+              platform: $platform,
+              lane: $lane,
+              canonical: $canonical,
+              requested_ref: $requested_ref,
+              source_sha: $source_sha,
+              head_sha: $head_sha,
+              runner_input: $runner_input,
+              runner_policy_class: $runner_policy_class,
+              required_jobs: {
+                shared: "success",
+                native: "success",
+                capture: "success",
+                installer: "success"
+              },
+              certified_at: $certified_at
+            }' | tee certification.json
+      - name: Upload canonical certification
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: rust-windows-e2e-certification
+          path: certification.json
+          if-no-files-found: error
+          retention-days: 90

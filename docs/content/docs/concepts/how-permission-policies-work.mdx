@@ -14,7 +14,7 @@ call, it asks the same policy engine whether the call is allowed.
 
 Every public path reaches the authorization coordinator before platform
 dispatch. It evaluates the built-in risk map, managed policy, user policy, and
-bounded session manifest in order. Adapters may repeat a check earlier as
+optional capability manifest in order. Adapters may repeat a check earlier as
 defense in depth, but they cannot authorize a request the runtime denies. A
 denial returns an error to the client and the tool implementation is never
 reached.

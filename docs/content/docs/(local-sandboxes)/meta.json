@@ -1,0 +1,19 @@
+{
+  "title": "Local Sandboxes",
+  "pages": [
+    "---Overview---",
+    "[Local Sandboxes](/local-sandboxes)",
+    "[Choose a local runtime](/reference/sandbox-sdk/runtime-support)",
+    "---Create and use---",
+    "[Create and manage a local Sandbox](/how-to-guides/sandbox/manage-local-lifecycle)",
+    "[Open a local interactive shell](/how-to-guides/sandbox/interactive-shell)",
+    "[Run local Sandboxes in parallel](/how-to-guides/sandbox/scale-out)",
+    "---Images---",
+    "[Build a local image](/how-to-guides/sandbox/images)",
+    "[Local image and runtime support](/reference/sandbox-sdk/runtime-support)",
+    "---Reference---",
+    "[Sandbox SDK for Python](/reference/sandbox-sdk)",
+    "[Local runtime support](/reference/sandbox-sdk/runtime-support)",
+    "[Image API](/reference/sandbox-sdk/image)"
+  ]
+}

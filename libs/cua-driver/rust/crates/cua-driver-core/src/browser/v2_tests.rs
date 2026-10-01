@@ -32,9 +32,9 @@ use super::tools::{
     BrowserTypeTool, GetBrowserStateTool,
 };
 use super::types::{
-    BrowserClassification, BrowserEngineFamily, BrowserProduct, EndpointOwnershipMethod,
-    EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo,
-    OwnedEndpoint, ProcessFingerprint, Rect,
+    BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
+    EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
+    NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 
 // ── Scripted Chromium fixture ────────────────────────────────────────────────
@@ -63,6 +63,14 @@ struct FixtureState {
     viewport_css_width: f64,
     viewport_css_height: f64,
     tab_visible: bool,
+    /// Extra page targets Chromium reports but cannot map to any browser
+    /// window (`Browser.getWindowForTarget` → `-32000 Browser window not
+    /// found`): an extension side panel, an offscreen document.
+    windowless_targets: Vec<Value>,
+    /// Drop the primary tab target T1 from `Target.getTargets`.
+    omit_primary_target: bool,
+    /// Make `Browser.getWindowForTarget` for T1 answer this CDP error.
+    primary_window_error: Option<(i64, String)>,
     /// Every incoming CDP call: (sessionId, method, params).
     calls: Vec<(Option<String>, String, Value)>,
 }
@@ -74,6 +82,9 @@ impl Default for FixtureState {
             oopif_present: true,
             emit_rogue_attach: false,
             main_url: "https://fixture.test/".into(),
+            windowless_targets: Vec::new(),
+            omit_primary_target: false,
+            primary_window_error: None,
             main_loader: "L_MAIN_1".into(),
             iframe_loader: "L_IFRAME_1".into(),
             oopif_loader: "L_OOPIF_1".into(),
@@ -424,16 +435,34 @@ fn fixture_handler(state: SharedState) -> MockHandler {
         let is_oopif = sess.starts_with("oopif-sess-");
 
         match call.method.as_str() {
-            "Target.getTargets" => MockReply::ok(json!({
-                "targetInfos": [{
-                    "targetId": "T1",
-                    "type": "page",
-                    "title": "Fixture",
-                    "url": "https://fixture.test/",
-                    "attached": false,
-                }]
-            })),
-            "Browser.getWindowForTarget" => MockReply::ok(json!({ "windowId": 11 })),
+            "Target.getTargets" => {
+                let mut infos: Vec<Value> = Vec::new();
+                if !st.omit_primary_target {
+                    infos.push(json!({
+                        "targetId": "T1",
+                        "type": "page",
+                        "title": "Fixture",
+                        "url": "https://fixture.test/",
+                        "attached": false,
+                    }));
+                }
+                infos.extend(st.windowless_targets.iter().cloned());
+                MockReply::ok(json!({ "targetInfos": infos }))
+            }
+            "Browser.getWindowForTarget" => {
+                let target_id = call.params["targetId"].as_str().unwrap_or("");
+                let windowless = st
+                    .windowless_targets
+                    .iter()
+                    .any(|t| t["targetId"].as_str() == Some(target_id));
+                if windowless {
+                    MockReply::err(-32000, "Browser window not found")
+                } else if let Some((code, message)) = st.primary_window_error.clone() {
+                    MockReply::err(code, &message)
+                } else {
+                    MockReply::ok(json!({ "windowId": 11 }))
+                }
+            }
             "Browser.getWindowBounds" => MockReply::ok(json!({
                 "bounds": { "left": 0.0, "top": 0.0, "width": 800.0, "height": 600.0 }
             })),
@@ -663,6 +692,8 @@ struct FixturePlatform {
     ws_url: String,
     trusted_input_limited: bool,
     managed_endpoint_visible: bool,
+    process_role: BrowserProcessRole,
+    managed_discovery_invoked: Arc<AtomicBool>,
     existing_endpoint_visible: Arc<AtomicBool>,
     setup_invoked: Arc<AtomicBool>,
     setup_aborted: Arc<AtomicBool>,
@@ -683,6 +714,9 @@ impl BrowserPlatform for FixturePlatform {
             product_kind: BrowserProduct::GoogleChrome,
             product: Some("MockChrome".into()),
             channel: Some("stable".into()),
+            // The mock endpoint is an explicit in-process harness, not a
+            // personal standalone browser profile.
+            process_role: self.process_role,
             supports_cdp: true,
         })
     }
@@ -718,6 +752,7 @@ impl BrowserPlatform for FixturePlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        self.managed_discovery_invoked.store(true, Ordering::SeqCst);
         if !self.managed_endpoint_visible {
             return Ok(None);
         }
@@ -734,6 +769,7 @@ impl BrowserPlatform for FixturePlatform {
         Ok(Some(OwnedEndpoint {
             ws_url: self.ws_url.clone(),
             http_port: None,
+            transport: EndpointTransport::LegacyJsonVersion,
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
@@ -754,6 +790,7 @@ impl BrowserPlatform for FixturePlatform {
         Ok(Some(OwnedEndpoint {
             ws_url: self.ws_url.clone(),
             http_port: None,
+            transport: EndpointTransport::LegacyJsonVersion,
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
@@ -779,6 +816,7 @@ impl BrowserPlatform for FixturePlatform {
             endpoint: Some(OwnedEndpoint {
                 ws_url: self.ws_url.clone(),
                 http_port: None,
+                transport: EndpointTransport::DevToolsActivePort,
                 ownership: EndpointOwnershipProof {
                     method: EndpointOwnershipMethod::ListeningSocketPid,
                     owner_pid: 1,
@@ -869,6 +907,8 @@ async fn fixture_with_platform(
         ws_url: server.ws_url(),
         trusted_input_limited,
         managed_endpoint_visible: true,
+        process_role: BrowserProcessRole::EmbeddedApplication,
+        managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
         existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
         setup_invoked: setup_invoked.clone(),
         setup_aborted: Arc::new(AtomicBool::new(false)),
@@ -884,27 +924,6 @@ async fn fixture_with_platform(
 
 async fn fixture() -> Fixture {
     fixture_with(|_| {}).await
-}
-
-async fn existing_profile_only_fixture() -> Fixture {
-    let state = Arc::new(StdMutex::new(FixtureState::default()));
-    let server = MockCdpServer::start(fixture_handler(state.clone())).await;
-    let setup_invoked = Arc::new(AtomicBool::new(false));
-    let engine = BrowserEngine::new(Arc::new(FixturePlatform {
-        ws_url: server.ws_url(),
-        trusted_input_limited: false,
-        managed_endpoint_visible: false,
-        existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
-        setup_invoked: setup_invoked.clone(),
-        setup_aborted: Arc::new(AtomicBool::new(false)),
-        stall_consent: false,
-    }));
-    Fixture {
-        state,
-        _server: server,
-        engine,
-        setup_invoked,
-    }
 }
 
 struct FixtureProtectedProvider {
@@ -941,6 +960,8 @@ async fn protected_existing_profile_fixture() -> (Fixture, Arc<FixtureProtectedP
             ws_url: server.ws_url(),
             trusted_input_limited: false,
             managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
             existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
             setup_invoked: setup_invoked.clone(),
             setup_aborted: Arc::new(AtomicBool::new(false)),
@@ -963,15 +984,22 @@ async fn existing_profile_setup_fixture() -> (Fixture, Arc<AtomicBool>) {
     let state = Arc::new(StdMutex::new(FixtureState::default()));
     let server = MockCdpServer::start(fixture_handler(state.clone())).await;
     let setup_invoked = Arc::new(AtomicBool::new(false));
-    let engine = BrowserEngine::new(Arc::new(FixturePlatform {
-        ws_url: server.ws_url(),
-        trusted_input_limited: false,
-        managed_endpoint_visible: false,
-        existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
-        setup_invoked: setup_invoked.clone(),
-        setup_aborted: Arc::new(AtomicBool::new(false)),
-        stall_consent: false,
-    }));
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            ws_url: server.ws_url(),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+            setup_invoked: setup_invoked.clone(),
+            setup_aborted: Arc::new(AtomicBool::new(false)),
+            stall_consent: false,
+        }),
+        Some(Arc::new(FixtureProtectedProvider {
+            consent_seen: AtomicBool::new(false),
+        })),
+    );
     (
         Fixture {
             state,
@@ -1006,26 +1034,59 @@ async fn bind(f: &Fixture) -> (String, String) {
 }
 
 #[tokio::test]
+async fn standalone_consumer_bind_without_grant_refuses_before_endpoint_discovery() {
+    let state = Arc::new(StdMutex::new(FixtureState::default()));
+    let server = MockCdpServer::start(fixture_handler(state)).await;
+    let managed_discovery_invoked = Arc::new(AtomicBool::new(false));
+    let setup_invoked = Arc::new(AtomicBool::new(false));
+    let engine = BrowserEngine::new(Arc::new(FixturePlatform {
+        ws_url: server.ws_url(),
+        trusted_input_limited: false,
+        managed_endpoint_visible: true,
+        process_role: BrowserProcessRole::StandaloneConsumer,
+        managed_discovery_invoked: managed_discovery_invoked.clone(),
+        existing_endpoint_visible: Arc::new(AtomicBool::new(true)),
+        setup_invoked: setup_invoked.clone(),
+        setup_aborted: Arc::new(AtomicBool::new(false)),
+        stall_consent: false,
+    }));
+
+    let result = GetBrowserStateTool::new(engine)
+        .invoke(json!({ "pid": 1, "window_id": 7, "session": SESSION }))
+        .await;
+    let refusal = structured(&result);
+    assert_eq!(refusal["status"], "refused");
+    assert_eq!(refusal["refusal"]["code"], "browser_consent_required");
+    assert_eq!(
+        refusal["refusal"]["detail"]["reason"],
+        "consumer_profile_endpoint_requires_grant"
+    );
+    assert_eq!(
+        refusal["refusal"]["detail"]["next_action"],
+        "browser_prepare"
+    );
+    assert!(
+        !managed_discovery_invoked.load(Ordering::SeqCst),
+        "read-only bind must not inspect a consent-gated endpoint"
+    );
+    assert!(
+        !setup_invoked.load(Ordering::SeqCst),
+        "read-only bind must never invoke browser setup UI"
+    );
+}
+
+#[tokio::test]
 async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
     // Match Chrome's per-instance toggle: the endpoint is discoverable only
     // through the approved existing-profile route, never as driver-managed.
-    let f = existing_profile_only_fixture().await;
-    let token = super::approval::mint_existing_profile_approval(
-        super::approval::ExistingProfileApprovalScope {
-            pid: 1,
-            window_id: 7,
-            session: SESSION.to_owned(),
-        },
-    )
-    .unwrap();
+    let (f, provider) = protected_existing_profile_fixture().await;
     let prepare = BrowserPrepareTool::new(f.engine.clone())
         .invoke(json!({
             "pid": 1,
             "window_id": 7,
             "session": SESSION,
             "_transport_session_id": "transport-v2-attach",
-            "strategy": { "kind": "existing_profile" },
-            "approval_token": token
+            "strategy": { "kind": "existing_profile" }
         }))
         .await;
     let prepared = structured(&prepare);
@@ -1034,6 +1095,7 @@ async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
     assert_eq!(prepared["attachment"]["kind"], "existing_profile");
     assert_eq!(prepared["attachment"]["capabilities_invalidated"], true);
     assert_eq!(prepared["side_effects"]["displayed_consent_prompt"], false);
+    assert!(provider.consent_seen.load(Ordering::SeqCst));
     assert!(!f.setup_invoked.load(Ordering::SeqCst));
 
     let state = GetBrowserStateTool::new(f.engine.clone())
@@ -1046,6 +1108,103 @@ async fn approved_existing_profile_attach_claims_then_binds_one_generation() {
         .await;
     assert_eq!(structured(&state)["status"], "ok", "{}", structured(&state));
     crate::session::fire_session_end("transport-v2-attach");
+}
+
+#[tokio::test]
+async fn approved_existing_profile_tools_stay_within_the_reviewed_cdp_surface() {
+    const TRANSPORT: &str = "transport-v2-method-policy";
+    let (f, _) = protected_existing_profile_fixture().await;
+    let prepare = BrowserPrepareTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": TRANSPORT,
+            "strategy": { "kind": "existing_profile" }
+        }))
+        .await;
+    assert_eq!(
+        structured(&prepare)["status"],
+        "ok",
+        "{}",
+        structured(&prepare)
+    );
+
+    let state = GetBrowserStateTool::new(f.engine.clone())
+        .invoke(json!({
+            "pid": 1,
+            "window_id": 7,
+            "session": SESSION,
+            "_transport_session_id": TRANSPORT
+        }))
+        .await;
+    let bound = structured(&state);
+    assert_eq!(bound["status"], "ok", "{bound}");
+    let target = bound["target_id"].as_str().unwrap().to_owned();
+    let tab = bound["tabs"][0]["tab_id"].as_str().unwrap().to_owned();
+
+    let snap = snapshot(&f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+    let input = ref_of(&snap, "main", "Shadow Input");
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": button,
+            "input_route": "dom_event",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(
+        structured(&clicked)["status"],
+        "ok",
+        "{}",
+        structured(&clicked)
+    );
+    let typed = BrowserTypeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": input,
+            "text": "policy-check",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(structured(&typed)["status"], "ok", "{}", structured(&typed));
+    let navigated = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://fixture.test/policy-check",
+            "session": SESSION
+        }))
+        .await;
+    assert_eq!(
+        structured(&navigated)["status"],
+        "ok",
+        "{}",
+        structured(&navigated)
+    );
+
+    let forbidden = [
+        "Runtime.enable",
+        "Target.setDiscoverTargets",
+        "Page.addScriptToEvaluateOnNewDocument",
+        "Network.enable",
+        "Fetch.enable",
+        "Emulation.setUserAgentOverride",
+        "Emulation.setDeviceMetricsOverride",
+        "Emulation.setTimezoneOverride",
+    ];
+    let calls = f.state.lock().unwrap().calls.clone();
+    for method in forbidden {
+        assert!(
+            calls.iter().all(|(_, observed, _)| observed != method),
+            "existing-profile operation emitted forbidden CDP method {method}: {calls:?}"
+        );
+    }
+
+    crate::session::fire_session_end(TRANSPORT);
 }
 
 #[tokio::test]
@@ -1087,21 +1246,12 @@ async fn protected_provider_accepts_exact_attach_and_session_end_revokes_the_gra
 #[tokio::test]
 async fn approved_existing_profile_setup_reports_exact_side_effects() {
     let (f, setup_invoked) = existing_profile_setup_fixture().await;
-    let token = super::approval::mint_existing_profile_approval(
-        super::approval::ExistingProfileApprovalScope {
-            pid: 1,
-            window_id: 7,
-            session: SESSION.to_owned(),
-        },
-    )
-    .unwrap();
     let prepare = BrowserPrepareTool::new(f.engine.clone())
         .invoke(json!({
             "pid": 1,
             "window_id": 7,
             "session": SESSION,
-            "strategy": { "kind": "existing_profile" },
-            "approval_token": token
+            "strategy": { "kind": "existing_profile" }
         }))
         .await;
     let prepared = structured(&prepare);
@@ -1134,31 +1284,29 @@ async fn refused_consent_cancels_stalled_claim_before_revoking_grant() {
         let (_stream, _) = listener.accept().await.unwrap();
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
     });
-    let engine = BrowserEngine::new(Arc::new(FixturePlatform {
-        ws_url: format!("ws://{address}/devtools/browser"),
-        trusted_input_limited: false,
-        managed_endpoint_visible: false,
-        existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
-        setup_invoked: Arc::new(AtomicBool::new(false)),
-        setup_aborted: Arc::new(AtomicBool::new(false)),
-        stall_consent: false,
-    }));
-    let token = super::approval::mint_existing_profile_approval(
-        super::approval::ExistingProfileApprovalScope {
-            pid: 1,
-            window_id: 7,
-            session: SESSION.to_owned(),
-        },
-    )
-    .unwrap();
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            ws_url: format!("ws://{address}/devtools/browser"),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+            setup_invoked: Arc::new(AtomicBool::new(false)),
+            setup_aborted: Arc::new(AtomicBool::new(false)),
+            stall_consent: false,
+        }),
+        Some(Arc::new(FixtureProtectedProvider {
+            consent_seen: AtomicBool::new(false),
+        })),
+    );
     let prepared = tokio::time::timeout(
         std::time::Duration::from_secs(3),
         BrowserPrepareTool::new(engine).invoke(json!({
             "pid": 1,
             "window_id": 7,
             "session": SESSION,
-            "strategy": { "kind": "existing_profile" },
-            "approval_token": token
+            "strategy": { "kind": "existing_profile" }
         })),
     )
     .await
@@ -1180,31 +1328,29 @@ async fn cancelled_prepare_aborts_the_exact_pending_setup() {
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
     });
     let setup_aborted = Arc::new(AtomicBool::new(false));
-    let engine = BrowserEngine::new(Arc::new(FixturePlatform {
-        ws_url: format!("ws://{address}/devtools/browser"),
-        trusted_input_limited: false,
-        managed_endpoint_visible: false,
-        existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
-        setup_invoked: Arc::new(AtomicBool::new(false)),
-        setup_aborted: setup_aborted.clone(),
-        stall_consent: true,
-    }));
-    let token = super::approval::mint_existing_profile_approval(
-        super::approval::ExistingProfileApprovalScope {
-            pid: 1,
-            window_id: 7,
-            session: SESSION.to_owned(),
-        },
-    )
-    .unwrap();
+    let engine = BrowserEngine::new_with_protected_consent_provider(
+        Arc::new(FixturePlatform {
+            ws_url: format!("ws://{address}/devtools/browser"),
+            trusted_input_limited: false,
+            managed_endpoint_visible: false,
+            process_role: BrowserProcessRole::StandaloneConsumer,
+            managed_discovery_invoked: Arc::new(AtomicBool::new(false)),
+            existing_endpoint_visible: Arc::new(AtomicBool::new(false)),
+            setup_invoked: Arc::new(AtomicBool::new(false)),
+            setup_aborted: setup_aborted.clone(),
+            stall_consent: true,
+        }),
+        Some(Arc::new(FixtureProtectedProvider {
+            consent_seen: AtomicBool::new(false),
+        })),
+    );
     let cancelled = tokio::time::timeout(
         std::time::Duration::from_millis(750),
         BrowserPrepareTool::new(engine).invoke(json!({
             "pid": 1,
             "window_id": 7,
             "session": SESSION,
-            "strategy": { "kind": "existing_profile" },
-            "approval_token": token
+            "strategy": { "kind": "existing_profile" }
         })),
     )
     .await;
@@ -1326,6 +1472,16 @@ async fn snapshot_composes_shadow_iframe_and_oopif_refs() {
         !labels.iter().any(|l| l.contains("role=button")),
         "user-agent shadow content leaked: {snap}"
     );
+}
+
+#[tokio::test]
+async fn semantic_snapshot_refreshes_bind_time_title_from_main_document() {
+    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["page"]["title"], "Fixture inbox", "{snap}");
 }
 
 #[tokio::test]
@@ -1522,6 +1678,7 @@ async fn semantic_continuation_is_opaque_single_use_and_reaches_offscreen_conten
     let continued = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
     assert_eq!(continued["status"], "ok", "{continued}");
     assert_eq!(continued["snapshot"]["scope"], "continuation");
+    assert_eq!(continued["page"]["title"], "Fixture inbox", "{continued}");
     assert!(
         continued["refs"]
             .as_array()
@@ -2290,4 +2447,106 @@ async fn keystrokes_use_char_events_for_text_delivery() {
     }));
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+// ---- window-less page targets (trycua/cua#3540) ------------------------------------------
+//
+// Chromium exposes page targets that live in no browser window — an extension
+// side panel, an offscreen document — and answers `Browser.getWindowForTarget`
+// for them with `-32000 Browser window not found`. Such a target can never be
+// the tab of the requested native window, so candidate enumeration skips it;
+// every other error keeps failing the whole proof.
+
+fn side_panel_target() -> Value {
+    json!({
+        "targetId": "T_SIDEPANEL",
+        "type": "page",
+        "title": "Claude",
+        "url": "chrome-extension://fcoeoabgfenejglbffodgkkbkcdhcgfn/sidepanel.html?tabId=42",
+        "attached": false,
+    })
+}
+
+async fn bind_result(f: &Fixture) -> Value {
+    let tool = GetBrowserStateTool::new(f.engine.clone());
+    let result = tool
+        .invoke(json!({ "pid": 1, "window_id": 7, "session": SESSION }))
+        .await;
+    structured(&result).clone()
+}
+
+#[tokio::test]
+async fn windowless_side_panel_target_is_skipped_and_bind_stays_exact() {
+    let f = fixture_with(|st| st.windowless_targets.push(side_panel_target())).await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "bind must succeed: {s}");
+    assert_eq!(s["binding_quality"], "exact");
+    let tabs = s["tabs"].as_array().expect("tabs");
+    assert_eq!(
+        tabs.len(),
+        1,
+        "the side panel is not a tab of the bound window: {s}"
+    );
+    assert_eq!(tabs[0]["url"], "https://fixture.test/");
+    // The window-less target was asked for its window (and skipped), never attached to.
+    let st = f.state.lock().unwrap();
+    assert!(st
+        .calls
+        .iter()
+        .any(|(_, m, p)| { m == "Browser.getWindowForTarget" && p["targetId"] == "T_SIDEPANEL" }));
+    assert!(!st
+        .calls
+        .iter()
+        .any(|(_, m, p)| { m == "Target.attachToTarget" && p["targetId"] == "T_SIDEPANEL" }));
+}
+
+#[tokio::test]
+async fn only_windowless_targets_refuse_wrong_target_never_route_unavailable() {
+    let f = fixture_with(|st| {
+        st.omit_primary_target = true;
+        st.windowless_targets.push(side_panel_target());
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(
+        s["refusal"]["code"], "browser_wrong_target_refused",
+        "no windowed candidate → refuse rather than guess, and never a route failure: {s}"
+    );
+}
+
+#[tokio::test]
+async fn other_window_lookup_errors_still_fail_the_whole_proof() {
+    let f = fixture_with(|st| {
+        st.primary_window_error = Some((-32000, "Target closed".into()));
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "refused", "{s}");
+    assert_eq!(s["refusal"]["code"], "browser_route_unavailable", "{s}");
+    assert!(
+        s["refusal"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Browser.getWindowForTarget failed while proving the native window"),
+        "{s}"
+    );
+}
+
+#[tokio::test]
+async fn method_unsupported_keeps_the_electron_none_path() {
+    // Electron omits the Browser domain method entirely: the candidate keeps a
+    // None geometry and binds through the single-page, single-native-window
+    // cardinality proof; the window-less skip must not drop it.
+    let f = fixture_with(|st| {
+        st.primary_window_error =
+            Some((-32601, "'Browser.getWindowForTarget' wasn't found".into()));
+    })
+    .await;
+    let s = bind_result(&f).await;
+    assert_eq!(s["status"], "ok", "{s}");
+    assert_eq!(s["binding_quality"], "exact", "{s}");
+    let tabs = s["tabs"].as_array().expect("tabs");
+    assert_eq!(tabs.len(), 1, "{s}");
+    assert_eq!(tabs[0]["url"], "https://fixture.test/");
 }

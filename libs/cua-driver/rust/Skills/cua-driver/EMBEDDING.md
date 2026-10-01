@@ -194,10 +194,68 @@ daemon child.
   completion is unknown.
 - The Rust owner holds a parent-liveness pipe, so host death closes the daemon;
   orderly shutdown should still await `stop()`.
-- Capture scope belongs to each session. One embedded daemon can concurrently
-  serve `auto`, strict `window`, and strict `desktop` sessions.
+- Capture modality belongs to each observation or action target, not to the
+  lifecycle session. One embedded daemon can concurrently serve exact window
+  and desktop calls without changing session state.
 - Permission changes require destroying clients, restarting the daemon, and
   reconnecting. A connection from the old generation is never reusable.
+
+## Bounding the post-action window observation
+
+After an input action, the driver watches the window list for a short time so
+it can report a menu, dialog, or new window that the action opened. On macOS,
+that watch lasts up to 1000 ms for an action that opens nothing, which makes it
+the largest part of a background click's latency. A host that already observes
+its target continuously can shorten it through two variables set at trusted
+launch, in the environment of the `serve --embedded` child (or of the host
+process when you use the same-process runtime). `EmbeddedCuaDriverHost` starts
+that child from an allowlisted environment that admits both variables, so pass
+them in its `environment` option or set them in the host process:
+
+| Variable                              | Meaning                                              | Default                         | Accepted range                            |
+| ------------------------------------- | ---------------------------------------------------- | ------------------------------- | ----------------------------------------- |
+| `CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS` | Longest wait for a window change after each action.  | 1000 on macOS, 800 on Linux X11 | 0 to 10000; larger values are clamped     |
+| `CUA_DRIVER_WINDOW_CHANGE_POLL_MS`    | Interval between window-list reads during that wait. | 50                              | 5 to 1000, and never longer than the wait |
+
+Unset, empty, or unparsable values, such as `-1`, `1.5`, or `100ms`, keep the
+default, so a daemon launched without these variables behaves exactly as
+before. No tool argument can change the bound. Every ingress strips
+underscore-prefixed arguments, so an agent cannot shorten its own focus
+protection.
+
+```sh
+CUA_DRIVER_EMBEDDED=1 \
+CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS=200 \
+  cua-driver serve --embedded --socket /tmp/yourapp-cua.sock
+```
+
+A shorter wait costs something on each platform. Choose a value knowingly.
+
+- **macOS: less focus protection.** The watch also holds a focus-steal lease:
+  while it runs, the driver reactivates the app that was frontmost before the
+  action if any other app activates, such as a browser opened by a link. The
+  lease ends when the watch ends. With a nonzero value, cross-app activations
+  are reverted only for that long after the action returns. With `0`, the lease
+  is released as soon as the action returns. The separate target-pid guard
+  remains, and it still covers the action plus a 50 ms settle when the target
+  was not frontmost. An app that activates later stays frontmost, so the host
+  must detect and correct that itself.
+- **macOS: missing result suffixes.** A window that appears after the wait
+  ends is not reported. With `0`, results never carry
+  `Action opened new window(s): …` or
+  `Action caused a different app to become frontmost.`
+- **Linux X11 foreground delivery: weaker evidence.** A foreground-delivery
+  action (`"delivery_mode": "foreground"`) reports `effect: "confirmed"` when
+  the target opened or closed a window during the wait. A dialog that maps after a shorter wait
+  leaves the action `unverifiable`. Qt file dialogs can take 300 to 600 ms to
+  map. With `0`, foreground actions never report window-change evidence. Focus
+  checks and `suspected_noop` detection are unchanged.
+- **Windows: no effect.** The Windows adapter does not wait for window changes
+  after an action, so it ignores both variables.
+
+Measured on macOS with Calculator in the background and Terminal frontmost, a
+background AX click took 1153 ms with the default, 325 ms with `200`, and 78 ms
+with `0`.
 
 ## What embedded mode changes (and what it doesn't)
 
@@ -249,11 +307,12 @@ gateway / node daemon                           YourApp.app
                                                      --socket <private-path>
 ```
 
-Note `check_permissions` cannot detect this: `source.attribution` reports
-`host` whenever `CUA_DRIVER_EMBEDDED=1` is set, even if a gateway spawned
-the driver. The symptoms are grant booleans that track the _gateway's_ TCC
-state and prompts/Settings entries naming the gateway process; see
-Troubleshooting below.
+`health_report(include=["bundle_identity"])` detects this wiring error by
+resolving the daemon's direct parent through macOS. It fails when the parent
+is not an identifiable app or when its observed bundle identifier differs
+from `CUA_DRIVER_HOST_BUNDLE_ID`. `check_permissions.source.attribution`
+still describes the configured mode; use the two reports together when
+diagnosing embedding.
 
 ## Reading `check_permissions` from the host
 
@@ -440,12 +499,29 @@ _ = readMessage()
 send(["jsonrpc": "2.0", "method": "notifications/initialized"])
 log("embedded cua-driver daemon + proxy started (\(driverPath)) — no driver prompt should have appeared")
 
-// 4. check_permissions must report attribution "host" and never prompt.
+// 4. health_report must observe this actual parent app, and
+//    check_permissions must report host attribution and matching TCC results.
+let health = call("health_report", ["include": ["bundle_identity"]])
+let healthStructured = health["structuredContent"] as? [String: Any] ?? [:]
+let healthChecks = healthStructured["checks"] as? [[String: Any]] ?? []
+let identity = healthChecks.first { $0["name"] as? String == "bundle_identity" } ?? [:]
+let identityData = identity["data"] as? [String: Any] ?? [:]
+let hostBundleId = Bundle.main.bundleIdentifier ?? ""
+let identityOk = identity["status"] as? String == "pass" &&
+    identityData["bundle_identifier"] as? String == hostBundleId &&
+    identityData["identity_source"] as? String == "parent_application" &&
+    (identityData["parent_process_id"] as? Int) == Int(ProcessInfo.processInfo.processIdentifier)
+log("health_report — bundle_identity: \(identity["status"] ?? "?"), " +
+    "observed host: \(identityData["bundle_identifier"] ?? "?") (want: \(hostBundleId))")
+
 let perms = call("check_permissions")
 let structured = perms["structuredContent"] as? [String: Any] ?? [:]
 let source = structured["source"] as? [String: Any] ?? [:]
 let attribution = source["attribution"] as? String ?? "?"
+let permissionsMatchHost = structured["accessibility"] as? Bool == ax &&
+    structured["screen_recording"] as? Bool == sr
 log("check_permissions — attribution: \(attribution) (want: host), " +
+    "TCC matches host: \(permissionsMatchHost), " +
     "capturable: \(structured["screen_recording_capturable"] ?? "?")")
 
 // 5. Background AX read + window screenshot — proves both grants
@@ -476,7 +552,8 @@ let cursorOk = (cursor1["isError"] as? Bool) != true &&
     (cursor2["isError"] as? Bool) != true
 log("move_cursor — \(cursorOk ? "ok" : "FAILED")")
 
-let pass = attribution == "host" && !images.isEmpty && hasTree && cursorOk
+let pass = identityOk && attribution == "host" && permissionsMatchHost &&
+    !images.isEmpty && hasTree && cursorOk
 log(pass ? "DEMO COMPLETE: PASS" : "DEMO COMPLETE: FAIL")
 driver.terminate()
 daemon.terminate()

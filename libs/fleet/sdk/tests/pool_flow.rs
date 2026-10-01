@@ -399,7 +399,50 @@ async fn gets_named_pool_and_updates_typed_pools() {
 
     let requests = resource_requests(&http).await;
     assert_request(&requests[0], "GET", ITEM, None);
-    assert_merge_patch_request(&requests[1], ITEM, Some(&json_bytes(&updated)));
+    assert_merge_patch_request(&requests[1], ITEM, Some(&pool_merge_patch_bytes(&updated)));
+}
+
+/// Terraform drops `idle_ttl_seconds` / `ttl_policy` / `ttl_seconds_after_created`
+/// by leaving them out of the desired spec; a merge patch only clears them
+/// when it names them as null.
+#[tokio::test]
+async fn update_pool_nulls_lifecycle_fields_the_desired_spec_drops() {
+    let current = Pool {
+        spec: serde_json::from_value(serde_json::json!({
+            "replicas": 1,
+            "sandboxTemplateRef": { "name": "example-pool-template" },
+            "ttlSecondsAfterCreated": 600,
+            "idleTtlSeconds": 3600,
+            "ttlPolicy": "Cascade",
+        }))
+        .unwrap(),
+        ..pool()
+    };
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(200, &pool())),
+        Ok(json_response(200, &current)),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    client.clone().update_pool(pool()).await.unwrap();
+    client.update_pool(current).await.unwrap();
+
+    let requests = resource_requests(&http).await;
+    let dropped: serde_json::Value =
+        serde_json::from_slice(requests[0].body.as_deref().unwrap()).unwrap();
+    for key in ["ttlSecondsAfterCreated", "idleTtlSeconds", "ttlPolicy"] {
+        assert!(
+            dropped["spec"].as_object().unwrap().contains_key(key),
+            "{key} must be patched to null"
+        );
+        assert_eq!(dropped["spec"][key], serde_json::Value::Null);
+    }
+    let kept: serde_json::Value =
+        serde_json::from_slice(requests[1].body.as_deref().unwrap()).unwrap();
+    assert_eq!(kept["spec"]["ttlSecondsAfterCreated"], 600);
+    assert_eq!(kept["spec"]["idleTtlSeconds"], 3600);
+    assert_eq!(kept["spec"]["ttlPolicy"], "Cascade");
 }
 
 #[tokio::test]
@@ -433,7 +476,7 @@ async fn reconcile_updates_an_existing_named_pool() {
 
     let requests = resource_requests(&http).await;
     assert_request(&requests[0], "GET", ITEM, None);
-    assert_merge_patch_request(&requests[1], ITEM, Some(&json_bytes(&updated)));
+    assert_merge_patch_request(&requests[1], ITEM, Some(&pool_merge_patch_bytes(&updated)));
 }
 
 #[tokio::test]
@@ -539,6 +582,144 @@ async fn reconcile_returns_create_error_after_named_pool_is_forbidden() {
 }
 
 #[tokio::test]
+async fn create_pool_403_maps_to_pool_access_denied_with_guidance() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(409, b"already exists")),
+        Ok(response(403, b"k8s request is not allowed")),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    let error = client
+        .create_pool(CreatePoolRequest {
+            namespace: NAMESPACE.into(),
+            spec: pool_spec(),
+        })
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        SdkError::PoolAccessDenied {
+            ref operation,
+            ref namespace,
+            status: 403,
+            ref body,
+        } if operation == "create pool"
+            && namespace == NAMESPACE
+            && body == "k8s request is not allowed"
+    ));
+    let message = error.to_string();
+    assert!(message.contains("globally unique"));
+    assert!(message.contains("try a new pool name"));
+    assert!(message.contains("https://discord.gg/mVnXXpdE85"));
+}
+
+#[tokio::test]
+async fn namespace_create_403_maps_to_pool_access_denied() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(403, b"cannot create namespace")),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    let error = client
+        .create_pool(CreatePoolRequest {
+            namespace: NAMESPACE.into(),
+            spec: pool_spec(),
+        })
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        SdkError::PoolAccessDenied {
+            ref operation,
+            ref namespace,
+            status: 403,
+            ..
+        } if operation == "create namespace" && namespace == NAMESPACE
+    ));
+}
+
+#[tokio::test]
+async fn reconcile_update_403_maps_to_pool_access_denied() {
+    let existing = pool();
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(200, &existing)),
+        Ok(response(403, b"k8s request is not allowed")),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    let error = client
+        .reconcile_pool(CreatePoolRequest {
+            namespace: NAMESPACE.into(),
+            spec: pool_spec(),
+        })
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        SdkError::PoolAccessDenied {
+            ref operation,
+            ref namespace,
+            status: 403,
+            ..
+        } if operation == "update pool" && namespace == NAMESPACE
+    ));
+}
+
+#[tokio::test]
+async fn delete_pool_403_maps_to_pool_access_denied() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(403, b"k8s request is not allowed")),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    let error = client.delete_pool(pool()).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        SdkError::PoolAccessDenied {
+            ref operation,
+            ref namespace,
+            status: 403,
+            ..
+        } if operation == "delete pool" && namespace == NAMESPACE
+    ));
+}
+
+#[tokio::test]
+async fn delete_pool_namespace_cleanup_403_maps_to_pool_access_denied() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(204, b"")),
+        Ok(response(403, b"cannot delete namespace")),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    let error = client.delete_pool(pool()).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        SdkError::PoolAccessDenied {
+            ref operation,
+            ref namespace,
+            status: 403,
+            ..
+        } if operation == "delete namespace" && namespace == NAMESPACE
+    ));
+
+    let requests = resource_requests(&http).await;
+    assert_eq!(requests.len(), 2);
+    assert_request(&requests[0], "DELETE", ITEM, None);
+    assert_request(&requests[1], "DELETE", NAMESPACE_ITEM, None);
+}
+
+#[tokio::test]
 async fn reconcile_returns_unrelated_named_pool_read_error_without_creating() {
     let http = Arc::new(ScriptedHttpClient::new([
         Ok(token()),
@@ -590,6 +771,7 @@ async fn rejects_deleting_a_pool_outside_the_namespace_owned_lifecycle() {
             namespace: NAMESPACE.into(),
             name: "other-pool".into(),
             labels: None,
+            creation_timestamp: None,
         },
         ..pool()
     };
@@ -609,6 +791,7 @@ async fn updates_non_lifecycle_pool_resources_without_namespace_cleanup() {
             namespace: NAMESPACE.into(),
             name: "other-pool".into(),
             labels: None,
+            creation_timestamp: None,
         },
         ..pool()
     };
@@ -626,7 +809,11 @@ async fn updates_non_lifecycle_pool_resources_without_namespace_cleanup() {
 
     let requests = resource_requests(&http).await;
     assert_eq!(requests.len(), 1);
-    assert_merge_patch_request(&requests[0], &other_item, Some(&json_bytes(&other)));
+    assert_merge_patch_request(
+        &requests[0],
+        &other_item,
+        Some(&pool_merge_patch_bytes(&other)),
+    );
 }
 
 #[tokio::test]
@@ -758,6 +945,7 @@ fn pool_named(namespace: &str) -> Pool {
             namespace: namespace.into(),
             name: namespace.into(),
             labels: None,
+            creation_timestamp: None,
         },
         spec: pool_spec(),
         status: None,
@@ -778,6 +966,25 @@ fn token() -> HttpResponse {
 
 fn json_response(status: u16, value: &impl serde::Serialize) -> HttpResponse {
     response(status, &json_bytes(value))
+}
+
+fn pool_merge_patch_bytes(pool: &Pool) -> Vec<u8> {
+    let mut value = serde_json::to_value(pool).unwrap();
+    let spec = &pool.spec;
+    for (key, absent) in [
+        ("autoscaling", spec.autoscaling.is_none()),
+        (
+            "ttlSecondsAfterCreated",
+            spec.ttl_seconds_after_created.is_none(),
+        ),
+        ("idleTtlSeconds", spec.idle_ttl_seconds.is_none()),
+        ("ttlPolicy", spec.ttl_policy.is_none()),
+    ] {
+        if absent {
+            value["spec"][key] = serde_json::Value::Null;
+        }
+    }
+    serde_json::to_vec(&value).unwrap()
 }
 
 fn json_bytes(value: &impl serde::Serialize) -> Vec<u8> {

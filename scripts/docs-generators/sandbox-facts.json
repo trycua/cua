@@ -1,0 +1,46 @@
+{
+  "$schema": "./sandbox-facts.schema.json",
+  "schemaVersion": 1,
+  "qualifiedImages": [
+    {
+      "id": "omarchy-amd64-4-0-2-1",
+      "image": "public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:dd09f70f8cd35eca7871dff000538302baad63688a3008803f2238492802d743",
+      "os": "Linux",
+      "distribution": "Omarchy 4.0.2-1 (Arch Linux-based), amd64",
+      "architecture": "amd64",
+      "desktop": "Hyprland / Wayland",
+      "kind": "Fleet containerDisk",
+      "services": {
+        "server": 8000,
+        "mcp": 3000
+      },
+      "components": {
+        "computerServer": "0.3.46",
+        "embeddedDriver": "0.22.2",
+        "directDriver": "0.26.1"
+      },
+      "qualification": {
+        "boot": true,
+        "serviceReadiness": true
+      }
+    }
+  ],
+  "publishedCandidates": [
+    {
+      "os": "Linux",
+      "distribution": "NixOS; release and architecture not recorded in the publication summary",
+      "desktop": "StumpWM",
+      "kind": "Published candidate image",
+      "image": "public.ecr.aws/k5j5w0x5/cua-nixos-stumpwm:git-ee87f38043c043831a8761016015d6ef5ae783d9",
+      "limits": "[Publication summary](https://github.com/trycua/cua/pull/3585) reports computer-server and Cua Driver included, guest tests and CI anonymous-pull checks passed. Component versions, service ports, and Fleet claim checks are not recorded there. Commit-named candidate tag, not a digest pin or `latest`; no built-in SDK mapping."
+    },
+    {
+      "os": "Linux",
+      "distribution": "NixOS; release and architecture not recorded in the publication summary",
+      "desktop": "Xfce / Xfwm4",
+      "kind": "Published candidate image",
+      "image": "public.ecr.aws/k5j5w0x5/cua-nixos-xfce:git-ee87f38043c043831a8761016015d6ef5ae783d9",
+      "limits": "[Publication summary](https://github.com/trycua/cua/pull/3585) reports computer-server and Cua Driver included, guest tests and CI anonymous-pull checks passed. Component versions, service ports, and Fleet claim checks are not recorded there. Commit-named candidate tag, not a digest pin or `latest`; no built-in SDK mapping."
+    }
+  ]
+}

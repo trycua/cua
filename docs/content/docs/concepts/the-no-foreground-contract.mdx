@@ -33,7 +33,7 @@ Windows also has session boundaries. A daemon running in the interactive user se
 
 AT-SPI provides the semantic path on Linux. Element actions call the toolkit's own accessibility action (`Action.DoAction`) and do not need pointer injection or foreground focus. On X11, window-addressable input and capture can also route to a target window. On Wayland, synthetic input is intentionally constrained by the compositor, so the background path depends more heavily on AT-SPI and reconstructed element frames.
 
-The remaining Linux gap is raw keyboard injection into native Wayland apps. Typing into accessible fields can still work through AT-SPI, but shortcuts or raw key events may need XWayland or foreground/user-granted compositor paths. See [Known limits](/reference/cua-driver/limits#native-wayland-apps-cant-receive-synthetic-keystrokes).
+The remaining Linux gap is raw keyboard injection into native Wayland apps. Typing into accessible fields can still work through AT-SPI, but shortcuts or raw key events may need XWayland or foreground/user-granted compositor paths. See [Known limits](/reference/cua-driver/limits#native-wayland-background-keyboard-input-is-focus-bound).
 
 ## The agent cursor
 
@@ -78,7 +78,7 @@ The agent tests and fixes an app while the terminal remains in front.
 
 The safest ladder is:
 
-1. Act by `element_index` in the background.
+1. Act by `element_token` in the background.
 2. If the element path is unavailable or unverifiable, act by `x, y` from the same window screenshot.
 3. If the app still rejects the action, retry that one action with `delivery_mode: "foreground"`.
 

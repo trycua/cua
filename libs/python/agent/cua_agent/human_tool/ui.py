@@ -9,8 +9,6 @@ import gradio as gr
 import requests
 from PIL import Image
 
-from .server import completion_queue
-
 
 class HumanCompletionUI:
     def __init__(self, server_url: str = "http://localhost:8002"):
@@ -411,7 +409,6 @@ class HumanCompletionUI:
             max_seconds: Maximum number of seconds to wait
             check_interval: How often to check for pending calls (in seconds)
         """
-        import time
 
         start_time = time.time()
 

@@ -76,6 +76,11 @@ pub struct RenderStateCore {
     pub theme_fallback: Option<String>,
     /// User-controlled visibility.
     pub visible: bool,
+    /// The pinned target window is on another workspace (macOS Space), so the
+    /// cursor must not paint over the user's current workspace at that
+    /// window's coordinates. Platform adapters set it when handling
+    /// `PinAbove`; `false` when membership is unknown.
+    pub pinned_target_off_workspace: bool,
     /// Idle-hide: elapsed seconds since last activity.
     pub idle_secs: f64,
     /// Idle-hide fade: 1.0 = fully visible, 0.0 = fully hidden.
@@ -138,6 +143,7 @@ impl RenderStateCore {
             idle_secs: 0.0,
             idle_alpha: 1.0,
             pinned_wid: None,
+            pinned_target_off_workspace: false,
             session_label: None,
             session_badge_secs: SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS,
             session_badge_hovered: false,
@@ -146,8 +152,90 @@ impl RenderStateCore {
         }
     }
 
-    fn cursor_is_revealed(&self) -> bool {
+    /// Whether the cursor currently paints pixels: user-visible, placed on
+    /// screen (not the `(-200, -200)` sentinel), and not fully idle-faded.
+    pub fn is_revealed(&self) -> bool {
         self.visible && self.pos.0 >= -100.0 && self.idle_alpha >= 0.004
+    }
+
+    /// Whether a revealed cursor keeps changing pixels while it rests.
+    ///
+    /// The default theme levitates through the shared float motion (the
+    /// resting "bob"), and a custom theme may loop a multi-frame animation for
+    /// its current action. Both are part of the cursor's visual identity, so
+    /// every platform must keep delivering frames while this holds.
+    ///
+    /// Resting motion is bounded by idle hide: the cursor levitates while its
+    /// idle-hide countdown runs and stops when the fade hides it. A cursor
+    /// configured never to hide (`idle_hide_ms == 0`) rests still, so the
+    /// overlay can stop rendering once activity settles; a full-output
+    /// redraw per frame on Wayland, or a layered-window upload on Windows,
+    /// must not run for as long as the cursor stays on screen. Reduced motion
+    /// freezes both (no bob, still frame), a hidden, unplaced, faded, or
+    /// off-workspace cursor paints nothing, and a single-frame custom theme
+    /// has nothing to animate.
+    pub fn has_resting_motion(&self) -> bool {
+        if !self.is_revealed()
+            || self.motion.idle_hide_ms <= 0.0
+            || self.pinned_target_off_workspace
+            || self.visual.reduced_motion == crate::ReducedMotion::On
+        {
+            return false;
+        }
+        match self.theme.as_deref() {
+            // The defensive no-theme fallback paints the embedded default.
+            None => true,
+            Some(theme) if theme.id == crate::DEFAULT_THEME_ID => true,
+            Some(theme) => theme
+                .animation_for_action(self.visual.resolved_action)
+                .is_some_and(|animation| animation.frames.len() > 1),
+        }
+    }
+
+    /// Whether the idle-hide fade (the 180 ms alpha ramp after
+    /// `motion.idle_hide_ms` of inactivity) is currently animating.
+    pub fn idle_fade_in_progress(&self) -> bool {
+        self.motion.idle_hide_ms > 0.0
+            && self.visible
+            && self.pos.0 >= -100.0
+            && self.idle_secs >= self.motion.idle_hide_ms / 1000.0
+            && self.idle_alpha >= 0.004
+    }
+
+    /// The shared frame-tick predicate: true while the next tick can change
+    /// this cursor's pixels, so the platform render loop must run at frame
+    /// cadence. It covers an in-flight glide, spring settle, click pulse,
+    /// session-badge or semantic-action animation, resting motion
+    /// ([`Self::has_resting_motion`]), and the idle fade. A brand-new sentinel
+    /// cursor, a fully faded cursor, and a reduced-motion cursor waiting out
+    /// its opaque idle-hide delay are quiescent; platforms advance that
+    /// countdown with [`Self::idle_fade_wait`] or their own slow heartbeat.
+    pub fn needs_frame_tick(&self) -> bool {
+        self.path.is_some()
+            || self.spring.is_some()
+            || self.click_t.is_some()
+            || self.session_badge_needs_frame_tick()
+            || self.has_resting_motion()
+            || self.idle_fade_in_progress()
+    }
+
+    /// Time until the idle fade starts for a placed, visible, settled cursor,
+    /// so a parked render loop can wake exactly when pixels begin to change.
+    /// `None` when idle hide is off, the cursor is moving or not shown, or
+    /// the fade has already started.
+    pub fn idle_fade_wait(&self) -> Option<std::time::Duration> {
+        if !self.visible
+            || self.pos.0 < -100.0
+            || self.motion.idle_hide_ms <= 0.0
+            || self.path.is_some()
+            || self.spring.is_some()
+            || self.click_t.is_some()
+        {
+            return None;
+        }
+        let remaining = self.motion.idle_hide_ms / 1000.0 - self.idle_secs;
+        (remaining.is_finite() && remaining > 0.0)
+            .then(|| std::time::Duration::from_secs_f64(remaining))
     }
 
     fn reveal_session_badge(&mut self) {
@@ -185,12 +273,12 @@ impl RenderStateCore {
     }
 
     pub fn session_badge_is_visible(&self) -> bool {
-        self.cursor_is_revealed()
+        self.is_revealed()
             && (self.session_badge_alpha() > 0.001 || self.session_badge_chip_alpha() > 0.001)
     }
 
     pub fn session_badge_needs_frame_tick(&self) -> bool {
-        self.cursor_is_revealed()
+        self.is_revealed()
             && ((self.session_label.is_some()
                 && self.session_badge_secs < SESSION_BADGE_HOLD_SECS + SESSION_BADGE_FADE_SECS)
                 || self.badge_modifier_fade_secs.is_some()
@@ -202,7 +290,7 @@ impl RenderStateCore {
     /// from [`Self::session_badge_needs_frame_tick`]: a faded badge needs hover
     /// hit-testing, not continuous 60 fps repainting.
     pub fn session_badge_needs_hover_poll(&self) -> bool {
-        self.session_label.is_some() && self.cursor_is_revealed()
+        self.session_label.is_some() && self.is_revealed()
     }
 
     /// Update hover state from a platform-native hardware pointer sample.
@@ -508,7 +596,10 @@ impl RenderStateCore {
         }
         let idle_hide_ms = self.motion.idle_hide_ms;
         if idle_hide_ms > 0.0 {
-            let moving = self.path.is_some() || self.spring.is_some() || self.click_t.is_some();
+            let moving = self.path.is_some()
+                || self.spring.is_some()
+                || self.click_t.is_some()
+                || self.visual.resolved_action != CursorAction::Idle;
             if moving {
                 self.idle_secs = 0.0;
                 self.idle_alpha = 1.0;
@@ -555,15 +646,12 @@ impl RenderStateCore {
                 y,
                 end_heading_radians,
             } => {
-                let reveal_badge = !self.cursor_is_revealed();
-                // Apply click offset (16 pt along end_heading) before planning,
-                // matching Swift `moveTo(point:endAngleRadians:)`:
-                //   tx = clickPoint.x + cos(endAngle) * clickOffset
-                //   ty = clickPoint.y + sin(endAngle) * clickOffset
-                const CLICK_OFFSET: f64 = 16.0;
+                let reveal_badge = !self.is_revealed();
+                // Plan the anchor, not the pointer point, so the hotspot lands
+                // on `(x, y)` once the cursor settles at `end_heading`
+                // (Swift `moveTo(point:endAngleRadians:)` click offset).
                 let turn_radius = self.motion.turn_radius;
-                let tx = x + end_heading_radians.cos() * CLICK_OFFSET;
-                let ty = y + end_heading_radians.sin() * CLICK_OFFSET;
+                let (tx, ty) = crate::anchor_for_pointer(x, y, end_heading_radians);
 
                 // macOS-only: if the cursor is still at the initial off-screen
                 // sentinel, snap it to the offset target so the path starts on-screen.
@@ -599,7 +687,7 @@ impl RenderStateCore {
                 y,
                 heading_radians,
             } => {
-                let reveal_badge = !self.cursor_is_revealed();
+                let reveal_badge = !self.is_revealed();
                 self.pos = (x, y);
                 if let Some(heading) = heading_radians {
                     self.heading = heading;
@@ -624,21 +712,13 @@ impl RenderStateCore {
                 true
             }
             OverlayCommand::ClickPulse { x, y } => {
-                let reveal_badge = !self.cursor_is_revealed();
-                if click_pulse_sentinel_only {
-                    // macOS: only snap position on first placement (sentinel state).
-                    // After that the cursor stays where the animation landed.
-                    if self.pos.0 < -50.0 {
-                        // Apply same click offset so tip lands at click point.
-                        const CLICK_OFFSET: f64 = 16.0;
-                        let angle = std::f64::consts::FRAC_PI_4;
-                        self.pos = (
-                            x + angle.cos() * CLICK_OFFSET,
-                            y + angle.sin() * CLICK_OFFSET,
-                        );
-                    }
-                } else {
-                    self.pos = (x, y);
+                let reveal_badge = !self.is_revealed();
+                // macOS only snaps on first placement (sentinel state); after
+                // that the cursor stays where the animation landed. Windows
+                // and Linux always snap. Both anchor the click point so the
+                // hotspot stays on it instead of jumping by the anchor offset.
+                if !click_pulse_sentinel_only || self.pos.0 < -50.0 {
+                    self.pos = crate::anchor_for_pointer(x, y, self.heading);
                 }
                 self.click_t = Some(0.0);
                 if matches!(
@@ -691,6 +771,10 @@ impl RenderStateCore {
                 target,
             } => {
                 self.visual.begin(action, delivery, target);
+                // A semantic cue re-reveals an idle-faded cursor that already
+                // has a position; `tick_idle` keeps it visible until the cue ends.
+                self.idle_secs = 0.0;
+                self.idle_alpha = 1.0;
                 self.badge_modifiers = if delivery.is_some() || target.is_some() {
                     Some((delivery, target))
                 } else {
@@ -810,7 +894,11 @@ pub fn paint_cursor(
     focus_rect: Option<FocusRect>,
     backing_scale: f32,
 ) {
-    if !core.visible || core.pos.0 < -100.0 || core.idle_alpha < 0.004 {
+    if !core.visible
+        || core.pinned_target_off_workspace
+        || core.pos.0 < -100.0
+        || core.idle_alpha < 0.004
+    {
         return;
     }
 
@@ -821,6 +909,9 @@ pub fn paint_cursor(
     // first, then scale into pixmap pixels.
     let (px, py) = ((core.pos.0 - origin_x) * s, (core.pos.1 - origin_y) * s);
     let heading = core.heading;
+    // Themes pivot on their hotspot, which is drawn at the pointer point.
+    let (tip_x, tip_y) = crate::pointer_for_anchor(core.pos.0, core.pos.1, heading);
+    let (tip_x, tip_y) = ((tip_x - origin_x) * s, (tip_y - origin_y) * s);
     let alpha_scale = core.idle_alpha as f32;
 
     // --- Focus rect highlight (macOS only — others pass None) ---
@@ -882,8 +973,8 @@ pub fn paint_cursor(
             pm,
             theme,
             &core.visual,
-            px as f32,
-            py as f32,
+            tip_x as f32,
+            tip_y as f32,
             heading as f32,
             backing_scale.max(1.0),
             alpha_scale,
@@ -896,8 +987,8 @@ pub fn paint_cursor(
         crate::theme::paint_default_theme_with_fill(
             pm,
             &core.visual,
-            px as f32,
-            py as f32,
+            tip_x as f32,
+            tip_y as f32,
             heading as f32,
             backing_scale.max(1.0),
             alpha_scale,
@@ -989,6 +1080,63 @@ mod glide_duration_tests {
 mod session_badge_and_action_tests {
     use super::*;
     use crate::{CursorConfig, DeliveryModifier, TargetModifier};
+
+    #[test]
+    fn idle_hide_zero_keeps_a_positioned_session_cursor_visible() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.motion.idle_hide_ms = 0.0;
+        assert!(core.apply_command_base(
+            OverlayCommand::ClickPulse { x: 40.0, y: 60.0 },
+            false,
+            false,
+        ));
+
+        core.tick_motion(2.0);
+
+        assert!(core.is_revealed());
+        assert_eq!(
+            core.pos,
+            crate::anchor_for_pointer(40.0, 60.0, core.heading)
+        );
+        assert_eq!(core.idle_alpha, 1.0);
+    }
+
+    #[test]
+    fn semantic_cue_re_reveals_an_idle_hidden_cursor_until_it_ends() {
+        let frame = 1.0 / 60.0;
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.motion.idle_hide_ms = 200.0;
+        core.apply_command_base(
+            OverlayCommand::ClickPulse { x: 40.0, y: 60.0 },
+            false,
+            false,
+        );
+        for _ in 0..120 {
+            core.tick_motion(frame);
+        }
+        assert_eq!(core.idle_alpha, 0.0, "the positioned cursor idles out");
+
+        core.apply_command_base(
+            OverlayCommand::BeginAction {
+                action: CursorAction::Text,
+                delivery: None,
+                target: None,
+            },
+            false,
+            false,
+        );
+        assert_eq!(core.idle_alpha, 1.0, "a keyboard cue re-reveals it");
+        for _ in 0..120 {
+            core.tick_motion(frame);
+        }
+        assert_eq!(core.idle_alpha, 1.0, "it stays visible while the cue runs");
+
+        core.apply_command_base(OverlayCommand::EndAction(CursorAction::Text), false, false);
+        for _ in 0..120 {
+            core.tick_motion(frame);
+        }
+        assert_eq!(core.idle_alpha, 0.0, "it idles out again after the cue");
+    }
 
     #[test]
     fn session_badge_holds_then_fades_once() {
@@ -1097,36 +1245,53 @@ mod session_badge_and_action_tests {
     }
 
     #[test]
-    fn movement_preserves_the_active_semantic_action() {
-        let mut core = RenderStateCore::new(CursorConfig::default());
-        core.pos = (20.0, 20.0);
-        core.apply_command_base(
-            OverlayCommand::BeginAction {
-                action: CursorAction::Text,
-                delivery: None,
-                target: Some(TargetModifier::Ax),
-            },
-            false,
-            false,
-        );
-        core.apply_command_base(
-            OverlayCommand::MoveTo {
-                x: 200.0,
-                y: 100.0,
-                end_heading_radians: 0.0,
-            },
-            false,
-            false,
-        );
-        assert_eq!(core.visual.resolved_action, CursorAction::Text);
-        assert_eq!(core.visual.target, Some(TargetModifier::Ax));
-        core.apply_command_base(
-            OverlayCommand::ClickPulse { x: 200.0, y: 100.0 },
-            false,
-            false,
-        );
-        assert_eq!(core.visual.resolved_action, CursorAction::Text);
-        assert_eq!(core.visual.target, Some(TargetModifier::Ax));
+    fn movement_and_click_pulse_preserve_the_active_semantic_context() {
+        // Text keeps its action through a pulse; Click re-begins itself and
+        // must carry the declared delivery and target across that restart.
+        for action in [CursorAction::Text, CursorAction::Click] {
+            let mut core = RenderStateCore::new(CursorConfig::default());
+            core.pos = (20.0, 20.0);
+            core.apply_command_base(
+                OverlayCommand::BeginAction {
+                    action,
+                    delivery: Some(DeliveryModifier::Background),
+                    target: Some(TargetModifier::Ax),
+                },
+                false,
+                false,
+            );
+            core.apply_command_base(
+                OverlayCommand::MoveTo {
+                    x: 200.0,
+                    y: 100.0,
+                    end_heading_radians: 0.0,
+                },
+                false,
+                false,
+            );
+            assert_eq!(core.visual.resolved_action, action);
+            assert_eq!(
+                (core.visual.delivery, core.visual.target),
+                (Some(DeliveryModifier::Background), Some(TargetModifier::Ax)),
+                "{action:?} after move"
+            );
+            core.apply_command_base(
+                OverlayCommand::ClickPulse { x: 200.0, y: 100.0 },
+                false,
+                false,
+            );
+            assert_eq!(core.visual.resolved_action, action);
+            assert_eq!(
+                (core.visual.delivery, core.visual.target),
+                (Some(DeliveryModifier::Background), Some(TargetModifier::Ax)),
+                "{action:?} after click pulse"
+            );
+            assert_eq!(
+                core.badge_modifiers,
+                Some((Some(DeliveryModifier::Background), Some(TargetModifier::Ax))),
+                "{action:?} badge context"
+            );
+        }
     }
 
     #[test]
@@ -1196,33 +1361,6 @@ mod session_badge_and_action_tests {
         assert_eq!(core.badge_modifier_fade_secs, None);
         assert_eq!(core.session_badge_chip_alpha(), 1.0);
     }
-
-    #[test]
-    fn click_pulse_preserves_declared_context_until_the_action_fades() {
-        let mut core = RenderStateCore::new(CursorConfig::default());
-        core.apply_command_base(
-            OverlayCommand::BeginAction {
-                action: CursorAction::Click,
-                delivery: Some(DeliveryModifier::Background),
-                target: Some(TargetModifier::Ax),
-            },
-            false,
-            false,
-        );
-        core.apply_command_base(
-            OverlayCommand::ClickPulse { x: 40.0, y: 60.0 },
-            false,
-            false,
-        );
-        assert_eq!(
-            (core.visual.delivery, core.visual.target),
-            (Some(DeliveryModifier::Background), Some(TargetModifier::Ax))
-        );
-        assert_eq!(
-            core.badge_modifiers,
-            Some((Some(DeliveryModifier::Background), Some(TargetModifier::Ax)))
-        );
-    }
 }
 
 #[cfg(test)]
@@ -1275,6 +1413,22 @@ mod backing_scale_tests {
         pm
     }
 
+    #[test]
+    fn cursor_pinned_to_an_off_workspace_window_paints_nothing() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.pos = (32.0, 32.0);
+        core.idle_alpha = 1.0;
+        core.visible = true;
+        core.pinned_target_off_workspace = true;
+        let mut pm = tiny_skia::Pixmap::new(64, 64).unwrap();
+        paint_cursor(&mut pm, &core, 0.0, 0.0, None, 1.0);
+        assert_eq!(visible_pixel_count(&pm), 0);
+
+        core.pinned_target_off_workspace = false;
+        paint_cursor(&mut pm, &core, 0.0, 0.0, None, 1.0);
+        assert!(visible_pixel_count(&pm) > 0);
+    }
+
     /// The compiled artifact contains vector geometry. Skia must rasterize it
     /// at the destination backing scale, so linear dimensions grow 1:2:3 and
     /// strongly visible coverage grows approximately with the square.
@@ -1320,6 +1474,156 @@ mod backing_scale_tests {
                 (three as f64 / one as f64 - 3.0).abs() < 0.20,
                 "3× visible bounds should triple: {one}, {three}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod pointer_anchor_tests {
+    use super::*;
+    use crate::{
+        track_pointer_command, CompiledAnimation, CompiledDrawCommand, CompiledFrame,
+        CompiledGeometry, CompiledTheme, CompiledTransform, CursorAction, CursorConfig,
+    };
+    use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
+
+    /// A theme whose only artwork is a small disc centred on a non-central
+    /// hotspot, so the disc centroid is the painted hotspot.
+    fn hotspot_marker_theme() -> Arc<CompiledTheme> {
+        let animation = CompiledAnimation {
+            still_frame: 0,
+            frames: vec![CompiledFrame {
+                commands: vec![CompiledDrawCommand {
+                    geometries: vec![CompiledGeometry::Ellipse {
+                        center: [55.0, 30.0],
+                        size: [8.0, 8.0],
+                    }],
+                    transform: CompiledTransform::default(),
+                    opacity: 1.0,
+                    fill: Some([255, 0, 0, 255]),
+                    stroke: None,
+                }],
+            }],
+        };
+        Arc::new(CompiledTheme {
+            id: "com.example.hotspot".into(),
+            name: "Hotspot".into(),
+            version: "1.0.0".into(),
+            author: "Example Author".into(),
+            license: "MIT".into(),
+            profile: crate::THEME_PROFILE.into(),
+            source_hash: [0; 32],
+            hotspot: [55, 30],
+            actions: CursorAction::ALL
+                .into_iter()
+                .map(|action| (action.as_str().to_owned(), animation.clone()))
+                .collect(),
+        })
+    }
+
+    fn cursor() -> RenderStateCore {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.theme = Some(hotspot_marker_theme());
+        core.motion.idle_hide_ms = 0.0;
+        core
+    }
+
+    /// Painted hotspot in logical points.
+    fn painted_hotspot(core: &RenderStateCore, backing_scale: f32) -> (f64, f64) {
+        let (width, height) = (
+            (400.0 * backing_scale) as u32,
+            (300.0 * backing_scale) as u32,
+        );
+        let pm = render_frame(core, width, height, 0.0, 0.0, None, backing_scale);
+        let (weight, x_sum, y_sum) = pm.data().chunks_exact(4).enumerate().fold(
+            (0.0, 0.0, 0.0),
+            |(weight, x_sum, y_sum), (index, pixel)| {
+                let alpha = f64::from(pixel[3]);
+                let x = (index % pm.width() as usize) as f64 + 0.5;
+                let y = (index / pm.width() as usize) as f64 + 0.5;
+                (weight + alpha, x_sum + x * alpha, y_sum + y * alpha)
+            },
+        );
+        assert!(weight > 0.0, "hotspot marker was not painted");
+        let scale = f64::from(backing_scale);
+        (x_sum / weight / scale, y_sum / weight / scale)
+    }
+
+    fn assert_hotspot_at(core: &RenderStateCore, backing_scale: f32, x: f64, y: f64, when: &str) {
+        let (hx, hy) = painted_hotspot(core, backing_scale);
+        assert!(
+            (hx - x).abs() <= 0.5 && (hy - y).abs() <= 0.5,
+            "{when}: hotspot painted at ({hx:.2}, {hy:.2}), expected ({x}, {y}) \
+             at heading {:.3} and {backing_scale}x",
+            core.heading
+        );
+    }
+
+    fn settle(core: &mut RenderStateCore, macos: bool) {
+        for _ in 0..1200 {
+            if macos {
+                core.tick_swift_constants(1.0 / 60.0);
+            } else {
+                core.tick_motion(1.0 / 60.0);
+            }
+            if core.path.is_none() && core.spring.is_none() {
+                return;
+            }
+        }
+        panic!("cursor did not settle");
+    }
+
+    /// Every pointer-producing command anchors the cursor so the theme hotspot
+    /// is painted on the requested coordinate, on both the macOS
+    /// (sentinel-only click snap, Swift constants) and Windows/Linux paths.
+    #[test]
+    fn hotspot_lands_on_requested_pointer_for_move_click_and_drag() {
+        for macos in [false, true] {
+            for backing_scale in [1.0_f32, 2.0] {
+                // First placement from the off-screen sentinel.
+                let mut core = cursor();
+                core.apply_command_base(
+                    OverlayCommand::ClickPulse { x: 90.0, y: 70.0 },
+                    macos,
+                    macos,
+                );
+                assert_hotspot_at(&core, backing_scale, 90.0, 70.0, "sentinel click");
+
+                for heading in [FRAC_PI_4, 0.0, FRAC_PI_2, 3.0 * FRAC_PI_4] {
+                    core.apply_command_base(
+                        OverlayCommand::MoveTo {
+                            x: 220.0,
+                            y: 160.0,
+                            end_heading_radians: heading,
+                        },
+                        macos,
+                        macos,
+                    );
+                    settle(&mut core, macos);
+                    assert_hotspot_at(&core, backing_scale, 220.0, 160.0, "settled move");
+
+                    core.apply_command_base(
+                        OverlayCommand::ClickPulse { x: 220.0, y: 160.0 },
+                        macos,
+                        macos,
+                    );
+                    assert_hotspot_at(&core, backing_scale, 220.0, 160.0, "click pulse");
+
+                    core.apply_command_base(
+                        OverlayCommand::MoveTo {
+                            x: 90.0,
+                            y: 70.0,
+                            end_heading_radians: heading,
+                        },
+                        macos,
+                        macos,
+                    );
+                    settle(&mut core, macos);
+                }
+
+                core.apply_command_base(track_pointer_command(150.0, 110.0), macos, macos);
+                assert_hotspot_at(&core, backing_scale, 150.0, 110.0, "tracked drag");
+            }
         }
     }
 }

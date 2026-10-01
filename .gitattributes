@@ -1,2 +1,4 @@
 *	        text=auto
 *.sh		text eol=lf
+docs/content/docs/reference/cua-driver/cli-reference.mdx text eol=lf
+docs/content/docs/reference/cua-driver/mcp-tools*.mdx text eol=lf

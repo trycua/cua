@@ -67,6 +67,13 @@ struct Run: AsyncParsableCommand {
     var organization: String = "trycua"
 
     @Option(
+        name: .customLong("vnc"),
+        help:
+            "VNC server policy: 'enabled' (default) or 'disabled'. 'disabled' starts the VM with no VNC listener and reports a null vncUrl."
+    )
+    var vnc: VNCPolicy = .enabled
+
+    @Option(
         name: [.customLong("vnc-port")],
         help: "Port to use for the VNC server. Defaults to 0 (auto-assign)")
     var vncPort: Int = 0
@@ -168,6 +175,18 @@ struct Run: AsyncParsableCommand {
     init() {
     }
 
+    func validate() throws {
+        if let option = VNCPolicy.conflictingOption(
+            policy: vnc,
+            displayMode: DisplayMode.resolve(requested: display, noDisplay: noDisplay),
+            vncPort: vncPort,
+            vncPassword: vncPassword
+        ) {
+            throw ValidationError(
+                "'--vnc disabled' starts no VNC server, so it cannot be combined with '\(option)'.")
+        }
+    }
+
     @MainActor
     func run() async throws {
         if detach {
@@ -205,7 +224,8 @@ struct Run: AsyncParsableCommand {
             usbMassStoragePaths: parsedUSBStorageDevices.isEmpty ? nil : parsedUSBStorageDevices,
             additionalDiskPaths: parsedAdditionalDisks.isEmpty ? nil : parsedAdditionalDisks,
             networkMode: parsedNetworkMode,
-            clipboard: clipboard
+            clipboard: clipboard,
+            vncPolicy: vnc
         )
     }
 }

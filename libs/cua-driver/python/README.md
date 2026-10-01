@@ -11,7 +11,10 @@ This package is for client applications importing Cua Driver as an SDK:
 from cua_driver import CuaDriver
 ```
 
-It does not contain a Python MCP client. Agents already have runtime-neutral
+It does not contain a Python MCP protocol implementation. The optional
+`cua_driver.fleet` module forwards service bytes to the shared Rust typed-MCP
+client. See [the candidate Fleet connection guide](../docs/shared-fleet-mcp-client.md)
+for prerequisites, ownership, and release limits. Agents already have runtime-neutral
 MCP clients and should configure the bundled server directly:
 
 ```text
@@ -38,7 +41,6 @@ in the importing process and does not require the executable or daemon.
 import asyncio
 
 from cua_driver import (
-    CaptureScope,
     CuaDriver,
     CursorReducedMotion,
     EndSessionInput,
@@ -50,7 +52,7 @@ from cua_driver import (
 async def main() -> None:
     driver = CuaDriver.create()
     await driver.start_session(
-        StartSessionInput(session="demo", capture_scope=CaptureScope.DESKTOP)
+        StartSessionInput(session="demo", capture_scope=None, cursor_theme=None)
     )
     try:
         await driver.set_agent_cursor_theme(
@@ -72,17 +74,45 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-SDK operations are asynchronous. Desktop calls return a typed `ToolResult` with
+SDK operations are asynchronous. Desktop observations return a typed `ToolResult` with
 text, images, verification/error metadata, and `structured_json` / `raw_json`
 for platform-extensible results. Session lifecycle calls return dedicated
 generated records.
 
-The agent cursor is session-owned. Its default theme and custom dotLottie
+`start_session` is optional for ordinary calls. The runtime creates one
+implicit session for this SDK transport and reuses it until shutdown, explicit
+end, or five minutes of inactivity. Use a named session when application code
+needs to configure or inspect that run explicitly.
+
+The agent cursor is session-owned and initializes on the first cursor-bearing
+action, including `move_cursor`. Its default theme and custom dotLottie
 authoring workflow are documented in
 [`docs/cursor-themes.md`](../docs/cursor-themes.md). Custom source is compiled
 and installed with the local CLI; SDK and MCP tools select only an installed
 theme ID. The built-in cursor shows the sanitized public session name in a
 badge below the pointer.
+
+## Typed native-window migration
+
+The next breaking release adds typed app and window discovery, window snapshots,
+and token-based clicks. Version 0.25 supports native-window operations through
+the generic tool surface; it does not expose this typed window API. Upgrade the
+bindings and native library together.
+
+`list_apps` returns `ListAppsOutput`, `list_windows` returns `ListWindowsOutput`,
+and `get_window_state` returns `WindowStateOutput`. `click` takes a required exact
+target, a coordinate or element-token position, and an explicit delivery mode.
+It returns `ActionResult` directly and raises `DriverError.Tool` on refusal.
+Other action methods retain `ToolResult`.
+
+Select a unique app and window, resolve an element from a fresh snapshot, request
+background delivery explicitly, then capture again to verify the intended UI
+change. An unsupported background route must not trigger an automatic foreground
+retry. Refresh stale tokens from the same exact window.
+
+See the [migration guide](../docs/native-window-sdk-migration.md) for input and
+return-type changes, and the [complete Python and TypeScript examples](https://cua.ai/docs/how-to-guides/driver/use-sdk-in-process)
+for discovery, token selection, verification, and shutdown.
 
 ## Authorization integrations
 

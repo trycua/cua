@@ -51,6 +51,17 @@ fn registered_tool_contracts_match_on_active_backend() {
     let mut violations: Vec<String> = Vec::new();
     for tool in tools {
         let name = tool["name"].as_str().unwrap_or("<unnamed>");
+        // Consumers route by capability token and read annotations, so every
+        // entry carries both, even when the capability list is empty.
+        if !tool["capabilities"].is_array() {
+            violations.push(format!("{name}: capabilities array is missing"));
+        }
+        if !tool["annotations"].is_object() {
+            violations.push(format!("{name}: annotations object is missing"));
+        }
+        if !tool["description"].is_string() {
+            violations.push(format!("{name}: description is missing"));
+        }
         match tool.pointer("/risk/class").and_then(|value| value.as_str()) {
             Some("unclassified") => {
                 violations.push(format!("{name}: risk class is unclassified"));
@@ -66,6 +77,12 @@ fn registered_tool_contracts_match_on_active_backend() {
             .cloned()
             .unwrap_or_else(|| json!({}));
         violations.extend(shared_schema_violations(name, &schema));
+
+        if let Some(output_schema) = tool.get("outputSchema") {
+            if output_schema.get("type") != Some(&json!("object")) {
+                violations.push(format!("{name}: outputSchema root must have type=object"));
+            }
+        }
 
         let schema_accepts_delivery_mode = schema
             .pointer("/properties/delivery_mode")
@@ -84,12 +101,17 @@ fn registered_tool_contracts_match_on_active_backend() {
         }
 
         if is_action_result_tool(name) {
-            let expected = ActionResult::output_schema();
+            // The live surface advertises the success shape beside the refusal
+            // envelope, because MCP holds every `structuredContent` — refusals
+            // included — to the advertised schema. The success variant must
+            // still be the shared ActionResult schema, byte for byte.
+            let expected =
+                cua_driver_contract::advertised_output_schema(ActionResult::output_schema());
             let actual = tool.get("outputSchema");
             if actual != Some(&expected) {
                 violations.push(format!(
-                    "{name}: live outputSchema does not equal the shared ActionResult schema; \
-                     actual={} expected={expected}",
+                    "{name}: live outputSchema does not equal the advertised ActionResult schema \
+                     (success variant + refusal envelope); actual={} expected={expected}",
                     actual.unwrap_or(&Value::Null)
                 ));
             }

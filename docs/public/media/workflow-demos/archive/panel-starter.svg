@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="297mm" height="210mm" viewBox="0 0 297 210">
+<title>Empty A4 landscape archive panel guide</title>
+<desc>Blank design input. Nonprinting guides mark a 15 mm safe margin. Create final artwork in Inkscape.</desc>
+<sodipodi:namedview id="namedview" showguides="true">
+<sodipodi:guide position="15,0" orientation="1,0"/>
+<sodipodi:guide position="282,0" orientation="1,0"/>
+<sodipodi:guide position="0,15" orientation="0,1"/>
+<sodipodi:guide position="0,195" orientation="0,1"/>
+</sodipodi:namedview>
+</svg>

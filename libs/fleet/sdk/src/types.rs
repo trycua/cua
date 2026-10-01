@@ -2,7 +2,7 @@ use cyclops_sdk_schema::{
     ClaimSpec, OSGymSandboxClaimStatus, OSGymSandboxTemplateSpec, OSGymSandboxWarmPoolSpec,
     OSGymSandboxWarmPoolStatus,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::{collections::HashMap, fmt, sync::Arc};
 
 #[derive(uniffi::Object)]
@@ -70,7 +70,8 @@ impl CyclopsConfiguration {
     }
 }
 
-#[derive(Clone, Debug, uniffi::Record)]
+#[derive(Clone, Debug, uniffi::Record, uniffi_builder_derive::UniffiBuilder)]
+#[uniffi_builder(crate::SdkBuildError)]
 pub struct CyclopsTokenProviderConfiguration {
     pub base_url: String,
     pub pool_poll_interval_ms: u64,
@@ -84,6 +85,12 @@ pub struct ResourceMetadata {
     pub namespace: String,
     pub name: String,
     pub labels: Option<HashMap<String, String>>,
+    #[serde(
+        rename = "creationTimestamp",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub creation_timestamp: Option<String>,
 }
 
 /// UniFFI cannot emit aliases for external record types. Generated bindings use
@@ -134,6 +141,60 @@ impl PartialEq for Claim {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+#[serde(rename_all = "camelCase")]
+pub struct Namespace {
+    pub name: String,
+    pub status: String,
+    pub created_at: String,
+    pub labels: Option<HashMap<String, String>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+pub struct UserApiKey {
+    pub id: String,
+    #[serde(rename = "client_id")]
+    pub client_id: String,
+    pub name: String,
+    #[serde(default, deserialize_with = "deserialize_nullable_scope")]
+    pub scope: Vec<String>,
+}
+
+fn deserialize_nullable_scope<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<Vec<String>>::deserialize(deserializer).map(Option::unwrap_or_default)
+}
+
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
+pub struct CreateUserApiKeyRequest {
+    pub name: String,
+    pub scope: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+pub struct NewUserApiKey {
+    #[serde(rename = "client_id")]
+    pub client_id: String,
+    #[serde(rename = "client_secret")]
+    pub client_secret: String,
+    #[serde(rename = "token_url")]
+    pub token_url: String,
+    pub name: String,
+    pub scope: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
 pub struct Sandbox {
     pub namespace: String,
     pub claim: String,
@@ -141,7 +202,42 @@ pub struct Sandbox {
     pub services: Vec<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, uniffi::Record)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
+pub struct CreateSignedServiceUrlRequest {
+    pub sandbox: Sandbox,
+    pub service: String,
+    pub label: Option<String>,
+    pub expires_in_seconds: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+#[serde(rename_all = "camelCase")]
+pub struct SignedServiceUrl {
+    pub id: String,
+    pub namespace: String,
+    pub claim: String,
+    pub sandbox: String,
+    pub service: String,
+    pub label: Option<String>,
+    pub url: String,
+    pub created_at: String,
+    pub expires_at: String,
+    pub revoked_at: Option<String>,
+}
+
+#[derive(
+    Clone, Debug, Serialize, Deserialize, uniffi::Record, uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
 pub struct CreatePoolRequest {
     pub namespace: String,
     pub spec: OSGymSandboxWarmPoolSpec,
@@ -155,7 +251,10 @@ impl PartialEq for CreatePoolRequest {
 
 /// The `osgym.cua.ai/v1alpha1 OSGymSandboxTemplate` CR verbatim. Warm pools
 /// and claims reference one by name via `spec.sandboxTemplateRef.name`.
-#[derive(Clone, Debug, Serialize, Deserialize, uniffi::Record)]
+#[derive(
+    Clone, Debug, Serialize, Deserialize, uniffi::Record, uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
 #[serde(rename_all = "camelCase")]
 pub struct Template {
     pub api_version: String,
@@ -173,7 +272,10 @@ impl PartialEq for Template {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, uniffi::Record)]
+#[derive(
+    Clone, Debug, Serialize, Deserialize, uniffi::Record, uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
 pub struct CreateTemplateRequest {
     pub namespace: String,
     pub name: String,
@@ -188,15 +290,86 @@ impl PartialEq for CreateTemplateRequest {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, uniffi::Record)]
+#[derive(Clone, Serialize, Deserialize, uniffi::Record, uniffi_builder_derive::UniffiBuilder)]
+#[uniffi_builder(crate::SdkBuildError)]
 pub struct CreateClaimRequest {
     pub pool: Pool,
     pub spec: Option<ClaimSpec>,
+    /// Explicit claim name. A client-supplied name is used verbatim (after
+    /// DNS-label validation); left unset, the client generates a random
+    /// `claim-<petname>` so concurrent leases and retries cannot collide.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub name: Option<String>,
+    /// Labels stamped onto the created claim's metadata verbatim. Grouping
+    /// helpers (for example fleet fan-out) rely on this to tag related claims
+    /// so they can be listed back by label within a namespace.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub labels: Option<HashMap<String, String>>,
+    /// Files delivered into the bound sandbox under `/run/cua/<key>` (mode
+    /// 0600) once the claim binds, without restarting it. The key
+    /// `claim_env_token_key()` (`env-token`) carries the cua-env-driver token.
+    /// The client stores them in a claim-scoped `cua-claim-<claim>` Secret
+    /// that the claim references by `spec.secretRef`; `delete_claim` removes
+    /// it. The pool's template must set `vmTemplate.claimSecrets`. Values are
+    /// never serialized with the request nor printed by `Debug`.
+    #[serde(default, skip_serializing)]
+    #[uniffi(default = None)]
+    pub secret_files: Option<HashMap<String, String>>,
+}
+
+impl fmt::Debug for CreateClaimRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let secret_keys = self.secret_files.as_ref().map(|files| {
+            let mut keys: Vec<&str> = files.keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            keys
+        });
+        formatter
+            .debug_struct("CreateClaimRequest")
+            .field("pool", &self.pool)
+            .field("spec", &self.spec)
+            .field("name", &self.name)
+            .field("labels", &self.labels)
+            .field(
+                "secret_files",
+                &secret_keys.map(|keys| (keys, "<redacted>")),
+            )
+            .finish()
+    }
 }
 
 impl PartialEq for CreateClaimRequest {
     fn eq(&self, other: &Self) -> bool {
-        self.pool == other.pool && schema_values_equal(&self.spec, &other.spec)
+        self.pool == other.pool
+            && schema_values_equal(&self.spec, &other.spec)
+            && self.name == other.name
+            && self.labels == other.labels
+            && self.secret_files == other.secret_files
+    }
+}
+
+/// Where a native client opens its own WebSocket to a sandbox service through
+/// the gateway's `/api/svc` proxy. `url` is the `ws(s)://` endpoint;
+/// `auth_header_name`/`auth_header_value` carry the bearer the socket's HTTP
+/// upgrade request must send. Deliberately not serde-serializable: the value
+/// holds a live credential and must not be logged or persisted.
+#[derive(Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ServiceStreamTarget {
+    pub url: String,
+    pub auth_header_name: String,
+    pub auth_header_value: String,
+}
+
+impl fmt::Debug for ServiceStreamTarget {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ServiceStreamTarget")
+            .field("url", &self.url)
+            .field("auth_header_name", &self.auth_header_name)
+            .field("auth_header_value", &"<redacted>")
+            .finish()
     }
 }
 
@@ -206,12 +379,33 @@ pub struct HttpHeader {
     pub value: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
 pub struct HttpRequest {
     pub method: String,
     pub url: String,
     pub headers: Vec<HttpHeader>,
     pub body: Option<Vec<u8>>,
+    /// Per-request timeout. Defaults to absent so callers written against the
+    /// pre-timeout record shape keep constructing requests unchanged; absent
+    /// falls back to the native client's 30-second default.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub timeout_secs: Option<u64>,
+    /// Maximum bytes delivered in the response body. Absent preserves the
+    /// historical unbounded response behavior.
+    #[serde(default)]
+    #[uniffi(default = None)]
+    pub max_response_bytes: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]

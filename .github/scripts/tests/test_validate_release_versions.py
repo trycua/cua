@@ -1,25 +1,42 @@
+import json
 from pathlib import Path
 import re
 import shutil
 
 import pytest
 
-from validate_release_versions import VersionError, validate
+from validate_release_versions import (
+    VersionError,
+    driver_installer_withdrawn_versions,
+    driver_withdrawn_versions,
+    main,
+    validate,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def copy_release_sources(destination: Path) -> None:
+    config = "scripts/docs-generators/config.json"
+    (destination / config).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(REPO_ROOT / config, destination / config)
     shutil.copy(REPO_ROOT / ".release-please-manifest.json", destination)
-    release_state = ".github/release-state/cua-driver-rs-published-version"
-    (destination / release_state).parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy(REPO_ROOT / release_state, destination / release_state)
+    for filename in ("VERSION", "pyproject.toml", "uv.lock", "cua_sandbox/__init__.py"):
+        relative = Path("libs/python/cua-sandbox") / filename
+        (destination / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO_ROOT / relative, destination / relative)
+    release_state = ".github/release-state"
+    shutil.copytree(REPO_ROOT / release_state, destination / release_state)
     for relative in ("libs/cua-driver", "libs/lume"):
         source = REPO_ROOT / relative
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source, target)
+        shutil.copytree(
+            source,
+            target,
+            ignore=shutil.ignore_patterns(".build", ".swiftpm", "target", "node_modules"),
+        )
     for product in ("cua-driver", "lume"):
         docs = f"docs/content/docs/reference/{product}"
         shutil.copytree(REPO_ROOT / docs, destination / docs)
@@ -27,6 +44,82 @@ def copy_release_sources(destination: Path) -> None:
 
 def test_current_release_versions_agree():
     validate(REPO_ROOT, "all")
+
+
+def test_sandbox_product_cli_accepts_current_versions():
+    assert main(["--repo-root", str(REPO_ROOT), "--product", "sandbox"]) == 0
+
+
+def test_perception_product_cli_accepts_current_versions():
+    assert main(["--repo-root", str(REPO_ROOT), "--product", "perception"]) == 0
+
+
+@pytest.mark.parametrize("product", ["perception", "all"])
+def test_perception_versions_use_independent_authority(tmp_path: Path, product: str):
+    copy_release_sources(tmp_path)
+    validate(tmp_path, product)
+
+
+@pytest.mark.parametrize("product", ["perception", "all"])
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("VERSION", "Cua Perception expects 9.9.9"),
+        ("Cargo.toml", "Cargo.toml=9.9.9"),
+        ("Cargo.lock", "Cargo.lock:cua-perception=9.9.9"),
+        (".release-please-manifest.json", ".release-please-manifest.json=9.9.9"),
+    ],
+)
+def test_perception_version_drift_fails(
+    tmp_path: Path, product: str, source: str, expected: str
+):
+    copy_release_sources(tmp_path)
+    base = tmp_path / "libs/cua-driver/rust/crates/cua-perception"
+    current = (base / "VERSION").read_text().strip()
+    if source == ".release-please-manifest.json":
+        path = tmp_path / source
+        manifest = json.loads(path.read_text())
+        manifest["libs/cua-driver/rust/crates/cua-perception"] = "9.9.9"
+        path.write_text(json.dumps(manifest))
+    elif source == "Cargo.lock":
+        path = tmp_path / "libs/cua-driver/rust/Cargo.lock"
+        path.write_text(
+            re.sub(
+                rf'(\[\[package\]\]\nname = "cua-perception"\nversion = "){re.escape(current)}("\n)',
+                r"\g<1>9.9.9\2",
+                path.read_text(),
+                count=1,
+            )
+        )
+    else:
+        path = base / source
+        path.write_text(path.read_text().replace(current, "9.9.9", 1))
+
+    with pytest.raises(VersionError, match=re.escape(expected)):
+        validate(tmp_path, product)
+
+
+@pytest.mark.parametrize("product", ["sandbox", "all"])
+@pytest.mark.parametrize(
+    "source",
+    ["VERSION", "pyproject.toml", "uv.lock", "cua_sandbox/__init__.py", ".release-please-manifest.json"],
+)
+def test_sandbox_version_drift_fails(tmp_path: Path, product: str, source: str):
+    copy_release_sources(tmp_path)
+    base = tmp_path / "libs/python/cua-sandbox"
+    current = (base / "VERSION").read_text().strip()
+    if source == ".release-please-manifest.json":
+        path = tmp_path / source
+        manifest = json.loads(path.read_text())
+        manifest["libs/python/cua-sandbox"] = "9.9.9"
+        path.write_text(json.dumps(manifest))
+    else:
+        path = base / source
+        path.write_text(path.read_text().replace(current, "9.9.9"))
+
+    expected = "Sandbox expects 9.9.9" if source == "VERSION" else f"{source}=9.9.9"
+    with pytest.raises(VersionError, match=re.escape(expected)):
+        validate(tmp_path, product)
 
 
 def test_version_drift_fails_with_the_source_name(tmp_path: Path):
@@ -93,4 +186,82 @@ def test_driver_validation_rejects_installer_version_ahead_of_source(tmp_path: P
     )
 
     with pytest.raises(VersionError, match="ahead of source release"):
+        validate(tmp_path, "driver")
+
+
+def test_withdrawn_release_can_never_be_baked(tmp_path: Path):
+    copy_release_sources(tmp_path)
+    published = (
+        tmp_path / ".github/release-state/cua-driver-rs-published-version"
+    ).read_text().strip()
+    withdrawn = tmp_path / ".github/release-state/cua-driver-rs-withdrawn-versions"
+    validate(tmp_path, "driver")
+    withdrawn.write_text(f"{published} # unsigned macOS app\n", encoding="utf-8")
+    with pytest.raises(VersionError, match=rf"withdrawn release {re.escape(published)}: unsigned macOS app"):
+        validate(tmp_path, "driver")
+
+
+def test_checked_in_withdrawn_versions_are_exact_and_explained():
+    path = REPO_ROOT / ".github/release-state/cua-driver-rs-withdrawn-versions"
+    entries = [
+        line for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert entries
+    for line in entries:
+        version, _, reason = line.partition("#")
+        assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version.strip())
+        assert reason.strip(), f"withdrawn {version.strip()} needs a reason"
+
+
+def test_installer_withdrawn_lists_mirror_release_state():
+    listed = sorted(driver_withdrawn_versions(REPO_ROOT))
+    baked = driver_installer_withdrawn_versions(REPO_ROOT)
+    assert "0.28.3" in listed
+    assert baked == {
+        "scripts/_install-rust.sh": listed,
+        "scripts/install.ps1": listed,
+    }
+
+
+@pytest.mark.parametrize(
+    ("relative", "old", "new"),
+    [
+        (
+            "libs/cua-driver/scripts/_install-rust.sh",
+            'CUA_DRIVER_RS_WITHDRAWN_VERSIONS="0.28.3"',
+            'CUA_DRIVER_RS_WITHDRAWN_VERSIONS=""',
+        ),
+        (
+            "libs/cua-driver/scripts/install.ps1",
+            "$Script:CuaDriverRsWithdrawnVersions = @('0.28.3')",
+            "$Script:CuaDriverRsWithdrawnVersions = @('0.28.3', '0.28.1')",
+        ),
+    ],
+)
+def test_installer_withdrawn_list_drift_fails(tmp_path: Path, relative: str, old: str, new: str):
+    copy_release_sources(tmp_path)
+    path = tmp_path / relative
+    source = path.read_text(encoding="utf-8-sig")
+    assert old in source
+    path.write_text(source.replace(old, new), encoding="utf-8")
+    with pytest.raises(VersionError, match="withdraws"):
+        validate(tmp_path, "driver")
+
+
+def test_release_state_withdrawal_without_installer_update_fails(tmp_path: Path):
+    copy_release_sources(tmp_path)
+    withdrawn = tmp_path / ".github/release-state/cua-driver-rs-withdrawn-versions"
+    withdrawn.write_text(
+        withdrawn.read_text(encoding="utf-8") + "0.1.0 # test withdrawal\n", encoding="utf-8"
+    )
+    with pytest.raises(VersionError, match=r"withdraws \['0.28.3'\], but"):
+        validate(tmp_path, "driver")
+
+
+def test_malformed_withdrawn_version_fails(tmp_path: Path):
+    copy_release_sources(tmp_path)
+    withdrawn = tmp_path / ".github/release-state/cua-driver-rs-withdrawn-versions"
+    withdrawn.write_text("v0.28.3 # prefixed\n", encoding="utf-8")
+    with pytest.raises(VersionError, match="exact stable"):
         validate(tmp_path, "driver")

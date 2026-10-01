@@ -47,6 +47,10 @@ fn main() {
             vec!["--client", "pi"],
             vec!["does not support MCP natively"],
         ),
+        (
+            vec!["--client", "prime-agent"],
+            vec!["No MCP registration is required", "skills install"],
+        ),
     ];
 
     for (args, needles) in cases {
@@ -77,7 +81,7 @@ fn main() {
     );
     println!("unknown-client err OK");
 
-    println!("\n✅ PASS: mcp-config 8 client paths + unknown-client error verified");
+    println!("\n✅ PASS: mcp-config 9 client paths + unknown-client error verified");
 }
 
 #[cfg(not(target_os = "windows"))]

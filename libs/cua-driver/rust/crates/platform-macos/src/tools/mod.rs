@@ -1,6 +1,7 @@
 //! MCP tool implementations for macOS.
 
 mod bring_to_front;
+mod capture_binding;
 mod click;
 mod clipboard;
 mod double_click;
@@ -33,6 +34,7 @@ pub(crate) mod get_screen_size;
 mod health_report;
 mod move_cursor;
 mod page;
+mod pixel_route;
 pub(crate) mod px_frame;
 mod set_config;
 mod type_text_chars;
@@ -45,7 +47,28 @@ use cua_driver_core::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::{ax::cache::ElementCache, cursor::state::CursorRegistry};
+use crate::{ax::snapshot::Snapshots, cursor::state::CursorRegistry};
+
+fn native_window_id(
+    window_id: Option<u64>,
+) -> Result<Option<u32>, cua_driver_core::protocol::ToolResult> {
+    window_id.map(u32::try_from).transpose().map_err(|_| {
+        cua_driver_core::protocol::ToolResult::error("window_id is out of range for macOS.")
+    })
+}
+
+#[cfg(test)]
+mod snapshot_window_id_tests {
+    #[test]
+    fn native_window_conversion_never_discards_high_bits() {
+        assert_eq!(super::native_window_id(None).unwrap(), None);
+        assert_eq!(
+            super::native_window_id(Some(u32::MAX as u64)).unwrap(),
+            Some(u32::MAX)
+        );
+        assert!(super::native_window_id(Some((1_u64 << 32) | 7)).is_err());
+    }
+}
 
 fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
     let Ok(pid) = i32::try_from(pid) else {
@@ -63,6 +86,7 @@ fn window_target_candidates_for_pid(
         .filter(|window| window.pid == pid)
         .map(|window| WindowTargetCandidate {
             window_id: u64::from(window.window_id),
+            transient_for: None,
             title: window.title,
             app_name: Some(window.app_name),
             is_on_screen: window.is_on_screen,
@@ -108,9 +132,6 @@ mod pid_window_target_tests {
     }
 }
 
-#[cfg(test)]
-mod background_input_regression_tests;
-
 fn pid_window_guarded<T: Tool + 'static>(
     tool: T,
     candidates: &WindowTargetCandidates,
@@ -126,60 +147,16 @@ pub use check_permissions::{
     PERMISSIONS_HOST_REQUEST_ARG,
 };
 
-/// Per-process zoom context — stores the padded crop origin and resize scale
-/// from the most recent `zoom` call, so `click(from_zoom=true)` can translate
-/// zoom-image pixel coordinates back to full-window coordinates.
-#[derive(Clone, Copy, Debug)]
-pub struct ZoomContext {
-    /// Padded crop X origin in full-window pixel space.
-    pub origin_x: f64,
-    /// Padded crop Y origin in full-window pixel space.
-    pub origin_y: f64,
-    /// Inverse resize scale: `cw / out_w` (1.0 = no downscale).
-    pub scale_inv: f64,
-}
+pub use cua_driver_core::snapshot_store::ZoomContext;
 
-impl ZoomContext {
-    /// Translate a zoom-image coordinate `(px, py)` to full-window pixel coordinates.
-    pub fn zoom_to_window(&self, px: f64, py: f64) -> (f64, f64) {
-        (
-            self.origin_x + px * self.scale_inv,
-            self.origin_y + py * self.scale_inv,
-        )
-    }
-}
-
-/// Input delivery modality — the agent-selected rung of the best-effort-background
-/// ladder, passed per call (never a stored/config setting).
+/// The shared per-call delivery mode; see [`cua_driver_core::delivery`].
 ///
-/// - `Background` (default): post synthetic input to the pid without fronting.
-/// - `Foreground`: briefly front the target window, act, then restore the prior
-///   frontmost (see [`crate::input::skylight::with_foreground_assist`]). The
-///   agent's vision-driven last resort — and the only way `click` reaches a
-///   foreground rung. Orthogonal to addressing (`element_index` vs `x/y`, which
-///   selects AX vs pixel).
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum DeliveryMode {
-    #[default]
-    Background,
-    Foreground,
-}
-
-impl DeliveryMode {
-    /// Parse the per-call `delivery_mode` argument. Anything other than an
-    /// explicit case-insensitive `"foreground"` resolves to `Background` — the
-    /// correct default, so an omitted/garbage value never silently fronts.
-    pub fn parse(arg: Option<&str>) -> Self {
-        match arg {
-            Some(s) if s.eq_ignore_ascii_case("foreground") => Self::Foreground,
-            _ => Self::Background,
-        }
-    }
-
-    pub fn is_foreground(self) -> bool {
-        matches!(self, Self::Foreground)
-    }
-}
+/// On macOS, `Foreground` briefly fronts the target window, acts, then
+/// restores the prior frontmost (see
+/// [`crate::input::skylight::with_foreground_assist`]). It is the only way
+/// `click` reaches a foreground rung and is orthogonal to addressing
+/// (`element_index` vs `x/y`, which selects AX vs pixel).
+pub use cua_driver_core::delivery::DeliveryMode;
 
 /// Convert a pure background-input refusal into the structured refusal result
 /// shape shared by exact-target tools: `code`, `effect: "refused"`, the
@@ -240,7 +217,10 @@ async fn decide_background_window_action(
     use cua_driver_core::background_input::{
         decide_background_input, BackgroundInputDecision, ExactWindowTarget,
     };
+    let element_guard =
+        element_ptr.map(|ptr| unsafe { crate::ax::snapshot::RetainedElement::retain(ptr) });
     let facts = match tokio::task::spawn_blocking(move || {
+        let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
         crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr)
     })
     .await
@@ -281,46 +261,23 @@ pub(crate) async fn acquire_background_mutation(pid: i32) -> BackgroundMutationL
     }
 }
 
-/// Finish the post-action observation window. Embedded interactive clients
-/// that already observe the target continuously may opt out through the
-/// private registry argument to avoid adding a one-second acknowledgement
-/// delay to every input event. Regular MCP callers retain the full observer.
+/// Finish the post-action observation window and release the wildcard
+/// focus-steal lease. The observation bound is a daemon-launch setting
+/// (`CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS` / `CUA_DRIVER_WINDOW_CHANGE_POLL_MS`),
+/// never a per-call argument: every ingress strips `_`-prefixed arguments, so
+/// a tool call cannot shorten focus protection for itself.
 pub(crate) async fn finish_window_observation(
     snapshot: crate::window_change_detector::Snapshot,
-    args: &serde_json::Value,
 ) -> crate::window_change_detector::Changes {
-    if args
-        .get("_skip_window_change_detection")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(false)
-    {
-        drop(snapshot);
-        crate::window_change_detector::Changes::no_change()
-    } else {
-        snapshot.detect_async().await
-    }
-}
-
-#[cfg(test)]
-mod interactive_observation_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn embedded_interactive_input_can_finish_without_polling() {
-        let snapshot = crate::window_change_detector::WindowChangeDetector::snapshot(None);
-        let changes = finish_window_observation(
-            snapshot,
-            &serde_json::json!({"_skip_window_change_detection": true}),
-        )
-        .await;
-        assert!(!changes.needs_restore());
-    }
+    snapshot.detect_async().await
 }
 
 /// px-focus for the keyboard family (type_text / press_key / hotkey): focus the
 /// element at (x,y) before a keystroke — the *element px action* form of a
-/// keyboard tool. Prefer non-destructive AX focus so an existing selection is
-/// retained; the foreground rung falls back to a real pixel click when needed.
+/// keyboard tool. When the exact window's focused element already covers the
+/// point, nothing is clicked, so a Cmd+A selection survives a follow-up
+/// type_text or Cmd+V. Otherwise prefer non-destructive AX focus; the
+/// foreground rung falls back to a real pixel click when needed.
 /// Reuses ClickTool's exact coordinate translation and delivery mode.
 /// `Ok(())` on success; `Err(ToolResult)` short-circuits the caller.
 #[allow(clippy::too_many_arguments)]
@@ -354,6 +311,14 @@ pub(crate) async fn focus_by_pixel(
                 .await?;
         }
     }
+    // The requested field may already hold keyboard focus, for example after
+    // a pixel hotkey Cmd+A. Any focus action is then redundant, and the real
+    // click fallback would be destructive: Chromium's omnibox hit-tests to an
+    // enclosing AXGroup that rejects AXFocused, so the fallback click moved
+    // the caret and dropped the selection (#4125).
+    if focused_element_holds_point(pid, window_id, x, y, true).await {
+        return Ok(());
+    }
     if let Some(ref s) = session {
         click_args["session"] = serde_json::json!(s);
     }
@@ -374,10 +339,16 @@ pub(crate) async fn focus_by_pixel(
         // AXFocused is non-destructive: unlike a second real click, it keeps a
         // Cmd+A selection intact before a follow-up type_text or Cmd+V.
         tokio::time::sleep(std::time::Duration::from_millis(120)).await;
-        return Ok(());
-    }
-
-    if !foreground {
+        // A background focus-click is `effect:"unverifiable"` by construction:
+        // it cannot prove the renderer moved its first responder. Returning on
+        // "it didn't error" therefore skipped the real-click fallback below
+        // whenever the click was a silent no-op — advancing on transport
+        // success alone, which is exactly what the ladder forbids. Confirm the
+        // focus actually moved before claiming this rung worked.
+        if !foreground || pixel_focus_landed(pid, window_id, x, y).await {
+            return Ok(());
+        }
+    } else if !foreground {
         return Err(cua_driver_core::protocol::ToolResult::error(format!(
             "focus pixel-click at ({x:.0},{y:.0}) failed."
         )));
@@ -415,95 +386,69 @@ pub(crate) async fn focus_by_pixel(
     Ok(())
 }
 
-/// Thread-safe per-pid zoom context registry.
-pub struct ZoomRegistry {
-    inner: std::sync::Mutex<HashMap<i32, ZoomContext>>,
-}
-
-impl Default for ZoomRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ZoomRegistry {
-    pub fn new() -> Self {
-        Self {
-            inner: std::sync::Mutex::new(HashMap::new()),
-        }
-    }
-
-    pub fn set(&self, pid: i32, ctx: ZoomContext) {
-        self.inner.lock().unwrap().insert(pid, ctx);
-    }
-
-    pub fn get(&self, pid: i32) -> Option<ZoomContext> {
-        self.inner.lock().unwrap().get(&pid).copied()
-    }
-}
-
-/// Tracks the per-(pid, window_id) ratio applied by `max_image_dimension`
-/// downscaling.
+/// Confirm that a focus pixel-click actually moved the application's focused
+/// element onto the clicked point.
 ///
-/// `ratio = original_dim / resized_dim` — multiply resized image coordinates
-/// by this to recover original (native) window-local pixel coordinates.
-/// Mirrors Swift's `ImageResizeRegistry`.
+/// The background focus-click reports `effect:"unverifiable"`, so this is the
+/// read-back that lets [`focus_by_pixel`] decide whether the cheap rung worked
+/// or the real-click fallback is still required. It reuses the same
+/// window-local-pixels → screen translation the click itself used, so the
+/// comparison is in one coordinate space.
 ///
-/// Keyed per window, matching the element cache and the element-token
-/// registry. A pid-only key leaked the ratio recorded while snapshotting
-/// window A into pixel clicks aimed at window B of the same pid, sending them
-/// off-target (issue #2237).
-pub struct ResizeRegistry {
-    inner: std::sync::Mutex<HashMap<(i32, u32), f64>>,
+/// Returns `false` whenever the answer cannot be established (no window id,
+/// untranslatable frame, unreadable focused element or rect). That is the
+/// conservative direction: an unprovable focus escalates to the stronger rung
+/// rather than being reported as success.
+async fn pixel_focus_landed(pid: i32, window_id: Option<u32>, x: f64, y: f64) -> bool {
+    focused_element_holds_point(pid, window_id, x, y, false).await
 }
 
-impl Default for ResizeRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Whether the application's focused element covers the window-local pixel
+/// `(x, y)` of `window_id`. With `require_window`, the focused element must
+/// also belong to that exact window, so focus held by a same-process sibling
+/// window that overlaps the point never counts as the requested target.
+/// Unprovable answers are `false`.
+async fn focused_element_holds_point(
+    pid: i32,
+    window_id: Option<u32>,
+    x: f64,
+    y: f64,
+    require_window: bool,
+) -> bool {
+    let Some(wid) = window_id else {
+        return false;
+    };
+    tokio::task::spawn_blocking(move || {
+        let Ok(frame) = px_frame::resolve_window_px_frame(wid) else {
+            return false;
+        };
+        let (screen_x, screen_y, _, _) = frame.to_screen(x, y);
+        unsafe {
+            let Some(focused) = crate::ax::bindings::focused_element_of_pid(pid) else {
+                return false;
+            };
+            let rect = crate::ax::bindings::element_screen_rect(focused);
+            let focused_window = if require_window {
+                crate::ax::exact_target::element_window_id(focused)
+            } else {
+                Some(wid)
+            };
+            core_foundation::base::CFRelease(focused as core_foundation::base::CFTypeRef);
+            let Some(rect) = rect else {
+                return false;
+            };
+            focused_window == Some(wid) && point_within_rect(rect, screen_x, screen_y)
+        }
+    })
+    .await
+    .unwrap_or(false)
 }
 
-impl ResizeRegistry {
-    pub fn new() -> Self {
-        Self {
-            inner: std::sync::Mutex::new(HashMap::new()),
-        }
-    }
-
-    /// Record that (pid, window_id)'s screenshot was downscaled by `ratio`.
-    pub fn set_ratio(&self, pid: i32, window_id: u32, ratio: f64) {
-        self.inner.lock().unwrap().insert((pid, window_id), ratio);
-    }
-
-    /// Remove the ratio entry for one window (no active downscale).
-    pub fn clear_ratio(&self, pid: i32, window_id: u32) {
-        self.inner.lock().unwrap().remove(&(pid, window_id));
-    }
-
-    /// The ratio for a window, or `None` if no downscale happened.
-    ///
-    /// `window_id: None` is the screen-scope (legacy) path: it returns a ratio
-    /// only when every window recorded for `pid` agrees on one, so a
-    /// window-less caller can never inherit some other window's scale. That
-    /// preserves today's behaviour for the single-window case without guessing
-    /// across windows.
-    pub fn ratio(&self, pid: i32, window_id: Option<u32>) -> Option<f64> {
-        let inner = self.inner.lock().unwrap();
-        match window_id {
-            Some(wid) => inner.get(&(pid, wid)).copied(),
-            None => {
-                let mut agreed: Option<f64> = None;
-                for (_, ratio) in inner.iter().filter(|((p, _), _)| *p == pid) {
-                    match agreed {
-                        None => agreed = Some(*ratio),
-                        Some(seen) if (seen - *ratio).abs() < 1e-9 => {}
-                        Some(_) => return None,
-                    }
-                }
-                agreed
-            }
-        }
-    }
+/// Whether `[x, y, width, height]` (screen coordinates, top-left origin)
+/// contains the point. A degenerate rect never contains anything, so an app
+/// reporting a zero-sized focused element escalates rather than false-confirms.
+fn point_within_rect([rx, ry, rw, rh]: [f64; 4], x: f64, y: f64) -> bool {
+    rw > 0.0 && rh > 0.0 && x >= rx && x < rx + rw && y >= ry && y < ry + rh
 }
 
 /// Runtime-mutable driver configuration persisted across calls within a session.
@@ -670,10 +615,9 @@ impl Default for SessionConfigRegistry {
 
 /// Shared state passed to all tools.
 pub struct ToolState {
-    pub element_cache: Arc<ElementCache>,
+    pub snapshots: Arc<Snapshots>,
     pub cursor_registry: Arc<CursorRegistry>,
-    pub zoom_registry: Arc<ZoomRegistry>,
-    pub resize_registry: Arc<ResizeRegistry>,
+    pub(crate) capture_bindings: Arc<capture_binding::MacCaptureBindings>,
     /// Global, disk-persisted config — the base layer and the only one the
     /// anonymous session / CLI writes.
     pub config: Arc<std::sync::RwLock<DriverConfig>>,
@@ -708,11 +652,24 @@ impl ToolState {
         host_owns_permission_ux: bool,
         host_bundle_id: Option<String>,
     ) -> Self {
+        Self::new_with_capture_service(
+            Arc::new(cua_driver_core::capture_runtime::CaptureService::default()),
+            cursor_overlay_available,
+            host_owns_permission_ux,
+            host_bundle_id,
+        )
+    }
+
+    fn new_with_capture_service(
+        capture_service: Arc<cua_driver_core::capture_runtime::CaptureService>,
+        cursor_overlay_available: bool,
+        host_owns_permission_ux: bool,
+        host_bundle_id: Option<String>,
+    ) -> Self {
         Self {
-            element_cache: Arc::new(ElementCache::new()),
+            snapshots: Arc::new(Snapshots::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),
-            zoom_registry: Arc::new(ZoomRegistry::new()),
-            resize_registry: Arc::new(ResizeRegistry::new()),
+            capture_bindings: Arc::new(capture_binding::MacCaptureBindings::new(capture_service)),
             // Load persisted config from ~/.cua-driver/config.json so that
             // `cua-driver config set` changes carry over into MCP sessions.
             config: Arc::new(std::sync::RwLock::new(load_driver_config())),
@@ -723,6 +680,35 @@ impl ToolState {
             host_bundle_id,
         }
     }
+}
+
+pub(super) fn screenshot_scale(
+    state: &ToolState,
+    args: &serde_json::Value,
+    pid: i32,
+    window_id: Option<u32>,
+) -> Result<f64, cua_driver_core::protocol::ToolResult> {
+    state
+        .snapshots
+        .screenshot_context(
+            pid,
+            window_id.map(u64::from),
+            args.get("_session_id").and_then(serde_json::Value::as_str),
+        )
+        .map(|context| context.scale)
+}
+
+pub(super) fn zoom_context(
+    state: &ToolState,
+    args: &serde_json::Value,
+    pid: i32,
+    window_id: Option<u32>,
+) -> Result<ZoomContext, cua_driver_core::protocol::ToolResult> {
+    state.snapshots.zoom(
+        pid,
+        window_id.map(u64::from),
+        args.get("_session_id").and_then(serde_json::Value::as_str),
+    )
 }
 
 pub(crate) fn cursor_overlay_unavailable() -> cua_driver_core::protocol::ToolResult {
@@ -750,7 +736,8 @@ pub fn register_all(
     host_owns_permission_ux: bool,
     host_bundle_id: Option<String>,
 ) {
-    let state = Arc::new(ToolState::new(
+    let state = Arc::new(ToolState::new_with_capture_service(
+        registry.capture_service(),
         cursor_overlay_available,
         host_owns_permission_ux,
         host_bundle_id,
@@ -773,11 +760,13 @@ pub fn register_all(
                     Some(state) => cua_driver_core::session::bounded_cursor_outcome(
                         true,
                         state.config.enabled,
+                        crate::cursor::overlay::is_visible_for_session(session_id),
                         Some(state.config.theme_id.as_str()),
                         motion_customized,
                         active_cursor_count,
                     ),
                     None => cua_driver_core::session::bounded_cursor_outcome(
+                        false,
                         false,
                         false,
                         None,
@@ -792,7 +781,9 @@ pub fn register_all(
     if let Some(runtime_scope) = cua_driver_core::tool::current_dispatch_runtime_scope() {
         let prefix = format!("__cua_runtime_{runtime_scope}:");
         let cursor_registry = state.cursor_registry.clone();
+        let capture_bindings = state.capture_bindings.clone();
         registry.retain_runtime_cleanup(move || {
+            capture_bindings.retire_runtime();
             for cursor in cursor_registry
                 .all_states()
                 .into_iter()
@@ -805,17 +796,21 @@ pub fn register_all(
     }
     // Share the element cache with the recording-hook layer so it can
     // resolve element_index → window-local screenshot coords for click.png.
-    crate::recording_hooks::set_element_cache(state.element_cache.clone());
+    crate::recording_hooks::set_snapshots(state.snapshots.clone());
 
     // Drop a disconnecting session's config overrides + owned cursor on
     // `session_end`. The daemon fans the session id out to this hook;
     // recording ownership is handled separately on the core RecordingSession.
     {
         let session_config = state.session_config.clone();
+        let snapshots = state.snapshots.clone();
         let cursor_registry = state.cursor_registry.clone();
+        let capture_bindings = state.capture_bindings.clone();
         let registration =
             cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
                 session_config.clear(session_id);
+                snapshots.retire_session_screenshots(session_id);
+                capture_bindings.retire_session(session_id);
                 // Per-session agent cursor: the session_id is the cursor key when
                 // the caller gave no explicit cursor_id, so dropping it here both
                 // prunes the metadata registry and stops the overlay painting that
@@ -826,6 +821,11 @@ pub fn register_all(
                 crate::cursor::overlay::remove_cursor(session_id.to_owned());
             });
         registry.retain_session_end_hook(registration);
+        let revive_registration =
+            cua_driver_core::session::register_scoped_session_revive_hook(move |session_id| {
+                crate::cursor::overlay::revive_cursor(session_id.to_owned());
+            });
+        registry.retain_session_revive_hook(revive_registration);
     }
 
     registry.register(Box::new(list_apps::ListAppsTool));
@@ -900,7 +900,9 @@ pub fn register_all(
     // triggers Claude Code's computer-use beta-tool injection (see cli.rs).
     let _ = compat;
     registry.register(Box::new(get_screen_size::GetScreenSizeTool));
-    registry.register(Box::new(get_desktop_state::GetDesktopStateTool));
+    registry.register(Box::new(get_desktop_state::GetDesktopStateTool::new(
+        state.clone(),
+    )));
     registry.register(Box::new(get_cursor_position::GetCursorPositionTool));
     registry.register(Box::new(move_cursor::MoveCursorTool::new(state.clone())));
     registry.register(Box::new(cursor_tools::SetAgentCursorEnabledTool::new(
@@ -1005,75 +1007,6 @@ mod session_config_guard_tests {
 }
 
 #[cfg(test)]
-mod resize_registry_tests {
-    use super::ResizeRegistry;
-
-    /// Issue #2237: the registry was keyed by pid alone, so the downscale
-    /// ratio recorded while snapshotting one window was applied to pixel
-    /// clicks aimed at another window of the same app.
-    #[test]
-    fn resize_ratio_is_keyed_per_window() {
-        let reg = ResizeRegistry::new();
-        reg.set_ratio(800, 11, 2.0);
-        reg.set_ratio(800, 22, 1.25);
-        assert_eq!(reg.ratio(800, Some(11)), Some(2.0));
-        assert_eq!(reg.ratio(800, Some(22)), Some(1.25));
-    }
-
-    #[test]
-    fn undownscaled_window_reports_no_ratio() {
-        let reg = ResizeRegistry::new();
-        reg.set_ratio(800, 11, 2.0);
-        assert_eq!(
-            reg.ratio(800, Some(22)),
-            None,
-            "window 22 was never downscaled; it must not inherit window 11's ratio"
-        );
-    }
-
-    #[test]
-    fn clearing_one_window_keeps_the_other() {
-        let reg = ResizeRegistry::new();
-        reg.set_ratio(800, 11, 2.0);
-        reg.set_ratio(800, 22, 1.25);
-        reg.clear_ratio(800, 11);
-        assert_eq!(reg.ratio(800, Some(11)), None);
-        assert_eq!(reg.ratio(800, Some(22)), Some(1.25));
-    }
-
-    #[test]
-    fn distinct_pids_with_the_same_window_id_do_not_collide() {
-        let reg = ResizeRegistry::new();
-        reg.set_ratio(800, 11, 2.0);
-        reg.set_ratio(900, 11, 3.0);
-        assert_eq!(reg.ratio(800, Some(11)), Some(2.0));
-        assert_eq!(reg.ratio(900, Some(11)), Some(3.0));
-    }
-
-    /// Screen-scope callers pass no window_id. One window (the common case)
-    /// keeps working; disagreeing windows refuse to guess.
-    #[test]
-    fn screen_scope_lookup_only_answers_when_windows_agree() {
-        let reg = ResizeRegistry::new();
-        assert_eq!(reg.ratio(800, None), None, "nothing recorded yet");
-        reg.set_ratio(800, 11, 2.0);
-        assert_eq!(
-            reg.ratio(800, None),
-            Some(2.0),
-            "single window is unambiguous"
-        );
-        reg.set_ratio(800, 22, 2.0);
-        assert_eq!(reg.ratio(800, None), Some(2.0), "agreeing windows answer");
-        reg.set_ratio(800, 33, 1.25);
-        assert_eq!(
-            reg.ratio(800, None),
-            None,
-            "disagreeing windows must not pick one arbitrarily"
-        );
-    }
-}
-
-#[cfg(test)]
 mod cursor_overlay_facility_tests {
     use super::*;
     use cua_driver_core::tool::Tool;
@@ -1111,6 +1044,43 @@ mod cursor_overlay_facility_tests {
 // macOS cursor sampler (CoreGraphics), so the start-guard test runs here in
 // platform-macos where build.rs links the frameworks — the core crate's test
 // binary has no CoreGraphics linkage.
+#[cfg(test)]
+mod pixel_focus_readback_tests {
+    use super::point_within_rect;
+
+    #[test]
+    fn confirms_a_point_inside_the_focused_element() {
+        let composer = [100.0, 800.0, 250.0, 24.0];
+        assert!(point_within_rect(composer, 220.0, 812.0));
+        assert!(
+            point_within_rect(composer, 100.0, 800.0),
+            "top-left is inside"
+        );
+    }
+
+    #[test]
+    fn rejects_a_point_outside_the_focused_element() {
+        // The WhatsApp case: the click targeted the composer but focus stayed on
+        // the transcript above it, so the clicked point is not inside the
+        // focused element's rect and the caller must escalate.
+        let transcript = [100.0, 100.0, 640.0, 690.0];
+        assert!(!point_within_rect(transcript, 220.0, 812.0));
+    }
+
+    #[test]
+    fn excludes_the_far_edges() {
+        let rect = [0.0, 0.0, 10.0, 10.0];
+        assert!(!point_within_rect(rect, 10.0, 5.0));
+        assert!(!point_within_rect(rect, 5.0, 10.0));
+    }
+
+    #[test]
+    fn a_degenerate_rect_never_confirms() {
+        assert!(!point_within_rect([5.0, 5.0, 0.0, 0.0], 5.0, 5.0));
+        assert!(!point_within_rect([5.0, 5.0, -3.0, 10.0], 5.0, 6.0));
+    }
+}
+
 #[cfg(test)]
 mod recording_start_guard_tests {
     use cua_driver_core::recording::RecordingSession;

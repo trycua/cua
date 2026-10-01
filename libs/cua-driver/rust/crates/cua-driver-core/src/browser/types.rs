@@ -85,8 +85,23 @@ pub struct BrowserClassification {
     pub product: Option<String>,
     /// Release channel when known, e.g. "stable", "canary".
     pub channel: Option<String>,
+    /// Process role proven by the platform adapter. Product identity alone is
+    /// not enough to distinguish a personal standalone browser from an
+    /// embedded Chromium host or a renderer/utility helper.
+    #[serde(default)]
+    pub process_role: BrowserProcessRole,
     /// Whether this browser can expose a DevTools (CDP) endpoint at all.
     pub supports_cdp: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserProcessRole {
+    StandaloneConsumer,
+    EmbeddedApplication,
+    Helper,
+    #[default]
+    Unknown,
 }
 
 /// How a platform adapter proved that a native window belongs to a pid.
@@ -144,6 +159,28 @@ pub enum EndpointOwnershipMethod {
     PlatformAttested,
 }
 
+/// How the platform located an endpoint. This is provenance, not authority:
+/// a path or socket owned by Chrome still requires an existing-profile grant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EndpointTransport {
+    SpawnedExact,
+    DevToolsActivePort,
+    #[default]
+    LegacyJsonVersion,
+    EmbeddedDescendant,
+}
+
+/// Core's authorization verdict for a bound endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EndpointAccessClass {
+    DriverOwned,
+    ExistingProfileApproved,
+    EmbeddedApplication,
+    ExternalConsumerBrowser,
+}
+
 /// Explicit proof of DevTools-endpoint ownership.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EndpointOwnershipProof {
@@ -171,6 +208,8 @@ pub struct OwnedEndpoint {
     /// `ws://127.0.0.1:9222/devtools/browser/<uuid>`.
     pub ws_url: String,
     pub http_port: Option<u16>,
+    #[serde(default)]
+    pub transport: EndpointTransport,
     pub ownership: EndpointOwnershipProof,
 }
 
@@ -306,6 +345,20 @@ mod tests {
         assert_eq!(
             serde_json::to_value(with_listener).expect("serialize listener proof")["listener_pid"],
             43
+        );
+    }
+
+    #[test]
+    fn endpoint_transport_and_access_class_have_stable_public_names() {
+        assert_eq!(
+            serde_json::to_value(EndpointTransport::DevToolsActivePort)
+                .expect("serialize endpoint transport"),
+            "dev_tools_active_port"
+        );
+        assert_eq!(
+            serde_json::to_value(EndpointAccessClass::ExistingProfileApproved)
+                .expect("serialize endpoint access class"),
+            "existing_profile_approved"
         );
     }
 }

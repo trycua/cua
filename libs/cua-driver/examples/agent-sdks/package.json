@@ -11,7 +11,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.218",
     "@openai/codex-sdk": "0.145.0",
-    "@trycua/cua-driver": "0.12.2",
+    "@trycua/cua-driver": "0.19.2",
     "zod": "4.1.12"
   },
   "devDependencies": {

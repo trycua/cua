@@ -2,18 +2,32 @@ use crate::{
     Claim, CreateClaimRequest, CyclopsClient, HttpHeader, HttpRequest, HttpResponse, Pool,
     ResourceMetadata, Sandbox, SdkError, Template, routes,
 };
-use cyclops_sdk_schema::ClaimSpec;
+use cyclops_sdk_schema::{
+    CLAIM_ENV_TOKEN_KEY, CLAIM_SECRET_NAME_PREFIX, ClaimSecretRef, ClaimSpec,
+    DEFAULT_CLAIM_BIND_DEADLINE_SECONDS,
+};
 #[cfg(not(target_arch = "wasm32"))]
 use futures_timer::Delay;
 #[cfg(target_arch = "wasm32")]
 use gloo_timers::future::TimeoutFuture;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
+use std::{collections::HashMap, sync::Arc};
 use url::Url;
 
 const JSON_CONTENT_TYPE: &str = "application/json";
+/// Label stamped on a claim-scoped Secret naming the claim it belongs to.
+const CLAIM_SECRET_CLAIM_LABEL: &str = "osgym.cua.ai/claim";
+/// Longest Secret data key Kubernetes accepts.
+const MAX_SECRET_KEY_BYTES: usize = 253;
+
+/// The `secret_files` key (and in-guest file name, `/run/cua/env-token`)
+/// that carries the cua-env-driver token for a claimed sandbox.
+#[uniffi::export]
+pub fn claim_env_token_key() -> String {
+    CLAIM_ENV_TOKEN_KEY.into()
+}
 
 #[derive(Deserialize)]
 struct ResourceList<T> {
@@ -40,37 +54,81 @@ impl CyclopsClient {
         // a naming convention. A hand-built ref that names a nonexistent
         // template makes the bind queue lookup miss forever and the claim
         // times out with no useful error (the hermes-cua-pool incident).
-        let spec = request.spec.unwrap_or_else(|| ClaimSpec {
+        let mut spec = request.spec.unwrap_or_else(|| ClaimSpec {
             sandbox_template_ref: pool.spec.sandbox_template_ref.clone(),
             warmpool: None,
-            bind_deadline: None,
+            bind_deadline: Some(DEFAULT_CLAIM_BIND_DEADLINE_SECONDS),
+            ttl_seconds_after_created: None,
+            secret_ref: None,
             lifecycle: None,
         });
+        if spec.bind_deadline.is_none() {
+            spec.bind_deadline = Some(DEFAULT_CLAIM_BIND_DEADLINE_SECONDS);
+        }
         if spec.sandbox_template_ref.name.is_empty() {
             return Err(SdkError::Configuration {
                 reason: "sandbox template name must not be empty".into(),
             });
         }
+        let secret_files = request.secret_files.filter(|files| !files.is_empty());
+        if let Some(files) = &secret_files {
+            if spec.secret_ref.is_some() {
+                return Err(SdkError::Configuration {
+                    reason: "set either secret_files or spec.secret_ref, not both".into(),
+                });
+            }
+            validate_secret_file_keys(files)?;
+        }
+        let name = match request.name {
+            Some(name) => {
+                routes::validate_dns_label_for("claim name", &name)?;
+                name
+            }
+            None => claim_name()?,
+        };
+        let namespace = pool.metadata.namespace.clone();
+        let secret_name = match &secret_files {
+            Some(files) => {
+                let secret_name = format!("{CLAIM_SECRET_NAME_PREFIX}{name}");
+                self.create_claim_secret(&namespace, &secret_name, &name, files)
+                    .await?;
+                spec.secret_ref = Some(ClaimSecretRef {
+                    name: secret_name.clone(),
+                });
+                Some(secret_name)
+            }
+            None => None,
+        };
 
         let claim = Claim {
             api_version: "osgym.cua.ai/v1alpha1".into(),
             kind: "OSGymSandboxClaim".into(),
             metadata: ResourceMetadata {
                 namespace: pool.metadata.namespace.clone(),
-                name: claim_name()?,
-                labels: None,
+                name,
+                labels: request.labels.filter(|labels| !labels.is_empty()),
+                creation_timestamp: None,
             },
             spec,
             status: None,
         };
-        let collection_url = routes::claim_collection(self.base_url(), &claim.metadata.namespace)?;
-        send_json(
-            self.as_ref(),
-            "create claim",
-            json_request("POST", collection_url, Some(to_json(&claim)?)),
-            &[200, 201, 202],
-        )
-        .await
+        let created = match routes::claim_collection(self.base_url(), &claim.metadata.namespace)
+            .and_then(|url| Ok(json_request("POST", url, Some(to_json(&claim)?))))
+        {
+            Ok(request) => {
+                send_json(self.as_ref(), "create claim", request, &[200, 201, 202]).await
+            }
+            Err(error) => Err(error),
+        };
+        if created.is_err()
+            && let Some(secret_name) = &secret_name
+        {
+            // Best effort: the claim never existed, so nothing else will
+            // reference or garbage-collect this Secret. The original error
+            // is what the caller needs to see.
+            let _ = self.delete_claim_secret(&namespace, secret_name).await;
+        }
+        created
     }
 
     pub async fn list_claims(self: Arc<Self>, namespace: String) -> Result<Vec<Claim>, SdkError> {
@@ -96,6 +154,9 @@ impl CyclopsClient {
         .await
     }
 
+    /// Delete the claim and, when it references a claim-scoped Secret
+    /// (`secret_files`), that Secret too. The pool-operator also owner-refs
+    /// the Secret to the claim, so garbage collection is the backstop.
     pub async fn delete_claim(self: Arc<Self>, claim: Claim) -> Result<(), SdkError> {
         let item_url = self.claim_item_url(&claim)?;
         send_unit(
@@ -103,6 +164,42 @@ impl CyclopsClient {
             "delete claim",
             json_request("DELETE", item_url, None),
             &[200, 202, 204, 404],
+        )
+        .await?;
+        if let Some(secret_ref) = &claim.spec.secret_ref
+            && secret_ref.name.starts_with(CLAIM_SECRET_NAME_PREFIX)
+        {
+            self.delete_claim_secret(&claim.metadata.namespace, &secret_ref.name)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+    /// expiry is the only liveness input the pool operator's claim reaper
+    /// honors, so a holder that outlives its current lease must renew before
+    /// the deadline passes or the bound sandbox is deleted underneath it.
+    /// Deliberately narrower than a claim update: nothing else on the claim
+    /// can be mutated through the SDK.
+    pub async fn renew_claim(
+        self: Arc<Self>,
+        claim: Claim,
+        shutdown_time: String,
+    ) -> Result<Claim, SdkError> {
+        if shutdown_time.trim().is_empty() {
+            return Err(SdkError::Configuration {
+                reason: "shutdown time must not be empty".into(),
+            });
+        }
+        let item_url = self.claim_item_url(&claim)?;
+        let body = to_json(&serde_json::json!({
+            "spec": { "lifecycle": { "shutdownTime": shutdown_time } }
+        }))?;
+        send_json(
+            self.as_ref(),
+            "renew claim",
+            merge_patch_request(item_url, Some(body)),
+            &[200],
         )
         .await
     }
@@ -158,6 +255,52 @@ impl CyclopsClient {
         Ok(())
     }
 
+    async fn create_claim_secret(
+        &self,
+        namespace: &str,
+        secret_name: &str,
+        claim_name: &str,
+        files: &HashMap<String, String>,
+    ) -> Result<(), SdkError> {
+        routes::validate_claim_secret_name(secret_name)?;
+        let collection_url = routes::claim_secret_collection(self.base_url(), namespace)?;
+        let body = to_json(&serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {
+                "name": secret_name,
+                "namespace": namespace,
+                "labels": { CLAIM_SECRET_CLAIM_LABEL: claim_name },
+            },
+            "type": "Opaque",
+            "stringData": files,
+        }))?;
+        // 409 is an error on purpose: an existing Secret of that name belongs
+        // to another claim attempt and must not be overwritten.
+        send_unit(
+            self,
+            "create claim secret",
+            json_request("POST", collection_url, Some(body)),
+            &[200, 201, 202],
+        )
+        .await
+    }
+
+    async fn delete_claim_secret(
+        &self,
+        namespace: &str,
+        secret_name: &str,
+    ) -> Result<(), SdkError> {
+        let item_url = routes::claim_secret_item(self.base_url(), namespace, secret_name)?;
+        send_unit(
+            self,
+            "delete claim secret",
+            json_request("DELETE", item_url, None),
+            &[200, 202, 204, 404],
+        )
+        .await
+    }
+
     fn claim_item_url(&self, claim: &Claim) -> Result<Url, SdkError> {
         routes::claim_item(
             self.base_url(),
@@ -195,6 +338,26 @@ fn claim_name() -> Result<String, SdkError> {
         })
 }
 
+fn validate_secret_file_keys(files: &HashMap<String, String>) -> Result<(), SdkError> {
+    for key in files.keys() {
+        let valid = !key.is_empty()
+            && key.len() <= MAX_SECRET_KEY_BYTES
+            && key != "."
+            && key != ".."
+            && key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_'));
+        if !valid {
+            return Err(SdkError::Configuration {
+                reason: format!(
+                    "secret file name {key:?} must be 1-{MAX_SECRET_KEY_BYTES} characters of [-._a-zA-Z0-9] and not . or .."
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn service_names(template: &Template) -> Vec<String> {
     let mut names: Vec<String> = template
         .spec
@@ -220,6 +383,12 @@ fn serialized_status<T: Serialize>(status: Option<&T>) -> Result<String, SdkErro
     })
 }
 
+fn merge_patch_request(url: Url, body: Option<Vec<u8>>) -> HttpRequest {
+    let mut request = json_request("PATCH", url, body);
+    request.headers[1].value = "application/merge-patch+json".into();
+    request
+}
+
 fn json_request(method: &str, url: Url, body: Option<Vec<u8>>) -> HttpRequest {
     HttpRequest {
         method: method.into(),
@@ -235,6 +404,8 @@ fn json_request(method: &str, url: Url, body: Option<Vec<u8>>) -> HttpRequest {
             },
         ],
         body,
+        timeout_secs: None,
+        max_response_bytes: None,
     }
 }
 

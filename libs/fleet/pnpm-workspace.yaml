@@ -1,0 +1,13 @@
+packages:
+  - .
+
+allowBuilds:
+  esbuild: true
+  "@mongodb-js/zstd": false
+  node-liblzma: false
+
+onlyBuiltDependencies:
+  - esbuild
+
+patchedDependencies:
+  '@novnc/novnc@1.7.0': patches/@novnc__novnc@1.7.0.patch

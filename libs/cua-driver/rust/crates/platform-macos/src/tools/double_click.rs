@@ -38,8 +38,8 @@ fn def() -> &'static ToolDef {
     DEF.get_or_init(|| ToolDef {
         name: "double_click".into(),
         description:
-            "Double-click at (x, y) or on an AX element identified by element_index + window_id.\n\n\
-             AX path (element_index provided): performs `AXOpen` when the element advertises it \
+            "Double-click at (x, y) or on an AX element identified by element_token.\n\n\
+             AX path (element_token provided): performs `AXOpen` when the element advertises it \
              (Finder items, openable list rows/cells); otherwise resolves the element's on-screen \
              center and falls back to a pixel double-click there.\n\n\
              Pixel path (x, y provided): two down/up pairs ~80 ms apart at the given coordinates."
@@ -48,14 +48,12 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["pid"],
             "properties": {
-                "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
+                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
                 "pid":           { "type": "integer" },
                 "x":             { "type": "number",  "description": "Screen X coordinate (pixel path)." },
                 "y":             { "type": "number",  "description": "Screen Y coordinate (pixel path)." },
-                "window_id":     { "type": "integer", "description": "CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it)." },
-                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "window_id":     { "type": "integer", "description": "CGWindowID. Omit when element_token is supplied (the token carries it)." },
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "delivery_mode": cua_driver_core::tool_schema::delivery_mode_schema()
             },
             "additionalProperties": false
@@ -84,51 +82,30 @@ impl Tool for DoubleClickTool {
         // background CGEvents), via the same skylight assist click uses.
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
-        // Surface 6: token / index precedence — see click.rs for the
-        // canonical comment.
-        let element_token_arg = args.opt_str("element_token");
-        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
-        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "double_click",
-        ) {
+        let window_id_arg = args.opt_u64("window_id");
+        let resolved = match self.state.snapshots.resolve(pid, &args) {
             Ok(r) => r,
             Err(e) => return e,
         };
-        let (element_index, window_id) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid,
-                element_index: idx,
-                via_token: _,
-            } => (Some(idx), wid),
+        let (element_index, window_id, element_guard) = resolved.into_parts(window_id_arg);
+        let window_id = match super::native_window_id(window_id) {
+            Ok(window_id) => window_id,
+            Err(error) => return error,
         };
 
         // ── AX element path ──────────────────────────────────────────────────
-        if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            // Retain out of the cache so a concurrent get_window_state can't
-            // free the element mid-action (use-after-free → daemon crash).
-            let element_guard = match self.state.element_cache.get_element_retained(pid, wid, idx) {
-                Some(e) => e,
-                None => {
-                    return ToolResult::error(format!(
-                        "Element index {idx} not found. Call get_window_state first."
-                    ))
-                }
-            };
+        if let (Some(idx), Some(wid), Some(element_guard)) =
+            (element_index, window_id, element_guard)
+        {
             let element_ptr = element_guard.as_ptr();
 
             // Choose one background actuator before dispatch. An element that
             // advertises AXOpen uses the exact semantic route; all other
             // elements require the stricter routed-pointer proof. Do not let a
             // failed AXOpen silently cross into an ungated pointer fallback.
+            let probe_guard = element_guard.clone();
             let has_ax_open = tokio::task::spawn_blocking(move || unsafe {
-                copy_action_names(element_ptr as AXUIElementRef)
+                copy_action_names(probe_guard.as_ptr() as AXUIElementRef)
                     .iter()
                     .any(|action| action == "AXOpen")
             })
@@ -153,7 +130,7 @@ impl Tool for DoubleClickTool {
                 ax_double_click(
                     pid,
                     wid,
-                    element_ptr,
+                    element_guard.as_ptr(),
                     idx,
                     &ck,
                     has_ax_open,
@@ -172,11 +149,7 @@ impl Tool for DoubleClickTool {
         // ── Pixel path ───────────────────────────────────────────────────────
         let mut cx = match args.get("x").and_then(|v| v.as_f64()) {
             Some(v) => v,
-            None => {
-                return ToolResult::error(
-                    "Either element_index + window_id or x + y must be provided.",
-                )
-            }
+            None => return ToolResult::error("Either element_token or x + y must be provided."),
         };
         let mut cy = match args.get("y").and_then(|v| v.as_f64()) {
             Some(v) => v,
@@ -184,10 +157,12 @@ impl Tool for DoubleClickTool {
         };
 
         // Scale back from downscaled-image space to native pixels when needed.
-        if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
-            cx *= ratio;
-            cy *= ratio;
-        }
+        let ratio = match super::screenshot_scale(&self.state, &args, pid, window_id) {
+            Ok(ratio) => ratio,
+            Err(refusal) => return refusal,
+        };
+        cx *= ratio;
+        cy *= ratio;
 
         // Window-local → screen coordinate translation + win-local logical coords
         // for CGEventSetWindowLocation (shared with click.rs via px_frame, which
@@ -255,8 +230,24 @@ impl Tool for DoubleClickTool {
         );
 
         let fg = delivery_mode.is_foreground() && window_id.is_some();
+        let route =
+            match super::pixel_route::resolve(pid, fg, window_id, "mouse_double_click").await {
+                Ok(route) => route,
+                Err(refusal) => return refusal,
+            };
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             let do_click = move || -> anyhow::Result<()> {
+                if route == super::pixel_route::PixelClickRoute::ForegroundHid {
+                    // Warp the hardware pointer and post at the HID tap; see
+                    // `pixel_route` for the cross-platform foreground contract.
+                    return crate::input::mouse::click_at_xy_desktop_with_modifiers(
+                        screen_x,
+                        screen_y,
+                        2,
+                        "left",
+                        &[],
+                    );
+                }
                 if let Some(wid) = window_id {
                     crate::input::mouse::click_at_xy_with_window_local(
                         pid,
@@ -267,36 +258,43 @@ impl Tool for DoubleClickTool {
                         wid,
                         2,
                         &[],
+                        crate::input::mouse::WindowClickDelivery::from_foreground(fg),
                     )
                 } else {
                     crate::input::mouse::click_at_xy(pid, screen_x, screen_y, 2, &[])
                 }
             };
-            // Foreground rung: brief front → double-click → restore prior frontmost.
-            match (fg, window_id) {
-                (true, Some(wid)) => {
-                    crate::input::skylight::with_foreground_assist(
+            // Foreground rung: front the exact window → HID double-click →
+            // restore the prior frontmost. No input is sent unless the exact
+            // window is proven focused.
+            match (route, window_id) {
+                (super::pixel_route::PixelClickRoute::ForegroundHid, Some(wid)) => {
+                    crate::input::skylight::with_foreground_hid_activation(
                         pid as libc::pid_t,
                         wid,
                         do_click,
-                    )?;
-                    Ok(())
+                    )
                 }
                 _ => do_click(),
             }
         })
         .await;
 
-        let mode_label = if fg {
-            " (delivery_mode:foreground)"
-        } else {
-            ""
-        };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("✅ Double-clicked at ({screen_x:.1}, {screen_y:.1}){mode_label}."))
-                .with_structured(serde_json::json!({
-                    "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
-                })),
+            Ok(Ok(())) => ToolResult::text(format!(
+                "✅ Double-clicked at ({screen_x:.1}, {screen_y:.1}) ({}).",
+                super::pixel_route::delivery_note(route)
+            ))
+            .with_structured(serde_json::json!({
+                "path": super::pixel_route::path_label(route), "verified": false, "effect": "unverifiable"
+            })),
+            Ok(Err(e)) if route == super::pixel_route::PixelClickRoute::ForegroundHid => {
+                super::pixel_route::foreground_unavailable(
+                    "Double-click",
+                    window_id.unwrap_or_default(),
+                    &e.to_string(),
+                )
+            }
             Ok(Err(e)) => ToolResult::error(format!("Double-click failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }
@@ -312,7 +310,7 @@ fn ax_double_click(
     idx: usize,
     cursor_key: &str,
     has_ax_open: bool,
-    allow_pointer_fallback: bool,
+    foreground: bool,
 ) -> anyhow::Result<String> {
     let element = element_ptr as AXUIElementRef;
 
@@ -322,7 +320,7 @@ fn ax_double_click(
         if err == kAXErrorSuccess {
             return Ok(format!("AXOpen performed on element [{idx}]."));
         }
-        if !allow_pointer_fallback {
+        if !foreground {
             anyhow::bail!(
                 "AXOpen returned {err} for element [{idx}]; background delivery will not \
                  improvise a pointer fallback after choosing the semantic route"
@@ -359,7 +357,17 @@ fn ax_double_click(
              screen coordinates as window-local for element [{idx}]."
             )
         })?;
-    crate::input::mouse::click_at_xy_with_window_local(pid, cx, cy, wx, wy, wid, 2, &[])?;
+    crate::input::mouse::click_at_xy_with_window_local(
+        pid,
+        cx,
+        cy,
+        wx,
+        wy,
+        wid,
+        2,
+        &[],
+        crate::input::mouse::WindowClickDelivery::from_foreground(foreground),
+    )?;
     Ok(format!(
         "✅ Double-clicked element [{idx}] at ({cx:.1}, {cy:.1})."
     ))

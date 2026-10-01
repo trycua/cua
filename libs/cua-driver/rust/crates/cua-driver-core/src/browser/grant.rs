@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
-use super::types::ProcessFingerprint;
+use super::types::{BrowserProduct, ProcessFingerprint};
 
 const GRANT_IDLE_TTL: Duration = Duration::from_secs(30 * 60);
 const GRANT_ABSOLUTE_TTL: Duration = Duration::from_secs(8 * 60 * 60);
@@ -30,8 +30,10 @@ pub(crate) struct ExistingProfileGrant {
     pub window_id: u64,
     pub fingerprint: ProcessFingerprint,
     pub browser: String,
+    pub browser_product: BrowserProduct,
     pub endpoint_ws_url: String,
     pub generation: u64,
+    pub cleanup_remote_debugging: bool,
     pub reconnect_attempts_remaining: u8,
     pub protected_consent: Option<crate::consent::ProtectedGrant>,
     pub permission_mode: crate::authorization::PermissionMode,
@@ -97,7 +99,9 @@ impl ExistingProfileGrants {
         window_id: u64,
         fingerprint: ProcessFingerprint,
         browser: String,
+        browser_product: BrowserProduct,
         endpoint_ws_url: String,
+        cleanup_remote_debugging: bool,
         protected_consent: Option<crate::consent::ProtectedGrant>,
     ) -> ExistingProfileGrant {
         let now = Instant::now();
@@ -115,8 +119,10 @@ impl ExistingProfileGrants {
             window_id,
             fingerprint,
             browser,
+            browser_product,
             endpoint_ws_url,
             generation,
+            cleanup_remote_debugging,
             reconnect_attempts_remaining: MAX_RECONNECT_ATTEMPTS,
             protected_consent,
             permission_mode: crate::tool::current_dispatch_authorization_context()
@@ -146,7 +152,9 @@ impl ExistingProfileGrants {
             return GrantLookup::Missing;
         };
         if grant.expired(now) || !grant.authorization_context_matches() {
-            return GrantLookup::Expired(grants.remove(&key).expect("expired grant exists"));
+            let mut expired = grants.remove(&key).expect("expired grant exists");
+            transfer_cleanup_ownership(&mut grants, &mut expired);
+            return GrantLookup::Expired(expired);
         }
         grant.last_used_at = now;
         GrantLookup::Live(grant.clone())
@@ -158,21 +166,25 @@ impl ExistingProfileGrants {
         transport_session: Option<&str>,
         pid: i64,
     ) -> Option<ExistingProfileGrant> {
-        self.inner
-            .lock()
-            .unwrap()
-            .remove(&Self::key(public_session, transport_session, pid))
+        let mut grants = self.inner.lock().unwrap();
+        let mut removed = grants.remove(&Self::key(public_session, transport_session, pid))?;
+        transfer_cleanup_ownership(&mut grants, &mut removed);
+        Some(removed)
     }
 
     pub fn remove_session(&self, session: &str) -> Vec<ExistingProfileGrant> {
         let mut removed = Vec::new();
-        self.inner.lock().unwrap().retain(|_, grant| {
+        let mut grants = self.inner.lock().unwrap();
+        grants.retain(|_, grant| {
             let keep = grant.public_session != session && grant.transport_session != session;
             if !keep {
                 removed.push(grant.clone());
             }
             keep
         });
+        for grant in &mut removed {
+            transfer_cleanup_ownership(&mut grants, grant);
+        }
         removed
     }
 
@@ -203,6 +215,23 @@ impl ExistingProfileGrants {
     }
 }
 
+fn transfer_cleanup_ownership(
+    grants: &mut HashMap<GrantKey, ExistingProfileGrant>,
+    removed: &mut ExistingProfileGrant,
+) {
+    if !removed.cleanup_remote_debugging {
+        return;
+    }
+    if let Some(successor) = grants.values_mut().find(|grant| {
+        grant.pid == removed.pid
+            && grant.fingerprint.matches(&removed.fingerprint)
+            && grant.browser_product == removed.browser_product
+    }) {
+        successor.cleanup_remote_debugging = true;
+        removed.cleanup_remote_debugging = false;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,7 +254,9 @@ mod tests {
             9,
             fingerprint(42),
             "chromium".to_owned(),
+            BrowserProduct::GoogleChrome,
             "ws://127.0.0.1:1/devtools/browser/x".to_owned(),
+            false,
             None,
         );
         assert!(matches!(
@@ -252,7 +283,9 @@ mod tests {
             9,
             fingerprint(42),
             "chromium".to_owned(),
+            BrowserProduct::GoogleChrome,
             "ws://127.0.0.1:1/devtools/browser/x".to_owned(),
+            false,
             None,
         );
         assert_eq!(grants.remove_session("transport-a").len(), 1);
@@ -272,7 +305,9 @@ mod tests {
             9,
             fingerprint(42),
             "chromium".to_owned(),
+            BrowserProduct::GoogleChrome,
             "ws://127.0.0.1:1/devtools/browser/x".to_owned(),
+            false,
             None,
         );
         let key = ExistingProfileGrants::key("public-a", Some("transport-a"), 42);
@@ -297,5 +332,87 @@ mod tests {
             grants.lookup("public-a", Some("transport-a"), 42),
             GrantLookup::Missing
         ));
+    }
+
+    #[test]
+    fn cleanup_ownership_moves_to_another_live_grant_for_the_same_process() {
+        let grants = ExistingProfileGrants::new();
+        grants.mint(
+            "public-a",
+            Some("transport-a"),
+            42,
+            9,
+            fingerprint(42),
+            "chromium".to_owned(),
+            BrowserProduct::GoogleChrome,
+            "ws://127.0.0.1:1/devtools/browser/x".to_owned(),
+            true,
+            None,
+        );
+        grants.mint(
+            "public-b",
+            Some("transport-b"),
+            42,
+            9,
+            fingerprint(42),
+            "chromium".to_owned(),
+            BrowserProduct::GoogleChrome,
+            "ws://127.0.0.1:1/devtools/browser/x".to_owned(),
+            false,
+            None,
+        );
+
+        let removed = grants.remove_session("transport-a");
+        assert_eq!(removed.len(), 1);
+        assert!(!removed[0].cleanup_remote_debugging);
+        let GrantLookup::Live(successor) = grants.lookup("public-b", Some("transport-b"), 42)
+        else {
+            panic!("successor grant must remain live");
+        };
+        assert!(successor.cleanup_remote_debugging);
+
+        let removed = grants.remove_session("transport-b");
+        assert_eq!(removed.len(), 1);
+        assert!(removed[0].cleanup_remote_debugging);
+    }
+
+    #[test]
+    fn cleanup_ownership_does_not_move_to_a_reused_pid() {
+        let grants = ExistingProfileGrants::new();
+        grants.mint(
+            "public-a",
+            Some("transport-a"),
+            42,
+            9,
+            fingerprint(42),
+            "chromium".to_owned(),
+            BrowserProduct::GoogleChrome,
+            "ws://127.0.0.1:1/devtools/browser/x".to_owned(),
+            true,
+            None,
+        );
+        let mut reused = fingerprint(42);
+        reused.start_time = Some(8);
+        grants.mint(
+            "public-b",
+            Some("transport-b"),
+            42,
+            10,
+            reused,
+            "chromium".to_owned(),
+            BrowserProduct::GoogleChrome,
+            "ws://127.0.0.1:2/devtools/browser/y".to_owned(),
+            false,
+            None,
+        );
+
+        let removed = grants.remove_session("transport-a");
+        assert_eq!(removed.len(), 1);
+        assert!(removed[0].cleanup_remote_debugging);
+        let GrantLookup::Live(reused_process) = grants.lookup("public-b", Some("transport-b"), 42)
+        else {
+            panic!("reused-pid grant must remain live");
+        };
+        assert!(!reused_process.cleanup_remote_debugging);
     }
 }

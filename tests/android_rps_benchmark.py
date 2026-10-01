@@ -20,7 +20,7 @@ import statistics
 import time
 from dataclasses import dataclass, field
 
-from cua_sandbox import Image, Sandbox
+from cua_sandbox import Image, Pool, Sandbox
 from cua_sandbox.transport.cloud import CloudTransport
 
 print = functools.partial(builtins.print, flush=True)
@@ -84,9 +84,9 @@ def _percentile(data: list[float], p: float) -> float:
 # ── Sandbox lifecycle ─────────────────────────────────────────────────────────
 
 
-async def _provision(image: Image, idx: int) -> tuple[Sandbox, SandboxStats]:
+async def _provision(pool: Pool, idx: int) -> tuple[Sandbox, SandboxStats]:
     t0 = time.monotonic()
-    sb = await Sandbox.create(image)
+    sb = await Sandbox.create(pool=pool)
     elapsed = time.monotonic() - t0
     name = getattr(sb, "name", None) or f"sb-{idx}"
     print(f"  [{idx + 1:>3}] {name}  provisioned in {elapsed:.1f}s")
@@ -94,13 +94,16 @@ async def _provision(image: Image, idx: int) -> tuple[Sandbox, SandboxStats]:
 
 
 async def _provision_fleet(
-    image: Image, n: int, parallel: int = 2
+    image: Image, n: int, parallel: int = 2, pool_name: str = "android-rps-bench"
 ) -> tuple[list[Sandbox], list[SandboxStats], list[float]]:
+    # Pool names are globally unique across accounts, so the benchmark pool
+    # carries an explicit name and is reconciled once per run.
+    pool = await Pool.apply(image, name=pool_name)
     sandboxes, stats, provision_times = [], [], []
 
     for batch_start in range(0, n, parallel):
         batch = range(batch_start, min(batch_start + parallel, n))
-        tasks = [_provision(image, i) for i in batch]
+        tasks = [_provision(pool, i) for i in batch]
         raw = await asyncio.gather(*tasks, return_exceptions=True)
         for i, res in zip(batch, raw):
             if isinstance(res, Exception):

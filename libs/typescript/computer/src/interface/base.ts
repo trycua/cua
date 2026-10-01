@@ -10,6 +10,11 @@ import type { ScreenSize } from '../types';
 
 export type MouseButton = 'left' | 'middle' | 'right';
 
+export interface ComputerInterfaceConnection {
+  wsUrl?: string;
+  headers?: Record<string, string>;
+}
+
 export interface CursorPosition {
   x: number;
   y: number;
@@ -41,6 +46,7 @@ export abstract class BaseComputerInterface {
   protected ws: WebSocket;
   protected apiKey?: string;
   protected vmName?: string;
+  protected connection: ComputerInterfaceConnection;
 
   protected logger = pino({ name: 'computer.interface-base' });
 
@@ -53,30 +59,29 @@ export abstract class BaseComputerInterface {
     username = 'lume',
     password = 'lume',
     apiKey?: string,
-    vmName?: string
+    vmName?: string,
+    connection: ComputerInterfaceConnection = {}
   ) {
     this.ipAddress = ipAddress;
     this.username = username;
     this.password = password;
     this.apiKey = apiKey;
     this.vmName = vmName;
+    this.connection = connection;
 
     // Initialize telemetry
     this.telemetry = new Telemetry();
     this.sessionId = uuidv4();
 
-    // Initialize WebSocket with headers if needed
-    const headers: { [key: string]: string } = {};
+    this.ws = this.createWebSocket();
+  }
+
+  private createWebSocket(): WebSocket {
+    const headers: Record<string, string> = { ...this.connection.headers };
     if (this.apiKey && this.vmName) {
       headers['X-API-Key'] = this.apiKey;
       headers['X-VM-Name'] = this.vmName;
     }
-
-    // Create the WebSocket instance
-    this.ws = this.createWebSocket(headers);
-  }
-
-  private createWebSocket(headers: { [key: string]: string }): WebSocket {
     const ws = new WebSocket(this.wsUri, { headers });
     // Constructors open immediately, and some tests only verify inheritance
     // without ever calling connect(). Keep those failed background attempts
@@ -93,6 +98,8 @@ export abstract class BaseComputerInterface {
    * Subclasses can override this to customize the URI.
    */
   protected get wsUri(): string {
+    if (this.connection.wsUrl) return this.connection.wsUrl;
+
     const protocol = this.apiKey ? 'wss' : 'ws';
 
     // Check if ipAddress already includes a port
@@ -186,12 +193,7 @@ export abstract class BaseComputerInterface {
     // If the WebSocket is closed or closing, reinitialize it
     if (this.ws.readyState === WebSocket.CLOSED || this.ws.readyState === WebSocket.CLOSING) {
       this.logger.info('Websocket is closed. Reinitializing connection.');
-      const headers: { [key: string]: string } = {};
-      if (this.apiKey && this.vmName) {
-        headers['X-API-Key'] = this.apiKey;
-        headers['X-VM-Name'] = this.vmName;
-      }
-      this.ws = this.createWebSocket(headers);
+      this.ws = this.createWebSocket();
     }
 
     // Connect and authenticate

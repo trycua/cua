@@ -1,0 +1,46 @@
+---
+title: OpenAI Codex
+description: Connect Codex to Cua Driver over MCP.
+icon: openai
+---
+
+Codex supports local MCP servers in the CLI, IDE extension, and desktop app. Generate the command with the installed Cua Driver version:
+
+```bash
+cua-driver mcp-config --client codex
+```
+
+The generated command uses the absolute executable path. Its shape is:
+
+```bash
+codex mcp add cua-driver -- /absolute/path/to/cua-driver mcp
+codex mcp list
+```
+
+Open a fresh Codex session after registration. You can also install the Cua Driver agent skill for action-selection guidance:
+
+```bash
+cua-driver skills install
+cua-driver skills status
+```
+
+Cua Driver 0.28.0 serves the same release-matched skill through its stdio MCP
+endpoint. As of Codex 0.154.0, it can list and read those resources in a fresh
+session. Install the filesystem skill for older Codex versions or when you want
+an explicit local skill entry.
+
+Codex applies its own approval policy to MCP calls. Registration and remote
+skill discovery do not approve mutating actions; allow the requested Driver
+action in Codex when prompted or configure an appropriate Codex policy for the
+test environment.
+
+Continue with [Connect your agent to Cua Driver](/how-to-guides/driver/connect-your-agent#codex) and [Install the Cua Driver agent skill](/how-to-guides/driver/install-agent-skill).
+
+Then try a complete workflow: [build a map](/how-to-guides/recipes/build-and-inspect-a-map),
+[review a PDF](/how-to-guides/recipes/redact-and-annotate-a-pdf), or
+[prepare an exhibition panel](/how-to-guides/recipes/prepare-an-exhibition-panel).
+Each recipe includes fictional starter files, output checks, and an edited
+macOS recording made with GPT-6 Astra + Cua Driver. These runs include
+foreground/desktop input.
+
+Upstream: [Codex MCP documentation](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).

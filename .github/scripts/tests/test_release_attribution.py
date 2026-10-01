@@ -10,10 +10,14 @@ from jsonschema import Draft202012Validator
 from release_attribution import (
     CommitRecord,
     LEGACY_RELEASE_BUMP_RE,
+    PUBLISHED_INSTALLER_BUMP_RE,
     ReleaseError,
     _change_contributors,
     build_manifest,
     changelog_references_change,
+    commits_in_range,
+    find_previous_tag,
+    is_perception_only_diff,
     linked_issue_numbers,
     login_from_email,
     merge_contributors,
@@ -117,6 +121,22 @@ def test_release_tracked_changes_require_a_releasing_title_or_explicit_opt_out()
     )
 
 
+def test_perception_diff_scope_includes_crate_and_release_controls():
+    assert is_perception_only_diff(
+        [
+            "libs/cua-driver/rust/crates/cua-perception/VERSION",
+            "libs/cua-driver/rust/crates/cua-perception/CHANGELOG.md",
+            ".github/releases/cua-perception/artifact-manifest.schema.json",
+        ]
+    )
+    assert not is_perception_only_diff(
+        [
+            "libs/cua-driver/rust/crates/cua-perception/VERSION",
+            ".github/releases/components.json",
+        ]
+    )
+
+
 def test_login_from_noreply_and_override():
     assert login_from_email("123+octo-user@users.noreply.github.com", {}) == "octo-user"
     assert (
@@ -153,8 +173,7 @@ def test_release_notes_dedupe_contributors_across_roles_and_login_case():
         "repository": "trycua/cua",
         "tag": "cua-driver-rs-v0.13.1",
         "compareUrl": (
-            "https://github.com/trycua/cua/compare/"
-            "cua-driver-rs-v0.12.6...cua-driver-rs-v0.13.1"
+            "https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.6...cua-driver-rs-v0.13.1"
         ),
         "visualRequested": False,
         "changes": [
@@ -183,8 +202,7 @@ def test_cua_driver_release_footer_explains_github_prerelease_label():
         "repository": "trycua/cua",
         "tag": "cua-driver-rs-v0.17.0",
         "compareUrl": (
-            "https://github.com/trycua/cua/compare/"
-            "cua-driver-rs-v0.16.0...cua-driver-rs-v0.17.0"
+            "https://github.com/trycua/cua/compare/cua-driver-rs-v0.16.0...cua-driver-rs-v0.17.0"
         ),
         "visualRequested": False,
         "changes": [],
@@ -333,6 +351,18 @@ def test_legacy_release_bump_subject_is_recognized():
     assert LEGACY_RELEASE_BUMP_RE.match("Bump cua-driver-rs to v0.8.3")
     assert LEGACY_RELEASE_BUMP_RE.match("Bump lume to v0.3.16")
     assert not LEGACY_RELEASE_BUMP_RE.match("feat(driver): bump reconnect retries")
+
+
+def test_published_installer_bump_subject_is_recognized_narrowly():
+    assert PUBLISHED_INSTALLER_BUMP_RE.match(
+        "chore(cua-driver): advance published installer version to 0.19.3 [skip ci]"
+    )
+    assert not PUBLISHED_INSTALLER_BUMP_RE.match(
+        "chore(cua-driver): advance published installer version to nightly [skip ci]"
+    )
+    assert not PUBLISHED_INSTALLER_BUMP_RE.match(
+        "feat(cua-driver): advance published installer version to 0.19.3 [skip ci]"
+    )
 
 
 def test_changelog_accepts_verified_commit_link_when_pr_suffix_is_missing():
@@ -491,6 +521,85 @@ def test_manifest_is_pr_first_and_renders_deterministically(tmp_path: Path):
     assert preflight["sha"] == commit_sha
 
 
+def test_nightly_manifest_attributes_maintenance_prs_without_a_versioned_changelog(
+    tmp_path: Path,
+):
+    git(tmp_path, "init")
+    git(tmp_path, "config", "user.name", "Release Test")
+    git(tmp_path, "config", "user.email", "release@example.com")
+    product = tmp_path / "libs/cua-driver/rust"
+    product.mkdir(parents=True)
+    (product / "CHANGELOG.md").write_text("# Changelog\n")
+    (product / "driver.txt").write_text("initial\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-m", "chore: seed fixture")
+    git(tmp_path, "tag", "cua-driver-rs-v0.8.1")
+
+    (product / "driver.txt").write_text("documented\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-m", "docs(driver): explain nightly sessions")
+    commit_sha = git(tmp_path, "rev-parse", "HEAD")
+
+    config = {
+        "bots": [],
+        "coauthorOverrides": {},
+        "ignoredCoauthorEmails": [],
+        "identityOverrides": {},
+        "internalHandles": [],
+        "optOutHandles": [],
+    }
+    manifest = build_manifest(
+        repo_root=tmp_path,
+        repository="trycua/cua",
+        product="cua-driver-rs",
+        display_name="Cua Driver",
+        version="0.8.2-nightly.20260812.42",
+        tag="nightly-cua-driver-rs-v0.8.2-nightly.20260812.42",
+        release_ref=commit_sha,
+        previous_tag="cua-driver-rs-v0.8.1",
+        expected_sha=commit_sha,
+        paths=("libs/cua-driver",),
+        changelog_path=product / "CHANGELOG.md",
+        attribution_config=config,
+        github=FakeGitHub(commit_sha),
+        channel="nightly",
+    )
+
+    assert manifest["channel"] == "nightly"
+    assert manifest["compareUrl"].endswith(f"/compare/cua-driver-rs-v0.8.1...{commit_sha}")
+    assert manifest["visualRequested"] is False
+    assert manifest["changes"][0]["type"] == "docs"
+    assert manifest["changes"][0]["pr"] == 12
+    assert {item["login"] for item in manifest["contributors"]} == {
+        "bug-reporter",
+        "pr-author",
+        "source-author",
+    }
+    schema = json.loads((REPO_ROOT / ".github/release-manifest.schema.json").read_text())
+    validator = Draft202012Validator(schema, format_checker=None)
+    validator.validate(manifest)
+    stable_shaped = dict(manifest)
+    stable_shaped.pop("channel")
+    assert any("is not one of" in error.message for error in validator.iter_errors(stable_shaped))
+
+    with pytest.raises(ReleaseError, match="no releasing pull requests"):
+        build_manifest(
+            repo_root=tmp_path,
+            repository="trycua/cua",
+            product="cua-driver-rs",
+            display_name="Cua Driver",
+            version="0.8.2",
+            tag="cua-driver-rs-v0.8.2",
+            release_ref=commit_sha,
+            previous_tag="cua-driver-rs-v0.8.1",
+            expected_sha=commit_sha,
+            paths=("libs/cua-driver",),
+            changelog_path=product / "CHANGELOG.md",
+            attribution_config=config,
+            github=FakeGitHub(commit_sha),
+        )
+
+
 def test_unresolved_human_coauthor_fails_closed():
     commit = CommitRecord(
         "deadbeef",
@@ -548,3 +657,186 @@ def test_pr_2805_coauthor_resolves_through_trusted_identity_override():
     ]
     assert issues == []
     assert visual_requested is False
+
+
+def test_pr_3266_squash_coauthor_resolves_through_verified_identity_override():
+    config = json.loads((REPO_ROOT / ".github/release-attribution-config.json").read_text())
+    commit = CommitRecord(
+        "2fd8bfc6dd5d7d67d00a4151c1159e665abb9ef0",
+        "test(cua-driver): seed macOS Lume TCC grants (#3266)",
+        "Co-authored-by: jf-mac-mini <jf-mac-mini@jf-mac-mini-4.local>",
+    )
+    pull = {
+        "user": {"login": "0xjohnnydev"},
+        "author_association": "CONTRIBUTOR",
+        "body": "",
+        "labels": [],
+    }
+
+    contributors, _, _ = _change_contributors(
+        pull,
+        commit,
+        FakeGitHub(commit.sha),
+        "trycua/cua",
+        config,
+    )
+    assert contributors == [
+        {"login": "0xjohnnydev", "role": "author", "external": True},
+        {"login": "0xjohnnydev", "role": "coauthor", "external": True},
+    ]
+
+
+def _commit(root: Path, path: str, content: str, subject: str) -> str:
+    target = root / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+    git(root, "add", ".")
+    git(root, "commit", "-m", subject)
+    return git(root, "rev-parse", "HEAD")
+
+
+def test_change_detection_skips_only_excluded_crate_and_companion_commits(tmp_path: Path):
+    """Driver nightlies ignore Perception-only changes, even with lockfile companions."""
+    driver = "libs/cua-driver"
+    perception = "libs/cua-driver/rust/crates/cua-perception"
+    lockfile = "libs/cua-driver/rust/Cargo.lock"
+    git(tmp_path, "init")
+    git(tmp_path, "config", "user.name", "Release Test")
+    git(tmp_path, "config", "user.email", "release@example.com")
+    _commit(tmp_path, f"{driver}/src.rs", "base\n", "chore: seed fixture")
+    git(tmp_path, "tag", "base")
+
+    def change(subject: str, *paths: str) -> None:
+        for path in paths:
+            target = tmp_path / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(f"{subject}\n")
+        git(tmp_path, "add", ".")
+        git(tmp_path, "commit", "-m", subject)
+
+    change("perception only", f"{perception}/src/lib.rs")
+    change("perception with lockfile", f"{perception}/Cargo.toml", lockfile)
+    change("perception with driver source", f"{perception}/src/lib.rs", lockfile, f"{driver}/src.rs")
+    change("lockfile only", lockfile)
+    change("driver only", f"{driver}/src.rs")
+
+    commits = commits_in_range(
+        tmp_path, "base", "HEAD", [driver], [perception], [lockfile]
+    )
+
+    assert [commit.subject for commit in commits] == [
+        "perception with driver source",
+        "lockfile only",
+        "driver only",
+    ]
+
+
+def test_previous_tag_ignores_a_higher_abandoned_version_tag(tmp_path: Path):
+    git(tmp_path, "init")
+    git(tmp_path, "config", "user.name", "Release Test")
+    git(tmp_path, "config", "user.email", "release@example.com")
+    _commit(tmp_path, "seed.txt", "seed\n", "chore: seed fixture")
+    for tag in ("cua-driver-rs-v0.9.9", "cua-driver-rs-v0.10.0", "cua-driver-rs-v0.11.0"):
+        git(tmp_path, "tag", tag)
+
+    assert find_previous_tag(tmp_path, "cua-driver-rs-v0.10.1", "cua-driver-rs-v") == (
+        "cua-driver-rs-v0.10.0"
+    )
+    assert find_previous_tag(tmp_path, "cua-driver-rs-v0.11.0", "cua-driver-rs-v") == (
+        "cua-driver-rs-v0.10.0"
+    )
+    assert find_previous_tag(tmp_path, "cua-driver-rs-v0.9.9", "cua-driver-rs-v") is None
+
+
+class LabeledPullsGitHub:
+    """Resolve each commit to one internal pull request with the given labels."""
+
+    def __init__(self, pulls_by_sha: dict[str, tuple[int, list[str]]]) -> None:
+        self.pulls_by_sha = pulls_by_sha
+        self.by_number = {number: labels for number, labels in pulls_by_sha.values()}
+
+    def pulls_for_commit(self, repository: str, commit_sha: str):
+        number, _ = self.pulls_by_sha[commit_sha]
+        return [{"number": number, "merge_commit_sha": commit_sha, "merged_at": "now"}]
+
+    def pull(self, repository: str, number: int):
+        return {
+            "number": number,
+            "user": {"login": "maintainer"},
+            "author_association": "MEMBER",
+            "body": "",
+            "labels": [{"name": label} for label in self.by_number[number]],
+        }
+
+
+def test_no_release_metadata_only_pulls_are_not_required_changelog_entries(tmp_path: Path):
+    git(tmp_path, "init")
+    git(tmp_path, "config", "user.name", "Release Test")
+    git(tmp_path, "config", "user.email", "release@example.com")
+    changelog = "libs/cua-driver/rust/CHANGELOG.md"
+    version = "libs/cua-driver/rust/VERSION"
+    _commit(tmp_path, version, "0.8.1\n", "chore: seed fixture")
+    git(tmp_path, "tag", "cua-driver-rs-v0.8.1")
+    product = _commit(
+        tmp_path, "libs/cua-driver/rust/driver.txt", "fixed\n", "fix(driver): keep focus"
+    )
+    metadata = _commit(
+        tmp_path,
+        changelog,
+        "## [0.8.2] (2026-07-16)\n\n* **driver:** keep focus (#12)\n",
+        "fix(cua-driver): release 0.8.2 metadata",
+    )
+    _commit(tmp_path, version, "0.8.2\n", "fix(cua-driver): align release version")
+    unlabeled = git(tmp_path, "rev-parse", "HEAD")
+    config = {
+        "bots": [],
+        "coauthorOverrides": {},
+        "ignoredCoauthorEmails": [],
+        "identityOverrides": {},
+        "internalHandles": ["maintainer"],
+        "optOutHandles": [],
+    }
+
+    def manifest(pulls: dict[str, tuple[int, list[str]]], metadata_paths=(changelog, version)):
+        return build_manifest(
+            repo_root=tmp_path,
+            repository="trycua/cua",
+            product="cua-driver-rs",
+            display_name="Cua Driver",
+            version="0.8.2",
+            tag="cua-driver-rs-v0.8.2",
+            previous_tag="cua-driver-rs-v0.8.1",
+            release_ref="HEAD",
+            expected_sha=unlabeled,
+            paths=("libs/cua-driver",),
+            changelog_path=tmp_path / changelog,
+            attribution_config=config,
+            github=LabeledPullsGitHub(pulls),
+            release_metadata_paths=metadata_paths,
+        )
+
+    # An unlabeled metadata pull request remains a required releasing entry.
+    with pytest.raises(ReleaseError, match=r"missing pull requests: \[13, 14\]"):
+        manifest({product: (12, []), metadata: (13, []), unlabeled: (14, [])})
+
+    # Without declared metadata paths the label alone never removes attribution.
+    with pytest.raises(ReleaseError, match=r"missing pull requests: \[13, 14\]"):
+        manifest(
+            {product: (12, []), metadata: (13, ["no-release"]), unlabeled: (14, ["no-release"])},
+            metadata_paths=(),
+        )
+
+    result = manifest(
+        {product: (12, []), metadata: (13, ["no-release"]), unlabeled: (14, ["no-release"])}
+    )
+    assert [change["pr"] for change in result["changes"]] == [12]
+
+    # A no-release label cannot hide a product diff from attribution.
+    result = manifest(
+        {
+            product: (12, ["no-release"]),
+            metadata: (13, ["no-release"]),
+            unlabeled: (14, ["no-release"]),
+        }
+    )
+    assert [change["pr"] for change in result["changes"]] == [12]

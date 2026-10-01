@@ -351,8 +351,10 @@ pub(super) fn post_to_pid(pid: pid_t, event_ptr: *mut c_void, attach_auth_messag
     true
 }
 
-/// Stamp a window-local `(x, y)` point onto `event_ptr` via the private
-/// `CGEventSetWindowLocation` SPI. Returns `true` when the SPI resolved.
+/// Stamp the event's screen-space `(x, y)` point via
+/// `CGEventSetWindowLocation`. Both the SkyLight and public PID routes receive
+/// this screen-space value; WindowServer derives the receiving window's local
+/// point during routing. Returns `true` when the SPI resolved.
 pub(super) fn set_window_location(event_ptr: *mut c_void, x: f64, y: f64) -> bool {
     match set_window_loc_fn() {
         Some(f) => {
@@ -548,6 +550,81 @@ pub fn activate_without_raise(target_pid: pid_t, target_wid: u32) -> bool {
     defocus_ok && focus_ok
 }
 
+/// Reverse [`activate_without_raise`] once a background click is delivered:
+/// defocus `target_wid` and hand key focus back to `previous_pid`'s key window.
+///
+/// The no-raise recipe posts a defocus record to the user's front process.
+/// That process stays frontmost as far as NSWorkspace reports, but its key
+/// window stops receiving keyboard input until the user clicks it again, so
+/// the activation-based restore never fires. Returns `true` when both posts
+/// succeeded.
+pub fn restore_focus_after_without_raise(
+    previous_pid: pid_t,
+    target_pid: pid_t,
+    target_wid: u32,
+) -> bool {
+    let Some(post_fn) = post_event_record_to_fn() else {
+        return false;
+    };
+    let Some(previous_wid) = key_window_of_pid(previous_pid) else {
+        return false;
+    };
+    let mut previous_psn = [0u8; 8];
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(previous_wid, previous_pid, &mut previous_psn)
+        || !get_process_psn_for_window(target_wid, target_pid, &mut target_psn)
+    {
+        return false;
+    }
+
+    let mut buf = focus_record(target_wid);
+    buf[0x8A] = 0x02;
+    let defocus_ok = unsafe { post_fn(target_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
+
+    let mut buf = focus_record(previous_wid);
+    buf[0x8A] = 0x01;
+    let focus_ok = unsafe { post_fn(previous_psn.as_ptr() as *const c_void, buf.as_ptr()) == 0 };
+
+    defocus_ok && focus_ok
+}
+
+/// The 248-byte focus/defocus event record with `wid` stamped little-endian at
+/// bytes 0x3c–0x3f. The caller sets the direction byte at 0x8a.
+fn focus_record(wid: u32) -> [u8; 0xF8] {
+    let mut buf = [0u8; 0xF8];
+    buf[0x04] = 0xF8;
+    buf[0x08] = 0x0D;
+    buf[0x3C..0x40].copy_from_slice(&wid.to_le_bytes());
+    buf
+}
+
+/// The CGWindowID of `pid`'s key window: its `AXFocusedWindow`, else its
+/// frontmost on-screen layer-0 window.
+fn key_window_of_pid(pid: pid_t) -> Option<u32> {
+    use crate::ax::bindings::{ax_get_window_id, copy_element_attr, AXUIElementCreateApplication};
+    let focused = unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            None
+        } else {
+            let window = copy_element_attr(app, "AXFocusedWindow");
+            core_foundation::base::CFRelease(app as _);
+            window.and_then(|window| {
+                let wid = ax_get_window_id(window);
+                core_foundation::base::CFRelease(window as _);
+                wid
+            })
+        }
+    };
+    focused.or_else(|| {
+        crate::windows::visible_windows()
+            .into_iter()
+            .filter(|w| w.pid == pid && w.layer == 0 && w.is_on_screen)
+            .max_by_key(|w| w.z_index)
+            .map(|w| w.window_id)
+    })
+}
+
 // ── NSMenu shortcut activation ────────────────────────────────────────────────
 
 /// Gets the PSN for the process that owns `window_id`.
@@ -660,15 +737,34 @@ pub fn make_exact_window_key(target_pid: libc::pid_t, target_wid: u32) -> bool {
     true
 }
 
-/// Tool-agnostic foreground-assist: briefly front `window_id`, run `body` (which
-/// posts the synthetic input), then restore the prior frontmost process.
+/// Tool-agnostic foreground-assist: briefly front `window_id`, wait for the
+/// activation to actually land, run `body` (which posts the synthetic input),
+/// then restore the prior frontmost process.
 ///
 /// This is the `delivery_mode:"foreground"` rung of the best-effort-background
-/// ladder, shared by `type_text` and `click`. It is the same brief front →
-/// act → restore primitive `press_key`/`hotkey` use for NSMenu key dispatch —
-/// see [`with_menu_shortcut_activation`], which this delegates to. Reached only
-/// when the agent has seen the background rungs fail (clicks) or the field is
-/// unverifiable + focus-sensitive (Catalyst typing).
+/// ladder, shared by `type_text` and `click`. Reached only when the agent has
+/// seen the background rungs fail (clicks) or the field is unverifiable +
+/// focus-sensitive (Catalyst typing).
+///
+/// ## Why this does not delegate to [`with_menu_shortcut_activation`]
+///
+/// It used to. That helper posts `set_front` and calls `action` immediately,
+/// which is correct for its own purpose: NSMenu key dispatch only needs the key
+/// event *enqueued* in the target's run-loop queue, so first-responder identity
+/// is irrelevant and the sub-millisecond front → act → restore is a feature.
+///
+/// Input delivery has the opposite requirement. `set_front` is asynchronous, so
+/// running the body straight away means the body's `AXFocused` write races
+/// AppKit's own activation. AppKit wins: when activation completes it installs
+/// the window's remembered first responder and clobbers the write. The
+/// keystrokes then land wherever the app chose — for a Catalyst app such as
+/// WhatsApp, the message list rather than the composer, which silently scrolls
+/// the transcript instead of typing.
+///
+/// So this waits for the activation to be observable before running `body`, the
+/// same ordering [`with_foreground_hid_activation`] already relies on. The wait
+/// is a bounded poll rather than a fixed sleep: an app that activates in 10 ms
+/// pays 10 ms, and a slow Catalyst/RDP surface still gets its full budget.
 ///
 /// Returns `Ok(true)` when the brief activation happened, `Ok(false)` when the
 /// fronting SPIs are unavailable (the body still ran, just without a front).
@@ -677,7 +773,81 @@ pub fn with_foreground_assist(
     target_wid: u32,
     body: impl FnOnce() -> anyhow::Result<()>,
 ) -> anyhow::Result<bool> {
-    with_menu_shortcut_activation(target_pid, target_wid, body)
+    let set_front = match set_front_process_fn() {
+        Some(f) => f,
+        None => {
+            // SPIs unavailable — run body anyway without activation.
+            body()?;
+            return Ok(false);
+        }
+    };
+
+    let mut prev_psn = [0u8; 8];
+    let prev_ok = get_front_process_fn()
+        .map(|f| unsafe { f(prev_psn.as_mut_ptr() as *mut c_void) } == 0)
+        .unwrap_or(false);
+
+    let mut target_psn = [0u8; 8];
+    if !get_process_psn_for_window(target_wid, target_pid, &mut target_psn) {
+        body()?;
+        return Ok(false);
+    }
+
+    unsafe { set_front(target_psn.as_ptr() as *const c_void, target_wid, 0x400) };
+    // `set_front` moves WindowServer's front process but does not make the
+    // target's NSWindow key, and AppKit installs a first responder only for a
+    // key window. Without this the app is "frontmost" to WindowServer while
+    // remaining, from AppKit's point of view, unfocused — so the AXFocused
+    // write in the body has no responder chain to attach to.
+    make_exact_window_key(target_pid, target_wid);
+    await_window_focused(target_pid, target_wid);
+
+    let result = body();
+
+    if prev_ok {
+        unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
+    }
+
+    result?;
+    Ok(true)
+}
+
+/// Upper bound on how long [`with_foreground_assist`] waits for a requested
+/// activation to become observable. Chosen to cover a Catalyst app's activation
+/// plus key-window install; past this the caller proceeds anyway so a stubborn
+/// target degrades to the old behavior instead of hanging.
+const ACTIVATION_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// Poll interval for [`await_window_focused`]. Short enough that a fast native
+/// app pays roughly one tick, long enough not to spin on the WindowServer.
+const ACTIVATION_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// Block until `target_wid` is the application's focused AX window, or the
+/// timeout expires. Returns whether that state was observed.
+///
+/// The predicate is deliberately `AXFocusedWindow` and not
+/// `NSWorkspace.frontmostApplication`. The latter does not observe a
+/// SkyLight-level front-process change at all: polling it every 15ms across a
+/// full foreground `type_text` against WhatsApp showed zero transitions while
+/// the target was demonstrably being fronted, so a frontmost-based wait always
+/// burns its whole timeout and never actually gates on anything. `AXFocusedWindow`
+/// is the same proof [`preserves_exact_existing_focus`] already trusts to decide
+/// whether a window is focused.
+///
+/// A `false` return is not fatal: the caller proceeds with delivery regardless,
+/// because a target that never reports focus is exactly the case the pre-existing
+/// best-effort contract already covered.
+fn await_window_focused(pid: libc::pid_t, window_id: u32) -> bool {
+    let deadline = std::time::Instant::now() + ACTIVATION_WAIT_TIMEOUT;
+    loop {
+        if crate::ax::bindings::focused_window_id_of_pid(pid) == Some(window_id) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(ACTIVATION_POLL_INTERVAL);
+    }
 }
 
 /// Activate an exact target window for a global HID keyboard action.
@@ -721,7 +891,14 @@ pub fn with_foreground_hid_activation(
         anyhow::bail!("WindowServer rejected foreground HID activation");
     }
 
-    std::thread::sleep(std::time::Duration::from_millis(40));
+    make_exact_window_key(target_pid, target_wid);
+    if !await_window_focused(target_pid, target_wid) {
+        if prev_ok {
+            unsafe { set_front(prev_psn.as_ptr() as *const c_void, 0, 0x400) };
+        }
+        anyhow::bail!("exact target window did not become focused for foreground HID delivery");
+    }
+
     let result = action();
     std::thread::sleep(std::time::Duration::from_millis(40));
 

@@ -20,7 +20,7 @@ use cursor_overlay::CursorConfig;
 use serde_json::Value;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
 const RECORDING_IDLE_TTL_SECS_DEFAULT: u64 = 300;
@@ -132,7 +132,11 @@ impl RuntimeSession {
             .runtime
             .invoke_with_context(name, args, self.context.clone())
             .await;
-        if name == "end_session" && result.is_some() {
+        if name == "end_session"
+            && result
+                .as_ref()
+                .is_some_and(|result| result.is_error != Some(true))
+        {
             self.authorization_registry
                 .revoke_connection(&self.connection);
         }
@@ -158,7 +162,13 @@ pub(crate) struct DriverRuntime {
     /// admission. Therefore shutdown is idempotent and does not return while a
     /// previously admitted operation is still executing.
     lifecycle: tokio::sync::RwLock<()>,
+    lifecycle_maintenance: Mutex<Option<LifecycleMaintenance>>,
     activity_observer: Option<Arc<dyn DriverActivityObserver>>,
+}
+
+struct LifecycleMaintenance {
+    shutdown: std::sync::mpsc::Sender<()>,
+    thread: std::thread::JoinHandle<()>,
 }
 
 impl DriverRuntime {
@@ -194,9 +204,11 @@ impl DriverRuntime {
             shutdown: AtomicBool::new(false),
             last_activity: AtomicU64::new(now_unix_secs()),
             lifecycle: tokio::sync::RwLock::new(()),
+            lifecycle_maintenance: Mutex::new(None),
             activity_observer: options.activity_observer.clone(),
         });
-        spawn_lifecycle_maintenance(&runtime);
+        *runtime.lifecycle_maintenance.lock().unwrap() =
+            Some(spawn_lifecycle_maintenance(&runtime));
         Ok(runtime)
     }
 
@@ -211,6 +223,7 @@ impl DriverRuntime {
     pub(crate) async fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Release);
         let _drained = self.lifecycle.write().await;
+        self.stop_lifecycle_maintenance();
         self.authorization_registry.revoke_all();
         let runtime_prefix = format!(
             "__cua_runtime_{}:",
@@ -221,14 +234,28 @@ impl DriverRuntime {
         cua_driver_core::session::forget_suspended_runtime_scope(
             &self.compatibility_context.runtime_scope_key(),
         );
-        cua_driver_core::element_token::global()
-            .clear_runtime_scope(&self.compatibility_context.runtime_scope_key());
+        cua_driver_core::snapshot_store::retire_runtime_scope(
+            &self.compatibility_context.runtime_scope_key(),
+        );
         let recording = self.registry.recording.clone();
         let _ = tokio::task::spawn_blocking(move || recording.stop_owner(None)).await;
     }
 
+    fn stop_lifecycle_maintenance(&self) {
+        if let Some(maintenance) = self.lifecycle_maintenance.lock().unwrap().take() {
+            let _ = maintenance.shutdown.send(());
+            if maintenance.thread.thread().id() != std::thread::current().id() {
+                let _ = maintenance.thread.join();
+            }
+        }
+    }
+
     pub(crate) fn tools_list(&self) -> Option<Value> {
         self.is_running().then(|| self.registry.tools_list())
+    }
+
+    pub(crate) fn history(&self) -> Option<Arc<cua_driver_core::history::HistoryManager>> {
+        self.is_running().then(|| self.registry.history()).flatten()
     }
 
     pub(crate) async fn invoke(&self, name: &str, args: Value) -> Option<CoreToolResult> {
@@ -421,21 +448,22 @@ fn activity_lifecycle_event(
 
 impl Drop for DriverRuntime {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::Release);
+        let was_running = !self.shutdown.swap(true, Ordering::AcqRel);
+        self.stop_lifecycle_maintenance();
         self.authorization_registry.revoke_all();
         let runtime_scope = self.compatibility_context.runtime_scope_key();
         let runtime_prefix = format!("__cua_runtime_{runtime_scope}:");
         cua_driver_core::session::revoke_sessions_with_prefix(&runtime_prefix);
         cua_driver_core::session::forget_ended_sessions_with_prefix(&runtime_prefix);
         cua_driver_core::session::forget_suspended_runtime_scope(&runtime_scope);
-        cua_driver_core::element_token::global().clear_runtime_scope(&runtime_scope);
+        cua_driver_core::snapshot_store::retire_runtime_scope(&runtime_scope);
         // Explicit `shutdown()` drains work and finalizes recordings. Drop is
         // runtime-scoped and non-blocking so a retained binding cannot affect
         // another generation.
-        let recording = self.registry.recording.clone();
-        std::thread::spawn(move || {
+        if was_running {
+            let recording = self.registry.recording.clone();
             let _ = recording.stop_owner(None);
-        });
+        }
     }
 }
 
@@ -464,8 +492,9 @@ fn now_unix_secs() -> u64 {
         .as_secs()
 }
 
-fn spawn_lifecycle_maintenance(runtime: &Arc<DriverRuntime>) {
+fn spawn_lifecycle_maintenance(runtime: &Arc<DriverRuntime>) -> LifecycleMaintenance {
     let runtime = Arc::downgrade(runtime);
+    let (shutdown, shutdown_rx) = std::sync::mpsc::channel();
     let recording_ttl = configured_ttl(
         "CUA_DRIVER_RS_RECORDING_IDLE_TTL_SECS",
         RECORDING_IDLE_TTL_SECS_DEFAULT,
@@ -474,8 +503,13 @@ fn spawn_lifecycle_maintenance(runtime: &Arc<DriverRuntime>) {
         "CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS",
         SESSION_IDLE_TTL_SECS_DEFAULT,
     ));
-    std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_secs(30));
+    let thread = std::thread::spawn(move || loop {
+        if shutdown_rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .is_ok()
+        {
+            break;
+        }
         let Some(runtime) = runtime.upgrade() else {
             break;
         };
@@ -501,6 +535,7 @@ fn spawn_lifecycle_maintenance(runtime: &Arc<DriverRuntime>) {
             let _ = runtime.registry.recording.stop_owner(None);
         }
     });
+    LifecycleMaintenance { shutdown, thread }
 }
 
 /// Build the canonical SDK tool inventory without acquiring runtime ownership.
@@ -555,17 +590,28 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     if let Some(register_host_tools) = options.register_host_tools {
         register_host_tools(&mut registry);
     }
-    let recording = Arc::downgrade(&registry.recording);
-    let recording_session_end =
-        cua_driver_core::session::register_scoped_session_end_hook(move |session| {
-            let Some(recording) = recording.upgrade() else {
-                return;
-            };
-            let session = session.to_owned();
-            std::thread::spawn(move || {
-                let _ = recording.stop_owner(Some(&session));
-            });
+    let perception_registered = registry.tools_list()["tools"]
+        .as_array()
+        .is_some_and(|tools| {
+            tools.iter().any(|tool| {
+                tool.get("name").and_then(Value::as_str) == Some("parse_visual_regions")
+            })
         });
+    if !perception_registered {
+        registry.register_perception_tool(crate::configured_perception_client());
+    }
+    let recording = Arc::downgrade(&registry.recording);
+    let recording_session_end = cua_driver_core::session::register_scoped_fallible_session_end_hook(
+        "recording",
+        move |session| {
+            let Some(recording) = recording.upgrade() else {
+                return Ok(());
+            };
+            recording
+                .stop_owner(Some(session))
+                .map_err(|error| error.to_string())
+        },
+    );
     registry.retain_session_end_hook(recording_session_end);
     registry
 }
@@ -588,8 +634,8 @@ fn configure_macos_runtime() {
     cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
         platform_macos::capture::crosshair_png_bytes(png_bytes, x, y).ok()
     });
-    cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
-        platform_macos::recording_hooks::app_state_json_for(window_id, pid)
+    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(|window_id, pid, budget| {
+        platform_macos::recording_hooks::app_state_json_for(window_id, pid, budget)
     });
     cua_driver_core::recording::set_element_bounds_fn(|window_id, pid, index| {
         platform_macos::recording_hooks::element_window_local_xy(window_id, pid, index)
@@ -607,8 +653,8 @@ fn configure_windows_runtime() {
     cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
         platform_windows::capture::crosshair_png_bytes(png_bytes, x, y).ok()
     });
-    cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
-        platform_windows::recording_hooks::app_state_json_for(window_id, pid)
+    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(|window_id, pid, budget| {
+        platform_windows::recording_hooks::app_state_json_for(window_id, pid, budget)
     });
     cua_driver_core::recording::set_element_bounds_fn(|window_id, pid, index| {
         platform_windows::recording_hooks::element_window_local_xy(window_id, pid, index)
@@ -623,9 +669,11 @@ fn configure_linux_runtime(prepare_desktop_environment: bool) {
     if prepare_desktop_environment {
         platform_linux::xauth::ensure_xauthority_discovered();
         platform_linux::session_bus::ensure_session_bus_discovered();
-        platform_linux::a11y::ensure_chromium_accessibility_enabled();
-        if let Err(error) = platform_linux::atspi::ensure_listener_active() {
-            tracing::warn!("could not activate the persistent AT-SPI listener: {error}");
+        if std::env::var_os("NO_AT_BRIDGE").as_deref() != Some(std::ffi::OsStr::new("1")) {
+            platform_linux::a11y::ensure_chromium_accessibility_enabled();
+            if let Err(error) = platform_linux::atspi::ensure_listener_active() {
+                tracing::warn!("could not activate the persistent AT-SPI listener: {error}");
+            }
         }
     }
     cua_driver_core::recording::set_screenshot_fn(|window_id, pid| {
@@ -634,8 +682,8 @@ fn configure_linux_runtime(prepare_desktop_environment: bool) {
     cua_driver_core::recording::set_click_marker_fn(|png_bytes, x, y| {
         platform_linux::capture::crosshair_png_bytes(png_bytes, x, y).ok()
     });
-    cua_driver_core::recording::set_ax_snapshot_fn(|window_id, pid| {
-        platform_linux::recording_hooks::app_state_json_for(window_id, pid)
+    cua_driver_core::recording::set_budgeted_ax_snapshot_fn(|window_id, pid, budget| {
+        platform_linux::recording_hooks::app_state_json_for(window_id, pid, budget)
     });
     cua_driver_core::recording::set_element_bounds_fn(|window_id, pid, index| {
         platform_linux::recording_hooks::element_window_local_xy(window_id, pid, index)
@@ -693,6 +741,65 @@ mod tests {
         options
     }
 
+    #[test]
+    fn every_registered_tool_schema_matches_the_dispatch_argument_check() {
+        let registry = build_registry(&RuntimeOptions::embedded(false));
+        // These schemas declare `additionalProperties: true`.
+        let open = [
+            "get_browser_state",
+            "browser_prepare",
+            "browser_navigate",
+            "browser_click",
+            "browser_type",
+            "browser_dialog",
+            "browser_set_input_files",
+            "browser_download",
+            "browser_pointer",
+            "start_session",
+            "escalate_session",
+            "get_session",
+            "list_sessions",
+            "get_session_state",
+            "end_session",
+        ];
+        let violations = registry.input_conformance_violations(&open);
+        assert!(violations.is_empty(), "{violations:#?}");
+    }
+
+    #[test]
+    fn canonical_inventory_advertises_unavailable_perception_tool() {
+        let inventory = tool_inventory(RuntimeOptions::embedded(false));
+        let tools = inventory["tools"].as_array().unwrap();
+        assert_eq!(
+            tools
+                .iter()
+                .filter(|tool| tool["name"] == "parse_visual_regions")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn host_perception_registration_is_not_duplicated_in_inventory() {
+        fn register(registry: &mut ToolRegistry) {
+            registry.register_perception_tool(
+                cua_driver_core::perception_client::PerceptionClient::unavailable(),
+            );
+        }
+        let mut options = RuntimeOptions::embedded(false);
+        options.register_host_tools = Some(register);
+        let inventory = tool_inventory(options);
+        assert_eq!(
+            inventory["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|tool| tool["name"] == "parse_visual_regions")
+                .count(),
+            1
+        );
+    }
+
     #[tokio::test]
     async fn authorized_dispatch_refreshes_only_the_runtime_private_activity_key() {
         let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
@@ -718,7 +825,7 @@ mod tests {
         let idle_before_refresh =
             cua_driver_core::session::session_idle_duration(&internal).unwrap();
         runtime
-            .invoke("health_report", serde_json::json!({"session": public}))
+            .invoke("start_session", serde_json::json!({"session": public}))
             .await
             .unwrap();
         let idle_after_refresh =
@@ -784,5 +891,108 @@ mod tests {
         );
 
         runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn incomplete_end_keeps_trusted_authorization_live_for_cleanup_retry() {
+        let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
+        let runtime = DriverRuntime::create(standard_options()).unwrap();
+        let public_session = "runtime-end-cleanup-retry";
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let attempts_for_hook = attempts.clone();
+        let _hook = cua_driver_core::session::register_scoped_fallible_session_end_hook(
+            "runtime-end-cleanup-retry-test",
+            move |_| {
+                if attempts_for_hook.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Err("synthetic first-attempt failure".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        let session = runtime
+            .create_trusted_session(DelegatedSessionRequest {
+                public_session: public_session.into(),
+                transport_session: "runtime-end-cleanup-retry-transport".into(),
+                mode: PermissionMode::Standard,
+                ttl: Duration::from_secs(60),
+                idle_ttl: Duration::from_secs(30),
+                capability_manifest: None,
+            })
+            .unwrap();
+
+        let started = session
+            .invoke("start_session", serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_ne!(started.is_error, Some(true));
+        let runtime_prefix = format!(
+            "__cua_runtime_{}:",
+            runtime.compatibility_context.runtime_scope_key()
+        );
+        let started_sessions = cua_driver_core::session::list_session_snapshots_with_prefix(
+            &runtime_prefix,
+            Duration::from_secs(300),
+        );
+        assert_eq!(started_sessions.len(), 1, "{started_sessions:?}");
+
+        let first_end = session
+            .invoke("end_session", serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            first_end.is_error,
+            Some(true),
+            "result={first_end:?} started={started_sessions:?} attempts={}",
+            attempts.load(Ordering::SeqCst)
+        );
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+
+        let retried_end = session
+            .invoke("end_session", serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_ne!(retried_end.is_error, Some(true));
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+
+        let after_end = session
+            .invoke("health_report", serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            after_end
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(Value::as_str),
+            Some("authorization_revoked")
+        );
+
+        runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn shutdown_stops_lifecycle_maintenance() {
+        let _runtime_test = TEST_RUNTIME_LOCK.lock().unwrap();
+        let runtime = DriverRuntime::create(standard_options()).unwrap();
+        // The maintenance thread owns the only receiver, so sends fail once it
+        // exits. This proves the thread stopped; it cannot distinguish the join
+        // from the thread's own prompt exit after the stop signal.
+        let probe = runtime
+            .lifecycle_maintenance
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("runtime creation starts lifecycle maintenance")
+            .shutdown
+            .clone();
+
+        runtime.shutdown().await;
+
+        assert!(runtime.lifecycle_maintenance.lock().unwrap().is_none());
+        assert!(
+            probe.send(()).is_err(),
+            "lifecycle maintenance is still running after shutdown"
+        );
     }
 }

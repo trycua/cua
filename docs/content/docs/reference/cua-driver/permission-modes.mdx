@@ -10,13 +10,23 @@ arguments are sanitized and before a platform action runs. CLI, MCP, direct
 SDK, private-worker, and service-backed calls all reach the same enforcement
 boundary.
 
+The three public names are authorization profiles over that shared engine.
+They select built-in capability and approval behavior; a capability manifest
+is a separate narrow-only ceiling.
+
 ## Choose a mode
 
 | Mode | Best for | Runtime behavior |
 | --- | --- | --- |
-| `standard` | Normal local CLI and MCP use | Routine observation, input, file transfer, isolated browser use, recording, and agent-adjustable settings run without Cua prompts. Residual boundaries return a structured refusal unless they have an explicit grant or trusted host callback. |
-| `bounded` | Unattended agents, gateways, and embedded applications | Only tools and resources in a launch-approved manifest may run. In-scope work is silent. Out-of-scope work is denied. |
-| `unrestricted` | Disposable or fully trusted environments | Cua approval checks are bypassed after an explicit dangerous acknowledgement. Hard invariants and configured policy ceilings still apply. |
+| `standard` | Normal local CLI and MCP use | Routine operations follow the built-in profile. Residual boundaries still require a launch grant or trusted host decision. An optional capability manifest can narrow tools and resources. |
+| `bounded` | Unattended agents, gateways, and embedded applications | A capability manifest is required. In-scope work is silent and undeclared scope is denied. |
+| `unrestricted` | Disposable or fully trusted environments | Cua approval checks are bypassed after an explicit dangerous acknowledgement. An optional capability manifest limits that bypass to declared scope. |
+
+| Profile | Manifest absent | Manifest present |
+| --- | --- | --- |
+| `standard` | Preserve standard behavior | Standard behavior intersected with manifest scope; residual grants remain required |
+| `bounded` | Startup fails | Unattended, deny-by-default bounded behavior with required lifetimes |
+| `unrestricted` | Preserve the acknowledged approval bypass within existing ceilings | Bypass approval only inside manifest scope |
 
 `standard` is the default:
 
@@ -29,8 +39,8 @@ Use `bounded` with a reviewed manifest:
 ```bash
 cua-driver serve \
   --permission-mode bounded \
-  --session-policy ./cua-session.yaml \
-  --approve-session-policy
+  --capability-manifest ./cua-capabilities.yaml \
+  --approve-capability-manifest
 ```
 
 Use `unrestricted` only when full autonomous access is intentional:
@@ -38,6 +48,10 @@ Use `unrestricted` only when full autonomous access is intentional:
 ```bash
 cua-driver serve --dangerously-bypass-approvals
 ```
+
+Add the same two capability-manifest flags to `standard` or `unrestricted`
+when that runtime should have a smaller tool and resource surface. A manifest
+can narrow a profile but never widen it.
 
 Passing `--permission-mode unrestricted` without
 `--dangerously-bypass-approvals` fails closed.
@@ -51,6 +65,41 @@ Passing `--permission-mode unrestricted` without
 `autonomous` remains a manifest compatibility alias for `bounded`. `yolo`
 remains a configuration alias for `unrestricted`. New integrations should use
 the canonical names.
+
+## Configure a mode without CLI flags
+
+The mode is read once, when the runtime that owns the driver starts. Only
+`cua-driver serve` takes the flags above. A launcher that cannot pass them —
+`cua-driver mcp` owning its own runtime on Windows and Linux, a Windows
+Scheduled Task registered by `cua-driver autostart enable`, or an embedding
+host — uses the equivalent environment variables:
+
+| Flag | Environment variable |
+| --- | --- |
+| `--permission-mode <mode>` | `CUA_DRIVER_PERMISSION_MODE=<mode>` |
+| `--capability-manifest <path>` | `CUA_DRIVER_CAPABILITY_MANIFEST_FILE=<path>` |
+| `--approve-capability-manifest` | `CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED=1` |
+| `--dangerously-bypass-approvals` | `CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS=1` |
+
+The variables accept `1`, `true`, `yes`, or `on` for their boolean form. The CLI
+flag normalizes mode plus acknowledgement in one step; the environment form does
+not, so `unrestricted` requires `CUA_DRIVER_PERMISSION_MODE=unrestricted` **and**
+`CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS=1`, and `bounded` requires both the
+capability manifest and its approval. Missing halves fail startup instead of downgrading
+to `standard`.
+
+`CUA_DRIVER_SESSION_POLICY_FILE`, `CUA_DRIVER_SESSION_POLICY_APPROVED`,
+`--session-policy`, and `--approve-session-policy` remain deprecated aliases
+for one compatibility window. New integrations should use the capability
+manifest names. Conflicting old and new paths fail closed.
+
+These variables are trusted launch configuration on the same footing as the
+flags. Whoever can write them for the daemon's environment sets its mode, so
+treat them like the plist, unit file, or Scheduled Task that carries them. An
+agent tool call can never set them.
+
+A running daemon's mode cannot be changed. Stop it and start it again with the
+configuration you want.
 
 ## What standard allows
 
@@ -75,6 +124,11 @@ not open a Cua confirmation card for routine actions.
 Path canonicalization, browser-origin validation, process identity checks, and
 managed or user policy still apply when standard permits an operation.
 
+Driver-owned isolated browser preparation follows the selected mode and any
+optional capability manifest. Standard allows it as a routine operation,
+bounded requires it to match the manifest, and unrestricted relies on the
+launcher's dangerous acknowledgement.
+
 ## Existing logged-in Chromium profiles
 
 An existing profile can contain live cookies and authenticated sites. Standard
@@ -98,11 +152,11 @@ needed.
 
 Other valid authorization paths are:
 
-- A `bounded` manifest that allows `kind: existing_profile`.
+- A capability manifest containing the exact profile scope, combined with the
+  profile's normal approval behavior. In `bounded` it is unattended; in
+  `standard` a launch grant or trusted host decision is still required.
 - A `DriverAuthorizationHost` callback installed by an embedding application.
 - `unrestricted` mode with its dangerous acknowledgement.
-- The temporary `browser-approve` compatibility artifact when the trusted
-  launcher explicitly enables it.
 
 An MCP transport marker, model-supplied Boolean, environment variable, or
 ordinary tool argument is never an attachment grant.
@@ -114,17 +168,18 @@ origin scope still applies to live navigation and input.
 See [Browser Profile Attachment](/reference/cua-driver/browser-profile-attachment)
 for the platform and CDP boundary.
 
-## Bounded manifests
+## Capability manifests
 
-Bounded mode is deny by default. A tool must appear in `allow.tools`, and every
-resource crossed by that call must match the manifest.
+A configured capability manifest is deny by default in every profile. A tool
+must appear in `allow.tools`, and every resource crossed by that call must
+match the manifest. Approval is considered only after those checks pass.
 
-Manifest version 2 supports application identities, browser profile kinds, and
-directory roots:
+Manifest version 3 removes profile behavior from the file. It supports the
+same application identities, browser profile kinds, and directory roots as
+version 2:
 
 ```yaml
-version: 2
-mode: bounded
+version: 3
 expires_after: 8h
 idle_timeout: 30m
 
@@ -185,7 +240,7 @@ that declares origins therefore cannot also allow a tool that reaches a page
 around that adapter, and the runtime refuses to start if it does:
 
 ```text
-authorization startup error: origin-scoped bounded manifests cannot allow
+authorization startup error: origin-scoped capability manifests cannot allow
 'click' because it bypasses the typed browser origin adapter
 ```
 
@@ -214,17 +269,20 @@ runtimes. Use `list_windows` for the `window_id` a browser call needs.
 
 An origin scope binds one runtime's tool surface. It is not a property of the
 browser, the profile, or the machine. A second runtime that can deliver generic
-input to a browser window — including any standard-mode runtime, which allows
-input against every application — voids the first runtime's origin scope
+input to a browser window — including a standard-mode runtime without a
+capability manifest, which allows input against every application — voids the first runtime's origin scope
 without violating it. Scope a companion runtime to non-browser applications
 with `desktop.display: false`, and treat same-user processes outside Cua Driver
 as outside the boundary entirely.
 
-Version 1 manifests remain loadable. They may name exact PIDs, windows, and
-paths, but version 2 is preferred for pre-launch and unattended workflows.
+Version 1 and 2 manifests remain loadable. Their `mode` field is retained for
+compatibility, and legacy `ask.tools` entries are treated as deny. Version 3
+removes `mode` and `ask.tools`. `expires_after` and `idle_timeout` are optional
+in version 3, but any declared lifetime is enforced in every profile. Bounded
+mode requires both fields.
 
 For a complete tested example, see
-[Write a bounded manifest](/how-to-guides/driver/write-a-bounded-manifest).
+[Write a capability manifest](/how-to-guides/driver/write-a-bounded-manifest).
 
 ## Authorization stack
 
@@ -234,12 +292,13 @@ Every call must pass all applicable layers:
 2. The reviewed built-in tool and risk map.
 3. Administrator policy from `CUA_DRIVER_MANAGED_POLICY_FILE`, when set.
 4. User policy from `CUA_DRIVER_POLICY_FILE`, when set.
-5. The bounded manifest, when the active mode is `bounded`.
-6. A launch grant or trusted host authorization for a residual standard-mode
+5. The selected profile's capability and approval behavior.
+6. The capability manifest, when configured.
+7. A launch grant or trusted host authorization for a residual standard-mode
    boundary.
 
-Each layer can narrow access. No grant or permission mode can widen a managed
-or user policy.
+Each layer can narrow access. No manifest, grant, approval bypass, or permission
+profile can widen a hard invariant or managed/user policy.
 
 The `tools/list`, `manifest`, and status surfaces expose content-free
 enforcement descriptors. Each descriptor states its adapter ID, risk class,
@@ -289,8 +348,10 @@ create a fresh authorization generation.
 
 ## Cursor and session badge
 
-The semantic cursor is optional activity feedback. A declared session displays
-its sanitized public session name in a badge below the cursor. The badge uses
+The semantic cursor is optional activity feedback. It initializes on the first
+cursor-bearing action even when the transport uses an implicit session. A
+publicly named session displays its sanitized label in a badge below the
+cursor. The badge uses
 the session color, strips control characters, collapses whitespace, and
 truncates long labels.
 
@@ -299,7 +360,7 @@ hides the badge. Headless sessions do not require either.
 
 ## Security boundary
 
-The host owns the permission mode, manifest, launch grants, and any human
+The host owns the permission profile, capability manifest, launch grants, and any human
 consent UX. Agent tools cannot change them.
 
 Same-user native code, malware, and automation with control of the same
@@ -311,5 +372,5 @@ window into a secure desktop.
 
 - [Permission policies](/reference/cua-driver/permission-policies)
 - [Browser Profile Attachment](/reference/cua-driver/browser-profile-attachment)
-- [Write a bounded manifest](/how-to-guides/driver/write-a-bounded-manifest)
+- [Write a capability manifest](/how-to-guides/driver/write-a-bounded-manifest)
 - [Restrict tool access](/how-to-guides/driver/restrict-tool-access)

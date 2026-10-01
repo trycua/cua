@@ -10,11 +10,107 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitStatus};
 
 use super::refusal::BrowserRefusal;
 use super::types::{
     BrowserClassification, BrowserProduct, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint,
 };
+
+/// Root process of a driver-owned isolated browser that core launched.
+///
+/// Core keeps this handle for the browser's lifetime to observe launcher
+/// exit, reap the process tree, and remove the driver-owned profile. The
+/// default implementation is [`std::process::Child`]. A platform that runs
+/// the browser under a different token than the Driver supplies its own
+/// handle so that filesystem work inside the browser-writable profile uses
+/// the browser's authority rather than the Driver's.
+pub trait IsolatedBrowserProcess: Send {
+    fn id(&self) -> u32;
+    fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>>;
+    fn kill(&mut self) -> std::io::Result<()>;
+    fn wait(&mut self) -> std::io::Result<ExitStatus>;
+
+    /// Run `work` with the authority of the browser's token. The browser can
+    /// write its profile directory, so a more privileged Driver must not
+    /// follow browser-planted links there with its own rights. When the
+    /// browser runs with the Driver's token, `work` runs directly. An error
+    /// means `work` did not run; callers must then skip the file operation.
+    fn with_browser_file_authority(&self, work: &mut dyn FnMut()) -> std::io::Result<()> {
+        work();
+        Ok(())
+    }
+}
+
+impl IsolatedBrowserProcess for Child {
+    fn id(&self) -> u32 {
+        Child::id(self)
+    }
+
+    fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        Child::try_wait(self)
+    }
+
+    fn kill(&mut self) -> std::io::Result<()> {
+        Child::kill(self)
+    }
+
+    fn wait(&mut self) -> std::io::Result<ExitStatus> {
+        Child::wait(self)
+    }
+}
+
+/// Select the first installed, non-redirected candidate and return its
+/// canonical path. Native adapters must supply only trusted installation
+/// locations in public product-preference order. Rejecting redirects prevents
+/// a known browser path from becoming an arbitrary executable through a
+/// symlink or junction controlled outside the trusted installation.
+pub fn select_isolated_browser_executable(
+    candidates: impl IntoIterator<Item = PathBuf>,
+) -> Result<String, BrowserRefusal> {
+    for candidate in candidates {
+        if !candidate.is_file() {
+            continue;
+        }
+        let canonical = std::fs::canonicalize(&candidate).map_err(|error| {
+            BrowserRefusal::new(
+                super::refusal::BrowserRefusalCode::BrowserRouteUnavailable,
+                format!(
+                    "could not canonicalize installed browser executable {}: {error}",
+                    candidate.display()
+                ),
+            )
+        })?;
+        if !same_installation_path(&candidate, &canonical) {
+            continue;
+        }
+        return Ok(canonical.to_string_lossy().into_owned());
+    }
+    Err(BrowserRefusal::new(
+        super::refusal::BrowserRefusalCode::BrowserRouteUnavailable,
+        "no supported installed Chromium executable is available for isolated launch",
+    ))
+}
+
+fn same_installation_path(candidate: &std::path::Path, canonical: &std::path::Path) -> bool {
+    #[cfg(windows)]
+    {
+        let normalize = |path: &std::path::Path| {
+            let value = path.to_string_lossy();
+            value
+                .strip_prefix(r"\\?\")
+                .unwrap_or(&value)
+                .replace('/', "\\")
+                .to_ascii_lowercase()
+        };
+        normalize(candidate) == normalize(canonical)
+    }
+    #[cfg(not(windows))]
+    {
+        candidate == canonical
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -38,17 +134,14 @@ pub enum PrepareStrategy {
     ExistingProfile,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PrepareAuthorization {
-    McpHost,
-    ApprovalArtifact(String),
-}
-
 /// Caller context for an explicit `browser_prepare` call. Prepare is never
 /// implicit: `get_browser_state` must not trigger it.
 #[derive(Debug, Clone)]
 pub struct PrepareRequest {
-    pub pid: i64,
+    /// Existing browser process used to select and attest the launch executable.
+    /// Omitted only for a driver-owned isolated launch, where the platform
+    /// resolves a supported installed Chromium executable instead.
+    pub pid: Option<i64>,
     /// Exact native window used as the visible approval and ownership anchor
     /// for existing-profile attachment.
     pub window_id: Option<u64>,
@@ -57,7 +150,6 @@ pub struct PrepareRequest {
     /// this independently from the public capability session so either proxy
     /// disconnect or explicit `end_session` can reap a spawned browser.
     pub transport_session: Option<String>,
-    pub authorization: Option<PrepareAuthorization>,
     /// Omitted for the legacy isolated-profile compatibility form.
     pub strategy: Option<PrepareStrategy>,
     pub profile: Option<PrepareProfile>,
@@ -220,6 +312,39 @@ pub struct PrepareSideEffects {
 /// `browser_route_unavailable`).
 #[async_trait]
 pub trait BrowserPlatform: Send + Sync {
+    /// Resolve a canonical installed Chromium-family executable for a
+    /// driver-owned isolated launch that did not name an existing process.
+    /// Native adapters use deterministic product priority and fail closed when
+    /// no supported executable can be proven.
+    fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
+        Err(BrowserRefusal::new(
+            super::refusal::BrowserRefusalCode::BrowserRouteUnavailable,
+            "no supported installed Chromium executable is available for isolated launch",
+        ))
+    }
+
+    /// Spawn the driver-owned isolated browser that core fully configured in
+    /// `command` for the private profile at `profile`. The default launches
+    /// it with the Driver's own token. A platform may instead launch it with
+    /// a less privileged token; it must then keep every trust check made by
+    /// [`Self::isolated_browser_executable`] valid for that token and refuse
+    /// rather than fall back to the Driver's token.
+    fn spawn_isolated_browser(
+        &self,
+        mut command: Command,
+        _profile: &Path,
+    ) -> Result<Box<dyn IsolatedBrowserProcess>, BrowserRefusal> {
+        command
+            .spawn()
+            .map(|child| Box::new(child) as Box<dyn IsolatedBrowserProcess>)
+            .map_err(|error| {
+                BrowserRefusal::new(
+                    super::refusal::BrowserRefusalCode::BrowserRouteUnavailable,
+                    format!("could not launch an isolated browser process: {error}"),
+                )
+            })
+    }
+
     /// Explain why a trusted CDP Input route cannot preserve background
     /// posture for a standalone browser on this platform. Embedded Chromium
     /// routes are independently proven and do not consult this capability.
@@ -331,6 +456,16 @@ pub trait BrowserPlatform: Send + Sync {
         Ok(false)
     }
 
+    /// Restore a browser-owned remote-debugging setting that Cua enabled for
+    /// an existing-profile grant. Core calls this only when the last grant for
+    /// the process ends and only when setup recorded that Cua changed it.
+    fn cleanup_existing_profile_setup(
+        &self,
+        _request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        Ok(false)
+    }
+
     /// Roll back a setup transition that core could not safely claim. The
     /// adapter must preserve `error`, adding exact cleanup evidence where
     /// useful, and must never act on an unproven current tab or control.
@@ -367,4 +502,51 @@ pub trait BrowserPlatform: Send + Sync {
         &self,
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_isolated_browser_executable;
+
+    #[test]
+    fn isolated_browser_selection_uses_first_installed_canonical_candidate() {
+        let root = tempfile::tempdir().expect("temporary browser candidates");
+        let canonical_root = std::fs::canonicalize(root.path()).expect("canonical temp root");
+        let first = canonical_root.join("chrome");
+        let second = canonical_root.join("chromium");
+        std::fs::write(&first, b"first").expect("first candidate");
+        std::fs::write(&second, b"second").expect("second candidate");
+
+        let selected = select_isolated_browser_executable([
+            canonical_root.join("missing"),
+            first.clone(),
+            second,
+        ])
+        .expect("select installed browser");
+
+        assert_eq!(
+            std::path::PathBuf::from(selected),
+            std::fs::canonicalize(first).expect("canonical first candidate")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn isolated_browser_selection_rejects_symlinked_candidate() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("temporary browser candidates");
+        let canonical_root = std::fs::canonicalize(root.path()).expect("canonical temp root");
+        let arbitrary = canonical_root.join("arbitrary");
+        let redirected = canonical_root.join("chrome");
+        std::fs::write(&arbitrary, b"not a browser").expect("arbitrary executable fixture");
+        symlink(&arbitrary, &redirected).expect("redirected browser fixture");
+
+        let error = select_isolated_browser_executable([redirected])
+            .expect_err("redirected browser path must fail closed");
+        assert_eq!(
+            error.code,
+            super::super::refusal::BrowserRefusalCode::BrowserRouteUnavailable
+        );
+    }
 }

@@ -19,6 +19,10 @@ declare module "@novnc/novnc" {
     scaleViewport: boolean
     resizeSession: boolean
     background: string
+    /** Tight/JPEG quality, 0 (worst) – 9 (near-lossless). Default 6. */
+    qualityLevel: number
+    /** Lossless zlib compression effort, 0 – 9. Default 2. */
+    compressionLevel: number
     disconnect(): void
   }
 }

@@ -310,7 +310,8 @@ enum APIDocExtractor {
                     APIFieldDoc(name: "sharedDirectories", type: "array", required: false, description: "Directories to share with the VM", defaultValue: nil),
                     APIFieldDoc(name: "recoveryMode", type: "boolean", required: false, description: "Boot macOS VM in recovery mode", defaultValue: "false"),
                     APIFieldDoc(name: "storage", type: "string", required: false, description: "VM storage location", defaultValue: nil),
-                    APIFieldDoc(name: "clipboard", type: "boolean", required: false, description: "Enable bidirectional clipboard sync via SSH (experimental)", defaultValue: "false")
+                    APIFieldDoc(name: "clipboard", type: "boolean", required: false, description: "Enable bidirectional clipboard sync via SSH (experimental)", defaultValue: "false"),
+                    APIFieldDoc(name: "vnc", type: "string", required: false, description: "VNC server policy: 'enabled' or 'disabled'. 'disabled' requires noDisplay=true, starts no VNC listener, and reports a null vncUrl", defaultValue: "enabled")
                 ]
             ),
             responseBody: APIResponseDoc(

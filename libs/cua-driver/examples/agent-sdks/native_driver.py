@@ -9,13 +9,10 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from cua_driver import (
-    CaptureScope,
+    ActionTarget,
     CuaDriver,
-    DesktopScope,
-    EndSessionInput,
     GetDesktopStateInput,
     PressKeyInput,
-    StartSessionInput,
     TypeTextInput,
 )
 
@@ -47,25 +44,13 @@ def parse_args() -> argparse.Namespace:
 async def main() -> None:
     args = parse_args()
     token = f"cua-{uuid4().hex[:10]}"
-    session = f"native-python-{uuid4().hex[:10]}"
     await asyncio.to_thread(fixture_request, args.fixture, "/reset", method="POST")
 
     driver = CuaDriver.create()
-    started = False
     mutation_outcome_unknown = False
     try:
-        await asyncio.wait_for(
-            driver.start_session(
-                StartSessionInput(session=session, capture_scope=CaptureScope.DESKTOP)
-            ),
-            args.timeout,
-        )
-        started = True
-
         before = await asyncio.wait_for(
-            driver.get_desktop_state(
-                GetDesktopStateInput(session=session, screenshot_out_file=None)
-            ),
+            driver.get_desktop_state(GetDesktopStateInput(session=None, screenshot_out_file=None)),
             args.timeout,
         )
         if before.is_error or not before.images:
@@ -77,8 +62,9 @@ async def main() -> None:
                 driver.type_text(
                     TypeTextInput(
                         text=token,
-                        scope=DesktopScope.DESKTOP,
-                        session=session,
+                        target=ActionTarget.DESKTOP(display_id="primary"),
+                        scope=None,
+                        session=None,
                     )
                 ),
                 args.timeout,
@@ -90,8 +76,9 @@ async def main() -> None:
                     PressKeyInput(
                         key="ENTER",
                         modifiers=None,
-                        scope=DesktopScope.DESKTOP,
-                        session=session,
+                        target=ActionTarget.DESKTOP(display_id="primary"),
+                        scope=None,
+                        session=None,
                     )
                 ),
                 args.timeout,
@@ -105,9 +92,7 @@ async def main() -> None:
         # the independent fixture first; it may have consumed the action.
         await wait_for_submission(args.fixture, token, args.timeout)
         after = await asyncio.wait_for(
-            driver.get_desktop_state(
-                GetDesktopStateInput(session=session, screenshot_out_file=None)
-            ),
+            driver.get_desktop_state(GetDesktopStateInput(session=None, screenshot_out_file=None)),
             args.timeout,
         )
         if after.is_error or not after.images:
@@ -116,11 +101,7 @@ async def main() -> None:
         if mutation_outcome_unknown:
             print("the driver response was uncertain; the external postcondition resolved it")
     finally:
-        try:
-            if started:
-                await driver.end_session(EndSessionInput(session=session))
-        finally:
-            await driver.shutdown()
+        await driver.shutdown()
 
 
 if __name__ == "__main__":

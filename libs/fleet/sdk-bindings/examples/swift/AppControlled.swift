@@ -27,7 +27,7 @@ actor ScriptedHttpClient: HttpClient {
         let pool = try await client.createPool(request: CreatePoolRequest(namespace: "default", spec: spec))
         let claim = try await client.createClaim(request: CreateClaimRequest(pool: pool, spec: ClaimSpec(sandboxTemplateRef: SandboxTemplateRef(name: pool.metadata.name), warmpool: nil, bindDeadline: nil, lifecycle: nil)))
         let sandbox = try await client.waitClaim(claim: claim)
-        let service = try await client.serviceRequest(sandbox: sandbox, service: "mcp", path: "/mcp", request: HttpRequest(method: "POST", url: "https://ignored.invalid/mcp", headers: [], body: Data("{\"offline\":true}".utf8)))
+        let service = try await client.serviceRequest(sandbox: sandbox, service: "mcp", path: "/mcp", request: HttpRequest(method: "POST", url: "https://ignored.invalid/mcp", headers: [], body: Data("{\"offline\":true}".utf8), timeoutSecs: nil))
         try await client.deleteClaim(claim: claim)
         try await client.deletePool(pool: pool)
         await transport.assertExhausted()

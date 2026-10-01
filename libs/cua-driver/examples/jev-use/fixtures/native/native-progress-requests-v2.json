@@ -1,0 +1,386 @@
+{
+  "_fixture": "Native v2 requests with task progress (#4313); python/tests/test_native_progress.py and typescript/native_progress.test.ts must both reproduce each request exactly from fixtures/native/appkit-window-state-initial-v1.json and the recorded runner history.",
+  "cases": [
+    {
+      "task": "appkit-save-note",
+      "history": [],
+      "request": {
+        "schema": "cua.jev_choice_request_v2",
+        "goal": "Enter the note text into the Note field, then save the note.",
+        "capture_id": "cap-appkit-initial",
+        "snapshot_id": "s00000086",
+        "regions": [],
+        "elements": [
+          {
+            "role_class": "button",
+            "label": "Increment",
+            "state": "enabled"
+          },
+          {
+            "role_class": "button",
+            "label": "Reset",
+            "state": "enabled"
+          },
+          {
+            "role_class": "button",
+            "label": "Click target (left / right / double)",
+            "state": "enabled"
+          },
+          {
+            "role_class": "checkbox",
+            "label": "I agree",
+            "state": "unchecked"
+          },
+          {
+            "role_class": "button",
+            "label": "Right-click for context menu",
+            "state": "enabled"
+          },
+          {
+            "role_class": "button",
+            "label": "Exit",
+            "state": "enabled"
+          },
+          {
+            "role_class": "text_input",
+            "label": "Note",
+            "state": "empty"
+          },
+          {
+            "role_class": "button",
+            "label": "Save note",
+            "state": "enabled"
+          },
+          {
+            "role_class": "radio",
+            "label": "Small",
+            "state": "not_selected"
+          },
+          {
+            "role_class": "radio",
+            "label": "Medium",
+            "state": "not_selected"
+          },
+          {
+            "role_class": "radio",
+            "label": "Large",
+            "state": "not_selected"
+          }
+        ],
+        "history": [],
+        "candidates": [
+          {
+            "id": "ax:button:increment",
+            "description": "Press the button labeled \"Increment\".",
+            "source": "ax"
+          },
+          {
+            "id": "ax:button:click-target-left-right-double",
+            "description": "Press the button labeled \"Click target (left / right / double)\".",
+            "source": "ax"
+          },
+          {
+            "id": "ax:button:right-click-for-context-menu",
+            "description": "Press the button labeled \"Right-click for context menu\".",
+            "source": "ax"
+          },
+          {
+            "id": "ax:text_input:note:set:note",
+            "description": "Set the text field \"Note\" to the task parameter \"note\", replacing its contents. The field currently reports empty. The task still requires this 1 more time(s).",
+            "source": "ax"
+          },
+          {
+            "id": "ax:button:save-note",
+            "description": "Press the button labeled \"Save note\". The task requires this only after: Set the text field \"Note\" to the task parameter \"note\" (not done yet).",
+            "source": "ax"
+          },
+          {
+            "id": "reobserve",
+            "description": "Take no action and obtain a fresh observation of the window, because the current observation looks stale, incomplete, or contradicts the goal's progress."
+          },
+          {
+            "id": "abstain",
+            "description": "Stop without acting if none of the proposed actions is safe or moves toward the goal."
+          }
+        ],
+        "progress": [
+          {
+            "step": "Set the text field \"Note\" to the task parameter \"note\"",
+            "done": 0,
+            "required": 1
+          },
+          {
+            "step": "Press the button labeled \"Save note\"",
+            "done": 0,
+            "required": 1
+          }
+        ]
+      }
+    },
+    {
+      "task": "appkit-save-note",
+      "history": [
+        {
+          "step": 1,
+          "selected_id": "ax:text_input:note:set:note",
+          "outcome": "set \"Note\" to parameter note",
+          "performed": true
+        }
+      ],
+      "request": {
+        "schema": "cua.jev_choice_request_v2",
+        "goal": "Enter the note text into the Note field, then save the note.",
+        "capture_id": "cap-appkit-initial",
+        "snapshot_id": "s00000086",
+        "regions": [],
+        "elements": [
+          {
+            "role_class": "button",
+            "label": "Increment",
+            "state": "enabled"
+          },
+          {
+            "role_class": "button",
+            "label": "Reset",
+            "state": "enabled"
+          },
+          {
+            "role_class": "button",
+            "label": "Click target (left / right / double)",
+            "state": "enabled"
+          },
+          {
+            "role_class": "checkbox",
+            "label": "I agree",
+            "state": "unchecked"
+          },
+          {
+            "role_class": "button",
+            "label": "Right-click for context menu",
+            "state": "enabled"
+          },
+          {
+            "role_class": "button",
+            "label": "Exit",
+            "state": "enabled"
+          },
+          {
+            "role_class": "text_input",
+            "label": "Note",
+            "state": "empty"
+          },
+          {
+            "role_class": "button",
+            "label": "Save note",
+            "state": "enabled"
+          },
+          {
+            "role_class": "radio",
+            "label": "Small",
+            "state": "not_selected"
+          },
+          {
+            "role_class": "radio",
+            "label": "Medium",
+            "state": "not_selected"
+          },
+          {
+            "role_class": "radio",
+            "label": "Large",
+            "state": "not_selected"
+          }
+        ],
+        "history": [
+          {
+            "selected_id": "ax:text_input:note:set:note",
+            "outcome": "set \"Note\" to parameter note"
+          }
+        ],
+        "candidates": [
+          {
+            "id": "ax:button:increment",
+            "description": "Press the button labeled \"Increment\".",
+            "source": "ax"
+          },
+          {
+            "id": "ax:button:click-target-left-right-double",
+            "description": "Press the button labeled \"Click target (left / right / double)\".",
+            "source": "ax"
+          },
+          {
+            "id": "ax:button:right-click-for-context-menu",
+            "description": "Press the button labeled \"Right-click for context menu\".",
+            "source": "ax"
+          },
+          {
+            "id": "ax:text_input:note:set:note",
+            "description": "Set the text field \"Note\" to the task parameter \"note\", replacing its contents. The field currently reports empty. This run already did this the 1 time(s) the task requires.",
+            "source": "ax"
+          },
+          {
+            "id": "ax:button:save-note",
+            "description": "Press the button labeled \"Save note\". The task still requires this 1 more time(s).",
+            "source": "ax"
+          },
+          {
+            "id": "reobserve",
+            "description": "Take no action and obtain a fresh observation of the window, because the current observation looks stale, incomplete, or contradicts the goal's progress."
+          },
+          {
+            "id": "abstain",
+            "description": "Stop without acting if none of the proposed actions is safe or moves toward the goal."
+          }
+        ],
+        "progress": [
+          {
+            "step": "Set the text field \"Note\" to the task parameter \"note\"",
+            "done": 1,
+            "required": 1
+          },
+          {
+            "step": "Press the button labeled \"Save note\"",
+            "done": 0,
+            "required": 1
+          }
+        ]
+      }
+    },
+    {
+      "task": "appkit-counter",
+      "history": [
+        {
+          "step": 1,
+          "selected_id": "ax:button:increment",
+          "outcome": "pressed \"Increment\"",
+          "performed": true
+        },
+        {
+          "step": 2,
+          "selected_id": "ax:button:increment",
+          "outcome": "pressed \"Increment\"",
+          "performed": true
+        },
+        {
+          "step": 3,
+          "selected_id": "ax:button:increment",
+          "outcome": "Driver refused background delivery (background_unsupported); nothing happened"
+        }
+      ],
+      "request": {
+        "schema": "cua.jev_choice_request_v2",
+        "goal": "The counter starts at 0. Set it to exactly 3 by pressing Increment once per step, then stop.",
+        "capture_id": "cap-appkit-initial",
+        "snapshot_id": "s00000086",
+        "regions": [],
+        "elements": [
+          {
+            "role_class": "button",
+            "label": "Increment",
+            "state": "enabled"
+          },
+          {
+            "role_class": "button",
+            "label": "Reset",
+            "state": "enabled"
+          },
+          {
+            "role_class": "button",
+            "label": "Click target (left / right / double)",
+            "state": "enabled"
+          },
+          {
+            "role_class": "checkbox",
+            "label": "I agree",
+            "state": "unchecked"
+          },
+          {
+            "role_class": "button",
+            "label": "Right-click for context menu",
+            "state": "enabled"
+          },
+          {
+            "role_class": "button",
+            "label": "Exit",
+            "state": "enabled"
+          },
+          {
+            "role_class": "text_input",
+            "label": "Note",
+            "state": "empty"
+          },
+          {
+            "role_class": "button",
+            "label": "Save note",
+            "state": "enabled"
+          },
+          {
+            "role_class": "radio",
+            "label": "Small",
+            "state": "not_selected"
+          },
+          {
+            "role_class": "radio",
+            "label": "Medium",
+            "state": "not_selected"
+          },
+          {
+            "role_class": "radio",
+            "label": "Large",
+            "state": "not_selected"
+          }
+        ],
+        "history": [
+          {
+            "selected_id": "ax:button:increment",
+            "outcome": "pressed \"Increment\""
+          },
+          {
+            "selected_id": "ax:button:increment",
+            "outcome": "pressed \"Increment\""
+          },
+          {
+            "selected_id": "ax:button:increment",
+            "outcome": "Driver refused background delivery (background_unsupported); nothing happened"
+          }
+        ],
+        "candidates": [
+          {
+            "id": "ax:button:increment",
+            "description": "Press the button labeled \"Increment\". The task still requires this 1 more time(s).",
+            "source": "ax"
+          },
+          {
+            "id": "ax:button:click-target-left-right-double",
+            "description": "Press the button labeled \"Click target (left / right / double)\".",
+            "source": "ax"
+          },
+          {
+            "id": "ax:button:right-click-for-context-menu",
+            "description": "Press the button labeled \"Right-click for context menu\".",
+            "source": "ax"
+          },
+          {
+            "id": "ax:button:save-note",
+            "description": "Press the button labeled \"Save note\".",
+            "source": "ax"
+          },
+          {
+            "id": "reobserve",
+            "description": "Take no action and obtain a fresh observation of the window, because the current observation looks stale, incomplete, or contradicts the goal's progress."
+          },
+          {
+            "id": "abstain",
+            "description": "Stop without acting if none of the proposed actions is safe or moves toward the goal."
+          }
+        ],
+        "progress": [
+          {
+            "step": "Press the button labeled \"Increment\"",
+            "done": 2,
+            "required": 3
+          }
+        ]
+      }
+    }
+  ]
+}

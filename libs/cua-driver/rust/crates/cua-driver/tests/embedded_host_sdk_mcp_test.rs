@@ -9,14 +9,54 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use cua_driver_contract::{CaptureScope, GetSessionStateInput, StartSessionInput};
-use cua_driver_sdk::{CuaDriver, EmbeddedCuaDriverHost, EmbeddedDriverHostState};
-use cua_driver_testkit::{spawn_in_job, ChildReaper};
+use cua_driver_sdk::{
+    CuaDriver, DriverError, EmbeddedCuaDriverHost, EmbeddedDriverHostOptions,
+    EmbeddedDriverHostState, EmbeddedEnvironmentVariable,
+};
+use cua_driver_testkit::{spawn_in_job, ChildReaper, IsolatedStateRoot};
 use serde_json::{json, Value};
 
 fn read_json(reader: &mut BufReader<std::process::ChildStdout>) -> Value {
     let mut line = String::new();
     reader.read_line(&mut line).expect("read MCP response");
     serde_json::from_str(line.trim()).expect("parse MCP response")
+}
+
+/// Construct a host for the source-built driver with per-user state isolated
+/// from the developer's installed product (#4094). Keep the returned root alive
+/// for as long as the daemon runs.
+fn isolated_driver_host(
+    host_bundle_id: &str,
+) -> (std::sync::Arc<EmbeddedCuaDriverHost>, IsolatedStateRoot) {
+    let state = IsolatedStateRoot::new().expect("isolated driver state root");
+    let host = EmbeddedCuaDriverHost::with_options(EmbeddedDriverHostOptions {
+        binary_path: env!("CARGO_BIN_EXE_cua-driver").into(),
+        host_bundle_id: host_bundle_id.into(),
+        socket_path: None,
+        startup_timeout_ms: None,
+        shutdown_timeout_ms: None,
+        permission_mode: None,
+        capability_manifest_path: None,
+        approve_capability_manifest: false,
+        session_policy_path: None,
+        approve_session_policy: false,
+        dangerously_bypass_approvals: false,
+        environment: state
+            .env()
+            .into_iter()
+            // The SDK forwards only its safe allowlist; without XDG overrides
+            // the driver derives its XDG state from the isolated HOME.
+            .filter(|(name, _)| matches!(*name, "HOME" | "APPDATA" | "LOCALAPPDATA"))
+            .map(|(name, value)| EmbeddedEnvironmentVariable {
+                name: name.into(),
+                value: value.to_string_lossy().into_owned(),
+            })
+            .collect(),
+        inherit_stderr: true,
+        no_overlay: false,
+    })
+    .expect("construct host");
+    (host, state)
 }
 
 fn tool_names(value: &Value, field: &str) -> BTreeSet<String> {
@@ -60,17 +100,24 @@ fn write_test_shell_script(path: &std::path::Path, body: &str) {
             })
         })
         .expect("test environment must provide a shell");
-    std::fs::write(path, format!("#!{}\n{body}\n", shell.display())).unwrap();
+    let script = format!("#!{}\n{body}\n", shell.display());
+    let status = std::process::Command::new(&shell)
+        .args([
+            std::ffi::OsStr::new("-c"),
+            std::ffi::OsStr::new("umask 077; printf '%s' \"$1\" > \"$2\""),
+            std::ffi::OsStr::new("cua-driver-test-fixture-writer"),
+        ])
+        .arg(script)
+        .arg(path)
+        .status()
+        .expect("spawn test fixture writer");
+    assert!(status.success(), "test fixture writer failed: {status}");
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
-    let host = EmbeddedCuaDriverHost::new(
-        env!("CARGO_BIN_EXE_cua-driver").into(),
-        "com.trycua.embedded-contract-test".into(),
-    )
-    .expect("construct host");
+    let (host, _state) = isolated_driver_host("com.trycua.embedded-contract-test");
     let connection = host.clone().start().await.expect("start embedded host");
     assert_eq!(host.state(), EmbeddedDriverHostState::Ready);
 
@@ -140,7 +187,7 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
 
     let sdk_session = sdk
         .start_session(StartSessionInput {
-            session: "embedded-sdk-window".into(),
+            session: Some("embedded-sdk-window".into()),
             capture_scope: Some(CaptureScope::Window),
             cursor_theme: None,
         })
@@ -172,23 +219,47 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
         "desktop"
     );
 
-    // Session policy belongs to the session, not the daemon or transport:
-    // one SDK session can remain strict-window while an MCP session sharing
-    // the same embedded host is strict-desktop.
+    // Session policy belongs to the session and ordinary lifecycle inspection
+    // is transport-scoped: the SDK and MCP connections can each inspect their
+    // own session without enumerating the other's label.
     let sdk_state = sdk
         .get_session_state(GetSessionStateInput {
-            session: "embedded-sdk-window".into(),
+            session: Some("embedded-sdk-window".into()),
         })
         .await
         .expect("read SDK session");
-    let mcp_state = sdk
+    let foreign = sdk
         .get_session_state(GetSessionStateInput {
-            session: "embedded-mcp-desktop".into(),
+            session: Some("embedded-mcp-desktop".into()),
         })
         .await
-        .expect("read MCP-created session through SDK");
+        .expect_err("SDK transport must not inspect an MCP-created session");
     assert_eq!(sdk_state.capture_scope, CaptureScope::Window);
-    assert_eq!(mcp_state.capture_scope, CaptureScope::Desktop);
+    assert!(matches!(
+        foreign,
+        DriverError::Tool { error_code, .. } if error_code == "session_not_started"
+    ));
+
+    writeln!(
+        stdin,
+        "{}",
+        json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "get_session",
+                "arguments": {"session": "embedded-mcp-desktop"}
+            }
+        })
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    let mcp_state = read_json(&mut stdout);
+    assert_eq!(
+        mcp_state["result"]["structuredContent"]["session"],
+        "embedded-mcp-desktop"
+    );
 
     drop(stdin);
     let mut reaper = ChildReaper::new();
@@ -200,11 +271,7 @@ async fn embedded_host_serves_sdk_and_mcp_with_one_contract() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dropping_the_host_cannot_orphan_its_daemon() {
-    let host = EmbeddedCuaDriverHost::new(
-        env!("CARGO_BIN_EXE_cua-driver").into(),
-        "com.trycua.embedded-drop-test".into(),
-    )
-    .expect("construct host");
+    let (host, _state) = isolated_driver_host("com.trycua.embedded-drop-test");
     let connection = host.clone().start().await.expect("start embedded host");
     drop(host);
 
@@ -227,11 +294,7 @@ async fn dropping_the_host_cannot_orphan_its_daemon() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_start_coalesces_and_restart_rotates_generation() {
-    let host = EmbeddedCuaDriverHost::new(
-        env!("CARGO_BIN_EXE_cua-driver").into(),
-        "com.trycua.embedded-lifecycle-test".into(),
-    )
-    .expect("construct host");
+    let (host, _state) = isolated_driver_host("com.trycua.embedded-lifecycle-test");
 
     let (left, right, third) = tokio::join!(
         host.clone().start(),

@@ -1,31 +1,91 @@
 //! Linux identity and endpoint evidence for the first-class browser tools.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
-    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, ExistingProfileSetupOutcome,
+    select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
+    BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
     ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
-    BrowserClassification, BrowserEngineFamily, BrowserProduct, EndpointOwnershipMethod,
-    EndpointOwnershipProof, NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo,
-    OwnedEndpoint, ProcessFingerprint, Rect,
+    BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
+    EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
+    NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
+};
+use cua_driver_core::browser::{
+    existing_profile_setup_descriptor, is_firefox, loopback_websocket_port,
+    parse_devtools_active_port, BrowserCursorTracker,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-#[derive(Debug, Default)]
-pub struct LinuxBrowserPlatform;
+pub struct LinuxBrowserPlatform {
+    cursor_registry: Arc<cursor_overlay::CursorRegistry>,
+    browser_cursors: Mutex<BrowserCursorTracker>,
+}
+
+impl LinuxBrowserPlatform {
+    pub fn new(cursor_registry: Arc<cursor_overlay::CursorRegistry>) -> Self {
+        Self {
+            cursor_registry,
+            browser_cursors: Mutex::new(BrowserCursorTracker::default()),
+        }
+    }
+}
+
+impl Default for LinuxBrowserPlatform {
+    fn default() -> Self {
+        Self::new(Arc::new(cursor_overlay::CursorRegistry::new()))
+    }
+}
 
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
 }
 
-fn is_chromium(name: &str) -> bool {
+fn hyprland_identity_matches(pid: u32, window_id: u64, owner_pid: u32, address: u64) -> bool {
+    pid != 0 && window_id != 0 && owner_pid == pid && address == window_id
+}
+
+fn hyprland_is_only_owned_window(
+    pid: u32,
+    window_id: u64,
+    identities: impl IntoIterator<Item = (u32, u64)>,
+) -> bool {
+    let mut owned = identities.into_iter().filter(|(owner, _)| *owner == pid);
+    let Some((owner, address)) = owned.next() else {
+        return false;
+    };
+    hyprland_identity_matches(pid, window_id, owner, address) && owned.next().is_none()
+}
+
+fn run_existing_profile_cleanup<T: Send + 'static>(
+    cleanup: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, BrowserRefusal> {
+    std::thread::Builder::new()
+        .name("cua-browser-cleanup".into())
+        .spawn(cleanup)
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not start exact browser cleanup: {error}"),
+            )
+        })?
+        .join()
+        .map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "exact browser cleanup worker panicked",
+            )
+        })
+}
+
+pub(crate) fn is_chromium_identity(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     let products = [
         "chrome", "chromium", "electron", "brave", "edge", "msedge", "vivaldi", "opera", "arc",
@@ -35,14 +95,8 @@ fn is_chromium(name: &str) -> bool {
         .any(|token| products.contains(&token))
 }
 
-fn is_firefox(name: &str) -> bool {
-    name.to_ascii_lowercase().split_whitespace().any(|word| {
-        word.rsplit(['/', '\\'])
-            .next()
-            .unwrap_or(word)
-            .trim_end_matches(".exe")
-            == "firefox"
-    })
+fn is_chromium(name: &str) -> bool {
+    is_chromium_identity(name)
 }
 
 fn browser_product(identity: &str) -> BrowserProduct {
@@ -74,16 +128,66 @@ fn browser_product(identity: &str) -> BrowserProduct {
     }
 }
 
-fn loopback_websocket_port(url: &str) -> Option<u16> {
-    ["ws://127.0.0.1:", "ws://localhost:", "ws://[::1]:"]
-        .iter()
-        .find_map(|prefix| {
-            url.strip_prefix(prefix)?
-                .split('/')
-                .next()?
-                .parse::<u16>()
-                .ok()
-        })
+fn isolated_browser_candidates() -> Vec<PathBuf> {
+    // These are the root-managed payload locations of supported Linux
+    // packages, not PATH shims. Core additionally rejects symlinked paths, so
+    // an isolated-launch grant cannot be redirected to a user-controlled file.
+    [
+        "/opt/google/chrome/google-chrome",
+        "/usr/lib/chromium/chromium",
+        "/usr/lib/chromium-browser/chromium-browser",
+        "/opt/microsoft/msedge/msedge",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .collect()
+}
+
+fn trusted_root_owned_installation(executable: &std::path::Path) -> bool {
+    if !executable.is_absolute() {
+        return false;
+    }
+    let mut current = Some(executable);
+    while let Some(path) = current {
+        let Ok(metadata) = std::fs::symlink_metadata(path) else {
+            return false;
+        };
+        if metadata.file_type().is_symlink() || metadata.uid() != 0 || metadata.mode() & 0o022 != 0
+        {
+            return false;
+        }
+        current = path.parent();
+    }
+    std::fs::metadata(executable)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.mode() & 0o111 != 0)
+}
+
+fn process_role_for_pid(pid: i64, product: BrowserProduct) -> BrowserProcessRole {
+    let helper = std::fs::read(format!("/proc/{pid}/cmdline"))
+        .ok()
+        .is_some_and(|bytes| {
+            bytes.split(|byte| *byte == 0).any(|arg| {
+                arg.starts_with(b"--type=") && arg.get(7..).is_some_and(|kind| !kind.is_empty())
+            })
+        });
+    if helper {
+        BrowserProcessRole::Helper
+    } else if product == BrowserProduct::Electron {
+        BrowserProcessRole::EmbeddedApplication
+    } else if matches!(
+        product,
+        BrowserProduct::GoogleChrome
+            | BrowserProduct::Chromium
+            | BrowserProduct::MicrosoftEdge
+            | BrowserProduct::Brave
+            | BrowserProduct::Vivaldi
+            | BrowserProduct::Opera
+            | BrowserProduct::Arc
+    ) {
+        BrowserProcessRole::StandaloneConsumer
+    } else {
+        BrowserProcessRole::Unknown
+    }
 }
 
 fn parse_proc_net_loopback_listeners(text: &str) -> Vec<(u16, u64)> {
@@ -194,21 +298,6 @@ fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     Ok(listeners)
 }
 
-fn parse_devtools_active_port(text: &str) -> Option<(u16, &str)> {
-    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
-    let port = lines.next()?.parse::<u16>().ok()?;
-    let path = lines.next()?;
-    if lines.next().is_some() {
-        return None;
-    }
-    let instance = path.strip_prefix("/devtools/browser/")?;
-    (!instance.is_empty()
-        && instance
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))
-    .then_some((port, path))
-}
-
 fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     let relative = match product {
@@ -299,6 +388,7 @@ fn active_port_endpoint(pid: i64) -> Result<Option<OwnedEndpoint>, BrowserRefusa
     Ok(Some(OwnedEndpoint {
         ws_url: format!("ws://127.0.0.1:{port}{path}"),
         http_port: Some(port),
+        transport: EndpointTransport::DevToolsActivePort,
         ownership: EndpointOwnershipProof {
             method: EndpointOwnershipMethod::DevtoolsActivePortsFile,
             owner_pid: pid,
@@ -317,25 +407,12 @@ fn process_identity(pid: i64) -> Result<(u64, Option<String>), BrowserRefusal> {
             format!("browser process {pid} is no longer available"),
         )
     })?;
-    let tail = stat
-        .rsplit_once(')')
-        .map(|(_, tail)| tail.trim())
-        .ok_or_else(|| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not parse process identity for pid {pid}"),
-            )
-        })?;
-    let started = tail
-        .split_whitespace()
-        .nth(19)
-        .and_then(|value| value.parse::<u64>().ok())
-        .ok_or_else(|| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not parse process start time for pid {pid}"),
-            )
-        })?;
+    let started = crate::proc_fs::process_start_time_from_stat(&stat).ok_or_else(|| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not parse process start time for pid {pid}"),
+        )
+    })?;
     let executable = std::fs::read_link(format!("/proc/{pid}/exe"))
         .ok()
         .map(|path| path.to_string_lossy().into_owned());
@@ -388,8 +465,93 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
 
 #[async_trait]
 impl BrowserPlatform for LinuxBrowserPlatform {
+    fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
+        for candidate in isolated_browser_candidates() {
+            let Ok(executable) = select_isolated_browser_executable([candidate]) else {
+                continue;
+            };
+            if trusted_root_owned_installation(std::path::Path::new(&executable)) {
+                return Ok(executable);
+            }
+        }
+        Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "no root-owned, non-writable system Chromium executable is available for isolated launch",
+        ))
+    }
+
     fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
         Some("Chromium's trusted CDP Input route activates its standalone browser window on Linux")
+    }
+
+    async fn visualize_browser_action(&self, action: BrowserVisualAction) {
+        if action.session.is_empty()
+            || action.cdp_target_id.is_empty()
+            || cua_driver_core::session::is_session_ended(&action.session)
+        {
+            return;
+        }
+
+        let visibility_updates = self.browser_cursors.lock().unwrap().update(
+            &action.session,
+            action.window_id,
+            &action.cdp_target_id,
+            action.tab_is_active,
+        );
+        let cursor_enabled = self
+            .cursor_registry
+            .get_or_create(&action.session)
+            .config
+            .enabled;
+        for (key, visible) in visibility_updates {
+            let enabled = if key == action.session {
+                visible && cursor_enabled
+            } else {
+                visible
+                    && self
+                        .cursor_registry
+                        .get(&key)
+                        .is_some_and(|state| state.config.enabled)
+            };
+            crate::overlay::send_command_for(
+                key,
+                cursor_overlay::OverlayCommand::SetEnabled(enabled),
+            );
+        }
+        if !action.tab_is_active || !cursor_enabled {
+            return;
+        }
+        let (Some(screen_x), Some(screen_y)) = (action.screen_x, action.screen_y) else {
+            return;
+        };
+        if !screen_x.is_finite() || !screen_y.is_finite() {
+            return;
+        }
+
+        crate::overlay::send_command_for(
+            action.session.clone(),
+            cursor_overlay::OverlayCommand::PinAbove(action.window_id),
+        );
+        crate::overlay::animate_cursor_to_for(action.session.clone(), screen_x, screen_y).await;
+        self.cursor_registry
+            .update_position(&action.session, screen_x, screen_y);
+
+        if matches!(
+            action.kind,
+            BrowserVisualActionKind::Click
+                | BrowserVisualActionKind::Type
+                | BrowserVisualActionKind::RightClick
+                | BrowserVisualActionKind::DoubleClick
+                | BrowserVisualActionKind::Drag
+        ) {
+            crate::overlay::send_command_for(
+                action.session,
+                cursor_overlay::OverlayCommand::ClickPulse {
+                    x: screen_x,
+                    y: screen_y,
+                },
+            );
+        }
     }
 
     async fn classify_browser(&self, pid: i64) -> Result<BrowserClassification, BrowserRefusal> {
@@ -435,6 +597,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             product_kind,
             product: Some(process.name),
             channel: None,
+            process_role: process_role_for_pid(pid, product_kind),
             supports_cdp: chromium,
         })
     }
@@ -451,6 +614,46 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             )
         })?;
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            if crate::wayland::hyprland::is_session() {
+                let window = tokio::task::spawn_blocking(move || {
+                    crate::wayland::hyprland::window_for_address(window_id)
+                })
+                .await
+                .ok()
+                .flatten()
+                .ok_or_else(|| {
+                    refusal(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        "Hyprland could not attest the exact mapped browser window",
+                    )
+                })?;
+                if !hyprland_identity_matches(pid_u32, window_id, window.pid, window.address) {
+                    return Err(refusal(
+                        BrowserRefusalCode::BrowserWrongTargetRefused,
+                        "Hyprland browser window does not match the requested pid and full address",
+                    ));
+                }
+                return Ok(NativeWindowInfo {
+                    pid,
+                    window_id,
+                    title: window.title,
+                    bounds: Rect::new(
+                        f64::from(window.x),
+                        f64::from(window.y),
+                        f64::from(window.width),
+                        f64::from(window.height),
+                    ),
+                    geometry_exact: true,
+                    ownership: NativeOwnershipProof {
+                        method: NativeOwnershipMethod::WindowServerOwner,
+                        owner_pid: pid,
+                        detail: Some(
+                            "authenticated Hyprland IPC pid, full address, and mapped window rect"
+                                .to_owned(),
+                        ),
+                    },
+                });
+            }
             if let Some(window) = crate::wayland::sway_ipc::window_for_id(window_id) {
                 if window.pid != pid_u32 {
                     return Err(refusal(
@@ -584,6 +787,27 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             )
         })?;
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            if crate::wayland::hyprland::is_session() {
+                let windows = tokio::task::spawn_blocking(crate::wayland::hyprland::list_windows)
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .ok_or_else(|| {
+                        refusal(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            "Hyprland could not attest browser window cardinality",
+                        )
+                    })?;
+                // Count every mapped client owned by the PID, including hidden
+                // and off-workspace clients; visibility cannot prove uniqueness.
+                return Ok(Some(hyprland_is_only_owned_window(
+                    pid_u32,
+                    window_id,
+                    windows
+                        .into_iter()
+                        .map(|window| (window.pid, window.address)),
+                )));
+            }
             let Some(windows) = crate::wayland::sway_ipc::list_windows() else {
                 if let Some(owned) =
                     crate::wayland::shell_helper::trusted_window_ids_for_pid(pid_u32)
@@ -641,9 +865,6 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         &self,
         pid: i64,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
-        if let Some(endpoint) = active_port_endpoint(pid)? {
-            return Ok(Some(endpoint));
-        }
         let ports = tokio::task::spawn_blocking(move || loopback_ports_for_pid(pid))
             .await
             .map_err(|error| {
@@ -657,6 +878,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 return Ok(Some(OwnedEndpoint {
                     ws_url,
                     http_port: Some(port),
+                    transport: EndpointTransport::LegacyJsonVersion,
                     ownership: EndpointOwnershipProof {
                         method: EndpointOwnershipMethod::ListeningSocketPid,
                         owner_pid: pid,
@@ -695,6 +917,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             [(port, ws_url)] => Ok(Some(OwnedEndpoint {
                 ws_url: ws_url.clone(),
                 http_port: Some(*port),
+                transport: EndpointTransport::LegacyJsonVersion,
                 ownership: EndpointOwnershipProof {
                     method: EndpointOwnershipMethod::ListeningSocketPid,
                     owner_pid: pid,
@@ -720,6 +943,15 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 "the approved existing-profile endpoint is not loopback-only",
             ));
         };
+        if let Some(endpoint) = active_port_endpoint(pid)? {
+            if endpoint.ws_url != expected_ws_url {
+                return Err(refusal(
+                    BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                    "the browser's exact DevTools endpoint changed after approval",
+                ));
+            }
+            return Ok(Some(endpoint));
+        }
         let ports = tokio::task::spawn_blocking(move || loopback_ports_for_pid(pid))
             .await
             .map_err(|error| {
@@ -734,6 +966,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         Ok(Some(OwnedEndpoint {
             ws_url: expected_ws_url.to_owned(),
             http_port: Some(port),
+            transport: EndpointTransport::LegacyJsonVersion,
             ownership: EndpointOwnershipProof {
                 method: EndpointOwnershipMethod::ListeningSocketPid,
                 owner_pid: pid,
@@ -859,6 +1092,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                     break Ok(OwnedEndpoint {
                         ws_url: ws_url.clone(),
                         http_port: Some(*port),
+                        transport: EndpointTransport::LegacyJsonVersion,
                         ownership: EndpointOwnershipProof {
                             method: EndpointOwnershipMethod::ListeningSocketPid,
                             owner_pid: request.pid,
@@ -988,6 +1222,34 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         })?
     }
 
+    fn cleanup_existing_profile_setup(
+        &self,
+        request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!(
+                    "existing-profile cleanup is not implemented for {:?}",
+                    request.browser
+                ),
+            )
+        })?;
+        let pid = u32::try_from(request.pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser pid is outside the Linux process-id range",
+            )
+        })?;
+        let window_id = request.window_id;
+        run_existing_profile_cleanup(move || {
+            let dismissed_before = crate::browser_consent_ui::dismiss(pid, window_id)?;
+            let closed_setup_page = crate::browser_setup_ui::disable(pid, window_id, descriptor)?;
+            let dismissed_after = crate::browser_consent_ui::dismiss(pid, window_id)?;
+            Ok(dismissed_before || closed_setup_page || dismissed_after)
+        })?
+    }
+
     async fn abort_existing_profile_setup(
         &self,
         request: ExistingProfileSetupRequest,
@@ -1035,7 +1297,13 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         &self,
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
-        if let Some(endpoint) = self.discover_owned_endpoint(request.pid).await? {
+        let Some(pid) = request.pid else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRequiresSetup,
+                "pid-free isolated launch is handled by shared core",
+            ));
+        };
+        if let Some(endpoint) = self.discover_owned_endpoint(pid).await? {
             return Ok(PrepareOutcome {
                 action: PrepareAction::AlreadyPrepared,
                 prepared_pid: Some(endpoint.ownership.owner_pid),
@@ -1055,6 +1323,125 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hyprland_browser_identity_requires_exact_pid_and_full_native_address() {
+        let address = 0x1234_0000_0042;
+        assert!(hyprland_identity_matches(42, address, 42, address));
+        assert!(!hyprland_identity_matches(43, address, 42, address));
+        assert!(!hyprland_identity_matches(42, 0x42, 42, address));
+        assert!(!hyprland_identity_matches(42, address + 1, 42, address));
+        assert!(!hyprland_identity_matches(0, address, 0, address));
+        assert!(!hyprland_identity_matches(42, 0, 42, 0));
+    }
+
+    #[test]
+    fn hyprland_browser_cardinality_requires_one_exact_owned_surface() {
+        let address = 0x1234_0000_0042;
+        assert!(hyprland_is_only_owned_window(42, address, [(42, address)]));
+        assert!(hyprland_is_only_owned_window(
+            42,
+            address,
+            [(7, address + 1), (42, address)],
+        ));
+        for identities in [
+            vec![],
+            vec![(7, address)],
+            vec![(42, 0x42)],
+            vec![(42, address + 1)],
+            vec![(42, address), (42, address + 1)],
+            vec![(42, address), (42, address)],
+        ] {
+            assert!(!hyprland_is_only_owned_window(42, address, identities));
+        }
+        assert!(!hyprland_is_only_owned_window(0, address, [(0, address)]));
+        assert!(!hyprland_is_only_owned_window(42, 0, [(42, 0)]));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn existing_profile_cleanup_can_drive_atspi_runtime_from_async_session_teardown() {
+        let cleaned = run_existing_profile_cleanup(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("AT-SPI-style cleanup runtime")
+                .block_on(async { true })
+        })
+        .expect("cleanup worker");
+
+        assert!(cleaned);
+    }
+
+    #[tokio::test]
+    async fn browser_visual_feedback_updates_the_declared_session_cursor() {
+        let registry = Arc::new(cursor_overlay::CursorRegistry::new());
+        let platform = LinuxBrowserPlatform::new(registry.clone());
+        platform
+            .visualize_browser_action(BrowserVisualAction {
+                session: "browser-cursor-test".to_owned(),
+                window_id: 77,
+                cdp_target_id: "tab-A".to_owned(),
+                tab_is_active: true,
+                screen_x: Some(321.0),
+                screen_y: Some(456.0),
+                kind: BrowserVisualActionKind::Click,
+            })
+            .await;
+
+        let state = registry
+            .get("browser-cursor-test")
+            .expect("browser action should materialize its session cursor");
+        assert_eq!((state.x, state.y), (Some(321.0), Some(456.0)));
+    }
+
+    #[tokio::test]
+    async fn inactive_tab_feedback_materializes_but_does_not_move_its_cursor() {
+        let registry = Arc::new(cursor_overlay::CursorRegistry::new());
+        let platform = LinuxBrowserPlatform::new(registry.clone());
+        platform
+            .visualize_browser_action(BrowserVisualAction {
+                session: "browser-cursor-hidden".to_owned(),
+                window_id: 77,
+                cdp_target_id: "tab-hidden".to_owned(),
+                tab_is_active: false,
+                screen_x: Some(321.0),
+                screen_y: Some(456.0),
+                kind: BrowserVisualActionKind::Click,
+            })
+            .await;
+
+        let state = registry
+            .get("browser-cursor-hidden")
+            .expect("browser action should establish its session-to-tab binding");
+        assert!(
+            state.x.is_none() && state.y.is_none(),
+            "an inactive tab must not animate or move its visible cursor"
+        );
+    }
+
+    #[test]
+    fn isolated_browser_candidates_use_only_root_managed_payloads() {
+        let candidates = isolated_browser_candidates();
+        assert!(candidates.iter().all(|candidate| candidate.is_absolute()));
+        assert_eq!(
+            candidates,
+            [
+                "/opt/google/chrome/google-chrome",
+                "/usr/lib/chromium/chromium",
+                "/usr/lib/chromium-browser/chromium-browser",
+                "/opt/microsoft/msedge/msedge",
+            ]
+            .map(PathBuf::from)
+        );
+    }
+
+    #[test]
+    fn user_owned_writable_candidate_is_not_a_trusted_installation() {
+        let root = tempfile::tempdir().expect("temporary untrusted installation");
+        let executable = root.path().join("google-chrome");
+        std::fs::write(&executable, b"not a browser").expect("untrusted executable fixture");
+        assert!(!trusted_root_owned_installation(&executable));
+    }
 
     #[test]
     fn proc_net_parser_returns_only_loopback_listeners() {
@@ -1099,47 +1486,6 @@ mod tests {
         assert_eq!(
             browser_product("/opt/google/chrome/chrome"),
             BrowserProduct::GoogleChrome
-        );
-    }
-
-    #[test]
-    fn firefox_classifier_uses_product_tokens() {
-        assert!(is_firefox("firefox --new-instance"));
-        assert!(is_firefox("Mozilla Firefox"));
-        assert!(!is_firefox("firefox-helper"));
-        assert!(!is_firefox("waterfox"));
-    }
-
-    #[test]
-    fn websocket_url_must_keep_the_attested_listener_port() {
-        assert_eq!(
-            loopback_websocket_port("ws://localhost:9222/devtools/browser/id"),
-            Some(9222)
-        );
-        assert_ne!(
-            loopback_websocket_port("ws://[::1]:9333/devtools/browser/foreign"),
-            Some(9222)
-        );
-        assert_eq!(loopback_websocket_port("ws://0.0.0.0:9222/devtools"), None);
-    }
-
-    #[test]
-    fn active_port_parser_requires_one_exact_browser_path() {
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser/abc-123\n"),
-            Some((9222, "/devtools/browser/abc-123"))
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser\n"),
-            None
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/page/abc\n"),
-            None
-        );
-        assert_eq!(
-            parse_devtools_active_port("9222\n/devtools/browser/../page\n"),
-            None
         );
     }
 }

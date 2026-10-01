@@ -1,10 +1,28 @@
+use cua_driver_testkit::IsolatedStateRoot;
+
 use cua_driver_sdk::{
     ConfiguredDriverOptions, DriverExecutionMode, EmbeddedDriverHostOptions,
     EmbeddedEnvironmentVariable, EmbeddedPermissionMode, PrivateWorkerOptions,
     RuntimeAuthorizationOptions, SessionPermissionMode, TrustedSessionOptions,
 };
 
-fn worker_options() -> PrivateWorkerOptions {
+/// Per-user state variables for a source-built driver, isolated from the
+/// developer's installed product (#4094).
+fn isolated_environment(state: &IsolatedStateRoot) -> Vec<EmbeddedEnvironmentVariable> {
+    state
+        .env()
+        .into_iter()
+        // The SDK forwards only its safe allowlist; without XDG overrides the
+        // driver derives its XDG state from the isolated HOME.
+        .filter(|(name, _)| matches!(*name, "HOME" | "APPDATA" | "LOCALAPPDATA"))
+        .map(|(name, value)| EmbeddedEnvironmentVariable {
+            name: name.into(),
+            value: value.to_string_lossy().into_owned(),
+        })
+        .collect()
+}
+
+fn worker_options(state: &IsolatedStateRoot) -> PrivateWorkerOptions {
     PrivateWorkerOptions {
         binary_path: env!("CARGO_BIN_EXE_cua-driver").to_owned(),
         host_bundle_id: "com.trycua.private-worker-test".into(),
@@ -18,20 +36,22 @@ fn worker_options() -> PrivateWorkerOptions {
                     SessionPermissionMode::Unrestricted,
                 ],
                 compatibility_mode: SessionPermissionMode::Standard,
+                compatibility_capability_manifest_path: None,
                 compatibility_bounded_manifest_path: None,
                 unrestricted_acknowledged: true,
                 max_session_ttl_seconds: 60,
                 max_idle_ttl_seconds: 30,
             },
         },
-        environment: Vec::new(),
+        environment: isolated_environment(state),
         inherit_stderr: true,
     }
 }
 
 #[tokio::test]
 async fn private_worker_owns_one_runtime_without_a_reconnect_endpoint() {
-    let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options()).unwrap();
+    let state = IsolatedStateRoot::new().unwrap();
+    let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options(&state)).unwrap();
     assert_eq!(driver.execution_mode(), DriverExecutionMode::PrivateWorker);
     assert!(driver.socket_path().is_empty());
     assert!(driver.is_available());
@@ -50,6 +70,7 @@ async fn private_worker_owns_one_runtime_without_a_reconnect_endpoint() {
             mode: SessionPermissionMode::Standard,
             ttl_seconds: 60,
             idle_ttl_seconds: 30,
+            capability_manifest_path: None,
             bounded_manifest_path: None,
         })
         .unwrap();
@@ -76,7 +97,8 @@ async fn private_worker_owns_one_runtime_without_a_reconnect_endpoint() {
 #[cfg(target_os = "macos")]
 #[tokio::test]
 async fn private_worker_owns_the_macos_cursor_overlay_facility() {
-    let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options()).unwrap();
+    let state = IsolatedStateRoot::new().unwrap();
+    let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options(&state)).unwrap();
     let result = driver
         .call_tool(
             "get_agent_cursor_state".into(),
@@ -120,13 +142,15 @@ async fn private_worker_inherits_the_interactive_linux_display_scope() {
         "canonical GUI E2E requires DISPLAY or WAYLAND_DISPLAY"
     );
 
-    let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options()).unwrap();
+    let state = IsolatedStateRoot::new().unwrap();
+    let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options(&state)).unwrap();
     let standard = driver
         .create_trusted_session(TrustedSessionOptions {
             public_session: "worker-standard-display-scope".into(),
             mode: SessionPermissionMode::Standard,
             ttl_seconds: 60,
             idle_ttl_seconds: 30,
+            capability_manifest_path: None,
             bounded_manifest_path: None,
         })
         .unwrap();
@@ -147,6 +171,7 @@ async fn private_worker_inherits_the_interactive_linux_display_scope() {
             mode: SessionPermissionMode::Unrestricted,
             ttl_seconds: 60,
             idle_ttl_seconds: 30,
+            capability_manifest_path: None,
             bounded_manifest_path: None,
         })
         .unwrap();
@@ -214,7 +239,8 @@ async fn private_worker_inherits_the_interactive_linux_display_scope() {
 
 #[tokio::test]
 async fn dropping_the_host_closes_and_terminates_the_private_worker() {
-    let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options()).unwrap();
+    let state = IsolatedStateRoot::new().unwrap();
+    let driver = cua_driver_sdk::CuaDriver::create_private_worker(worker_options(&state)).unwrap();
     let pid = driver.metadata().await.unwrap().pid;
     drop(driver);
 
@@ -234,6 +260,7 @@ async fn dropping_the_host_closes_and_terminates_the_private_worker() {
 
 #[tokio::test]
 async fn embedded_service_binds_authority_to_the_original_host_connection() {
+    let state = IsolatedStateRoot::new().unwrap();
     let host = cua_driver_sdk::EmbeddedCuaDriverHost::with_options(EmbeddedDriverHostOptions {
         binary_path: env!("CARGO_BIN_EXE_cua-driver").to_owned(),
         host_bundle_id: "com.trycua.trusted-service-test".into(),
@@ -241,11 +268,14 @@ async fn embedded_service_binds_authority_to_the_original_host_connection() {
         startup_timeout_ms: Some(10_000),
         shutdown_timeout_ms: Some(2_000),
         permission_mode: Some(EmbeddedPermissionMode::Standard),
+        capability_manifest_path: None,
+        approve_capability_manifest: false,
         session_policy_path: None,
         approve_session_policy: false,
         dangerously_bypass_approvals: false,
-        environment: Vec::<EmbeddedEnvironmentVariable>::new(),
+        environment: isolated_environment(&state),
         inherit_stderr: true,
+        no_overlay: false,
     })
     .unwrap();
     let connection = host.clone().start().await.unwrap();
@@ -257,6 +287,7 @@ async fn embedded_service_binds_authority_to_the_original_host_connection() {
             mode: SessionPermissionMode::Standard,
             ttl_seconds: 60,
             idle_ttl_seconds: 30,
+            capability_manifest_path: None,
             bounded_manifest_path: None,
         })
         .unwrap();
@@ -298,6 +329,7 @@ fn service_untrusted_child_probe() {
         mode: SessionPermissionMode::Standard,
         ttl_seconds: 60,
         idle_ttl_seconds: 30,
+        capability_manifest_path: None,
         bounded_manifest_path: None,
     });
     assert!(

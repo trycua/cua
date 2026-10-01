@@ -1,10 +1,24 @@
 # Cyclops UniFFI SDK bindings
 
-This directory contains the checked-in, generated source for the official
-Cyclops SDK bindings: **Python, Kotlin, Swift, and Ruby**. Rust is the native
-`cyclops-sdk` API and owns the canonical implementation. JavaScript/OpenAPI
-clients, arbitrary community-language wrappers, and native-library packaging
-are outside this binding surface.
+This directory contains the checked-in generated sources for several Cyclops
+SDK targets. Rust is the native `cyclops-sdk` API and owns the canonical
+implementation. The deterministic generation and drift pipeline in
+`generate-sdk-bindings.sh` owns Python, Kotlin, Swift, Ruby, Go, Node.js
+TypeScript, and Browser/WASM TypeScript source roots.
+
+### Compatibility targets
+
+The pinned Go and TypeScript generators run from the same Rust metadata as
+UniFFI. Go and Node.js retain their existing direct-record API: the canonical
+generator reuses `normalize-compat-sdk-bindings.py` to exclude generated builder
+ABI, without deleting non-builder records or methods. Go exposes the status helper
+as `GetPoolDisplayStatus` to avoid colliding with its `PoolDisplayStatus` record. The normalizer never uses
+checked-in snapshots as transformation input. The schema-only
+`generate-compat-sdk-bindings.sh --check` remains an independent compatibility
+check. Browser/WASM retains its advertised generated builder surface.
+
+Native-library and browser/WASM packaging still use their existing separate
+build commands; generating source does not prove runtime packaging works.
 
 ## Source of truth and compatibility
 
@@ -12,8 +26,10 @@ are outside this binding surface.
 CRD bundle at `clusters/base/osgym/crd.yaml` is derived from that schema with
 `generate-crds`; it is not hand-maintained and must not be post-processed.
 Short-term compatibility breaks in this evolving API are intentional. Update
-the schema and raw CRD together rather than adding compatibility shims,
-rewriters, or binding-specific post-processing.
+the schema and raw CRD together rather than adding compatibility shims or
+rewriters. The only binding-specific exception is the repository-owned Go/Node
+compatibility normalization above: it deterministically removes generated
+builder ABI from fresh raw output and does not alter the schema or CRD source.
 
 Generated binding source is committed so review and drift checks are
 reproducible. Native libraries, Cargo target output, Gradle caches, and staged
@@ -60,12 +76,15 @@ cargo run --locked --manifest-path "$REPO_ROOT/cyclops-cs/Cargo.toml" \
   --output "$REPO_ROOT/clusters/base/osgym/crd.yaml"
 ```
 
-Generate or check all four UniFFI language roots with the pinned workspace
-wrapper around UniFFI `0.32.0`:
+Generate or check every binding root with UniFFI `0.31.0`,
+`uniffi-bindgen-go 0.7.1+v0.31.0`, `uniffi-bindgen-react-native@0.31.0-3`,
+and Go (`gofmt`) on PATH:
 
 ```sh
 "$REPO_ROOT/cyclops-cs/scripts/generate-sdk-bindings.sh"
 "$REPO_ROOT/cyclops-cs/scripts/generate-sdk-bindings.sh" --check
+"$REPO_ROOT/cyclops-cs/scripts/generate-compat-sdk-bindings.sh"
+"$REPO_ROOT/cyclops-cs/scripts/generate-compat-sdk-bindings.sh" --check
 "$REPO_ROOT/cyclops-cs/scripts/test-generate-sdk-bindings.sh"
 ```
 
@@ -96,6 +115,8 @@ Run the Python contract and deterministic lifecycle example:
 
 ```sh
 "$REPO_ROOT/cyclops-cs/scripts/run-python-sdk-binding.sh" \
+  "$REPO_ROOT/cyclops-cs/sdk-bindings/python/tests/test_builders.py" -v
+"$REPO_ROOT/cyclops-cs/scripts/run-python-sdk-binding.sh" \
   "$REPO_ROOT/cyclops-cs/sdk-bindings/python/tests/test_async_client.py" -v
 "$REPO_ROOT/cyclops-cs/scripts/run-python-sdk-binding.sh" \
   "$REPO_ROOT/cyclops-cs/sdk-bindings/examples/python/app_controlled.py"
@@ -105,6 +126,7 @@ Run the Kotlin contract and example after staging the Linux cdylib:
 
 ```sh
 export CYCLOPS_SDK_NATIVE_DIR="$(dirname "$CYCLOPS_SDK_NATIVE_TARGET_DIR/debug/libcyclops_sdk.so")"
+gradle -p "$REPO_ROOT/cyclops-cs/sdk-bindings/kotlin" builderContract
 gradle -p "$REPO_ROOT/cyclops-cs/sdk-bindings/kotlin" contract
 gradle -p "$REPO_ROOT/cyclops-cs/sdk-bindings/kotlin" example
 ```
@@ -112,6 +134,8 @@ gradle -p "$REPO_ROOT/cyclops-cs/sdk-bindings/kotlin" example
 Run the Ruby contract and example:
 
 ```sh
+"$REPO_ROOT/cyclops-cs/scripts/run-ruby-sdk-binding.sh" \
+  "$REPO_ROOT/cyclops-cs/sdk-bindings/ruby/tests/test_builders.rb"
 "$REPO_ROOT/cyclops-cs/scripts/run-ruby-sdk-binding.sh" \
   "$REPO_ROOT/cyclops-cs/sdk-bindings/ruby/tests/test_async_client.rb"
 "$REPO_ROOT/cyclops-cs/scripts/run-ruby-sdk-binding.sh" \
@@ -125,12 +149,65 @@ an rpath to the host `libcyclops_sdk.dylib`.
 
 ```sh
 "$REPO_ROOT/cyclops-cs/scripts/run-swift-sdk-binding.sh" \
+  "$REPO_ROOT/cyclops-cs/sdk-bindings/swift/tests/TestBuilders.swift"
+"$REPO_ROOT/cyclops-cs/scripts/run-swift-sdk-binding.sh" \
   "$REPO_ROOT/cyclops-cs/sdk-bindings/swift/tests/TestAsyncClient.swift"
 "$REPO_ROOT/cyclops-cs/scripts/run-swift-sdk-binding.sh" \
   "$REPO_ROOT/cyclops-cs/sdk-bindings/examples/swift/AppControlled.swift"
 ```
 
 ## Typed lifecycle shape
+
+### Generated record builders
+
+The seven sandbox-pool records `VmTemplate`, `SandboxService`,
+`OSGymSandboxTemplateSpec`, `CreateTemplateRequest`, `SandboxTemplateRef`,
+`OSGymSandboxWarmPoolSpec`, and `CreatePoolRequest` expose generated builders.
+Each setter returns a new immutable builder object; it does not mutate the
+receiver. Keep the returned value, either by chaining calls or assigning it.
+This `&self -> Arc<Self>` Rust receiver shape is portable across the four
+official UniFFI targets and avoids foreign-language interior mutability.
+
+Python:
+
+```python
+vm = (fleet_sdk.VmTemplateBuilder().container_disk_image(image)
+      .image_pull_secret(secret).cpu_cores(4).memory("8Gi")
+      .services([service]).build())
+```
+
+Kotlin:
+
+```kotlin
+val vm: VmTemplate = VmTemplateBuilder().containerDiskImage(image)
+    .imagePullSecret(secret).cpuCores(4u).memory("8Gi")
+    .services(listOf(service)).build()
+```
+
+Swift:
+
+```swift
+let vm: VmTemplate = try VmTemplateBuilder().containerDiskImage(value: image)
+    .imagePullSecret(value: secret).cpuCores(value: 4).memory(value: "8Gi")
+    .services(value: [service]).build()
+```
+
+Ruby:
+
+```ruby
+vm = FleetSdk::VmTemplateBuilder.new.container_disk_image(image)
+  .image_pull_secret(secret).cpu_cores(4).memory('8Gi')
+  .services([service]).build
+```
+
+Optional setters may be omitted; their record fields remain `None`, `null`, or
+`nil` as appropriate. `build()` returns the exact existing record type and
+reports an omitted required field through stable `SchemaBuildError` or
+`SdkBuildError` variants (generated as `SchemaBuildException` and
+`SdkBuildException` in Kotlin). Existing direct record constructors remain
+available and unchanged. At the syntax-only derive boundary, optional record
+fields must be spelled `Option<T>`, `std::option::Option<T>`, or
+`core::option::Option<T>`; type aliases are not inferred.
 
 Use the generated constructors and schema records rather than ad-hoc JSON.
 The exact optional fields and language naming are generated, so consult the
@@ -158,7 +235,7 @@ pool = await client.create_pool(CreatePoolRequest(namespace="default", spec=pool
 claim_spec = ClaimSpec(
     sandbox_template_ref=SandboxTemplateRef(name=pool.metadata.name),
     warmpool=None,
-    bind_deadline=None,
+    bind_deadline=None,  # SDK defaults omitted deadlines to 900 seconds
     lifecycle=None,
 )
 claim = await client.create_claim(CreateClaimRequest(pool=pool, spec=claim_spec))

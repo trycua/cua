@@ -1,7 +1,7 @@
 //! Explicit permission-policy configuration must fail before a daemon exposes
 //! an action endpoint.
 
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 fn test_socket(directory: &tempfile::TempDir, suffix: &str) -> String {
     #[cfg(unix)]
@@ -33,6 +33,74 @@ fn rejected_serve(socket: &str, extra_args: &[&str]) -> std::process::Output {
         .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
         .output()
         .expect("run rejected cua-driver serve configuration")
+}
+
+#[test]
+fn mcp_rejects_serve_only_authorization_flags() {
+    let cases: &[(&[&str], &str)] = &[
+        (
+            &["mcp", "--direct", "--permission-mode", "bounded"],
+            "--permission-mode",
+        ),
+        (
+            &["mcp", "--capability-manifest", "unused.yaml"],
+            "--capability-manifest",
+        ),
+        (
+            &["mcp", "--approve-capability-manifest"],
+            "--approve-capability-manifest",
+        ),
+        (
+            &["mcp", "--dangerously-bypass-approvals"],
+            "--dangerously-bypass-approvals",
+        ),
+        (
+            &["mcp", "--session-policy", "unused.yaml"],
+            "--session-policy",
+        ),
+        (
+            &["mcp", "--approve-session-policy"],
+            "--approve-session-policy",
+        ),
+        (&["--permission-mode=bounded"], "--permission-mode"),
+    ];
+
+    for (args, rejected_flag) in cases {
+        let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+            .args(*args)
+            .stdin(Stdio::null())
+            .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+            .output()
+            .expect("run cua-driver mcp with a serve-only authorization flag");
+        assert_eq!(output.status.code(), Some(64), "args={args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&format!("does not accept {rejected_flag}")),
+            "args={args:?}, stderr={stderr}"
+        );
+        assert!(
+            stderr.contains("CUA_DRIVER_PERMISSION_MODE"),
+            "args={args:?}, stderr={stderr}"
+        );
+        assert!(
+            stderr.contains("mcp --socket"),
+            "args={args:?}, stderr={stderr}"
+        );
+    }
+}
+
+#[test]
+fn direct_mcp_still_reads_permission_profile_from_environment() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .args(["mcp", "--direct"])
+        .stdin(Stdio::null())
+        .env("CUA_DRIVER_PERMISSION_MODE", "bounded")
+        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+        .output()
+        .expect("run direct MCP with bounded profile from the environment");
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("requires --capability-manifest"));
 }
 
 #[test]
@@ -167,13 +235,12 @@ fn danger_flag_alone_selects_unrestricted_and_managed_config_can_disable_it() {
     assert!(!std::path::Path::new(&socket).exists());
 }
 
-fn write_valid_session_policy(directory: &tempfile::TempDir) -> String {
-    let path = directory.path().join("session-policy.yaml");
+fn write_valid_capability_manifest(directory: &tempfile::TempDir) -> String {
+    let path = directory.path().join("capability-manifest.yaml");
     std::fs::write(
         &path,
         r#"
-version: 1
-mode: bounded
+version: 3
 expires_after: 1h
 idle_timeout: 10m
 resources: {}
@@ -181,8 +248,6 @@ allow:
   tools: [start_session, get_session_state, end_session]
 deny:
   tools: [page]
-ask:
-  tools: [browser_download]
 "#,
     )
     .unwrap();
@@ -190,12 +255,12 @@ ask:
 }
 
 #[test]
-fn bounded_mode_requires_a_session_policy_before_bind() {
+fn bounded_mode_requires_a_capability_manifest_before_bind() {
     let directory = tempfile::tempdir().expect("temporary bounded test directory");
     let socket = test_socket(&directory, "bounded-no-policy");
     let output = rejected_serve(&socket, &["--permission-mode", "bounded"]);
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("requires --session-policy"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("requires --capability-manifest"));
     #[cfg(unix)]
     assert!(!std::path::Path::new(&socket).exists());
 }
@@ -203,58 +268,97 @@ fn bounded_mode_requires_a_session_policy_before_bind() {
 #[test]
 fn bounded_mode_requires_launch_time_manifest_approval_before_bind() {
     let directory = tempfile::tempdir().expect("temporary bounded test directory");
-    let policy = write_valid_session_policy(&directory);
+    let policy = write_valid_capability_manifest(&directory);
     let socket = test_socket(&directory, "bounded-no-approval");
-    let output = rejected_serve(
-        &socket,
-        &["--permission-mode", "bounded", "--session-policy", &policy],
-    );
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("requires --approve-session-policy"));
-    #[cfg(unix)]
-    assert!(!std::path::Path::new(&socket).exists());
-}
-
-#[test]
-fn session_policy_cannot_be_smuggled_into_standard_mode() {
-    let directory = tempfile::tempdir().expect("temporary standard test directory");
-    let policy = write_valid_session_policy(&directory);
-    let socket = test_socket(&directory, "standard-session-policy");
     let output = rejected_serve(
         &socket,
         &[
             "--permission-mode",
-            "standard",
-            "--session-policy",
+            "bounded",
+            "--capability-manifest",
             &policy,
-            "--approve-session-policy",
         ],
     );
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("valid only with"));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("requires --approve-capability-manifest")
+    );
     #[cfg(unix)]
     assert!(!std::path::Path::new(&socket).exists());
 }
 
 #[test]
-fn legacy_existing_profile_approval_cannot_bypass_bounded_indicator() {
-    let directory = tempfile::tempdir().expect("temporary bounded test directory");
-    let policy = write_valid_session_policy(&directory);
-    let socket = test_socket(&directory, "bounded-legacy-approval");
+fn deprecated_session_policy_flags_remain_startup_aliases() {
+    let directory = tempfile::tempdir().expect("temporary bounded alias test directory");
+    let policy = directory.path().join("legacy-session-policy.yaml");
+    std::fs::write(
+        &policy,
+        r#"
+version: 3
+resources: {}
+allow:
+  tools: [start_session]
+"#,
+    )
+    .expect("write v3 manifest without bounded lifetime fields");
+    let socket = test_socket(&directory, "bounded-deprecated-aliases");
     let output = rejected_serve(
         &socket,
         &[
             "--permission-mode",
             "bounded",
             "--session-policy",
-            &policy,
+            &policy.display().to_string(),
             "--approve-session-policy",
-            "--allow-legacy-existing-profile-approval",
+        ],
+    );
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("requires capability manifest expires_after and idle_timeout"),
+        "deprecated aliases did not reach bounded manifest validation: {stderr}"
+    );
+    #[cfg(unix)]
+    assert!(!std::path::Path::new(&socket).exists());
+}
+
+#[test]
+fn capability_manifest_without_acknowledgement_fails_in_standard_mode() {
+    let directory = tempfile::tempdir().expect("temporary standard test directory");
+    let policy = write_valid_capability_manifest(&directory);
+    let socket = test_socket(&directory, "standard-session-policy");
+    let output = rejected_serve(
+        &socket,
+        &[
+            "--permission-mode",
+            "standard",
+            "--capability-manifest",
+            &policy,
         ],
     );
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr)
-        .contains("valid only with --permission-mode standard"));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("requires --approve-capability-manifest")
+    );
+    #[cfg(unix)]
+    assert!(!std::path::Path::new(&socket).exists());
+}
+
+#[test]
+fn capability_manifest_acknowledgement_without_manifest_fails_closed() {
+    let directory = tempfile::tempdir().expect("temporary standard test directory");
+    let socket = test_socket(&directory, "standard-manifest-ack-only");
+    let output = rejected_serve(
+        &socket,
+        &[
+            "--permission-mode",
+            "standard",
+            "--approve-capability-manifest",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("requires --capability-manifest"));
     #[cfg(unix)]
     assert!(!std::path::Path::new(&socket).exists());
 }
@@ -266,7 +370,7 @@ fn autonomous_mode_name_remains_a_bounded_compatibility_alias() {
     let output = rejected_serve(&socket, &["--permission-mode", "autonomous"]);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr)
-        .contains("permission mode bounded requires --session-policy"));
+        .contains("permission mode bounded requires --capability-manifest"));
     #[cfg(unix)]
     assert!(!std::path::Path::new(&socket).exists());
 }

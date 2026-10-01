@@ -1,8 +1,8 @@
 use cyclops_sdk_schema::{
     Firmware, ImagePullPolicy, JsonValueError, OSGymSandboxClaimCondition,
     OSGymSandboxClaimSandbox, OSGymSandboxClaimStatus, OSGymSandboxStatus,
-    OSGymSandboxWarmPoolStatus, OidcConfig, PreservedJson, RuntimeKind, SandboxService,
-    ServiceProtocol, VmTemplate,
+    OSGymSandboxWarmPoolStatus, OidcConfig, PreservedJson, ProcessMode, RuntimeKind,
+    SandboxService, ServiceProtocol, VmTemplate,
 };
 use schemars::schema_for;
 use serde_json::json;
@@ -88,6 +88,7 @@ fn vm_template_round_trips_every_known_field() {
         cpu_cores: Some(8),
         memory: Some("8Gi".into()),
         firmware: Some(Firmware::Efi),
+        nested_virtualization: Some(true),
         probes: Some(Arc::new(
             PreservedJson::parse(r#"{"readinessProbe":{"tcpSocket":{"port":22}}}"#.into()).unwrap(),
         )),
@@ -103,6 +104,10 @@ fn vm_template_round_trips_every_known_field() {
             aws_role_arn: Some("arn:aws:iam::123456789012:role/workload".into()),
             refresh_interval_seconds: Some(900),
         }),
+        args: Some(vec!["--port".into(), "8765".into()]),
+        env: Some(HashMap::from([("FOO".into(), "bar".into())])),
+        claim_secrets: Some(true),
+        process_mode: Some(ProcessMode::Run),
     };
 
     let value = serde_json::to_value(&template).unwrap();
@@ -112,6 +117,9 @@ fn vm_template_round_trips_every_known_field() {
         value["probes"]["readinessProbe"]["tcpSocket"]["port"],
         json!(22)
     );
+    assert_eq!(value["args"], json!(["--port", "8765"]));
+    assert_eq!(value["env"], json!({"FOO": "bar"}));
+    assert_eq!(value["processMode"], json!("Run"));
     assert_eq!(
         serde_json::from_value::<VmTemplate>(value).unwrap(),
         template
@@ -143,9 +151,14 @@ fn minimal_vm_template_omits_none_fields_and_round_trips() {
         cpu_cores: None,
         memory: None,
         firmware: None,
+        nested_virtualization: None,
         probes: None,
         services: None,
         oidc: None,
+        args: None,
+        env: None,
+        claim_secrets: None,
+        process_mode: None,
     };
 
     let value = serde_json::to_value(&template).unwrap();
@@ -176,6 +189,8 @@ fn exported_status_records_are_typed_and_round_trip() {
         replicas: Some(3),
         ready_replicas: Some(2),
         selector: Some("osgym.cua.ai/pool=default".into()),
+        last_claimed_at: Some("2026-07-19T12:00:00Z".into()),
+        last_activity_time: Some("2026-07-19T12:05:00Z".into()),
     };
     let claim_status = OSGymSandboxClaimStatus {
         phase: Some("Bound".into()),

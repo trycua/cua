@@ -84,6 +84,24 @@ fn released_cli_help_and_manifest_fields_remain_compatible() {
 }
 
 #[test]
+fn prime_agent_connection_guidance_uses_the_skill_and_cli_path() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+        .args(["mcp-config", "--client", "prime-agent"])
+        .output()
+        .expect("run Prime Agent connection guidance");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 guidance");
+    assert!(stdout.contains("skills install"), "{stdout}");
+    assert!(stdout.contains("skills status"), "{stdout}");
+    assert!(
+        stdout.contains("No MCP registration is required"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("snapshot/action/verify"), "{stdout}");
+}
+
+#[test]
 fn released_mcp_initialize_tools_list_and_error_fields_remain_compatible() {
     let fixture: Value = serde_json::from_str(MCP_FIXTURE).expect("valid MCP fixture");
     let Some(mut driver) = RawDriver::spawn() else {
@@ -198,8 +216,15 @@ fn assert_mcp_contract(driver: &mut RawDriver, fixture: &Value) {
         );
     }
 
+    // A notification gets no response: the next message read must answer the
+    // following request, not the notification.
+    driver.send(&json!({"jsonrpc": "2.0", "method": "notifications/initialized"}));
     driver.send(&json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}));
     let tools_list = driver.recv();
+    assert_eq!(
+        tools_list["id"], 2,
+        "notifications/initialized must not produce a response: {tools_list:?}"
+    );
     let expected_tools = &fixture["tools_list"];
     assert_eq!(
         tools_list["result"]["schema_version"],
@@ -267,6 +292,25 @@ fn assert_mcp_contract(driver: &mut RawDriver, fixture: &Value) {
         assert!(
             tool_call["result"].get(field).is_some(),
             "tools/call result no longer contains {field}"
+        );
+    }
+
+    // Clients and gateway watchdogs send `ping` as a liveness probe and treat
+    // an error answer as a dead child, so it must return an empty result with
+    // or without `params` (#4001).
+    for (id, ping) in [
+        (5, json!({"jsonrpc": "2.0", "id": 5, "method": "ping"})),
+        (
+            6,
+            json!({"jsonrpc": "2.0", "id": 6, "method": "ping", "params": {}}),
+        ),
+    ] {
+        driver.send(&ping);
+        let pong = driver.recv();
+        assert_eq!(
+            pong,
+            json!({"jsonrpc": "2.0", "id": id, "result": {}}),
+            "ping must answer with an empty result"
         );
     }
 }

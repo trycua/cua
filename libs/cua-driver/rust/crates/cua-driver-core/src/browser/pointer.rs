@@ -20,6 +20,7 @@ use super::cdp_ws::CdpConnection;
 use super::engine::{BrowserEngine, ValidatedTab};
 use super::platform::BrowserVisualActionKind;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
+use super::required_session_schema;
 use super::store::{BrowserActionKind, FrameKind, FrameRef};
 use super::tools::{browser_protected_resource_scope, browser_resource_ownership};
 
@@ -299,7 +300,7 @@ impl BrowserPointerTool {
                     "properties": {
                         "target_id": { "type": "string", "description": "Opaque target id minted by get_browser_state." },
                         "tab_id": { "type": "string", "description": "Opaque tab id minted by get_browser_state." },
-                        "session": { "type": "string", "description": "Explicit caller session owning the browser capabilities." },
+                        "session": required_session_schema(),
                         "action": { "type": "string", "enum": ["hover", "right_click", "double_click", "scroll", "drag"] },
                         "input_route": { "type": "string", "enum": ["trusted", "dom_event"], "default": "trusted" },
                         "ref": { "type": "string", "description": "Origin page ref. Alternative to x/y." },

@@ -1,0 +1,137 @@
+---
+title: MCP server
+description: The cua serve-mcp stdio server, its permission grammar, and the tools each permission exposes.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`cua serve-mcp` starts a Model Context Protocol server on stdio that exposes
+sandbox management, computer control, and skills to an MCP client. It requires
+the `mcp` extra:
+
+```bash
+pip install --extra-index-url https://wheels.cua.ai/simple "cua-cli[mcp]"
+```
+
+Without it the command exits 1 with
+`MCP support not installed. Run: pip install cua-cli[mcp]`.
+
+## Running it
+
+The server speaks MCP over stdin/stdout and logs to stderr, so it is started by
+the client rather than by you. Register it with Claude Code:
+
+```bash
+claude mcp add cua -- cua serve-mcp
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--permissions` | `CUA_MCP_PERMISSIONS`, else every permission | Comma-separated permissions. |
+| `--sandbox` | `CUA_SANDBOX` | Default sandbox name for the computer tools. |
+
+```bash
+claude mcp add cua -- cua serve-mcp --permissions sandbox:readonly,computer:readonly --sandbox my-sandbox
+```
+
+The server reports its enabled permissions on startup, which is the quickest way
+to confirm a grant landed as intended:
+
+```
+2026-08-12 22:20:50,897 - cua-mcp - INFO - Enabled permissions: ['sandbox:list', 'sandbox:get']
+2026-08-12 22:20:50,909 - cua-mcp - INFO - Starting CUA MCP server...
+```
+
+## Permissions
+
+A permission is either a single `group:action` string or one of the shorthand
+groups below. Only tools covered by the granted permissions are registered, so
+an ungranted tool is not merely refused at call time — the client never sees it.
+
+| Group | Expands to |
+|-------|-----------|
+| `all` | Every permission. |
+| `sandbox:all` | `sandbox:list`, `create`, `delete`, `start`, `stop`, `restart`, `suspend`, `get`, `vnc` |
+| `sandbox:readonly` | `sandbox:list`, `sandbox:get` |
+| `computer:all` | `computer:screenshot`, `click`, `type`, `key`, `scroll`, `drag`, `hotkey`, `clipboard`, `file`, `shell`, `window` |
+| `computer:readonly` | `computer:screenshot` |
+| `skills:all` | `skills:list`, `read`, `record`, `delete` |
+| `skills:readonly` | `skills:list`, `skills:read` |
+
+<Callout type="warn">
+  **An empty or unrecognized permission list grants everything.** With no
+  `--permissions` and no `CUA_MCP_PERMISSIONS`, the server logs
+  `No permissions specified, granting all permissions` and registers all 47
+  tools. A misspelled permission is skipped with a `WARNING: Unknown permission`
+  line — and if it was the only one you passed, the resulting empty set is
+  treated as "unspecified" and again grants everything. Read the
+  `Enabled permissions:` line on startup rather than assuming the flag was
+  understood.
+</Callout>
+
+## Tools
+
+The permission that registers each tool:
+
+### Sandbox
+
+| Permission | Tools |
+|------------|-------|
+| `sandbox:list` | `sandbox_list` |
+| `sandbox:get` | `sandbox_get` |
+| `sandbox:create` | `sandbox_create` |
+| `sandbox:delete` | `sandbox_delete` |
+| `sandbox:start` | `sandbox_start` |
+| `sandbox:stop` | `sandbox_stop` |
+| `sandbox:restart` | `sandbox_restart` |
+| `sandbox:suspend` | `sandbox_suspend` |
+| `sandbox:vnc` | `sandbox_vnc` |
+
+### Computer
+
+| Permission | Tools |
+|------------|-------|
+| `computer:screenshot` | `computer_screenshot`, `computer_get_screen_size`, `computer_get_cursor_position`, `computer_get_accessibility_tree`, `computer_get_current_window` |
+| `computer:click` | `computer_click`, `computer_double_click`, `computer_move_cursor`, `computer_mouse_down`, `computer_mouse_up` |
+| `computer:type` | `computer_type` |
+| `computer:key` | `computer_key`, `computer_key_down`, `computer_key_up` |
+| `computer:hotkey` | `computer_hotkey` |
+| `computer:scroll` | `computer_scroll` |
+| `computer:drag` | `computer_drag` |
+| `computer:clipboard` | `computer_clipboard_get`, `computer_clipboard_set` |
+| `computer:file` | `computer_file_read`, `computer_file_write`, `computer_file_list` |
+| `computer:shell` | `computer_shell` |
+| `computer:window` | `computer_window_list`, `computer_window_open`, `computer_window_focus`, `computer_window_unfocus`, `computer_window_minimize`, `computer_window_maximize`, `computer_window_close`, `computer_window_resize`, `computer_window_move`, `computer_window_get_info`, `computer_launch` |
+
+### Skills
+
+| Permission | Tools |
+|------------|-------|
+| `skills:list` | `skills_list` |
+| `skills:read` | `skills_read` |
+| `skills:record` | `skills_record` |
+| `skills:delete` | `skills_delete` |
+
+<Callout type="info">
+  `computer:readonly` is not screenshot-only in practice: `computer:screenshot`
+  also registers screen size, cursor position, the accessibility tree, and the
+  current window. It reads the screen and never acts on it, but it reads more
+  than a picture.
+</Callout>
+
+## Choosing a grant
+
+`computer:shell` and `computer:file` give the client arbitrary command execution
+and filesystem access inside the target machine, and `sandbox:delete` destroys
+machines. Grant the narrowest set that lets the assistant do its job:
+
+| Intent | Grant |
+|--------|-------|
+| Let an assistant look, not touch | `sandbox:readonly,computer:readonly` |
+| Drive a UI without a shell | `computer:screenshot,computer:click,computer:type,computer:key,computer:scroll` |
+| Full automation of one sandbox | `computer:all` plus `--sandbox <name>` |
+| Everything | `all` |
+
+Authentication comes from the same session as the rest of the CLI, so
+`cua auth status` must report a session before the sandbox tools can reach the
+cloud. See [Authentication](/reference/cua-cli/authentication).

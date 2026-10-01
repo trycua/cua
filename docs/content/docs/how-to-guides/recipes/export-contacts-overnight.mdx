@@ -9,7 +9,9 @@ import { Steps, Step } from 'fumadocs-ui/components/steps';
 After a networking event, use Cua Driver on the machine where you already have a logged-in browser. The agent inherits that **real authenticated session** from the browser profile, so there are no credentials in the script and no anti-bot fight. Let it run overnight, then wake up to a CSV.
 
 <Callout type="info">
-  Before you start: [install Cua Driver](/how-to-guides/driver/install), grant host permissions, [connect your agent](/how-to-guides/driver/connect-your-agent), and configure [Keep Cua Driver running](/how-to-guides/driver/keep-running).
+  Before you start: [install Cua Driver](/how-to-guides/driver/install), grant host permissions,
+  [connect your agent](/how-to-guides/driver/connect-your-agent), and configure [Keep Cua Driver
+  running](/how-to-guides/driver/keep-running).
 </Callout>
 
 <Steps>
@@ -18,10 +20,11 @@ After a networking event, use Cua Driver on the machine where you already have a
 
 ### Log in once
 
-On your own machine, open the browser profile that Cua Driver will drive and log into LinkedIn, X, or both. Do the normal login yourself, including any two-factor prompts. The *session persistence* is the whole trick: the overnight job starts from a browser that is already authenticated.
+On your own machine, open the browser profile that Cua Driver will drive and log into LinkedIn, X, or both. Do the normal login yourself, including any two-factor prompts. The _session persistence_ is the whole trick: the overnight job starts from a browser that is already authenticated.
 
 <Callout type="warn">
-  Keep the machine awake for the whole run. Disable sleep, leave the browser profile available, and keep the network connection up so the overnight run does not pause.
+  Keep the machine awake for the whole run. Disable sleep, leave the browser profile available, and
+  keep the network connection up so the overnight run does not pause.
 </Callout>
 
 </Step>
@@ -67,4 +70,4 @@ Kick off the task before you leave. In the morning, open `~/contacts.csv` and sp
 
 One logged-in browser profile handles one account at a time. To process several accounts, events, or platforms in parallel overnight, use one local Cua Sandbox per authenticated session and cap concurrency to the resources available on the host.
 
-Use [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) to run several local desktops, [Images](/how-to-guides/sandbox/images) to prepare their starting state, and [Your first local sandbox](/tutorials/your-first-local-sandbox) for the basic SDK lifecycle.
+Use [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) to run several local desktops, [Images](/how-to-guides/sandbox/images) to prepare their starting state, and [Sandbox lifecycle](/concepts/sandbox-lifecycle) for the basic local SDK lifecycle.

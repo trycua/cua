@@ -302,6 +302,7 @@ func telemetryMappingsAreBounded() {
     "run": "run", "stop": "stop", "ssh": "ssh", "sip": "sip", "ipsw": "ipsw",
     "serve": "serve", "delete": "delete", "prune": "prune", "config": "config",
     "logs": "logs", "check-update": "check_update", "update": "update", "setup": "setup",
+    "channel": "channel",
     "dump-docs": "dump_docs",
   ]
   for (command, operation) in commands {

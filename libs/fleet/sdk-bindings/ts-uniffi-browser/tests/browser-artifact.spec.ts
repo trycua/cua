@@ -17,4 +17,5 @@ test("loads the Vite bundle backed by the generated WASM SDK artifact", async ({
 
   await page.goto("/")
   await expect(page.getByTestId("sdk-ready")).toHaveText("ready")
+  await expect(page.getByTestId("builder-ready")).toHaveText("ready")
 })

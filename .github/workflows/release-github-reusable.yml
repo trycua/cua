@@ -11,6 +11,11 @@ on:
         description: "Release display name (e.g., cua-computer v0.5.0)"
         required: true
         type: string
+      source_sha:
+        description: "Optional verified immutable commit for path-filtered release notes"
+        required: false
+        type: string
+        default: ""
       module_path:
         description: "Path to the module for filtering commits (e.g., libs/python/agent)"
         required: false
@@ -53,6 +58,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.source_sha || github.sha }}
 
       - name: Generate path-filtered release notes
         if: inputs.module_path != '' && inputs.generate_notes

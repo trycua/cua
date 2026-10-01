@@ -1,0 +1,79 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cua-bench-s1"
+version = "0.0.0"
+description = "A benchmark for computer-use GUI decision-making: closed-option-set task generation and model-agnostic scoring"
+readme = { text = "cua-bench-s1 provides a task schema, synthetic/real task generators, and a model-agnostic scoring harness for computer-use GUI decision-making. The package does not include or download model weights.", content-type = "text/markdown" }
+license = { file = "LICENSE" }
+authors = [
+    { name = "TryCua", email = "hello@trycua.com" }
+]
+keywords = [
+    "computer-use",
+    "benchmark",
+    "evaluation",
+    "machine-learning",
+    "research",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "pillow>=10,<12",
+]
+
+[project.optional-dependencies]
+chess = [
+    "chess>=1.10,<2",
+]
+vizdoom = [
+    "vizdoom>=1.2,<2",
+]
+androidcontrol = [
+    "tfrecord>=1.14,<2",
+]
+all = [
+    "chess>=1.10,<2",
+    "vizdoom>=1.2,<2",
+    "tfrecord>=1.14,<2",
+]
+
+[project.urls]
+Homepage = "https://github.com/trycua/cua"
+Documentation = "https://github.com/trycua/cua/tree/main/libs/cua-bench-s1"
+Repository = "https://github.com/trycua/cua"
+Issues = "https://github.com/trycua/cua/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cua_bench_s1"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "W"]
+ignore = ["E501"]
+
+[dependency-groups]
+test = [
+    "pytest>=8,<10",
+    "ruff>=0.12,<1",
+]

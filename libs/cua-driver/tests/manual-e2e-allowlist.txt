@@ -1,0 +1,37 @@
+# Ignored cua-driver and cua-driver-e2e integration tests that no canonical
+# runner selects.
+#
+# .github/scripts/tests/test_cua_driver_e2e_inventory.py fails when an
+# #[ignore] test under libs/cua-driver/rust/crates/cua-driver/tests or
+# libs/cua-driver/rust/crates/cua-driver-e2e/tests is neither selected by a
+# runner or workflow nor listed here. It also fails when an entry
+# here no longer names an ignored test or is routed after all.
+#
+# Format: <test binary>::<test function> | <why it stays manual>
+
+# Native Hyprland has no automated lane. The maintainer runs these in the
+# prepared native Hyprland desktop alongside `scripts/ci/linux/run-rust-e2e.sh`
+# (see libs/cua-driver/docs/test-harnesses-guide.md, Hyprland validation).
+hyprland_foreground_test::foreground_action_refused_while_independent_virtual_pointer_holds_primary_grab | Manual native-Hyprland gate: needs a live Hyprland compositor with the Cua plugin; RFC 3550 foreground grab refusal
+hyprland_foreground_test::foreground_drag_focus_loss_does_not_release_into_successor | Manual native-Hyprland gate: needs a live Hyprland compositor with the Cua plugin; RFC 3550 drag focus-loss safety
+hyprland_foreground_test::foreground_drag_focus_loss_does_not_release_into_same_client_sibling | Manual native-Hyprland gate: needs a live Hyprland compositor with the Cua plugin; RFC 3550 drag focus-loss safety
+hyprland_native_observation_test::native_window_capture_and_background_ax_keep_exact_identity | Manual native-Hyprland gate: needs a live Hyprland compositor; exact-identity capture and owner-mismatch refusals
+
+# Optional external-app suite: the canonical Windows image has no LibreOffice.
+harness_libreoffice_test::harness_lo_vcl_font_color_expand_opens_picker | Optional Windows suite that needs LibreOffice Writer installed; under review in the lane-3 prune (#4094)
+
+
+# macOS-only browser regressions that failed on their first routed run. Restore
+# them to the Darwin list in scripts/ci/run-rust-standalone-browser-e2e.sh with
+# the product fix.
+standalone_browser_behavior_test::standalone_browser_generic_type_text_completion | Fails on first routed run: native snapshot omits the page editor (#4126)
+standalone_browser_behavior_test::standalone_browser_web_type_text_verification | Fails on first routed run: native snapshot omits the page editor (#4126)
+
+# Real input or real per-user state outside a canonical harness row.
+protocol_media_test::zoom_from_zoom_click_round_trip | Sends real input to a live desktop window; kept off plain cargo test by #4100 for manual disposable-desktop runs
+protocol_media_test::recording_screenshot_capture | Sends real input to a live desktop window; kept off plain cargo test by #4100 for manual disposable-desktop runs
+protocol_media_test::click_debug_image_out | Sends real input to a live desktop window; kept off plain cargo test by #4100 for manual disposable-desktop runs
+protocol_tools_call_test::type_text_chars_tool | Sends real input to a live desktop window; kept off plain cargo test by #4100 for manual disposable-desktop runs
+transport_config_persistence_test::cli_set_config_visible_across_daemon_backed_invocations | Mutates the real per-user driver config through a daemon-backed CLI; manual only
+private_worker_test::service_untrusted_child_probe | Subprocess probe that the routed private_worker_test parent spawns itself; never a standalone row
+authorized_live_jev_use_demo_test::authorized_live_jev_no_matching_action_control | Needs the reviewed live Jev chooser and a protected credential; Actions deliberately runs only the mock chooser

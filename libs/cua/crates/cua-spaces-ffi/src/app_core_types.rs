@@ -1446,8 +1446,12 @@ pub struct AppNotchTile {
     /// `os-ubuntu`, ..., `os-linux`); the artwork is [`os_icon_svg`], or on
     /// macOS the system symbol [`os_icon_system_symbol`] names.
     pub symbol: String,
-    /// Accessibility label: name, OS and status.
+    /// Accessibility label: name, OS, where it runs and status.
     pub label: String,
+    /// Where it runs, in words, on the tile's header line next to the OS
+    /// logo: "This Mac", the machine that provides it ("Mac mini"), the
+    /// address of one added by address, or the cloud's place ([`location`]).
+    pub location: String,
     /// While it is being created: overall progress in thousandths (a ring
     /// over the tile).
     pub progress: Option<u32>,

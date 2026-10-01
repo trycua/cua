@@ -54,7 +54,7 @@
           "os-macos Mac [Starting] 10 1%"
         ],
         "tiles": [
-          "os-macos Mac, macOS, Starting 10 Starting…"
+          "os-macos Mac, macOS, This Mac, Starting 10 Starting…"
         ]
       }
     },
@@ -96,7 +96,7 @@
           "os-macos Mac [Starting] 160 16%"
         ],
         "tiles": [
-          "os-macos Mac, macOS, Starting 160 Downloading image…"
+          "os-macos Mac, macOS, This Mac, Starting 160 Downloading image…"
         ]
       }
     },
@@ -138,7 +138,7 @@
           "os-macos Mac [Starting] 187 18%"
         ],
         "tiles": [
-          "os-macos Mac, macOS, Starting 187 Downloading image…"
+          "os-macos Mac, macOS, This Mac, Starting 187 Downloading image…"
         ]
       }
     },
@@ -180,7 +180,7 @@
           "os-macos Mac [Cancelling…] 187 18%"
         ],
         "tiles": [
-          "os-macos Mac, macOS, Cancelling… 187 Cancelling…"
+          "os-macos Mac, macOS, This Mac, Cancelling… 187 Cancelling…"
         ]
       }
     },
@@ -222,7 +222,7 @@
           "os-macos Mac [Cancelling…] 187 18%"
         ],
         "tiles": [
-          "os-macos Mac, macOS, Cancelling… 187 Cancelling…"
+          "os-macos Mac, macOS, This Mac, Cancelling… 187 Cancelling…"
         ]
       }
     },
@@ -264,7 +264,7 @@
           "os-macos Mac [Cancelling…] 187 18%"
         ],
         "tiles": [
-          "os-macos Mac, macOS, Cancelling… 187 Cancelling…"
+          "os-macos Mac, macOS, This Mac, Cancelling… 187 Cancelling…"
         ]
       }
     },
@@ -320,7 +320,7 @@
           "os-linux Box [Starting] 10 1%"
         ],
         "tiles": [
-          "os-linux Box, Linux, Starting 10 Starting…"
+          "os-linux Box, Linux, This Mac, Starting 10 Starting…"
         ]
       }
     },
@@ -361,7 +361,7 @@
           "os-linux Box [Starting] 425 42%"
         ],
         "tiles": [
-          "os-linux Box, Linux, Starting 425 Downloading image…"
+          "os-linux Box, Linux, This Mac, Starting 425 Downloading image…"
         ]
       }
     },
@@ -402,7 +402,7 @@
           "os-linux Box [Cancelling…] 425 42%"
         ],
         "tiles": [
-          "os-linux Box, Linux, Cancelling… 425 Cancelling…"
+          "os-linux Box, Linux, This Mac, Cancelling… 425 Cancelling…"
         ]
       }
     },
@@ -443,7 +443,7 @@
           "os-linux Box [Failed] - timed out: the cua daemon did not answer"
         ],
         "tiles": [
-          "os-linux Box, Linux, Failed - Failed"
+          "os-linux Box, Linux, This Mac, Failed - Failed"
         ]
       }
     },

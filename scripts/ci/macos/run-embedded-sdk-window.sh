@@ -2,6 +2,11 @@
 # One embedded SDK fixture in an already-authorized GUI session. No permission setup.
 set -euo pipefail
 set +x
+ACCESSIBILITY_HANDOFF=0
+if (($#)); then
+  [[ "$#" == 1 && "$1" == --accessibility-handoff ]] || exit 2
+  ACCESSIBILITY_HANDOFF=1
+fi
 export CUA_E2E_RUNNER_LIB_ONLY=1
 export CUA_E2E_REPO_ROOT="$PWD"
 source libs/cua-driver/tests/runners/macos-lume/run-all.sh
@@ -10,6 +15,8 @@ FIXTURE_DIR="$PWD/artifacts/cua-driver/embedded-sdk-window"
 mkdir -p "$FIXTURE_DIR"
 source_sha="$(tr -d '[:space:]' < .cua-e2e-source-sha)"
 [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || exit 2
+APP="$HOME/Applications/Cua Embedded SDK Window Fixture.app"
+bundle_info_before=""
 binary=""
 identity=""
 binary_before=""
@@ -21,13 +28,17 @@ finish_fixture() {
   if ! "$HOME/.local/bin/cua-driver-local" status > "$FIXTURE_DIR/daemon-after.txt" 2>&1; then
     fixture_exit=1
   fi
-  python3 - "$FIXTURE_DIR" "$source_sha" "$fixture_exit" "$binary" "$identity" "$binary_before" "$signature_verified" <<'PY'
+  python3 - "$FIXTURE_DIR" "$source_sha" "$fixture_exit" "$binary" "$identity" "$binary_before" "$signature_verified" "$APP" "$bundle_info_before" "$ACCESSIBILITY_HANDOFF" <<'PY'
 import hashlib, json, pathlib, sys
-root, sha, code, binary, identity, before, verified = sys.argv[1:]
+root, sha, code, binary, identity, before, verified, app, info_before, handoff = sys.argv[1:]
+info = pathlib.Path(app, "Contents/Info.plist")
 path = pathlib.Path(binary) if binary else None
 report = {
     'fixture': 'embedded-sdk-window', 'source_sha': sha, 'exit_code': int(code),
     'executable': binary, 'binary_sha256_before': before,
+    'bundle_path': app, 'launch_method': 'LaunchServices', 'accessibility_handoff': handoff == '1',
+    'bundle_info_sha256_before': info_before,
+    'bundle_info_sha256_after': hashlib.sha256(info.read_bytes()).hexdigest() if info.is_file() else None,
     'binary_sha256_after': hashlib.sha256(path.read_bytes()).hexdigest() if path and path.is_file() else None,
     'signing': {'identity': identity, 'identifier': 'com.trycua.fixture.embedded-sdk-window', 'verified': verified == 'true'},
 }
@@ -72,21 +83,108 @@ if len(paths) != 1:
 print(pathlib.Path(paths[0]).resolve())
 PY
 )"
-run_bounded_command codesign --force --timestamp=none --sign "$identity" --keychain "$SIGNING_KEYCHAIN" \
-  --identifier com.trycua.fixture.embedded-sdk-window "$binary"
-run_bounded_command codesign --verify --strict "$binary"
-codesign -d --verbose=4 "$binary" > "$FIXTURE_DIR/signature.txt" 2>&1
+# Match the existing fixture bundle layout, with the reviewed stable signer.
+python3 - "$binary" "$APP" <<'PYBUNDLE'
+import pathlib, plistlib, shutil, sys
+binary, destination = sys.argv[1:]
+app = pathlib.Path(destination)
+if app.exists():
+    raise SystemExit('Refusing to overwrite an existing fixture app')
+(app / 'Contents/MacOS').mkdir(parents=True)
+shutil.copy2(binary, app / 'Contents/MacOS/embedded_menu_restore')
+with (app / 'Contents/Info.plist').open('wb') as stream:
+    plistlib.dump({'CFBundleIdentifier': 'com.trycua.fixture.embedded-sdk-window',
+                  'CFBundleName': 'Cua Embedded SDK Window Fixture',
+                  'CFBundleDisplayName': 'Cua Embedded SDK Window Fixture',
+                  'CFBundleExecutable': 'embedded_menu_restore', 'CFBundlePackageType': 'APPL',
+                  'CFBundleVersion': '1', 'CFBundleShortVersionString': '1.0',
+                  'NSHighResolutionCapable': True}, stream)
+PYBUNDLE
+binary="$APP/Contents/MacOS/embedded_menu_restore"
+run_bounded_command codesign --force --timestamp=none --sign "$identity" --keychain "$SIGNING_KEYCHAIN" "$APP"
+run_bounded_command codesign --verify --strict "$APP"
+codesign -d --verbose=4 "$APP" > "$FIXTURE_DIR/signature.txt" 2>&1
 [[ "$(cat "$FIXTURE_DIR/signature.txt")" == *'Identifier=com.trycua.fixture.embedded-sdk-window'* ]]
+[[ "$(cat "$FIXTURE_DIR/signature.txt")" != *'Info.plist=not bound'* ]]
 codesign -d --extract-certificates="$FIXTURE_DIR/signing-cert" "$binary"
 [[ "$(shasum "$FIXTURE_DIR/signing-cert0" | cut -d ' ' -f 1 | tr '[:lower:]' '[:upper:]')" == "$identity" ]]
 signature_verified=true
 binary_before="$(shasum -a 256 "$binary" | cut -d ' ' -f 1)"
+cp "$APP/Contents/Info.plist" "$FIXTURE_DIR/bundle-info.plist"
+bundle_info_before="$(shasum -a 256 "$APP/Contents/Info.plist" | cut -d ' ' -f 1)"
 export CUA_E2E_SOURCE_SHA="$source_sha"
-# Execute the actual signed process as a Terminal descendant. Its AX trust is observed,
-# never inferred from the certificate or from CuaDriverLocal's unrelated grants.
-run_bounded_command "$binary" --status-only --evidence "$FIXTURE_DIR/preflight.json"
-run_fixture() {
-  local KEYCHAIN_COMMAND_TIMEOUT_SECONDS=120
-  run_bounded_command "$binary" --run-gui --report "$FIXTURE_DIR/fixture.txt" --evidence "$FIXTURE_DIR/fixture.json"
+
+launch_fixture_app() {
+  local KEYCHAIN_COMMAND_TIMEOUT_SECONDS="$1" phase="$2"
+  shift 2
+  # A bounded open timeout fails the run; canonical owned-VM shutdown is final cleanup.
+  run_bounded_command /usr/bin/open -n -W -a "$APP" \
+    --env "CUA_E2E_SOURCE_SHA=$source_sha" --stdout "$FIXTURE_DIR/$phase.stdout" \
+    --stderr "$FIXTURE_DIR/$phase.stderr" --args "$@"
 }
-run_fixture
+
+read_preflight_trust() {
+  python3 - "$FIXTURE_DIR/preflight.json" "$source_sha" "$APP" "$binary" <<'PYTRUST'
+import json, pathlib, sys
+path, sha, app, binary = sys.argv[1:]
+r = json.loads(pathlib.Path(path).read_text())
+p = r['process']
+assert (r['schema'], r['source_sha'], r['status']) == ('cua-driver/embedded-sdk-window@1', sha, 'preflight')
+assert p['bundle_path'] == app and p['bundle_id'] == 'com.trycua.fixture.embedded-sdk-window'
+assert p['executable'] == binary and p['appkit_main_thread'] is True
+assert type(p['pid']) is int and p['pid'] > 0 and type(p['ax_trusted']) is bool
+print('true' if p['ax_trusted'] else 'false')
+PYTRUST
+}
+
+record_handoff() {
+  python3 - "$FIXTURE_DIR" "$ACCESSIBILITY_HANDOFF" "$1" <<'PYHANDOFF'
+import json, pathlib, sys
+root, requested, completed = sys.argv[1:]
+root = pathlib.Path(root)
+initial = json.loads((root / 'preflight-initial.json').read_text())['process']
+latest = json.loads((root / 'preflight.json').read_text())['process']
+(root / 'handoff.json').write_text(json.dumps({'requested': requested == '1',
+    'needed': initial['ax_trusted'] is False, 'completed': completed == 'true',
+    'initial_pid': initial['pid'], 'trusted_pid': latest['pid'] if latest['ax_trusted'] else None}, indent=2) + '\n')
+PYHANDOFF
+}
+
+ensure_fixture_trust() {
+  local probe=0 deadline=$((SECONDS + 300)) trusted
+  while true; do
+    # New process and new report every time: open's exit code does not prove AX trust.
+    local report="$FIXTURE_DIR/preflight-$probe.json"
+    [[ ! -e "$report" ]] || return 2
+    launch_fixture_app 15 "preflight-$probe" --status-only --evidence "$report" || return 2
+    cp "$report" "$FIXTURE_DIR/preflight.json" || return 2
+    trusted="$(read_preflight_trust)" || return 2
+    if ((probe == 0)); then cp "$report" "$FIXTURE_DIR/preflight-initial.json"; fi
+    record_handoff "$trusted" || return 2
+    if [[ "$trusted" == true ]]; then return 0; fi
+    if ((ACCESSIBILITY_HANDOFF != 1)); then
+      echo 'Fixture app lacks AX trust; no handoff was authorized and no permission was requested.' >&2
+      return 2
+    fi
+    if ((SECONDS >= deadline)); then
+      echo 'App-only Accessibility handoff expired without verified trust.' >&2
+      return 2
+    fi
+    echo "Waiting for authorized app-only Accessibility handoff: $APP"
+    sleep 5
+    probe=$((probe + 1))
+  done
+}
+
+ensure_fixture_trust
+launch_fixture_app 120 native --run-gui --report "$FIXTURE_DIR/fixture.txt" --evidence "$FIXTURE_DIR/fixture.json"
+python3 - "$FIXTURE_DIR" <<'PYRESULT'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+preflight = json.loads((root / 'preflight.json').read_text())
+result = json.loads((root / 'fixture.json').read_text())
+assert result['status'] == 'pass' and result['source_sha'] == preflight['source_sha']
+assert result['process']['pid'] != preflight['process']['pid']
+for key in ('executable', 'bundle_path', 'bundle_id', 'ax_trusted', 'appkit_main_thread'):
+    assert result['process'][key] == preflight['process'][key]
+PYRESULT

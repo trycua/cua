@@ -35,6 +35,10 @@ fn main() {
     if let Some(path) = report {
         std::fs::write(path, "running\n").unwrap();
     }
+    if let Some(path) = evidence {
+        record["status"] = "running".into();
+        std::fs::write(path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+    }
     let result = std::panic::catch_unwind(|| {
         if request {
             native::request_accessibility();
@@ -481,7 +485,17 @@ mod native {
             }
             pid = parent;
         }
+        let (bundle_path, bundle_id) = unsafe {
+            let bundle: *mut AnyObject = msg_send![class!(NSBundle), mainBundle];
+            let path: *const NSString = msg_send![bundle, bundlePath];
+            let identifier: *const NSString = msg_send![bundle, bundleIdentifier];
+            (
+                path.as_ref().map(ToString::to_string),
+                identifier.as_ref().map(ToString::to_string),
+            )
+        };
         serde_json::json!({
+            "bundle_path": bundle_path, "bundle_id": bundle_id,
             "pid": std::process::id(), "parent_pid": unsafe { libc::getppid() },
             "executable": std::env::current_exe().unwrap(),
             "ax_trusted": unsafe { platform_macos::ax::bindings::AXIsProcessTrusted() },

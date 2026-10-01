@@ -36,7 +36,7 @@ routes where the app has a real X11 window.
 | --- | --- | --- | --- |
 | X11/Xorg | Supported | Discovery, capture, AT-SPI, foreground input, semantic background actions, desktop scope | Raw background delivery depends on the toolkit. |
 | Sway (wlroots) | Supported with limits | The full Electron, Tauri, GTK, and capture catalog | Focus-bound raw background input refuses. Other wlroots compositors unproven. |
-| GNOME/Mutter | Supported with limits | AT-SPI, GTK controls, compositor geometry and capture, foreground activation, portal/libei input | Needs the bundled WinRects Shell helper and one Shell restart. Portal video recording incomplete. |
+| GNOME/Mutter | Supported with limits | AT-SPI, GTK controls, compositor geometry and capture, foreground activation, portal/libei input | Needs the bundled [WinRects Shell helper](/cua-driver/quickstart) and one Shell restart. Portal video recording incomplete. |
 | KDE/KWin | Experimental | Plasma 6 startup, GTK AT-SPI discovery, portal availability | The KWin helper is read-only; raw target-addressed input refuses. |
 | Hyprland / Omarchy | Experimental | [Qualified isolated input](#hyprland-and-omarchy) since 0.24.0 | Does not inherit Sway coverage. |
 | `cua-compositor` (nested) | Experimental | Native GTK behavior, capture, per-surface raw input | Owns its own compositor; says nothing about stock Wayland. |

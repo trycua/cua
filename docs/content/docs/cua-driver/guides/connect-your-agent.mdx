@@ -162,6 +162,18 @@ tokens. Use at least a 64K context window. To target a macOS VM, pass the
 guest's SSH MCP command ([Run in a VM](/cua-driver/guides/vms-and-remote#macos-lume-vm))
 to `cua-mcp-filter --driver`.
 
+### Text-only models
+
+For a model that cannot accept images, such as iFlytek Spark-X2.5 on the
+Astron Token Plan, add `--text-only` to the filter's `args`. The filter then
+requests `get_window_state` without a screenshot and replaces any remaining
+image content with a short text note, so the model works through the
+accessibility tree and its `element_token` values. Leave pixel-only tools such
+as `screenshot` and `zoom` out of the allowlist. Without `--text-only`, a
+provider that rejects images fails every request once a screenshot reaches
+the conversation. Apps that expose no usable accessibility elements (canvas,
+video, custom-drawn surfaces) need a vision model instead.
+
 <div className="not-prose my-8 grid gap-5 md:grid-cols-2">
   <VideoDemo
     src="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/notes-editorial.mp4"

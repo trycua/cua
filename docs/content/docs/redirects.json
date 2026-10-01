@@ -406,6 +406,7 @@
     "cua-cli/reference/cli/drive": "cua-cli/reference/cli/volume",
     "cua-sdk/reference/spaces/drive": "cua-sdk/reference/spaces/volume",
     "cua-sdk/reference/spaces/drive-sync": "cua-sdk/reference/spaces/volume-sync",
-    "cua-sdk/reference/spaces/drive-app-core": "cua-sdk/reference/spaces/volume-app-core"
+    "cua-sdk/reference/spaces/drive-app-core": "cua-sdk/reference/spaces/volume-app-core",
+    "use-cua-with/iflytek": "cua-driver/guides/connect-your-agent"
   }
 }

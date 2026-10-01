@@ -56,6 +56,14 @@ cua-driver serve
 Run it in a terminal inside the desktop session and leave it open. On a
 minimal image, first `sudo apt install libxi6 at-spi2-core`.
 
+On GNOME, also install the bundled WinRects helper (no `sudo` needed), then
+log out and back in once so Shell loads it:
+
+```bash skip="host-install"
+~/.cua-driver/packages/current/wayland-helper/install.sh
+gnome-extensions info winrects@cua   # State: ACTIVE
+```
+
   </Tab>
 </Tabs>
 

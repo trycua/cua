@@ -24,7 +24,8 @@ from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
 from primary_observer import PrimaryObserver, verify_negative_control as verify_primary_control
 from production_app_smoke import (EXECUTABLES, NS, add_provenance_arguments, digest, ground, package_owner, profile_packages,
-                                  provenance as runtime_provenance, OBSERVATION_TIMEOUT_MS, require_complete)
+                                  provenance as runtime_provenance, OBSERVATION_ATTEMPTS, OBSERVATION_TIMEOUT_MS, identity_unproven_only,
+                                  require_complete)
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
 import production_pointer_grounding as pointer_grounding
 from realapp_proof import cleanup_all, rect_position, released_synthetic_input
@@ -629,18 +630,26 @@ def run(args):
         directory.mkdir()
         return DirectMCP(args.driver, directory, profile)
     def snapshot(mcp, target, session=None, full=False, pixels=False):
-        if capacity or policy_cache or full:
-            windows = mcp.tool('list_windows', {})
-            assert not windows.get('isError'), windows
-            matches = [window for window in windows['structuredContent']['windows']
-                       if window.get('pid') == target['pid']]
-            assert len(matches) == 1 and matches[0].get('window_id') == target['window_id'], \
-                'reviewed PID/window identity is stale or ambiguous'
-        result = mcp.tool('get_window_state', {**target,
-                          **({'timeout_ms': OBSERVATION_TIMEOUT_MS} if full else {'max_elements': 100, 'max_depth': 6}),
-                          **({'session': session} if session else {})})
-        assert not result.get('isError'), result
-        content = result['structuredContent']
+        # Only a complete walk whose sole defect is a not-yet-reconciled window
+        # identity is re-observed (read-only, fixed bound, exact PID/window on
+        # every attempt). Input is never replayed; every strict gate still applies.
+        for attempt in range(1, (OBSERVATION_ATTEMPTS if full else 1) + 1):
+            if capacity or policy_cache or full:
+                windows = mcp.tool('list_windows', {})
+                assert not windows.get('isError'), windows
+                matches = [window for window in windows['structuredContent']['windows']
+                           if window.get('pid') == target['pid']]
+                assert len(matches) == 1 and matches[0].get('window_id') == target['window_id'], \
+                    'reviewed PID/window identity is stale or ambiguous'
+            result = mcp.tool('get_window_state', {**target,
+                              **({'timeout_ms': OBSERVATION_TIMEOUT_MS} if full else {'max_elements': 100, 'max_depth': 6}),
+                              **({'session': session} if session else {})})
+            assert not result.get('isError'), result
+            content = result['structuredContent']
+            if not (full and attempt < OBSERVATION_ATTEMPTS and identity_unproven_only(content)):
+                break
+            mark('observation_retry', pid=target['pid'], window_id=target['window_id'], attempt=attempt,
+                 max_attempts=OBSERVATION_ATTEMPTS, degraded_reason=content['degraded_reason'])
         if full:
             require_complete(content)
         assert content.get('screenshot_width', 0) > 0, 'missing grounding image'

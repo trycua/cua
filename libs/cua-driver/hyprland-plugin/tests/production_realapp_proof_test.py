@@ -680,7 +680,16 @@ class SmokeStageTests(unittest.TestCase):
                     'dialog': 'unexpected dialog; no dismissal keys were sent',
                     'extra_window': 'reviewed PID/window identity is stale or ambiguous',
                     'after_dialog': 'unexpected dialog; no dismissal keys were sent',
-                    'transport': 'unknown input outcome'}
+                    'transport': 'unknown input outcome',
+                    'identity_before_once': None, 'identity_after_once': None,
+                    'identity_before_permanent': 'not proven complete',
+                    'identity_after_permanent': 'not proven complete',
+                    'identity_window_changed': 'reviewed PID/window identity is stale or ambiguous',
+                    'identity_truncated': 'not proven complete',
+                    'identity_incomplete': 'not proven complete'}
+        no_input = ('no_elements', 'dialog', 'extra_window', 'truncated', 'incomplete', 'degraded',
+                    'missing_budget', 'identity_before_permanent', 'identity_window_changed',
+                    'identity_truncated', 'identity_incomplete')
         for app, stage, elements in (
                 ('calc', 'insert', [{'role': 'table cell', 'label': 'A1', 'selected': True}]),
                 ('inkscape', 'select', INKSCAPE['elements']),
@@ -708,10 +717,13 @@ class SmokeStageTests(unittest.TestCase):
                     observer = Mock()
                     targets = [candidate['foreground']] + [spec['target'] for spec in candidate['agents']]
 
+                    identity_seen, phase_count = [0], {False: 0, True: 0}
+
                     def tool(name, parameters):
                         if name == 'list_windows':
                             windows = copy.deepcopy(targets)
-                            if failure == 'extra_window':
+                            if failure == 'extra_window' or (failure == 'identity_window_changed'
+                                                             and identity_seen[0]):
                                 windows.append({**candidate['agents'][index]['target'], 'window_id': 999})
                             return {'structuredContent': {'windows': windows}}
                         if name == 'get_window_state':
@@ -722,10 +734,22 @@ class SmokeStageTests(unittest.TestCase):
                                 rows = []
                             if failure == 'dialog' or (failure == 'after_dialog' and sent):
                                 rows = [{'role': 'dialog'}]
+                            phase_count[sent] += parameters.get('timeout_ms') == OBSERVATION_TIMEOUT_MS
+                            identity = ((failure in ('identity_truncated', 'identity_incomplete',
+                                                     'identity_window_changed') and not sent)
+                                        or ((failure or '').startswith('identity_before') and not sent)
+                                        or ((failure or '').startswith('identity_after') and sent))
+                            if (failure or '').endswith('_once') and phase_count[sent] > 1:
+                                identity = False
+                            identity = identity and parameters.get('timeout_ms') == OBSERVATION_TIMEOUT_MS
+                            identity_seen[0] += identity
                             return {'structuredContent': {'screenshot_width': 600, 'window_bounds': bounds,
-                                                          'truncated': failure == 'truncated',
-                                                          'elements_complete': failure != 'incomplete',
-                                                          'degraded': failure == 'degraded',
+                                                          'truncated': failure in ('truncated', 'identity_truncated'),
+                                                          'elements_complete': failure not in ('incomplete',
+                                                                                               'identity_incomplete'),
+                                                          'degraded': failure == 'degraded' or identity,
+                                                          **({'degraded_reason': 'accessibility_window_identity_unproven'
+                                                              ': title transition'} if identity else {}),
                                                           'timeout_ms': None if failure == 'missing_budget' else OBSERVATION_TIMEOUT_MS,
                                                           'tree_markdown': (INKSCAPE_SELECTED if stage == 'move'
                                                                             else INKSCAPE)['tree_markdown'],
@@ -747,8 +771,16 @@ class SmokeStageTests(unittest.TestCase):
                         verify_output=Mock(return_value={'verified': True})))
                     self.assertEqual(run(args), 0 if expected_error is None else 1)
                     inputs = [i for i, row in enumerate(calls) if row[0] == 'input']
-                    self.assertEqual(len(inputs), 0 if failure in ('no_elements', 'dialog', 'extra_window',
-                                      'truncated', 'incomplete', 'degraded', 'missing_budget') else 1)
+                    self.assertEqual(len(inputs), 0 if failure in no_input else 1)
+                    snapshots = [row for row in calls if row[0] == 'snapshot'
+                                 and row[1].get('timeout_ms') == OBSERVATION_TIMEOUT_MS]
+                    bound = {'identity_before_once': 3, 'identity_after_once': 3,
+                             'identity_before_permanent': 2, 'identity_after_permanent': 3,
+                             'identity_window_changed': 1, 'identity_truncated': 1,
+                             'identity_incomplete': 1, 'truncated': 1, 'incomplete': 1,
+                             'degraded': 1, 'missing_budget': 1}
+                    if failure in bound:
+                        self.assertEqual(len(snapshots), bound[failure])
                     if inputs:
                         i = inputs[0]
                         self.assertEqual(calls[i - 1][0], 'snapshot')

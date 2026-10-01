@@ -666,7 +666,7 @@ pub fn send_virtual_keyboard_text(
 ) -> Result<KeyboardDeliveryReport> {
     let keymap = Keymap::load()?;
     // Characters absent from the keymap (a sparse layout, or a non-Latin
-    // glyph) are hosted on spare keycodes, xdotool-style, with a guard that
+    // glyph) are hosted on spare keycodes, with a guard that
     // restores the map after delivery. plan_text_with_fallback resolves each
     // character in ORIGINAL text order — remapping a character never defers
     // it behind the characters that came after it, or a mixed-script string

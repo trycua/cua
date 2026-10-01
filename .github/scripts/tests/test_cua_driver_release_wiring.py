@@ -261,7 +261,7 @@ fi
         self.assertIn("missing from Screen & System Audio Recording", cli)
         self.assertIn("add {app_path}", cli)
 
-        limits = self.read("docs/content/docs/reference/cua-driver/limits.mdx")
+        limits = self.read("docs/content/docs/cua-driver/guides/troubleshoot.mdx")
         self.assertIn("without this grant it returns the tree only (no PNG)", limits)
 
     def test_release_please_owns_driver_and_lume(self) -> None:
@@ -445,8 +445,9 @@ fi
         self.assertIn('"path": "python/pyproject.toml"', config)
         self.assertIn('"path": "python/src/cua_driver/__init__.py"', config)
         self.assertIn('"path": "typescript/package.json"', config)
+        driver_files = json.loads(config)["packages"]["libs/cua-driver"]["extra-files"]
         self.assertEqual(
-            config.count('"path": "typescript/package-lock.json"'), 2
+            [entry["path"] for entry in driver_files].count("typescript/package-lock.json"), 2
         )
         self.assertNotIn('"path": "scripts/_install-rust.sh"', config)
         self.assertNotIn('"path": "scripts/install.ps1"', config)
@@ -1026,7 +1027,9 @@ fi
         self.assertIn("workflow_call:\n", workflow)
         self.assertIn("Installer compatibility summary", workflow)
         self.assertIn("ubuntu-latest, macos-26, windows-latest", workflow)
-        self.assertIn("repos/$GITHUB_REPOSITORY/releases?per_page=100", workflow)
+        # Versions come from the repository the installers download from.
+        self.assertIn("RELEASE_REPOSITORY: trycua/cua", workflow)
+        self.assertIn("repos/$RELEASE_REPOSITORY/releases?per_page=100", workflow)
         self.assertIn("libs/cua-driver/scripts/install.sh", workflow)
         self.assertIn("libs/cua-driver/scripts/install.ps1", workflow)
         self.assertIn("-NoAutoStart", workflow)

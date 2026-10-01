@@ -211,7 +211,7 @@ fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String
                         "could not read the current WindowServer frame of window_id {window_id}"
                     )
                 });
-                before.and_then(|before| {
+                before.map(|before| {
                     let mut mutation_errors = Vec::new();
                     let apply_mutations = |mutations: &[FrameMutation]| {
                         let mut errors = Vec::new();
@@ -268,13 +268,13 @@ fn mutate_and_verify(input: &SetWindowFrameInput) -> Result<FrameOutcome, String
                         observed.is_some_and(|frame| frame.approximately_eq(requested, 2.0));
                     let changed =
                         observed.is_some_and(|frame| !frame.approximately_eq(before, 2.0));
-                    Ok(FrameOutcome {
+                    FrameOutcome {
                         requested,
                         observed,
                         confirmed,
                         changed,
                         mutation_errors,
-                    })
+                    }
                 })
             }
         } else {

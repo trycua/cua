@@ -12,7 +12,7 @@ Usage:
     uv run samples/python/3_osworld_fleet.py                     # Fleet
     OSWORLD_LOCAL=1 OSWORLD_QCOW2=/path/to/overlay.qcow2 uv run samples/python/3_osworld_fleet.py  # local
 
-See docs/content/docs/how-to-guides/sandbox/run-osworld-on-cloud-fleet.mdx.
+See docs/content/docs/cua-bench/guides/benchmarks.mdx (OSWorld-Verified).
 """
 
 import asyncio
@@ -133,7 +133,7 @@ async def main() -> None:
         Path("osworld-after.png").write_bytes(await sb.screenshot())
         print("saved osworld-after.png")
     print(
-        f"[{time.time() - t0:.0f}s] released; pool deleted"
+        f"[{time.time() - t0:.0f}s] claim released (the managed pool stays for reuse)"
         if not LOCAL
         else f"[{time.time() - t0:.0f}s] VM stopped"
     )

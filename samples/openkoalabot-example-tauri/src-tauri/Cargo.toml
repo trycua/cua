@@ -1,0 +1,49 @@
+# openkoalabots on the cua SDK's Rust crates, with a Tauri shell.
+#
+# - `core/`  (`openkoalabot-example-core`): the app logic, headless. Depends on the
+#   Spaces runtime (`cua-spaces`, libs/cua) directly. Also builds the
+#   `openkoalabot-example-scenario` runner for samples/openkoalabot-example-scenario.
+# - `app/`   (`openkoalabot-example-tauri`): the Tauri 2 shell; every command is a
+#   one-liner over `openkoalabot-example-core`.
+[workspace]
+resolver = "2"
+members = ["core", "app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "FSL-1.1-MIT"
+publish = false
+
+[workspace.dependencies]
+openkoalabot-example-core = { path = "core" }
+cua-spaces = { path = "../../../libs/cua/crates/cua-spaces", default-features = false, features = [
+    "spaces-files",
+    "spaces-stream",
+    "spaces-presence",
+    "spaces-agents",
+    # `Spaces::call_extension`: session teleport's tool calls.
+    "mcp",
+] }
+cua-fleet = { path = "../../../libs/cua/crates/cua-fleet" }
+# The streaming client behind `StreamSession` ships with Cua Spaces
+# (source-available, FSL-1.1-MIT), which makes this sample FSL too.
+cua-spaces-ext = { path = "../../../libs/cua/crates/cua-spaces-ext" }
+# The in-process mock cua-spacesd (`testing` feature) behind the core's
+# integration tests.
+cua-spacesd-client = { path = "../../../libs/cua/crates/cua-spacesd-client" }
+# `LocalRuntime` (local Spaces) and the SDK's runtime behind it (`VmmLocal`:
+# containers, QEMU, Lume; no setup on the host beyond what they need).
+cua-sandbox-core = { path = "../../../libs/cua/crates/cua-sandbox-core" }
+cua-daemon = { path = "../../../libs/cua/crates/cua-daemon", default-features = false }
+async-trait = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+rand = "0.9"
+tempfile = "3"
+thiserror = "2"

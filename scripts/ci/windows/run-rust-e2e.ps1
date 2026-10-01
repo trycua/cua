@@ -399,7 +399,7 @@ if ($suite -in @("shared", "all")) {
 if ($suite -in @("native", "all")) {
     Invoke-CargoTest "Windows installed-app discovery deadline" @(
         "test", "-p", "cua-driver", "--test", "protocol_tools_call_test", "--",
-        "--exact", "tools_call_list_apps", "--nocapture", "--test-threads=1"
+        "--ignored", "--exact", "tools_call_list_apps", "--nocapture", "--test-threads=1"
     )
     Invoke-CargoTest "Agent cursor showcase" @(
         "test", "-p", "cua-driver-e2e", "--test", "agent_cursor_showcase_test", "--",

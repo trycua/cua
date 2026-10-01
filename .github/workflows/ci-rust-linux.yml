@@ -53,6 +53,11 @@ concurrency:
   group: ci-rust-linux-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
 jobs:
   pacman:
     name: Arch native pacman updates
@@ -113,8 +118,15 @@ jobs:
     name: Rust Linux unit and compile
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Dozens of debug test binaries: line tables keep backtraces useful
+      # without full debug info filling the runner disk at link time.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+        with:
+          install-deps: "false"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

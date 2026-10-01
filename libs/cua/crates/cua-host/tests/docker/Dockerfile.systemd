@@ -1,0 +1,7 @@
+# Debian with systemd as PID 1, for the host-setup systemd lane only.
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends systemd systemd-sysv procps ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && systemctl mask getty@tty1.service systemd-logind.service
+STOPSIGNAL SIGRTMIN+3
+CMD ["/lib/systemd/systemd"]

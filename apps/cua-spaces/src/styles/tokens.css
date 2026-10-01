@@ -1,0 +1,117 @@
+/* SPDX-License-Identifier: FSL-1.1-MIT */
+/* Copyright (c) 2026 Cua AI, Inc. */
+
+:root {
+  color-scheme: light dark;
+
+  /* Type */
+  --font-ui:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Acrylic surfaces (light) */
+  --acrylic-bg: rgba(255, 255, 255, 0.62);
+  --acrylic-bg-strong: rgba(255, 255, 255, 0.78);
+  --acrylic-border: rgba(255, 255, 255, 0.55);
+  --acrylic-edge: rgba(0, 0, 0, 0.08);
+  --acrylic-blur: 28px;
+  --acrylic-saturate: 160%;
+
+  --ink: rgba(0, 0, 0, 0.88);
+  --ink-2: rgba(0, 0, 0, 0.58);
+  --ink-3: rgba(0, 0, 0, 0.38);
+  --hairline: rgba(0, 0, 0, 0.09);
+  --fill: rgba(0, 0, 0, 0.045);
+  --fill-hover: rgba(0, 0, 0, 0.08);
+  --fill-active: rgba(0, 0, 0, 0.12);
+
+  /* Top-edge highlight that makes a glass surface read as a physical layer. */
+  --glass-highlight: rgba(255, 255, 255, 0.5);
+
+  --accent: #0a7aff;
+  --accent-ink: #ffffff;
+  --focus-ring: 0 0 0 3px rgba(10, 122, 255, 0.45);
+
+  --status-running: #30c552;
+  --status-approval: #f2a600;
+  --status-suspended: #a3a3aa;
+  --status-provisioning: #0a7aff;
+  --status-deleting: #a3a3aa;
+  /* Agent runs can end badly in a way a Space's own statuses never did. */
+  --status-error: #d9534f;
+
+  --notch-black: #000;
+  --notch-height: 38px;
+  /* The MacBook notch is narrower than the old 220px fallback, which made the
+     cap stick out on the left and pushed the tab/indicator ~8px off the notch.
+     Sizing it down narrows the cap and pulls both flanks in together. */
+  --notch-width: 200px;
+
+  --radius-xl: 22px;
+  --radius-lg: 14px;
+  --radius-md: 10px;
+  --radius-sm: 7px;
+
+  --shadow-shelf: 0 18px 40px -18px rgba(0, 0, 0, 0.38), 0 2px 6px rgba(0, 0, 0, 0.1);
+  --shadow-tile: 0 1px 2px rgba(0, 0, 0, 0.14), 0 6px 14px -8px rgba(0, 0, 0, 0.3);
+
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-fast: 140ms;
+  --dur: 220ms;
+
+  /* Springy, slightly-overshooting easing for the notch morph choreography
+     (the "N Spaces" tab collapsing, the notch growing into the "Teleport to
+     Cua" box, and the expand/collapse of the Space selector). Reads like the
+     iOS Dynamic Island rather than a flat ease-out. Reduced-motion drops the
+     duration to 0 below (and the global guard neutralises the overshoot). */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-spring: 300ms;
+  /* Snappier duration for the Island panel's expand/collapse (out of / back
+     into the notch) — deliberately quicker than the general spring. */
+  --dur-island: 200ms;
+
+  /* Hover and press feedback on the notch's controls (tiles, search, list
+     and settings, the "N Spaces" tab): a quick spring, much faster than the
+     island's open. The SwiftUI notch uses the same numbers (NotchPress). */
+  --notch-press-dur: 120ms;
+  --notch-press-ease: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --notch-press-button: 0.9;
+  --notch-press-tile: 0.96;
+  --notch-tile-lift: -2px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --acrylic-bg: rgba(38, 38, 42, 0.62);
+    --acrylic-bg-strong: rgba(44, 44, 48, 0.78);
+    --acrylic-border: rgba(255, 255, 255, 0.14);
+    --acrylic-edge: rgba(0, 0, 0, 0.5);
+
+    --ink: rgba(255, 255, 255, 0.92);
+    --ink-2: rgba(255, 255, 255, 0.62);
+    --ink-3: rgba(255, 255, 255, 0.4);
+    --hairline: rgba(255, 255, 255, 0.1);
+    --fill: rgba(255, 255, 255, 0.07);
+    --fill-hover: rgba(255, 255, 255, 0.11);
+    --fill-active: rgba(255, 255, 255, 0.16);
+
+    --glass-highlight: rgba(255, 255, 255, 0.14);
+
+    --accent: #2f8fff;
+    --shadow-shelf: 0 18px 40px -16px rgba(0, 0, 0, 0.7), 0 2px 6px rgba(0, 0, 0, 0.3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur: 0ms;
+    --dur-spring: 0ms;
+    --dur-island: 0ms;
+    --notch-press-dur: 0ms;
+    --notch-press-button: 1;
+    --notch-press-tile: 1;
+    /* Fall back to a plain (non-bouncy) curve so nothing overshoots. */
+    --ease-spring: var(--ease-out);
+  }
+}

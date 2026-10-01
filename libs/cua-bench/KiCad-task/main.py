@@ -118,7 +118,11 @@ async def evaluate(task_cfg: cb.Task, session: cb.DesktopSession) -> list[float]
     if expected:
         components = await session.apps.kicad.get_components(netlist_path=NETLIST_PATH)
         scores = [
-            1.0 if sum(1 for c in components if c["ref"].upper().startswith(prefix)) == count else 0.0
+            (
+                1.0
+                if sum(1 for c in components if c["ref"].upper().startswith(prefix)) == count
+                else 0.0
+            )
             for prefix, count in expected.items()
         ]
         score = sum(scores) / len(scores)

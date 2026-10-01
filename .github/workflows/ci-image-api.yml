@@ -12,6 +12,7 @@ on:
       - "libs/python/cua-sandbox/tests/test_image*.py"
       - "libs/python/cua-sandbox/pyproject.toml"
       - "libs/python/cua-sandbox/uv.lock"
+      - "libs/cua/python/**"
       - ".github/workflows/ci-image-api.yml"
       - ".github/workflows/cd-image-api.yml"
   pull_request:
@@ -25,6 +26,7 @@ on:
       - "libs/python/cua-sandbox/tests/test_image*.py"
       - "libs/python/cua-sandbox/pyproject.toml"
       - "libs/python/cua-sandbox/uv.lock"
+      - "libs/cua/python/**"
       - ".github/workflows/ci-image-api.yml"
       - ".github/workflows/cd-image-api.yml"
   workflow_dispatch:
@@ -32,10 +34,18 @@ on:
 permissions:
   contents: read
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # A cold release build of the cua SDK library alone takes 15 minutes or
+    # more on a hosted runner (both runs on PR #19 were cancelled mid-build
+    # at the old 15-minute limit); the rust cache makes warm runs quick.
+    timeout-minutes: 45
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -49,6 +59,36 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.25.x"
+
+      # cua-sandbox imports the cua SDK, whose Python package loads the
+      # native cua-sdk library: build and stage it before installing.
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-sandbox
+
+      - name: Install Linux build dependencies (cua SDK)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config libx11-dev libxkbcommon-dev \
+            libwayland-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev \
+            libxrandr-dev libxi-dev libudev-dev
+
+      - name: Build the cua SDK library
+        working-directory: libs/cua
+        run: |
+          cargo build --locked --release -p cua-sdk
+          node scripts/stage-uniffi-library.mjs --only=python
 
       - name: Install dependencies
         run: |

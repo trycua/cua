@@ -1,0 +1,185 @@
+{
+  "flow": "about",
+  "frames": [
+    {
+      "about": {
+        "copyright": "© 2026 Cua AI, Inc. All rights reserved.",
+        "links": [
+          "acknowledgements Acknowledgements -> (bundled notices)",
+          "privacy Privacy Policy -> https://cua.ai/privacy-policy",
+          "terms Terms of Service -> https://cua.ai/terms-of-service",
+          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.2.0%20%280.2.0.123%29%0AmacOS%2026.0%20%28arm64%29"
+        ],
+        "title": "Cua Spaces for macOS",
+        "updates": {
+          "autoCheck": "[x] Automatically check for updates",
+          "autoInstall": "[ ] Install updates automatically",
+          "channel": "Update to: Stable* | Beta",
+          "check": "Check Now on",
+          "help": "Stable gets tested releases. Beta also gets prereleases: new features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.",
+          "lastCheck": "Last check: Never",
+          "sparkleChannels": []
+        },
+        "version": "Version 0.2.0 (0.2.0.123)"
+      },
+      "step": "first open"
+    },
+    {
+      "about": {
+        "copyright": "© 2026 Cua AI, Inc. All rights reserved.",
+        "links": [
+          "acknowledgements Acknowledgements -> (bundled notices)",
+          "privacy Privacy Policy -> https://cua.ai/privacy-policy",
+          "terms Terms of Service -> https://cua.ai/terms-of-service",
+          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.2.0%20%280.2.0.123%29%0AmacOS%2026.0%20%28arm64%29"
+        ],
+        "title": "Cua Spaces for macOS",
+        "updates": {
+          "autoCheck": "[x] Automatically check for updates",
+          "autoInstall": "[x] Install updates automatically",
+          "channel": "Update to: Stable* | Beta",
+          "check": "Check Now on",
+          "help": "Stable gets tested releases. Beta also gets prereleases: new features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.",
+          "lastCheck": "Last check: Never",
+          "sparkleChannels": []
+        },
+        "version": "Version 0.2.0 (0.2.0.123)"
+      },
+      "step": "install automatically"
+    },
+    {
+      "about": {
+        "copyright": "© 2026 Cua AI, Inc. All rights reserved.",
+        "links": [
+          "acknowledgements Acknowledgements -> (bundled notices)",
+          "privacy Privacy Policy -> https://cua.ai/privacy-policy",
+          "terms Terms of Service -> https://cua.ai/terms-of-service",
+          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.3.0-beta.1%20%280.3.0.130%29%0AmacOS%2026.0%20%28arm64%29"
+        ],
+        "title": "Cua Spaces for macOS",
+        "updates": {
+          "autoCheck": "[x] Automatically check for updates",
+          "autoInstall": "[x] Install updates automatically",
+          "channel": "Update to: Stable | Beta*",
+          "check": "Check Now on",
+          "help": "Stable gets tested releases. Beta also gets prereleases: new features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.",
+          "lastCheck": "Last check: 9/30/26, 3:04 PM",
+          "sparkleChannels": [
+            "beta"
+          ]
+        },
+        "version": "Version 0.3.0-beta.1 (0.3.0.130)"
+      },
+      "step": "beta, checked before"
+    },
+    {
+      "about": {
+        "copyright": "© 2026 Cua AI, Inc. All rights reserved.",
+        "links": [
+          "acknowledgements Acknowledgements -> (bundled notices)",
+          "privacy Privacy Policy -> https://cua.ai/privacy-policy",
+          "terms Terms of Service -> https://cua.ai/terms-of-service",
+          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.3.0-beta.1%20%280.3.0.130%29%0AmacOS%2026.0%20%28arm64%29"
+        ],
+        "title": "Cua Spaces for macOS",
+        "updates": {
+          "autoCheck": "[x] Automatically check for updates",
+          "autoInstall": "[x] Install updates automatically",
+          "channel": "Update to: Stable | Beta*",
+          "check": "Checking… off",
+          "help": "Stable gets tested releases. Beta also gets prereleases: new features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.",
+          "lastCheck": "Last check: 9/30/26, 3:04 PM",
+          "sparkleChannels": [
+            "beta"
+          ]
+        },
+        "version": "Version 0.3.0-beta.1 (0.3.0.130)"
+      },
+      "step": "checking"
+    },
+    {
+      "about": {
+        "copyright": "© 2026 Cua AI, Inc. All rights reserved.",
+        "links": [
+          "acknowledgements Acknowledgements -> (bundled notices)",
+          "privacy Privacy Policy -> https://cua.ai/privacy-policy",
+          "terms Terms of Service -> https://cua.ai/terms-of-service",
+          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.3.0-beta.1%20%280.3.0.130%29%0AmacOS%2026.0%20%28arm64%29"
+        ],
+        "title": "Cua Spaces for macOS",
+        "updates": {
+          "autoCheck": "[ ] Automatically check for updates",
+          "autoInstall": "[x] Install updates automatically (disabled)",
+          "channel": "Update to: Stable | Beta*",
+          "check": "Check Now on",
+          "help": "Stable gets tested releases. Beta also gets prereleases: new features sooner, with rough edges. Back on Stable, this version stays until a newer stable release.",
+          "lastCheck": "Last check: 9/30/26, 3:04 PM",
+          "sparkleChannels": [
+            "beta"
+          ]
+        },
+        "version": "Version 0.3.0-beta.1 (0.3.0.130)"
+      },
+      "step": "no automatic checks"
+    },
+    {
+      "about": {
+        "copyright": "© 2026 Cua AI, Inc. All rights reserved.",
+        "links": [
+          "acknowledgements Acknowledgements -> (bundled notices)",
+          "privacy Privacy Policy -> https://cua.ai/privacy-policy",
+          "terms Terms of Service -> https://cua.ai/terms-of-service",
+          "issue Report an Issue… -> https://github.com/trycua/cua/issues/new?template=bug.yml&environment=Cua%20Spaces%20for%20macOS%200.3.0-beta.1%0AmacOS%2026.0%20%28arm64%29"
+        ],
+        "title": "Cua Spaces for macOS",
+        "updates": null,
+        "version": "Version 0.3.0-beta.1"
+      },
+      "step": "no updater"
+    },
+    {
+      "launch": "refresh false save 0.2.0 (0.2.0.1)",
+      "step": "fresh install"
+    },
+    {
+      "launch": "refresh false save -",
+      "step": "same build again"
+    },
+    {
+      "launch": "refresh true save 0.2.0-staging.6 (0.2.0.106)",
+      "step": "updated"
+    },
+    {
+      "launch": "refresh true save 0.2.0 (0.2.0.2)",
+      "step": "updated from a build that kept no record"
+    },
+    {
+      "restartDaemon": true,
+      "step": "the app's own daemon"
+    },
+    {
+      "restartDaemon": false,
+      "step": "another cua's daemon"
+    },
+    {
+      "restartDaemon": false,
+      "step": "no daemon"
+    },
+    {
+      "notice": null,
+      "step": "refreshed"
+    },
+    {
+      "notice": "Cua Spaces updated, but could not refresh the Cua skills in your AI agents (exit status 1). Run `cua agents update` to try again.",
+      "step": "agents failed"
+    },
+    {
+      "notice": "Cua Spaces updated, but could not restart the Cua daemon (the daemon did not stop within 10 s). Quit and reopen Cua Spaces to use the new version.",
+      "step": "daemon failed"
+    },
+    {
+      "notice": "Cua Spaces updated, but could not refresh the Cua skills in your AI agents or restart the Cua daemon. Run `cua agents update`, then quit and reopen Cua Spaces.",
+      "step": "both failed"
+    }
+  ]
+}

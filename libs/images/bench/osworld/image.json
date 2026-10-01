@@ -1,0 +1,197 @@
+{
+  "schema_version": 1,
+  "name": "bench-osworld",
+  "description": "OSWorld-Verified: the upstream Ubuntu 22.04 GNOME desktop (auto-login user, OSWorld server on :5000, the benchmark apps) plus cua-spacesd.",
+  "repository": "ghcr.io/trycua/bench-osworld",
+  "os": "linux",
+  "platforms": [
+    "linux/amd64"
+  ],
+  "outputs": {
+    "rootfs": {
+      "tag_prefix": "",
+      "runtimes": [
+        "docker",
+        "gvisor"
+      ],
+      "init": "supervisord"
+    },
+    "containerdisk": {
+      "tag_prefix": "",
+      "runtimes": [
+        "kubevirt",
+        "qemu"
+      ],
+      "init": "systemd",
+      "path": "/disk/disk.img",
+      "firmware": {
+        "amd64": [
+          "bios",
+          "efi"
+        ]
+      }
+    }
+  },
+  "desktop": {
+    "display": ":0",
+    "resolution": "1920x1080",
+    "user": "user",
+    "uid": 1000,
+    "runtime_dir": "/run/user/1000",
+    "session_bus": "unix:path=/run/user/1000/bus"
+  },
+  "services": [
+    {
+      "name": "env",
+      "port": 3211,
+      "protocol": "grpc",
+      "component": "cua-spacesd",
+      "auth": "bearer token: CUA_ENV_TOKEN or /run/cua/env-token",
+      "readiness": "tcp"
+    },
+    {
+      "name": "env-media",
+      "port": 3212,
+      "protocol": "udp",
+      "component": "cua-spacesd"
+    },
+    {
+      "name": "server",
+      "port": 5000,
+      "protocol": "http",
+      "component": "osworld",
+      "readiness": "http:/screenshot"
+    }
+  ],
+  "fixtures": {},
+  "audio": {},
+  "claims": {
+    "_doc": "What the image promises (claimed = required by cua-spacesd doctor). Kept to what a stock OSWorld desktop provides; everything else is optional. Chrome CDP (9222, via socat) and VLC HTTP (8080) are started by task setup, so they are not claimed as always-on services.",
+    "features_required": [
+      "pty",
+      "fs_watch",
+      "driver",
+      "windows"
+    ],
+    "features_optional": [
+      "a11y",
+      "background_input",
+      "desktop_stream",
+      "window_stream",
+      "h264_sw",
+      "h264_hw",
+      "quic_media",
+      "launch_app",
+      "clipboard.text",
+      "clipboard.files",
+      "clipboard.image",
+      "presence",
+      "presence.cursor_shape",
+      "hotspot",
+      "relay_attach",
+      "tunnel.forward",
+      "audio.desktop",
+      "audio.uplink",
+      "audio.opus",
+      "audio.per_app",
+      "teleport.*",
+      "volume.mount"
+    ],
+    "codecs_required": [],
+    "auth_modes": [
+      "local",
+      "pod-secret",
+      "kubevirt-bridge"
+    ],
+    "units": {
+      "supervisord": [
+        "dbus-system",
+        "desktop",
+        "pulseaudio",
+        "osworld",
+        "cua-env-token-sync",
+        "cua-spacesd"
+      ],
+      "systemd": [
+        "osworld.service",
+        "cua-env-token-sync.service",
+        "cua-spacesd.service"
+      ]
+    },
+    "unit_processes": {
+      "dbus-system": "dbus-daemon --system",
+      "desktop": "Xorg",
+      "osworld": "server/main.py",
+      "cua-env-token-sync": "token-sync",
+      "cua-spacesd": "cua-spacesd",
+      "pulseaudio": "pulseaudio"
+    },
+    "compat_links": [
+      {
+        "path": "/usr/local/bin/cua-env-driver",
+        "target": "cua-spacesd"
+      },
+      {
+        "path": "/usr/local/bin/cua-guestd",
+        "target": "cua-spacesd"
+      },
+      {
+        "path": "/opt/cua/bin/start-env-driver.sh",
+        "target": "start-spacesd.sh"
+      },
+      {
+        "path": "/opt/cua/bin/start-guestd.sh",
+        "target": "start-spacesd.sh"
+      },
+      {
+        "path": "/etc/cua-image/env-driver-source",
+        "target": "spacesd-source"
+      },
+      {
+        "path": "/etc/cua-image/guestd-source",
+        "target": "spacesd-source"
+      }
+    ],
+    "apps": {
+      "python3": [
+        "python3",
+        "--version"
+      ],
+      "google-chrome": [
+        "google-chrome",
+        "--version"
+      ],
+      "libreoffice": [
+        "libreoffice",
+        "--version"
+      ],
+      "gimp": [
+        "gimp",
+        "--version"
+      ],
+      "thunderbird": [
+        "thunderbird",
+        "--version"
+      ]
+    },
+    "parity_expected_diff": [
+      "kernel",
+      "runtime",
+      "init",
+      "cpu_model",
+      "cpu_count",
+      "memory_mib",
+      "clock_skew_ms",
+      "gpu",
+      "encoder",
+      "display_server",
+      "audio_backend"
+    ],
+    "resources": {
+      "min_disk_gib": 4,
+      "min_shm_mib": 64,
+      "min_memory_mib": 3584
+    },
+    "locale": "en_US.UTF-8"
+  }
+}

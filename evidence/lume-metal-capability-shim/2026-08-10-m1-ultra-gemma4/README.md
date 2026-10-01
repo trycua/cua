@@ -17,8 +17,8 @@ The final sample ranges were:
 
 | Workload          | Bare-metal host | Stock guest | Safe-shim guest |
 | ----------------- | --------------: | ----------: | --------------: |
-| Prompt processing |   516.33–518.29 | 69.94–72.77 |   514.14–516.54 |
-| Token generation  |     51.92–52.52 |   3.37–3.50 |     49.52–49.79 |
+| Prompt processing |   516.33-518.29 | 69.94-72.77 |   514.14-516.54 |
+| Token generation  |     51.92-52.52 |   3.37-3.50 |     49.52-49.79 |
 
 ## Measurement hygiene
 

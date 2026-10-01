@@ -118,6 +118,100 @@
           "path": "scripts/install.sh"
         }
       ]
+    },
+    "libs/cua": {
+      "release-type": "simple",
+      "component": "cua-sdk",
+      "package-name": "cua-sdk",
+      "bump-minor-pre-major": true,
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md",
+      "exclude-paths": [
+        "libs/cua/proto/MEDIA.md",
+        "libs/cua/README.md"
+      ],
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "python/pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
+          "type": "generic",
+          "path": "python/src/cua/__init__.py"
+        },
+        {
+          "type": "json",
+          "path": "typescript/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "typescript/package-lock.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "typescript/package-lock.json",
+          "jsonpath": "$.packages[''].version"
+        }
+      ],
+      "release-as": "0.2.0"
+    },
+    "libs/cua-spacesd": {
+      "release-type": "simple",
+      "component": "cua-spacesd",
+      "package-name": "cua-spacesd",
+      "release-as": "0.1.0",
+      "bump-minor-pre-major": true,
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md",
+      "exclude-paths": [
+        "libs/cua-spacesd/docs",
+        "libs/cua-spacesd/examples",
+        "libs/cua-spacesd/README.md"
+      ],
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "Cargo.toml",
+          "jsonpath": "$.workspace.package.version"
+        }
+      ]
+    },
+    "apps/cua-spaces": {
+      "release-type": "simple",
+      "component": "cua-spaces",
+      "package-name": "cua-spaces",
+      "bump-minor-pre-major": true,
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md",
+      "exclude-paths": [
+        "apps/cua-spaces/docs"
+      ],
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "src-tauri/tauri.conf.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "toml",
+          "path": "src-tauri/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "src-tauri/Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-spaces-app')].version"
+        }
+      ],
+      "release-as": "0.1.0"
     }
   }
 }

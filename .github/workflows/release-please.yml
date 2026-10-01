@@ -17,6 +17,9 @@ on:
           - cua-driver-rs
           - lume
           - sandbox
+          - cua-spacesd
+          - cua-sdk
+          - cua-spaces
       bump:
         description: "Version bump for the selected component"
         required: true
@@ -60,7 +63,7 @@ jobs:
           inputs.component == 'automatic' &&
           inputs.bump != 'automatic'
         run: |
-          echo "::error::Select cua-perception, cua-driver-rs, lume, or sandbox when forcing a bump type."
+          echo "::error::Select cua-perception, cua-driver-rs, lume, sandbox, cua-spacesd, cua-sdk or cua-spaces when forcing a bump type."
           exit 1
 
       - name: Reject manifest tags outside main history
@@ -157,7 +160,12 @@ jobs:
               '.files | any(.path == "libs/lume/VERSION")')
             SANDBOX=$(echo "$PR" | jq -r \
               '.files | any(.path == "libs/python/cua-sandbox/VERSION")')
-            if [[ "$DRIVER" != "true" && "$PERCEPTION" != "true" && "$LUME" != "true" && "$SANDBOX" != "true" ]]; then
+            SPACESD=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/cua-spacesd/VERSION")')
+            SDK=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/cua/VERSION")')
+            if [[ "$DRIVER" != "true" && "$PERCEPTION" != "true" && "$LUME" != "true" && \
+                  "$SANDBOX" != "true" && "$SPACESD" != "true" && "$SDK" != "true" ]]; then
               continue
             fi
 
@@ -206,6 +214,12 @@ jobs:
               if [[ "$SANDBOX" == "true" ]]; then
                 COMPONENT_ARGS+=(--component sandbox)
               fi
+              if [[ "$SPACESD" == "true" ]]; then
+                COMPONENT_ARGS+=(--component cua-spacesd)
+              fi
+              if [[ "$SDK" == "true" ]]; then
+                COMPONENT_ARGS+=(--component cua-sdk)
+              fi
               python3 .github/scripts/merge_release_please_manifests.py \
                 --main "$RUNNER_TEMP/main-release-manifest.json" \
                 --release "$RUNNER_TEMP/branch-release-manifest.json" \
@@ -233,14 +247,28 @@ jobs:
               python3 .github/scripts/sync_driver_release_docs.py
               python3 .github/scripts/validate_release_versions.py --product driver
               git add libs/cua-driver/rust/Cargo.lock \
-                docs/content/docs/reference/cua-driver
+                docs/content/docs/cua-driver/reference
               COMMIT_MESSAGE="chore(cua-driver-rs): synchronize generated release files"
             elif [[ "$LUME" == "true" ]]; then
               python3 .github/scripts/sync_lume_release_docs.py
               python3 .github/scripts/validate_release_versions.py --product lume
-              git add docs/content/docs/reference/lume/cli-reference.mdx \
-                docs/content/docs/reference/lume/http-api.mdx
+              git add docs/content/docs/lume/reference
               COMMIT_MESSAGE="chore(lume): synchronize release documentation"
+            elif [[ "$SPACESD" == "true" ]]; then
+              # Release Please bumps the workspace version in Cargo.toml; the
+              # lockfiles (the workspace and the standalone e2e workspaces
+              # that lock its crates by path) follow without upgrading deps.
+              for manifest in libs/cua-spacesd/Cargo.toml libs/cua-spacesd/tests/*/Cargo.toml; do
+                cargo metadata --format-version 1 --manifest-path "$manifest" > /dev/null
+              done
+              python3 .github/scripts/validate_release_versions.py --product spacesd
+              git add libs/cua-spacesd/Cargo.lock libs/cua-spacesd/tests/*/Cargo.lock
+              COMMIT_MESSAGE="chore(cua-spacesd): synchronize release lockfiles"
+            elif [[ "$SDK" == "true" ]]; then
+              # Release Please bumps VERSION, pyproject, __init__, package.json
+              # and package-lock.json together; only validation runs here.
+              python3 .github/scripts/validate_release_versions.py --product sdk
+              COMMIT_MESSAGE="chore(cua-sdk): synchronize release metadata"
             else
               python3 .github/scripts/validate_release_versions.py --product sandbox
               # The Sandbox reference records the package version, so regenerate
@@ -248,8 +276,9 @@ jobs:
               # because this step holds the release app token.
               npx --yes pnpm@9.0.4 --dir docs install --frozen-lockfile --ignore-scripts
               node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library sandbox
-              git add docs/content/docs/reference/sandbox-sdk/runtime-support.mdx \
-                docs/content/docs/reference/sandbox-sdk/os-image-catalog.mdx
+              git add docs/content/docs/cua-sdk/reference/runtime-support.mdx \
+                docs/content/docs/cua-sdk/reference/os-image-catalog.mdx \
+                docs/content/docs/cua-sdk/reference/image-software.mdx
               COMMIT_MESSAGE="chore(sandbox): synchronize release metadata"
             fi
             if git diff --cached --quiet; then

@@ -964,9 +964,8 @@ fn actual_delivery_from_legacy(
     {
         return Some(ActualDelivery::NotApplicable);
     }
-    match structured_delivery_mode(args, structured) {
-        Some(delivery) => return Some(delivery),
-        None => {}
+    if let Some(delivery) = structured_delivery_mode(args, structured) {
+        return Some(delivery);
     }
     match raw_path {
         Some(path) if path.ends_with("_fg") => Some(ActualDelivery::Foreground),

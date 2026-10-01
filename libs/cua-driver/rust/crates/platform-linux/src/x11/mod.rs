@@ -52,10 +52,7 @@ pub fn active_window() -> Option<u64> {
 
 /// List top-level windows, optionally filtered by pid.
 pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
-    match list_windows_inner(filter_pid) {
-        Ok(w) => w,
-        Err(_) => Vec::new(),
-    }
+    list_windows_inner(filter_pid).unwrap_or_default()
 }
 
 /// Whether the X server still knows a window by this id.
@@ -153,7 +150,7 @@ fn list_windows_inner(filter_pid: Option<u32>) -> Result<Vec<WindowInfo>> {
     Ok(result)
 }
 
-fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec<Window>> {
+pub(crate) fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec<Window>> {
     let atom_names = ["_NET_CLIENT_LIST_STACKING", "_NET_CLIENT_LIST"];
     for name in &atom_names {
         if let Ok(atom) = get_atom(conn, name) {
@@ -197,7 +194,7 @@ fn fallback_window_is_listable(map_state: MapState) -> bool {
     map_state == MapState::VIEWABLE
 }
 
-fn get_atom(conn: &RustConnection, name: &str) -> Result<Atom> {
+pub(crate) fn get_atom(conn: &RustConnection, name: &str) -> Result<Atom> {
     Ok(conn.intern_atom(false, name.as_bytes())?.reply()?.atom)
 }
 
@@ -523,7 +520,7 @@ pub fn window_pid(xid: u64) -> Option<u32> {
     get_window_pid(&conn, xid).ok().flatten()
 }
 
-fn get_window_pid(conn: &RustConnection, window: Window) -> Result<Option<u32>> {
+pub(crate) fn get_window_pid(conn: &RustConnection, window: Window) -> Result<Option<u32>> {
     let atom = get_atom(conn, "_NET_WM_PID")?;
     let reply = conn
         .get_property(false, window, atom, AtomEnum::CARDINAL, 0, 1)?
@@ -643,7 +640,7 @@ fn get_client_machine(conn: &RustConnection, window: Window) -> Result<Option<St
     Ok(Some(value.trim_end_matches('\0').to_owned()))
 }
 
-fn get_window_title(conn: &RustConnection, window: Window) -> Result<String> {
+pub(crate) fn get_window_title(conn: &RustConnection, window: Window) -> Result<String> {
     // Try _NET_WM_NAME (UTF-8) first.
     if let Ok(atom) = get_atom(conn, "_NET_WM_NAME") {
         if let Ok(utf8_atom) = get_atom(conn, "UTF8_STRING") {
@@ -681,14 +678,7 @@ pub fn wm_class_for_window(xid: u64) -> Option<(String, String)> {
 
 pub(crate) fn get_window_class(conn: &RustConnection, xid: Window) -> Option<(String, String)> {
     let reply = conn
-        .get_property(
-            false,
-            xid as u32,
-            AtomEnum::WM_CLASS,
-            AtomEnum::STRING,
-            0,
-            512,
-        )
+        .get_property(false, xid, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 512)
         .ok()?
         .reply()
         .ok()?;

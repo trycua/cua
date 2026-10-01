@@ -76,7 +76,7 @@ class TestCiNixLinuxPaths(unittest.TestCase):
             "libs/cua-driver/tools/cursor-gallery/README.md",
             "libs/cua-driver/tools/cursor-gallery/index.html",
             "libs/cua-driver/tools/cursor-gallery/styles.css",
-            "docs/content/docs/how-to-guides/driver/personalize-cursor.mdx",
+            "docs/content/docs/cua-driver/guides/operate.mdx",
             "docs/public/img/cua-driver/cursor-themes/delivery-target-context.gif",
         )
 

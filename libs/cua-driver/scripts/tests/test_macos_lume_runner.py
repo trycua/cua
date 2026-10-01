@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import sqlite3
 import subprocess
 import time
@@ -24,9 +25,7 @@ RUN_ALL = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/run-all.sh"
 SEED_TCC = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/seed-tcc.sh"
 SEED_TCC_GUEST = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/seed-tcc-guest.sh"
 HARNESS_GUIDE = REPO_ROOT / "libs/cua-driver/docs/test-harnesses-guide.md"
-PUBLIC_LUME_TEST_GUIDE = (
-    REPO_ROOT / "docs/content/docs/how-to-guides/driver/run-tests-in-macos-lume-vm.mdx"
-)
+RUNNER_GUIDE = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/README.md"
 RUN_RUST_E2E = REPO_ROOT / "scripts/ci/macos/run-rust-e2e.sh"
 ELECTRON_BUILD = REPO_ROOT / "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh"
 ELECTRON_LOCK = (
@@ -60,7 +59,19 @@ def _run(
         text=True,
         env=merged,
         check=False,
+        preexec_fn=_default_signal_dispositions,
     )
+
+
+def _default_signal_dispositions() -> None:
+    """Undo inherited SIG_IGN (nohup, some CI/agent launchers) in the child.
+
+    bash cannot trap a signal that was ignored when it started, so the
+    runner's HUP/INT/TERM traps would silently never fire and the trap tests
+    would depend on how pytest itself was launched.
+    """
+    for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, signal.SIG_DFL)
 
 
 # The runner derives the installed daemon path from HOME on purpose, so tests
@@ -462,7 +473,7 @@ def test_tcc_guest_seed_library_mode_fails_closed_when_executed() -> None:
 
 @pytest.mark.parametrize(
     "document",
-    [HARNESS_GUIDE, PUBLIC_LUME_TEST_GUIDE],
+    [HARNESS_GUIDE, RUNNER_GUIDE],
     ids=lambda path: path.name,
 )
 def test_harness_guides_route_automated_tcc_through_guarded_helper(document: Path) -> None:

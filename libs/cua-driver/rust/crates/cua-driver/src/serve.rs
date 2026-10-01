@@ -618,6 +618,8 @@ fn prepare_embedded_socket_path(socket_path: &str, embedded: bool) -> anyhow::Re
 static PERMISSION_GATE_PENDING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+// Only the macOS first-launch gate sets it; elsewhere it stays false.
+#[cfg(target_os = "macos")]
 /// Mark whether the macOS first-launch gate is still waiting for TCC grants.
 /// The daemon socket and lifecycle diagnostics remain reachable, but tool calls
 /// are rejected before execution until fresh child-process probes confirm grants.

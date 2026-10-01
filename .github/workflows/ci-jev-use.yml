@@ -12,7 +12,7 @@ on:
       - "libs/cua-driver/tests/fixtures/apps/linux/gtk3/**"
       - "libs/cua-driver/tests/fixtures/build/linux.sh"
       - "libs/cua-driver/docs/jev-use-validation.md"
-      - "docs/content/docs/how-to-guides/driver/jev-use.mdx"
+      - "docs/content/docs/cua-driver/guides/visual-regions.mdx"
       - "docs/content/docs/how-to-guides/driver/meta.json"
       - "skills/jev-use/**"
       - ".github/workflows/ci-jev-use.yml"
@@ -31,7 +31,7 @@ on:
       - "libs/cua-driver/tests/fixtures/apps/linux/gtk3/**"
       - "libs/cua-driver/tests/fixtures/build/linux.sh"
       - "libs/cua-driver/docs/jev-use-validation.md"
-      - "docs/content/docs/how-to-guides/driver/jev-use.mdx"
+      - "docs/content/docs/cua-driver/guides/visual-regions.mdx"
       - "docs/content/docs/how-to-guides/driver/meta.json"
       - "skills/jev-use/**"
       - ".github/workflows/ci-jev-use.yml"
@@ -53,6 +53,11 @@ defaults:
   run:
     working-directory: libs/cua-driver/examples/jev-use
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
 jobs:
   unit-python:
     name: Python unit
@@ -63,7 +68,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: "0.8.15"
           enable-cache: true
@@ -117,7 +122,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: "0.8.15"
           enable-cache: true

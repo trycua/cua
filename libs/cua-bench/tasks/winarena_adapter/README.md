@@ -2,6 +2,22 @@
 
 The Windows Arena adapter enables running Windows desktop automation benchmarks within cua-bench. It provides **173 tasks** across **12 application domains** including Chrome, LibreOffice, VS Code, VLC, File Explorer, and more.
 
+## Running with cua-bench 0.3
+
+The adapter is a `BenchAdapter` (`cua_bench.adapters`): Windows is VM-only,
+local runs need KVM, and the image comes from `CUA_BENCH_WAA_IMAGE`.
+
+```bash
+CUA_BENCH_WAA_IMAGE=<registry>/waa-win11@sha256:... cb run tasks/winarena_adapter --agent cua-agent
+cb run tasks/winarena_adapter --on cloud --dry-run    # Fleet KubeVirt, nothing starts
+```
+
+`CUA_BENCH_WAA_IMAGE` is a Windows 11 VM image with WAA's applications that you
+build and push yourself (Microsoft's license does not allow publishing it).
+Without it the canonical Windows image runs, which lacks most WAA apps. The
+docker golden-image flow below (`trycua/winarena`) predates 0.3; `cb run` does
+not use it.
+
 ## Requirements
 
 - **x86_64 Linux** with KVM support (nested virtualization)
@@ -181,7 +197,7 @@ During benchmark execution:
 │                         │ HTTP (172.30.0.2:5000)                │
 │  ┌──────────────────────▼────────────────────────────────────┐  │
 │  │  Windows 11 VM (QEMU/KVM)                                 │  │
-│  │  - CUA Computer Server (Flask API)                        │  │
+│  │  - WAA control server (Flask API)                         │  │
 │  │  - PyAutoGUI automation                                   │  │
 │  │  - Pre-installed apps (Chrome, LibreOffice, VLC, etc.)    │  │
 │  └───────────────────────────────────────────────────────────┘  │
@@ -245,9 +261,11 @@ Password: (none)
 3. Check disk space: `df -h ~/.local/share/cua-bench`
 4. View logs: `docker logs winarena-setup`
 
-### Connection to CUA Server fails
+### Connection to the VM's control server fails
 
-The Windows VM needs time to boot and start the CUA Computer Server. Wait for the log message:
+The Windows VM needs time to boot and start its Flask control server (WAA's own,
+in `infra/vm/setup/server`; not the removed cua-computer-server package). Wait
+for the log message:
 
 ```
 VM is up and running, and the CUA Computer Server is ready to use!
@@ -287,7 +305,7 @@ infra/vm/setup/
 ├── setup-tools.psm1    # PowerShell module for tool installation
 ├── install.bat         # Batch installer entry point
 ├── on-logon.ps1        # Script run on Windows logon
-└── server/             # CUA Computer Server (Python Flask API)
+└── server/             # WAA control server (Python Flask API)
 ```
 
 To update tool mirrors or setup behavior:

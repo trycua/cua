@@ -484,15 +484,11 @@ async fn user_data_dir_for_pid(
 ) -> Result<Option<PathBuf>, BrowserRefusal> {
     tokio::task::spawn_blocking(move || {
         let args = process_arguments(pid)?;
-        if allow_relative_fallback {
-            user_data_dir_from_arguments_with_relative_fallback(
-                &args,
-                default_user_data_dir(product),
-                true,
-            )
-        } else {
-            user_data_dir_from_arguments(&args, default_user_data_dir(product))
-        }
+        user_data_dir_from_arguments_with_relative_fallback(
+            &args,
+            default_user_data_dir(product),
+            allow_relative_fallback,
+        )
     })
     .await
     .map_err(|error| {

@@ -746,6 +746,45 @@ pub struct HostPanelView {
     pub open_settings_label: String,
     /// Buttons, primary first.
     pub actions: Vec<HostAction>,
+    /// Before setup: what this machine is and why set it up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intro: Option<String>,
+    /// Before setup: the ways to set it up, shown inline.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub setup_choices: Vec<HostSetupChoice>,
+}
+
+/// A way to set this machine up, shown before setup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostSetupChoice {
+    /// The form's profile: `desktop` or `spare`.
+    pub id: String,
+    /// Label.
+    pub label: String,
+    /// The button that opens the form with this choice.
+    pub button_label: String,
+}
+
+/// The intro over the setup choices.
+pub const HOST_INTRO: &str = "This is the computer you are using now. Set it \
+up for access to reach it and its Spaces from your other devices and your \
+agents, over the Cua relay with no port forwarding.";
+
+/// The setup choices (the form's "Use for" options).
+pub fn setup_choices() -> Vec<HostSetupChoice> {
+    vec![
+        HostSetupChoice {
+            id: "desktop".into(),
+            label: "Share this desktop".into(),
+            button_label: "Set Up\u{2026}".into(),
+        },
+        HostSetupChoice {
+            id: "spare".into(),
+            label: "Use as a spare machine for Spaces".into(),
+            button_label: "Set Up\u{2026}".into(),
+        },
+    ]
 }
 
 /// Panes still to grant, as rows.
@@ -793,12 +832,16 @@ pub fn panel(state: Option<&HostState>) -> HostPanelView {
         permissions: vec![],
         open_settings_label: OPEN_SETTINGS_LABEL.into(),
         actions: vec![],
+        intro: None,
+        setup_choices: vec![],
     };
     let Some(s) = state else {
         return v;
     };
     if !s.configured {
         v.summary = "Other devices can\u{2019}t reach this machine yet.".into();
+        v.intro = Some(HOST_INTRO.into());
+        v.setup_choices = setup_choices();
         v.actions = vec![HostAction {
             id: HostActionId::SetUp,
             label: "Set up for access".into(),
@@ -1527,6 +1570,13 @@ mod tests {
         assert!(panel(None).actions.is_empty());
         let off = panel(Some(&HostState::default()));
         assert_eq!(off.actions[0].id, HostActionId::SetUp);
+        // Before setup the page explains itself and shows the form's two
+        // choices inline.
+        assert!(off.intro.as_deref().is_some_and(|t| !t.contains('\u{2014}')));
+        assert_eq!(
+            off.setup_choices.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            ["desktop", "spare"]
+        );
         let on = panel(Some(&HostState {
             configured: true,
             sharing: true,

@@ -14177,6 +14177,14 @@ public struct AppHostPanelView: Equatable, Hashable {
      * Buttons, primary first.
      */
     public var actions: [AppHostAction]
+    /**
+     * Before setup: what this machine is and why set it up.
+     */
+    public var intro: String?
+    /**
+     * Before setup: the ways to set it up, shown inline.
+     */
+    public var setupChoices: [AppHostSetupChoice]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -14247,7 +14255,13 @@ public struct AppHostPanelView: Equatable, Hashable {
          */openSettingsLabel: String,
         /**
          * Buttons, primary first.
-         */actions: [AppHostAction]) {
+         */actions: [AppHostAction],
+        /**
+         * Before setup: what this machine is and why set it up.
+         */intro: String?,
+        /**
+         * Before setup: the ways to set it up, shown inline.
+         */setupChoices: [AppHostSetupChoice]) {
         self.title = title
         self.summary = summary
         self.configured = configured
@@ -14270,6 +14284,8 @@ public struct AppHostPanelView: Equatable, Hashable {
         self.permissions = permissions
         self.openSettingsLabel = openSettingsLabel
         self.actions = actions
+        self.intro = intro
+        self.setupChoices = setupChoices
     }
 
 
@@ -14309,7 +14325,9 @@ public struct FfiConverterTypeAppHostPanelView: FfiConverterRustBuffer {
                 permissionsTitle: FfiConverterOptionString.read(from: &buf),
                 permissions: FfiConverterSequenceTypeAppPermissionRow.read(from: &buf),
                 openSettingsLabel: FfiConverterString.read(from: &buf),
-                actions: FfiConverterSequenceTypeAppHostAction.read(from: &buf)
+                actions: FfiConverterSequenceTypeAppHostAction.read(from: &buf),
+                intro: FfiConverterOptionString.read(from: &buf),
+                setupChoices: FfiConverterSequenceTypeAppHostSetupChoice.read(from: &buf)
         )
     }
 
@@ -14336,6 +14354,8 @@ public struct FfiConverterTypeAppHostPanelView: FfiConverterRustBuffer {
         FfiConverterSequenceTypeAppPermissionRow.write(value.permissions, into: &buf)
         FfiConverterString.write(value.openSettingsLabel, into: &buf)
         FfiConverterSequenceTypeAppHostAction.write(value.actions, into: &buf)
+        FfiConverterOptionString.write(value.intro, into: &buf)
+        FfiConverterSequenceTypeAppHostSetupChoice.write(value.setupChoices, into: &buf)
     }
 }
 
@@ -14640,6 +14660,82 @@ public func FfiConverterTypeAppHostSettingChange_lift(_ buf: RustBuffer) throws 
 #endif
 public func FfiConverterTypeAppHostSettingChange_lower(_ value: AppHostSettingChange) -> RustBuffer {
     return FfiConverterTypeAppHostSettingChange.lower(value)
+}
+
+
+public struct AppHostSetupChoice: Equatable, Hashable {
+    /**
+     * The form's profile: `desktop` or `spare`.
+     */
+    public var id: String
+    /**
+     * Label.
+     */
+    public var label: String
+    /**
+     * The button that opens the form with this choice.
+     */
+    public var buttonLabel: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The form's profile: `desktop` or `spare`.
+         */id: String,
+        /**
+         * Label.
+         */label: String,
+        /**
+         * The button that opens the form with this choice.
+         */buttonLabel: String) {
+        self.id = id
+        self.label = label
+        self.buttonLabel = buttonLabel
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppHostSetupChoice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppHostSetupChoice: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppHostSetupChoice {
+        return
+            try AppHostSetupChoice(
+                id: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                buttonLabel: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppHostSetupChoice, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.buttonLabel, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppHostSetupChoice_lift(_ buf: RustBuffer) throws -> AppHostSetupChoice {
+    return try FfiConverterTypeAppHostSetupChoice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppHostSetupChoice_lower(_ value: AppHostSetupChoice) -> RustBuffer {
+    return FfiConverterTypeAppHostSetupChoice.lower(value)
 }
 
 
@@ -53084,6 +53180,31 @@ fileprivate struct FfiConverterSequenceTypeAppHostProvidedSpace: FfiConverterRus
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeAppHostProvidedSpace.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppHostSetupChoice: FfiConverterRustBuffer {
+    typealias SwiftType = [AppHostSetupChoice]
+
+    public static func write(_ value: [AppHostSetupChoice], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppHostSetupChoice.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppHostSetupChoice] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppHostSetupChoice]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppHostSetupChoice.read(from: &buf))
         }
         return seq
     }

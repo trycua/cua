@@ -243,6 +243,11 @@ struct SnapshotTests {
 
     @Test func thisMachine() async throws {
         let m = try await model()
+        await m.host.refresh()
+        // Before setup: the explainer and both choices inline.
+        #expect(m.host.panel.intro != nil)
+        #expect(m.host.panel.setupChoices.map(\.id) == ["desktop", "spare"])
+        try assertSnapshot(ThisMachineView(host: m.host), "this-machine-unset", size: CGSize(width: 640, height: 420))
         m.host.openForm()
         try assertSnapshot(ThisMachineView(host: m.host), "host-setup", size: CGSize(width: 640, height: 420))
         m.host.send(.setName(name: "Studio"))

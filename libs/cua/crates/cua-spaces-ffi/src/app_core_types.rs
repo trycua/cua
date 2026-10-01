@@ -6111,6 +6111,18 @@ pub struct AppPermissionRow {
     pub settings_url: Option<String>,
 }
 
+/// A way to set this machine up, shown before setup.
+pub type AppHostSetupChoice = core::host::HostSetupChoice;
+#[uniffi::remote(Record)]
+pub struct AppHostSetupChoice {
+    /// The form's profile: `desktop` or `spare`.
+    pub id: String,
+    /// Label.
+    pub label: String,
+    /// The button that opens the form with this choice.
+    pub button_label: String,
+}
+
 /// The "This machine" page.
 pub type AppHostPanelView = core::host::HostPanelView;
 #[uniffi::remote(Record)]
@@ -6160,6 +6172,10 @@ pub struct AppHostPanelView {
     pub open_settings_label: String,
     /// Buttons, primary first.
     pub actions: Vec<AppHostAction>,
+    /// Before setup: what this machine is and why set it up.
+    pub intro: Option<String>,
+    /// Before setup: the ways to set it up, shown inline.
+    pub setup_choices: Vec<AppHostSetupChoice>,
 }
 
 /// The host setup form's state.

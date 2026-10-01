@@ -21,10 +21,33 @@ struct ThisMachineView: View {
                 HostFormView(host: host, buttons: true)
             } else {
                 Form {
-                    Section {
-                        Text(panel.summary)
-                            .lineLimit(1)
-                            .accessibilityIdentifier("host-summary")
+                    if let intro = panel.intro {
+                        // Before setup: what this machine is and why set it
+                        // up, then the form's choices inline.
+                        Section {
+                            Text(intro)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("host-summary")
+                        }
+                        Section {
+                            ForEach(panel.setupChoices, id: \.id) { choice in
+                                LabeledContent(choice.label) {
+                                    Button(choice.buttonLabel) {
+                                        host.openForm()
+                                        host.send(.setProfile(profile: choice.id))
+                                    }
+                                    .disabled(host.busy)
+                                }
+                                .accessibilityIdentifier("host-choice-\(choice.id)")
+                            }
+                        }
+                    } else {
+                        Section {
+                            Text(panel.summary)
+                                .lineLimit(1)
+                                .accessibilityIdentifier("host-summary")
+                        }
                     }
                     if !panel.facts.isEmpty {
                         Section {
@@ -104,22 +127,24 @@ struct ThisMachineView: View {
                     if let error = host.error {
                         Text(error).foregroundStyle(.red).lineLimit(1).help(error)
                     }
-                    Section {
-                        HStack {
-                            ForEach(Array(panel.actions.enumerated()), id: \.offset) { index, action in
-                                let button = Button(action.label, role: action.destructive ? .destructive : nil) {
-                                    if action.confirm != nil {
-                                        confirming = action
-                                    } else {
-                                        Task { await host.run(action.id) }
+                    if panel.setupChoices.isEmpty {
+                        Section {
+                            HStack {
+                                ForEach(Array(panel.actions.enumerated()), id: \.offset) { index, action in
+                                    let button = Button(action.label, role: action.destructive ? .destructive : nil) {
+                                        if action.confirm != nil {
+                                            confirming = action
+                                        } else {
+                                            Task { await host.run(action.id) }
+                                        }
                                     }
-                                }
-                                .disabled(host.busy)
-                                .accessibilityIdentifier("host-action-\(index)")
-                                if index == 0 {
-                                    button.buttonStyle(.borderedProminent).tint(action.destructive ? .red : .accentColor)
-                                } else {
-                                    button
+                                    .disabled(host.busy)
+                                    .accessibilityIdentifier("host-action-\(index)")
+                                    if index == 0 {
+                                        button.buttonStyle(.borderedProminent).tint(action.destructive ? .red : .accentColor)
+                                    } else {
+                                        button
+                                    }
                                 }
                             }
                         }

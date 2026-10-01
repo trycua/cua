@@ -9,7 +9,7 @@ adapters in `libs/cua-bench/tasks/` against converted benchmark images.
 
 Every adapter runs with one command: `cb run dataset <tasks> --agent <agent> --model <model>`.
 Converted images come in two variants, a container (`<ver>`) and a VM disk
-(`<ver>-disk`): `--kind container|vm` picks one, `--on cloud` runs it in the Cua cloud.
+(`<ver>-disk`): `--kind container|vm` picks one.
 Both run cua-spacesd, and every result records `image_ref`, `image_variant`,
 `image_digest` and `arch`.
 
@@ -54,7 +54,7 @@ cua-spacesd added.
 ```bash skip="placeholder"
 pip install "cua-bench[osworld]"
 cb run dataset libs/cua-bench/tasks/osworld --agent <agent> --model <model> --kind vm
-cb run dataset libs/cua-bench/tasks/osworld --agent <agent> --model <model> --kind container --on cloud
+cb run dataset libs/cua-bench/tasks/osworld --agent <agent> --model <model> --kind container
 ```
 
 OSWorld's `SetupController` and evaluators run on your machine against the
@@ -134,7 +134,7 @@ CUA_BENCH_OM2W_LEVEL=easy cb run dataset libs/cua-bench/tasks/online_mind2web \
 MIT, data CDLA-Permissive-2.0. Needs guest network and `OPENAI_API_KEY`; scored by an LLM judge. Select with `--max-variants`.
 
 ```bash skip="placeholder"
-cb run dataset libs/cua-bench/tasks/webgym --agent <agent> --model <model> --kind vm --on cloud
+cb run dataset libs/cua-bench/tasks/webgym --agent <agent> --model <model> --kind vm
 ```
 
 `--oracle` runs scripted solutions where a set has them; `--noop` scores an

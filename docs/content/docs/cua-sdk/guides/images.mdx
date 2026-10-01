@@ -51,7 +51,7 @@ windows = Image.from_registry("registry.example/win:1", os_type="windows", kind=
   content.
 
 ```bash test="cli-shape" id="cua-sb-create-linux"
-cua sb create linux --name desk                       # add --on cloud for the cloud
+cua sb create linux --name desk
 cua sb create python:3.12-slim --name app -- python -m http.server 8000
 ```
 
@@ -95,7 +95,7 @@ prod = base.pip_install('gunicorn').run('useradd -m appuser')
 ```python test="container" id="start-dev" session="dev" prelude="images-dev"
 from cua_sandbox import Sandbox
 
-async with Sandbox.ephemeral(dev, local=True) as sb:   # local=False builds it in the cloud
+async with Sandbox.ephemeral(dev) as sb:
     print((await sb.shell.run('python -c "import rich"')).returncode)
 ```
 
@@ -117,9 +117,9 @@ Image.from_file('https://example.com/windows.vhdx', os_type='windows')
 
 ## Private registries
 
-Pass a `RegistrySecret`. Locally the SDK uses it for the pull; in the cloud it
-becomes the sandbox's pull secret, which also covers sidecar images on the same
-registry. Credentials are never logged or saved in `~/.cua`.
+Pass a `RegistrySecret`. The SDK uses it for the pull (in the cloud it becomes
+the sandbox's pull secret, which also covers sidecar images on the same
+registry). Credentials are never logged or saved in `~/.cua`.
 
 ```python skip="pseudo"
 from cua_sandbox import Image, RegistrySecret, Sandbox
@@ -128,7 +128,7 @@ image = Image.from_registry(
     "ghcr.io/acme/agent:1.4",
     secret=RegistrySecret.from_env(),   # CUA_REGISTRY_USERNAME / CUA_REGISTRY_PASSWORD
 )
-sb = await Sandbox.create(image, local=True)  # or local=False
+sb = await Sandbox.create(image)
 ```
 
 | Secret | Credentials |
@@ -144,14 +144,13 @@ Without a secret, local pulls also use `CUA_REGISTRY_*`, `GITHUB_TOKEN` for
 cua sb create ghcr.io/acme/agent:1.4 \
   --registry-secret env:CUA_REGISTRY_USERNAME:CUA_REGISTRY_PASSWORD
 cua sb create 123456789012.dkr.ecr.us-east-1.amazonaws.com/agent:1.4 \
-  --registry-secret aws-ecr:us-east-1 --on cloud
+  --registry-secret aws-ecr:us-east-1
 ```
 
 ```ts test="docs" id="typescript"
 import { registrySecret, SandboxCreateOptions } from '@trycua/cua';
 
 SandboxCreateOptions.create({
-  on: 'cloud',
   image: 'ghcr.io/acme/agent:1.4',
   registrySecret: registrySecret.fromEnv('CUA_REGISTRY_USERNAME', 'CUA_REGISTRY_PASSWORD'),
 });

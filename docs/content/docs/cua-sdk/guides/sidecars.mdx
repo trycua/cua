@@ -1,6 +1,6 @@
 ---
 title: Add sidecar containers
-description: Run extra containers such as a database or cache next to a sandbox and reach them by name, locally and in the cloud.
+description: Run extra containers such as a database or cache next to a sandbox and reach them by name.
 ---
 
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
@@ -12,9 +12,6 @@ service. It is addressed by name on every runtime:
 - a sidecar reaches the sandbox at `main`;
 - `services=` names a sidecar port so you can call it from your machine.
 
-<Tabs groupId="where" persist items={['Local', 'Cloud']}>
-  <Tab value="Local">
-
 ```python test="container" id="local" prelude="local-cleanup"
 from cua_sandbox import Container, Image, Sandbox, tcp
 
@@ -25,7 +22,6 @@ sb = await Sandbox.create(
     services={"db": 6379},
     wait_for=tcp("db"),
     runtime="runc",
-    local=True,
 )
 ```
 
@@ -34,32 +30,10 @@ Local sidecars share the sandbox container's network namespace, so
 cannot share a network namespace, and the SDK refuses rather than switching
 runtimes silently. Local VM sandboxes refuse sidecars.
 
-  </Tab>
-  <Tab value="Cloud">
-
-```python test="docs,fleet" id="cloud" prelude="fakefleet"
-from cua_sandbox import Container, Image, Sandbox, tcp
-
-sb = await Sandbox.create(
-    Image.from_registry("python:3.12-slim"),
-    command=["sleep", "infinity"],
-    sidecars=[Container("redis:7-alpine", ports=[6379], name="db")],
-    services={"db": 6379},
-    wait_for=tcp("db"),
-    local=False,
-)
-```
-
-The cloud ignores `runtime="runc"` and runs sidecars on both runtimes; see
-[Fleet sidecars](/fleets/guides/sidecars).
-
-  </Tab>
-</Tabs>
-
 ## Reach the sandbox from a sidecar
 
 This relay fetches the sandbox's page from `http://main:8000` and serves it on
-its own port. With `local=False` the same code runs in the cloud.
+its own port.
 
 ```python test="container" id="by-name" prelude="local-cleanup"
 from cua_sandbox import Container, Image, Sandbox, http
@@ -79,7 +53,6 @@ sb = await Sandbox.create(
     services={"relay": 8081},
     wait_for=http("relay", "/"),
     runtime="runc",
-    local=True,
 )
 print((await sb.service("relay").request("GET", "/")).status_code)  # 200
 ```
@@ -109,7 +82,6 @@ cua sb create python:3.12-slim --name app --runtime runc \
 import { sidecar, SandboxCreateOptions } from '@trycua/cua';
 
 SandboxCreateOptions.create({
-  on: 'local',
   image: 'python:3.12-slim',
   command: ['sleep', 'infinity'],
   sidecars: [sidecar('redis:7-alpine', { ports: [6379], name: 'db' })],

@@ -2322,13 +2322,24 @@ mod tests {
                 RecordingCaller::default(),
             )
             .expect("resolved refusal should reserve an evidence turn");
-        let refusal_record = crate::action_record::ActionExecutionRecord::builder(
-            crate::action_record::ActionEffect::Refused,
-            crate::action_record::ActionTransport::WindowsTargetedInjection,
-            crate::action_record::RequestedDelivery::Background,
+        // Derive the record from the real shared stale-zoom refusal so the
+        // recorder is proven to treat it as refused-before-dispatch (no
+        // click marker), not as an unverifiable delivered click.
+        let zoom_refusal = cache
+            .zoom(1, Some(2), None)
+            .expect_err("no zoom context was published")
+            .structured_content
+            .expect("zoom refusal is structured");
+        let refusal_record = crate::action_record::ActionExecutionRecord::from_legacy(
+            "click",
+            &serde_json::json!({"pid": 1, "window_id": 2, "x": 3, "y": 4, "from_zoom": true}),
+            &zoom_refusal,
         )
-        .build()
-        .expect("valid refusal record");
+        .expect("click refusal normalizes to an action record");
+        assert_eq!(
+            refusal_record.effect,
+            crate::action_record::ActionEffect::Refused
+        );
         session.finish_turn_with_outcome(
             pending,
             "refused before dispatch",

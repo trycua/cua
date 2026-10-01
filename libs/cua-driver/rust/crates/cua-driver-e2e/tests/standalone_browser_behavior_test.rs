@@ -233,7 +233,7 @@ struct BrowserSpec {
     executable: PathBuf,
 }
 
-const SUPPORTED_BROWSER_PRODUCTS: &[&str] = &["chrome", "chromium", "edge"];
+const SUPPORTED_BROWSER_PRODUCTS: &[&str] = &["chrome", "chromium", "edge", "helium"];
 
 fn parse_browser_products(raw: &str) -> Result<Vec<String>, String> {
     let mut products = Vec::new();
@@ -286,6 +286,7 @@ fn browser_product_selection_is_ordered_and_strict() {
         parse_browser_products("Edge, chrome,chromium").unwrap(),
         ["edge", "chrome", "chromium"]
     );
+    assert_eq!(parse_browser_products("helium").unwrap(), ["helium"]);
     assert!(parse_browser_products("").is_err());
     assert!(parse_browser_products("chrome,chrome").is_err());
     assert!(parse_browser_products("firefox").is_err());
@@ -330,10 +331,13 @@ fn select_browser_products(
                 .position(|product| product == &spec.name)
                 .unwrap_or(usize::MAX)
         });
-    } else if prefer_chrome_over_chromium && browsers.iter().any(|spec| spec.name == "chrome") {
-        // Preserve the historical default lane: Chromium is the fallback when
-        // Chrome is absent. Certification runs opt into each product.
-        browsers.retain(|spec| spec.name != "chromium");
+    } else {
+        // Helium is an explicit compatibility lane until its complete matrix
+        // is certified. Keep default Chrome/Edge selection stable.
+        browsers.retain(|spec| spec.name != "helium");
+        if prefer_chrome_over_chromium && browsers.iter().any(|spec| spec.name == "chrome") {
+            browsers.retain(|spec| spec.name != "chromium");
+        }
     }
     // A distro may expose one browser installation through several wrappers
     // (for example /usr/bin/chromium-browser and /snap/bin/chromium). The
@@ -371,6 +375,14 @@ fn browser_specs() -> Vec<BrowserSpec> {
         select_browser_products(
             [
                 (
+                    "helium",
+                    PathBuf::from("/Applications/Helium.app/Contents/MacOS/Helium"),
+                ),
+                (
+                    "helium",
+                    home.join("Applications/Helium.app/Contents/MacOS/Helium"),
+                ),
+                (
                     "chrome",
                     PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
                 ),
@@ -400,6 +412,10 @@ fn browser_specs() -> Vec<BrowserSpec> {
     #[cfg(target_os = "linux")]
     {
         let mut candidates = vec![
+            ("helium", PathBuf::from("/usr/bin/helium")),
+            ("helium", PathBuf::from("/usr/bin/helium-browser")),
+            ("helium", PathBuf::from("/opt/helium/helium")),
+            ("helium", PathBuf::from("/opt/helium-browser-bin/helium")),
             ("chrome", PathBuf::from("/usr/bin/google-chrome")),
             ("chromium", PathBuf::from("/usr/bin/chromium")),
             ("chromium", PathBuf::from("/usr/bin/chromium-browser")),
@@ -408,6 +424,8 @@ fn browser_specs() -> Vec<BrowserSpec> {
         ];
         if let Some(path) = std::env::var_os("PATH") {
             for (name, executable_name) in [
+                ("helium", "helium"),
+                ("helium", "helium-browser"),
                 ("chrome", "google-chrome"),
                 ("chromium", "chromium"),
                 ("chromium", "chromium-browser"),
@@ -1056,6 +1074,7 @@ fn browser_app_name_matches(spec: &BrowserSpec, app_name: &str) -> bool {
         "chrome" => app_name.contains("chrome"),
         "chromium" => app_name.contains("chromium"),
         "edge" => app_name.contains("edge"),
+        "helium" => app_name.contains("helium"),
         _ => false,
     }
 }
@@ -1247,21 +1266,41 @@ fn launch_browser_with_driver(
 ) -> BrowserFixture {
     let server = BrowserFixtureServer::start(&html);
     let profile = tempfile::Builder::new()
-        .prefix("cua-e2e-browser-")
+        .prefix("cua-e2e browser-")
         .tempdir()
         .expect("create isolated browser profile");
-    let cdp_port = allocate_loopback_port();
+    // Helium attachment requires the browser-written exact endpoint file.
+    let launch_port = if spec.name == "helium" {
+        0
+    } else {
+        allocate_loopback_port()
+    };
     let before = window_ids(&mut driver);
     spawn_browser_command(
         &mut driver,
         spec,
         profile.path(),
-        cdp_port,
+        launch_port,
         "about:blank",
         TEST_BROWSER_INITIAL_POSITION,
         label.contains("multi-tab"),
         label.contains("browser-owned-permission"),
     );
+    let cdp_port = if launch_port == 0 {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if let Some(port) = devtools_active_port(profile.path()) {
+                break port;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Helium did not publish DevToolsActivePort"
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+    } else {
+        launch_port
+    };
     navigate_initial_page(cdp_port, &server);
     record_browser_provenance(spec, cdp_port);
     let window = wait_for_fixture_window(&mut driver, &before, &server);
@@ -2391,6 +2430,10 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
         spec.name
     );
     execute_case(prepare_isolated_case(&spec.name), |evidence| {
+        // Pid-free launch selects the system Chrome/Edge installation. Use
+        // Helium's existing PID to prove isolated launch of this exact product.
+        let seed = (spec.name == "helium")
+            .then(|| launch_unprepared_browser(spec, &format!("{scenario}-seed")));
         let target_server = BrowserFixtureServer::start(&standalone_fixture_html());
         let driver_profiles = driver_profile_root();
         let profiles_before = profile_entries(&driver_profiles);
@@ -2407,6 +2450,7 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
             serde_json::json!({
                 "session": session,
                 "allow_launch": true,
+                "pid": seed.as_ref().map(|fixture| fixture.pid as i64),
                 "profile": {"mode": "isolated_new"},
             }),
         );
@@ -2737,7 +2781,129 @@ fn run_existing_profile_attach(spec: &BrowserSpec) {
     );
 }
 
+fn run_helium_missing_active_port_refusal(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-helium-standalone-missing-active-port",
+        std::env::consts::OS
+    );
+    execute_case(
+        refusal_case(
+            &spec.name,
+            "browser_prepare_missing_active_port",
+            RefusalCode::BrowserRouteUnavailable,
+        ),
+        |evidence| {
+            let mut fixture = launch_browser(spec, &scenario);
+            // Keep the real browser-owned listener alive. Only remove the
+            // exact endpoint file from this disposable test profile.
+            std::fs::rename(
+                fixture._profile.path().join("DevToolsActivePort"),
+                fixture._profile.path().join("DevToolsActivePort.hidden"),
+            )
+            .expect("hide fixture endpoint file");
+            *evidence = recording_evidence(fixture.driver.recording_dir());
+            fixture.driver.start_behavior_recording();
+            run_with_background_oracles(&mut fixture, |fixture| {
+                let session = format!("helium-missing-active-port-{}", fixture.pid);
+                let started = fixture
+                    .driver
+                    .call("start_session", serde_json::json!({"session": session}));
+                assert!(!started.is_error(), "{}", started.raw);
+                let refused = fixture.driver.call(
+                    "browser_prepare",
+                    serde_json::json!({
+                        "pid": fixture.pid as i64, "window_id": fixture.window_id,
+                        "session": session, "strategy": {"kind": "existing_profile"}
+                    }),
+                );
+                assert_eq!(
+                    refused.structured()["refusal"]["code"],
+                    "browser_route_unavailable",
+                    "{}",
+                    refused.raw
+                );
+                assert!(
+                    refused.structured()["refusal"]["detail"]["setup_side_effects"].is_null(),
+                    "{}",
+                    refused.raw
+                );
+                wait_for_text(&fixture.server, "lbl-counter", "counter=0");
+                Observation::refused(
+                    RefusalCode::BrowserRouteUnavailable,
+                    vec![OracleKind::FixtureState],
+                    refused.text(),
+                    Evidence::default(),
+                )
+            })
+        },
+    );
+}
+
+fn run_helium_setup_refusal(spec: &BrowserSpec) {
+    let scenario = format!("{}-helium-standalone-setup-refusal", std::env::consts::OS);
+    execute_case(
+        refusal_case(
+            &spec.name,
+            "browser_prepare_existing_profile_setup",
+            RefusalCode::BrowserRouteUnavailable,
+        ),
+        |evidence| {
+            let mut fixture = launch_unprepared_browser(spec, &scenario);
+            *evidence = recording_evidence(fixture.driver.recording_dir());
+            fixture.driver.start_behavior_recording();
+            run_with_background_oracles(&mut fixture, |fixture| {
+                let session = format!("helium-setup-refusal-{}", fixture.pid);
+                let started = fixture
+                    .driver
+                    .call("start_session", serde_json::json!({"session": session}));
+                assert!(!started.is_error(), "{}", started.raw);
+                let refused = fixture.driver.call(
+                    "browser_prepare",
+                    serde_json::json!({
+                        "pid": fixture.pid as i64, "window_id": fixture.window_id,
+                        "session": session, "strategy": {"kind": "existing_profile"}
+                    }),
+                );
+                assert_eq!(
+                    refused.structured()["refusal"]["code"],
+                    "browser_route_unavailable",
+                    "{}",
+                    refused.raw
+                );
+                assert!(
+                    refused.structured()["refusal"]["detail"]["setup_side_effects"].is_null(),
+                    "{}",
+                    refused.raw
+                );
+                assert!(devtools_active_port(fixture._profile.path()).is_none());
+                let windows = fixture
+                    .driver
+                    .call("list_windows", serde_json::json!({"pid": fixture.pid}));
+                assert!(
+                    windows.structured()["windows"]
+                        .as_array()
+                        .is_some_and(|windows| windows
+                            .iter()
+                            .any(|window| window["window_id"].as_u64() == Some(fixture.window_id))),
+                    "{}",
+                    windows.raw
+                );
+                Observation::refused(
+                    RefusalCode::BrowserRouteUnavailable,
+                    vec![OracleKind::FixtureState],
+                    refused.text(),
+                    Evidence::default(),
+                )
+            })
+        },
+    );
+}
+
 fn run_existing_profile_setup(spec: &BrowserSpec) {
+    if spec.name == "helium" {
+        run_helium_missing_active_port_refusal(spec);
+        return run_helium_setup_refusal(spec);
+    }
     let scenario = format!(
         "{}-{}-standalone-existing-profile-setup",
         std::env::consts::OS,

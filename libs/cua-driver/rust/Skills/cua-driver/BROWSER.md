@@ -190,6 +190,10 @@ window, toggle its uniquely labelled per-instance checkbox, prove that the
 loopback endpoint belongs to the approved process, and close the temporary
 tab. The result reports all visible `side_effects`. Missing, localized, or
 ambiguous controls are refused; never click a similar-looking prompt yourself.
+Helium resolves its default profile from `~/.config/net.imput.helium` on Linux
+and `~/Library/Application Support/net.imput.helium` on macOS
+but currently requires an already available PID-owned endpoint; automated
+setup of its branded internal page is not claimed.
 On current macOS Chrome, the internal page may omit its web AX subtree. The
 driver's bounded fallback is limited to a temporary tab it created and
 navigated. It requires the committed fixed URL, expected selected-tab title,

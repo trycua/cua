@@ -197,6 +197,27 @@ jobs:
             python3 -c 'import tkinter; print("Tk", tkinter.TkVersion)'
           fi
 
+      - name: Install pinned Helium for browser compatibility
+        if: matrix.lane == 'browser'
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            arm64) architecture=arm64; digest=418e7339807161cbdac42dba70520679970576d50f5aa4f30a3f0862feb4a1d9 ;;
+            x86_64) architecture=x86_64; digest=6e358eb02828a568df70d2cd13aed4f6f7db23896c11787ac1b9c621bc5d6e34 ;;
+            *) echo "unsupported Helium architecture" >&2; exit 2 ;;
+          esac
+          image="${RUNNER_TEMP}/helium.dmg"
+          mount="${RUNNER_TEMP}/cua-helium-mount"
+          curl --fail --location --retry 3 --output "${image}" \
+            "https://github.com/imputnet/helium-macos/releases/download/0.18.1.1/helium_0.18.1.1_${architecture}-macos.dmg"
+          echo "${digest}  ${image}" | shasum -a 256 --check
+          test ! -e /Applications/Helium.app
+          hdiutil attach "${image}" -nobrowse -readonly -mountpoint "${mount}"
+          trap 'hdiutil detach "${mount}"' EXIT
+          sudo ditto "${mount}/Helium.app" /Applications/Helium.app
+          echo "CUA_E2E_INCLUDE_HELIUM=1" >> "${GITHUB_ENV}"
+
       - name: Run hosted macOS lane
         shell: bash
         run: scripts/ci/macos/run-hosted-rust-e2e.sh

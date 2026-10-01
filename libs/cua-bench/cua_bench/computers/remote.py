@@ -13,6 +13,7 @@ This is the unified desktop session implementation that supports:
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Literal, Optional
@@ -86,6 +87,11 @@ class RemoteDesktopSession:
     # Timeout settings
     DEFAULT_TIMEOUT = 30
     SCREENSHOT_TIMEOUT = 10
+    POINTER_MOVE_SETTLE_DELAY = 0.05
+    ELEMENT_EVENT_TIMEOUT = 0.5
+    ELEMENT_EVENT_POLL_INTERVAL = 0.05
+    WINDOW_ACTIVATION_TIMEOUT = 2.0
+    WINDOW_ACTIVATION_POLL_INTERVAL = 0.05
 
     def __init__(
         self,
@@ -528,12 +534,21 @@ class RemoteDesktopSession:
 
             return get_element_rect(pid, selector, space=space)
 
+        use_native_origin = space == "screen" and self._os_type == "linux"
+        query_space = "window" if use_native_origin else space
         retry_interval = max(0.1, timeout / 2.0)
         start_time = time.time()
 
         while True:
-            result = await _get_rect(pid, selector, space)
+            result = await _get_rect(pid, selector, query_space)
             if result is not None:
+                if use_native_origin:
+                    origin = await self._get_process_client_origin(pid)
+                    if origin is None:
+                        raise RuntimeError(f"Could not locate client frame for process {pid}")
+                    result = dict(result)
+                    result["x"] += origin["x"]
+                    result["y"] += origin["y"]
                 return result
 
             elapsed = time.time() - start_time
@@ -541,6 +556,33 @@ class RemoteDesktopSession:
                 return None
 
             await asyncio.sleep(retry_interval)
+
+    async def _get_process_client_origin(self, pid: int | str) -> dict[str, int] | None:
+        """Return the native screen origin of a bench-ui process client area."""
+        await self._ensure_computer()
+
+        @self._computer.python_command(use_system_python=True)
+        def _get_origin(pid):
+            import pywinctl as pwc
+
+            target_pid = int(pid)
+            try:
+                windows = pwc.getAllWindows()
+            except Exception:
+                return None
+            for window in windows:
+                try:
+                    if int(window.getPID()) != target_pid:
+                        continue
+                    # On X11, pywinctl's position is the client-window origin.
+                    # getClientFrame() double-applies XFCE frame extents here.
+                    x, y = window.position
+                    return {"x": int(x), "y": int(y)}
+                except Exception:
+                    continue
+            return None
+
+        return await _get_origin(pid)
 
     async def execute_javascript(self, pid: int | str, javascript: str) -> Any:
         """Execute JavaScript in a pywebview window using bench_ui.
@@ -749,24 +791,190 @@ class RemoteDesktopSession:
     async def click_element(self, pid: int | str, selector: str) -> None:
         """Find element by CSS selector and click its center.
 
-        Uses get_element_rect to fetch element rect in screen space
-        and then dispatches a ClickAction.
+        Activates the native bench-ui window before reading its screen-space
+        element rect, then verifies where the real remote click landed.
         """
+        if not await self._activate_process_window(pid):
+            raise RuntimeError(f"Could not activate remote window for process {pid}")
         rect = await self.get_element_rect(pid, selector, space="screen")
         if not rect:
             raise RuntimeError(f"Element not found for selector: {selector}")
         cx = int(rect["x"] + rect["width"] / 2)
         cy = int(rect["y"] + rect["height"] / 2)
-        await self.execute_action(ClickAction(x=cx, y=cy))
+        event_token = await self._arm_element_event(pid, selector, "click")
+        try:
+            await self.interface.move_cursor(cx, cy)
+            await asyncio.sleep(self.POINTER_MOVE_SETTLE_DELAY)
+            await self.interface.left_click()
+            try:
+                event_status = await self._wait_for_element_event(pid, event_token)
+            except Exception:
+                # A successful click may navigate or close the window before the
+                # marker can be read. Telemetry must never cause a duplicate click.
+                return
+            if event_status is None or event_status.get("observed"):
+                return
+        finally:
+            await self._clear_element_event(pid, event_token)
+        metrics = await self.execute_javascript(
+            pid,
+            f"""
+                (() => {{
+                    const element = document.querySelector({json.dumps(selector)});
+                    const targetRect = element?.getBoundingClientRect();
+                    return {{
+                        expectedX: targetRect && targetRect.left + targetRect.width / 2,
+                        expectedY: targetRect && targetRect.top + targetRect.height / 2,
+                        screenX: window.screenX,
+                        screenY: window.screenY,
+                    }};
+                }})()
+            """,
+        )
+        raise RuntimeError(
+            f"Remote click landed outside selector {selector!r}; rect={rect!r}; "
+            f"metrics={metrics!r}; event={event_status!r}"
+        )
 
     async def right_click_element(self, pid: int | str, selector: str) -> None:
         """Find element by CSS selector and right-click its center."""
+        if not await self._activate_process_window(pid):
+            raise RuntimeError(f"Could not activate remote window for process {pid}")
         rect = await self.get_element_rect(pid, selector, space="screen")
         if not rect:
             raise RuntimeError(f"Element not found for selector: {selector}")
         cx = int(rect["x"] + rect["width"] / 2)
         cy = int(rect["y"] + rect["height"] / 2)
-        await self.execute_action(RightClickAction(x=cx, y=cy))
+        await self.interface.move_cursor(cx, cy)
+        await asyncio.sleep(self.POINTER_MOVE_SETTLE_DELAY)
+        await self.interface.right_click()
+        await self.execute_javascript(pid, "true")
+
+    async def _arm_element_event(self, pid: int | str, selector: str, event: str) -> str:
+        """Install a one-shot DOM event marker before dispatching remote input."""
+        token = f"cua_{time.monotonic_ns()}"
+        script = f"""
+            (() => {{
+                const element = document.querySelector({json.dumps(selector)});
+                if (!element) return false;
+                window.__cuaBenchInputEvents ||= {{}};
+                const entry = {{
+                    element,
+                    event: {json.dumps(event)},
+                    dispatched: false,
+                    observed: false,
+                }};
+                entry.handler = (inputEvent) => {{
+                    const targetRect = element.getBoundingClientRect();
+                    entry.dispatched = true;
+                    entry.observed = (
+                        inputEvent.target === element || element.contains(inputEvent.target)
+                    );
+                    entry.clientX = inputEvent.clientX;
+                    entry.clientY = inputEvent.clientY;
+                    entry.expectedX = targetRect.left + targetRect.width / 2;
+                    entry.expectedY = targetRect.top + targetRect.height / 2;
+                    entry.screenX = window.screenX;
+                    entry.screenY = window.screenY;
+                    entry.frameWidth = window.outerWidth - window.innerWidth;
+                    entry.frameHeight = window.outerHeight - window.innerHeight;
+                    entry.target = inputEvent.target?.tagName || null;
+                    entry.targetText = inputEvent.target?.textContent?.trim()?.slice(0, 80) || null;
+                }};
+                window.__cuaBenchInputEvents[{json.dumps(token)}] = entry;
+                document.addEventListener(entry.event, entry.handler, true);
+                return true;
+            }})()
+        """
+        if not await self.execute_javascript(pid, script):
+            raise RuntimeError(f"Element not found for selector: {selector}")
+        return token
+
+    async def _wait_for_element_event(
+        self,
+        pid: int | str,
+        token: str,
+    ) -> dict[str, Any] | None:
+        """Wait until WebKit reports where the real remote pointer event landed."""
+        marker = json.dumps(token)
+        deadline = time.monotonic() + self.ELEMENT_EVENT_TIMEOUT
+        while time.monotonic() < deadline:
+            status = await self.execute_javascript(
+                pid,
+                f"""
+                    (() => {{
+                        const entry = window.__cuaBenchInputEvents?.[{marker}];
+                        if (!entry?.dispatched) return null;
+                        return {{
+                            observed: entry.observed,
+                            clientX: entry.clientX,
+                            clientY: entry.clientY,
+                            expectedX: entry.expectedX,
+                            expectedY: entry.expectedY,
+                            screenX: entry.screenX,
+                            screenY: entry.screenY,
+                            frameWidth: entry.frameWidth,
+                            frameHeight: entry.frameHeight,
+                            target: entry.target,
+                            targetText: entry.targetText,
+                        }};
+                    }})()
+                """,
+            )
+            if status:
+                return status
+            await asyncio.sleep(self.ELEMENT_EVENT_POLL_INTERVAL)
+        return None
+
+    async def _clear_element_event(self, pid: int | str, token: str) -> None:
+        """Remove a pending DOM marker and its listener."""
+        marker = json.dumps(token)
+        try:
+            await self.execute_javascript(
+                pid,
+                f"""
+                    (() => {{
+                        const entry = window.__cuaBenchInputEvents?.[{marker}];
+                        if (!entry) return;
+                        document.removeEventListener(entry.event, entry.handler, true);
+                        delete window.__cuaBenchInputEvents[{marker}];
+                    }})()
+                """,
+            )
+        except Exception:
+            # The click may have navigated or closed the window.
+            pass
+
+    async def _activate_process_window(self, pid: int | str) -> bool:
+        """Activate the native window owned by a bench-ui child process."""
+        await self._ensure_computer()
+
+        @self._computer.python_command(use_system_python=True)
+        def _activate(pid):
+            import pywinctl as pwc
+
+            target_pid = int(pid)
+            try:
+                windows = pwc.getAllWindows()
+            except Exception:
+                return False
+            for window in windows:
+                try:
+                    if int(window.getPID()) != target_pid:
+                        continue
+                    window.activate(wait=True)
+                    active = pwc.getActiveWindow()
+                    return bool(active and int(active.getPID()) == target_pid)
+                except Exception:
+                    continue
+            return False
+
+        deadline = time.monotonic() + self.WINDOW_ACTIVATION_TIMEOUT
+        while time.monotonic() < deadline:
+            if await _activate(pid):
+                return True
+            await asyncio.sleep(self.WINDOW_ACTIVATION_POLL_INTERVAL)
+        return False
 
     # =========================================================================
     # Additional methods using SDK

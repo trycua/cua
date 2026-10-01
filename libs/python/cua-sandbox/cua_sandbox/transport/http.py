@@ -94,7 +94,7 @@ class HTTPTransport(Transport):
             # Add 10s headroom so the server timeout fires before the client one
             req_timeout = httpx.Timeout(self._timeout, read=float(server_timeout) + 10)
         else:
-            req_timeout = None  # use client default
+            req_timeout = self._client.timeout
 
         resp: httpx.Response
         for attempt in range(_CMD_MAX_RETRIES):

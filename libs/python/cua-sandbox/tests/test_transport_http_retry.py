@@ -50,6 +50,32 @@ async def test_cmd_success_no_retry():
     assert len(calls) == 1, "success should not retry"
 
 
+@pytest.mark.parametrize(
+    ("params", "read_timeout"),
+    [
+        ({}, 5.0),
+        ({"command": "echo hello"}, 5.0),
+        ({"timeout": None}, 5.0),
+        ({"timeout": 60}, 70.0),
+        ({"timeout": 0}, 10.0),
+    ],
+)
+async def test_send_preserves_request_timeouts(params, read_timeout):
+    timeouts = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        timeouts.append(request.extensions["timeout"])
+        return httpx.Response(200, text=_sse_body({"ok": True}))
+
+    t = await _make_transport(handler)
+    try:
+        assert await t.send("run_command", **params) == {"ok": True}
+    finally:
+        await t.disconnect()
+
+    assert timeouts == [{"connect": 5.0, "read": read_timeout, "write": 5.0, "pool": 5.0}]
+
+
 async def test_cmd_retries_5xx_then_succeeds(monkeypatch):
     # Skip sleeps so the test runs instantly.
     import cua_sandbox.transport.http as http_mod

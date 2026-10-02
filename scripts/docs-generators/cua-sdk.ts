@@ -810,10 +810,10 @@ export const PAGES: PageSpec[] = [
   {
     slug: 'spaces/app-core/teleport',
     title: 'Teleport picker',
-    description: 'The teleport picker and review, and consent.',
-    intro: 'The picker lists `Teleport.catalog` entries, reviews a `Teleport.plan` with its consent items, and follows the run. The overlays that show a teleport in progress are on [Teleport transfer and drag](/cua-sdk/reference/spaces/app-core/teleport-transfer).',
-    items: ['AppEntrySection', 'AppReviewView', 'AppPlanStepView', 'AppInstallCuaPrompt'],
-    prefixes: ['AppPicker', 'app_picker_', 'AppTeleport', 'app_teleport_', 'AppCatalog', 'app_catalog_', 'AppConsent'],
+    description: 'The teleport picker and its catalog.',
+    intro: 'The picker lists `Teleport.catalog` entries and drives the steps up to the review. The overlays that show a teleport in progress are on [Teleport transfer and drag](/cua-sdk/reference/spaces/app-core/teleport-transfer).',
+    items: ['AppEntrySection'],
+    prefixes: ['AppPicker', 'app_picker_', 'AppCatalog', 'app_catalog_'],
     spaces: true,
   },
   {
@@ -823,6 +823,24 @@ export const PAGES: PageSpec[] = [
     intro: 'The transfer overlay follows a running teleport step by step; the drag overlay shows a file or app dragged onto a Space.',
     items: [],
     prefixes: ['AppTransfer', 'app_transfer_', 'AppDragOverlay'],
+    spaces: true,
+  },
+  {
+    slug: 'spaces/app-core/teleport-run',
+    title: 'Teleport plan and run',
+    description: 'The teleport plan, its consent and capabilities, and the run\'s steps.',
+    intro: '`app_teleport_plan` turns a `Teleport.plan` into the consent the user sees; `AppTeleportRunEvent` and `AppTeleportRunReport` follow the run.',
+    items: [],
+    prefixes: ['AppTeleport', 'app_teleport_'],
+    spaces: true,
+  },
+  {
+    slug: 'spaces/app-core/teleport-review',
+    title: 'Teleport review',
+    description: 'The review and consent before a teleport: what to send per site, from the app or from the Keyvault, and the choice remembered for next time.',
+    intro: '`AppReviewView` is the review sheet. `AppReviewToggle` and `AppReviewChoice` change what is sent, per site or per part; `app_review_remember` keeps the choice for the next teleport of the same app to the same Space, and `AppVaultSource` offers the items the Keyvault already holds, which need no Keychain prompt.',
+    items: ['AppReviewView', 'AppSendSource', 'AppVaultSource', 'AppRememberedChoice', 'AppPlanStepView', 'AppInstallCuaPrompt'],
+    prefixes: ['AppReview', 'app_review_', 'AppConsent'],
     spaces: true,
   },
   {
@@ -937,10 +955,10 @@ export const PAGES: PageSpec[] = [
   {
     slug: 'spaces/app-core/keyvault-screens',
     title: 'Keyvault screens',
-    description: 'The Keyvault page, sidebar, list, site detail and the approval prompt.',
-    intro: 'The `kv_*` functions derive each Keyvault screen from a `KeyvaultOverview`. `kv_approval_open`, `kv_approval_reduce` and `kv_approval_view` drive the approval prompt; the `*_command` functions return the `KvCommand` to send.',
+    description: 'The Keyvault page, sidebar, the vault list (apps, sites and items with their locks), the unlock prompt and the approval prompt.',
+    intro: 'The `kv_*` functions derive each Keyvault screen from a `KeyvaultOverview`. `kv_vault_view` groups the vault by source app and site, with a lock on each row; `kv_vault_reduce` applies search, selection and open groups; `kv_unlock_prompt` is the "Allow unattended access?" prompt. `kv_approval_open`, `kv_approval_reduce` and `kv_approval_view` drive the approval prompt; the `*_command` functions return the `KvCommand` to send.',
     items: ['KvAccessRow', 'KvAccessKind', 'KvRecentRow', 'KvDecision', 'KvDecisionTone', 'KvTri', 'KvSelection', 'KvSigningBadge', 'KvTone'],
-    prefixes: ['kv_page', 'KvPage', 'kv_sidebar', 'KvSidebar', 'KvCategory', 'kv_list', 'KvListView', 'kv_site_', 'KvSite', 'KvItemRow', 'KvConsentChip', 'KvPendingRow', 'kv_approval_', 'KvApproval'],
+    prefixes: ['kv_page', 'KvPage', 'kv_sidebar', 'KvSidebar', 'KvCategory', 'kv_list', 'KvListView', 'kv_vault_', 'KvVault', 'KvLock', 'KvKind', 'KvAppRow', 'kv_unlock_', 'KvUnlockPrompt', 'kv_delete_', 'KvDeleteConfirm', 'kv_lock_', 'kv_live_', 'KvPendingRow', 'kv_approval_', 'KvApproval'],
     spaces: true,
   },
   {

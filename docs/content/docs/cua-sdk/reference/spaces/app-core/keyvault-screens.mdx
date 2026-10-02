@@ -1,6 +1,6 @@
 ---
 title: "Keyvault screens"
-description: "The Keyvault page, sidebar, list, site detail and the approval prompt."
+description: "The Keyvault page, sidebar, the vault list (apps, sites and items with their locks), the unlock prompt and the approval prompt."
 ---
 
 {/*
@@ -17,7 +17,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 These APIs are part of the Cua Spaces app export for building Spaces UIs. They are source-available under FSL-1.1-MIT and ship for Swift only (`import CuaSpacesFFI`); the Rust tab shows the `cua-spaces-ffi` crate they come from. The open source SDK packages for Python, TypeScript and Kotlin do not include them.
 </Callout>
 
-The `kv_*` functions derive each Keyvault screen from a `KeyvaultOverview`. `kv_approval_open`, `kv_approval_reduce` and `kv_approval_view` drive the approval prompt; the `*_command` functions return the `KvCommand` to send.
+The `kv_*` functions derive each Keyvault screen from a `KeyvaultOverview`. `kv_vault_view` groups the vault by source app and site, with a lock on each row; `kv_vault_reduce` applies search, selection and open groups; `kv_unlock_prompt` is the "Allow unattended access?" prompt. `kv_approval_open`, `kv_approval_reduce` and `kv_approval_view` drive the approval prompt; the `*_command` functions return the `KvCommand` to send.
 
 ## `KvAccessRow` record
 
@@ -141,7 +141,7 @@ KvTri::Mixed
 
 ```swift
 .category(category: KvCategory)
-.site(key: String)
+.app(key: String)
 ```
 
 </Tab>
@@ -149,7 +149,7 @@ KvTri::Mixed
 
 ```rust
 KvSelection::Category { category: KvCategory }
-KvSelection::Site { key: String }
+KvSelection::App { key: String }
 ```
 
 </Tab>
@@ -158,7 +158,7 @@ KvSelection::Site { key: String }
 | Variant | Description |
 | --- | --- |
 | `Category` | A category. Fields: `category: KvCategory` |
-| `Site` | A site. Fields: `key: String` |
+| `App` | One app's items. Fields: `key: String` |
 
 ## `KvSigningBadge` record
 
@@ -196,13 +196,25 @@ KvTone::Danger
 | `Warn` | Caution. |
 | `Danger` | Untrusted. |
 
+## `KvAppRow` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `key` | `String` |  | The provider id (`chrome`): the key, and what the icon is looked up by. |
+| `title` | `String` |  | "Google Chrome". |
+| `items` | `u32` |  | Items. |
+| `waiting` | `bool` |  | Something waits for this app. |
+
 ## `KvApprovalRow` record
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `key` | `String` |  | Row key. |
-| `title` | `String` |  | Site or app. |
-| `account` | `String` |  | Account, or "Not imported yet". |
+| `key` | `String` |  | Row key: `<app>\|<site>`, `<app>\|files`, or `import:<n>`. |
+| `title` | `String` |  | The site, or the app for files and imports. |
+| `account` | `String` |  | "3 cookies, 1 password", or "Not saved yet". |
+| `provider_id` / `providerId` | `String` |  | The app's provider id (its icon), when known. |
+| `items` | `u32` |  | Items the row stands for. |
+| `item_ids` / `itemIds` | `Vec<String>` |  | The items' ids. |
 | `selected` | `bool` |  | Ticked. |
 | `is_import` / `isImport` | `bool` |  | A new item the approval imports. |
 
@@ -213,7 +225,7 @@ Returned by [`kv_approval_open`](#kv_approval_open), [`kv_approval_reduce`](#kv_
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `request_id` / `requestId` | `String` |  | The request. |
-| `selected` | `Vec<String>` |  | Ticked row keys (item ids, or `import:<n>` for new items). |
+| `selected` | `Vec<String>` |  | Ticked row keys (`<app>\|<site>`, or `import:<n>` for new items). |
 
 ## `KvApprovalView` record
 
@@ -245,22 +257,16 @@ Returned by [`kv_approval_view`](#kv_approval_view).
 | `count` | `Option<u32>` |  | Count (none for Recent). |
 | `badge` | `Option<u32>` |  | The sidebar badge: Waiting's count while something waits. |
 
-## `KvConsentChip` record
+## `KvDeleteConfirm` record
+
+Returned by [`kv_delete_confirm`](#kv_delete_confirm).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `kind` | [`KvConsentChipKind`](#kvconsentchipkind-enum) |  | Kind. |
-| `text` | `String` |  | Text. |
-
-## `KvItemRow` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `item` | [`KvItem`](/cua-sdk/reference/spaces/app-core/keyvault#kvitem-record) |  | The item. |
-| `account` | `String` |  | "ada@example.com", "Whole app session", or the profile. |
-| `consent` | [`Vec<KvConsentChip>`](#kvconsentchip-record) |  | Strongest first; `asks` when nothing else applies. |
-| `toggle_enabled` / `toggleEnabled` | `bool` |  | The unattended switch can be changed (not an identity provider). |
-| `toggle_help` / `toggleHelp` | `String` |  | The switch's tooltip. |
+| `title` | `String` |  | "Delete 3 items?" |
+| `message` | `String` |  | What deleting does. |
+| `confirm` | `String` |  | "Delete". |
+| `cancel` | `String` |  | "Cancel". |
 
 ## `KvListView` record
 
@@ -269,11 +275,11 @@ Returned by [`kv_list`](#kv_list).
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `title` | `String` |  | Title. |
-| `sites` | [`Vec<KvSiteGroup>`](#kvsitegroup-record) |  | Sites (All, or the one site). |
+| `vault` | `bool` |  | The vault list shows (All Items, or one app). |
 | `pending` | [`Vec<KvPendingRow>`](#kvpendingrow-record) |  | Waiting. |
 | `access` | [`Vec<KvAccessRow>`](#kvaccessrow-record) |  | Access. |
 | `recent` | [`Vec<KvRecentRow>`](#kvrecentrow-record) |  | Recent. |
-| `empty_text` / `emptyText` | `Option<String>` |  | "No items yet." and friends. |
+| `empty_text` / `emptyText` | `Option<String>` |  | "Nothing is waiting." and friends. |
 
 ## `KvPage` record
 
@@ -296,7 +302,9 @@ Returned by [`kv_page`](#kv_page).
 | `protection` | [`Vec<AppFact>`](/cua-sdk/reference/spaces/app-core/window#appfact-record) |  | Protection facts. |
 | `revoke_all` / `revokeAll` | `bool` |  | "Revoke all" shows (more than one live grant). |
 | `has_items` / `hasItems` | `bool` |  | Items exist. |
-| `search_visible` / `searchVisible` | `bool` |  | Search shows (more than six items). |
+| `search_visible` / `searchVisible` | `bool` |  | Search shows (any item exists). |
+| `skip_unlock_prompt` / `skipUnlockPrompt` | `bool` |  | "Never ask again" on the unlock prompt is on (Settings turns it off). |
+| `reset_notice` / `resetNotice` | `Option<String>` |  | An earlier preview's vault was set aside: one line to show. |
 | `pending_count` / `pendingCount` | `u32` |  | Pending requests (the sidebar badge). |
 | `kill_switch_help` / `killSwitchHelp` | `String` |  | The switch's tooltip (it reads "on" while the Keyvault works). |
 | `labels` | [`KvLabels`](/cua-sdk/reference/spaces/app-core/keyvault#kvlabels-record) |  | The page's fixed words. |
@@ -319,40 +327,136 @@ Returned by [`kv_sidebar`](#kv_sidebar).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `categories` | [`Vec<KvCategoryRow>`](#kvcategoryrow-record) |  | All, Waiting, Access, Recent. |
-| `sites` | [`Vec<KvSiteRow>`](#kvsiterow-record) |  | One row per site or app. |
+| `categories` | [`Vec<KvCategoryRow>`](#kvcategoryrow-record) |  | All Items, Waiting, Access, Recent. |
+| `apps` | [`Vec<KvAppRow>`](#kvapprow-record) |  | One row per app, by name. |
 
-## `KvSiteDetail` record
+## `KvUnlockPrompt` record
 
-Returned by [`kv_site_detail`](#kv_site_detail).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `group` | [`KvSiteGroup`](#kvsitegroup-record) |  | The group. |
-| `site_switch` / `siteSwitch` | `bool` |  | The site switch shows (more than one account). |
-| `site_state` / `siteState` | [`KvTri`](#kvtri-enum) |  | The site switch's state. |
-| `site_switch_enabled` / `siteSwitchEnabled` | `bool` |  | The site switch can be flipped. |
-| `site_switch_help` / `siteSwitchHelp` | `String` |  | Its tooltip. |
-
-## `KvSiteGroup` record
+Returned by [`kv_unlock_prompt`](#kv_unlock_prompt), [`kv_unlock_prompt_always`](#kv_unlock_prompt_always).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `key` | `String` |  | Stable key. |
-| `title` | `String` |  | "github.com" or "Slack". |
-| `app` | `String` |  | "Chrome", "Slack". |
-| `rows` | [`Vec<KvItemRow>`](#kvitemrow-record) |  | Accounts. |
-| `unattended` | [`KvTri`](#kvtri-enum) |  | Unattended across rows. |
-| `locked` | `bool` |  | Every row is an identity provider. |
+| `title` | `String` |  | "Allow unattended access?" |
+| `message` | `String` |  | What it allows. |
+| `subject` | `String` |  | "3 items" (a batch), or the one item's name. |
+| `deny` | `String` |  | "Deny". |
+| `allow` | `String` |  | "Allow". |
+| `never_ask` / `neverAsk` | `String` |  | "Never ask again". |
 
-## `KvSiteRow` record
+## `KvVaultApp` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `key` | `String` |  | Group key: the provider id (`chrome`). |
+| `provider_id` / `providerId` | `String` |  | The provider id, for the app's icon. |
+| `name` | `String` |  | "Google Chrome". |
+| `count` | `u32` |  | Items. |
+| `summary` | `String` |  | "212 items, 14 unlocked". |
+| `updated` | `String` |  | Grey time of the newest save. |
+| `selected` | [`KvTri`](#kvtri-enum) |  | Selection of its items. |
+| `lock` | [`KvLock`](#kvlock-enum) |  | Lock of its items. |
+| `unlock_ids` / `unlockIds` | `Vec<String>` |  | Items a click on the lock unlocks (locked, not identity providers). |
+| `lock_ids` / `lockIds` | `Vec<String>` |  | Items a click on the lock locks (unlocked). |
+| `open` | `bool` |  | Open. |
+| `sites` | [`Vec<KvVaultSite>`](#kvvaultsite-record) |  | Sites with their items, by name. |
+| `files` | [`Option<KvVaultFiles>`](#kvvaultfiles-record) |  | Files, when it has any. |
+
+## `KvVaultFiles` record
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `key` | `String` |  | Group key. |
-| `title` | `String` |  | "github.com" or "Slack". |
-| `accounts` | `u32` |  | Accounts. |
-| `waiting` | `bool` |  | Something waits for this site. |
+| `count` | `u32` |  | Files. |
+| `selected` | [`KvTri`](#kvtri-enum) |  | Selection of its items. |
+| `lock` | [`KvLock`](#kvlock-enum) |  | Lock of its items. |
+| `unlock_ids` / `unlockIds` | `Vec<String>` |  | Items a click on the lock unlocks (locked, not identity providers). |
+| `lock_ids` / `lockIds` | `Vec<String>` |  | Items a click on the lock locks (unlocked). |
+| `open` | `bool` |  | Open. |
+| `rows` | [`Vec<KvVaultRow>`](#kvvaultrow-record) |  | Its rows (empty while closed, unless searching). |
+
+## `KvVaultRow` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `String` |  | Item id. |
+| `kind` | [`KvKind`](#kvkind-enum) |  | Type. |
+| `kind_label` / `kindLabel` | `String` |  | "Cookie". |
+| `symbol` | `String` |  | The type's SF Symbol. |
+| `title` | `String` |  | The key: a cookie name, storage key, username or file name. |
+| `subtitle` | `String` |  | Grey line: the domain, or the file's folder. |
+| `updated` | `String` |  | Grey time: "2 min ago". |
+| `locked` | `bool` |  | Locked (needs approval for every use). |
+| `lock_symbol` / `lockSymbol` | `String` |  | The lock icon: `lock.fill` or `lock.open`. |
+| `lock_help` / `lockHelp` | `String` |  | The lock's tooltip and accessibility label. |
+| `identity_provider` / `identityProvider` | `bool` |  | Identity provider: always asks, cannot be unlocked. |
+| `selected` | `bool` |  | Selected. |
+
+## `KvVaultSelection` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `count` | `u32` |  | Selected items. |
+| `ids` | `Vec<String>` |  | Their ids, in list order. |
+| `title` | `String` |  | "3 selected". |
+| `can_unlock` / `canUnlock` | `bool` |  | Some selected item is locked and may be unlocked. |
+| `can_lock` / `canLock` | `bool` |  | Some selected item is unlocked. |
+| `always_ask` / `alwaysAsk` | `u32` |  | Selected items that always ask (identity providers). |
+| `unlock_ids` / `unlockIds` | `Vec<String>` |  | The ids to send when unlocking (locked, not identity providers). |
+| `lock_ids` / `lockIds` | `Vec<String>` |  | The ids to send when locking (unlocked). |
+
+## `KvVaultSite` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `key` | `String` |  | Group key. |
+| `site` | `String` |  | "github.com". |
+| `count` | `u32` |  | Items (all of them, even while closed). |
+| `counts` | `String` |  | "12 cookies, 2 storage values". |
+| `updated` | `String` |  | Grey time of the newest save. |
+| `selected` | [`KvTri`](#kvtri-enum) |  | Selection of its items. |
+| `lock` | [`KvLock`](#kvlock-enum) |  | Lock of its items. |
+| `unlock_ids` / `unlockIds` | `Vec<String>` |  | Items a click on the lock unlocks (locked, not identity providers). |
+| `lock_ids` / `lockIds` | `Vec<String>` |  | Items a click on the lock locks (unlocked). |
+| `open` | `bool` |  | Open. |
+| `rows` | [`Vec<KvVaultRow>`](#kvvaultrow-record) |  | Its rows (empty while closed, unless searching). |
+
+## `KvVaultSource` record
+
+Returned by [`kv_vault_source`](#kv_vault_source).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `count` | `u32` |  | Items that can be sent. |
+| `newest_ms` / `newestMs` | `i64` |  | When the newest was saved, Unix ms (0: none). |
+| `ids` | `Vec<String>` |  | Their ids, in list order. |
+
+## `KvVaultState` record
+
+Returned by [`kv_vault_prune`](#kv_vault_prune), [`kv_vault_reduce`](#kv_vault_reduce).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `query` | `String` |  | The search text. |
+| `selected` | `Vec<String>` |  | Selected item ids. |
+| `expanded` | `Vec<String>` |  | Open groups (their keys); the rest are closed. |
+| `app` | `Option<String>` |  | Narrowed to one app (its provider id), as the sidebar picks it. |
+
+## `KvVaultView` record
+
+Returned by [`kv_vault_view`](#kv_vault_view).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `apps` | [`Vec<KvVaultApp>`](#kvvaultapp-record) |  | Apps, by name. |
+| `shown` | `u32` |  | Items shown (after search). |
+| `total` | `u32` |  | Items in the vault. |
+| `empty_text` / `emptyText` | `Option<String>` |  | "No items yet." and friends. |
+| `names_hidden` / `namesHidden` | `bool` |  | Domains and keys are hidden until the user confirms with Touch ID. |
+| `hidden_note` / `hiddenNote` | `Option<String>` |  | What to say about it. |
+| `show_names_label` / `showNamesLabel` | `String` |  | The button that opens the names. |
+| `search_prompt` / `searchPrompt` | `String` |  | The search field's prompt. |
+| `selection` | [`KvVaultSelection`](#kvvaultselection-record) |  | The selection. |
+| `can_select_all` / `canSelectAll` | `bool` |  | Select all is offered. |
 
 ## `KvApprovalAction` enum
 
@@ -410,33 +514,31 @@ KvCategory::Recent
 
 | Variant | Description |
 | --- | --- |
-| `All` | Every site. |
+| `All` | Every item, grouped by app. |
 | `Waiting` | Requests waiting for approval. |
 | `Access` | Live grants, rules and copies. |
 | `Recent` | Recent decisions. |
 
-## `KvConsentChipKind` enum
+## `KvKind` enum
 
 <Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Swift">
 
 ```swift
-.pending
-.delivered
-.granted
-.rule
-.asks
+.cookie
+.localStorage
+.password
+.file
 ```
 
 </Tab>
 <Tab value="Rust">
 
 ```rust
-KvConsentChipKind::Pending
-KvConsentChipKind::Delivered
-KvConsentChipKind::Granted
-KvConsentChipKind::Rule
-KvConsentChipKind::Asks
+KvKind::Cookie
+KvKind::LocalStorage
+KvKind::Password
+KvKind::File
 ```
 
 </Tab>
@@ -444,11 +546,77 @@ KvConsentChipKind::Asks
 
 | Variant | Description |
 | --- | --- |
-| `Pending` | A request waits. |
-| `Delivered` | A copy is in a Space. |
-| `Granted` | A live grant. |
-| `Rule` | An unattended rule. |
-| `Asks` | Nothing: asks every time. |
+| `Cookie` | A cookie. |
+| `LocalStorage` | A localStorage value. |
+| `Password` | A saved password. |
+| `File` | A file. |
+
+## `KvLock` enum
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+.locked
+.unlocked
+.mixed
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+KvLock::Locked
+KvLock::Unlocked
+KvLock::Mixed
+```
+
+</Tab>
+</Tabs>
+
+| Variant | Description |
+| --- | --- |
+| `Locked` | Every item needs approval for each use. |
+| `Unlocked` | Every item allows unattended access. |
+| `Mixed` | Some of each. |
+
+## `KvVaultAction` enum
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+.query(text: String)
+.toggle(id: String)
+.toggleGroup(key: String)
+.selectAll
+.clear
+.toggleOpen(key: String)
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+KvVaultAction::Query { text: String }
+KvVaultAction::Toggle { id: String }
+KvVaultAction::ToggleGroup { key: String }
+KvVaultAction::SelectAll
+KvVaultAction::Clear
+KvVaultAction::ToggleOpen { key: String }
+```
+
+</Tab>
+</Tabs>
+
+| Variant | Description |
+| --- | --- |
+| `Query` | The search text changed. Fields: `text: String` |
+| `Toggle` | Select or deselect one item. Fields: `id: String` |
+| `ToggleGroup` | Select or deselect every shown item of an app, a site or the files of an app (all of them when any is unselected, none when all are). Fields: `key: String` |
+| `SelectAll` | Select every shown item. |
+| `Clear` | Deselect everything. |
+| `ToggleOpen` | Open or close a group. Fields: `key: String` |
 
 ## `kv_approval_approve_command`
 
@@ -589,22 +757,77 @@ pub fn kv_approval_view(overview: KeyvaultOverview, state: KvApprovalState) -> K
 
 **Returns** [`KvApprovalView`](#kvapprovalview-record)
 
-## `kv_list`
+## `kv_delete_command`
 
-The list for a sidebar selection.
+The command that deletes items and wipes their copies in Spaces.
 
 <Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Swift">
 
 ```swift
-func kvList(overview: KeyvaultOverview, selection: KvSelection, nowMs: Int64, query: String) -> KvListView
+func kvDeleteCommand(ids: [String]) -> KvCommand
 ```
 
 </Tab>
 <Tab value="Rust">
 
 ```rust
-pub fn kv_list(overview: KeyvaultOverview, selection: KvSelection, now_ms: i64, query: String) -> KvListView
+pub fn kv_delete_command(ids: Vec<String>) -> KvCommand
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `ids` | `Vec<String>` | required |
+
+**Returns** [`KvCommand`](/cua-sdk/reference/spaces/app-core/keyvault#kvcommand-enum)
+
+## `kv_delete_confirm`
+
+The delete confirmation.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func kvDeleteConfirm(count: UInt32, liveCopies: UInt32) -> KvDeleteConfirm
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn kv_delete_confirm(count: u32, live_copies: u32) -> KvDeleteConfirm
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `count` | `u32` | required |
+| `live_copies` | `u32` | required |
+
+**Returns** [`KvDeleteConfirm`](#kvdeleteconfirm-record)
+
+## `kv_list`
+
+The pane for a sidebar selection (the vault list is `kv_vault_view`).
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func kvList(overview: KeyvaultOverview, selection: KvSelection, nowMs: Int64) -> KvListView
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn kv_list(overview: KeyvaultOverview, selection: KvSelection, now_ms: i64) -> KvListView
 ```
 
 </Tab>
@@ -615,9 +838,64 @@ pub fn kv_list(overview: KeyvaultOverview, selection: KvSelection, now_ms: i64, 
 | `overview` | [`KeyvaultOverview`](/cua-sdk/reference/spaces/app-core/keyvault#keyvaultoverview-record) | required |
 | `selection` | [`KvSelection`](#kvselection-enum) | required |
 | `now_ms` | `i64` | required |
-| `query` | `String` | required |
 
 **Returns** [`KvListView`](#kvlistview-record)
+
+## `kv_live_copy_spaces`
+
+How many Spaces hold a live copy of any of `ids`.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func kvLiveCopySpaces(overview: KeyvaultOverview, ids: [String], nowMs: Int64) -> UInt32
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn kv_live_copy_spaces(overview: KeyvaultOverview, ids: Vec<String>, now_ms: i64) -> u32
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `overview` | [`KeyvaultOverview`](/cua-sdk/reference/spaces/app-core/keyvault#keyvaultoverview-record) | required |
+| `ids` | `Vec<String>` | required |
+| `now_ms` | `i64` | required |
+
+**Returns** `u32`
+
+## `kv_lock_command`
+
+The command that locks items.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func kvLockCommand(ids: [String]) -> KvCommand
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn kv_lock_command(ids: Vec<String>) -> KvCommand
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `ids` | `Vec<String>` | required |
+
+**Returns** [`KvCommand`](/cua-sdk/reference/spaces/app-core/keyvault#kvcommand-enum)
 
 ## `kv_page`
 
@@ -649,7 +927,7 @@ pub fn kv_page(overview: KeyvaultOverview, now_ms: i64) -> KvPage
 
 ## `kv_sidebar`
 
-The Passwords-style sidebar.
+The sidebar: All Items, Waiting, Access, Recent, and one row per app.
 
 <Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Swift">
@@ -675,22 +953,50 @@ pub fn kv_sidebar(overview: KeyvaultOverview, now_ms: i64) -> KvSidebar
 
 **Returns** [`KvSidebar`](#kvsidebar-record)
 
-## `kv_site_detail`
+## `kv_unlock_command`
 
-One site's detail.
+The command that unlocks items (the daemon asks for Touch ID once).
 
 <Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Swift">
 
 ```swift
-func kvSiteDetail(overview: KeyvaultOverview, key: String, nowMs: Int64) -> KvSiteDetail?
+func kvUnlockCommand(ids: [String]) -> KvCommand
 ```
 
 </Tab>
 <Tab value="Rust">
 
 ```rust
-pub fn kv_site_detail(overview: KeyvaultOverview, key: String, now_ms: i64) -> Option<KvSiteDetail>
+pub fn kv_unlock_command(ids: Vec<String>) -> KvCommand
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `ids` | `Vec<String>` | required |
+
+**Returns** [`KvCommand`](/cua-sdk/reference/spaces/app-core/keyvault#kvcommand-enum)
+
+## `kv_unlock_prompt`
+
+The unlock prompt for `count` items (`name`: the one item's name). None
+when the user chose "Never ask again".
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func kvUnlockPrompt(overview: KeyvaultOverview, count: UInt32, name: String?) -> KvUnlockPrompt?
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn kv_unlock_prompt(overview: KeyvaultOverview, count: u32, name: Option<String>) -> Option<KvUnlockPrompt>
 ```
 
 </Tab>
@@ -699,27 +1005,27 @@ pub fn kv_site_detail(overview: KeyvaultOverview, key: String, now_ms: i64) -> O
 | Parameter | Type | Default |
 | --- | --- | --- |
 | `overview` | [`KeyvaultOverview`](/cua-sdk/reference/spaces/app-core/keyvault#keyvaultoverview-record) | required |
-| `key` | `String` | required |
-| `now_ms` | `i64` | required |
+| `count` | `u32` | required |
+| `name` | `Option<String>` | required |
 
-**Returns** [`Option<KvSiteDetail>`](#kvsitedetail-record)
+**Returns** [`Option<KvUnlockPrompt>`](#kvunlockprompt-record)
 
-## `kv_site_toggle`
+## `kv_unlock_prompt_always`
 
-The site switch's command.
+The unlock prompt whatever the setting says.
 
 <Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Swift">
 
 ```swift
-func kvSiteToggle(group: KvSiteGroup, on: Bool) -> KvCommand
+func kvUnlockPromptAlways(count: UInt32, name: String?) -> KvUnlockPrompt
 ```
 
 </Tab>
 <Tab value="Rust">
 
 ```rust
-pub fn kv_site_toggle(group: KvSiteGroup, on: bool) -> KvCommand
+pub fn kv_unlock_prompt_always(count: u32, name: Option<String>) -> KvUnlockPrompt
 ```
 
 </Tab>
@@ -727,7 +1033,122 @@ pub fn kv_site_toggle(group: KvSiteGroup, on: bool) -> KvCommand
 
 | Parameter | Type | Default |
 | --- | --- | --- |
-| `group` | [`KvSiteGroup`](#kvsitegroup-record) | required |
-| `on` | `bool` | required |
+| `count` | `u32` | required |
+| `name` | `Option<String>` | required |
 
-**Returns** [`KvCommand`](/cua-sdk/reference/spaces/app-core/keyvault#kvcommand-enum)
+**Returns** [`KvUnlockPrompt`](#kvunlockprompt-record)
+
+## `kv_vault_prune`
+
+The selection without what the vault no longer holds.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func kvVaultPrune(overview: KeyvaultOverview, state: KvVaultState) -> KvVaultState
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn kv_vault_prune(overview: KeyvaultOverview, state: KvVaultState) -> KvVaultState
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `overview` | [`KeyvaultOverview`](/cua-sdk/reference/spaces/app-core/keyvault#keyvaultoverview-record) | required |
+| `state` | [`KvVaultState`](#kvvaultstate-record) | required |
+
+**Returns** [`KvVaultState`](#kvvaultstate-record)
+
+## `kv_vault_reduce`
+
+The vault list's next state (search, selection, open groups).
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func kvVaultReduce(overview: KeyvaultOverview, state: KvVaultState, action: KvVaultAction) -> KvVaultState
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn kv_vault_reduce(overview: KeyvaultOverview, state: KvVaultState, action: KvVaultAction) -> KvVaultState
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `overview` | [`KeyvaultOverview`](/cua-sdk/reference/spaces/app-core/keyvault#keyvaultoverview-record) | required |
+| `state` | [`KvVaultState`](#kvvaultstate-record) | required |
+| `action` | [`KvVaultAction`](#kvvaultaction-enum) | required |
+
+**Returns** [`KvVaultState`](#kvvaultstate-record)
+
+## `kv_vault_source`
+
+What the Keyvault holds for `provider_id` that a teleport can send.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func kvVaultSource(overview: KeyvaultOverview, providerId: String) -> KvVaultSource
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn kv_vault_source(overview: KeyvaultOverview, provider_id: String) -> KvVaultSource
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `overview` | [`KeyvaultOverview`](/cua-sdk/reference/spaces/app-core/keyvault#keyvaultoverview-record) | required |
+| `provider_id` | `String` | required |
+
+**Returns** [`KvVaultSource`](#kvvaultsource-record)
+
+## `kv_vault_view`
+
+The vault list: apps, sites and items with their locks, the selection and
+the batch bar.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func kvVaultView(overview: KeyvaultOverview, state: KvVaultState, nowMs: Int64) -> KvVaultView
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn kv_vault_view(overview: KeyvaultOverview, state: KvVaultState, now_ms: i64) -> KvVaultView
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `overview` | [`KeyvaultOverview`](/cua-sdk/reference/spaces/app-core/keyvault#keyvaultoverview-record) | required |
+| `state` | [`KvVaultState`](#kvvaultstate-record) | required |
+| `now_ms` | `i64` | required |
+
+**Returns** [`KvVaultView`](#kvvaultview-record)

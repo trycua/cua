@@ -53,7 +53,7 @@ impl Frame {
         }
     }
 
-    fn is_valid(self) -> bool {
+    fn is_valid(&self) -> bool {
         self.x.is_finite()
             && self.y.is_finite()
             && self.width.is_finite()
@@ -62,16 +62,16 @@ impl Frame {
             && self.height > 0.0
     }
 
-    fn approximately_eq(self, other: Self, tolerance: f64) -> bool {
+    fn approximately_eq(&self, other: &Self, tolerance: f64) -> bool {
         self.position_approximately_eq(other, tolerance)
             && self.size_approximately_eq(other, tolerance)
     }
 
-    fn position_approximately_eq(self, other: Self, tolerance: f64) -> bool {
+    fn position_approximately_eq(&self, other: &Self, tolerance: f64) -> bool {
         (self.x - other.x).abs() <= tolerance && (self.y - other.y).abs() <= tolerance
     }
 
-    fn size_approximately_eq(self, other: Self, tolerance: f64) -> bool {
+    fn size_approximately_eq(&self, other: &Self, tolerance: f64) -> bool {
         (self.width - other.width).abs() <= tolerance
             && (self.height - other.height).abs() <= tolerance
     }
@@ -100,7 +100,7 @@ const FRAME_MUTATION_ORDER: [FrameMutation; 2] = [FrameMutation::Position, Frame
 const POSITION_ONLY: [FrameMutation; 1] = [FrameMutation::Position];
 const SIZE_ONLY: [FrameMutation; 1] = [FrameMutation::Size];
 
-fn corrective_mutations(requested: Frame, observed: Frame) -> &'static [FrameMutation] {
+fn corrective_mutations(requested: &Frame, observed: &Frame) -> &'static [FrameMutation] {
     const TOLERANCE: f64 = 2.0;
     match (
         requested.position_approximately_eq(observed, TOLERANCE),
@@ -116,7 +116,7 @@ fn corrective_mutations(requested: Frame, observed: Frame) -> &'static [FrameMut
 // A window whose size cannot be set, such as Calculator's, can still be moved. Writing the
 // size only when it changes keeps AXSize out of the request, so such a window only needs a
 // settable AXPosition.
-fn initial_mutations(requested: Frame, current: Frame) -> &'static [FrameMutation] {
+fn initial_mutations(requested: &Frame, current: &Frame) -> &'static [FrameMutation] {
     const TOLERANCE: f64 = 2.0;
     if requested.size_approximately_eq(current, TOLERANCE) {
         &POSITION_ONLY
@@ -146,8 +146,8 @@ fn mutate_and_verify(
         return Err("x/y must be finite and width/height must be finite positive numbers".into());
     }
     let before = window_server_frame(window_id);
-    let mutations = before.map_or(&FRAME_MUTATION_ORDER[..], |before| {
-        initial_mutations(requested, before)
+    let mutations = before.as_ref().map_or(&FRAME_MUTATION_ORDER[..], |before| {
+        initial_mutations(&requested, before)
     });
     let apply = move |target, mutations: &[FrameMutation]| unsafe {
         mutations
@@ -168,6 +168,7 @@ fn mutate_and_verify(
             })
             .collect::<Vec<_>>()
     };
+    let has_before = before.is_some();
     let mutation_errors = window.with(move |target| unsafe {
         if !is_attribute_settable(target, "AXPosition") {
             return Err(format!(
@@ -179,7 +180,7 @@ fn mutate_and_verify(
                 "window_id {window_id} does not expose a settable AXSize"
             ));
         }
-        before.ok_or_else(|| {
+        has_before.then_some(()).ok_or_else(|| {
             format!("could not read the current WindowServer frame of window_id {window_id}")
         })?;
         Ok(apply(target, mutations))
@@ -195,18 +196,19 @@ fn mutate_and_verify(
     for attempt in 0..20 {
         std::thread::sleep(std::time::Duration::from_millis(50));
         let corrections = if attempt < 6 {
+            let requested = outcome.requested.clone();
             window.with(move |target| unsafe {
                 Ok(element_screen_rect(target).map_or_else(Vec::new, |rect| {
                     apply(
                         target,
-                        corrective_mutations(requested, Frame::from_ax(rect)),
+                        corrective_mutations(&requested, &Frame::from_ax(rect)),
                     )
                 }))
             })
         } else {
             Ok(Vec::new())
         };
-        outcome.observe(before, corrections, window_server_frame(window_id));
+        outcome.observe(&before, corrections, window_server_frame(window_id));
         if outcome.confirmed {
             break;
         }
@@ -217,7 +219,7 @@ fn mutate_and_verify(
 impl FrameOutcome {
     fn observe(
         &mut self,
-        before: Frame,
+        before: &Frame,
         corrections: Result<Vec<String>, String>,
         frame: Option<Frame>,
     ) {
@@ -229,9 +231,11 @@ impl FrameOutcome {
         }
         self.confirmed = self
             .observed
-            .is_some_and(|frame| frame.approximately_eq(self.requested, 2.0));
+            .as_ref()
+            .is_some_and(|frame| frame.approximately_eq(&self.requested, 2.0));
         self.changed = self
             .observed
+            .as_ref()
             .is_some_and(|frame| !frame.approximately_eq(before, 2.0));
     }
 }
@@ -337,7 +341,7 @@ mod tests {
             height: 600.0,
         };
         assert!(requested.approximately_eq(
-            Frame {
+            &Frame {
                 x: 11.5,
                 y: 19.0,
                 width: 799.0,
@@ -346,7 +350,7 @@ mod tests {
             2.0
         ));
         assert!(!requested.approximately_eq(
-            Frame {
+            &Frame {
                 x: 13.0,
                 ..requested
             },
@@ -372,22 +376,22 @@ mod tests {
         };
         assert_eq!(
             initial_mutations(
-                Frame {
+                &Frame {
                     x: 454.0,
                     y: 600.0,
                     ..current
                 },
-                current
+                &current
             ),
             &POSITION_ONLY
         );
         assert_eq!(
             initial_mutations(
-                Frame {
+                &Frame {
                     width: 500.0,
                     ..current
                 },
-                current
+                &current
             ),
             &FRAME_MUTATION_ORDER
         );
@@ -403,8 +407,8 @@ mod tests {
         };
         assert_eq!(
             corrective_mutations(
-                requested,
-                Frame {
+                &requested,
+                &Frame {
                     x: 30.0,
                     y: 40.0,
                     ..requested
@@ -414,8 +418,8 @@ mod tests {
         );
         assert_eq!(
             corrective_mutations(
-                requested,
-                Frame {
+                &requested,
+                &Frame {
                     width: 900.0,
                     height: 700.0,
                     ..requested
@@ -444,20 +448,20 @@ mod tests {
             ..before
         };
         let mut outcome = FrameOutcome {
-            requested,
+            requested: requested.clone(),
             observed: None,
             confirmed: false,
             changed: false,
             mutation_errors: vec!["AXSize was rejected with AXError -25202".into()],
         };
         outcome.observe(
-            before,
+            &before,
             Err("window_id 23 has no matching AXWindow".into()),
             Some(moved),
         );
         assert!(outcome.changed);
         assert!(!outcome.confirmed);
-        assert_eq!(outcome.observed.unwrap().x, requested.x);
+        assert_eq!(outcome.observed.as_ref().unwrap().x, requested.x);
         assert_eq!(outcome.mutation_errors.len(), 2);
         let projection = action_record(&outcome).stable_projection().unwrap();
         assert_eq!(
@@ -469,8 +473,8 @@ mod tests {
             "independent WindowServer evidence was lost"
         );
         // Later disappearance must retain the last independently observed geometry.
-        outcome.observe(before, Err("window_id 23 is closed".into()), None);
-        assert_eq!(outcome.observed.unwrap().x, requested.x);
+        outcome.observe(&before, Err("window_id 23 is closed".into()), None);
+        assert_eq!(outcome.observed.as_ref().unwrap().x, requested.x);
         assert!(outcome.changed);
     }
 

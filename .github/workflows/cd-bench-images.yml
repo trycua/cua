@@ -313,9 +313,11 @@ jobs:
     if: ${{ !cancelled() && needs.verify.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
-      # contents: write for the image-doctor-ledger branch (attest).
+      # contents: write for the image-doctor-ledger branch (attest) and the
+      # catalog branch; pull-requests: write to open the catalog PR.
       contents: write
       packages: write
+      pull-requests: write
     env:
       BENCH: ${{ inputs.bench }}
       STAMP: ${{ needs.meta.outputs.stamp }}
@@ -367,3 +369,36 @@ jobs:
         with:
           name: bench-${{ inputs.bench }}-promoted-lock
           path: libs/images/bench/${{ inputs.bench }}/lock.json
+      # The release's catalog step: move the catalog digests of the promoted
+      # <ver> and <ver>-disk tags and record their sizes, then open a PR with
+      # libs/images/sandbox-images.json, the promoted lock.json and the
+      # regenerated cua_bench/images.py. A PR opened
+      # with GITHUB_TOKEN does not trigger CI on its own; push to it (or close
+      # and reopen it) to run the required checks.
+      - name: Catalog PR (sandbox-images.json and lock.json at the promoted digests)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          lock="libs/images/bench/$BENCH/lock.json"
+          python3 scripts/images/record-image-sizes.py --refresh-digest \
+            --ref "$(jq -r .index.floating "$lock")" --ref "$(jq -r .disk_index.floating "$lock")"
+          python3 scripts/images/record-image-sizes.py --check
+          # cua-bench's BENCH_<NAME> pins are generated from the lock files.
+          python3 scripts/images/gen-image-constants.py
+          files=(libs/images/sandbox-images.json "$lock" libs/cua-bench/cua_bench/images.py)
+          if git diff --quiet -- "${files[@]}"; then
+            echo "catalog already at the promoted digests"; exit 0
+          fi
+          branch="chore/bench-$BENCH-catalog-$STAMP"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add -- "${files[@]}"
+          git commit -m "chore(images): catalog bench-$BENCH $STAMP"
+          git push -u origin "$branch" --force
+          url="$(gh pr create --base main --head "$branch" \
+            --title "chore(images): catalog bench-$BENCH $STAMP" \
+            --body "The catalog step of ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}: \`libs/images/sandbox-images.json\` moves bench-$BENCH's promoted tags to their new digests with fresh sizes (\`record-image-sizes.py --refresh-digest\`), and \`$lock\` records the promoted stamp (with cua-bench's generated \`cua_bench/images.py\` pin)." \
+            || gh pr view "$branch" --json url -q .url)"
+          echo "- catalog PR: $url" >>"$GITHUB_STEP_SUMMARY"

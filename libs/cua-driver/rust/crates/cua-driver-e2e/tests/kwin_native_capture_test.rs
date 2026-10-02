@@ -18,7 +18,13 @@ for color in [(1, 0, 0), (0, 0, 1)]:
     window.set_default_size(320, 200)
     panel = Gtk.EventBox()
     panel.override_background_color(Gtk.StateFlags.NORMAL, Gdk.RGBA(*color, 1))
-    window.add(panel)
+    overlay = Gtk.Overlay()
+    overlay.add(panel)
+    slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+    slider.get_accessible().set_name('KWin input fixture')
+    slider.set_valign(Gtk.Align.END)
+    overlay.add_overlay(slider)
+    window.add(overlay)
     window.show_all()
     window.fullscreen()
     windows.append(window)
@@ -117,6 +123,75 @@ fn same_pid_same_title_windows_capture_exact_surfaces_without_a_helper() {
     assert!(colors.contains(&[0, 0, 255, 255]), "{colors:?}");
     for (window, color) in windows.iter().zip(&colors) {
         assert_eq!(capture(&mut driver, pid, window), *color);
+    }
+    let foreground_refusal = format!(
+        "foreground_unavailable: KWin target pid={pid} token={} is verified, but only \
+         focus-bound portal/libei input is available; refusing raw input until a target-bound \
+         KWin input path is implemented",
+        windows[0]["window_id"]
+    );
+    for tool in ["type_text", "press_key", "click"] {
+        let mut args = json!({
+            "pid": pid, "window_id": windows[0]["window_id"],
+            "delivery_mode": "foreground",
+        });
+        match tool {
+            "type_text" => args["text"] = json!("must not arrive"),
+            "press_key" => args["key"] = json!("a"),
+            _ => {
+                args["x"] = json!(20);
+                args["y"] = json!(20);
+            }
+        }
+        let response = driver.call(tool, args);
+        assert!(response.is_error(), "{tool}: {}", response.text());
+        assert!(
+            response.text().contains(&foreground_refusal),
+            "{}",
+            response.text()
+        );
+    }
+    for delivery in ["background", "foreground"] {
+        let state = driver.call(
+            "get_window_state",
+            json!({
+                "pid": pid, "window_id": windows[0]["window_id"],
+                "include_screenshot": false, "timeout_ms": 5000,
+            }),
+        );
+        let slider = state.structured()["elements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|element| element["label"] == "KWin input fixture")
+            .expect("fixture slider must be exposed over the isolated AT-SPI bus");
+        let response = driver.call(
+            "click",
+            json!({
+                "pid": pid, "window_id": windows[0]["window_id"],
+                "element_token": slider["element_token"], "delivery_mode": delivery,
+            }),
+        );
+        assert!(response.is_error(), "{}", response.text());
+        if delivery == "background" {
+            assert_eq!(
+                response.structured()["code"],
+                "background_unavailable",
+                "{}",
+                response.text()
+            );
+        } else {
+            assert!(
+                response.text().contains(&foreground_refusal),
+                "{}",
+                response.text()
+            );
+        }
+        assert!(
+            !response.text().contains("X11 error"),
+            "{}",
+            response.text()
+        );
     }
     let wrong_owner = driver.call("get_window_state", json!({
         "pid": std::process::id(), "window_id": windows[0]["window_id"], "include_accessibility_tree": false,

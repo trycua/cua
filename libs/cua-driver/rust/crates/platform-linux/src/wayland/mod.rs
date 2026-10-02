@@ -1476,6 +1476,15 @@ pub fn with_target_foreground<T>(
     body: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     let _target_guard = bind_foreground_target(pid, window_id);
+    if kwin_capture::knows_window(window_id) {
+        anyhow::ensure!(
+            kwin_capture::list_windows()?
+                .iter()
+                .any(|window| { window.xid == window_id && window.pid == Some(pid) }),
+            "foreground_unavailable: KWin window {window_id} no longer belongs to pid {pid}"
+        );
+        return kwin_helper::with_focused_window(pid, window_id, body);
+    }
     if let Some(window) = sway_ipc::window_for_id(window_id) {
         if window.pid != pid {
             anyhow::bail!(

@@ -8,6 +8,21 @@ The native KWin capture adapter uses Plasma window-management UUIDs and
 The optional Cua KWin effect is not required for this capture path. The adapter
 does not enable KWin raw keyboard or pointer input.
 
+## Input limitations
+
+Native window IDs are driver-local UUID handles, not X11 XIDs. An AT-SPI
+action or targeted editable-text operation can still work without raw input.
+If a control has no usable semantic action, its pointer fallback must use the
+Wayland input adapter, never X11 injection with a native window ID.
+
+Background pointer fallback returns `background_unavailable`. Foreground raw
+input validates the native window's current PID but returns
+`foreground_unavailable`: KWin's existing portal/libei path is focus-bound,
+not window-bound. Activating a UUID and reading back focus would leave a race
+between that check and input delivery. A compositor-side target-bound input
+API is required before these requests can be enabled. Installing the read-only
+Cua KWin helper or restarting AT-SPI does not supply that capability.
+
 ## Installation
 
 Enable the existing native Wayland backend with
@@ -40,7 +55,12 @@ are errors.
 ## Focused native regression
 
 In a disposable KWin Wayland session, install the exact candidate binary with
-its desktop entry and provide Python with GTK3/PyGObject. From `rust/` run:
+its desktop entry and provide Python with GTK3/PyGObject and a working AT-SPI
+bus. Isolate the session bus, runtime directory and accessibility bus together.
+Start `at-spi-bus-launcher` inside that session rather than forwarding D-Bus
+activation to the host's systemd user manager; verify that `org.a11y.Bus.GetAddress`
+points inside the disposable runtime directory before starting the fixtures.
+From `rust/` run:
 
 ```sh
 CUA_TEST_DRIVER_BIN=/path/to/installed/cua-driver \
@@ -54,5 +74,7 @@ This manual test creates two fullscreen windows with identical PID and title
 but different solid colors. Both screenshots must retain their own color,
 including the covered window. It checks repeated capture, logical dimensions,
 owner mismatch, closure, resize, stable IDs and minimized visibility. Run it
-at scale 1 and scale 2. It supplements the canonical desktop matrix; it does
+at scale 1 and scale 2. It also checks exact refusal codes for raw foreground
+input and semantic-click pointer fallback without dispatching to X11.
+It supplements the canonical desktop matrix; it does
 not replace that matrix or establish coverage on other compositors.

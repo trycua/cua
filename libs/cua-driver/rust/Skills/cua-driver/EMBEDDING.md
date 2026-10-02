@@ -279,6 +279,10 @@ change the gap. An explicit `type_text` `delay_ms` still applies on top of it.
   load. Read the field back after typing before relying on a low value for a
   new target. The 2 ms floor exists because `0` posts events with no gap at all.
 
+Measured on macOS 27 with TextEdit in the background, typing a 185-character
+ASCII sentence through the PID-routed key path took about 3650 ms at the default
+and about 980 ms at `2`. All ten read-backs (five per value) matched exactly.
+
 ## What embedded mode changes (and what it doesn't)
 
 |                                               | Standalone                    | Embedded (`CUA_DRIVER_EMBEDDED=1`)     |

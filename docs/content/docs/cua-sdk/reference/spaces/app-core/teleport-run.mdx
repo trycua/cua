@@ -1,6 +1,6 @@
 ---
 title: "Teleport plan and run"
-description: "The teleport plan, its consent and capabilities, the run's steps and the transfer overlay."
+description: "The teleport plan, its consent and capabilities, and the run's steps."
 ---
 
 {/*
@@ -17,7 +17,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 These APIs are part of the Cua Spaces app export for building Spaces UIs. They are source-available under FSL-1.1-MIT and ship for Swift only (`import CuaSpacesFFI`); the Rust tab shows the `cua-spaces-ffi` crate they come from. The open source SDK packages for Python, TypeScript and Kotlin do not include them.
 </Callout>
 
-`app_teleport_plan` turns a `Teleport.plan` into the consent the user sees; `AppTeleportRunEvent` and `AppTeleportRunReport` follow the run. The transfer overlay shows a teleport in progress.
+`app_teleport_plan` turns a `Teleport.plan` into the consent the user sees; `AppTeleportRunEvent` and `AppTeleportRunReport` follow the run.
 
 ## `AppTeleportConsent` record
 
@@ -75,28 +75,6 @@ Returned by [`app_teleport_run_event`](#app_teleport_run_event).
 | `imported` | `Vec<String>` |  | Imported. |
 | `skipped` | `Vec<String>` |  | Skipped. |
 | `launched` | `bool` |  | Launched. |
-
-## `AppTransferOverlayState` record
-
-Returned by [`app_transfer_reduce`](#app_transfer_reduce).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `phase` | [`AppTransferPhase`](#apptransferphase-enum) |  | Phase. |
-| `app_name` / `appName` | `String` |  | App being teleported. |
-| `message` | `Option<String>` |  | Failure reason. |
-| `sent_bytes` / `sentBytes` | `Option<f64>` |  | Bytes sent. |
-| `total_bytes` / `totalBytes` | `Option<f64>` |  | Total bytes. |
-
-## `AppTransferSignal` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `status` | [`AppTransferStatus`](#apptransferstatus-enum) |  | Status. |
-| `app_name` / `appName` | `Option<String>` |  | App name. |
-| `message` | `Option<String>` |  | Message. |
-| `sent_bytes` / `sentBytes` | `Option<f64>` |  | Bytes sent. |
-| `total_bytes` / `totalBytes` | `Option<f64>` |  | Total bytes. |
 
 ## `AppTeleportCapability` enum
 
@@ -190,64 +168,6 @@ AppTeleportRunPhase::Done
 | `Finished` | A step finished. |
 | `Failed` | A step failed. |
 | `Done` | All done. |
-
-## `AppTransferPhase` enum
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-.active
-.error
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-AppTransferPhase::Active
-AppTransferPhase::Error
-```
-
-</Tab>
-</Tabs>
-
-| Variant | Description |
-| --- | --- |
-| `Active` | Uploading. |
-| `Error` | Failed. |
-
-## `AppTransferStatus` enum
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-.start
-.progress
-.done
-.error
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-AppTransferStatus::Start
-AppTransferStatus::Progress
-AppTransferStatus::Done
-AppTransferStatus::Error
-```
-
-</Tab>
-</Tabs>
-
-| Variant | Description |
-| --- | --- |
-| `Start` | Began (or retried). |
-| `Progress` | Bytes moved. |
-| `Done` | Finished. |
-| `Error` | Failed. |
 
 ## `app_teleport_plan`
 
@@ -356,58 +276,3 @@ pub fn app_teleport_run_status(events: Vec<TeleportRunEvent>) -> Option<String>
 | `events` | [`Vec<TeleportRunEvent>`](/cua-sdk/reference/spaces/teleport-apps#teleportrunevent-record) | required |
 
 **Returns** `Option<String>`
-
-## `app_transfer_reduce`
-
-Advances the transfer overlay (`None` hides it).
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-func appTransferReduce(state: AppTransferOverlayState?, signal: AppTransferSignal) -> AppTransferOverlayState?
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn app_transfer_reduce(state: Option<AppTransferOverlayState>, signal: AppTransferSignal) -> Option<AppTransferOverlayState>
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `state` | [`Option<AppTransferOverlayState>`](#apptransferoverlaystate-record) | required |
-| `signal` | [`AppTransferSignal`](#apptransfersignal-record) | required |
-
-**Returns** [`Option<AppTransferOverlayState>`](#apptransferoverlaystate-record)
-
-## `app_transfer_title`
-
-The transfer overlay's title.
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-func appTransferTitle(state: AppTransferOverlayState) -> String
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn app_transfer_title(state: AppTransferOverlayState) -> String
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `state` | [`AppTransferOverlayState`](#apptransferoverlaystate-record) | required |
-
-**Returns** `String`

@@ -620,6 +620,9 @@ Returned by [`app_settings_input_from_json`](#app_settings_input_from_json).
 | `login_item` / `loginItem` | [`Option<AppLoginItemInput>`](#apploginiteminput-record) |  | Launch at login, once the system was asked (none: no rows). |
 | `experiments` | [`AppExperiments`](/cua-sdk/reference/spaces/app-core/experiments#appexperiments-record) |  | Settings, Experiments (what the page mentions follows them). |
 | `keyvault_auto_wipe` / `keyvaultAutoWipe` | `Option<bool>` |  | The Keyvault's auto-wipe, once the broker told it (none: no Keyvault section). |
+| `keyvault_unlock_prompt` / `keyvaultUnlockPrompt` | `Option<bool>` |  | The unlock prompt shows (false once the user chose "Never ask again"); none until the broker told it. |
+| `keyvault_site_icons` / `keyvaultSiteIcons` | `bool` |  | Load site icons from Google when the browser had none (`AppSettings.keyvault_site_icons`). |
+| `keyvault_protection` / `keyvaultProtection` | [`Vec<AppFact>`](#appfact-record) |  | The Keyvault's protection facts (Touch ID, the daemon's signature), shown in the section. |
 
 ## `AppSettingsOption` record
 

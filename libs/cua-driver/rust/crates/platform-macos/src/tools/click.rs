@@ -132,6 +132,59 @@ const SELECTION_READBACK_POLL: std::time::Duration = std::time::Duration::from_m
 const SELECTION_READBACK_SETTLE: std::time::Duration = std::time::Duration::from_millis(200);
 const SELECTION_READBACK_STABILITY: std::time::Duration = std::time::Duration::from_millis(250);
 
+/// AXPress on a radio button or checkbox that advertises it: a press whose
+/// effect the control's own AXValue shows.
+fn is_toggle_press(ax_action: &str, role: &str, advertised: &[String]) -> bool {
+    ax_action == "AXPress"
+        && matches!(role, "AXRadioButton" | "AXCheckBox")
+        && advertised.iter().any(|action| action == "AXPress")
+}
+
+/// AX errors that AppKit apps return from a press they performed (#3835).
+/// Errors that mean the request never reached the app (illegal argument,
+/// invalid element, cannot complete, API disabled) are not among them.
+fn press_error_may_have_acted(err: crate::ax::bindings::AXError) -> bool {
+    use crate::ax::bindings::{
+        kAXErrorActionUnsupported, kAXErrorAttributeUnsupported, kAXErrorFailure,
+    };
+    matches!(
+        err,
+        kAXErrorFailure | kAXErrorAttributeUnsupported | kAXErrorActionUnsupported
+    )
+}
+
+/// Whether a toggle's value moving from `before` to `now` is what pressing it
+/// does: a checkbox changes state; a radio button becomes selected (a radio
+/// turning off was another radio's press).
+fn toggle_press_shows(role: &str, before: &str, now: &str) -> bool {
+    now != before && (role != "AXRadioButton" || now == "1")
+}
+
+/// The value `read` returns when, before `timeout`, it satisfies `shows` and
+/// a second read `stability` later agrees on it. Some apps (Finder's toolbar
+/// view switcher) apply a press and still return an AX error.
+fn settled_value(
+    shows: impl Fn(&str) -> bool,
+    mut read: impl FnMut() -> Option<String>,
+    timeout: std::time::Duration,
+    poll: std::time::Duration,
+    stability: std::time::Duration,
+) -> Option<String> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if let Some(now) = read().filter(|now| shows(now)) {
+            std::thread::sleep(stability);
+            if read().as_deref() == Some(now.as_str()) {
+                return Some(now);
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(poll);
+    }
+}
+
 fn pixel_activation_policy(
     button: &str,
     effective_foreground: bool,
@@ -1439,8 +1492,37 @@ fn perform_ax_click(
         }
     }
 
+    let read_value = || unsafe {
+        crate::ax::bindings::copy_stringish_attr(element, "AXValue").map(|value| value.state_value)
+    };
+    let toggle_before = is_toggle_press(ax_action, &role, &advertised)
+        .then(read_value)
+        .flatten();
     let err = unsafe { crate::ax::bindings::perform_action(element, ax_action) };
     if err != crate::ax::bindings::kAXErrorSuccess {
+        // Checked before the row-selection fallback, which writes AXSelected
+        // on an ancestor: a toggle whose press landed needs no other write.
+        if let Some(before) = toggle_before.filter(|_| press_error_may_have_acted(err)) {
+            if let Some(now) = settled_value(
+                |now| toggle_press_shows(&role, &before, now),
+                read_value,
+                SELECTION_READBACK_TIMEOUT,
+                SELECTION_READBACK_POLL,
+                SELECTION_READBACK_STABILITY,
+            ) {
+                return Ok((
+                    format!(
+                        "✅ Performed {ax_action} on [{idx}] {role} \"{title}\"; AXValue is now \
+                         {now} (was {before}) on two reads, although the app returned AX error \
+                         {err}."
+                    ),
+                    false,
+                    false,
+                    true,
+                    false,
+                ));
+            }
+        }
         // Some collection rows claim a click-like action but Finder returns
         // kAXErrorCannotComplete. Use the same verified selection fallback
         // before surfacing the dispatch error.
@@ -1593,6 +1675,69 @@ fn map_action(action: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #3835: Finder's toolbar view switcher applies an AXPress and returns
+    /// -25205. Only a radio button or checkbox qualifies for the read-back.
+    #[test]
+    fn toggle_press_is_an_advertised_press_on_a_radio_or_checkbox() {
+        let press = vec!["AXPress".to_owned()];
+        assert!(is_toggle_press("AXPress", "AXRadioButton", &press));
+        assert!(is_toggle_press("AXPress", "AXCheckBox", &press));
+        assert!(
+            !is_toggle_press("AXPress", "AXButton", &press),
+            "a button has no value that shows the press"
+        );
+        assert!(!is_toggle_press("AXPick", "AXRadioButton", &press));
+        assert!(
+            !is_toggle_press("AXPress", "AXRadioButton", &[]),
+            "AXPress not advertised"
+        );
+    }
+
+    /// Only errors an app returns after acting qualify; errors that mean the
+    /// request never reached the app keep failing (#3835).
+    #[test]
+    fn only_errors_an_app_returns_after_acting_qualify() {
+        assert!(press_error_may_have_acted(-25200));
+        assert!(press_error_may_have_acted(-25205));
+        assert!(press_error_may_have_acted(-25206));
+        for refused in [-25201, -25202, -25204, -25211] {
+            assert!(!press_error_may_have_acted(refused), "{refused}");
+        }
+    }
+
+    /// A checkbox press shows as any state change; a radio press only as the
+    /// radio becoming selected.
+    #[test]
+    fn toggle_press_shows_as_the_value_the_press_produces() {
+        assert!(toggle_press_shows("AXCheckBox", "0", "1"));
+        assert!(toggle_press_shows("AXCheckBox", "1", "0"));
+        assert!(toggle_press_shows("AXCheckBox", "2", "1"), "mixed state");
+        assert!(!toggle_press_shows("AXCheckBox", "1", "1"));
+        assert!(toggle_press_shows("AXRadioButton", "0", "1"));
+        assert!(
+            !toggle_press_shows("AXRadioButton", "1", "0"),
+            "a radio turning off was another radio's press"
+        );
+        assert!(!toggle_press_shows("AXRadioButton", "1", "1"));
+    }
+
+    /// An erroring toggle press counts only when the value shows the press
+    /// and a second read agrees on it.
+    #[test]
+    fn erroring_toggle_press_counts_only_when_its_value_settles() {
+        let zero = std::time::Duration::ZERO;
+        let settled = |reads: Vec<Option<&str>>| {
+            let mut reads = reads.into_iter().map(|read| read.map(str::to_owned));
+            let shows = |now: &str| toggle_press_shows("AXRadioButton", "0", now);
+            settled_value(shows, || reads.next().flatten(), zero, zero, zero)
+        };
+        assert_eq!(settled(vec![Some("1"), Some("1")]), Some("1".to_owned()));
+        assert_eq!(settled(vec![Some("1"), Some("0")]), None, "flickered back");
+        assert_eq!(settled(vec![Some("1"), None]), None, "second read failed");
+        assert_eq!(settled(vec![Some("0")]), None, "never moved");
+        assert_eq!(settled(vec![None]), None, "unreadable");
+    }
 
     /// Surface 5: schema must advertise the new `button` field with the three
     /// canonical values and default to "left". Hermes / Codex / Claude Code

@@ -522,6 +522,7 @@
      },
      "element_token": {
       "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
      "from_zoom": {
@@ -646,6 +647,7 @@
      },
      "element_token": {
       "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
      "from_zoom": {
@@ -711,6 +713,7 @@
      },
      "element_token": {
       "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
      "from_zoom": {
@@ -1219,6 +1222,7 @@
      },
      "element_token": {
       "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
      "pid": {
@@ -1342,6 +1346,7 @@
      },
      "element_token": {
       "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
      "key": {
@@ -1464,6 +1469,7 @@
      },
      "element_token": {
       "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
      "keys": {
@@ -1583,6 +1589,7 @@
      },
      "element_token": {
       "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
      "pid": {
@@ -1668,6 +1675,7 @@
      },
      "element_token": {
       "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Returns an explicit stale error naming the current snapshots once a newer read supersedes it.",
+      "pattern": "^s[0-9a-f]{8}:[0-9]+$",
       "type": "string"
      },
      "pid": {

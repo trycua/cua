@@ -95,6 +95,7 @@ pub fn scope_schema() -> Value {
 pub fn element_token_schema() -> Value {
     json!({
         "type": "string",
+        "pattern": "^s[0-9a-f]{8}:[0-9]+$",
         "description": "Opaque per-snapshot element handle from \
             `structuredContent.elements[].element_token`. Returns an explicit \
             stale error naming the current snapshots once a newer read \
@@ -192,8 +193,8 @@ fn required_canonical(tool: &str) -> Option<&'static [&'static str]> {
 }
 
 /// Reduce a param schema to the parts that govern client compatibility —
-/// `type`, `enum`, and (recursively) `items` — dropping `description` and any
-/// other prose so per-tool wording differences don't trip the gate.
+/// `type`, `enum`, `pattern`, and (recursively) `items` — dropping
+/// `description` and other prose so per-tool wording differences don't trip the gate.
 fn structural(schema: &Value) -> Value {
     let mut out = serde_json::Map::new();
     if let Some(t) = schema.get("type") {
@@ -201,6 +202,9 @@ fn structural(schema: &Value) -> Value {
     }
     if let Some(e) = schema.get("enum") {
         out.insert("enum".into(), e.clone());
+    }
+    if let Some(pattern) = schema.get("pattern") {
+        out.insert("pattern".into(), pattern.clone());
     }
     if let Some(items) = schema.get("items") {
         out.insert("items".into(), structural(items));
@@ -383,5 +387,50 @@ mod tests {
     fn canonical_click_required_passes() {
         let tool = json!({ "type": "object", "required": [], "properties": {} });
         assert!(shared_schema_violations("click", &tool).is_empty());
+    }
+    #[test]
+    fn element_token_pattern_matches_the_minted_wire_shape() {
+        let schema = element_token_schema();
+        assert_eq!(schema["pattern"], "^s[0-9a-f]{8}:[0-9]+$");
+        let validator = jsonschema::validator_for(&schema).expect("element token schema compiles");
+        for (snapshot_id, element_index) in
+            [(0_u32, 0_usize), (1_u32, 42_usize), (u32::MAX, usize::MAX)]
+        {
+            let token = crate::element_token::token_for(snapshot_id, element_index);
+            assert!(
+                validator.is_valid(&json!(token)),
+                "advertised element_token schema rejected minted token {token}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_shared_element_token_pattern_is_flagged() {
+        let tool = json!({
+            "type": "object",
+            "properties": {
+                "element_token": { "type": "string" }
+            }
+        });
+        let violations = shared_schema_violations("click", &tool);
+        assert!(
+            violations.iter().any(|item| item.contains("element_token")),
+            "missing element_token pattern must be flagged: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn element_token_pattern_drift_is_flagged() {
+        let tool = json!({
+            "type": "object",
+            "properties": {
+                "element_token": { "type": "string", "pattern": "^wrong$" }
+            }
+        });
+        let violations = shared_schema_violations("click", &tool);
+        assert!(
+            violations.iter().any(|item| item.contains("element_token")),
+            "element_token pattern drift must be flagged: {violations:?}"
+        );
     }
 }

@@ -146,24 +146,33 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Links to this repository's own main branch are checked against the
-      # checkout instead of github.com, which answers bursts of them with 429
-      # and 503 and failed the job on links that resolve. A path missing here
-      # is a real 404 and still fails.
-      - name: Check links to this repository's main branch
+      # Links to this repository's own files (github.com/trycua/cua/blob|tree)
+      # are checked with git instead of github.com, which answers bursts of
+      # them with 429 and 503 and failed the job on links that resolve. A
+      # path missing at the linked ref is a real 404 and still fails.
+      - name: Check links to this repository's files
         run: |
           set -euo pipefail
           missing=0
           while IFS= read -r url; do
-            path="${url#https://github.com/trycua/cua/}"
-            path="${path#*/main/}"
+            rest="${url#https://github.com/trycua/cua/}"
+            rest="${rest#*/}"
+            ref="${rest%%/*}"
+            path="${rest#*/}"
             path="${path%%[#?]*}"
             path="${path%/}"
-            if [ ! -e "$path" ]; then
-              echo "::error::$url: $path does not exist in this checkout"
+            if [ "$ref" != main ] && ! git cat-file -e "$ref^{commit}" 2>/dev/null; then
+              git fetch --quiet --depth=1 --filter=blob:none origin "$ref" || true
+            fi
+            if [ "$ref" = main ]; then found=$(test -e "$path" && echo yes || echo no)
+            # ls-tree reads trees only, which the blob-less fetch has.
+            elif [ -n "$(git ls-tree "$ref" -- "$path" 2>/dev/null)" ]; then found=yes
+            else found=no; fi
+            if [ "$found" != yes ]; then
+              echo "::error::$url: $path does not exist at $ref"
               missing=1
             fi
-          done < <(grep -rhoE --include='*.mdx' 'https://github\.com/trycua/cua/(blob|tree)/main/[^] )"'"'"'<>`]+' docs/content | sort -u)
+          done < <(grep -rhoE --include='*.mdx' 'https://github\.com/trycua/cua/(blob|tree)/[^/]+/[^] )"'"'"'<>`]+' docs/content | sort -u)
           exit "$missing"
 
       - name: Check external links
@@ -176,7 +185,7 @@ jobs:
             --accept 100..=399
             --max-retries 6
             --retry-wait-time 5
-            --exclude '^https://github\.com/trycua/cua/(blob|tree)/main/'
+            --exclude '^https://github\.com/trycua/cua/(blob|tree)/'
             --scheme https
             --scheme http
             --root-dir ${{ github.workspace }}/docs/content/docs

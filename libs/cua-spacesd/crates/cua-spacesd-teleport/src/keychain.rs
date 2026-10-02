@@ -157,8 +157,9 @@ pub fn install_generic(host: &dyn HostEffects, item: &KeychainItem) -> std::io::
 /// of the passwords this guest can know opens it (the login keychain of an
 /// image whose autologin password file is wrong has a password nobody knows),
 /// the item moves to a keychain spacesd owns (`cua.keychain-db`, a password
-/// it knows), which becomes the default and first on the search list, where
-/// the write succeeds and the app reads the key silently.
+/// it knows), which joins the search list (never the default) and is kept
+/// unlocked by [`keep_cua_keychain_unlocked`], where the write succeeds and the
+/// app reads the key silently.
 pub fn install_generic_noted(
     host: &dyn HostEffects,
     item: &KeychainItem,
@@ -527,9 +528,80 @@ pub(crate) fn trusted_app_for(service: &str) -> Option<&'static str> {
     }
 }
 
+/// Where spacesd's own keychain lives.
+#[cfg(target_os = "macos")]
+fn cua_keychain_path(host: &dyn HostEffects) -> Option<std::path::PathBuf> {
+    Some(host.home_dir()?.join("Library/Keychains/cua.keychain-db"))
+}
+
+/// Unlocks `path` with the first of `passwords` it takes and gives it no
+/// auto-lock: `set-keychain-settings` without `-l` (lock on sleep) or `-u`
+/// (lock after a timeout) leaves it open until logout. Whether it opened.
+#[cfg(target_os = "macos")]
+fn unlock_and_unlimit(host: &dyn HostEffects, path: &str, passwords: &[String]) -> bool {
+    let mut opened = false;
+    for pw in passwords {
+        let ok = host
+            .run(
+                &HostCommand::new(EffectKind::KeychainWrite, "security")
+                    .args(["unlock-keychain", "-p", pw, path])
+                    .timeout(std::time::Duration::from_secs(20)),
+            )
+            .map(|o| o.success)
+            .unwrap_or(false);
+        if ok {
+            opened = true;
+            break;
+        }
+    }
+    if opened {
+        let _ = host.run(
+            &HostCommand::new(EffectKind::KeychainWrite, "security")
+                .args(["set-keychain-settings", path])
+                .timeout(std::time::Duration::from_secs(20)),
+        );
+    }
+    opened
+}
+
+/// Unlocks spacesd's `cua` keychain (the fallback home of Chrome's Safe
+/// Storage key when the login keychain's password is unknown) and keeps it
+/// from locking. A locked keychain on the search list makes whatever touches
+/// it raise "<App> wants to use the 'cua' keychain. Please enter the
+/// keychain password.", which nobody can answer in an unattended Space. It
+/// locks again when the Space reboots (the lock is not persistent) and a
+/// keychain created with the defaults locks on sleep and after a timeout, so
+/// spacesd calls this at start-up and then every [`KEEPER_INTERVAL`], which
+/// also covers wake from sleep. The password is the one from spacesd's
+/// protected config (`CUA_ENV_LOGIN_KEYCHAIN_PW`, `~/.cua/spacesd/keychain-password`,
+/// `/etc/cua/keychain-password`, then the image's `lume`). Does nothing when
+/// the keychain does not exist (the login keychain took the password, the
+/// usual case) or off macOS. Returns whether the keychain is now open.
+pub fn keep_cua_keychain_unlocked(host: &dyn HostEffects) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let Some(path) = cua_keychain_path(host) else {
+            return false;
+        };
+        if !path.exists() {
+            return false;
+        }
+        unlock_and_unlimit(host, &path.to_string_lossy(), &keychain_passwords(host))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = host;
+        false
+    }
+}
+
+/// How often [`keep_cua_keychain_unlocked`] runs in the daemon: the longest
+/// the keychain stays locked after a wake.
+pub const KEEPER_INTERVAL: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// Makes sure a keychain whose password this guest knows exists, is unlocked,
-/// first on the search list and the default, and returns its path. `None`
-/// when it cannot be created.
+/// never auto-locks and is on the search list (not the default), and returns
+/// its path. `None` when it cannot be created or opened.
 #[cfg(target_os = "macos")]
 fn adopt_known_keychain(host: &dyn HostEffects) -> Option<String> {
     let home = host.home_dir()?;
@@ -551,15 +623,18 @@ fn adopt_known_keychain(host: &dyn HostEffects) -> Option<String> {
     {
         return None;
     }
-    sec(vec![
-        "unlock-keychain".into(),
-        "-p".into(),
-        pw,
-        path_str.clone(),
-    ]);
-    sec(vec!["set-keychain-settings".into(), path_str.clone()]);
-    // First on the search list (apps read through it), the rest kept.
-    let mut list = vec![path_str.clone()];
+    // Open and never auto-lock (see [`keep_cua_keychain_unlocked`]).
+    if !unlock_and_unlimit(host, &path_str, std::slice::from_ref(&pw)) {
+        return None;
+    }
+    // On the search list (apps read through it), AFTER the login keychain
+    // and the rest, which stay as they were. It is deliberately NOT the
+    // default keychain: system services (Spotlight's mdworker above all)
+    // reach for the default, and any moment it is locked they raise
+    // "<Process> wants to use the 'cua' keychain", a dialog nothing in an
+    // unattended Space can answer. Chrome finds its Safe Storage key
+    // through the search list.
+    let mut list: Vec<String> = Vec::new();
     if let Ok(o) = host.run(
         &HostCommand::new(EffectKind::KeychainRead, "security").args([
             "list-keychains",
@@ -574,22 +649,17 @@ fn adopt_known_keychain(host: &dyn HostEffects) -> Option<String> {
             }
         }
     }
-    let mut args = vec![
-        "list-keychains".to_string(),
-        "-d".into(),
-        "user".into(),
-        "-s".into(),
-    ];
-    args.extend(list);
-    sec(args);
-    // Default too: some apps resolve only the default keychain.
-    sec(vec![
-        "default-keychain".into(),
-        "-d".into(),
-        "user".into(),
-        "-s".into(),
-        path_str.clone(),
-    ]);
+    if !list.contains(&path_str) {
+        list.push(path_str.clone());
+        let mut args = vec![
+            "list-keychains".to_string(),
+            "-d".into(),
+            "user".into(),
+            "-s".into(),
+        ];
+        args.extend(list);
+        sec(args);
+    }
     Some(path_str)
 }
 
@@ -941,11 +1011,26 @@ mod tests {
             ),
             "{writes:?}"
         );
+        // On the search list, but never made the default (system services
+        // would reach for it and prompt whenever it is locked).
+        assert!(
+            writes
+                .iter()
+                .all(|c| c.args.first().map(String::as_str) != Some("default-keychain")),
+            "{writes:?}"
+        );
         assert!(
             writes.iter().any(
-                |c| c.args.first().map(String::as_str) == Some("default-keychain")
+                |c| c.args.first().map(String::as_str) == Some("list-keychains")
                     && c.args.last().map(String::as_str) == Some(known)
             ),
+            "{writes:?}"
+        );
+        // Open, with no lock-on-sleep and no timeout (no -l, -u or -t).
+        assert!(
+            writes.iter().any(|c| c.args.first().map(String::as_str)
+                == Some("set-keychain-settings")
+                && c.args == ["set-keychain-settings", known]),
             "{writes:?}"
         );
         // Added twice (login, then the known keychain), authorized on the second.
@@ -953,6 +1038,61 @@ mod tests {
         let last = partition_calls(&host).pop().unwrap();
         assert_eq!(last.args.last().map(String::as_str), Some(known));
         assert!(last.args[2].contains("teamid:EQHXZ8M8AV"));
+    }
+
+    /// The `cua` keychain is reopened (and told never to lock) by the
+    /// keeper, with the first password that takes; a Space whose login
+    /// keychain took the password has no `cua` keychain and nothing happens.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_keeper_unlocks_the_cua_keychain_and_never_auto_locks_it() {
+        let dir = std::env::temp_dir().join(format!("cua-keeper-{}", std::process::id()));
+        let kc = dir.join("Library/Keychains");
+        std::fs::create_dir_all(&kc).unwrap();
+        let path = kc.join("cua.keychain-db");
+        let none = FakeHost::new().with_home(&dir);
+        assert!(!keep_cua_keychain_unlocked(&none), "no keychain, no work");
+        assert!(none.calls().is_empty());
+
+        std::fs::write(&path, b"").unwrap();
+        // The first password (an env one nobody set) is skipped: only `lume` opens it.
+        let host = FakeHost::new().with_home(&dir).with_responder(|c| {
+            Ok(
+                if c.args.first().map(String::as_str) == Some("unlock-keychain")
+                    && c.args[2] != "lume"
+                {
+                    HostOutput::failed()
+                } else {
+                    HostOutput::ok("")
+                },
+            )
+        });
+        assert!(keep_cua_keychain_unlocked(&host));
+        let calls = host.calls_of(EffectKind::KeychainWrite);
+        let p = path.to_string_lossy().into_owned();
+        assert_eq!(
+            calls.last().unwrap().args,
+            ["set-keychain-settings".to_string(), p.clone()],
+            "no -l / -u / -t: no lock on sleep, no timeout"
+        );
+        assert!(calls.iter().any(|c| c.args
+            == [
+                "unlock-keychain".to_string(),
+                "-p".into(),
+                "lume".into(),
+                p.clone()
+            ]));
+
+        // A password that never takes: still tries, reports closed, sets nothing.
+        let host = FakeHost::new()
+            .with_home(&dir)
+            .with_responder(|_| Ok(HostOutput::failed()));
+        assert!(!keep_cua_keychain_unlocked(&host));
+        assert!(host
+            .calls()
+            .iter()
+            .all(|c| c.args.first().map(String::as_str) != Some("set-keychain-settings")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// When no password works anywhere, the teleport says so in words the

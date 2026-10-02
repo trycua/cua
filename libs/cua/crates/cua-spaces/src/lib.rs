@@ -96,6 +96,7 @@ pub mod install_cache;
 pub mod mcp;
 #[cfg(feature = "spaces-presence")]
 pub mod presence;
+pub mod reattach;
 /// Sharing a Space with other accounts, to watch or to edit, through the
 /// relay.
 #[cfg(feature = "spaces-agents")]

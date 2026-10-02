@@ -26,6 +26,11 @@ on:
         description: "Exact Cua Driver version whose archives are verified"
         required: true
         type: string
+      release_repository:
+        description: "Repository whose published release is verified (source: release). Empty means this repository."
+        required: false
+        type: string
+        default: ""
       source:
         description: "artifacts (this workflow run) or release (published GitHub release assets)"
         required: false
@@ -80,10 +85,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
+          RELEASE_REPOSITORY: ${{ inputs.release_repository }}
         run: |
           set -euo pipefail
           gh release download "cua-driver-rs-v${VERSION}" \
-            --repo "$GITHUB_REPOSITORY" \
+            --repo "${RELEASE_REPOSITORY:-$GITHUB_REPOSITORY}" \
             --dir signature-artifacts \
             --pattern "cua-driver-rs-${VERSION}-darwin-*.tar.gz" \
             --pattern "*.pkg" \
@@ -131,10 +137,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
+          RELEASE_REPOSITORY: ${{ inputs.release_repository }}
         run: |
           set -euo pipefail
           gh release download "cua-driver-rs-v${VERSION}" \
-            --repo "$GITHUB_REPOSITORY" \
+            --repo "${RELEASE_REPOSITORY:-$GITHUB_REPOSITORY}" \
             --dir signature-artifacts \
             --pattern "cua-driver-rs-${VERSION}-windows-*.zip"
       - name: Verify Windows Authenticode signatures

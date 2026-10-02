@@ -1,0 +1,269 @@
+// Shared types for the cua.env.v1 contract spoken by cua-spacesd.
+//
+// # Transport
+//
+// cua-spacesd serves every service in this package on one port (default
+// 3211) as native gRPC (HTTP/2) and gRPC-Web (HTTP/1.1) side by side. gRPC-Web
+// cannot carry client-streaming or bidirectional RPCs, so every client-stream
+// RPC in this package has a unary, chunked fallback that is functionally
+// equivalent. The SDK picks the fallback automatically on gRPC-Web transports.
+//
+// # Authentication
+//
+// Every RPC (except the plain-HTTP `/health` route, which is outside this
+// contract) requires the `authorization: Bearer <token>` metadata entry once
+// a token is configured. A token is mandatory for any non-loopback bind.
+// Media and tunnel sockets do not use the root token: they authenticate with
+// short-lived tickets minted by `StreamService.OpenMedia`,
+// `TunnelService.Forward` and `TunnelService.StartHotspot`.
+//
+// The optional `x-cua-principal-bin` metadata entry carries a serialized
+// `Principal`. It names the human or agent behind the call and drives
+// presence and cursor ownership. It is informational, not an authorization
+// boundary: anyone with the token may claim any principal.
+//
+// # Errors
+//
+// Failures use standard gRPC status codes. The `grpc-status-details-bin`
+// trailer carries a `google.rpc.Status` whose `details` contain one
+// `google.protobuf.Any` packing a `cua.env.v1.ErrorInfo`. Clients must treat
+// the details as optional and fall back to the status code.
+//
+// # Evolution policy
+//
+// - This package is additive-only. `buf breaking` (FILE + WIRE_JSON) gates CI.
+// - Field and enum numbers are never reused. When a field, enum value or
+//   oneof arm is removed, its number and name are added to a `reserved`
+//   statement in the same message or enum.
+// - Numbers 1 to 15 (one-byte tags) go to fields that appear on hot paths.
+// - Numbers 1000 to 1999 in any message are reserved for experimental fields.
+//   They are only populated when the matching `experimental.*` capability is
+//   advertised, and may be removed without a major version bump.
+// - Every enum's zero value is `*_UNSPECIFIED` and means "not set". Servers
+//   substitute the documented default for it.
+// - Unknown enum values must be tolerated by clients (treated as
+//   UNSPECIFIED) and by servers (rejected with INVALID_ARGUMENT).
+// - A breaking change requires a new package (`cua.env.v2`) served next to
+//   v1 until all SDKs have moved.
+syntax = "proto3";
+
+package cua.env.v1;
+
+// A point in a two-dimensional coordinate space. Which space is always stated
+// by the enclosing message (see `CoordinateSpace`).
+message Point {
+  // Horizontal coordinate, growing to the right.
+  double x = 1;
+  // Vertical coordinate, growing downward.
+  double y = 2;
+}
+
+// An axis-aligned rectangle in a coordinate space stated by the enclosing
+// message.
+message Rect {
+  // Left edge.
+  double x = 1;
+  // Top edge.
+  double y = 2;
+  // Width. Never negative.
+  double width = 3;
+  // Height. Never negative.
+  double height = 4;
+}
+
+// A size in device (physical) pixels.
+message PixelSize {
+  // Width in pixels.
+  uint32 width = 1;
+  // Height in pixels.
+  uint32 height = 2;
+}
+
+// Opaque, server-issued reference to a window.
+//
+// Native window identifiers (CGWindowID, HWND, X11 Window, portal tokens) are
+// never exposed. `id` stays stable for the life of the native window. `epoch`
+// changes whenever the server recycles an `id` or the window's identity is no
+// longer trustworthy (for example, the owning process restarted). A request
+// with a stale epoch fails with FAILED_PRECONDITION and
+// `ERROR_REASON_STALE_HANDLE`.
+message WindowRef {
+  // Opaque window identifier. Compare only for equality.
+  string id = 1;
+  // Identity generation of `id`.
+  uint64 epoch = 2;
+}
+
+// A display (monitor) attached to the guest desktop.
+message Display {
+  // Opaque, stable display identifier. The alias "primary" is accepted
+  // wherever a display id is expected.
+  string id = 1;
+  // Human-readable name, for example "Built-in Retina Display" or "XVFB-0".
+  string name = 2;
+  // True for the primary display.
+  bool primary = 3;
+  // Display bounds in global logical points (`COORDINATE_SPACE_SCREEN`).
+  Rect bounds = 4;
+  // Size of the display's framebuffer in physical pixels.
+  PixelSize native_size = 5;
+  // Physical pixels per logical point (for example 2.0 on Retina, 1.0 on
+  // most Linux framebuffers).
+  double scale_factor = 6;
+  // Nominal refresh rate in hertz, 0 when unknown (for example Xvfb).
+  uint32 refresh_rate_hz = 7;
+  // Clockwise rotation in degrees: 0, 90, 180 or 270.
+  uint32 rotation_degrees = 8;
+}
+
+// The coordinate space a `Point` or `Rect` is expressed in.
+enum CoordinateSpace {
+  // Not set. Servers treat it as `COORDINATE_SPACE_SCREEN`.
+  COORDINATE_SPACE_UNSPECIFIED = 0;
+  // Global desktop space in logical points, origin at the top-left of the
+  // primary display. This is the space `Display.bounds` uses.
+  COORDINATE_SPACE_SCREEN = 1;
+  // Logical points relative to the top-left corner of the target window's
+  // frame. Requires a target window on the request.
+  COORDINATE_SPACE_WINDOW = 2;
+  // Pixels of a screenshot previously returned by
+  // `ComputerService.Screenshot`, identified by `screenshot_id` on the
+  // request. The server performs the one conversion to native coordinates
+  // and fails with `ERROR_REASON_STALE_GEOMETRY` if the display or window
+  // geometry changed since the screenshot was taken.
+  COORDINATE_SPACE_SCREENSHOT = 3;
+  // Normalized coordinates in [0, 1] relative to the target window, or the
+  // target display when no window is given.
+  COORDINATE_SPACE_NORMALIZED = 4;
+}
+
+// How synthetic input or an action is delivered to the guest.
+enum Delivery {
+  // Not set. Servers treat it as `DELIVERY_AUTO`.
+  DELIVERY_UNSPECIFIED = 0;
+  // Prefer background delivery and fall back to foreground delivery when the
+  // platform or target cannot receive background input.
+  DELIVERY_AUTO = 1;
+  // Deliver without moving the user-visible pointer, changing the focused
+  // window or activating the target app. Fails with
+  // `ERROR_REASON_WOULD_REQUIRE_ACTIVATION` rather than falling back.
+  DELIVERY_BACKGROUND = 2;
+  // Activate the target (if any) and deliver through the global input
+  // stream, moving the real pointer and focus.
+  DELIVERY_FOREGROUND = 3;
+}
+
+// What the server actually did for an input or action request.
+message DeliveryReport {
+  // The delivery mode that was used. Never `DELIVERY_AUTO` or unspecified.
+  Delivery delivery = 1;
+  // True if the focused window or frontmost app changed as a result.
+  bool focus_changed = 2;
+  // True if the user-visible pointer moved as a result.
+  bool pointer_moved = 3;
+  // Free-form, human-readable note (for example which platform path was
+  // used). Not for programmatic use.
+  string detail = 4;
+}
+
+// Who is making a call. Sent as serialized bytes in the `x-cua-principal-bin`
+// metadata entry.
+message Principal {
+  // Stable identifier chosen by the client (for example a user id or an
+  // agent run id).
+  string id = 1;
+  // Name shown to other participants.
+  string display_name = 2;
+  // Preferred cursor color as `#RRGGBB`. The server may substitute a
+  // different color to keep participants distinguishable.
+  string color = 3;
+  // Whether the principal is a human or an automated agent.
+  PrincipalKind kind = 4;
+}
+
+// Kind of principal behind a call.
+enum PrincipalKind {
+  // Not set. Servers treat it as `PRINCIPAL_KIND_HUMAN`.
+  PRINCIPAL_KIND_UNSPECIFIED = 0;
+  // A person driving a client UI.
+  PRINCIPAL_KIND_HUMAN = 1;
+  // An automated agent.
+  PRINCIPAL_KIND_AGENT = 2;
+}
+
+// Machine-readable error detail, packed as `google.protobuf.Any` inside the
+// `google.rpc.Status` in the `grpc-status-details-bin` trailer.
+message ErrorInfo {
+  // The specific reason. More precise than the gRPC status code.
+  ErrorReason reason = 1;
+  // Human-readable description. Not for programmatic use.
+  string message = 2;
+  // Capability feature name involved, when `reason` is
+  // `ERROR_REASON_FEATURE_UNSUPPORTED` (for example "a11y").
+  string feature = 3;
+  // Structured context. Well-known keys: "expected_sequence",
+  // "expected_offset", "path", "pid", "tag", "retry_after_ms".
+  map<string, string> metadata = 4;
+}
+
+// Machine-readable error reasons shared by every service.
+enum ErrorReason {
+  // Not set.
+  ERROR_REASON_UNSPECIFIED = 0;
+  // Missing or wrong bearer token, or an expired ticket.
+  ERROR_REASON_UNAUTHENTICATED = 1;
+  // The operation needs a feature the guest does not support. See
+  // `ErrorInfo.feature` and `SystemService.GetCapabilities`.
+  ERROR_REASON_FEATURE_UNSUPPORTED = 2;
+  // The guest OS denied permission (for example macOS TCC, UAC, AT-SPI
+  // disabled).
+  ERROR_REASON_PERMISSION_DENIED = 3;
+  // A `WindowRef` epoch no longer matches.
+  ERROR_REASON_STALE_HANDLE = 4;
+  // Geometry changed since the referenced screenshot or media frame.
+  ERROR_REASON_STALE_GEOMETRY = 5;
+  // An accessibility element's snapshot is no longer current.
+  ERROR_REASON_STALE_SNAPSHOT = 6;
+  // `DELIVERY_BACKGROUND` was requested but only foreground delivery could
+  // reach the target.
+  ERROR_REASON_WOULD_REQUIRE_ACTIVATION = 7;
+  // The target window, app, display or element is gone.
+  ERROR_REASON_TARGET_UNAVAILABLE = 8;
+  // The platform accepted the request but native delivery failed.
+  ERROR_REASON_DELIVERY_FAILED = 9;
+  // No process matches the given pid or tag.
+  ERROR_REASON_PROCESS_NOT_FOUND = 10;
+  // The path does not exist.
+  ERROR_REASON_PATH_NOT_FOUND = 11;
+  // The path already exists and overwrite was not requested.
+  ERROR_REASON_PATH_EXISTS = 12;
+  // A directory was required.
+  ERROR_REASON_NOT_A_DIRECTORY = 13;
+  // A regular file was required.
+  ERROR_REASON_IS_A_DIRECTORY = 14;
+  // The guest disk is full (HTTP 507 on the `/files` route).
+  ERROR_REASON_DISK_FULL = 15;
+  // Received content does not match the declared SHA-256.
+  ERROR_REASON_CHECKSUM_MISMATCH = 16;
+  // Unknown or expired upload, transfer, watcher, media session or forward.
+  ERROR_REASON_SESSION_NOT_FOUND = 17;
+  // A chunk arrived at the wrong offset. `metadata["expected_offset"]`
+  // holds the offset the server expects next.
+  ERROR_REASON_OFFSET_MISMATCH = 18;
+  // A sequenced input chunk skipped ahead. `metadata["expected_sequence"]`
+  // holds the sequence the server expects next.
+  ERROR_REASON_SEQUENCE_GAP = 19;
+  // Too many requests. `metadata["retry_after_ms"]` may hint a delay.
+  ERROR_REASON_RATE_LIMITED = 20;
+  // A request limit was exceeded (chunk size, message size, tree depth).
+  ERROR_REASON_LIMIT_EXCEEDED = 21;
+  // `SystemService.Init` has not configured a required default yet.
+  ERROR_REASON_NOT_INITIALIZED = 22;
+  // An internal server error. Report a bug.
+  ERROR_REASON_INTERNAL = 23;
+}
+
+// Periodic empty message sent on long-lived server streams so proxies (the
+// Fleet gateway, load balancers) do not time out an idle stream. Clients
+// ignore it apart from resetting their own liveness timers.
+message KeepAlive {}

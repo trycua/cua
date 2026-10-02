@@ -1204,15 +1204,21 @@ fn state_status(state: &StateCapture, expected: bool) -> Value {
     status
 }
 
+/// How a turn's click marker is expected and whether it was captured.
+struct ClickEvidence {
+    expected: bool,
+    captured: bool,
+    /// Recorded when no click marker applies to the turn.
+    not_applicable_classification: &'static str,
+}
+
 fn write_evidence_manifest(
     turn_dir: &Path,
     before: &TurnCapture,
     after: &TurnCapture,
     state_expected: bool,
-    click_expected: bool,
-    click_captured: bool,
+    click: ClickEvidence,
     supplemental: &DispatchClickCapture,
-    click_not_applicable_classification: &'static str,
 ) -> anyhow::Result<()> {
     let mut manifest = serde_json::json!({
         "schema": "cua-turn-evidence/v1",
@@ -1232,12 +1238,12 @@ fn write_evidence_manifest(
                 after.screenshot_classification,
             ),
         },
-        "click": if click_expected {
-            capture_status(click_captured, true, None)
+        "click": if click.expected {
+            capture_status(click.captured, true, None)
         } else {
             serde_json::json!({
                 "status": "not_applicable",
-                "classification": click_not_applicable_classification,
+                "classification": click.not_applicable_classification,
             })
         },
     });
@@ -1482,18 +1488,20 @@ fn write_turn_with_after(
         &before,
         &after,
         pid.is_some() && capture_visual_state,
-        click_expected,
-        click_captured,
-        &supplemental,
-        if refused_before_target_resolution {
-            "action_refused_before_target_resolution"
-        } else if refused_before_dispatch {
-            "action_refused_before_dispatch"
-        } else if semantic_without_point {
-            "semantic_action_without_point"
-        } else {
-            "not_a_click_action"
+        ClickEvidence {
+            expected: click_expected,
+            captured: click_captured,
+            not_applicable_classification: if refused_before_target_resolution {
+                "action_refused_before_target_resolution"
+            } else if refused_before_dispatch {
+                "action_refused_before_dispatch"
+            } else if semantic_without_point {
+                "semantic_action_without_point"
+            } else {
+                "not_a_click_action"
+            },
         },
+        &supplemental,
     )?;
 
     Ok(())

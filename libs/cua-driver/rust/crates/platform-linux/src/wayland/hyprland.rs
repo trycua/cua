@@ -35,6 +35,9 @@ struct Client {
     at: [i32; 2],
     size: [i32; 2],
     workspace: Workspace,
+    /// 0 is the focused client; larger is longer ago. Absent on old builds.
+    #[serde(rename = "focusHistoryID", default)]
+    focus_history: i64,
 }
 
 #[derive(Deserialize)]
@@ -68,6 +71,9 @@ pub struct Window {
     pub workspace: i64,
     pub visible: bool,
     hidden: bool,
+    /// Focus recency (0 = focused); the closest thing to z-order Hyprland
+    /// exposes.
+    pub focus_order: i64,
 }
 
 pub fn is_session() -> bool {
@@ -219,7 +225,10 @@ fn query_with<T: serde::de::DeserializeOwned>(
     let deadline = Instant::now() + total;
     // Keep this a closed list: a generic "j/" prefix also admits JSON-formatted
     // dispatch commands. JSON output does not imply a read-only operation.
-    let read_only = matches!(command, "j/monitors" | "j/clients" | "j/activewindow");
+    let read_only = matches!(
+        command,
+        "j/monitors" | "j/clients" | "j/activewindow" | "j/cursorpos"
+    );
     for attempt in 1..=QUERY_MAX_ATTEMPTS {
         query_time_remaining(deadline)?;
         let attempt_deadline = deadline.min(Instant::now() + per_attempt);
@@ -308,6 +317,7 @@ fn windows_from_clients(clients: Vec<Client>, active: &HashSet<i64>) -> Result<V
             workspace: c.workspace.id,
             visible: !c.hidden && active.contains(&c.workspace.id),
             hidden: c.hidden,
+            focus_order: c.focus_history,
         });
     }
     Ok(windows)
@@ -368,6 +378,37 @@ pub fn list_windows() -> Result<Vec<Window>> {
         .filter(|id| *id != 0)
         .collect();
     windows_from_clients(query("j/clients")?, &active)
+}
+
+#[derive(Deserialize)]
+struct CursorPos {
+    x: f64,
+    y: f64,
+}
+
+/// The pointer in Hyprland's global layout coordinates.
+pub fn cursor_position() -> Result<(f64, f64)> {
+    let pos: CursorPos = query("j/cursorpos")?;
+    Ok((pos.x, pos.y))
+}
+
+/// Move the pointer (`dispatch movecursor`), no button state. For the
+/// presence shape probe only.
+pub fn move_cursor(x: f64, y: f64) -> Result<()> {
+    let mut ipc = ipc_connection()?;
+    let command = format!(
+        "dispatch movecursor {} {}",
+        x.round() as i64,
+        y.round() as i64
+    );
+    let reply = read_reply(&mut ipc, command.as_bytes(), QUERY_TIMEOUT)?;
+    if reply.trim_ascii() != b"ok" {
+        bail!(
+            "Hyprland movecursor refused: {}",
+            String::from_utf8_lossy(&reply)
+        );
+    }
+    Ok(())
 }
 
 pub fn window_for_address(address: u64) -> Option<Window> {
@@ -478,6 +519,7 @@ mod tests {
             workspace: 1,
             visible: true,
             hidden: false,
+            focus_order: 0,
         }
     }
 
@@ -496,7 +538,7 @@ mod tests {
     fn accessibility_correlation_rejects_duplicate_compositor_titles() {
         let a = window(0x10, 42);
         let b = window(0x20, 42);
-        assert!(accessibility_target(&[a.clone()], a.address, a.pid).is_some());
+        assert!(accessibility_target(std::slice::from_ref(&a), a.address, a.pid).is_some());
         assert!(accessibility_target(&[a.clone(), b], a.address, a.pid).is_none());
     }
 

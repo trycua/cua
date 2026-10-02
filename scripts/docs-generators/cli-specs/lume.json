@@ -1,0 +1,1892 @@
+{
+ "abstract": "A lightweight CLI and local API server to build, run and manage macOS VMs.",
+ "commands": [
+  {
+   "abstract": "Create a new virtual machine",
+   "arguments": [
+    {
+     "help": "Name for the virtual machine",
+     "is_optional": false,
+     "name": "name",
+     "type": "String"
+    }
+   ],
+   "examples": [
+    {
+     "command": "lume create macos-tahoe --ipsw latest --unattended tahoe",
+     "description": "A macOS VM from the latest IPSW, set up unattended (SSH user lume/lume)"
+    },
+    {
+     "command": "lume create dev --os linux --cpu 4 --memory 8GB --disk-size 50GB",
+     "description": "A Linux VM"
+    },
+    {
+     "command": "lume create macos-tahoe --ipsw latest --network bridged:en0",
+     "description": "Bridge the VM onto the host's en0 network"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Compatibility flag; ignored by offline setup",
+     "name": "debug"
+    },
+    {
+     "default_value": false,
+     "help": "Compatibility flag; offline setup verifies headlessly",
+     "name": "no-display"
+    }
+   ],
+   "name": "create",
+   "options": [
+    {
+     "default_value": "macOS",
+     "help": "Operating system to install: macOS or linux",
+     "is_optional": true,
+     "name": "os",
+     "type": "String"
+    },
+    {
+     "default_value": "4",
+     "help": "Number of CPU cores",
+     "is_optional": true,
+     "name": "cpu",
+     "type": "Int"
+    },
+    {
+     "default_value": "8GB",
+     "help": "Memory size (8, 8GB or 8192MB; a bare number is GB)",
+     "is_optional": true,
+     "name": "memory",
+     "type": "String"
+    },
+    {
+     "help": "Disk size (100, 100GB or 102400MB; a bare number is GB). Defaults to 100GB for macOS and 50GB for Linux",
+     "is_optional": true,
+     "name": "disk-size",
+     "type": "String"
+    },
+    {
+     "default_value": "1024x768",
+     "help": "Display resolution as WIDTHxHEIGHT",
+     "is_optional": true,
+     "name": "display",
+     "type": "String"
+    },
+    {
+     "help": "Path to a macOS restore image (IPSW), or 'latest' to download the latest supported version. Required for macOS VMs",
+     "is_optional": true,
+     "name": "ipsw",
+     "type": "String"
+    },
+    {
+     "help": "VM storage location name, or a direct path to the VM location",
+     "is_optional": true,
+     "name": "storage",
+     "type": "String"
+    },
+    {
+     "help": "Prepare macOS unattended setup offline after install. Built-in presets: sequoia, tahoe; a YAML path is accepted for compatibility. macOS VMs only",
+     "is_optional": true,
+     "name": "unattended",
+     "type": "String"
+    },
+    {
+     "help": "Compatibility option; ignored by offline setup",
+     "is_optional": true,
+     "name": "debug-dir",
+     "type": "String"
+    },
+    {
+     "default_value": "0",
+     "help": "Port for the temporary verification VNC server (0 picks a free port)",
+     "is_optional": true,
+     "name": "vnc-port",
+     "type": "Int"
+    },
+    {
+     "default_value": "nat",
+     "help": "Network mode: nat, bridged (picks an interface), or bridged:<interface> (for example bridged:en0)",
+     "is_optional": true,
+     "name": "network",
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Pull a prebuilt or custom macOS image from an OCI-compatible registry",
+   "arguments": [
+    {
+     "help": "Image to pull (format: name:tag)",
+     "is_optional": false,
+     "name": "image",
+     "type": "String"
+    },
+    {
+     "help": "Name for the resulting VM (defaults to the image name without its tag)",
+     "is_optional": true,
+     "name": "name",
+     "type": "String"
+    }
+   ],
+   "examples": [
+    {
+     "command": "lume pull macos-tahoe-vanilla:latest",
+     "description": "Pull an image from ghcr.io/trycua as a VM named macos-tahoe-vanilla"
+    },
+    {
+     "command": "lume pull macos-tahoe-vanilla:latest my-vm --storage external",
+     "description": "Pull it as my-vm into another storage location"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Download again even if the image is cached",
+     "name": "force"
+    },
+    {
+     "default_value": false,
+     "help": "Enable verbose logging",
+     "name": "verbose"
+    }
+   ],
+   "name": "pull",
+   "options": [
+    {
+     "default_value": "ghcr.io",
+     "help": "Container registry to pull from",
+     "is_optional": true,
+     "name": "registry",
+     "type": "String"
+    },
+    {
+     "default_value": "trycua",
+     "help": "Organization to pull from",
+     "is_optional": true,
+     "name": "organization",
+     "type": "String"
+    },
+    {
+     "help": "VM storage location name, or a direct path to the VM location",
+     "is_optional": true,
+     "name": "storage",
+     "type": "String"
+    },
+    {
+     "help": "Registry username for authentication",
+     "is_optional": true,
+     "name": "username",
+     "type": "String"
+    },
+    {
+     "help": "Registry password for authentication",
+     "is_optional": true,
+     "name": "password",
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Push a macOS VM to an OCI-compatible registry",
+   "arguments": [
+    {
+     "help": "Name of the VM to push",
+     "is_optional": false,
+     "name": "name",
+     "type": "String"
+    },
+    {
+     "help": "Image tag to push (format: name:tag)",
+     "is_optional": false,
+     "name": "image",
+     "type": "String"
+    }
+   ],
+   "examples": [
+    {
+     "command": "lume push my-vm my-image:latest --organization my-org",
+     "description": "Push my-vm as ghcr.io/my-org/my-image:latest"
+    },
+    {
+     "command": "lume push my-vm my-image:1.0 --additional-tags latest stable",
+     "description": "Push one image under several tags"
+    },
+    {
+     "command": "lume push my-vm my-image:latest --dry-run --reassemble",
+     "description": "Prepare and verify the chunks without uploading"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Enable verbose logging",
+     "name": "verbose"
+    },
+    {
+     "default_value": false,
+     "help": "Prepare files without uploading to the registry",
+     "name": "dry-run"
+    },
+    {
+     "default_value": false,
+     "help": "With --dry-run, also reassemble the chunks to verify integrity",
+     "name": "reassemble"
+    },
+    {
+     "default_value": false,
+     "help": "Push the disk as a single layer (kubelet-compatible, no chunking)",
+     "name": "single-layer"
+    },
+    {
+     "default_value": false,
+     "help": "Use the legacy Lume LZ4-chunked format instead of the OCI-compliant format",
+     "name": "legacy"
+    }
+   ],
+   "name": "push",
+   "options": [
+    {
+     "help": "Additional tags to push the same image to",
+     "is_optional": true,
+     "multiple_values": true,
+     "name": "additional-tags",
+     "type": "[String]"
+    },
+    {
+     "default_value": "ghcr.io",
+     "help": "Container registry to push to",
+     "is_optional": true,
+     "name": "registry",
+     "type": "String"
+    },
+    {
+     "default_value": "trycua",
+     "help": "Organization to push to",
+     "is_optional": true,
+     "name": "organization",
+     "type": "String"
+    },
+    {
+     "help": "VM storage location to use",
+     "is_optional": true,
+     "name": "storage",
+     "type": "String"
+    },
+    {
+     "default_value": "512",
+     "help": "Chunk size for large files, in MB",
+     "is_optional": true,
+     "name": "chunk-size-mb",
+     "type": "Int"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Convert a legacy Lume image to OCI-compliant format",
+   "arguments": [
+    {
+     "help": "Source image to convert (legacy format, for example macos-tahoe:latest)",
+     "is_optional": false,
+     "name": "source-image",
+     "type": "String"
+    },
+    {
+     "help": "Target image to push in OCI format (format: name:tag)",
+     "is_optional": false,
+     "name": "target-image",
+     "type": "String"
+    }
+   ],
+   "discussion": "Pulls a legacy Lume image from the registry, pushes it again in OCI-compliant format under a new name and tag, then removes the temporary local VM.",
+   "examples": [
+    {
+     "command": "lume convert macos-tahoe:latest macos-tahoe:latest-oci"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Enable verbose logging",
+     "name": "verbose"
+    },
+    {
+     "default_value": false,
+     "help": "Prepare files without uploading to the registry",
+     "name": "dry-run"
+    },
+    {
+     "default_value": false,
+     "help": "Push the disk as a single layer (kubelet-compatible, no chunking)",
+     "name": "single-layer"
+    }
+   ],
+   "name": "convert",
+   "options": [
+    {
+     "help": "Additional tags to push the OCI image to",
+     "is_optional": true,
+     "multiple_values": true,
+     "name": "additional-tags",
+     "type": "[String]"
+    },
+    {
+     "default_value": "ghcr.io",
+     "help": "Registry to pull from and push to",
+     "is_optional": true,
+     "name": "registry",
+     "type": "String"
+    },
+    {
+     "default_value": "trycua",
+     "help": "Registry organization",
+     "is_optional": true,
+     "name": "organization",
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "List available macOS images from local cache",
+   "arguments": [],
+   "examples": [
+    {
+     "command": "lume images"
+    }
+   ],
+   "flags": [],
+   "name": "images",
+   "options": [
+    {
+     "default_value": "trycua",
+     "help": "Organization to list images for",
+     "is_optional": true,
+     "name": "organization",
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Clone an existing virtual machine",
+   "arguments": [
+    {
+     "help": "Name of the source VM",
+     "is_optional": false,
+     "name": "name",
+     "type": "String"
+    },
+    {
+     "help": "Name for the cloned VM",
+     "is_optional": false,
+     "name": "new-name",
+     "type": "String"
+    }
+   ],
+   "examples": [
+    {
+     "command": "lume clone macos-tahoe macos-tahoe-backup",
+     "description": "Keep a golden copy before changing a VM"
+    },
+    {
+     "command": "lume clone macos-tahoe macos-tahoe --source-storage default --dest-storage external",
+     "description": "Copy a VM to another storage location"
+    }
+   ],
+   "flags": [],
+   "name": "clone",
+   "options": [
+    {
+     "help": "Source VM storage location",
+     "is_optional": true,
+     "name": "source-storage",
+     "type": "String"
+    },
+    {
+     "help": "Destination VM storage location",
+     "is_optional": true,
+     "name": "dest-storage",
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Get detailed information about a virtual machine",
+   "arguments": [
+    {
+     "help": "Name of the VM",
+     "is_optional": false,
+     "name": "name",
+     "type": "String"
+    }
+   ],
+   "examples": [
+    {
+     "command": "lume get my-vm"
+    },
+    {
+     "command": "lume get my-vm --format json",
+     "description": "Machine-readable, including the IP address and VNC URL"
+    }
+   ],
+   "flags": [],
+   "name": "get",
+   "options": [
+    {
+     "default_value": "text",
+     "help": "Output format",
+     "is_optional": true,
+     "name": "format",
+     "possible_values": [
+      "json",
+      "text"
+     ],
+     "short_name": "f",
+     "type": "String"
+    },
+    {
+     "help": "VM storage location name, or a direct path to the VM location",
+     "is_optional": true,
+     "name": "storage",
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Set new values for CPU, memory, and disk size of a virtual machine",
+   "arguments": [
+    {
+     "help": "Name of the VM",
+     "is_optional": false,
+     "name": "name",
+     "type": "String"
+    }
+   ],
+   "examples": [
+    {
+     "command": "lume set my-vm --cpu 8 --memory 16GB"
+    },
+    {
+     "command": "lume set my-vm --disk-size 120GB --dry-run",
+     "description": "Check a disk resize plan, then run it without --dry-run"
+    },
+    {
+     "command": "lume set my-vm --mac-address random"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Skip the pre-resize disk backup (macOS resize only). Faster, but a failure cannot be rolled back",
+     "name": "no-backup"
+    },
+    {
+     "default_value": false,
+     "help": "Keep the pre-resize backup after a successful macOS resize",
+     "name": "keep-backup"
+    },
+    {
+     "default_value": false,
+     "help": "Validate the disk-resize plan and print it without changing anything (macOS resize only)",
+     "name": "dry-run"
+    }
+   ],
+   "name": "set",
+   "options": [
+    {
+     "help": "New number of CPU cores",
+     "is_optional": true,
+     "name": "cpu",
+     "type": "Int"
+    },
+    {
+     "help": "New memory size (8, 8GB or 8192MB; a bare number is GB)",
+     "is_optional": true,
+     "name": "memory",
+     "type": "String"
+    },
+    {
+     "help": "New total disk size, increase only. For macOS VMs this relocates the recovery partition and grows the main APFS container; the VM must be stopped and it may take several minutes",
+     "is_optional": true,
+     "name": "disk-size",
+     "type": "String"
+    },
+    {
+     "help": "New display resolution as WIDTHxHEIGHT",
+     "is_optional": true,
+     "name": "display",
+     "type": "String"
+    },
+    {
+     "help": "New machine identifier: 'random', or a base64 identifier from `lume get --format json` to give this VM an existing machine identity (per-machine licenses then see one machine). macOS VMs only; the VM must be stopped",
+     "is_optional": true,
+     "name": "machine-identifier",
+     "type": "String"
+    },
+    {
+     "help": "New MAC address: 'random' (locally administered) or aa:bb:cc:dd:ee:ff. The VM must be stopped. The DHCP lease follows the MAC, so two running VMs with one MAC claim the same IP",
+     "is_optional": true,
+     "name": "mac-address",
+     "type": "String"
+    },
+    {
+     "help": "VM storage location name, or a direct path to the VM location",
+     "is_optional": true,
+     "name": "storage",
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "List virtual machines",
+   "arguments": [],
+   "examples": [
+    {
+     "command": "lume ls"
+    },
+    {
+     "command": "lume ls --format json"
+    }
+   ],
+   "flags": [],
+   "name": "ls",
+   "options": [
+    {
+     "default_value": "text",
+     "help": "Output format",
+     "is_optional": true,
+     "name": "format",
+     "possible_values": [
+      "json",
+      "text"
+     ],
+     "short_name": "f",
+     "type": "String"
+    },
+    {
+     "help": "Show only VMs in this storage location",
+     "is_optional": true,
+     "name": "storage",
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Run a virtual machine",
+   "arguments": [
+    {
+     "help": "Name of the VM, or an image to pull and run (format: name or name:tag)",
+     "is_optional": false,
+     "name": "name",
+     "type": "String"
+    }
+   ],
+   "examples": [
+    {
+     "command": "lume run my-vm"
+    },
+    {
+     "command": "lume run my-vm --shared-dir ~/src:ro --display none",
+     "description": "Headless, with a read-only shared folder"
+    },
+    {
+     "command": "lume run my-vm --detach --display none --vnc disabled",
+     "description": "In the background with no VNC listener"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Compatibility alias for --display none",
+     "name": "no-display",
+     "short_name": "d"
+    },
+    {
+     "default_value": false,
+     "help": "Run the VM in the background and return immediately",
+     "name": "detach"
+    },
+    {
+     "default_value": false,
+     "help": "Sync the clipboard both ways over SSH. Automatic with the native macOS display",
+     "name": "clipboard"
+    }
+   ],
+   "name": "run",
+   "options": [
+    {
+     "default_value": "native",
+     "help": "Local viewer to open. The VNC server stays available in every mode",
+     "is_optional": true,
+     "name": "display",
+     "possible_values": [
+      "vnc",
+      "native",
+      "none"
+     ],
+     "type": "DisplayMode"
+    },
+    {
+     "help": "Log path for --detach (default: ~/Library/Logs/lume/{vm}.log)",
+     "is_optional": true,
+     "name": "log-file",
+     "type": "String"
+    },
+    {
+     "help": "Directory to share with the VM: a path (read-write) or path:ro / path:rw. Repeatable",
+     "is_optional": true,
+     "name": "shared-dir",
+     "type": "[String]"
+    },
+    {
+     "help": "For Linux VMs only, a read-only disk image to attach",
+     "is_optional": true,
+     "name": "mount",
+     "type": "String"
+    },
+    {
+     "help": "Disk image to attach as a USB mass storage device. Repeatable",
+     "is_optional": true,
+     "name": "usb-storage",
+     "type": "[String]"
+    },
+    {
+     "help": "Disk image to attach as a read-write virtio-blk device. Repeatable",
+     "is_optional": true,
+     "name": "disk",
+     "type": "[String]"
+    },
+    {
+     "default_value": "ghcr.io",
+     "help": "Container registry to pull images from",
+     "is_optional": true,
+     "name": "registry",
+     "type": "String"
+    },
+    {
+     "default_value": "trycua",
+     "help": "Organization to pull images from",
+     "is_optional": true,
+     "name": "organization",
+     "type": "String"
+    },
+    {
+     "default_value": "enabled",
+     "help": "VNC server policy. disabled starts the VM with no VNC listener and reports a null vncUrl",
+     "is_optional": true,
+     "name": "vnc",
+     "possible_values": [
+      "enabled",
+      "disabled"
+     ],
+     "type": "VNCPolicy"
+    },
+    {
+     "default_value": "0",
+     "help": "Port for the VNC server (0 picks a free port)",
+     "is_optional": true,
+     "name": "vnc-port",
+     "type": "Int"
+    },
+    {
+     "help": "Password for the VNC server (default: a random passphrase)",
+     "is_optional": true,
+     "name": "vnc-password",
+     "type": "String"
+    },
+    {
+     "default_value": "false",
+     "help": "For macOS VMs only, boot into recovery mode",
+     "is_optional": true,
+     "name": "recovery-mode",
+     "type": "Bool"
+    },
+    {
+     "help": "VM storage location name, or a direct path to the VM location",
+     "is_optional": true,
+     "name": "storage",
+     "type": "String"
+    },
+    {
+     "help": "Use this disk image instead of disk.img in the VM directory",
+     "is_optional": true,
+     "name": "disk-path",
+     "type": "String"
+    },
+    {
+     "help": "Use this NVRAM file instead of nvram.bin in the VM directory",
+     "is_optional": true,
+     "name": "nvram-path",
+     "type": "String"
+    },
+    {
+     "help": "Network override for this run: nat, bridged, or bridged:<interface> (default: the VM's configured mode)",
+     "is_optional": true,
+     "name": "network",
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Open a viewer for a running virtual machine",
+   "arguments": [
+    {
+     "help": "Name of the virtual machine",
+     "is_optional": false,
+     "name": "name",
+     "type": "String"
+    }
+   ],
+   "discussion": "The native display is used when the `lume run` process that owns the VM supports live attachment; VNC is the fallback.",
+   "examples": [
+    {
+     "command": "lume attach my-vm"
+    },
+    {
+     "command": "lume attach my-vm --display vnc",
+     "description": "Open Screen Sharing over VNC"
+    }
+   ],
+   "flags": [],
+   "name": "attach",
+   "options": [
+    {
+     "help": "Viewer to open (default: native, falling back to VNC)",
+     "is_optional": true,
+     "name": "display",
+     "possible_values": [
+      "native",
+      "vnc"
+     ],
+     "type": "AttachDisplayMode"
+    },
+    {
+     "help": "VM storage location to use",
+     "is_optional": true,
+     "name": "storage",
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Stop a virtual machine",
+   "arguments": [
+    {
+     "help": "Name of the VM to stop",
+     "is_optional": false,
+     "name": "name",
+     "type": "String"
+    }
+   ],
+   "examples": [
+    {
+     "command": "lume stop my-vm"
+    },
+    {
+     "command": "lume stop my-vm --force"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Power off the VM immediately instead of attempting a graceful shutdown first",
+     "name": "force"
+    }
+   ],
+   "name": "stop",
+   "options": [
+    {
+     "help": "VM storage location name, or a direct path to the VM location",
+     "is_optional": true,
+     "name": "storage",
+     "type": "String"
+    },
+    {
+     "default_value": "10",
+     "help": "Seconds to wait for a graceful shutdown before forcing power off",
+     "is_optional": false,
+     "name": "timeout",
+     "type": "Int"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Gracefully shut down a virtual machine",
+   "arguments": [
+    {
+     "help": "Name of the virtual machine",
+     "is_optional": false,
+     "name": "name",
+     "type": "String"
+    }
+   ],
+   "discussion": "Requests the operation inside the guest over SSH. VMs created with --unattended use lume/lume credentials by default.",
+   "examples": [
+    {
+     "command": "lume shutdown my-vm"
+    },
+    {
+     "command": "lume shutdown my-vm --user admin --timeout 60",
+     "description": "With another SSH user and a longer timeout"
+    }
+   ],
+   "flags": [],
+   "name": "shutdown",
+   "options": [
+    {
+     "default_value": "lume",
+     "help": "SSH username",
+     "is_optional": true,
+     "name": "user",
+     "short_name": "u",
+     "type": "String"
+    },
+    {
+     "default_value": "lume",
+     "help": "SSH and sudo password",
+     "is_optional": true,
+     "name": "password",
+     "short_name": "p",
+     "type": "String"
+    },
+    {
+     "help": "VM storage location to use",
+     "is_optional": true,
+     "name": "storage",
+     "type": "String"
+    },
+    {
+     "default_value": "30",
+     "help": "SSH command timeout in seconds",
+     "is_optional": true,
+     "name": "timeout",
+     "short_name": "t",
+     "type": "Int"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Gracefully restart a virtual machine",
+   "arguments": [
+    {
+     "help": "Name of the virtual machine",
+     "is_optional": false,
+     "name": "name",
+     "type": "String"
+    }
+   ],
+   "discussion": "Requests the operation inside the guest over SSH. VMs created with --unattended use lume/lume credentials by default.",
+   "examples": [
+    {
+     "command": "lume restart my-vm"
+    },
+    {
+     "command": "lume restart my-vm --user admin --timeout 60",
+     "description": "With another SSH user and a longer timeout"
+    }
+   ],
+   "flags": [],
+   "name": "restart",
+   "options": [
+    {
+     "default_value": "lume",
+     "help": "SSH username",
+     "is_optional": true,
+     "name": "user",
+     "short_name": "u",
+     "type": "String"
+    },
+    {
+     "default_value": "lume",
+     "help": "SSH and sudo password",
+     "is_optional": true,
+     "name": "password",
+     "short_name": "p",
+     "type": "String"
+    },
+    {
+     "help": "VM storage location to use",
+     "is_optional": true,
+     "name": "storage",
+     "type": "String"
+    },
+    {
+     "default_value": "30",
+     "help": "SSH command timeout in seconds",
+     "is_optional": true,
+     "name": "timeout",
+     "short_name": "t",
+     "type": "Int"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Connect to a VM via SSH or execute commands remotely",
+   "arguments": [
+    {
+     "help": "Name of the virtual machine",
+     "is_optional": false,
+     "name": "name",
+     "type": "String"
+    },
+    {
+     "help": "Command to execute (omit for an interactive shell)",
+     "is_optional": true,
+     "name": "command",
+     "type": "[String]"
+    }
+   ],
+   "discussion": "Opens an interactive shell, or runs one command and exits with its status. Password authentication is handled for you (no sshpass needed). Requires Remote Login in the guest; VMs created with --unattended have it enabled with credentials lume/lume.",
+   "examples": [
+    {
+     "command": "lume ssh my-vm",
+     "description": "Interactive shell"
+    },
+    {
+     "command": "lume ssh my-vm \"ls -la\"",
+     "description": "Run one command"
+    },
+    {
+     "command": "lume ssh my-vm --timeout 0 \"cd /app && npm test\"",
+     "description": "A long-running command with no timeout"
+    }
+   ],
+   "flags": [],
+   "name": "ssh",
+   "options": [
+    {
+     "default_value": "lume",
+     "help": "SSH username",
+     "is_optional": true,
+     "name": "user",
+     "short_name": "u",
+     "type": "String"
+    },
+    {
+     "default_value": "lume",
+     "help": "SSH password",
+     "is_optional": true,
+     "name": "password",
+     "short_name": "p",
+     "type": "String"
+    },
+    {
+     "help": "Storage location name or path",
+     "is_optional": true,
+     "name": "storage",
+     "type": "String"
+    },
+    {
+     "default_value": "60",
+     "help": "Command timeout in seconds (0 for no timeout)",
+     "is_optional": true,
+     "name": "timeout",
+     "short_name": "t",
+     "type": "Int"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Enable or disable System Integrity Protection on a macOS VM",
+   "arguments": [
+    {
+     "help": "Desired SIP state",
+     "is_optional": false,
+     "name": "state",
+     "possible_values": [
+      "on",
+      "off"
+     ],
+     "type": "String"
+    },
+    {
+     "help": "Name of the virtual machine",
+     "is_optional": false,
+     "name": "name",
+     "type": "String"
+    }
+   ],
+   "discussion": "Boots the stopped VM normally to validate the admin credentials, runs `csrutil disable` (or `enable`) in paired recoveryOS over VNC, then boots normally once more to verify the result. The VM needs an admin account and Remote Login; VMs from unattended setup use lume/lume. Prefer --admin-password-stdin: --admin-password is visible to other processes. Requires vncdotool (pip3 install vncdotool).",
+   "examples": [
+    {
+     "command": "lume sip off my-vm --yes"
+    },
+    {
+     "command": "lume sip on my-vm --yes --admin-user alice --admin-password-stdin",
+     "description": "With another admin account, password read from stdin"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Skip the interactive confirmation prompt",
+     "name": "yes",
+     "short_name": "y"
+    },
+    {
+     "default_value": false,
+     "help": "Read one administrator-password line from standard input without echo",
+     "name": "admin-password-stdin"
+    }
+   ],
+   "name": "sip",
+   "options": [
+    {
+     "default_value": "lume",
+     "help": "Administrator username in the guest",
+     "is_optional": true,
+     "name": "admin-user",
+     "type": "String"
+    },
+    {
+     "help": "Administrator password in the guest (default: lume); prefer --admin-password-stdin",
+     "is_optional": true,
+     "name": "admin-password",
+     "type": "String"
+    },
+    {
+     "help": "Save step-by-step framebuffer PNGs here for debugging",
+     "is_optional": true,
+     "name": "screenshot-dir",
+     "type": "String"
+    },
+    {
+     "default_value": "5999",
+     "help": "TCP port for the temporary recovery VNC server",
+     "is_optional": true,
+     "name": "vnc-port",
+     "type": "Int"
+    },
+    {
+     "help": "VM storage location",
+     "is_optional": true,
+     "name": "storage",
+     "type": "String"
+    },
+    {
+     "default_value": "900",
+     "help": "Overall timeout in seconds",
+     "is_optional": true,
+     "name": "timeout",
+     "type": "Int"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Get macOS restore image IPSW URL",
+   "arguments": [],
+   "discussion": "Prints the URL of the latest supported restore image. Download it, then pass the file to `lume create --ipsw`.",
+   "examples": [
+    {
+     "command": "lume ipsw"
+    }
+   ],
+   "flags": [],
+   "name": "ipsw",
+   "options": [],
+   "subcommands": []
+  },
+  {
+   "abstract": "Start the VM management server",
+   "arguments": [],
+   "discussion": "Serves the HTTP API on localhost, or with --mcp an MCP server over stdio for AI agents.",
+   "examples": [
+    {
+     "command": "lume serve",
+     "description": "HTTP API on http://localhost:7777"
+    },
+    {
+     "command": "lume serve --port 7778"
+    },
+    {
+     "command": "lume serve --mcp",
+     "description": "MCP server over stdio (what MCP clients launch)"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Run as an MCP server (stdio transport) for AI agents",
+     "name": "mcp"
+    }
+   ],
+   "name": "serve",
+   "options": [
+    {
+     "default_value": "7777",
+     "help": "Port to listen on (HTTP mode only)",
+     "is_optional": true,
+     "name": "port",
+     "type": "Int"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Delete a virtual machine",
+   "arguments": [
+    {
+     "help": "Name of the VM to delete",
+     "is_optional": false,
+     "name": "name",
+     "type": "String"
+    }
+   ],
+   "examples": [
+    {
+     "command": "lume delete my-vm"
+    },
+    {
+     "command": "lume delete my-vm --force",
+     "description": "Without the confirmation prompt"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Delete without asking for confirmation",
+     "name": "force"
+    }
+   ],
+   "name": "delete",
+   "options": [
+    {
+     "help": "VM storage location name, or a direct path to the VM location",
+     "is_optional": true,
+     "name": "storage",
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Remove cached images",
+   "arguments": [],
+   "examples": [
+    {
+     "command": "lume prune"
+    }
+   ],
+   "flags": [],
+   "name": "prune",
+   "options": [],
+   "subcommands": []
+  },
+  {
+   "abstract": "Get or set lume configuration",
+   "arguments": [],
+   "discussion": "Without a subcommand, prints the current configuration (`lume config get`).",
+   "examples": [],
+   "flags": [],
+   "name": "config",
+   "options": [],
+   "subcommands": [
+    {
+     "abstract": "Get current configuration",
+     "arguments": [],
+     "examples": [
+      {
+       "command": "lume config get"
+      }
+     ],
+     "flags": [],
+     "name": "get",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Manage VM storage locations",
+     "arguments": [],
+     "examples": [],
+     "flags": [],
+     "name": "storage",
+     "options": [],
+     "subcommands": [
+      {
+       "abstract": "Add a new VM storage location",
+       "arguments": [
+        {
+         "help": "Storage name (letters, digits, dashes and underscores)",
+         "is_optional": false,
+         "name": "name",
+         "type": "String"
+        },
+        {
+         "help": "Path to the VM storage directory",
+         "is_optional": false,
+         "name": "path",
+         "type": "String"
+        }
+       ],
+       "examples": [
+        {
+         "command": "lume config storage add external /Volumes/External/lume"
+        }
+       ],
+       "flags": [],
+       "name": "add",
+       "options": [],
+       "subcommands": []
+      },
+      {
+       "abstract": "Remove a VM storage location",
+       "arguments": [
+        {
+         "help": "Storage name to remove",
+         "is_optional": false,
+         "name": "name",
+         "type": "String"
+        }
+       ],
+       "examples": [
+        {
+         "command": "lume config storage remove external"
+        }
+       ],
+       "flags": [],
+       "name": "remove",
+       "options": [],
+       "subcommands": []
+      },
+      {
+       "abstract": "List all VM storage locations",
+       "arguments": [],
+       "examples": [
+        {
+         "command": "lume config storage list"
+        }
+       ],
+       "flags": [],
+       "name": "list",
+       "options": [],
+       "subcommands": []
+      },
+      {
+       "abstract": "Set the default VM storage location",
+       "arguments": [
+        {
+         "help": "Storage name to set as default",
+         "is_optional": false,
+         "name": "name",
+         "type": "String"
+        }
+       ],
+       "examples": [
+        {
+         "command": "lume config storage default external"
+        }
+       ],
+       "flags": [],
+       "name": "default",
+       "options": [],
+       "subcommands": []
+      }
+     ]
+    },
+    {
+     "abstract": "Manage image cache settings",
+     "arguments": [],
+     "examples": [],
+     "flags": [],
+     "name": "cache",
+     "options": [],
+     "subcommands": [
+      {
+       "abstract": "Get or set cache directory",
+       "arguments": [
+        {
+         "help": "Path to the cache directory (omit to show the current one)",
+         "is_optional": true,
+         "name": "path",
+         "type": "String"
+        }
+       ],
+       "examples": [
+        {
+         "command": "lume config cache dir"
+        },
+        {
+         "command": "lume config cache dir /Volumes/External/lume-cache"
+        }
+       ],
+       "flags": [],
+       "name": "dir",
+       "options": [],
+       "subcommands": []
+      },
+      {
+       "abstract": "Enable image caching",
+       "arguments": [],
+       "examples": [
+        {
+         "command": "lume config cache enable"
+        }
+       ],
+       "flags": [],
+       "name": "enable",
+       "options": [],
+       "subcommands": []
+      },
+      {
+       "abstract": "Disable image caching",
+       "arguments": [],
+       "examples": [
+        {
+         "command": "lume config cache disable"
+        }
+       ],
+       "flags": [],
+       "name": "disable",
+       "options": [],
+       "subcommands": []
+      },
+      {
+       "abstract": "Show cache status and directory",
+       "arguments": [],
+       "examples": [
+        {
+         "command": "lume config cache status"
+        }
+       ],
+       "flags": [],
+       "name": "status",
+       "options": [],
+       "subcommands": []
+      }
+     ]
+    },
+    {
+     "abstract": "Manage pseudonymous telemetry settings",
+     "arguments": [],
+     "examples": [],
+     "flags": [],
+     "name": "telemetry",
+     "options": [],
+     "subcommands": [
+      {
+       "abstract": "Show current telemetry status",
+       "arguments": [],
+       "examples": [
+        {
+         "command": "lume config telemetry status"
+        }
+       ],
+       "flags": [],
+       "name": "status",
+       "options": [],
+       "subcommands": []
+      },
+      {
+       "abstract": "Enable pseudonymous telemetry",
+       "arguments": [],
+       "examples": [
+        {
+         "command": "lume config telemetry enable"
+        }
+       ],
+       "flags": [],
+       "name": "enable",
+       "options": [],
+       "subcommands": []
+      },
+      {
+       "abstract": "Disable pseudonymous telemetry",
+       "arguments": [],
+       "examples": [
+        {
+         "command": "lume config telemetry disable"
+        }
+       ],
+       "flags": [],
+       "name": "disable",
+       "options": [],
+       "subcommands": []
+      },
+      {
+       "abstract": "Delete the pseudonymous installation ID and registration markers",
+       "arguments": [],
+       "examples": [
+        {
+         "command": "lume config telemetry reset-id"
+        }
+       ],
+       "flags": [],
+       "name": "reset-id",
+       "options": [],
+       "subcommands": []
+      }
+     ]
+    },
+    {
+     "abstract": "Manage container registry settings",
+     "arguments": [],
+     "examples": [],
+     "flags": [],
+     "name": "registry",
+     "options": [],
+     "subcommands": [
+      {
+       "abstract": "Show current registry configuration",
+       "arguments": [],
+       "examples": [
+        {
+         "command": "lume config registry status"
+        }
+       ],
+       "flags": [],
+       "name": "status",
+       "options": [],
+       "subcommands": []
+      },
+      {
+       "abstract": "Get or set registry type",
+       "arguments": [
+        {
+         "help": "Registry type to use: ghcr or gcs (omit to show the current one)",
+         "is_optional": true,
+         "name": "type",
+         "type": "String"
+        }
+       ],
+       "examples": [
+        {
+         "command": "lume config registry type"
+        },
+        {
+         "command": "lume config registry type ghcr"
+        }
+       ],
+       "flags": [],
+       "name": "type",
+       "options": [],
+       "subcommands": []
+      },
+      {
+       "abstract": "Configure GitHub Container Registry settings",
+       "arguments": [],
+       "examples": [
+        {
+         "command": "lume config registry ghcr --organization my-org"
+        }
+       ],
+       "flags": [],
+       "name": "ghcr",
+       "options": [
+        {
+         "help": "Registry URL (default: ghcr.io)",
+         "is_optional": true,
+         "name": "registry",
+         "type": "String"
+        },
+        {
+         "help": "Organization or namespace (default: trycua)",
+         "is_optional": true,
+         "name": "organization",
+         "type": "String"
+        }
+       ],
+       "subcommands": []
+      },
+      {
+       "abstract": "Configure GCS registry settings",
+       "arguments": [],
+       "examples": [
+        {
+         "command": "lume config registry gcs --api-url https://images.example.com --api-key <key>"
+        }
+       ],
+       "flags": [],
+       "name": "gcs",
+       "options": [
+        {
+         "help": "API URL for signed URL generation",
+         "is_optional": true,
+         "name": "api-url",
+         "type": "String"
+        },
+        {
+         "help": "API key for authentication",
+         "is_optional": true,
+         "name": "api-key",
+         "type": "String"
+        }
+       ],
+       "subcommands": []
+      }
+     ]
+    },
+    {
+     "abstract": "Manage network settings",
+     "arguments": [],
+     "examples": [],
+     "flags": [],
+     "name": "network",
+     "options": [],
+     "subcommands": [
+      {
+       "abstract": "List available network interfaces for bridged networking",
+       "arguments": [],
+       "examples": [
+        {
+         "command": "lume config network interfaces"
+        }
+       ],
+       "flags": [],
+       "name": "interfaces",
+       "options": [],
+       "subcommands": []
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "abstract": "View lume serve logs",
+   "arguments": [],
+   "examples": [],
+   "flags": [],
+   "name": "logs",
+   "options": [],
+   "subcommands": [
+    {
+     "abstract": "View info logs from the daemon",
+     "arguments": [],
+     "examples": [
+      {
+       "command": "lume logs info --lines 100"
+      },
+      {
+       "command": "lume logs info --follow"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Follow the log continuously (like tail -f)",
+       "name": "follow",
+       "short_name": "f"
+      }
+     ],
+     "name": "info",
+     "options": [
+      {
+       "help": "Number of lines to display from the end of the file",
+       "is_optional": true,
+       "name": "lines",
+       "short_name": "l",
+       "type": "Int"
+      }
+     ],
+     "subcommands": []
+    },
+    {
+     "abstract": "View error logs from the daemon",
+     "arguments": [],
+     "examples": [
+      {
+       "command": "lume logs error --lines 100"
+      },
+      {
+       "command": "lume logs error --follow"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Follow the log continuously (like tail -f)",
+       "name": "follow",
+       "short_name": "f"
+      }
+     ],
+     "name": "error",
+     "options": [
+      {
+       "help": "Number of lines to display from the end of the file",
+       "is_optional": true,
+       "name": "lines",
+       "short_name": "l",
+       "type": "Int"
+      }
+     ],
+     "subcommands": []
+    },
+    {
+     "abstract": "View both info and error logs from the daemon",
+     "arguments": [],
+     "examples": [
+      {
+       "command": "lume logs all --lines 100"
+      },
+      {
+       "command": "lume logs all --follow"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Follow the log continuously (like tail -f)",
+       "name": "follow",
+       "short_name": "f"
+      }
+     ],
+     "name": "all",
+     "options": [
+      {
+       "help": "Number of lines to display from the end of each file",
+       "is_optional": true,
+       "name": "lines",
+       "short_name": "l",
+       "type": "Int"
+      }
+     ],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Check whether a newer Lume release is available",
+   "arguments": [],
+   "discussion": "Read-only update check. Uses GitHub Releases, caches the result briefly, and never installs anything.",
+   "examples": [
+    {
+     "command": "lume check-update"
+    },
+    {
+     "command": "lume check-update --json --no-cache"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Emit the structured update-state payload as JSON",
+     "name": "json"
+    },
+    {
+     "default_value": false,
+     "help": "Bypass the local update-check cache",
+     "name": "no-cache"
+    }
+   ],
+   "name": "check-update",
+   "options": [],
+   "subcommands": []
+  },
+  {
+   "abstract": "Check for a Lume update and optionally apply it",
+   "arguments": [],
+   "discussion": "Without --apply, this command only checks for a newer release and prints the command to install it. With --apply, it runs the official Lume installer pinned to the discovered version and exits with the installer's status.",
+   "examples": [
+    {
+     "command": "lume update"
+    },
+    {
+     "command": "lume update --apply"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Apply the update by re-running the official installer",
+     "name": "apply"
+    },
+    {
+     "default_value": false,
+     "help": "Emit the structured update-state payload as JSON",
+     "name": "json"
+    }
+   ],
+   "name": "update",
+   "options": [],
+   "subcommands": []
+  },
+  {
+   "abstract": "Inspect or change the stable/nightly update channel; selection does not install",
+   "arguments": [],
+   "discussion": "The selection persists but never installs by itself; run `lume update --apply` after changing it. Without a subcommand, prints the status.",
+   "examples": [],
+   "flags": [],
+   "name": "channel",
+   "options": [],
+   "subcommands": [
+    {
+     "abstract": "Show selected and current release channels",
+     "arguments": [],
+     "examples": [
+      {
+       "command": "lume channel status --json"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Emit machine-readable channel state as JSON",
+       "name": "json"
+      }
+     ],
+     "name": "status",
+     "options": [],
+     "subcommands": []
+    },
+    {
+     "abstract": "Save stable or nightly as the update channel",
+     "arguments": [
+      {
+       "help": "Release channel: stable or nightly",
+       "is_optional": false,
+       "name": "channel",
+       "type": "String"
+      }
+     ],
+     "examples": [
+      {
+       "command": "lume channel set nightly"
+      },
+      {
+       "command": "lume channel set stable"
+      }
+     ],
+     "flags": [
+      {
+       "default_value": false,
+       "help": "Emit machine-readable channel state as JSON",
+       "name": "json"
+      }
+     ],
+     "name": "set",
+     "options": [],
+     "subcommands": []
+    }
+   ]
+  },
+  {
+   "abstract": "Prepare unattended macOS setup",
+   "arguments": [
+    {
+     "help": "Name of the virtual machine",
+     "is_optional": false,
+     "name": "name",
+     "type": "String"
+    }
+   ],
+   "discussion": "Lume prepares the macOS disk offline, skips Setup Assistant, enables autologin and SSH, disables screensaver lock, verifies SSH, then stops the VM.",
+   "examples": [
+    {
+     "command": "lume setup my-vm"
+    },
+    {
+     "command": "lume setup my-vm --unattended sequoia"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Compatibility flag; offline setup verifies headlessly",
+     "name": "no-display"
+    },
+    {
+     "default_value": false,
+     "help": "Compatibility flag; ignored by offline setup",
+     "name": "debug"
+    }
+   ],
+   "name": "setup",
+   "options": [
+    {
+     "help": "Built-in preset (sequoia, tahoe) or a YAML path, kept for compatibility and optional post-SSH commands (default: tahoe)",
+     "is_optional": true,
+     "name": "unattended",
+     "type": "String"
+    },
+    {
+     "help": "VM storage location name, or a direct path to the VM location",
+     "is_optional": true,
+     "name": "storage",
+     "type": "String"
+    },
+    {
+     "default_value": "0",
+     "help": "Port for the temporary verification VNC server (0 picks a free port)",
+     "is_optional": true,
+     "name": "vnc-port",
+     "type": "Int"
+    },
+    {
+     "help": "Compatibility option; ignored by offline setup",
+     "is_optional": true,
+     "name": "debug-dir",
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  },
+  {
+   "abstract": "Output CLI and API documentation as JSON for tooling and integrations",
+   "arguments": [],
+   "discussion": "Emits the CLI, HTTP API or MCP tool metadata (arguments, options, flags, endpoints, tool schemas, help text, defaults and types) that the generated reference is built from.",
+   "examples": [
+    {
+     "command": "lume dump-docs --type cli --pretty"
+    },
+    {
+     "command": "lume dump-docs --type mcp",
+     "description": "The MCP server's tool list"
+    }
+   ],
+   "flags": [
+    {
+     "default_value": false,
+     "help": "Pretty-print the JSON output with sorted keys",
+     "name": "pretty"
+    }
+   ],
+   "name": "dump-docs",
+   "options": [
+    {
+     "default_value": "cli",
+     "help": "Documentation type to output",
+     "is_optional": true,
+     "name": "type",
+     "possible_values": [
+      "cli",
+      "api",
+      "mcp",
+      "all"
+     ],
+     "type": "String"
+    }
+   ],
+   "subcommands": []
+  }
+ ],
+ "exit_codes": [
+  {
+   "code": 0,
+   "meaning": "Success"
+  },
+  {
+   "code": 1,
+   "meaning": "The command failed (for example the VM does not exist or the operation errored)"
+  },
+  {
+   "code": 64,
+   "meaning": "Usage error: an unknown command or option, a missing argument, or an invalid value"
+  }
+ ],
+ "name": "lume",
+ "version": "0.6.0"
+}

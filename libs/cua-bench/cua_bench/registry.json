@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "datasets": [
+    {
+      "name": "cua-bench-basic",
+      "version": "1.0",
+      "description": "13 single-widget GUI tasks (click, drag, forms, pickers)",
+      "git_url": "https://github.com/trycua/cua.git",
+      "git_commit_id": "6762bcf63b616c6de86ab7b2309686150913105b",
+      "path": "libs/cua-bench/datasets/cua-bench-basic",
+      "image": "BENCH_WEB"
+    },
+    {
+      "name": "cua-bench-kicad",
+      "version": "1.0",
+      "description": "25 KiCad schematic and PCB tasks",
+      "git_url": "https://github.com/trycua/cua.git",
+      "git_commit_id": "6762bcf63b616c6de86ab7b2309686150913105b",
+      "path": "libs/cua-bench/datasets/cua-bench-kicad"
+    },
+    {
+      "name": "cua-bench-workflows",
+      "version": "1.0",
+      "description": "Multi-step app workflows (OpenShot, Unity)",
+      "git_url": "https://github.com/trycua/cua.git",
+      "git_commit_id": "6762bcf63b616c6de86ab7b2309686150913105b",
+      "path": "libs/cua-bench/datasets/cua-bench-workflows"
+    }
+  ]
+}

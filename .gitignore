@@ -96,6 +96,9 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+# The cua.env.v1 protobuf TypeScript the HTML5 viewer imports is generated
+# and committed (its drift gate is `pnpm check`).
+!/libs/cua/crates/cua-spacesd-html5/web/src/gen/cua/env/
 # Git worktrees
 .worktrees/
 .pi/

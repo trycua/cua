@@ -1,0 +1,315 @@
+---
+title: Use the SDK
+description: Call Cua Driver from Python or TypeScript in process, verify each action, and expose MCP from a signed desktop app.
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+`CuaDriver.create()` loads the Rust runtime into your process: no daemon,
+socket, or executable. Your app owns the OS permissions, sessions, and
+shutdown. On macOS, the process that imports the SDK needs the Accessibility
+and Screen Recording grants.
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```bash skip="host-install"
+python -m pip install cua-driver
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```bash skip="host-install"
+npm install @trycua/cua-driver
+```
+
+  </Tab>
+</Tabs>
+
+## Capture the desktop
+
+The first call creates an implicit session for this runtime; later unnamed
+calls reuse it. Keep one `CuaDriver` for the app's lifetime.
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```python skip="no-runner"
+import asyncio
+
+from cua_driver import CuaDriver, EndSessionInput, GetDesktopStateInput
+
+
+async def main() -> None:
+    driver = CuaDriver.create()
+    try:
+        result = await driver.get_desktop_state(
+            GetDesktopStateInput(session=None, screenshot_out_file=None)
+        )
+        if result.is_error:
+            raise RuntimeError(result.text)
+        print(result.images[0].mime_type)
+    finally:
+        await driver.end_session(EndSessionInput(session=None))
+        await driver.shutdown()
+
+
+asyncio.run(main())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts skip="no-runner"
+import { CuaDriver, EndSessionInput, GetDesktopStateInput } from '@trycua/cua-driver';
+
+const driver = CuaDriver.create(undefined);
+try {
+  const result = await driver.getDesktopState(GetDesktopStateInput.new({}));
+  if (result.isError) throw new Error(result.text);
+  console.log(result.images[0]?.mimeType);
+} finally {
+  await driver.endSession(EndSessionInput.new({}));
+  await driver.shutdown();
+  driver.uniffiDestroy();
+}
+```
+
+  </Tab>
+</Tabs>
+
+In TypeScript, `shutdown()` stops admitting work and awaits admitted calls;
+`uniffiDestroy()` then frees the native handle. Call both, in that order.
+
+## Act on a window and verify it
+
+Find an exact window, snapshot it, click an element by its token, and check
+the change in a second snapshot. The example expects an app `Window Demo` with
+a `Counter` window, an `Increment` button, and a `Count` value; replace them
+with your own.
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```python skip="no-runner"
+import asyncio
+
+from cua_driver import (
+    ActionTarget, ClickButton, ClickInput, ClickPosition, CuaDriver,
+    GetWindowStateInput, InputDeliveryMode, ListAppsInput, ListWindowsInput,
+)
+
+
+def unique(items, what):
+    if len(items) != 1:
+        raise RuntimeError(f"Expected one {what}, found {len(items)}")
+    return items[0]
+
+
+async def main() -> None:
+    driver = CuaDriver.create()
+    try:
+        apps = await driver.list_apps(ListAppsInput())
+        app = unique([a for a in apps.apps if a.name == "Window Demo" and a.running], "app")
+        windows = await driver.list_windows(ListWindowsInput(pid=app.pid, on_screen_only=True))
+        window = unique([w for w in windows.windows if w.title == "Counter"], "window")
+        capture = GetWindowStateInput(
+            pid=app.pid, window_id=window.window_id, session=None, query=None,
+            include_accessibility_tree=True, include_screenshot=True,
+            screenshot_out_file=None, max_elements=None, max_depth=None,
+            max_dimension=None,
+        )
+
+        async def snapshot():
+            state = await driver.get_window_state(capture)
+            if state.degraded or state.truncated:
+                raise RuntimeError("Snapshot is degraded or truncated")
+            return state
+
+        before = await snapshot()
+        button = unique([e for e in before.elements or [] if e.label == "Increment"], "button")
+        count = unique([e for e in before.elements or [] if e.label == "Count"], "counter")
+        await driver.click(ClickInput(
+            target=ActionTarget.WINDOW(pid=app.pid, window_id=window.window_id),
+            position=ClickPosition.ELEMENT(element_token=button.element_token),
+            delivery_mode=InputDeliveryMode.BACKGROUND,
+            session=None, button=ClickButton.LEFT, count=1,
+        ))
+        after = await snapshot()
+        updated = unique([e for e in after.elements or [] if e.label == "Count"], "counter")
+        if updated.value == count.value:
+            raise RuntimeError("Click returned, but the counter did not change")
+        print("Verified:", count.value, "->", updated.value)
+    finally:
+        await driver.shutdown()
+
+
+asyncio.run(main())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts skip="no-runner"
+import {
+  ActionTarget, ClickButton, ClickInput, ClickPosition, CuaDriver,
+  GetWindowStateInput, InputDeliveryMode, ListAppsInput, ListWindowsInput,
+} from '@trycua/cua-driver';
+
+function unique<T>(items: T[], what: string): T {
+  if (items.length !== 1) throw new Error(`Expected one ${what}, found ${items.length}`);
+  return items[0]!;
+}
+
+const driver = CuaDriver.create(undefined);
+try {
+  const apps = await driver.listApps(ListAppsInput.new({}));
+  const app = unique(apps.apps.filter(a => a.name === 'Window Demo' && a.running), 'app');
+  const windows = await driver.listWindows(ListWindowsInput.new({ pid: app.pid, onScreenOnly: true }));
+  const window = unique(windows.windows.filter(w => w.title === 'Counter'), 'window');
+  // Keep windowId as bigint; converting to number can lose precision.
+  const capture = GetWindowStateInput.new({
+    pid: app.pid, windowId: window.windowId,
+    includeAccessibilityTree: true, includeScreenshot: true,
+  });
+  const snapshot = async () => {
+    const state = await driver.getWindowState(capture);
+    if (state.degraded || state.truncated) throw new Error('Snapshot is degraded or truncated');
+    return state;
+  };
+  const before = await snapshot();
+  const button = unique((before.elements ?? []).filter(e => e.label === 'Increment'), 'button');
+  const count = unique((before.elements ?? []).filter(e => e.label === 'Count'), 'counter');
+  await driver.click(ClickInput.new({
+    target: new ActionTarget.Window({ pid: app.pid, windowId: window.windowId }),
+    position: new ClickPosition.Element({ elementToken: button.elementToken! }),
+    deliveryMode: InputDeliveryMode.Background,
+    button: ClickButton.Left, count: 1,
+  }));
+  const after = await snapshot();
+  const updated = unique((after.elements ?? []).filter(e => e.label === 'Count'), 'counter');
+  if (updated.value === count.value) throw new Error('Click returned, but the counter did not change');
+  console.log('Verified:', count.value, '->', updated.value);
+} finally {
+  await driver.shutdown();
+  driver.uniffiDestroy();
+}
+```
+
+  </Tab>
+</Tabs>
+
+Version 0.25 does not expose these typed window methods (`ActionTarget`,
+`ClickPosition`); upgrade the bindings and native library together. Rules the
+example follows:
+
+- `click` returns `ActionResult` and raises `DriverError.Tool` on refusal. A
+  returned action does not prove the UI changed; the second snapshot does.
+- Tokens belong to one snapshot. After a stale-token refusal, snapshot again
+  and resolve the element again.
+- `background` delivery never retries in the foreground on its own.
+- Window coordinates come from that window's screenshot; do not add the screen
+  origin. See the
+  [native-window migration guide](https://github.com/trycua/cua/blob/2c4f19d2aa455b6ae2f79d2bf982e9b3c2356fda/libs/cua-driver/docs/native-window-sdk-migration.md).
+- An action can reach the OS even if your call times out. Check an independent
+  postcondition before any retry. `DriverError.ActionInterrupted` reports
+  `NotStarted`, `Completed`, or `Unknown`; never replay `Unknown` blindly.
+
+A complete runnable version that types into a local browser fixture and
+confirms the value through a separate `/state` endpoint lives in
+`libs/cua-driver/examples/agent-sdks` (`fixture_server.py`, then
+`native_driver.py` or `npm run native`).
+
+## Constructors
+
+| Python / TypeScript | Use |
+| --- | --- |
+| `create()` | Same-process runtime. The default. |
+| `create_configured(options)` / `createConfigured` | Trusted host sets an immutable permission ceiling and session TTLs. |
+| `create_configured_with_authorization_host(options, host)` | Adds a callback that approves residual boundaries, such as attaching to a logged-in browser profile. |
+| `create_configured_with_activity_observer(options, observer)` | Adds content-free activity events (tool, risk class, refusal code; never arguments or images). |
+| `create_private_worker(options)` / `createPrivateWorker` | One supervised child runtime over inherited pipes; no listener, closes with its channel. |
+| `connect(socket_path)` / `connect(socketPath)` | Connects to a running daemon. |
+
+Python uses `snake_case`, TypeScript `camelCase`. Desktop methods mirror the
+[MCP tools](/cua-driver/reference/mcp-tools) (`get_window_state`, `click`,
+`type_text`, …); `list_tools_json()` and `call_tool()` reach the full generic
+tool surface. Results are `ToolResult` (`text`, `images`, `structured_json`,
+`is_error`, `error_code`, `verified`, `degraded`). On macOS, a direct runtime
+cannot draw the agent cursor unless the host provides an AppKit main-thread
+adapter; it returns `facility_unavailable`. Use a private worker when you need
+the overlay.
+
+## Expose MCP from a desktop app
+
+When a signed desktop app must let an external agent use its permissions, host
+a private daemon from the app process and hand its MCP connection to the agent.
+If only your app calls the driver, use `create()` instead.
+
+```ts skip="no-runner"
+import { CuaDriver, EmbeddedCuaDriverHost } from '@trycua/cua-driver';
+
+const host = new EmbeddedCuaDriverHost(
+  '/path/inside/YourApp.app/Contents/Resources/cua-driver',
+  'com.example.your-app',
+);
+const connection = await host.start();
+const driver = CuaDriver.connect(connection.socketPath);
+
+// Your app calls the SDK on `driver`. An external agent launches
+// connection.mcp.command with connection.mcp.args and connection.mcp.environment.
+
+// Shutdown, in order:
+await driver.shutdown();
+driver.uniffiDestroy();
+await host.stop();
+host.uniffiDestroy();
+```
+
+Python exposes the same objects:
+`EmbeddedCuaDriverHost(str(get_binary_path()), "com.yourco.yourapp")`.
+
+- **Call `start()` from the permission-owning app process.** On macOS, a
+  gateway, terminal, `open`, or `NSWorkspace` launch changes the TCC
+  responsibility chain and cannot lend the app's grants. A separate backend
+  may launch the returned `connection.mcp` unchanged, but must not start a
+  second host.
+- **Ship the executable** as a signed app resource, outside Electron's ASAR
+  archive, with its executable bit. The npm package does not bundle it; the
+  Python wheel does.
+- **Restart on grant changes.** `restart()` gives a new generation, PID, and
+  endpoint: discard old clients and MCP proxies. `start()` coalesces callers,
+  `stop()` is idempotent, and `waitForExit(generation)` reports an unexpected
+  exit.
+- **Check it.** Call `check_permissions`; on macOS embedded mode returns
+  `source.attribution: "host"` and never raises its own prompts. Call
+  `health_report` with `{"include":["bundle_identity"]}` to confirm the parent
+  app's bundle ID.
+
+- **Bound the post-action window wait.** After each input action the driver
+  watches the window list to report a menu, dialog, or new window the action
+  opened. For an action that opens nothing, the wait lasts 1000 ms on macOS and
+  800 ms for Linux X11 foreground delivery. Set
+  `CUA_DRIVER_WINDOW_CHANGE_TIMEOUT_MS` (0 to 10000; `0` skips it) and
+  `CUA_DRIVER_WINDOW_CHANGE_POLL_MS` (5 to 1000) in the daemon's launch
+  environment to shorten it; `EmbeddedCuaDriverHost` admits both in its
+  `environment` option. On macOS the wait also holds the focus-restore
+  lease, so a shorter wait shortens that protection. Windows ignores both.
+
+Without the SDK, the equivalent low-level launch is:
+
+```sh test="cli-shape" id="cua-driver-serve"
+CUA_DRIVER_EMBEDDED=1 \
+CUA_DRIVER_HOST_BUNDLE_ID=com.yourco.yourapp \
+cua-driver serve --socket /tmp/yourapp-cua.sock
+```
+
+```sh test="cli-shape" id="cua-driver-mcp"
+cua-driver mcp --embedded --socket /tmp/yourapp-cua.sock \
+  --host-bundle-id com.yourco.yourapp
+```
+
+Spawn `serve` directly (for example with `posix_spawn` or `NSTask`), never
+through `open(1)`. A reference macOS host lives at
+`libs/cua-driver/rust/examples/embedded-host-macos`.

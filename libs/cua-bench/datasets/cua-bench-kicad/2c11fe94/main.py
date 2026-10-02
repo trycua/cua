@@ -1,4 +1,5 @@
 """Auto-generated cb task for KiCad submission 2c11fe94-d9da-47e4-8526-89fb97b19b6e."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,9 +16,9 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='''The given schematic shows a cascaded active filter system implemented with a TL072 dual op-amp. The first stage is a Sallen-Key high-pass filter followed by a Sallen-Key low-pass filter.
-Modify the circuit to lower the cutoff frequency of the low-pass stage by changing the low-pass capacitor from 47nF to 100nF. In addition, add a 10kΩ load resistor from the final output node (Vo2) to ground to evaluate its behavior under practical loading conditions. Keep all other components unchanged and provide the updated schematic.''',
-            metadata={"difficulty": 'medium', "submission_id": _SUBMISSION_ID},
+            description="""The given schematic shows a cascaded active filter system implemented with a TL072 dual op-amp. The first stage is a Sallen-Key high-pass filter followed by a Sallen-Key low-pass filter.
+Modify the circuit to lower the cutoff frequency of the low-pass stage by changing the low-pass capacitor from 47nF to 100nF. In addition, add a 10kΩ load resistor from the final output node (Vo2) to ground to evaluate its behavior under practical loading conditions. Keep all other components unchanged and provide the updated schematic.""",
+            metadata={"difficulty": "medium", "submission_id": _SUBMISSION_ID},
         )
     ]
 
@@ -37,7 +38,9 @@ async def start(task_cfg: cb.Task, session: cb.DesktopSession) -> None:
         await session.write_bytes(remote_path, local_path.read_bytes())
 
     try:
-        await session.apps.kicad.launch(project_path='/home/cua/kicad_project/kicad_BandpassFilter_circuit/kicad_BandpassFilter_circuit.kicad_pro')
+        await session.apps.kicad.launch(
+            project_path="/home/cua/kicad_project/kicad_BandpassFilter_circuit/kicad_BandpassFilter_circuit.kicad_pro"
+        )
     except Exception:
         pass
     await asyncio.sleep(5)

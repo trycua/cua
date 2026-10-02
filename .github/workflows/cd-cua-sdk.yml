@@ -1,0 +1,579 @@
+name: "CD: cua SDK"
+
+# Builds and publishes the cua SDK for tag `cua-sdk-v<version>`:
+#   - native libcua_sdk (+ the copy-based N-API runtime) per platform,
+#   - platform wheels of PyPI `cua` (linux x86_64/aarch64 with the
+#     glibc 2.31 floor from debian:11, macOS arm64/x86_64, Windows x64/arm64),
+#   - `@trycua/cua` + six optional native npm packages (+ the browser build),
+#   - `CuaSDKFFI.xcframework.zip` for the Swift `.binaryTarget`,
+#   - the `cua` CLI binaries, plus standalone `cua-cli-<version>-<platform>`
+#     archives, checksums.txt and release-artifacts.json for install.sh /
+#     install.ps1 (also mirrored to the rolling `cua-install-latest` release).
+# Mirrors cd-rust-cua-driver.yml / cd-py-cua-driver.yml.
+#
+# Signing (required whenever the run publishes; refuses to publish unsigned):
+#   - macOS `cua`, libcua_sdk.dylib and the N-API runtime: Developer ID
+#     Application + hardened runtime, notarized (secrets APPLICATION_CERT_BASE64,
+#     CERT_PASSWORD, DEVELOPER_NAME, TEAM_ID, APPLE_ID, APP_SPECIFIC_PASSWORD).
+#   - Windows cua.exe, cua_sdk.dll and the N-API runtime: Authenticode through
+#     Azure Artifact Signing (environment cua-driver-release-signing, vars
+#     AZURE_*), the same identity as the Cua Driver release.
+#   - Every release asset gets a keyless Sigstore (cosign) bundle, which
+#     install.sh / install.ps1 verify when cosign is installed.
+# Release Please creates the release as a draft; the publish job fills it and
+# publishes it before the rolling cua-install-latest feed moves. A hand-pushed
+# tag with no release gets a new draft here.
+#
+# Canonical vs staging: only trycua/cua publishes to PyPI and npm and fails
+# closed on missing signing secrets. Any other repository (trycua/cua-staging)
+# runs the same pipeline end to end but PyPI gets `twine check` (and TestPyPI
+# when TEST_PYPI_TOKEN is set), npm gets `npm publish --dry-run`, a missing
+# Apple/Azure secret gives unsigned binaries, and the GitHub release is a
+# prerelease whose title and notes say so. The CLI's download URLs, the
+# installers' default repository and their Sigstore identity derive from
+# github.repository. A version with a suffix (X.Y.Z-rc.1) is a prerelease
+# everywhere: npm dist-tag `next`, never GitHub "latest", and on trycua/cua
+# it leaves the rolling installer feed alone.
+
+on:
+  push:
+    tags:
+      - "cua-sdk-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (without the cua-sdk-v prefix)"
+        required: true
+      publish:
+        description: "Publish to PyPI/npm and attach to the GitHub release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_TERM_COLOR: always
+  # `cua host setup` downloads cua-spacesd from this repository's releases.
+  CUA_RELEASE_REPOSITORY: ${{ github.repository }}
+  # Registries and the fail-closed signing gates are for trycua/cua only.
+  CANONICAL: ${{ github.repository == 'trycua/cua' }}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      publish: ${{ steps.v.outputs.publish }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - id: v
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/cua-sdk-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/cua-sdk-v}"
+            PUBLISH=true
+          else
+            VERSION="${{ inputs.version }}"
+            PUBLISH="${{ inputs.publish }}"
+          fi
+          # Signed artifacts carry the workflow ref in their Sigstore
+          # identity, and the installers accept only a release tag: publish
+          # only from one (run the workflow from the tag to re-publish).
+          if [[ "$PUBLISH" == true && "$GITHUB_REF" != "refs/tags/cua-sdk-v$VERSION" ]]; then
+            echo "publishing needs the run's ref to be refs/tags/cua-sdk-v$VERSION (got $GITHUB_REF)" >&2
+            exit 1
+          fi
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "invalid version $VERSION" >&2; exit 1
+          fi
+          PRERELEASE=false
+          if [[ "$VERSION" == *-* || "$CANONICAL" != true ]]; then PRERELEASE=true; fi
+          {
+            echo "version=$VERSION"
+            echo "tag=cua-sdk-v$VERSION"
+            echo "publish=$PUBLISH"
+            echo "prerelease=$PRERELEASE"
+          } >> "$GITHUB_OUTPUT"
+
+  native:
+    needs: version
+    name: native ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    container: ${{ matrix.container }}
+    # Holds the Azure Artifact Signing identity (Windows Authenticode).
+    environment: cua-driver-release-signing
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PUBLISH: ${{ needs.version.outputs.publish }}
+      # A publishing run on trycua/cua never ships unsigned binaries.
+      REQUIRE_SIGNING: ${{ needs.version.outputs.publish == 'true' && github.repository == 'trycua/cua' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: linux-x64-gnu, runner: ubuntu-latest, target: x86_64-unknown-linux-gnu, container: "debian:11", lib: libcua_sdk.so, exe: cua }
+          - { label: linux-arm64-gnu, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, container: "debian:11", lib: libcua_sdk.so, exe: cua }
+          - { label: darwin-arm64, runner: macos-26, target: aarch64-apple-darwin, container: "", lib: libcua_sdk.dylib, exe: cua }
+          - { label: darwin-x64, runner: macos-26, target: x86_64-apple-darwin, container: "", lib: libcua_sdk.dylib, exe: cua }
+          - { label: win32-x64-msvc, runner: windows-latest, target: x86_64-pc-windows-msvc, container: "", lib: cua_sdk.dll, exe: cua.exe }
+          - { label: win32-arm64-msvc, runner: windows-11-arm, target: aarch64-pc-windows-msvc, container: "", lib: cua_sdk.dll, exe: cua.exe }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install base tooling (debian:11 is bare)
+        if: matrix.container != ''
+        run: |
+          # The live bullseye-security mirror now 404s: freeze indexes and
+          # packages on snapshot.debian.org (same pin as cd-rust-cua-driver.yml;
+          # the glibc 2.31 floor is unchanged). HTTP bootstraps ca-certificates;
+          # APT still verifies Debian signatures and hashes.
+          cat > /etc/apt/sources.list <<'EOF'
+          deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye main
+          deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye-updates main
+          deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian-security/20260901T000000Z/ bullseye-security main
+          EOF
+          rm -f /etc/apt/sources.list.d/debian.sources
+          # snapshot.debian.org answers 504 under load; retry each fetch.
+          echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates curl build-essential \
+            pkg-config unzip python3 xz-utils cmake
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y nodejs
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        if: matrix.container == ''
+        with:
+          node-version: "22"
+      - name: Build libcua_sdk, the cua CLI and the N-API runtime
+        working-directory: libs/cua
+        env:
+          # cua_sdk_version() and `cua --version` report the published version.
+          CUA_SDK_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          # Windows native packages must load without the VC++ redistributable.
+          RUSTFLAGS: ${{ contains(matrix.target, 'windows') && '-C target-feature=+crt-static' || '' }}
+        run: |
+          cargo build --locked --release -p cua-sdk -p cua-cli --target ${{ matrix.target }}
+          npm --prefix typescript ci --ignore-scripts
+          node scripts/build-node-runtime.mjs --target ${{ matrix.target }} \
+            --output "native/${{ matrix.label }}/cua_node_runtime.node"
+          mkdir -p "native/${{ matrix.label }}"
+          cp "target/${{ matrix.target }}/release/${{ matrix.lib }}" "native/${{ matrix.label }}/"
+          cp "target/${{ matrix.target }}/release/${{ matrix.exe }}" "native/${{ matrix.label }}/"
+      - name: Developer ID sign and notarize (macOS)
+        if: runner.os == 'macOS'
+        working-directory: libs/cua/native/${{ matrix.label }}
+        env:
+          APPLICATION_CERT_BASE64: ${{ secrets.APPLICATION_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+          DEVELOPER_NAME: ${{ secrets.DEVELOPER_NAME }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APPLICATION_CERT_BASE64" ] || [ -z "$APPLE_ID" ]; then
+            if [ "$REQUIRE_SIGNING" = true ]; then
+              echo "::error::refusing to publish unsigned macOS binaries (Developer ID secrets missing)"
+              exit 1
+            fi
+            echo "${{ matrix.label }}: UNSIGNED (no Developer ID signature, not notarized)" > "$RUNNER_TEMP/signing.txt"
+            echo "::warning::Developer ID secrets are not set; the macOS binaries stay unsigned."
+            exit 0
+          fi
+          echo "${{ matrix.label }}: Developer ID signed and notarized" > "$RUNNER_TEMP/signing.txt"
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          kc_password="$(openssl rand -hex 16)"
+          security create-keychain -p "$kc_password" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$kc_password" "$kc"
+          echo "$APPLICATION_CERT_BASE64" | base64 --decode > "$RUNNER_TEMP/application.p12"
+          security import "$RUNNER_TEMP/application.p12" -k "$kc" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/application.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kc_password" "$kc" > /dev/null
+          security list-keychains -d user -s "$kc" login.keychain-db
+          identity="Developer ID Application: $DEVELOPER_NAME ($TEAM_ID)"
+          files=(cua libcua_sdk.dylib cua_node_runtime.node)
+          for f in "${files[@]}"; do
+            codesign --force --timestamp --options runtime --sign "$identity" --keychain "$kc" "$f"
+            codesign --verify --strict --verbose=2 "$f"
+          done
+          # Bare Mach-O files cannot be stapled; notarization registers their
+          # cdhashes with Apple, which Gatekeeper checks online.
+          /usr/bin/ditto -c -k . "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APP_SPECIFIC_PASSWORD" \
+            --wait --timeout 20m | tee "$RUNNER_TEMP/notarize.log"
+          grep -q "status: Accepted" "$RUNNER_TEMP/notarize.log"
+      - name: Azure login for Artifact Signing (Windows)
+        if: runner.os == 'Windows' && vars.AZURE_CLIENT_ID != ''
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Authenticode-sign the Windows binaries
+        if: runner.os == 'Windows' && vars.AZURE_CLIENT_ID != ''
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          files: |
+            ${{ github.workspace }}\libs\cua\native\${{ matrix.label }}\cua.exe
+            ${{ github.workspace }}\libs\cua\native\${{ matrix.label }}\cua_sdk.dll
+            ${{ github.workspace }}\libs\cua\native\${{ matrix.label }}\cua_node_runtime.node
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: Cua
+          description-url: https://cua.ai
+      - name: Verify Authenticode signatures (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: libs/cua/native/${{ matrix.label }}
+        run: |
+          $status = '${{ matrix.label }}: Authenticode signed (Azure Artifact Signing)'
+          foreach ($file in @('cua.exe', 'cua_sdk.dll', 'cua_node_runtime.node')) {
+            $signature = Get-AuthenticodeSignature -FilePath $file
+            Write-Host "${file}: $($signature.Status)"
+            if ($signature.Status -ne 'Valid') {
+              if ($env:REQUIRE_SIGNING -eq 'true') { throw "refusing to publish: $file is not Authenticode-signed" }
+              $status = '${{ matrix.label }}: UNSIGNED (no Authenticode; Azure Artifact Signing vars are not set)'
+            }
+          }
+          Set-Content -Path "$env:RUNNER_TEMP/signing.txt" -Value $status
+      - name: Signing status
+        run: |
+          [ -f "$RUNNER_TEMP/signing.txt" ] || echo "${{ matrix.label }}: no OS code signing on Linux (Sigstore bundle only)" > "$RUNNER_TEMP/signing.txt"
+          mkdir -p "$RUNNER_TEMP/signing" && cp "$RUNNER_TEMP/signing.txt" "$RUNNER_TEMP/signing/${{ matrix.label }}.txt"
+          cat "$RUNNER_TEMP/signing.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.label }}
+          path: libs/cua/native/${{ matrix.label }}
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signing-${{ matrix.label }}
+          path: ${{ runner.temp }}/signing/${{ matrix.label }}.txt
+          if-no-files-found: error
+
+  wheels:
+    needs: [version, native]
+    name: wheel ${{ matrix.platform }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux, arch: x86_64, runner: ubuntu-latest, native: linux-x64-gnu, lib: libcua_sdk.so }
+          - { platform: linux, arch: arm64, runner: ubuntu-24.04-arm, native: linux-arm64-gnu, lib: libcua_sdk.so }
+          # One wheel per macOS arch: a universal2 wheel is over PyPI's 100 MB file limit.
+          - { platform: darwin, arch: arm64, runner: macos-26, native: darwin-arm64, lib: libcua_sdk.dylib }
+          - { platform: darwin, arch: x86_64, runner: macos-15-intel, native: darwin-x64, lib: libcua_sdk.dylib }
+          - { platform: windows, arch: x86_64, runner: windows-latest, native: win32-x64-msvc, lib: cua_sdk.dll }
+          - { platform: windows, arch: arm64, runner: windows-11-arm, native: win32-arm64-msvc, lib: cua_sdk.dll }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: native
+      - name: Build the wheel
+        working-directory: libs/cua/python
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          sed -i.bak "s/^version = .*/version = \"$VERSION\"/" pyproject.toml && rm pyproject.toml.bak
+          sed -i.bak "s/^__version__ = .*/__version__ = \"$VERSION\"/" src/cua/__init__.py && rm src/cua/__init__.py.bak
+          python -m pip install --upgrade pip build hatchling
+          DIR="../../../native/native-${{ matrix.native }}"
+          EXE=cua; [ "${{ matrix.platform }}" = windows ] && EXE=cua.exe
+          python build_wheel.py --library "$DIR/${{ matrix.lib }}" --cli "$DIR/$EXE" --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+      - name: Import the wheel
+        working-directory: libs/cua/python
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          VERSION="${{ needs.version.outputs.version }}"
+          cd / && python -c "import cua, sys; v = cua.cua_sdk_version(); print(v); cua.embedded(fleet_from_env=False); sys.exit(v != sys.argv[1])" "$VERSION"
+          test "$(cua --version | tr -d '\r')" = "cua $VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.platform }}-${{ matrix.arch }}
+          path: libs/cua/python/dist/*.whl
+          if-no-files-found: error
+
+  npm:
+    needs: [version, native]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: ${{ runner.temp }}/downloads
+      - name: Build the TypeScript package and the browser build
+        working-directory: libs/cua
+        env:
+          CUA_SDK_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          npm --prefix typescript ci
+          (cd typescript && npm version --no-git-tag-version "$VERSION" --allow-same-version)
+          npm --prefix typescript run build
+          cargo install wasm-bindgen-cli --version 0.2.126 --locked
+          node scripts/build-wasm.mjs
+      - name: Pack root and platform packages
+        run: |
+          mkdir -p "$RUNNER_TEMP/native"
+          for d in "$RUNNER_TEMP"/downloads/native-*; do
+            cp -R "$d" "$RUNNER_TEMP/native/${d##*/native-}"
+          done
+          node libs/cua/scripts/build-npm-packages.mjs \
+            --version "${{ needs.version.outputs.version }}" \
+            --native-dir "$RUNNER_TEMP/native" \
+            --output-dir "$RUNNER_TEMP/npm"
+          ls -lh "$RUNNER_TEMP/npm"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm
+          path: ${{ runner.temp }}/npm/*.tgz
+          if-no-files-found: error
+
+  xcframework:
+    needs: version
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-apple-ios,aarch64-apple-ios-sim
+      - name: Build CuaSDKFFI.xcframework.zip
+        # `shell: bash` adds pipefail, so a failed build is not hidden by tee.
+        shell: bash
+        env:
+          CUA_SDK_RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          # Package.swift's minimums. Rust and the C dependencies (aws-lc,
+          # SQLite) must target the same OS versions, or the iOS link misses
+          # ___chkstk_darwin.
+          MACOSX_DEPLOYMENT_TARGET: "12.0"
+          IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+        run: libs/cua/swift/scripts/build-xcframework.sh --ios --zip | tee xcframework.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xcframework
+          path: |
+            libs/cua/swift/build/CuaSDKFFI.xcframework.zip
+            xcframework.log
+          if-no-files-found: error
+
+  publish:
+    needs: [version, wheels, npm, xcframework, native]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      # trycua/cua publishes; any other repository checks the wheels (and
+      # uploads to TestPyPI when TEST_PYPI_TOKEN is set) without touching PyPI.
+      - name: Publish wheels to PyPI (trycua/cua) or check them (staging)
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+          TEST_PYPI_TOKEN: ${{ secrets.TEST_PYPI_TOKEN }}
+        run: |
+          python -m pip install --upgrade twine
+          python -m twine check --strict dist/wheel-*/*.whl
+          if [ "$CANONICAL" = true ]; then
+            python -m twine upload --skip-existing dist/wheel-*/*.whl
+          elif [ -n "$TEST_PYPI_TOKEN" ]; then
+            TWINE_PASSWORD="$TEST_PYPI_TOKEN" python -m twine upload --skip-existing \
+              --repository-url https://test.pypi.org/legacy/ dist/wheel-*/*.whl
+          else
+            echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: wheels checked, not uploaded to PyPI (DRY RUN)"
+          fi
+      - name: Publish npm packages, native first (trycua/cua) or dry-run them (staging)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          # npm requires a dist-tag for a prerelease version; keep it off `latest`.
+          flags=(--access public)
+          [[ "$VERSION" == *-* ]] && flags+=(--tag next)
+          if [ "$CANONICAL" = true ]; then
+            flags+=(--provenance)
+          else
+            echo "::notice::$GITHUB_REPOSITORY is not trycua/cua: npm publish --dry-run (nothing reaches the registry)"
+            flags+=(--dry-run)
+          fi
+          # Native packages first. A version already on the registry (a
+          # re-run) is skipped; any other failure stops before the root
+          # package can point at a missing native dependency.
+          for package in dist/npm/trycua-cua-*-"$VERSION".tgz; do
+            name="$(tar -xzOf "$package" package/package.json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).name))')"
+            if [ "$CANONICAL" = true ] && npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "$name@$VERSION is already published; skipping"
+              continue
+            fi
+            npm publish "$package" "${flags[@]}"
+          done
+          if [ "$CANONICAL" = true ] && npm view "@trycua/cua@$VERSION" version >/dev/null 2>&1; then
+            echo "@trycua/cua@$VERSION is already published; skipping"
+            exit 0
+          fi
+          npm publish "dist/npm/trycua-cua-$VERSION.tgz" "${flags[@]}"
+      - name: Attach artifacts to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          mkdir -p release
+          cp dist/wheel-*/*.whl dist/npm/*.tgz release/
+          # upload-artifact keeps the paths below the files' common root.
+          xcframework="$(find dist/xcframework -name CuaSDKFFI.xcframework.zip)"
+          [ "$(printf '%s\n' "$xcframework" | grep -c .)" = 1 ] || { echo "expected one CuaSDKFFI.xcframework.zip, got: $xcframework" >&2; exit 1; }
+          cp "$xcframework" release/
+          for d in dist/native-*; do
+            label="${d##*/native-}"
+            tar -czf "release/cua-${{ needs.version.outputs.version }}-$label.tar.gz" -C "$d" .
+          done
+          # Standalone CLI archives for install.sh / install.ps1 (just `cua`).
+          VERSION="${{ needs.version.outputs.version }}"
+          for pair in linux-x64-gnu:linux-x64 linux-arm64-gnu:linux-arm64 darwin-arm64:darwin-arm64 \
+            darwin-x64:darwin-x64 win32-x64-msvc:windows-x64 win32-arm64-msvc:windows-arm64; do
+            label="${pair%%:*}" platform="${pair##*:}"
+            d="dist/native-$label"
+            if [ -f "$d/cua.exe" ]; then
+              (cd "$d" && zip -q "$OLDPWD/release/cua-cli-$VERSION-$platform.zip" cua.exe)
+            else
+              chmod +x "$d/cua"
+              tar -czf "release/cua-cli-$VERSION-$platform.tar.gz" -C "$d" cua
+            fi
+          done
+          # release-artifacts.json: this CLI + the newest Spaces app from the
+          # rolling cua-install-latest manifest (scripts/install/README.md).
+          BASE="https://github.com/$GITHUB_REPOSITORY/releases/download"
+          gh release download cua-install-latest --pattern release-artifacts.json \
+            --dir previous --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          # Keyless Sigstore bundles next to each asset; release_manifest.py
+          # lists them and install.sh / install.ps1 verify them.
+          for f in release/*; do
+            cosign sign-blob --yes --bundle "$f.sigstore.json" "$f" >/dev/null
+          done
+          python3 scripts/install/release_manifest.py --component cli --version "$VERSION" \
+            --dir release --base-url "$BASE/$TAG" --repo "$GITHUB_REPOSITORY" \
+            --merge previous/release-artifacts.json --out release-artifacts.json
+          cp release-artifacts.json release/
+          (cd release && sha256sum -- * | sort > checksums.txt)
+          # Release Please creates a draft with the tag; a hand-pushed tag
+          # (a staging prerelease, a recovery) gets a new draft here.
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            FLAGS=(--draft --verify-tag --title "cua SDK $VERSION" --notes "cua SDK $VERSION release assets.")
+            [ "$PRERELEASE" = true ] && FLAGS+=(--prerelease)
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${FLAGS[@]}"
+          fi
+          gh release upload "$TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"
+      # Release Please creates the release as a draft, whose assets are not
+      # downloadable; publish it before the installer feed points at it.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          flags=(--draft=false)
+          # Staging builds and X.Y.Z-suffix versions are prereleases, never latest.
+          [ "$PRERELEASE" = true ] && flags+=(--prerelease --latest=false)
+          if [ "$CANONICAL" != true ] || grep -q UNSIGNED dist/signing-*/*.txt; then
+            label="staging"; [ "$CANONICAL" = true ] && label="test"
+            # Name the unsigned platforms: "UNSIGNED: windows-x64".
+            unsigned="$(grep -h UNSIGNED dist/signing-*/*.txt | cut -d: -f1 | sort | paste -sd, - | sed 's/,/, /g')"
+            [ -n "$unsigned" ] && label="$label, UNSIGNED: $unsigned"
+            {
+              echo "**$GITHUB_REPOSITORY prerelease ($label).** Built by cd-cua-sdk.yml at $GITHUB_REF ($GITHUB_SHA)."
+              echo "Installs from $GITHUB_REPOSITORY, not trycua/cua."
+              [ "$CANONICAL" = true ] || echo "PyPI and npm were dry runs: nothing was published to either registry."
+              echo
+              echo "Signing:"
+              cat dist/signing-*/*.txt | sed 's/^/- /'
+              echo
+              echo "Every asset has a keyless Sigstore bundle (identity: https://github.com/$GITHUB_REPOSITORY/.github/workflows/cd-cua-sdk.yml@$GITHUB_REF)."
+            } > notes.md
+            flags+=(--title "cua SDK $VERSION ($label)" --notes-file notes.md)
+          fi
+          gh release edit "$TAG" "${flags[@]}" --repo "$GITHUB_REPOSITORY"
+      # A prerelease on trycua/cua stays off the rolling feed; on any other
+      # repository the feed is that repository's own and follows every release.
+      - name: Update the rolling installer manifest (cua-install-latest)
+        if: needs.version.outputs.prerelease != 'true' || github.repository != 'trycua/cua'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view cua-install-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # The Actions token may create a release only for an existing tag
+            # (with --target, or for a new tag, the API answers 403). Push the tag
+            # once by hand: git push origin <any commit>:refs/tags/cua-install-latest
+            gh release create cua-install-latest --repo "$GITHUB_REPOSITORY" --prerelease --verify-tag \
+              --title "Cua installer feed (rolling)" \
+              --notes "release-artifacts.json for install.sh / install.ps1. Always the newest cua CLI and Cua Spaces." || {
+              echo "::error::could not create the rolling cua-install-latest release; push the cua-install-latest tag once by hand (any commit), then re-run this job"
+              exit 1
+            }
+          fi
+          # The installers default to this repository (download base and the
+          # Sigstore identity they verify).
+          python3 scripts/install/stamp_installers.py --repo "$GITHUB_REPOSITORY" --out stamped
+          gh release upload cua-install-latest release-artifacts.json \
+            stamped/install.sh stamped/install.ps1 --clobber --repo "$GITHUB_REPOSITORY"

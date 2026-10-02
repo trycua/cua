@@ -8,7 +8,9 @@
 //!
 //! Hard 4-second per-call timeout.
 
+#[cfg(target_os = "windows")]
 use std::io::{Read, Write};
+#[cfg(target_os = "windows")]
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "windows")]

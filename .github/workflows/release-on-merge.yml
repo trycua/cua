@@ -55,7 +55,7 @@ jobs:
                   )
               ]
               | last
-              | .event == "labeled" and .actor.login == "f-trycua"
+              | .event == "labeled" and (.actor.login == "f-trycua" or .actor.login == "ddupont808")
             ' <<< "$LABEL_EVENTS" > /dev/null
           }
 
@@ -63,13 +63,13 @@ jobs:
           BUMP_TYPE="patch"
           if echo "$LABELS" | grep -q '"bump:major"'; then
             if ! label_was_applied_by_release_owner "bump:major"; then
-              echo "::warning::bump:major was not applied by f-trycua; skipping auto-release."
+              echo "::warning::bump:major was not applied by a release owner; skipping auto-release."
               exit 0
             fi
             BUMP_TYPE="major"
           elif echo "$LABELS" | grep -q '"bump:minor"'; then
             if ! label_was_applied_by_release_owner "bump:minor"; then
-              echo "::warning::bump:minor was not applied by f-trycua; skipping auto-release."
+              echo "::warning::bump:minor was not applied by a release owner; skipping auto-release."
               exit 0
             fi
             BUMP_TYPE="minor"
@@ -86,19 +86,11 @@ jobs:
 
           # Map paths to publishable services
           declare -A PATH_TO_SERVICE=(
-            ["libs/python/cua-cli/"]="pypi/cli"
-            ["libs/python/cua-auto/"]="pypi/auto"
             ["libs/python/agent/"]="pypi/agent"
-            ["libs/python/computer/"]="pypi/computer"
-            ["libs/python/cua-cloud/"]="pypi/cloud"
             ["libs/python/core/"]="pypi/core"
             ["libs/python/som/"]="pypi/som"
             ["libs/python/bench-ui/"]="pypi/bench-ui"
             ["libs/cua-bench/"]="pypi/bench"
-            ["libs/python/computer-server/"]="pypi/computer-server"
-            ["libs/python/mcp-server/"]="pypi/mcp-server"
-            ["libs/typescript/cua-cli/"]="npm/cli"
-            ["libs/typescript/computer/"]="npm/computer"
             ["libs/typescript/core/"]="npm/core"
             ["libs/typescript/fleet/"]="npm/fleet"
             ["libs/typescript/playground/"]="npm/playground"
@@ -137,7 +129,7 @@ jobs:
               if label_was_applied_by_release_owner "$release_label"; then
                 LABELED+=("$svc")
               else
-                echo "::warning::$release_label was not applied by f-trycua; ignoring it."
+                echo "::warning::$release_label was not applied by a release owner; ignoring it."
               fi
             fi
           done

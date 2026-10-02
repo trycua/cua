@@ -2,7 +2,7 @@
 
 These tests verify the coordinate-extraction logic in
 AnthropicHostedToolsConfig.predict_click directly, without requiring the full
-cua_agent import chain (which needs cua-computer, cua-core, etc.).
+cua_agent import chain (which needs cua-core, litellm, etc.).
 """
 
 import pytest

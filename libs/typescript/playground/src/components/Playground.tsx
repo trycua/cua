@@ -264,7 +264,7 @@ function PlaygroundContentInternal({
  * import { Playground, createLocalAdapter } from '@trycua/playground';
  *
  * const adapters = createLocalAdapter({
- *   computerServerUrl: 'http://localhost:8443',
+ *   agentUrl: 'http://localhost:8080',
  *   providerApiKeys: { anthropic: 'sk-...' },
  * });
  *

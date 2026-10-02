@@ -1,0 +1,196 @@
+---
+title: Run agent frameworks in a sandbox
+description: Run OpenAI Agents, Codex, Cursor, OpenClaw, an Omarchy desktop and a Minecraft agent in Cua sandboxes.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Each recipe gives a third-party agent its own cloud desktop instead of yours.
+You need [cloud credentials](/cua-sdk/guides/cloud#credentials), and Python
+`>=3.11,<3.14` with [`uv`](https://docs.astral.sh/uv/) for the scripts, which
+pin `cua-sandbox==0.9.0`. Your controller owns the sandbox and must release it.
+
+## OpenAI Agents API
+
+A controller claims `Image.linux()`, starts `codex exec-server` in it as an
+OpenAI `self_hosted` environment, and gives the agent Cua Driver as a stdio
+MCP server. It needs an OpenAI application key (`OPENAI_API_KEY`) and a
+separate environment key with only `api.agents.environments.connect`
+(`CODEX_API_KEY`), which is written to a mode-`600` file and deleted after the
+executor reads it.
+
+```bash skip="third-party-cli"
+curl -fsSLO https://cua.ai/docs-assets/scripts/openai-agents-fleet/run_openai_agents_fleet.py
+uv run run_openai_agents_fleet.py
+```
+
+The run drives an XFCE terminal through Cua Driver, reconnects the same
+environment ID, downloads an artifact, and deletes the session and the
+sandbox. Deleting an OpenAI session alone does not release the sandbox.
+
+## Codex native Computer Use (Windows)
+
+Codex-in-ChatGPT's Computer Use plugin runs only on macOS and Windows, with an
+eligible, signed-in ChatGPT account. To let it take over a VM instead of your
+desktop, create a Windows sandbox (`Image.from_registry(WINDOWS_IMAGE,
+os_type="windows", kind="vm")`) from a disk that runs cua-spacesd,
+open it with `cua sb view`, install the ChatGPT desktop app and Codex CLI, and
+run `codex plugin add computer-use@openai-bundled`. Sign-in and approvals stay
+interactive.
+
+## Cursor Cloud Agents
+
+A Cursor self-hosted Team Pool worker runs in a Linux desktop for as long as
+your controller holds `Sandbox.ephemeral(Image.linux())`.
+The controller installs the Cursor CLI, writes `CURSOR_API_KEY` to a
+mode-`600` file with `sb.files.write_text`, and starts
+`agent worker --pool <pool> start` in the background. It needs Cursor
+Enterprise with Self-Hosted Agents and a service-account key.
+
+## OpenClaw
+
+OpenClaw's bundled `cua-computer` provider runs Cua Driver in-process, so its
+`computer` tool drives the sandbox's X11 desktop. Create the desktop, then in
+`cua sb shell openclaw` install Node.js and `openclaw`, run
+`openclaw plugins enable cua-computer`, and start the Gateway and node with
+`DISPLAY=:1`:
+
+```bash test="cli-shape" id="cua-sb-create-openclaw"
+cua sb create linux --name openclaw --cpu 4 --memory 8GB
+cua sb rm openclaw -f
+```
+
+OpenClaw needs X11 (not Wayland) and a vision-capable model.
+
+## Omarchy desktop
+
+An amd64 Omarchy (Hyprland) containerDisk that ships cua-spacesd runs as a
+KubeVirt VM on a pool you apply. `OMARCHY_IMAGE` names the image (pin a
+digest) and `CUA_POOL_NAME` a globally unique pool name:
+
+```python title="run_omarchy_fleet.py" test="fleet" id="omarchy-fleet"
+# /// script
+# requires-python = ">=3.11,<3.14"
+# dependencies = [
+#   "cua-sandbox[driver]==0.9.0",
+# ]
+# [[tool.uv.index]]
+# name = "cua-wheels"
+# url = "https://wheels.cua.ai/simple"
+# ///
+
+import asyncio
+import os
+from pathlib import Path
+
+from cua_driver import GetScreenSizeInput
+from cua_sandbox import Image, Pool
+
+IMAGE = os.environ["OMARCHY_IMAGE"]
+POOL_NAME = os.environ["CUA_POOL_NAME"]
+
+
+async def main() -> None:
+    pool = await Pool.apply(
+        Image.from_registry(IMAGE, os_type="linux", kind="vm"),
+        name=POOL_NAME,
+        replicas=1,
+        cpu=4,
+        memory_mb=6144,
+        runtime="kubevirt",
+        ttl_seconds_after_created=21600,
+    )
+
+    try:
+        async with pool.claim(time_to_start=1800) as sandbox:
+            width, height = await sandbox.get_dimensions()
+            print(f"Sandbox: {sandbox.name}, screen {width}x{height}")
+
+            result = await sandbox.shell.run("pgrep -a Hyprland")
+            if not result.success:
+                raise RuntimeError(result.stderr)
+            print(result.stdout.strip())
+
+            screenshot = Path("omarchy-fleet.png")
+            screenshot.write_bytes(await sandbox.screenshot())
+            print(f"Screenshot: {screenshot.resolve()}")
+
+            await sandbox.clipboard.set("hello from Omarchy Fleet")
+            if await sandbox.clipboard.get() != "hello from Omarchy Fleet":
+                raise RuntimeError("clipboard round trip failed")
+
+            await sandbox.mouse.click(width // 2, height // 2)
+            await sandbox.keyboard.keypress(["super", "2"])
+
+            # Typed Cua Driver over the spacesd's /mcp endpoint.
+            async with sandbox.driver.connect() as driver:
+                size = await driver.get_screen_size(GetScreenSizeInput(session=None))
+                print(f"Driver screen size: {size.text}")
+
+            print("Shell, screenshot, clipboard, click, hotkey and Driver passed")
+    finally:
+        await pool.delete()
+
+
+asyncio.run(main())
+```
+
+`PoolAccessDeniedError` means the pool name is taken or the image is not
+admitted; a black screenshot means Hyprland did not start. To keep the pool
+warm between runs, drop the `finally` and delete it later:
+
+```python test="docs" id="delete-pool" prelude="fakefleet,pool-applied"
+await pool.delete()
+```
+
+For Omarchy on Apple silicon, see [Lume](/lume).
+
+## Minecraft
+
+Build the Prism launcher into an image once, then run it in the cloud or
+locally. Describe it as `minecraft.json`:
+
+```json title="minecraft.json" test="config" id="json-config" schema="cua-image"
+{
+  "apiVersion": "images.cua.ai/v1alpha1",
+  "kind": "Image",
+  "metadata": { "name": "minecraft-workspace", "namespace": "minecraft-workspace" },
+  "spec": {
+    "recipe": {
+      "osType": "linux",
+      "distro": "ubuntu",
+      "version": "24.04",
+      "kind": "vm",
+      "layers": [
+        { "type": "apt_install", "packages": ["flatpak"] },
+        {
+          "type": "run",
+          "command": "flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo && flatpak install -y --noninteractive flathub org.prismlauncher.PrismLauncher"
+        }
+      ]
+    }
+  }
+}
+```
+
+Build on an x86_64 host with KVM (the cloud runs amd64), push, and run it:
+
+```bash test="cli-shape" id="cua-image-build"
+cua image build minecraft.json \
+  --base vm:ghcr.io/trycua/linux:24.04-disk \
+  --push ghcr.io/<you>/minecraft-workspace:1
+cua sb create ghcr.io/<you>/minecraft-workspace@sha256:<digest> --name mc --cpu 4 --memory 8GB
+cua sb view mc
+cua sb rm mc -f
+```
+
+<Callout type="error">
+  Never sign in before building or publishing: a published disk carries every
+  token it ever held. Sign in to Prism on the running sandbox (`cua sb view mc`).
+</Callout>
+
+Then drive the game with any tool-calling model: give it `click`, `type_text`
+and `press` tools backed by `sb.mouse.click`, `sb.keyboard.type` and
+`sb.keyboard.keypress` on `Sandbox.connect("mc")`, and return a fresh
+`sb.screenshot()` after each action. For typed desktop tools, use
+[Cua Driver](/cua-sdk/guides/desktop#typed-cua-driver).

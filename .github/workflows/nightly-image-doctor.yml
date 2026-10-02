@@ -1,0 +1,166 @@
+name: "Nightly: image doctor on Fleet"
+
+# Re-verifies the published canonical Linux images, each tier on its own
+# (`24.04` full and `24.04-slim`), where users run them: on Fleet, as a gVisor pod (rootfs) and as a KubeVirt VM (containerDisk), through
+# the gateway. Each lane applies a cua-e2e-doctor-* pool with per-claim
+# Secrets, claims it with a fresh claim token and runs the guest's doctor
+# (`SystemService.Diagnose`, strict, effects on the virtual display only)
+# through the gateway with x-cua-env-authorization and the runner clock for
+# the skew check (libs/cua/crates/cua-fleet/tests/live_image_doctor.rs); the
+# pool is deleted whatever happened. The image's own token path needs the
+# claim Secret: without one it mints a local token, so a managed-pool claim
+# (`cua sb create --on cloud`) cannot reach its spacesd.
+# A failing lane flips the image-doctor ledger entry of that digest to
+# `regressed` (so the docs gate fails on the next docs PR) and opens or
+# updates an issue with the report.
+#
+# A tier whose tag is not published yet is skipped with a notice.
+#
+# Needs the Fleet client credentials as secrets (CUA_CLIENT_ID,
+# CUA_CLIENT_SECRET, CUA_TOKEN_URL, FLEET_BASE_URL); without them every lane
+# is skipped with a notice.
+
+on:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+    inputs:
+      images:
+        description: "Images to verify (comma separated; one per tier)"
+        default: "ghcr.io/trycua/linux:24.04,ghcr.io/trycua/linux:24.04-slim"
+      runtimes:
+        description: "Fleet runtimes"
+        default: "gvisor,kubevirt"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-image-doctor
+  cancel-in-progress: false
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      runtimes: ${{ steps.plan.outputs.runtimes }}
+      images: ${{ steps.plan.outputs.images }}
+    steps:
+      - id: plan
+        env:
+          HAS_CREDS: ${{ secrets.CUA_CLIENT_ID != '' && secrets.CUA_CLIENT_SECRET != '' }}
+          RUNTIMES: ${{ inputs.runtimes || 'gvisor,kubevirt' }}
+          IMAGES: ${{ inputs.images || 'ghcr.io/trycua/linux:24.04,ghcr.io/trycua/linux:24.04-slim' }}
+        run: |
+          echo "images=$(jq -cR 'split(",")' <<<"$IMAGES")" >>"$GITHUB_OUTPUT"
+          if [ "$HAS_CREDS" != true ]; then
+            echo "::notice::Fleet credentials (CUA_CLIENT_ID / CUA_CLIENT_SECRET) are not configured; skipping the Fleet doctor lanes"
+            echo 'runtimes=[]' >>"$GITHUB_OUTPUT"
+          else
+            echo "runtimes=$(jq -cR 'split(",")' <<<"$RUNTIMES")" >>"$GITHUB_OUTPUT"
+          fi
+
+  fleet:
+    needs: plan
+    if: needs.plan.outputs.runtimes != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: ${{ fromJSON(needs.plan.outputs.runtimes) }}
+        image: ${{ fromJSON(needs.plan.outputs.images) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      issues: write
+    env:
+      IMAGE: ${{ matrix.image }}
+      CUA_CLIENT_ID: ${{ secrets.CUA_CLIENT_ID }}
+      CUA_CLIENT_SECRET: ${{ secrets.CUA_CLIENT_SECRET }}
+      CUA_TOKEN_URL: ${{ secrets.CUA_TOKEN_URL }}
+      FLEET_BASE_URL: ${{ secrets.FLEET_BASE_URL }}
+      NAME: cua-e2e-doctor-${{ matrix.runtime }}-${{ github.run_id }}
+      CARGO_BUILD_JOBS: "4"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+      - name: Install protoc and crane
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler libprotobuf-dev
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          echo "$(go env GOPATH)/bin" >>"$GITHUB_PATH"
+      - name: Tier label and published check
+        id: tier
+        run: |
+          set -euo pipefail
+          tag="${IMAGE##*:}"
+          echo "label=${tag//./}" >>"$GITHUB_OUTPUT"
+          if crane manifest "$IMAGE" >/dev/null 2>&1; then echo "published=true" >>"$GITHUB_OUTPUT"
+          else echo "::notice::$IMAGE is not published yet; skipping"; echo "published=false" >>"$GITHUB_OUTPUT"; fi
+      - name: Claim, doctor, release
+        id: doctor
+        if: steps.tier.outputs.published == 'true'
+        working-directory: libs/cua
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/doctor"
+          variant=rootfs index="$IMAGE"
+          if [ "${{ matrix.runtime }}" = kubevirt ]; then variant=containerdisk index="${IMAGE}-disk"; fi
+          # The amd64 child the Fleet node pulls (digest-pinned).
+          child="$(crane manifest "$index" | python3 -c 'import json,sys;print(next(m["digest"] for m in json.load(sys.stdin)["manifests"] if m.get("platform",{}).get("architecture")=="amd64"))')"
+          CUA_E2E_FLEET=1 CUA_E2E_FLEET_DOCTOR_IMAGE="${index%:*}@$child" \
+            CUA_E2E_FLEET_DOCTOR_RUNTIME="${{ matrix.runtime }}" CUA_E2E_FLEET_DOCTOR_STRICT=1 \
+            CUA_E2E_FLEET_DOCTOR_OUT="$RUNNER_TEMP/doctor/report.json" \
+            cargo test --release --locked -p cua-fleet --test live_image_doctor -- --nocapture \
+            | tee "$RUNNER_TEMP/doctor/report.txt"
+          # The report decides: 1 = the image failed its doctor, 2 = the lane
+          # itself could not run (no report), 0 = pass.
+          rc=2
+          if [ -s "$RUNNER_TEMP/doctor/report.json" ]; then
+            status="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["summary"]["status"])' "$RUNNER_TEMP/doctor/report.json")"
+            if [ "$status" = fail ]; then rc=1; else rc=0; fi
+          fi
+          printf '{"lane": "fleet-%s", "arch": "amd64", "variant": "%s", "claim_secrets": true, "exit": %s}\n' \
+            "${{ matrix.runtime }}" "$variant" "$rc" >"$RUNNER_TEMP/doctor/lane.json"
+          echo "rc=$rc" >>"$GITHUB_OUTPUT"
+          exit "$rc"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: doctor-fleet-${{ steps.tier.outputs.label }}-${{ matrix.runtime }}
+          path: ${{ runner.temp }}/doctor
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Summary
+        if: always()
+        run: python3 scripts/images/doctor_ledger.py summary "$RUNNER_TEMP/doctor" >>"$GITHUB_STEP_SUMMARY"
+      - name: Mark the ledger entry regressed and file an issue
+        if: failure() && steps.doctor.outputs.rc == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          variant=rootfs; [ "${{ matrix.runtime }}" = kubevirt ] && variant=containerdisk
+          index="$IMAGE"; [ "$variant" = containerdisk ] && index="${IMAGE}-disk"
+          child="$(crane manifest "$index" | python3 -c 'import json,sys;print(next(m["digest"] for m in json.load(sys.stdin)["manifests"] if m.get("platform",{}).get("architecture")=="amd64"))')"
+          git fetch -q origin image-doctor-ledger && git worktree add -q ledger FETCH_HEAD
+          git -C ledger checkout -q -B image-doctor-ledger
+          python3 scripts/images/doctor_ledger.py regress --ledger ledger --repo "${index%:*}" \
+            --digest "$child" --lane "fleet-${{ matrix.runtime }}" --run "$RUN_URL"
+          git -C ledger add -A
+          git -C ledger -c user.name=cua-image-doctor -c user.email=noreply@github.com commit -qm "doctor: regressed on Fleet ${{ matrix.runtime }}"
+          git -C ledger push -q origin HEAD:image-doctor-ledger
+          title="Image doctor: $IMAGE fails on Fleet ${{ matrix.runtime }}"
+          # shellcheck disable=SC2016 # the backticks are a Markdown fence
+          body="$(printf 'Nightly run: %s\n\n```\n%s\n```\n' "$RUN_URL" "$(tail -n 60 "$RUNNER_TEMP/doctor/report.txt")")"
+          existing="$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number')"
+          if [ -n "$existing" ]; then gh issue comment "$existing" --body "$body"; else gh issue create --title "$title" --body "$body" --label image-doctor || gh issue create --title "$title" --body "$body"; fi

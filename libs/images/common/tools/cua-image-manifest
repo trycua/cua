@@ -1,0 +1,321 @@
+#!/usr/bin/env python3
+"""Generate /etc/cua-image/manifest.json: what an image claims.
+
+`cua-spacesd doctor` checks a running guest against this file, and derives each
+check's severity from it (a claimed feature is required). It is built from the
+image's image.json (its `claims` section) plus build facts: the variant, the
+architecture, and `cua-spacesd build-info` of the binary actually baked in.
+
+    cua-image-manifest generate --image-json /etc/cua-image/image.json \
+        --variant rootfs --arch arm64 --spacesd-source local \
+        [--spacesd /usr/local/bin/cua-spacesd] [--source-revision SHA] [--ref REF] \
+        [--build-info FILE] [--tier slim|full|xcode] --out /etc/cua-image/manifest.json
+    cua-image-manifest set-variant --in /etc/cua-image/manifest.json \
+        --image-json /etc/cua-image/image.json --variant containerdisk \
+        [--out FILE]                      (the VM layer, common/vm/Dockerfile)
+    cua-image-manifest check-labels --manifest FILE --labels JSON
+                                          (build.sh: labels must match the manifest)
+
+Tiers: image.json's top-level `claims` is the floor every tier shares. An
+optional `tiers` map names tiers; each tier's `claims` is deep-merged onto the
+claims of the tier it names in `from` (objects merge key by key, arrays
+replace, JSON null deletes a key), root first. `--tier` picks one
+(default: `default_tier`), and manifest.json then records `tier`.
+
+Python 3 standard library only: it runs inside image builds.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from typing import Any
+
+SCHEMA_VERSION = 1
+VARIANTS = ("rootfs", "containerdisk", "lume")
+# The init system each variant boots with.
+VARIANT_INIT = {"rootfs": "supervisord", "containerdisk": "systemd", "lume": "launchd"}
+# image.json output keys (legacy spelling) per manifest variant.
+OUTPUT_KEYS = {"rootfs": "rootfs", "containerdisk": "containerdisk", "lume": "lume"}
+
+
+def fail(message: str) -> None:
+    print(f"cua-image-manifest: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def load_json(path: str) -> Any:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, json.JSONDecodeError) as error:
+        fail(f"{path}: {error}")
+
+
+def build_info(args: argparse.Namespace) -> dict[str, Any]:
+    """`cua-spacesd build-info` of the baked binary ({} without one)."""
+    if args.build_info:
+        return load_json(args.build_info)
+    if args.spacesd_source == "none":
+        return {}
+    binary = args.spacesd
+    if not (os.path.isfile(binary) and os.access(binary, os.X_OK)):
+        fail(f"spacesd source is {args.spacesd_source!r} but {binary} is not an executable")
+    try:
+        out = subprocess.run(
+            [binary, "build-info"], check=True, capture_output=True, text=True, timeout=120
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as error:
+        fail(f"{binary} build-info failed: {error}")
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError as error:
+        fail(f"{binary} build-info printed invalid JSON: {error}")
+    return {}
+
+
+def deep_merge(base: Any, over: Any) -> Any:
+    """`over` onto `base`: objects merge, anything else replaces, null deletes."""
+    if not (isinstance(base, dict) and isinstance(over, dict)):
+        return over
+    out = dict(base)
+    for key, value in over.items():
+        if value is None:
+            out.pop(key, None)
+        elif key in out:
+            out[key] = deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def tier_chain(image: dict[str, Any], tier: str) -> list[str]:
+    """`tier` and its `from` ancestors, root first."""
+    tiers = image.get("tiers") or {}
+    chain: list[str] = []
+    name: str | None = tier
+    while name is not None:
+        if name not in tiers:
+            fail(f"unknown tier {name!r} (image.json tiers: {', '.join(sorted(tiers)) or 'none'})")
+        if name in chain:
+            fail(f"tier {name!r} inherits from itself ({' <- '.join(chain + [name])})")
+        chain.append(name)
+        name = tiers[name].get("from")
+    return list(reversed(chain))
+
+
+def pick_tier(image: dict[str, Any], tier: str | None) -> str | None:
+    """The tier to build: `tier`, else `default_tier`; None without tiers."""
+    tiers = image.get("tiers") or {}
+    if not tiers:
+        if tier:
+            fail(f"--tier {tier} given but image.json has no `tiers`")
+        return None
+    tier = tier or image.get("default_tier")
+    if not tier:
+        fail("image.json has `tiers` but no `default_tier`; pass --tier")
+    tier_chain(image, tier)
+    return tier
+
+
+def effective_claims(image: dict[str, Any], tier: str | None) -> dict[str, Any]:
+    """The top-level claims with the tier chain merged on top."""
+    claims = dict(image.get("claims", {}))
+    if tier is None:
+        return claims
+    tiers = image.get("tiers") or {}
+    for name in tier_chain(image, tier):
+        claims = deep_merge(claims, tiers[name].get("claims") or {})
+    return claims
+
+
+def services_for(image: dict[str, Any], variant: str) -> list[dict[str, Any]]:
+    out = []
+    for service in image.get("services", []):
+        variants = service.get("variants")
+        if variants and variant not in variants:
+            continue
+        out.append({k: v for k, v in service.items() if k != "variants"})
+    return out
+
+
+def variant_fields(image: dict[str, Any], variant: str, tier: str | None = None) -> dict[str, Any]:
+    """Everything in the manifest that depends on the variant."""
+    if variant not in VARIANTS:
+        fail(f"unknown variant {variant!r} (want one of {', '.join(VARIANTS)})")
+    claims = effective_claims(image, tier)
+    output = image.get("outputs", {}).get(OUTPUT_KEYS[variant], {})
+    init = output.get("init") or VARIANT_INIT[variant]
+    return {
+        "variant": variant,
+        "init": init,
+        "units": list(claims.get("units", {}).get(init, [])),
+        "services": services_for(image, variant),
+    }
+
+
+def annotations(manifest: dict[str, Any]) -> dict[str, str]:
+    """Registry annotations/labels the image must carry (resolver inputs)."""
+    spacesd = "true" if manifest["spacesd"]["present"] else "false"
+    out = {
+        "ai.cua.image.os": manifest["os"],
+        "ai.cua.image.variant": manifest["variant"],
+        "ai.cua.spacesd": spacesd,
+        # Pre-rename label, still read by older SDKs.
+        "ai.cua.env-driver": spacesd,
+    }
+    if manifest.get("tier"):
+        out["ai.cua.image.tier"] = manifest["tier"]
+    return out
+
+
+def generate(args: argparse.Namespace) -> dict[str, Any]:
+    image = load_json(args.image_json)
+    if not image.get("claims"):
+        fail(f"{args.image_json} has no `claims` section")
+    tier = pick_tier(image, args.tier)
+    claims = effective_claims(image, tier)
+    info = build_info(args)
+    desktop = image.get("desktop", {})
+    fixtures = image.get("fixtures", {})
+    audio = image.get("audio", {})
+    present = args.spacesd_source != "none"
+    manifest: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "name": image.get("name", ""),
+        # Former names the image answered to (read aliases for one release).
+        "aliases": list(image.get("aliases", [])),
+        "os": image.get("os", "linux"),
+        "arch": args.arch,
+        "ref": args.ref or "",
+        "source_revision": args.source_revision or "",
+        "spacesd": {
+            "present": present,
+            "source": args.spacesd_source,
+            "path": args.spacesd if present else "",
+            "version": info.get("version", ""),
+            "protocol_revision": int(info.get("protocol_revision", 0) or 0),
+            "git_sha": info.get("git_sha", ""),
+            "cua_driver_version": info.get("cua_driver_version", ""),
+            "tools_sha256": info.get("tools_sha256", ""),
+            "tools_count": int(info.get("tools_count", 0) or 0),
+            "codecs_compiled": list(info.get("codecs_compiled", [])),
+        },
+        "features_required": list(claims.get("features_required", [])),
+        "features_optional": list(claims.get("features_optional", [])),
+        # Attribute values a feature must report (the backends the image was
+        # built for, e.g. presence.cursor_shape's hit_test/system/probe).
+        "feature_attributes": {
+            name: dict(attrs) for name, attrs in claims.get("feature_attributes", {}).items()
+        },
+        "codecs_required": list(claims.get("codecs_required", [])),
+        "auth_modes": list(claims.get("auth_modes", [])),
+        "unit_processes": dict(claims.get("unit_processes", {})),
+        "display": {
+            "name": desktop.get("display", ""),
+            "resolution": desktop.get("resolution", ""),
+            "user": desktop.get("user", ""),
+        },
+        "fixtures": {
+            "root": fixtures.get("root", ""),
+            "apps": [a["name"] for a in fixtures.get("apps", []) if "name" in a],
+        },
+        "audio": {
+            "server": audio.get("server", ""),
+            "default_sink": audio.get("default_sink", ""),
+            "default_source": audio.get("default_source", ""),
+            "uplink_input_sink": audio.get("uplink_input_sink", ""),
+        },
+        "compat_links": list(claims.get("compat_links", [])),
+        "apps": dict(claims.get("apps", {})),
+        "tools": dict(claims.get("tools", {})),
+        "simulator_runtimes": list(claims.get("simulator_runtimes", [])),
+        "launch_app": claims.get("launch_app"),
+        "parity": {"expected_diff": list(claims.get("parity_expected_diff", []))},
+        "resources": dict(claims.get("resources", {})),
+        "tz": claims.get("tz", ""),
+        "locale": claims.get("locale", ""),
+        "dns_probe": claims.get("dns_probe", ""),
+        "av_skew_budget_ms": dict(claims.get("av_skew_budget_ms", {})),
+    }
+    if tier is not None:
+        manifest["tier"] = tier
+    if present and not info:
+        fail("spacesd is present but build-info is empty")
+    manifest.update(variant_fields(image, args.variant, tier))
+    manifest["annotations"] = annotations(manifest)
+    return manifest
+
+
+def set_variant(args: argparse.Namespace) -> dict[str, Any]:
+    manifest = load_json(args.input)
+    image = load_json(args.image_json)
+    # The tier the manifest was generated for (unchanged by the variant).
+    manifest.update(variant_fields(image, args.variant, manifest.get("tier")))
+    manifest["annotations"] = annotations(manifest)
+    return manifest
+
+
+def check_labels(args: argparse.Namespace) -> None:
+    """Every manifest annotation that is also set as a label must agree."""
+    manifest = load_json(args.manifest)
+    labels = json.loads(args.labels) if args.labels else {}
+    wrong = []
+    for key, want in manifest.get("annotations", {}).items():
+        if key in labels and labels[key] != want:
+            wrong.append(f"{key}: label {labels[key]!r}, image {want!r}")
+    if wrong:
+        fail("labels disagree with /etc/cua-image/manifest.json:\n  " + "\n  ".join(wrong))
+    print("labels match the image manifest")
+
+
+def write(manifest: dict[str, Any], out: str) -> None:
+    text = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    if out == "-":
+        sys.stdout.write(text)
+        return
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    tmp = out + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, out)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    gen = sub.add_parser("generate")
+    gen.add_argument("--image-json", required=True)
+    gen.add_argument("--variant", required=True, choices=VARIANTS)
+    gen.add_argument("--arch", required=True)
+    gen.add_argument("--spacesd-source", required=True, choices=("local", "release", "none"))
+    gen.add_argument("--spacesd", default="/usr/local/bin/cua-spacesd")
+    gen.add_argument("--build-info", help="build-info JSON file (instead of running the binary)")
+    gen.add_argument("--source-revision", default="")
+    gen.add_argument("--ref", default="")
+    gen.add_argument("--tier", help="image.json tier (default: its default_tier)")
+    gen.add_argument("--out", default="-")
+    sv = sub.add_parser("set-variant")
+    sv.add_argument("--in", dest="input", required=True)
+    sv.add_argument("--image-json", required=True)
+    sv.add_argument("--variant", required=True, choices=VARIANTS)
+    sv.add_argument("--out")
+    cl = sub.add_parser("check-labels")
+    cl.add_argument("--manifest", required=True)
+    cl.add_argument("--labels", required=True, help="JSON object of image labels")
+    args = parser.parse_args(argv)
+    if args.cmd == "generate":
+        write(generate(args), args.out)
+    elif args.cmd == "set-variant":
+        write(set_variant(args), args.out or args.input)
+    else:
+        check_labels(args)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

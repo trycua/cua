@@ -201,7 +201,7 @@ fn def() -> &'static ToolDef {
             "required": ["key"],
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
-                "pid": { "type": "integer" },
+                "pid": { "type": "integer", "description": "Target process ID." },
                 "key": { "type": "string", "description": "Key name: return, tab, escape, up, down, etc." },
                 "modifiers": {
                     "type": "array",

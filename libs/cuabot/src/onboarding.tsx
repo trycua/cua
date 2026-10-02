@@ -239,13 +239,14 @@ function OptionSelector({
 }
 
 function TelemetrySelector({ onSelect }: { onSelect: (enabled: boolean) => void }) {
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  // "No" is preselected: sharing is opt-in.
+  const [selectedIndex, setSelectedIndex] = useState(1);
   const options = [
     {
-      label: 'Yes, share prompts and usage data',
+      label: 'Yes, share my prompts and usage data with Cua',
       description: 'Help improve computer-use technology',
     },
-    { label: 'No thanks', description: 'Keep prompts private' },
+    { label: 'No, keep my prompts private', description: 'Nothing is sent' },
   ];
 
   useInput((input, key) => {
@@ -261,6 +262,14 @@ function TelemetrySelector({ onSelect }: { onSelect: (enabled: boolean) => void 
   return (
     <Box flexDirection="column" marginTop={1}>
       <Text dimColor>Share prompts to help improve computer-use technology?</Text>
+      <Text dimColor>
+        If you choose Yes, cuabot sends to Cua (PostHog, EU) the full text of each prompt you type
+        into the Claude Code agent, plus anonymous usage events: which cuabot command or MCP tool
+        ran, click and scroll coordinates, timings and a random installation id. Prompts can contain
+        anything you type, including personal or confidential text. Text the agent types, key
+        presses, screenshots, file paths and session names are not sent. To choose again, run cuabot
+        --reset settings. CUABOT_TELEMETRY=false or DO_NOT_TRACK=1 also turns it off.
+      </Text>
       <Box flexDirection="column" marginTop={1}>
         {options.map((opt, index) => (
           <Box key={index}>

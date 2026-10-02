@@ -1,0 +1,493 @@
+{
+  "flow": "create-gpu",
+  "frames": [
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container",
+          "Architecture: ARM",
+          "Disk: 2.8 GB"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 0
+      },
+      "wizard": "initial"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "4 cores",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "fields": [
+          "os: System",
+          "image: Image [ghcr.io/org/app:tag]",
+          "placement: Run on",
+          "kind: Kind (advanced)",
+          "runtime: Runtime (advanced)",
+          "connect-by-address: Connect by address…"
+        ],
+        "gpu": "GPU acceleration (Experimental) [ ] Learn more -> https://cua.ai/docs/lume/guides/gpu-passthrough",
+        "image": "ghcr.io/trycua/macos:26",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/macos:26"
+        },
+        "kinds": [
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "lume"
+        ],
+        "step": 0
+      },
+      "wizard": "choose-os"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "4 cores",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "fields": [
+          "cpus: CPU cores",
+          "memory: Memory",
+          "disk: Disk"
+        ],
+        "gpu": "GPU acceleration (Experimental) [ ] Learn more -> https://cua.ai/docs/lume/guides/gpu-passthrough",
+        "image": "ghcr.io/trycua/macos:26",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/macos:26"
+        },
+        "kinds": [
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "lume"
+        ],
+        "step": 1
+      },
+      "wizard": "next"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "4 cores",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "fields": [
+          "cpus: CPU cores",
+          "memory: Memory",
+          "disk: Disk"
+        ],
+        "gpu": "GPU acceleration (Experimental) [x] Learn more -> https://cua.ai/docs/lume/guides/gpu-passthrough",
+        "image": "ghcr.io/trycua/macos:26",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/macos:26"
+        },
+        "kinds": [
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "lume"
+        ],
+        "step": 1
+      },
+      "wizard": "set-gpu"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "2 cores",
+        "disk": null,
+        "fields": [
+          "cpus: CPU cores",
+          "memory: Memory"
+        ],
+        "gpu": null,
+        "image": "ghcr.io/trycua/linux:24.04",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/linux:24.04"
+        },
+        "kinds": [
+          "container",
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "4 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Container",
+          "Architecture: ARM",
+          "Disk: 2.8 GB"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "gvisor",
+          "runc"
+        ],
+        "step": 1
+      },
+      "wizard": "choose-os"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "4 cores",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "fields": [
+          "cpus: CPU cores",
+          "memory: Memory",
+          "disk: Disk"
+        ],
+        "gpu": "GPU acceleration (Experimental) [x] Learn more -> https://cua.ai/docs/lume/guides/gpu-passthrough",
+        "image": "ghcr.io/trycua/macos:26",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/macos:26"
+        },
+        "kinds": [
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "lume"
+        ],
+        "step": 1
+      },
+      "wizard": "choose-os"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "4 cores",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "fields": [
+          "name: Name [Optional]",
+          "open-when-ready: Open when ready"
+        ],
+        "gpu": "GPU acceleration (Experimental) [x] Learn more -> https://cua.ai/docs/lume/guides/gpu-passthrough",
+        "image": "ghcr.io/trycua/macos:26",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/macos:26"
+        },
+        "kinds": [
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Continue",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "lume"
+        ],
+        "step": 2
+      },
+      "wizard": "next"
+    },
+    {
+      "frame": {
+        "address": {
+          "canSubmit": false,
+          "error": null,
+          "submit": null,
+          "submitLabel": "Add Space"
+        },
+        "canContinue": true,
+        "cpusText": "4 cores",
+        "disk": "150 GB (150-1024) ~Uses about 33 GB on this Mac at first, up to 150 GB as the Space fills it. ?A VM disk cannot shrink below the image's 150 GB.",
+        "fields": [],
+        "gpu": "GPU acceleration (Experimental) [x] Learn more -> https://cua.ai/docs/lume/guides/gpu-passthrough",
+        "image": "ghcr.io/trycua/macos:26",
+        "imageField": {
+          "custom": false,
+          "error": null,
+          "open": false,
+          "rows": [],
+          "text": "ghcr.io/trycua/macos:26"
+        },
+        "kinds": [
+          "vm"
+        ],
+        "labels": "Cancel | Back | Advanced",
+        "memoryText": "8 GB",
+        "nameInvalid": false,
+        "placement": "local",
+        "placementError": null,
+        "placements": [
+          "local"
+        ],
+        "price": null,
+        "primaryLabel": "Create Space",
+        "ranges": "cpus 1-8, memory 2-16",
+        "resourceFacts": [
+          "Kind: Virtual machine",
+          "Architecture: ARM"
+        ],
+        "resourcesError": null,
+        "runtime": "auto",
+        "runtimes": [
+          "auto",
+          "lume"
+        ],
+        "step": 3
+      },
+      "wizard": "next"
+    },
+    {
+      "plan": {
+        "createSpace": {
+          "cpus": 4,
+          "gpu": "paravirtual",
+          "image": "ghcr.io/trycua/macos:26",
+          "kind": "vm",
+          "memoryMb": 8192,
+          "on": "local",
+          "runtime": "auto",
+          "spacesd": true
+        },
+        "creating": "Creating macOS Tahoe 26. It appears in the list when it is ready.",
+        "failed": "Could not create the Space: no macOS image is configured",
+        "openDesktop": true,
+        "summary": [
+          "System: macOS Tahoe 26",
+          "Image: ghcr.io/trycua/macos:26",
+          "Runs on: This Mac",
+          "Kind: Virtual machine",
+          "Architecture: ARM",
+          "Runtime: Lume virtual machine (Apple silicon)",
+          "Resources: 4 cores, 8 GB memory, 150 GB disk",
+          "GPU: GPU acceleration (Experimental)",
+          "Name: Chosen automatically",
+          "When ready: Open the desktop"
+        ]
+      }
+    },
+    {
+      "frame": {
+        "focusIndex": 0,
+        "ids": [],
+        "mode": "ambient",
+        "names": [],
+        "notice": null,
+        "selectedId": ""
+      },
+      "roster": "sync-spaces"
+    },
+    {
+      "frame": {
+        "emptyText": "No Spaces yet",
+        "sections": [],
+        "selectedId": null,
+        "thisMachine": null
+      },
+      "sidebar": ""
+    },
+    {
+      "frame": {
+        "emptyText": "No Spaces yet",
+        "sections": [],
+        "selectedId": null,
+        "thisMachine": null
+      },
+      "sidebar": ""
+    }
+  ]
+}

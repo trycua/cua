@@ -41,6 +41,14 @@ def _make_cloud_transport(*, name: str = "test-vm") -> FleetCloudTransport:
     return t
 
 
+def _managed_sandbox() -> MagicMock:
+    """A sandbox as returned by cua_sandbox._autopool.acquire."""
+    claimed = MagicMock()
+    claimed.close = AsyncMock()
+    claimed.keep_alive = AsyncMock()
+    return claimed
+
+
 def _make_sandbox(transport: FleetCloudTransport, **kwargs) -> Sandbox:
     """Return a Sandbox wrapping *transport* without calling _connect()."""
     return Sandbox(
@@ -57,103 +65,81 @@ def _make_sandbox(transport: FleetCloudTransport, **kwargs) -> Sandbox:
 
 
 class TestCreateCleansUpOnConnectFailure:
-    """Sandbox._create() should delete the cloud VM when _connect() raises."""
+    """Sandbox._create() releases a managed Fleet claim when attaching fails.
+
+    Fleet images come from the account's managed pool (the cua SDK's native
+    manager); these run against the ``cua-test-fixtures`` fake Fleet API.
+    """
 
     @pytest.fixture(autouse=True)
-    def _select_fleet(self, monkeypatch):
-        monkeypatch.setattr(Sandbox, "_uses_fleet", staticmethod(lambda api_key: True))
+    def _fleet(self, fleet):
+        self.client_factory = fleet
 
-    async def test_delete_vm_called_on_timeout(self):
-        """ReadTimeout during _connect() triggers delete_vm()."""
-        transport = _make_cloud_transport(name="orphan-vm")
-        transport.connect = AsyncMock(side_effect=httpx.ReadTimeout("poll timed out"))
-        transport.delete_vm = AsyncMock()
+    async def _claims(self) -> list[str]:
+        client = self.client_factory()
+        try:
+            names = [n.name for n in await client.list_namespaces()]
+            out: list[str] = []
+            for ns in names:
+                out += [c.metadata.name for c in await client.list_claims(ns)]
+            return out
+        finally:
+            await client.close()
 
-        with patch(
-            "cua_sandbox.sandbox.FleetCloudTransport",
-            return_value=transport,
-        ):
-            with pytest.raises(httpx.ReadTimeout):
-                await Sandbox._create(
-                    image=Image.from_registry("registry.example/workspace:latest"),
-                    telemetry_enabled=False,
-                )
+    def _fail_attach(self, monkeypatch, error: BaseException) -> None:
+        async def wait(self, **_):
+            raise error
 
-        transport.delete_vm.assert_awaited_once()
+        monkeypatch.setattr("cua_sandbox.pool._ClaimHandle.wait", wait)
 
-    async def test_delete_vm_called_on_generic_exception(self):
-        """Any exception during _connect() triggers delete_vm()."""
-        transport = _make_cloud_transport(name="orphan-vm")
-        transport.connect = AsyncMock(side_effect=RuntimeError("unexpected"))
-        transport.delete_vm = AsyncMock()
+    async def _create(self):
+        return await Sandbox._create(
+            image=Image.from_registry("registry.example/workspace@sha256:0123"),
+            telemetry_enabled=False,
+        )
 
-        with patch(
-            "cua_sandbox.sandbox.FleetCloudTransport",
-            return_value=transport,
-        ):
-            with pytest.raises(RuntimeError, match="unexpected"):
-                await Sandbox._create(
-                    image=Image.from_registry("registry.example/workspace:latest"),
-                    telemetry_enabled=False,
-                )
+    async def test_delete_vm_called_on_timeout(self, monkeypatch):
+        """ReadTimeout while attaching releases the claim and keeps its type."""
+        self._fail_attach(monkeypatch, httpx.ReadTimeout("poll timed out"))
+        with pytest.raises(httpx.ReadTimeout):
+            await self._create()
+        assert not await self._claims()
 
-        transport.delete_vm.assert_awaited_once()
+    async def test_delete_vm_called_on_generic_exception(self, monkeypatch):
+        self._fail_attach(monkeypatch, RuntimeError("unexpected"))
+        with pytest.raises(RuntimeError, match="unexpected"):
+            await self._create()
+        assert not await self._claims()
 
-    async def test_original_exception_propagates_even_if_delete_fails(self):
-        """The original connect error is re-raised even when delete_vm also fails."""
-        transport = _make_cloud_transport(name="orphan-vm")
-        transport.connect = AsyncMock(side_effect=TimeoutError("poll timeout"))
-        transport.delete_vm = AsyncMock(side_effect=httpx.ConnectError("api down"))
+    async def test_original_exception_propagates_even_if_delete_fails(self, monkeypatch):
+        from cua_sandbox import _autopool
 
-        with patch(
-            "cua_sandbox.sandbox.FleetCloudTransport",
-            return_value=transport,
-        ):
-            with pytest.raises(TimeoutError, match="poll timeout"):
-                await Sandbox._create(
-                    image=Image.from_registry("registry.example/workspace:latest"),
-                    telemetry_enabled=False,
-                )
+        self._fail_attach(monkeypatch, TimeoutError("poll timeout"))
 
-        transport.delete_vm.assert_awaited_once()
+        async def release(self):
+            raise httpx.ConnectError("api down")
 
-    async def test_no_cleanup_when_vm_not_yet_created(self):
-        """If connect() fails before _create_vm (no _name), skip delete_vm."""
-        transport = _make_cloud_transport()
-        # Simulate: connect() fails before _create_vm sets _name
-        transport._name = None
-        transport.connect = AsyncMock(side_effect=ValueError("no api key"))
-        transport.delete_vm = AsyncMock()
+        monkeypatch.setattr(_autopool.ManagedClaimHandle, "release", release)
+        with pytest.raises(TimeoutError, match="poll timeout"):
+            await self._create()
 
-        with patch(
-            "cua_sandbox.sandbox.FleetCloudTransport",
-            return_value=transport,
-        ):
-            with pytest.raises(ValueError, match="no api key"):
-                await Sandbox._create(
-                    image=Image.from_registry("registry.example/workspace:latest"),
-                    telemetry_enabled=False,
-                )
+    async def test_no_cleanup_when_vm_not_yet_created(self, monkeypatch):
+        """A failure before any claim exists deletes nothing."""
+        from cua_sandbox import _autopool
 
-        transport.delete_vm.assert_not_awaited()
+        def no_runtime():
+            raise ValueError("no api key")
 
-    async def test_keyboard_interrupt_still_cleans_up(self):
-        """BaseException subclasses (KeyboardInterrupt) also trigger cleanup."""
-        transport = _make_cloud_transport(name="interrupted-vm")
-        transport.connect = AsyncMock(side_effect=KeyboardInterrupt)
-        transport.delete_vm = AsyncMock()
+        monkeypatch.setattr(_autopool, "_native_cua", no_runtime)
+        with pytest.raises(_autopool.AutoPoolError, match="no api key"):
+            await self._create()
+        assert not await self._claims()
 
-        with patch(
-            "cua_sandbox.sandbox.FleetCloudTransport",
-            return_value=transport,
-        ):
-            with pytest.raises(KeyboardInterrupt):
-                await Sandbox._create(
-                    image=Image.from_registry("registry.example/workspace:latest"),
-                    telemetry_enabled=False,
-                )
-
-        transport.delete_vm.assert_awaited_once()
+    async def test_keyboard_interrupt_still_cleans_up(self, monkeypatch):
+        self._fail_attach(monkeypatch, KeyboardInterrupt())
+        with pytest.raises(KeyboardInterrupt):
+            await self._create()
+        assert not await self._claims()
 
 
 # ===================================================================
@@ -253,50 +239,50 @@ class TestFleetServerPortForwarding:
     def _select_fleet(self, monkeypatch):
         monkeypatch.setattr(Sandbox, "_uses_fleet", staticmethod(lambda api_key: api_key is None))
 
-    async def test_create_with_fleet_image_requires_explicit_pool(self):
+    async def test_create_forwards_server_port_to_the_managed_pool(self):
+        # Was test_create_with_fleet_image_requires_explicit_pool.
         apply = AsyncMock()
+        acquire = AsyncMock(return_value=_managed_sandbox())
 
-        with patch("cua_sandbox.pool.Pool.apply", new=apply):
-            with pytest.raises(ValueError, match="Pool.apply"):
-                await Sandbox.create(
-                    Image.from_registry("registry.example/workspace:latest"),
-                    server_port=5000,
-                    telemetry_enabled=False,
-                )
+        with (
+            patch("cua_sandbox.pool.Pool.apply", new=apply),
+            patch("cua_sandbox._autopool.acquire", new=acquire),
+            patch("cua_sandbox.sandbox._save_fleet_claim_or_close", new=AsyncMock()),
+        ):
+            await Sandbox.create(
+                Image.from_registry("registry.example/workspace:latest"),
+                server_port=5000,
+                telemetry_enabled=False,
+                local=False,
+            )
 
         apply.assert_not_awaited()
+        assert acquire.await_args.kwargs["server_port"] == 5000
 
     async def test_ephemeral_forwards_server_port(self):
-        claimed = MagicMock()
-        claimed.close = AsyncMock()
-        pool = MagicMock()
-        pool.claim = AsyncMock(return_value=claimed)
-        pool.delete = AsyncMock()
-        apply = AsyncMock(return_value=pool)
+        claimed = _managed_sandbox()
+        acquire = AsyncMock(return_value=claimed)
 
-        with patch("cua_sandbox.pool.Pool.apply", new=apply):
+        with patch("cua_sandbox._autopool.acquire", new=acquire):
             async with Sandbox.ephemeral(
                 Image.from_registry("registry.example/workspace:latest"),
                 server_port=5000,
                 telemetry_enabled=False,
+                local=False,
             ):
                 pass
 
-        assert apply.await_args.kwargs["services"] == {"server": 5000}
+        assert acquire.await_args.kwargs["server_port"] == 5000
         claimed.close.assert_awaited_once()
-        pool.delete.assert_awaited_once()
 
     async def test_create_passes_server_port_to_fleet_transport(self):
-        transport = _make_cloud_transport(name="port-fleet")
-        transport.connect = AsyncMock()
+        # _create (the sandbox() helper path) routes to the managed pool too.
+        acquire = AsyncMock(return_value=_managed_sandbox())
 
         with (
             patch.object(Sandbox, "_uses_fleet", return_value=True),
-            patch(
-                "cua_sandbox.sandbox.FleetCloudTransport",
-                return_value=transport,
-            ) as fleet_transport,
-            patch.object(Sandbox, "_connect", AsyncMock()),
+            patch("cua_sandbox._autopool.acquire", new=acquire),
+            patch("cua_sandbox.sandbox._save_fleet_claim_or_close", new=AsyncMock()),
         ):
             await Sandbox._create(
                 image=Image.from_registry("registry.example/workspace:latest"),
@@ -304,7 +290,7 @@ class TestFleetServerPortForwarding:
                 telemetry_enabled=False,
             )
 
-        assert fleet_transport.call_args.kwargs["server_port"] == 5000
+        assert acquire.await_args.kwargs["server_port"] == 5000
 
     async def test_existing_pool_does_not_pass_server_port_to_fleet_transport(self):
         transport = _make_cloud_transport(name="existing-pool")
@@ -383,51 +369,37 @@ class TestEphemeralCleanup:
         monkeypatch.setattr(Sandbox, "_uses_fleet", staticmethod(lambda api_key: api_key is None))
 
     async def test_ephemeral_destroys_on_normal_exit(self):
-        claimed = MagicMock()
-        claimed.close = AsyncMock()
-        pool = MagicMock()
-        pool.claim = AsyncMock(return_value=claimed)
-        pool.delete = AsyncMock()
-
-        with patch("cua_sandbox.pool.Pool.apply", new=AsyncMock(return_value=pool)):
+        claimed = _managed_sandbox()
+        with patch("cua_sandbox._autopool.acquire", new=AsyncMock(return_value=claimed)):
             async with Sandbox.ephemeral(
                 Image.from_registry("registry.example/workspace:latest"),
                 telemetry_enabled=False,
+                local=False,
             ):
                 pass
 
         claimed.close.assert_awaited_once()
-        pool.delete.assert_awaited_once()
 
     async def test_ephemeral_destroys_on_test_failure(self):
-        claimed = MagicMock()
-        claimed.close = AsyncMock()
-        pool = MagicMock()
-        pool.claim = AsyncMock(return_value=claimed)
-        pool.delete = AsyncMock()
-
-        with patch("cua_sandbox.pool.Pool.apply", new=AsyncMock(return_value=pool)):
+        claimed = _managed_sandbox()
+        with patch("cua_sandbox._autopool.acquire", new=AsyncMock(return_value=claimed)):
             with pytest.raises(AssertionError):
                 async with Sandbox.ephemeral(
                     Image.from_registry("registry.example/workspace:latest"),
                     telemetry_enabled=False,
+                    local=False,
                 ):
                     raise AssertionError("test failed")
 
         claimed.close.assert_awaited_once()
-        pool.delete.assert_awaited_once()
 
     async def test_ephemeral_propagates_claim_failure(self):
-        pool = MagicMock()
-        pool.claim = AsyncMock(side_effect=httpx.ReadTimeout("poll timed out"))
-        pool.delete = AsyncMock()
-
-        with patch("cua_sandbox.pool.Pool.apply", new=AsyncMock(return_value=pool)):
+        acquire = AsyncMock(side_effect=httpx.ReadTimeout("poll timed out"))
+        with patch("cua_sandbox._autopool.acquire", new=acquire):
             with pytest.raises(httpx.ReadTimeout):
                 async with Sandbox.ephemeral(
                     Image.from_registry("registry.example/workspace:latest"),
                     telemetry_enabled=False,
+                    local=False,
                 ):
                     pass
-
-        pool.delete.assert_awaited_once()

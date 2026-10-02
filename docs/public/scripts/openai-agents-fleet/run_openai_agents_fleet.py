@@ -2,15 +2,21 @@
 # /// script
 # requires-python = ">=3.11,<3.14"
 # dependencies = [
-#   "cua-sandbox==0.7.0",
+#   "cua-sandbox==0.9.0",
 #   "httpx>=0.27,<1",
 # ]
+# [[tool.uv.index]]
+# name = "cua-wheels"
+# url = "https://wheels.cua.ai/simple"
 # ///
 """Run an OpenAI Agents API self-hosted session on Cua Cloud Fleet.
 
 The application API key remains on the controller. Only the restricted
 environment key is copied into the claimed VM, and its temporary file is
-removed as soon as the detached executor starts.
+removed as soon as the detached executor starts. The guest is the canonical
+Image.linux() (ghcr.io/trycua/linux:24.04): Ubuntu 24.04 with XFCE on X11 and
+cua-spacesd on port 3211, which carries the SDK's shell and file calls. Commands run as the
+image's `cua` user, which has passwordless sudo.
 """
 
 from __future__ import annotations
@@ -30,10 +36,8 @@ from cua_sandbox import Image, Pool
 
 AGENTS_BASE_URL = "https://api.openai.com/v1/agents/"
 AGENTS_BETA_HEADER = "agents=v1"
-IMAGE = (
-    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04"
-    "@sha256:80fff8a40f217a460cef7a60161adb3899eabd02c3451f18926b84d1f81b8da2"
-)
+# Unset: Image.linux() (ghcr.io/trycua/linux:24.04), run as a gVisor pod.
+IMAGE = os.environ.get("CUA_FLEET_IMAGE")
 CODEX_VERSION = "0.155.0-alpha.3"
 CUA_DRIVER_VERSION = "0.27.0"
 ARTIFACT_PATH = "/workspace/outputs/openai-cua-fleet-e2e.txt"
@@ -136,7 +140,7 @@ class AgentsClient:
             await asyncio.sleep(2)
         raise AssertionError("unreachable")
 
-    async def create_session(self) -> dict[str, Any]:
+    async def create_session(self, driver_path: str) -> dict[str, Any]:
         return await self.request(
             "POST",
             "sessions",
@@ -158,7 +162,7 @@ class AgentsClient:
                                 "command": "/usr/bin/python3",
                                 "args": [
                                     MCP_AUDIT_PROXY_PATH,
-                                    "/root/.local/bin/cua-driver",
+                                    driver_path,
                                 ],
                                 "cwd": "/workspace",
                                 "env_vars": [
@@ -369,9 +373,18 @@ wait "$terminal_pid"
 '''
 
 
-async def install_runtime(sandbox: Any) -> str:
-    await checked(sandbox, "mkdir -p /workspace /workspace/outputs /run/cua-agents")
-    await checked(sandbox, "chmod 700 /run/cua-agents")
+async def install_runtime(sandbox: Any) -> tuple[str, str]:
+    await checked(
+        sandbox,
+        "sudo install -d -o \"$(id -u)\" -g \"$(id -g)\" -m 700 /run/cua-agents && "
+        "sudo install -d -o \"$(id -u)\" -g \"$(id -g)\" /workspace /workspace/outputs",
+    )
+    await checked(
+        sandbox,
+        "command -v npm >/dev/null || "
+        "(sudo apt-get update -q && sudo apt-get install -y -q nodejs npm)",
+        timeout=900,
+    )
     await checked(
         sandbox,
         "curl -fsSL https://cua.ai/driver/install.sh -o /tmp/cua-driver-install.sh",
@@ -384,10 +397,11 @@ async def install_runtime(sandbox: Any) -> str:
     )
     await checked(
         sandbox,
-        f"npm install --global @openai/codex@{CODEX_VERSION}",
+        f"npm install --global --prefix \"$HOME/.local\" @openai/codex@{CODEX_VERSION}",
         timeout=600,
     )
-    await checked(sandbox, "/root/.local/bin/cua-driver --version")
+    driver_path = await checked(sandbox, "printf %s \"$HOME/.local/bin/cua-driver\"")
+    await checked(sandbox, f"{shlex.quote(driver_path)} --version")
     await sandbox.files.write_bytes(MCP_AUDIT_PROXY_PATH, mcp_audit_proxy().encode())
     await sandbox.files.write_bytes(
         E2E_TERMINAL_PATH,
@@ -395,10 +409,10 @@ async def install_runtime(sandbox: Any) -> str:
     )
     await checked(sandbox, f"chmod 700 {shlex.quote(MCP_AUDIT_PROXY_PATH)}")
     await checked(sandbox, f"chmod 700 {shlex.quote(E2E_TERMINAL_PATH)}")
-    codex_path = await checked(sandbox, "command -v codex")
+    codex_path = await checked(sandbox, "PATH=\"$HOME/.local/bin:$PATH\" command -v codex")
     if not codex_path.startswith("/"):
         raise RuntimeError("Codex CLI did not resolve to an absolute path")
-    return codex_path
+    return codex_path, driver_path
 
 
 def executor_launcher(
@@ -413,7 +427,7 @@ set +a
 rm -f {shlex.quote(EXECUTOR_ENV_PATH)}
 echo $$ > {shlex.quote(EXECUTOR_PID_PATH)}
 export DISPLAY={shlex.quote(display)}
-export PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 export CUA_DRIVER_PERMISSION_MODE=unrestricted
 export CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS=1
 exec {shlex.quote(codex_path)} exec-server \\
@@ -568,27 +582,28 @@ async def main() -> None:
     run_error: Exception | None = None
 
     try:
+        # Default services: cua-spacesd published as `env` on port 3211.
         pool = await Pool.apply(
-            Image.from_registry(IMAGE, os_type="linux", kind="vm"),
+            Image.from_registry(IMAGE, os_type="linux", kind="container")
+            if IMAGE
+            else Image.linux(),
             name=selected_pool_name,
             replicas=1,
             cpu=4,
             memory_mb=8192,
-            services={"server": 8000},
             ttl_seconds_after_created=7200,
         )
         async with pool.claim(
             name=f"session-{secrets.token_hex(4)}",
-            service="server",
             time_to_start=1800,
             ttl_seconds_after_created=3600,
         ) as sandbox:
             print(f"Cua pool: {sandbox.pool_name}")
             print(f"Cua claim: {sandbox.claim_name}")
-            codex_path = await install_runtime(sandbox)
+            codex_path, driver_path = await install_runtime(sandbox)
             display = (await checked(sandbox, "printf %s \"${DISPLAY:-:1}\"")).strip() or ":1"
 
-            session = await agents.create_session()
+            session = await agents.create_session(driver_path)
             session_id = session["id"]
             environment = session["environment"]
             launcher = executor_launcher(

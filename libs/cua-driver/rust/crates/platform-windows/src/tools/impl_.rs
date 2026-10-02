@@ -638,12 +638,7 @@ fn screenshot_scale(
 ) -> Result<f64, ToolResult> {
     state
         .snapshots
-        .screenshot_context(
-            pid as i32,
-            window_id,
-            args.get("_session_id").and_then(Value::as_str),
-        )
-        .map(|context| context.scale)
+        .screenshot_scale(pid as i32, window_id, args)
 }
 
 fn capture_admission_refusal(error: anyhow::Error) -> ToolResult {
@@ -3246,7 +3241,7 @@ impl Tool for ClickTool {
                     "count":{"type":"integer","minimum":1,"maximum":3,"description":"Click count — 1 (single), 2 (double), 3 (triple). Default 1."},
                     "modifier": cua_driver_core::tool_schema::modifier_schema(),
                     "from_zoom":{"type":"boolean","description":"When true, x and y are pixel coordinates in the last `zoom` image for this pid. The driver maps them back to window coords."},
-                    "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
+                    "scope":{"type":"string","enum":["window","desktop"],"default":"window","description":"Coordinate frame (default \"window\"). Pass \"desktop\" with x,y and no pid/window_id for a screen-absolute click in get_desktop_state coordinates."},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -4062,9 +4057,7 @@ impl Tool for ClickTool {
                 cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
             );
             let btn = button.clone();
-            // Vision-mode (x, y) dispatch is **layered**, mirroring the
-            // trope-cua reference impl
-            // (`src/CuaDriver.Win/Tools/ClickTool.cs::InvokePixelClickAsync`):
+            // Vision-mode (x, y) dispatch is **layered**:
             //
             //   1. UIA hit-test in the target HWND's subtree. If the
             //      deepest InvokePattern-bearing element at (sx, sy) is
@@ -6060,7 +6053,7 @@ impl Tool for ScrollTool {
                 "type":"object","required":["direction"],"properties":{
                     "session": cua_driver_core::tool_schema::session_schema(),
                     "pid":{"type":"integer","description":"Target process ID for window scope. Omit with scope=desktop for screen-absolute coordinates from get_desktop_state."},
-                    "direction":{"type":"string","enum":["up","down","left","right"]},
+                    "direction":{"type":"string","enum":["up","down","left","right"],"description":"Scroll direction."},
                     "by":{"type":"string","enum":["line","page"],"description":"Scroll granularity. Default: line."},
                     "amount":{"type":"integer","minimum":1,"maximum":50,
                         "description":"Number of scroll ticks. Default 3."},
@@ -6068,7 +6061,7 @@ impl Tool for ScrollTool {
                     "y":{"type":"number","description":"With pid/window_id: window-local screenshot Y used to target a nested scroll surface in foreground mode. Without pid/window_id: screen-absolute Y for desktop scope. Must be paired with x."},
                     "window_id":{"type":"integer","description":"HWND of the target window. Omit when element_token is supplied; otherwise auto-resolves the pid's first visible window."},
                     "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                    "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
+                    "scope":{"type":"string","enum":["window","desktop"],"default":"window","description":"Use \"desktop\" with x,y and no pid/window_id for screen-absolute coordinates from get_desktop_state. Default \"window\"."},
                     "delivery_mode": crate::input::delivery::delivery_mode_schema()
                 },"additionalProperties":false
             }),
@@ -7958,7 +7951,9 @@ impl Tool for MoveCursorTool {
             input_schema: json!({"type":"object","required":["x","y"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "scope":{"type":"string","enum":["window","desktop"],"description":"desktop moves the real OS pointer; window moves only the agent overlay."},
-                "x":{"type":"number"},"y":{"type":"number"},"cursor_id":{"type":"string"}
+                "x":{"type":"number","description":"Destination X. Window scope: screen coordinates of the agent cursor overlay. Desktop scope: get_desktop_state screenshot pixels."},
+                "y":{"type":"number","description":"Destination Y, in the same space as x."},
+                "cursor_id":{"type":"string","description":"Cursor instance to move. Default: 'default'."}
             },"additionalProperties":false}),
             read_only: false,
             destructive: false,
@@ -8900,9 +8895,9 @@ impl Tool for TypeTextCharsTool {
                 Otherwise identical to type_text (WM_CHAR, no focus steal).".into(),
             input_schema: json!({
                 "type":"object","required":["pid","text"],"properties":{
-                    "pid":{"type":"integer"},
-                    "window_id":{"type":"integer"},
-                    "text":{"type":"string"},
+                    "pid":{"type":"integer","description":"Target process ID."},
+                    "window_id":{"type":"integer","description":"HWND of the target window. Required with element_index."},
+                    "text":{"type":"string","description":"Text to type, one character at a time."},
                     "delay_ms":{"type":"integer","description":"Milliseconds between chars (default 30)."},
                     "type_chars_only":{"type":"boolean","description":"Skip element focus, type directly. Default false."}
                 },"additionalProperties":false

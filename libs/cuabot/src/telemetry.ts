@@ -7,17 +7,18 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { PostHog } from 'posthog-node';
 import { v4 as uuidv4 } from 'uuid';
-import { getTelemetryEnabled } from './settings.js';
+import { AGENTS, getTelemetryEnabled } from './settings.js';
 
 // PostHog config (same as @trycua/core - intentionally public)
 const POSTHOG_API_KEY = 'phc_eSkLnbLxsnYFaXksif1ksbrNzYlJShr35miFLDppF14';
 const POSTHOG_HOST = 'https://eu.i.posthog.com';
 
-// Installation ID path (shared with @trycua/core)
-const INSTALLATION_ID_PATH = join(homedir(), '.cua', 'installation_id');
+// Installation id path (shared with the Cua Python and TypeScript SDKs).
+const INSTALLATION_ID_PATH = join(homedir(), '.config', 'cua', 'installation_id');
+const LEGACY_INSTALLATION_ID_PATH = join(homedir(), '.cua', 'installation_id');
 
 export interface TelemetryEvent {
   type: string;
@@ -28,28 +29,156 @@ export interface TelemetryEvent {
 }
 
 /**
- * Get or create installation ID (anonymous user identifier)
+ * Get or create the random installation id. Only called while telemetry is
+ * enabled, so no file is created for users who did not opt in.
  */
 function getOrCreateInstallationId(): string {
-  try {
-    if (existsSync(INSTALLATION_ID_PATH)) {
-      return readFileSync(INSTALLATION_ID_PATH, 'utf-8').trim();
+  for (const file of [INSTALLATION_ID_PATH, LEGACY_INSTALLATION_ID_PATH]) {
+    try {
+      if (existsSync(file)) {
+        const stored = readFileSync(file, 'utf-8').trim();
+        if (stored) return stored;
+      }
+    } catch {
+      // Fall through
     }
-  } catch {
-    // Fall through to create new ID
   }
 
   const newId = uuidv4();
   try {
-    const dir = join(homedir(), '.cua');
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
+    mkdirSync(dirname(INSTALLATION_ID_PATH), { recursive: true });
     writeFileSync(INSTALLATION_ID_PATH, newId);
   } catch {
-    // Use in-memory ID if file write fails
+    // Use in-memory id if the file write fails
   }
   return newId;
+}
+
+// ============================================================================
+// Sanitizers (pure; exported for tests)
+// ============================================================================
+
+/** Flag subcommands understood by cuabot.tsx. */
+export const KNOWN_CLI_SUBCOMMANDS = [
+  '--help',
+  '-h',
+  '--serve',
+  '--stop',
+  '--status',
+  '--reset',
+  '--screenshot',
+  '--bash',
+  '--click',
+  '--doubleclick',
+  '--move',
+  '--mousedown',
+  '--mouseup',
+  '--drag',
+  '--scroll',
+  '--type',
+  '--key',
+  '--keydown',
+  '--keyup',
+  '--debug-onboarding',
+] as const;
+
+/**
+ * The first subcommand word if it is a known cuabot flag or agent id,
+ * "none" for no arguments, else "other". Never the raw argv (it can hold
+ * shell commands, text to type, paths or session names).
+ */
+export function cliSubcommandLabel(argv: readonly string[]): string {
+  const rest: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--name' || argv[i] === '-n') {
+      i++;
+      continue;
+    }
+    rest.push(argv[i]);
+  }
+  const first = rest[0];
+  if (first === undefined) return 'none';
+  if ((KNOWN_CLI_SUBCOMMANDS as readonly string[]).includes(first)) return first;
+  if (Object.prototype.hasOwnProperty.call(AGENTS, first)) return first;
+  return 'other';
+}
+
+/** MCP tools exposed by computer-use-mcp.py. */
+export const KNOWN_MCP_TOOLS = [
+  'screenshot',
+  'click',
+  'double_click',
+  'type_text',
+  'mouse_move',
+  'mouse_down',
+  'mouse_up',
+  'scroll',
+  'key_down',
+  'key_up',
+  'key_press',
+  'drag',
+] as const;
+
+const NUMERIC_TOOL_ARGS = new Set([
+  'x',
+  'y',
+  'delta_x',
+  'delta_y',
+  'from_x',
+  'from_y',
+  'to_x',
+  'to_y',
+  'delay',
+]);
+const BUTTONS = new Set(['left', 'right', 'middle']);
+
+function sanitizeToolArgs(args: unknown): Record<string, number | string> {
+  const out: Record<string, number | string> = {};
+  if (!args || typeof args !== 'object') return out;
+  for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
+    if (NUMERIC_TOOL_ARGS.has(key) && typeof value === 'number' && Number.isFinite(value)) {
+      out[key] = value;
+    } else if (key === 'button' && typeof value === 'string' && BUTTONS.has(value)) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/**
+ * Event types the cuabotd /telemetry relay accepts, each with the only
+ * properties it may carry. Everything else is dropped.
+ */
+export function sanitizeRelayedEvent(body: unknown): TelemetryEvent | null {
+  if (!body || typeof body !== 'object') return null;
+  const event = body as Record<string, unknown>;
+  const timestamp = typeof event.timestamp === 'number' ? event.timestamp : Date.now();
+
+  switch (event.type) {
+    case 'cli_invocation': {
+      const sub = typeof event.subcommand === 'string' ? event.subcommand : 'other';
+      const known =
+        sub === 'none' ||
+        sub === 'other' ||
+        (KNOWN_CLI_SUBCOMMANDS as readonly string[]).includes(sub) ||
+        Object.prototype.hasOwnProperty.call(AGENTS, sub);
+      return { type: 'cli_invocation', timestamp, subcommand: known ? sub : 'other' };
+    }
+    case 'mcp_tool_call': {
+      const tool = event.tool_name;
+      if (typeof tool !== 'string' || !(KNOWN_MCP_TOOLS as readonly string[]).includes(tool)) {
+        return null;
+      }
+      return {
+        type: 'mcp_tool_call',
+        timestamp,
+        tool_name: tool,
+        tool_args: sanitizeToolArgs(event.tool_args),
+      };
+    }
+    default:
+      return null;
+  }
 }
 
 /**
@@ -60,7 +189,7 @@ function getOrCreateInstallationId(): string {
  */
 export class CuabotTelemetry {
   private sessionId: string;
-  private installationId: string;
+  private installationId: string | null = null;
   private posthog: PostHog | null = null;
   private startTime: number;
   private eventCount: number = 0;
@@ -68,19 +197,20 @@ export class CuabotTelemetry {
 
   constructor() {
     this.sessionId = uuidv4();
-    this.installationId = getOrCreateInstallationId();
     this.startTime = Date.now();
     this.enabled = getTelemetryEnabled();
 
     if (this.enabled) {
+      this.installationId = getOrCreateInstallationId();
       try {
         this.posthog = new PostHog(POSTHOG_API_KEY, {
           host: POSTHOG_HOST,
           flushAt: 20,
           flushInterval: 30000,
+          disableGeoip: true,
         });
       } catch (err) {
-        console.error('[telemetry] Failed to initialize PostHog:', err);
+        console.error('[telemetry] Failed to initialize PostHog:', (err as Error)?.name ?? 'Error');
       }
     }
   }
@@ -96,7 +226,7 @@ export class CuabotTelemetry {
    * Record a telemetry event
    */
   recordEvent(event: TelemetryEvent): void {
-    if (!this.enabled || !this.posthog) return;
+    if (!this.enabled || !this.posthog || !this.installationId) return;
 
     try {
       const eventName = `cuabot_${event.type}`;
@@ -111,8 +241,11 @@ export class CuabotTelemetry {
           timestamp,
           version: process.env.npm_package_version || 'unknown',
           platform: process.platform,
-          node_version: process.version,
+          node_version: process.versions.node.split('.')[0],
+          $process_person_profile: false,
+          $geoip_disable: true,
         },
+        disableGeoip: true,
       });
 
       this.eventCount++;
@@ -125,12 +258,18 @@ export class CuabotTelemetry {
    * Record cuabotd startup event
    */
   recordStartup(port: number, sessionName: string | null, defaultAgent: string | null): void {
+    // The session name is user-chosen: only whether one was given is sent.
     this.recordEvent({
       type: 'startup',
       timestamp: Date.now(),
       port,
-      session_name: sessionName,
-      default_agent: defaultAgent,
+      has_session_name: !!sessionName,
+      default_agent:
+        defaultAgent && Object.prototype.hasOwnProperty.call(AGENTS, defaultAgent)
+          ? defaultAgent
+          : defaultAgent
+            ? 'other'
+            : null,
     });
   }
 
@@ -204,8 +343,12 @@ export function log_event(event: TelemetryEvent): void {
 }
 
 // ============================================================================
-// History scraping (kept for prompt_change tracking)
+// Prompt sharing (explicit opt-in; see TelemetrySelector in onboarding.tsx)
 // ============================================================================
+// Only runs when the user chose "Yes, share my prompts" (cuabot telemetry is
+// off unless explicitly enabled). Sends the text of the latest prompt typed
+// into Claude Code and Claude's random session id. The project path is not
+// sent.
 
 let lastPrompt: string | null = null;
 let historyPollingInterval: ReturnType<typeof setInterval> | null = null;
@@ -242,7 +385,6 @@ export function scrapeHistory(historyPath: string): void {
         timestamp: Date.now(),
         prompt: currentPrompt,
         claude_session_id: entry.sessionId,
-        project: entry.project,
       });
     }
   } catch {

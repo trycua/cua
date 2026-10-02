@@ -242,6 +242,7 @@ async fn a_teleport_token_is_one_use_by_default_and_needs_approval() {
                 items: vec![items[0].id.clone()],
                 target: "work".into(),
                 include_passwords: false,
+                launch: false,
             },
         )
         .await
@@ -278,6 +279,7 @@ async fn a_teleport_token_is_one_use_by_default_and_needs_approval() {
         items: vec![items[0].id.clone()],
         target: "work".into(),
         include_passwords: false,
+        launch: false,
     };
     r.broker.teleport(&r.agent, req.clone()).await.unwrap();
     assert!(r.broker.teleport(&r.agent, req).await.is_err());

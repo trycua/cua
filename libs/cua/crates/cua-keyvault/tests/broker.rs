@@ -28,6 +28,8 @@ struct FakeBackend {
     delivered_hosts: Mutex<Vec<Vec<String>>>,
     wiped: Mutex<Vec<(String, String)>>,
     notified: Mutex<Vec<String>>,
+    /// The `launch` flag of every launching delivery.
+    launches: Mutex<Vec<bool>>,
     captures: Mutex<Vec<ImportSpec>>,
     /// Name -> immutable Space id. A name absent here resolves to a stable
     /// `sandbox-<name>`; a test can insert a new id to model a rename or a
@@ -194,6 +196,25 @@ impl Backend for FakeBackend {
         stage(TeleportStage::Importing);
         self.deliver(target, provider_id, scope, entries, expires_ms)
             .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn deliver_launching(
+        &self,
+        target: &str,
+        provider_id: &str,
+        scope: &str,
+        entries: Vec<PayloadEntry>,
+        expires_ms: u64,
+        stage: cua_keyvault::broker::StageSink,
+        launch: bool,
+    ) -> cua_keyvault::Result<DeliveryOutcome> {
+        self.launches.lock().unwrap().push(launch);
+        let mut out = self
+            .deliver_with_progress(target, provider_id, scope, entries, expires_ms, stage)
+            .await?;
+        out.launched = launch;
+        Ok(out)
     }
 
     async fn wipe(&self, target: &str, import_id: &str) -> cua_keyvault::Result<Vec<String>> {
@@ -408,6 +429,7 @@ async fn consent_grants_a_caller_bound_scoped_token() {
         items,
         target: target.into(),
         include_passwords: false,
+        launch: false,
     };
     let out = r
         .broker
@@ -448,6 +470,7 @@ async fn consent_grants_a_caller_bound_scoped_token() {
                     items: vec![github.id.clone()],
                     target: "dev-1".into(),
                     include_passwords: false,
+                    launch: false,
                 }
             )
             .await
@@ -463,6 +486,7 @@ async fn consent_grants_a_caller_bound_scoped_token() {
                     items: vec![github.id.clone()],
                     target: "dev-1".into(),
                     include_passwords: false,
+                    launch: false,
                 }
             )
             .await,
@@ -483,6 +507,7 @@ async fn f1_grant_is_bound_to_the_immutable_target_id_not_the_name() {
         items: granted.clone(),
         target: "dev-1".into(),
         include_passwords: false,
+        launch: false,
     };
     // While the id is unchanged the token works.
     r.broker.teleport(&r.koala, req.clone()).await.unwrap();
@@ -540,6 +565,7 @@ async fn f1_unattended_rule_is_bound_to_the_immutable_target_id() {
         items: vec![id],
         target: "dev-1".into(),
         include_passwords: false,
+        launch: false,
     };
     let out = r.broker.teleport(&r.koala, req.clone()).await.unwrap();
     assert_eq!(out.authority, format!("rule={}", rule.id));
@@ -599,6 +625,7 @@ async fn single_use_grants_and_other_callers_cannot_collect_decisions() {
         items: vec![items[0].id.clone()],
         target: "dev-1".into(),
         include_passwords: false,
+        launch: false,
     };
     r.broker.teleport(&r.koala, req.clone()).await.unwrap();
     // Default grants are single use.
@@ -644,6 +671,7 @@ async fn presence_is_required_to_expand_access() {
                     items: vec![items[0].id.clone()],
                     target: "dev-1".into(),
                     include_passwords: false,
+                    launch: false,
                 }
             )
             .await,
@@ -708,6 +736,7 @@ async fn kill_switch_blocks_everything_and_kills_old_tokens() {
         items: vec![items[0].id.clone()],
         target: "dev-1".into(),
         include_passwords: false,
+        launch: false,
     };
     assert!(matches!(
         r.broker.teleport(&r.koala, req.clone()).await,
@@ -758,6 +787,7 @@ async fn revoking_one_site_leaves_the_others() {
                     items: i1,
                     target: "dev-1".into(),
                     include_passwords: false,
+                    launch: false,
                 }
             )
             .await
@@ -771,6 +801,7 @@ async fn revoking_one_site_leaves_the_others() {
                 items: i2.clone(),
                 target: "dev-1".into(),
                 include_passwords: false,
+                launch: false,
             },
         )
         .await
@@ -858,6 +889,7 @@ async fn unattended_rules_need_signed_known_callers_and_expire() {
         items: vec![id.clone()],
         target: "dev-1".into(),
         include_passwords: false,
+        launch: false,
     };
     let asked_before = r.presence.asked.lock().unwrap().len();
     let out = r.broker.teleport(&r.koala, req.clone()).await.unwrap();
@@ -904,6 +936,7 @@ async fn deliveries_supersede_and_release_wipes() {
                     items: vec![id.clone()],
                     target: "dev-1".into(),
                     include_passwords: false,
+                    launch: false,
                 },
             )
             .await
@@ -951,6 +984,7 @@ async fn teleport_to(r: &Rig, id: &str, target: &str) {
                 items: vec![id.to_string()],
                 target: target.into(),
                 include_passwords: false,
+                launch: false,
             },
         )
         .await
@@ -1067,6 +1101,7 @@ async fn audit_records_decisions_without_secrets_or_sites() {
                 items,
                 target: "dev-1".into(),
                 include_passwords: false,
+                launch: false,
             },
         )
         .await
@@ -1080,6 +1115,7 @@ async fn audit_records_decisions_without_secrets_or_sites() {
                 items: vec!["00".into()],
                 target: "dev-1".into(),
                 include_passwords: false,
+                launch: false,
             },
         )
         .await;
@@ -1389,6 +1425,7 @@ async fn broker_records_counts_and_verified_caller_kinds_only() {
                 items: granted.clone(),
                 target: "dev-1".into(),
                 include_passwords: false,
+                launch: false,
             },
         )
         .await
@@ -1403,6 +1440,7 @@ async fn broker_records_counts_and_verified_caller_kinds_only() {
                 items: granted,
                 target: "dev-1".into(),
                 include_passwords: false,
+                launch: false,
             },
         )
         .await;
@@ -1734,6 +1772,7 @@ async fn a_delivery_the_audit_log_cannot_record_is_refused() {
                 items: ids,
                 target: "dev-1".into(),
                 include_passwords: false,
+                launch: false,
             },
         )
         .await;
@@ -1748,6 +1787,7 @@ async fn a_delivery_the_audit_log_cannot_record_is_refused() {
                 items: vec![items[0].id.clone()],
                 target: "dev-1".into(),
                 include_passwords: false,
+                launch: false,
             },
         )
         .await;
@@ -1771,6 +1811,7 @@ async fn deliveries_are_authorized_in_the_log_and_the_kill_switch_wipes_them() {
                 items: ids,
                 target: "dev-1".into(),
                 include_passwords: false,
+                launch: false,
             },
         )
         .await
@@ -1783,6 +1824,7 @@ async fn deliveries_are_authorized_in_the_log_and_the_kill_switch_wipes_them() {
                 items: vec![items[0].id.clone()],
                 target: "dev-2".into(),
                 include_passwords: false,
+                launch: false,
             },
         )
         .await
@@ -1862,6 +1904,36 @@ async fn import_and_teleport_reports_its_stages_in_order() {
         ]);
         assert_eq!(*seen.lock().unwrap(), want, "save={save}");
     }
+}
+
+/// A direct teleport opens the app in the Space (and says so), unless the
+/// caller asked not to; the grant-gated agent path never launches anything.
+#[tokio::test]
+async fn import_and_teleport_launches_the_app_unless_told_not_to() {
+    let r = rig().await;
+    let spec = || ImportSpec {
+        app: "chrome".into(),
+        sites: vec![SiteChoice {
+            site: "github.com".into(),
+            include_storage: false,
+            include_passwords: false,
+        }],
+        ..Default::default()
+    };
+    let on = r
+        .broker
+        .import_and_teleport(&r.cua, spec(), "dev-1".into(), false)
+        .await
+        .unwrap();
+    assert!(on.deliveries[0].launched);
+    let off = r
+        .broker
+        .import_and_teleport_launching(&r.cua, spec(), "dev-1".into(), false, false, None)
+        .await
+        .unwrap();
+    assert!(!off.deliveries[0].launched);
+    // Only the first asked for a launching delivery.
+    assert_eq!(*r.backend.launches.lock().unwrap(), vec![true]);
 }
 
 /// `import_and_teleport` is what a direct (non-MCP) teleport uses instead of

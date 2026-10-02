@@ -247,7 +247,8 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.meta.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
+    # A disk doctored under TCG (hosted arm64) boots and checks several times slower.
+    timeout-minutes: 300
     permissions:
       contents: read
       packages: read
@@ -292,6 +293,14 @@ jobs:
         run: |
           "$RUNNER_TEMP/cua" images release "libs/images/bench/$BENCH" --arch "$ARCH" --stamp "$STAMP" --work release \
             --publish --steps "verify/$ARCH" --scope "verify-$ARCH" --var python=.venv/bin/python
+      # Hosted arm64 runners have no KVM, so the release skips
+      # verify/<arch>/containerdisk (it needs accel-<arch>) and attest would
+      # find no doctor evidence for that disk. Doctor the staged disk child
+      # under TCG instead (stretched budgets), as cd-image-linux.yml does.
+      - name: Strict VM doctor of the staged disk under TCG (no KVM)
+        run: |
+          if [ -w /dev/kvm ]; then echo "KVM present: the release verified the disk"; exit 0; fi
+          scripts/bench-images/doctor-disk.sh "$BENCH" "$ARCH" release/evidence/verify
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

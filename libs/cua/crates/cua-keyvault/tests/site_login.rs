@@ -322,6 +322,7 @@ async fn saved_logins_are_never_teleported() {
                 items: vec![items[0].id.clone()],
                 target: "work".into(),
                 include_passwords: false,
+                launch: false,
             },
         )
         .await

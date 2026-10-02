@@ -28,14 +28,14 @@ the interfaces below raise `SpacesdNotAvailable`.
 from pathlib import Path
 from cua_sandbox import Image, Sandbox
 
-FOCUS_TERMINAL = ("export DISPLAY=:1; nohup xfce4-terminal -T demo >/dev/null 2>&1 & "
-                  "xdotool search --sync --name demo windowactivate --sync")
+FOCUS_TERMINAL = ("export DISPLAY=:1; setsid -f xfce4-terminal -T demo >/dev/null 2>&1; "
+                  "xdotool search --sync --onlyvisible --name demo windowactivate --sync")
 
 async with Sandbox.ephemeral(Image.linux()) as sb:
-    # Keys go to the focused window, so open one.
-    await sb.shell.run(FOCUS_TERMINAL)
     width, height = await sb.get_dimensions()
     await sb.mouse.click(width // 2, height // 2)
+    # Keys go to the focused window, so open one.
+    assert (await sb.shell.run(FOCUS_TERMINAL)).success
     await sb.keyboard.type("hello")
     await sb.keyboard.keypress(["ctrl", "a"])
     Path("desk.png").write_bytes(await sb.screenshot())
@@ -49,8 +49,8 @@ import { writeFile } from 'node:fs/promises';
 import { embedded, SandboxCreateOptions, SpacesdCommand } from '@trycua/cua';
 
 const FOCUS_TERMINAL =
-  'export DISPLAY=:1; nohup xfce4-terminal -T demo >/dev/null 2>&1 & ' +
-  'xdotool search --sync --name demo windowactivate --sync';
+  'export DISPLAY=:1; setsid -f xfce4-terminal -T demo >/dev/null 2>&1; ' +
+  'xdotool search --sync --onlyvisible --name demo windowactivate --sync';
 
 const sb = await embedded().sandboxes().create(
   SandboxCreateOptions.create({
@@ -59,10 +59,10 @@ const sb = await embedded().sandboxes().create(
 );
 try {
   const env = await sb.spacesd(undefined);
-  // Keys go to the focused window, so open one.
-  await env.run(SpacesdCommand.create({ program: 'sh', args: ['-c', FOCUS_TERMINAL] }));
   const shot = await env.screenshot(undefined);
   await env.click(Math.floor(shot.width / 2), Math.floor(shot.height / 2));
+  // Keys go to the focused window, so open one.
+  await env.run(SpacesdCommand.create({ program: 'sh', args: ['-c', FOCUS_TERMINAL] }));
   await env.typeText('hello');
   await env.hotkey(['ctrl', 'a']);
   await writeFile('desk.png', Buffer.from((await env.screenshot(undefined)).image));
@@ -103,7 +103,7 @@ async with Sandbox.ephemeral(image) as sb:
 credentials; `connect(service="mcp", transport="mcp")` selects a named MCP
 service instead.
 
-For agents, `cua mcp` is a stdio MCP server with sandbox and computer tools:
+`cua mcp` is a stdio MCP server for agents:
 
 ```bash test="cli-shape" id="cua-mcp-desk"
 cua mcp --sandbox desk

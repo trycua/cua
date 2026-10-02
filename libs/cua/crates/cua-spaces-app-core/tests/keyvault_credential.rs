@@ -328,6 +328,7 @@ async fn the_vault_page_end_to_end_through_the_client() {
                 items: sel.unlock_ids.clone(),
                 target: "dev-1".into(),
                 include_passwords: false,
+                launch: false,
             },
         )
         .await

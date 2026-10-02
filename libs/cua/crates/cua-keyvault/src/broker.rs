@@ -396,6 +396,25 @@ pub trait Backend: Send + Sync {
         self.deliver(target, provider_id, scope, entries, expires_ms)
             .await
     }
+    /// [`Self::deliver_with_progress`], also asking the receiver to launch the
+    /// imported app in the Space's logged-in GUI session (`launch`). The
+    /// default ignores `launch` (a backend that cannot launch reports
+    /// `launched: false` in its [`DeliveryOutcome`]).
+    #[allow(clippy::too_many_arguments)]
+    async fn deliver_launching(
+        &self,
+        target: &str,
+        provider_id: &str,
+        scope: &str,
+        entries: Vec<PayloadEntry>,
+        expires_ms: u64,
+        stage: StageSink,
+        launch: bool,
+    ) -> Result<DeliveryOutcome> {
+        let _ = launch;
+        self.deliver_with_progress(target, provider_id, scope, entries, expires_ms, stage)
+            .await
+    }
     /// Wipes an earlier import from `target`.
     async fn wipe(&self, target: &str, import_id: &str) -> Result<Vec<String>>;
     /// Tells the UI a consent request is waiting (open the Keyvault page).
@@ -717,6 +736,10 @@ pub struct TeleportRequest {
     pub items: Vec<String>,
     /// Target Space.
     pub target: String,
+    /// Launch the delivered app in the Space once it is imported (the
+    /// teleport's `launch_after`); a backend that cannot launch ignores it.
+    #[serde(default)]
+    pub launch: bool,
     /// Deliver the saved passwords among `items` too. Only the Cua app's own
     /// interactive request may set this (the user ticked them in the review);
     /// a token or a rule never delivers a password, whatever it names.
@@ -1784,6 +1807,22 @@ impl Broker {
         save: bool,
         stage: Option<StageSink>,
     ) -> Result<TeleportOutcome> {
+        self.import_and_teleport_launching(caller, spec, target, save, true, stage)
+            .await
+    }
+
+    /// [`Self::import_and_teleport_with_progress`] with an explicit `launch`:
+    /// whether the Space opens the app after importing it (the default for a
+    /// teleport; `cua teleport push --no-launch` turns it off).
+    pub async fn import_and_teleport_launching(
+        &self,
+        caller: &CallerIdentity,
+        spec: ImportSpec,
+        target: String,
+        save: bool,
+        launch: bool,
+        stage: Option<StageSink>,
+    ) -> Result<TeleportOutcome> {
         let tell = |s: TeleportStage| {
             if let Some(f) = &stage {
                 f(s);
@@ -1829,9 +1868,16 @@ impl Broker {
             items: item_ids.clone(),
             target: target.clone(),
             include_passwords: with_passwords,
+            launch: false,
         };
         let result = self
-            .teleport_inner(caller, req, PresenceAlready::Confirmed, stage.clone())
+            .teleport_inner(
+                caller,
+                req,
+                PresenceAlready::Confirmed,
+                stage.clone(),
+                launch,
+            )
             .await;
         crate::telemetry::teleport(&self.telemetry, caller, &app, started, &result, n);
         if !save && !stored.created.is_empty() {
@@ -2979,8 +3025,9 @@ impl Broker {
                 })
                 .unwrap_or_default()
         };
+        let launch = req.launch;
         let r = self
-            .teleport_inner(caller, req, PresenceAlready::NotConfirmed, None)
+            .teleport_inner(caller, req, PresenceAlready::NotConfirmed, None, launch)
             .await;
         crate::telemetry::teleport(&self.telemetry, caller, &app, started, &r, items);
         r
@@ -2992,6 +3039,7 @@ impl Broker {
         req: TeleportRequest,
         presence: PresenceAlready,
         stage: Option<StageSink>,
+        launch: bool,
     ) -> Result<TeleportOutcome> {
         validate_target(&req.target)?;
         if req.items.is_empty() {
@@ -3227,6 +3275,19 @@ impl Broker {
                 let _ = self.backend.wipe(&req.target, &d.import_id).await;
             }
             let res = match &stage {
+                Some(sink) if launch => {
+                    self.backend
+                        .deliver_launching(
+                            &req.target,
+                            &provider,
+                            &scope,
+                            entries,
+                            expires_ms,
+                            sink.clone(),
+                            true,
+                        )
+                        .await
+                }
                 Some(sink) => {
                     self.backend
                         .deliver_with_progress(
@@ -3236,6 +3297,19 @@ impl Broker {
                             entries,
                             expires_ms,
                             sink.clone(),
+                        )
+                        .await
+                }
+                None if launch => {
+                    self.backend
+                        .deliver_launching(
+                            &req.target,
+                            &provider,
+                            &scope,
+                            entries,
+                            expires_ms,
+                            Arc::new(|_| {}),
+                            true,
                         )
                         .await
                 }

@@ -45,11 +45,12 @@ async fn guest() -> Guest {
     let ctx = ServerContext::new(config, Some(TOKEN.into()));
     // A guest that has never held a Chrome Safe Storage item: reading the
     // secret fails (so the receiver creates one), every other `security`
-    // call succeeds. Only a macOS receiver ever asks.
+    // call and the app launch (`open` on macOS) succeed. Only a macOS receiver ever asks.
     let receiver_host = Arc::new(cua_spacesd_teleport::FakeHost::new().with_responder(|c| {
         let reads_secret =
             c.args.iter().any(|a| a == "find-generic-password") && c.args.iter().any(|a| a == "-w");
-        if c.program != "security" || reads_secret {
+        let launches = c.kind == cua_spacesd_teleport::EffectKind::AppLaunch;
+        if (c.program != "security" && !launches) || reads_secret {
             Ok(cua_spacesd_teleport::HostOutput::failed())
         } else {
             Ok(cua_spacesd_teleport::HostOutput::ok(""))
@@ -267,6 +268,13 @@ async fn cookies_land_in_a_chrome_that_was_never_launched() {
         .join(user_data)
         .join("Default/Network/Cookies");
     assert!(db.is_file(), "no cookies database was created");
+    // Current Chrome (154) reads `Default/Cookies`, older builds
+    // `Default/Network/Cookies`: both carry the session, so neither a new nor
+    // an old guest Chrome comes up signed out.
+    assert!(
+        db.with_file_name("..").join("Cookies").is_file(),
+        "no root Cookies database was created"
+    );
     let conn = rusqlite::Connection::open(&db).unwrap();
     let version: String = conn
         .query_row("SELECT value FROM meta WHERE key = 'version'", [], |r| {

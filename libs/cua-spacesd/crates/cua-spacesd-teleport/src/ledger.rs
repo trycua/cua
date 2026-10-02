@@ -103,6 +103,10 @@ pub struct ImportRecord {
     pub local_storage: Vec<StorageKeysRef>,
     /// Saved logins written into an existing `Login Data` database.
     pub login_rows: Vec<LoginRowRef>,
+    /// Things the user should be told about that did not fail the import
+    /// (e.g. the app will ask once for a password). Reported back to the
+    /// client, never ledgered.
+    pub notices: Vec<String>,
 }
 
 impl ImportRecord {
@@ -317,6 +321,7 @@ impl Ledger {
             cookie_rows: self.cookie_rows.clone(),
             local_storage: self.local_storage.clone(),
             login_rows: self.login_rows.clone(),
+            notices: Vec::new(),
         }
     }
 

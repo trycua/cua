@@ -224,7 +224,7 @@ async fn push_through_keyvault(
             ))
         })?;
     let outcome = client
-        .import_and_teleport(spec, sandbox.to_string(), false)
+        .import_and_teleport_launching(spec, sandbox.to_string(), false, !args.no_launch, |_| {})
         .await
         .map_err(|e| CuaError::PermissionDenied(format!("{}: {e}", manifest.provider_id)))?;
     let delivery = outcome.deliveries.first().cloned().unwrap_or_default();

@@ -500,7 +500,7 @@ fn add_local_storage<W: std::io::Write>(
 }
 
 /// Where curated profile file `name` lives on disk: `Cookies` resolves to
-/// `Network/Cookies` first (Chrome 96+), then the legacy root file; every
+/// whichever of `Network/Cookies` and the root file is newer; every
 /// other file is at the profile root.
 fn profile_file_path(profile_dir: &Path, name: &str) -> PathBuf {
     if name == "Cookies" {

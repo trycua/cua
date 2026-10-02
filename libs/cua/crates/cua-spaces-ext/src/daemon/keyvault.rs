@@ -642,6 +642,31 @@ impl Backend for DaemonBackend {
         expires_ms: u64,
         stage: cua_keyvault::broker::StageSink,
     ) -> KvResult<DeliveryOutcome> {
+        self.deliver_launching(
+            target,
+            provider_id,
+            scope,
+            entries,
+            expires_ms,
+            stage,
+            false,
+        )
+        .await
+    }
+
+    /// [`Self::deliver_with_progress`], with the receiver launching the app
+    /// afterwards (`launch`) and reporting whether it did.
+    #[allow(clippy::too_many_arguments)]
+    async fn deliver_launching(
+        &self,
+        target: &str,
+        provider_id: &str,
+        scope: &str,
+        entries: Vec<PayloadEntry>,
+        expires_ms: u64,
+        stage: cua_keyvault::broker::StageSink,
+        launch: bool,
+    ) -> KvResult<DeliveryOutcome> {
         let space = self.open_target(target).await?;
         stage(TeleportStage::Packing);
         let spacesd = space
@@ -685,7 +710,7 @@ impl Backend for DaemonBackend {
             BundleSource::Bytes(&bytes),
             &sha,
             &SendOptions {
-                launch_after: false,
+                launch_after: launch,
                 expires_at_ms: expires_ms,
                 // Every delivery through here was authorized by the broker.
                 broker_grant: Some("keyvault".into()),
@@ -981,6 +1006,7 @@ impl SessionBroker for McpSessionBroker {
                             items: items.clone(),
                             target: target.into(),
                             include_passwords: false,
+                            launch: false,
                         },
                     )
                     .await

@@ -285,7 +285,7 @@ impl ChromeCookies {
     /// Chromium app-bound `v20` value) instead of failing the whole read.
     pub fn read_report(&self, sites: &[String]) -> Result<CookieRead, TeleportError> {
         let dir = self.profile_dir()?;
-        // `Default/Network/Cookies` first (Chrome 96+), then `Default/Cookies`.
+        // `Default/Cookies` or `Default/Network/Cookies`, whichever is newer.
         let db = cua_teleport_bundle::layout::chrome::cookies_store(&dir);
         if !db.is_file() {
             return Err(TeleportError::Provider(format!(
@@ -415,7 +415,7 @@ fn read_rows(db: &Path) -> Result<Vec<Row>, TeleportError> {
     let result = (|| -> rusqlite::Result<Vec<Row>> {
         let conn = rusqlite::Connection::open_with_flags(
             tmp.path(),
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
         )?;
         let have: std::collections::HashSet<String> = {
             let mut stmt = conn.prepare("PRAGMA table_info(cookies)")?;
@@ -499,13 +499,19 @@ impl TempCopy {
 
 impl Drop for TempCopy {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        // The private directory holds the copy and its journal sidecars.
         if let Some(dir) = self.0.parent() {
-            let _ = std::fs::remove_dir(dir);
+            let _ = std::fs::remove_dir_all(dir);
         }
     }
 }
 
+/// Copies `src` and its `-wal`, `-shm` and `-journal` sidecars to a private
+/// directory. Chrome may be running: a WAL-mode database keeps recent commits
+/// only in `-wal`, and a rollback-journal database mid-write has a hot
+/// `-journal`; copying the main file alone would miss or tear them. SQLite
+/// replays/rolls back the sidecars on open, so the copy reads as a consistent
+/// snapshot while the original is never opened, locked or modified.
 fn tempfile_copy(src: &Path) -> Result<TempCopy, TeleportError> {
     let dir = std::env::temp_dir().join(format!("cua-cookies-{:016x}", rand::random::<u64>()));
     std::fs::create_dir(&dir)
@@ -516,8 +522,18 @@ fn tempfile_copy(src: &Path) -> Result<TempCopy, TeleportError> {
         let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
     }
     let dst = dir.join("Cookies");
+    // Sidecars first: a checkpoint between the two copies then only makes the
+    // main file newer than the log, which replays idempotently.
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let mut from = src.as_os_str().to_owned();
+        from.push(suffix);
+        let from = PathBuf::from(from);
+        if from.is_file() {
+            let _ = std::fs::copy(&from, dir.join(format!("Cookies{suffix}")));
+        }
+    }
     std::fs::copy(src, &dst).map_err(|e| {
-        let _ = std::fs::remove_dir(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
         TeleportError::Provider(format!("copying Cookies failed: {e}"))
     })?;
     Ok(TempCopy(dst))
@@ -889,26 +905,95 @@ mod tests {
         assert_eq!(read_linux(&profile).unwrap().len(), 1);
     }
 
-    /// Both exist (a profile Chrome migrated): the modern one is read.
+    fn touch(path: &std::path::Path, secs_ago: u64) {
+        let t = std::time::SystemTime::now() - std::time::Duration::from_secs(secs_ago);
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
+    }
+
+    /// Both exist: the newer one is read, in either direction.
     #[test]
-    fn prefers_network_cookies_over_a_stale_legacy_file() {
+    fn reads_the_newer_of_two_cookie_stores() {
+        for network_newer in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let profile = dir.path().join("Default");
+            write_cookies_db_for_tests(&profile, &[]).unwrap();
+            write_network_cookies_db_for_tests(&profile, &one_row()).unwrap();
+            if !network_newer {
+                // Swap the contents: the root file holds the row and is newer.
+                std::fs::remove_dir_all(profile.join("Network")).unwrap();
+                std::fs::remove_file(profile.join("Cookies")).unwrap();
+                write_network_cookies_db_for_tests(&profile, &[]).unwrap();
+                write_cookies_db_for_tests(&profile, &one_row()).unwrap();
+            }
+            let (new, old) = if network_newer {
+                (profile.join("Network/Cookies"), profile.join("Cookies"))
+            } else {
+                (profile.join("Cookies"), profile.join("Network/Cookies"))
+            };
+            touch(&old, 600);
+            touch(&new, 5);
+            let got = read_linux(&profile).unwrap();
+            assert_eq!(got.len(), 1, "network_newer={network_newer}");
+        }
+    }
+
+    /// Chrome is running: its newest cookies are only in the `-wal` file. The
+    /// reader must see them (and never touch the live database).
+    #[test]
+    fn reads_cookies_that_only_exist_in_the_wal_of_a_running_chrome() {
         let dir = tempfile::tempdir().unwrap();
         let profile = dir.path().join("Default");
-        write_cookies_db_for_tests(&profile, &[]).unwrap();
-        write_network_cookies_db_for_tests(&profile, &one_row()).unwrap();
-        assert_eq!(read_linux(&profile).unwrap().len(), 1);
+        write_network_cookies_db_for_tests(&profile, &[]).unwrap();
+        let db = profile.join("Network/Cookies");
+        let live = rusqlite::Connection::open(&db).unwrap();
+        let mode: String = live
+            .query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
+        live.execute_batch("PRAGMA wal_autocheckpoint=0").unwrap();
+        let row = &one_row()[0];
+        live.execute(
+            "INSERT INTO cookies (host_key, name, value, encrypted_value, path, expires_utc, \
+             is_secure, is_httponly, samesite) VALUES (?1, ?2, '', ?3, ?4, 0, 1, 1, 1)",
+            rusqlite::params![row.host_key, row.name, row.encrypted_value, row.path],
+        )
+        .unwrap();
+        assert!(db.with_file_name("Cookies-wal").metadata().unwrap().len() > 0);
+        let before = std::fs::read(&db).unwrap();
+        let got = read_linux(&profile).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].value.as_str(), "gh-session-abc");
+        // The live database was only copied, never written.
+        assert_eq!(std::fs::read(&db).unwrap(), before);
+        drop(live);
     }
 
     #[test]
-    fn cookies_store_prefers_network_and_falls_back_to_legacy() {
+    fn cookies_store_picks_by_mtime_wal_included() {
         use cua_teleport_bundle::layout::chrome::cookies_store;
         let d = tempfile::tempdir().unwrap();
         let p = d.path();
-        assert_eq!(cookies_store(p), p.join("Network/Cookies"));
+        // Neither: the root path, what current Chrome creates.
+        assert_eq!(cookies_store(p), p.join("Cookies"));
         std::fs::write(p.join("Cookies"), b"x").unwrap();
         assert_eq!(cookies_store(p), p.join("Cookies"));
         std::fs::create_dir_all(p.join("Network")).unwrap();
         std::fs::write(p.join("Network/Cookies"), b"x").unwrap();
+        touch(&p.join("Cookies"), 600);
+        touch(&p.join("Network/Cookies"), 5);
+        assert_eq!(cookies_store(p), p.join("Network/Cookies"));
+        touch(&p.join("Cookies"), 1);
+        touch(&p.join("Network/Cookies"), 600);
+        assert_eq!(cookies_store(p), p.join("Cookies"));
+        // A fresh -wal on the network store makes it the live one.
+        std::fs::write(p.join("Network/Cookies-wal"), b"x").unwrap();
+        touch(&p.join("Network/Cookies-wal"), 0);
+        touch(&p.join("Cookies"), 100);
         assert_eq!(cookies_store(p), p.join("Network/Cookies"));
     }
 

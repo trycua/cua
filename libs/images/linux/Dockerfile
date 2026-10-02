@@ -100,6 +100,8 @@ RUN install -d -m 0755 /etc/apt/keyrings
 # Chromium from the xtradeb/apps PPA (open-source build, BSD-3-Clause; not
 # Google-branded Chrome): only the chromium packages may come from it, at
 # exactly CHROMIUM_VERSION, and the key must have the pinned fingerprint.
+# The key is vendored (common/apt-keys/xtradeb-apps.asc), not fetched from
+# keyserver.ubuntu.com, so a keyserver outage cannot break the build.
 # cua-driver's browser_prepare launches /usr/lib/chromium/chromium (a
 # root-owned package payload) with a driver-owned throwaway profile. The
 # managed policy turns off first-run noise, sign-in and password saving.
@@ -109,8 +111,8 @@ ARG CHROMIUM_VERSION=
 ARG CHROMIUM_VERSION_AMD64=154.0.8037.92-1xtradeb1.2404.1
 ARG CHROMIUM_VERSION_ARM64=154.0.8037.92-1xtradeb1.2404.1
 ARG CHROMIUM_PPA_KEY=5301FA4FD93244FBC6F6149982BB6851C64F6880
-RUN curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${CHROMIUM_PPA_KEY}" \
-      | gpg --dearmor >/etc/apt/keyrings/xtradeb-apps.gpg \
+RUN --mount=type=bind,source=common/apt-keys/xtradeb-apps.asc,target=/tmp/xtradeb-apps.asc \
+    gpg --dearmor </tmp/xtradeb-apps.asc >/etc/apt/keyrings/xtradeb-apps.gpg \
  && gpg --show-keys --with-colons /etc/apt/keyrings/xtradeb-apps.gpg | grep -q "^fpr:::::::::${CHROMIUM_PPA_KEY}:" \
  && echo "deb [signed-by=/etc/apt/keyrings/xtradeb-apps.gpg] https://ppa.launchpadcontent.net/xtradeb/apps/ubuntu noble main" \
       >/etc/apt/sources.list.d/xtradeb-apps.list \

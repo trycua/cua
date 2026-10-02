@@ -17,7 +17,8 @@
 //! nothing: Chrome migrates `Login Data` from a version number, and a
 //! hand-made table at the wrong version would be razed on first launch. So
 //! when the browser has never been launched here (no `Login Data` yet) the
-//! install fails with a clear message instead of guessing.
+//! passwords are skipped with a notice back to the sender instead of
+//! guessing.
 
 use std::path::Path;
 
@@ -69,11 +70,14 @@ pub fn install_logins(
     }
     let db = profile_dir.join("Login Data");
     if !db.is_file() {
-        return Err(TeleportError::Provider(
-            "the browser in the destination has no saved-password store yet; open it once there, \
-             then send the passwords again"
+        // Not a failure of the whole import (the cookies and files still
+        // land): the passwords wait for a browser that has run once.
+        record.notices.push(
+            "Saved passwords were not sent: the browser here has no password store yet. Open it \
+             once in this Space, then send the passwords again."
                 .into(),
-        ));
+        );
+        return Ok(0);
     }
     let secret = ensure_safe_storage_secret(host, platform, service, record)
         .map_err(|e| TeleportError::Provider(format!("Safe Storage key for {service}: {e}")))?;
@@ -242,18 +246,24 @@ mod tests {
     }
 
     #[test]
-    fn a_browser_never_launched_gets_a_clear_message_and_nothing_is_guessed() {
+    fn a_browser_never_launched_gets_a_notice_and_nothing_is_guessed() {
         let dir = tempfile::tempdir().unwrap();
-        let err = install_logins(
+        let mut record = ImportRecord::default();
+        let n = install_logins(
             &FakeHost::new(),
             dir.path(),
             "Chrome Safe Storage",
             Platform::Linux,
             &[login("https://github.com", "octo", b"pw")],
-            &mut ImportRecord::default(),
+            &mut record,
         )
-        .unwrap_err();
-        assert!(err.to_string().contains("open it once"), "{err}");
+        .unwrap();
+        assert_eq!(n, 0);
+        assert!(
+            record.notices[0].contains("Open it once"),
+            "{:?}",
+            record.notices
+        );
         assert!(!dir.path().join("Login Data").exists());
     }
 

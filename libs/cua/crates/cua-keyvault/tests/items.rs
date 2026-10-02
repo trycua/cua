@@ -362,6 +362,7 @@ async fn unlocked_items_answer_an_agent_without_asking_and_no_value_comes_back()
                 items: ids,
                 target: "dev-1".into(),
                 include_passwords: false,
+                launch: false,
             },
         )
         .await
@@ -397,6 +398,7 @@ async fn unlocked_items_answer_an_agent_without_asking_and_no_value_comes_back()
                     items: vec![github[0].id.clone()],
                     target: "dev-1".into(),
                     include_passwords: false,
+                    launch: false,
                 },
             )
             .await
@@ -502,6 +504,7 @@ async fn locking_an_item_revokes_the_unattended_grants_it_backed() {
                 items: held,
                 target: "dev-1".into(),
                 include_passwords: false,
+                launch: false,
             },
         )
         .await
@@ -613,6 +616,7 @@ async fn deleting_a_batch_wipes_their_live_copies_and_is_all_or_nothing() {
                     items: ids(set),
                     target: "dev-1".into(),
                     include_passwords: false,
+                    launch: false,
                 },
             )
             .await
@@ -683,6 +687,7 @@ async fn sending_part_of_an_app_filters_records_and_nothing_else_leaves() {
                 items: ids(&chosen),
                 target: "dev-1".into(),
                 include_passwords: false,
+                launch: false,
             },
         )
         .await
@@ -710,6 +715,7 @@ async fn saved_passwords_are_delivered_only_when_the_user_ticked_them_and_never_
         items,
         target: "dev-1".into(),
         include_passwords: include,
+        launch: false,
     };
     // Without the explicit choice a password is never part of a delivery.
     let err = r
@@ -886,6 +892,7 @@ async fn a_big_file_is_stored_as_a_blob_and_delivered_whole() {
             items: ids(&items),
             target: "dev-1".into(),
             include_passwords: false,
+            launch: false,
         },
     )
     .await

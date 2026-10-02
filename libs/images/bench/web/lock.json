@@ -6,31 +6,31 @@
   "sources": [
     "https://github.com/Farama-Foundation/miniwob-plusplus.git@a7658beb68e1d3572329e06734c5822bd284ddc8"
   ],
-  "stamp": "20260927-9a3828d",
+  "stamp": "20261002-01636cb",
   "dry_run": false,
   "promoted": true,
   "index": {
-    "ref": "ghcr.io/trycua/bench-web:1.0-20260927-9a3828d",
-    "digest": "sha256:e1781d7449146d35ee0d4b114890bbb7452cab1cd500821b9d281877ed5a8954",
+    "ref": "ghcr.io/trycua/bench-web:1.0-20261002-01636cb",
+    "digest": "sha256:3b7e1d9d4e34694175cf1b44ffefc09b557c94b1c8f946fe50646d68df39ca87",
     "floating": "ghcr.io/trycua/bench-web:1.0"
   },
   "disk_index": {
-    "ref": "ghcr.io/trycua/bench-web:1.0-disk-20260927-9a3828d",
-    "digest": "sha256:798e995956ca6a7ef7eacca04535ab44ff468d27631387308e92c61c2d44c4e1",
+    "ref": "ghcr.io/trycua/bench-web:1.0-disk-20261002-01636cb",
+    "digest": "sha256:989c072b0da8319b232f775f0c4731cfaa9e894fc8bcc1ef67c640ee895a8908",
     "floating": "ghcr.io/trycua/bench-web:1.0-disk"
   },
   "children": [
     {
       "arch": "amd64",
-      "rootfs": "sha256:f978dfd5e1dd4d49d0c59fe128ded48fddb5a38a9de1dff4155ba93970201a35",
-      "containerdisk": "sha256:f0ca3f7d3b4ef4f1d5500bfb7524cfe5fbd653cabded6d46a0d88786816d9735"
+      "rootfs": "sha256:0790eca5ce1634c2eaca7b4a9b742b74bd00c86be6b531acee3933be462ff4eb",
+      "containerdisk": "sha256:40cc136209172c5179503e8aca961dc2c63e9c483e99be38e4ecb0154434b8fd"
     },
     {
       "arch": "arm64",
-      "rootfs": "sha256:ee70dda02831b6d3ff01c45dac2e219e0a67aec12fc3e238e120a2d74ef30422",
-      "containerdisk": "sha256:9986c79436295ccc31e67f72f34b9214389fceb067e957b0404376018a615827"
+      "rootfs": "sha256:0033ca069035cd8fd494bc69a3f3253224efc2c2b484e8620b012b7031aa2c67",
+      "containerdisk": "sha256:e60878ebdff70751567a44e18bb48fbed3c1a4bb05726a1e6d0cf7f8ff15eb92"
     }
   ],
-  "pinned": "ghcr.io/trycua/bench-web@sha256:e1781d7449146d35ee0d4b114890bbb7452cab1cd500821b9d281877ed5a8954",
-  "written": "2026-09-28T00:45:17Z"
+  "pinned": "ghcr.io/trycua/bench-web@sha256:3b7e1d9d4e34694175cf1b44ffefc09b557c94b1c8f946fe50646d68df39ca87",
+  "written": "2026-10-02T07:25:05Z"
 }

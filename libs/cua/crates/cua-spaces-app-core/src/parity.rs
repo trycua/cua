@@ -601,9 +601,6 @@ pub mod frame {
         "revokeAll",
         "confirmNote",
         "protectionTitle",
-        "accountsTitle",
-        "appLabel",
-        "everyAccount",
     ];
 
     /// The This machine page.
@@ -1269,24 +1266,17 @@ pub mod frame {
                 Some(n) => format!("{}:{n}", c["title"].as_str().unwrap_or("")),
                 None => c["title"].as_str().unwrap_or("").to_string(),
             })).collect::<Vec<_>>()).unwrap_or_default(),
-            "sites": v["sites"].as_array().map(|a| a.iter().map(|x| Value::String(format!("{} ({}){}",
-                x["title"].as_str().unwrap_or(""), x["accounts"], if x["waiting"] == true { " waiting" } else { "" }))).collect::<Vec<_>>()).unwrap_or_default(),
+            "apps": v["apps"].as_array().map(|a| a.iter().map(|x| Value::String(format!("{} ({}){}",
+                x["title"].as_str().unwrap_or(""), x["items"], if x["waiting"] == true { " waiting" } else { "" }))).collect::<Vec<_>>()).unwrap_or_default(),
         })
     }
 
-    /// A Keyvault list.
+    /// A Keyvault list (the panes other than the vault list).
     pub fn kv_list(v: &Value) -> Value {
         let text = |x: &Value| x.as_str().unwrap_or("").to_string();
         json!({
             "title": v["title"],
-            "sites": v["sites"].as_array().map(|a| a.iter().map(|g| Value::String(format!("{} [{}]: {}",
-                text(&g["title"]), text(&g["unattended"]),
-                g["rows"].as_array().map(|r| r.iter().map(|row| format!("{} {}{} <{}>",
-                    text(&row["account"]),
-                    if row["item"]["policy"]["unattended"] == true { "on" } else { "off" },
-                    if row["toggleEnabled"] == true { "" } else { " locked" },
-                    row["consent"].as_array().map(|c| c.iter().map(|chip| format!("{}:{}", text(&chip["kind"]), text(&chip["text"]))).collect::<Vec<_>>().join("; ")).unwrap_or_default()
-                )).collect::<Vec<_>>().join(" | ")).unwrap_or_default()))).collect::<Vec<_>>()).unwrap_or_default(),
+            "vault": v["vault"],
             "pending": v["pending"].as_array().map(|a| a.iter().map(|p| Value::String(format!("{} ({}) {} for {}",
                 text(&p["caller"]), text(&p["badge"]["text"]), text(&p["summary"]), text(&p["wants"])))).collect::<Vec<_>>()).unwrap_or_default(),
             "access": v["access"].as_array().map(|a| a.iter().map(|x| Value::String(format!("{} / {} [{}]",
@@ -1295,6 +1285,117 @@ pub mod frame {
                 text(&x["decision"]["verb"]), text(&x["decision"]["what"]), text(&x["decision"]["tone"]), text(&x["age"])))).collect::<Vec<_>>()).unwrap_or_default(),
             "empty": v["emptyText"],
         })
+    }
+
+    /// The vault list: each app with its sites and files, one line each,
+    /// the selection and the batch bar.
+    pub fn kv_vault(v: &Value) -> Value {
+        let text = |x: &Value| x.as_str().unwrap_or("").to_string();
+        let mark = |x: &Value| match x.as_str().unwrap_or("") {
+            "on" => "[x]",
+            "mixed" => "[-]",
+            _ => "[ ]",
+        };
+        let row = |r: &Value| {
+            format!(
+                "{} {} {} | {} | {} | {}{}",
+                if r["selected"] == true { "[x]" } else { "[ ]" },
+                text(&r["kindLabel"]),
+                text(&r["title"]),
+                text(&r["subtitle"]),
+                text(&r["lockSymbol"]),
+                text(&r["updated"]),
+                if r["identityProvider"] == true {
+                    " | always asks"
+                } else {
+                    ""
+                }
+            )
+        };
+        let lines: Vec<Value> = v["apps"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|a| {
+                let mut out = vec![Value::String(format!(
+                    "{} {} {} | {} | {} | {}",
+                    mark(&a["selected"]),
+                    text(&a["name"]),
+                    text(&a["providerId"]),
+                    text(&a["summary"]),
+                    text(&a["lock"]),
+                    text(&a["updated"])
+                ))];
+                for s in a["sites"].as_array().into_iter().flatten() {
+                    out.push(Value::String(format!(
+                        "  {} {} | {} | {} | {}{}",
+                        mark(&s["selected"]),
+                        text(&s["site"]),
+                        text(&s["counts"]),
+                        text(&s["lock"]),
+                        text(&s["updated"]),
+                        if s["open"] == true { " | open" } else { "" }
+                    )));
+                    for r in s["rows"].as_array().into_iter().flatten() {
+                        out.push(Value::String(format!("    {}", row(r))));
+                    }
+                }
+                if !a["files"].is_null() {
+                    let f = &a["files"];
+                    out.push(Value::String(format!(
+                        "  {} files ({}) | {}{}",
+                        mark(&f["selected"]),
+                        f["count"],
+                        text(&f["lock"]),
+                        if f["open"] == true { " | open" } else { "" }
+                    )));
+                    for r in f["rows"].as_array().into_iter().flatten() {
+                        out.push(Value::String(format!("    {}", row(r))));
+                    }
+                }
+                out
+            })
+            .collect();
+        let sel = &v["selection"];
+        json!({
+            "shown": format!("{}/{}", v["shown"], v["total"]),
+            "lines": lines,
+            "empty": v["emptyText"],
+            "selection": format!("{} (unlock {} / lock {} / always ask {})",
+                text(&sel["title"]),
+                sel["unlockIds"].as_array().map(|a| a.len()).unwrap_or(0),
+                sel["lockIds"].as_array().map(|a| a.len()).unwrap_or(0),
+                sel["alwaysAsk"]),
+            "canUnlock": sel["canUnlock"],
+            "canLock": sel["canLock"],
+        })
+    }
+
+    /// The unlock prompt (`null`: skipped).
+    pub fn kv_unlock_prompt(v: &Value) -> Value {
+        if v.is_null() {
+            return Value::Null;
+        }
+        json!([
+            v["title"],
+            v["message"],
+            v["subject"],
+            format!(
+                "{} / {} / {}",
+                str_of(&v["deny"]),
+                str_of(&v["allow"]),
+                str_of(&v["neverAsk"])
+            ),
+        ])
+    }
+
+    /// The delete confirmation.
+    pub fn kv_delete_confirm(v: &Value) -> Value {
+        json!([
+            v["title"],
+            v["message"],
+            format!("{} / {}", str_of(&v["confirm"]), str_of(&v["cancel"]))
+        ])
     }
 
     /// The approval sheet.
@@ -2272,7 +2373,7 @@ fn run_keyvault(f: &Value, h: &dyn Host) -> Result<Value, String> {
         let l = c(
             h,
             "keyvault.list",
-            json!({ "overview": o, "selection": sel, "now": now, "query": "" }),
+            json!({ "overview": o, "selection": sel, "now": now }),
         )?;
         frames.push(json!({ "list": sel, "frame": frame::kv_list(&l) }));
     }
@@ -2306,21 +2407,60 @@ fn run_keyvault(f: &Value, h: &dyn Host) -> Result<Value, String> {
         json!({ "state": { "requestId": f["deny"], "selected": [] } }),
     )?;
     frames.push(json!({ "denyCommand": deny }));
-    let t = &f["siteToggle"];
-    let detail = c(
+    let vault = &f["vault"];
+    let mut st = vault["state"].clone();
+    let v = c(
         h,
-        "keyvault.siteDetail",
-        json!({ "overview": o, "key": t["key"], "now": now }),
+        "keyvault.vaultView",
+        json!({ "overview": o, "state": st, "now": now }),
     )?;
-    let toggle = c(
+    frames.push(json!({ "vault": "open", "frame": frame::kv_vault(&v) }));
+    for action in vault["actions"].as_array().into_iter().flatten() {
+        st = c(
+            h,
+            "keyvault.vaultReduce",
+            json!({ "overview": o, "state": st, "action": action }),
+        )?;
+        let v = c(
+            h,
+            "keyvault.vaultView",
+            json!({ "overview": o, "state": st, "now": now }),
+        )?;
+        frames.push(json!({ "vault": action, "frame": frame::kv_vault(&v) }));
+    }
+    // One app's list: the sidebar's pick narrows the state.
+    let mut one = vault["state"].clone();
+    one["app"] = vault["app"].clone();
+    let v = c(
         h,
-        "keyvault.siteToggle",
-        json!({ "group": detail["group"], "on": t["on"] }),
+        "keyvault.vaultView",
+        json!({ "overview": o, "state": one, "now": now }),
     )?;
-    frames.push(json!({
-        "siteDetail": { "switch": detail["siteSwitch"], "state": detail["siteState"], "enabled": detail["siteSwitchEnabled"] },
-        "siteToggle": toggle,
-    }));
+    frames.push(json!({ "vaultApp": vault["app"], "frame": frame::kv_vault(&v) }));
+    for u in vault["unlock"].as_array().into_iter().flatten() {
+        let p = c(
+            h,
+            "keyvault.unlockPrompt",
+            json!({ "overview": o, "count": u["count"], "name": u["name"] }),
+        )?;
+        frames.push(json!({ "unlockPrompt": u, "frame": frame::kv_unlock_prompt(&p) }));
+    }
+    let mut skip = o.clone();
+    skip["status"]["skip_unlock_prompt"] = Value::Bool(true);
+    let p = c(
+        h,
+        "keyvault.unlockPrompt",
+        json!({ "overview": skip, "count": 1, "name": null }),
+    )?;
+    frames.push(json!({ "unlockPromptSkipped": frame::kv_unlock_prompt(&p) }));
+    for d in vault["delete"].as_array().into_iter().flatten() {
+        let p = c(
+            h,
+            "keyvault.deleteConfirm",
+            json!({ "count": d["count"], "liveCopies": d["liveCopies"] }),
+        )?;
+        frames.push(json!({ "deleteConfirm": d, "frame": frame::kv_delete_confirm(&p) }));
+    }
     let mut off = o.clone();
     off["status"]["disabled"] = Value::Bool(true);
     let page = c(h, "keyvault.page", json!({ "overview": off, "now": now }))?;

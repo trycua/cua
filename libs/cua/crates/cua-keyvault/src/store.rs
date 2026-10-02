@@ -8,6 +8,7 @@
 //!   vault.json           header: format, vault id, protector records (wrapped VMK only)
 //!   meta.sealed          Meta, AEAD under HKDF(VMK, "meta"), AAD = vault id
 //!   items/<id>.sealed    {rev, wrapped item key, payload}; AAD = vault | id | rev
+//!   blobs/<sha256>.sealed  a big file's bytes, content-addressed; AAD = vault | hash
 //!   audit.log            hash-chained JSONL (see `audit`)
 //! ```
 //!
@@ -26,7 +27,12 @@ use crate::protector::{Protector, ProtectorRecord};
 use crate::{Error, Result};
 
 /// Header format version this build reads and writes.
-pub const FORMAT: u32 = 1;
+///
+/// Format 2 stores one sealed item per secret (cookie, localStorage value,
+/// password or file) grouped by app. Format 1 held whole-app sessions; it
+/// was only ever shipped in previews and is not migrated (see
+/// [`Error::OldFormat`]).
+pub const FORMAT: u32 = 2;
 /// Largest item payload accepted (bundles above this are refused).
 pub const MAX_ITEM_BYTES: usize = 256 * 1024 * 1024;
 
@@ -43,6 +49,27 @@ pub struct Header {
     pub protectors: Vec<ProtectorRecord>,
 }
 
+/// What [`Vault::upsert_items`] did with one item.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpsertOutcome {
+    /// A new item.
+    Created,
+    /// An existing item whose value changed.
+    Updated,
+    /// An existing item saved again with the same value (only its
+    /// timestamp moved).
+    Unchanged,
+}
+
+/// One saved item.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Upsert {
+    /// The item id (existing items keep theirs).
+    pub id: String,
+    /// What happened.
+    pub outcome: UpsertOutcome,
+}
+
 #[derive(Serialize, Deserialize)]
 struct ItemRecord {
     id: String,
@@ -56,6 +83,7 @@ struct Keys {
     meta: SecretKey,
     wrap: SecretKey,
     audit: SecretKey,
+    blob: SecretKey,
 }
 
 impl Keys {
@@ -64,6 +92,7 @@ impl Keys {
             meta: vmk.derive(b"cua-keyvault/v1/meta"),
             wrap: vmk.derive(b"cua-keyvault/v1/item-wrap"),
             audit: vmk.derive(b"cua-keyvault/v1/audit"),
+            blob: vmk.derive(b"cua-keyvault/v2/blob"),
             vmk,
         }
     }
@@ -139,6 +168,14 @@ fn item_aad(vault_id: &str, id: &str, rev: u64, part: &str) -> Vec<u8> {
     format!("cua-keyvault/v1/item-{part}|{vault_id}|{id}|{rev}").into_bytes()
 }
 
+fn blob_aad(vault_id: &str, hash: &str) -> Vec<u8> {
+    format!("cua-keyvault/v2/blob|{vault_id}|{hash}").into_bytes()
+}
+
+fn valid_hash(h: &str) -> bool {
+    h.len() == 64 && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
 }
@@ -205,6 +242,9 @@ impl Vault {
         })?;
         let header: Header =
             serde_json::from_slice(&raw).map_err(|e| Error::Corrupt(format!("vault.json: {e}")))?;
+        if header.format < FORMAT {
+            return Err(Error::OldFormat(header.format));
+        }
         if header.format != FORMAT {
             return Err(Error::Corrupt(format!(
                 "vault format {} is not supported by this build (expects {FORMAT})",
@@ -378,6 +418,123 @@ impl Vault {
         Ok(self.dir.join("items").join(format!("{id}.sealed")))
     }
 
+    fn blob_path(&self, hash: &str) -> Result<PathBuf> {
+        if !valid_hash(hash) {
+            return Err(Error::Invalid(format!("bad blob hash {hash:?}")));
+        }
+        Ok(self.dir.join("blobs").join(format!("{hash}.sealed")))
+    }
+
+    /// Seals `bytes` as a content-addressed blob and returns its SHA-256
+    /// (hex). The same bytes are stored once, however many items name them.
+    pub fn put_blob(&self, bytes: &[u8]) -> Result<String> {
+        let keys = self.keys()?;
+        if bytes.len() > MAX_ITEM_BYTES {
+            return Err(Error::Invalid(format!(
+                "a file of {} bytes is over the {MAX_ITEM_BYTES} byte limit",
+                bytes.len()
+            )));
+        }
+        let hash = hex::encode(crypto::sha256(bytes));
+        let path = self.blob_path(&hash)?;
+        if path.exists() {
+            return Ok(hash);
+        }
+        private_dir(&self.dir.join("blobs"))?;
+        let sealed = crypto::seal(&keys.blob, &blob_aad(&self.header.vault_id, &hash), bytes)?;
+        write_private(&path, &serde_json::to_vec(&sealed)?)?;
+        Ok(hash)
+    }
+
+    /// Reads a blob, checking it against its own name.
+    pub fn read_blob(&self, hash: &str) -> Result<Zeroizing<Vec<u8>>> {
+        let keys = self.keys()?;
+        let raw = std::fs::read(self.blob_path(hash)?)?;
+        let sealed: Sealed = serde_json::from_slice(&raw)
+            .map_err(|e| Error::Corrupt(format!("blob {hash}: {e}")))?;
+        let plain = crypto::open(&keys.blob, &blob_aad(&self.header.vault_id, hash), &sealed)
+            .map_err(|_| Error::Corrupt(format!("blob {hash} does not authenticate")))?;
+        if !crypto::ct_eq(
+            hex::encode(crypto::sha256(&plain)).as_bytes(),
+            hash.as_bytes(),
+        ) {
+            return Err(Error::Corrupt(format!(
+                "blob {hash} does not match its name (swapped)"
+            )));
+        }
+        Ok(plain)
+    }
+
+    /// A payload with a big file's bytes put back inline, for delivery.
+    pub fn inline_blobs(&self, payload: &ItemPayload) -> Result<ItemPayload> {
+        use base64::Engine as _;
+        if payload.schema != crate::record::FILE_V1 {
+            return Ok(payload.clone());
+        }
+        let mut f: crate::record::FileRecord = serde_json::from_str(&payload.record)
+            .map_err(|_| Error::Corrupt("a file record is not valid".into()))?;
+        if let Some(hash) = f.blob.take() {
+            let bytes = self.read_blob(&hash)?;
+            f.content = Some(base64::engine::general_purpose::STANDARD.encode(bytes.as_slice()));
+        }
+        Ok(payload.with_record(serde_json::to_string(&f)?))
+    }
+
+    /// Moves a big file's bytes out of its record into a blob (the record
+    /// then names the hash); anything else is stored as it is.
+    fn externalize(&self, meta: &mut ItemMeta, payload: ItemPayload) -> Result<ItemPayload> {
+        use base64::Engine as _;
+        meta.blob = None;
+        if payload.schema != crate::record::FILE_V1 {
+            return Ok(payload);
+        }
+        let mut f: crate::record::FileRecord = serde_json::from_str(&payload.record)
+            .map_err(|_| Error::Invalid("a file record is not valid".into()))?;
+        let Some(content) = f.content.clone() else {
+            meta.blob = f.blob.clone();
+            return Ok(payload);
+        };
+        let bytes = Zeroizing::new(
+            base64::engine::general_purpose::STANDARD
+                .decode(content)
+                .map_err(|_| Error::Invalid("a file record is not base64".into()))?,
+        );
+        if bytes.len() <= crate::record::INLINE_FILE_LIMIT {
+            return Ok(payload);
+        }
+        let hash = self.put_blob(&bytes)?;
+        f.content = None;
+        f.blob = Some(hash.clone());
+        meta.blob = Some(hash);
+        Ok(payload.with_record(serde_json::to_string(&f)?))
+    }
+
+    /// Deletes blobs no item names any more.
+    fn gc_blobs(&self) -> Result<()> {
+        let dir = self.dir.join("blobs");
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            return Ok(());
+        };
+        let live: std::collections::HashSet<&str> = self
+            .meta()?
+            .items
+            .values()
+            .filter_map(|i| i.blob.as_deref())
+            .collect();
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Some(hash) = name.strip_suffix(".sealed") else {
+                continue;
+            };
+            if !live.contains(hash) {
+                let len = e.metadata().map(|m| m.len()).unwrap_or(0) as usize;
+                let _ = std::fs::write(e.path(), vec![0u8; len]);
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+        Ok(())
+    }
+
     fn write_item(&self, id: &str, rev: u64, payload: &ItemPayload) -> Result<String> {
         let keys = self.keys()?;
         let vid = &self.header.vault_id;
@@ -405,44 +562,151 @@ impl Vault {
         Ok(digest)
     }
 
-    /// Stores a new item. `meta.id`, `rev`, `record_digest` and timestamps
-    /// are assigned here.
-    pub fn put_item(&mut self, mut meta: ItemMeta, payload: &ItemPayload) -> Result<String> {
-        let id = crypto::random_id()?;
-        let digest = self.write_item(&id, 1, payload)?;
-        let now = crate::now_ms();
-        meta.id = id.clone();
-        meta.rev = 1;
-        meta.record_digest = digest;
-        meta.created_ms = now;
-        meta.updated_ms = now;
-        let res = self.update_meta(|m| {
-            m.items.insert(meta.id.clone(), meta);
-            Ok(())
-        });
-        if res.is_err() {
-            let _ = std::fs::remove_file(self.item_path(&id)?);
-        }
-        res.map(|_| id)
+    /// Saves one item (see [`Vault::upsert_items`]) and returns its id.
+    pub fn put_item(&mut self, meta: ItemMeta, payload: &ItemPayload) -> Result<String> {
+        let mut out = self.upsert_items(vec![(meta, payload.clone())])?;
+        Ok(out.remove(0).id)
     }
 
-    /// Replaces an item's payload (new revision, new item key).
-    pub fn replace_payload(&mut self, id: &str, payload: &ItemPayload) -> Result<()> {
-        let rev = self
+    /// Saves a batch of items, upserting by key: an item whose app and
+    /// [`ItemMeta::unique_key`] already exist is updated in place (same id,
+    /// same lock state and policy, same creation time), never duplicated.
+    /// Later duplicates inside the batch win. The whole batch is one
+    /// metadata write. `updated_ms` is bumped for every item saved again;
+    /// the sealed record is rewritten only when its value changed.
+    pub fn upsert_items(&mut self, items: Vec<(ItemMeta, ItemPayload)>) -> Result<Vec<Upsert>> {
+        let now = crate::now_ms();
+        // (provider, unique key) -> id, for what the vault already holds.
+        let mut index: std::collections::HashMap<(String, String), String> = self
             .meta()?
             .items
-            .get(id)
-            .ok_or_else(|| Error::NotFound(format!("item {id}")))?
-            .rev
-            + 1;
-        let digest = self.write_item(id, rev, payload)?;
-        self.update_meta(|m| {
-            let it = m.items.get_mut(id).expect("checked above");
-            it.rev = rev;
-            it.record_digest = digest;
-            it.updated_ms = crate::now_ms();
+            .values()
+            .map(|i| ((i.provider_id.clone(), i.unique_key()), i.id.clone()))
+            .collect();
+        // Later duplicates win: keep the last of each key, in first-seen order.
+        let mut order: Vec<(String, String)> = Vec::new();
+        let mut last: std::collections::HashMap<(String, String), (ItemMeta, ItemPayload)> =
+            std::collections::HashMap::new();
+        for (m, p) in items {
+            let k = (m.provider_id.clone(), m.unique_key());
+            if !last.contains_key(&k) {
+                order.push(k.clone());
+            }
+            last.insert(k, (m, p));
+        }
+        enum Change {
+            New(Box<ItemMeta>),
+            Saved {
+                id: String,
+                meta: Box<ItemMeta>,
+                written: Option<(u64, String)>,
+            },
+        }
+        let mut changes = Vec::new();
+        let mut created_files: Vec<String> = Vec::new();
+        let mut out = Vec::new();
+        let fail = |this: &Self, files: &[String], e: Error| -> Error {
+            for id in files {
+                if let Ok(p) = this.item_path(id) {
+                    let _ = std::fs::remove_file(p);
+                }
+            }
+            e
+        };
+        for k in order {
+            let (mut meta, payload) = last.remove(&k).expect("keyed above");
+            meta.updated_ms = now;
+            let payload = match self.externalize(&mut meta, payload) {
+                Ok(p) => p,
+                Err(e) => return Err(fail(self, &created_files, e)),
+            };
+            match index.get(&k).cloned() {
+                Some(id) => {
+                    let cur = self.meta()?.items[&id].clone();
+                    let same = self
+                        .read_payload(&id)
+                        .map(|p| p == payload)
+                        .unwrap_or(false);
+                    let written = if same {
+                        None
+                    } else {
+                        let rev = cur.rev + 1;
+                        match self.write_item(&id, rev, &payload) {
+                            Ok(d) => Some((rev, d)),
+                            Err(e) => return Err(fail(self, &created_files, e)),
+                        }
+                    };
+                    out.push(Upsert {
+                        id: id.clone(),
+                        outcome: if same {
+                            UpsertOutcome::Unchanged
+                        } else {
+                            UpsertOutcome::Updated
+                        },
+                    });
+                    changes.push(Change::Saved {
+                        id,
+                        meta: Box::new(meta),
+                        written,
+                    });
+                }
+                None => {
+                    let id = crypto::random_id()?;
+                    let digest = match self.write_item(&id, 1, &payload) {
+                        Ok(d) => d,
+                        Err(e) => return Err(fail(self, &created_files, e)),
+                    };
+                    created_files.push(id.clone());
+                    meta.id = id.clone();
+                    meta.rev = 1;
+                    meta.record_digest = digest;
+                    meta.created_ms = now;
+                    index.insert(k, id.clone());
+                    out.push(Upsert {
+                        id,
+                        outcome: UpsertOutcome::Created,
+                    });
+                    changes.push(Change::New(Box::new(meta)));
+                }
+            }
+        }
+        let res = self.update_meta(|m| {
+            for c in changes {
+                match c {
+                    Change::New(meta) => {
+                        m.items.insert(meta.id.clone(), *meta);
+                    }
+                    Change::Saved { id, meta, written } => {
+                        let it = m
+                            .items
+                            .get_mut(&id)
+                            .ok_or_else(|| Error::NotFound(format!("item {id}")))?;
+                        // Facts about the secret refresh; the user's choices
+                        // (the lock, targets, lifetime) and identity stay.
+                        it.updated_ms = meta.updated_ms;
+                        it.session = meta.session;
+                        it.expires_ms = meta.expires_ms;
+                        it.bytes = meta.bytes;
+                        it.blob = meta.blob.clone();
+                        it.path = meta.path.clone();
+                        it.app_display = meta.app_display;
+                        it.source = meta.source;
+                        if let Some((rev, digest)) = written {
+                            it.rev = rev;
+                            it.record_digest = digest;
+                        }
+                    }
+                }
+            }
             Ok(())
-        })
+        });
+        match res {
+            Ok(()) => {
+                self.gc_blobs()?;
+                Ok(out)
+            }
+            Err(e) => Err(fail(self, &created_files, e)),
+        }
     }
 
     /// Decrypts an item's payload after checking its record against the
@@ -486,34 +750,82 @@ impl Vault {
             .map_err(|e| Error::Corrupt(format!("item {id} payload: {e}")))
     }
 
+    /// Remembers site icons (site to base64 PNG), one metadata write. The
+    /// map stays bounded.
+    pub fn set_favicons(&mut self, icons: Vec<(String, String)>) -> Result<()> {
+        const MAX: usize = 1024;
+        if icons.is_empty() {
+            return Ok(());
+        }
+        self.update_meta(|m| {
+            for (site, png) in icons {
+                if m.favicons.len() < MAX || m.favicons.contains_key(&site) {
+                    m.favicons.insert(site, png);
+                }
+            }
+            Ok(())
+        })
+    }
+
     /// Deletes an item (crypto-shredded: the record, with its wrapped key,
     /// is removed) and drops it from grants and rules.
     pub fn delete_item(&mut self, id: &str) -> Result<ItemMeta> {
-        let path = self.item_path(id)?;
+        self.delete_items(&[id.to_string()])
+            .map(|mut v| v.remove(0))
+    }
+
+    /// Deletes several items with one metadata write. Fails, deleting
+    /// nothing, when any id is unknown.
+    pub fn delete_items(&mut self, ids: &[String]) -> Result<Vec<ItemMeta>> {
+        let mut seen = std::collections::HashSet::new();
+        let ids: Vec<String> = ids
+            .iter()
+            .filter(|i| seen.insert(i.as_str()))
+            .cloned()
+            .collect();
+        let ids = ids.as_slice();
+        let paths = ids
+            .iter()
+            .map(|i| self.item_path(i))
+            .collect::<Result<Vec<_>>>()?;
         let removed = self.update_meta(|m| {
-            let it = m
-                .items
-                .remove(id)
-                .ok_or_else(|| Error::NotFound(format!("item {id}")))?;
+            let mut removed = Vec::new();
+            for id in ids {
+                let it = m
+                    .items
+                    .remove(id)
+                    .ok_or_else(|| Error::NotFound(format!("item {id}")))?;
+                removed.push(it);
+            }
             for g in &mut m.grants {
-                g.items.retain(|i| i != id);
+                g.items.retain(|i| !ids.contains(i));
                 if g.items.is_empty() {
                     g.revoked = true;
                 }
             }
             for r in &mut m.rules {
-                r.items.retain(|i| i != id);
+                r.items.retain(|i| !ids.contains(i));
             }
             m.rules.retain(|r| !r.items.is_empty());
-            Ok(it)
+            // An icon goes with the last item of its site.
+            let live: std::collections::HashSet<String> = m
+                .items
+                .values()
+                .filter_map(|i| i.domain.as_deref().map(crate::record::site_of))
+                .collect();
+            m.favicons.retain(|site, _| live.contains(site));
+            Ok(removed)
         })?;
-        if path.exists() {
-            // Overwrite before unlinking (best effort on copy-on-write file
-            // systems; the wrapped key is what makes this a shred).
-            let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) as usize;
-            let _ = std::fs::write(&path, vec![0u8; len]);
-            std::fs::remove_file(&path)?;
+        for path in paths {
+            if path.exists() {
+                // Overwrite before unlinking (best effort on copy-on-write
+                // file systems; the wrapped key is what makes this a shred).
+                let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) as usize;
+                let _ = std::fs::write(&path, vec![0u8; len]);
+                std::fs::remove_file(&path)?;
+            }
         }
+        self.gc_blobs()?;
         Ok(removed)
     }
 
@@ -545,7 +857,7 @@ impl Vault {
 mod tests {
     use super::*;
     use crate::crypto::KdfParams;
-    use crate::model::{ItemKind, ItemPolicy, ItemSummary, PayloadEntry};
+    use crate::model::{ItemKind, ItemPolicy};
     use crate::protector::{PassphraseProtector, RecoveryKey, RecoveryProtector};
 
     pub(crate) fn pp() -> PassphraseProtector {
@@ -553,35 +865,25 @@ mod tests {
     }
 
     pub(crate) fn sample_meta() -> ItemMeta {
-        ItemMeta {
-            id: String::new(),
-            kind: ItemKind::BrowserSite,
-            label: "github.com (Chrome)".into(),
-            provider_id: "chrome".into(),
-            app_display: "Google Chrome".into(),
-            site: Some("github.com".into()),
-            account: None,
-            source: "Default".into(),
-            summary: ItemSummary::default(),
-            warnings: vec![],
-            identity_provider: false,
-            policy: ItemPolicy::default(),
-            created_ms: 0,
-            updated_ms: 0,
-            rev: 0,
-            record_digest: String::new(),
-        }
+        let mut m = ItemMeta::draft(
+            ItemKind::Cookie,
+            "chrome",
+            "Google Chrome",
+            Some("github.com"),
+            "user_session",
+        );
+        m.source = "Default".into();
+        m.policy = ItemPolicy::default();
+        m
     }
 
+    /// A cookie payload whose value is `fixture-<tag>`.
     pub(crate) fn sample_payload(tag: &str) -> ItemPayload {
         ItemPayload {
             provider_id: "chrome".into(),
             scope: "full".into(),
-            entries: vec![PayloadEntry {
-                rel_path: "Cookies".into(),
-                mode: 0o600,
-                data: crypto::b64_encode(format!("fixture-{tag}").as_bytes()),
-            }],
+            schema: crate::record::COOKIE_V1.into(),
+            record: format!(r#"{{"fixture":"{tag}"}}"#),
         }
     }
 
@@ -593,7 +895,7 @@ mod tests {
         let mut v = Vault::create(&dir, &[&pp(), &RecoveryProtector(rk.clone())]).unwrap();
         let id = v.put_item(sample_meta(), &sample_payload("a")).unwrap();
         assert_eq!(v.read_payload(&id).unwrap(), sample_payload("a"));
-        v.replace_payload(&id, &sample_payload("b")).unwrap();
+        v.put_item(sample_meta(), &sample_payload("b")).unwrap();
         assert_eq!(v.meta().unwrap().items[&id].rev, 2);
         drop(v);
 
@@ -610,7 +912,7 @@ mod tests {
         v.lock();
         v.unlock(&pp()).unwrap();
         let removed = v.delete_item(&id).unwrap();
-        assert_eq!(removed.site.as_deref(), Some("github.com"));
+        assert_eq!(removed.domain.as_deref(), Some("github.com"));
         assert!(!dir.join("items").join(format!("{id}.sealed")).exists());
 
         #[cfg(unix)]
@@ -669,11 +971,13 @@ mod tests {
         let dir = d.path().join("kv");
         let mut v = Vault::create(&dir, &[&pp()]).unwrap();
         let a = v.put_item(sample_meta(), &sample_payload("a")).unwrap();
-        let b = v.put_item(sample_meta(), &sample_payload("b")).unwrap();
+        let mut other = sample_meta();
+        other.key = "other".into();
+        let b = v.put_item(other, &sample_payload("b")).unwrap();
         let pa = dir.join("items").join(format!("{a}.sealed"));
         let pb = dir.join("items").join(format!("{b}.sealed"));
         let old_a = std::fs::read(&pa).unwrap();
-        v.replace_payload(&a, &sample_payload("a2")).unwrap();
+        v.put_item(sample_meta(), &sample_payload("a2")).unwrap();
         // Rollback of one item to its previous revision.
         std::fs::write(&pa, &old_a).unwrap();
         assert!(matches!(v.read_payload(&a), Err(Error::Corrupt(_))));
@@ -740,7 +1044,7 @@ mod tests {
         let item_path = dir.join("items").join(format!("{id}.sealed"));
         let item_snap = std::fs::read(&item_path).unwrap();
         // Move the vault forward: trip the kill switch and rotate the payload.
-        v.replace_payload(&id, &sample_payload("b")).unwrap();
+        v.put_item(sample_meta(), &sample_payload("b")).unwrap();
         v.update_meta(|m| {
             m.settings.disabled = true;
             Ok(())
@@ -786,5 +1090,227 @@ mod tests {
         assert!(v.unlock(&pp()).is_err());
         v.unlock(&RecoveryProtector(rk)).unwrap();
         assert_eq!(v.header().protectors[0].id, rec.id);
+    }
+
+    fn item(kind: ItemKind, domain: Option<&str>, key: &str) -> ItemMeta {
+        ItemMeta {
+            kind,
+            domain: domain.map(str::to_string),
+            key: key.into(),
+            ..sample_meta()
+        }
+    }
+
+    fn vault(d: &tempfile::TempDir) -> Vault {
+        Vault::create(&d.path().join("kv"), &[&pp()]).unwrap()
+    }
+
+    #[test]
+    fn saving_an_app_twice_upserts_by_key_and_never_duplicates() {
+        let d = tempfile::tempdir().unwrap();
+        let mut v = vault(&d);
+        let batch = |tag: &str| {
+            vec![
+                (
+                    item(ItemKind::Cookie, Some("github.com"), "user_session"),
+                    sample_payload(tag),
+                ),
+                (
+                    item(ItemKind::Cookie, Some("github.com"), "_gh_sess"),
+                    sample_payload(tag),
+                ),
+                (
+                    item(ItemKind::File, None, "Default/Bookmarks"),
+                    sample_payload(tag),
+                ),
+            ]
+        };
+        let first = v.upsert_items(batch("a")).unwrap();
+        assert!(first.iter().all(|u| u.outcome == UpsertOutcome::Created));
+        let created = v.meta().unwrap().items.clone();
+        assert_eq!(created.len(), 3);
+
+        // The user unlocks one item between the two saves.
+        let id0 = first[0].id.clone();
+        v.update_meta(|m| {
+            m.items.get_mut(&id0).unwrap().policy.unattended = true;
+            Ok(())
+        })
+        .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(3));
+
+        // Same value: unchanged, timestamps move, nothing duplicates.
+        let again = v.upsert_items(batch("a")).unwrap();
+        assert_eq!(v.meta().unwrap().items.len(), 3);
+        assert!(again.iter().all(|u| u.outcome == UpsertOutcome::Unchanged));
+        assert_eq!(
+            again.iter().map(|u| &u.id).collect::<Vec<_>>(),
+            first.iter().map(|u| &u.id).collect::<Vec<_>>()
+        );
+        let it = &v.meta().unwrap().items[&id0];
+        assert_eq!(it.created_ms, created[&id0].created_ms);
+        assert!(it.updated_ms > created[&id0].updated_ms, "updated-at moves");
+        assert_eq!(it.rev, 1, "an unchanged value is not rewritten");
+        assert!(it.policy.unattended, "saving again keeps the lock state");
+
+        // A changed value: updated in place with a new revision.
+        let changed = v.upsert_items(batch("b")).unwrap();
+        assert!(changed.iter().all(|u| u.outcome == UpsertOutcome::Updated));
+        assert_eq!(v.meta().unwrap().items.len(), 3);
+        assert_eq!(v.meta().unwrap().items[&id0].rev, 2);
+        assert_eq!(v.read_payload(&id0).unwrap(), sample_payload("b"));
+    }
+
+    #[test]
+    fn keys_are_per_app_and_per_type() {
+        let d = tempfile::tempdir().unwrap();
+        let mut v = vault(&d);
+        let mut slack_cookie = item(ItemKind::Cookie, Some("github.com"), "user_session");
+        slack_cookie.provider_id = "slack".into();
+        let out = v
+            .upsert_items(vec![
+                (
+                    item(ItemKind::Cookie, Some("github.com"), "user_session"),
+                    sample_payload("1"),
+                ),
+                // Same domain and key in another app: a different item.
+                (slack_cookie, sample_payload("2")),
+                // Same domain and key, another type: a different item.
+                (
+                    item(ItemKind::LocalStorage, Some("github.com"), "user_session"),
+                    sample_payload("3"),
+                ),
+                // Domains compare case-insensitively.
+                (
+                    item(ItemKind::Cookie, Some("GitHub.com"), "user_session"),
+                    sample_payload("4"),
+                ),
+            ])
+            .unwrap();
+        assert_eq!(v.meta().unwrap().items.len(), 3);
+        assert_eq!(out.len(), 3, "one result per distinct key");
+        assert_eq!(v.read_payload(&out[0].id).unwrap(), sample_payload("4"));
+    }
+
+    #[test]
+    fn delete_items_is_one_write_and_crypto_shreds() {
+        let d = tempfile::tempdir().unwrap();
+        let mut v = vault(&d);
+        let ids: Vec<String> = v
+            .upsert_items(vec![
+                (
+                    item(ItemKind::Cookie, Some("a.test"), "a"),
+                    sample_payload("a"),
+                ),
+                (
+                    item(ItemKind::Cookie, Some("b.test"), "b"),
+                    sample_payload("b"),
+                ),
+                (item(ItemKind::File, None, "x/y"), sample_payload("c")),
+            ])
+            .unwrap()
+            .into_iter()
+            .map(|u| u.id)
+            .collect();
+        let before = v.meta().unwrap().generation;
+        let removed = v
+            .delete_items(&[ids[0].clone(), ids[1].clone(), ids[0].clone()])
+            .unwrap();
+        assert_eq!(removed.len(), 2);
+        assert_eq!(v.meta().unwrap().generation, before + 1);
+        assert_eq!(v.meta().unwrap().items.len(), 1);
+        for id in &ids[..2] {
+            assert!(
+                !d.path()
+                    .join("kv/items")
+                    .join(format!("{id}.sealed"))
+                    .exists()
+            );
+        }
+        // An unknown id deletes nothing.
+        assert!(v.delete_items(&[ids[2].clone(), "nope".into()]).is_err());
+        assert_eq!(v.meta().unwrap().items.len(), 1);
+    }
+
+    #[test]
+    fn a_format_1_vault_is_reported_not_misread() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("kv");
+        drop(Vault::create(&dir, &[&pp()]).unwrap());
+        let mut header: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join("vault.json")).unwrap()).unwrap();
+        header["format"] = 1.into();
+        std::fs::write(dir.join("vault.json"), serde_json::to_vec(&header).unwrap()).unwrap();
+        assert!(matches!(Vault::open(&dir), Err(Error::OldFormat(1))));
+    }
+
+    #[test]
+    fn big_files_become_content_addressed_blobs_and_come_back_inline() {
+        use base64::Engine as _;
+        let d = tempfile::tempdir().unwrap();
+        let mut v = vault(&d);
+        let big = vec![7u8; crate::record::INLINE_FILE_LIMIT + 1];
+        let rec = |path: &str, bytes: &[u8]| {
+            let n = crate::record::file_record(path, 0o600, bytes).unwrap();
+            let (m, p) = n.into_item("chrome", "Chrome", "Default", "full");
+            (m, p)
+        };
+        let out = v
+            .upsert_items(vec![
+                rec("Default/History", &big),
+                rec("Default/History.copy", &big),
+                rec("Default/Bookmarks", b"{}"),
+            ])
+            .unwrap();
+        let meta = v.meta().unwrap().items.clone();
+        let hash = meta[&out[0].id].blob.clone().expect("a big file is a blob");
+        assert_eq!(
+            meta[&out[1].id].blob.as_ref(),
+            Some(&hash),
+            "same bytes, one blob"
+        );
+        assert!(meta[&out[2].id].blob.is_none(), "a small file stays inline");
+        assert_eq!(
+            std::fs::read_dir(d.path().join("kv/blobs"))
+                .unwrap()
+                .count(),
+            1
+        );
+
+        // The record never carries the bytes.
+        let p = v.read_payload(&out[0].id).unwrap();
+        assert!(
+            !p.record.contains("content") && p.record.contains(&hash),
+            "{}",
+            p.record
+        );
+        let inlined = v.inline_blobs(&p).unwrap();
+        let f: crate::record::FileRecord = serde_json::from_str(&inlined.record).unwrap();
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(f.content.clone().unwrap())
+                .unwrap(),
+            big
+        );
+        assert_eq!(&v.read_blob(&hash).unwrap()[..], &big[..]);
+
+        // No plaintext, and a swapped blob is refused.
+        let blob = d.path().join("kv/blobs").join(format!("{hash}.sealed"));
+        let on_disk = std::fs::read(&blob).unwrap();
+        assert!(!String::from_utf8_lossy(&on_disk).contains("BwcHBwcH"));
+        std::fs::write(&blob, b"{}").unwrap();
+        assert!(v.read_blob(&hash).is_err());
+        std::fs::write(&blob, &on_disk).unwrap();
+
+        // Deleting one holder keeps the blob; deleting the last shreds it.
+        v.delete_items(&[out[0].id.clone()]).unwrap();
+        assert!(blob.exists());
+        v.delete_items(&[out[1].id.clone()]).unwrap();
+        assert!(!blob.exists(), "no item names it any more");
+        // Saving the same big file again is "unchanged".
+        let again = v
+            .upsert_items(vec![rec("Default/Bookmarks", b"{}")])
+            .unwrap();
+        assert_eq!(again[0].outcome, UpsertOutcome::Unchanged);
     }
 }

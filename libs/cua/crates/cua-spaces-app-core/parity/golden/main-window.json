@@ -1167,16 +1167,16 @@
     {
       "presentationPreviews": [
         [
-          "notch: tiles macos-qa,ubuntu-ci,windows-11; tab 3 Spaces; 232x82 loop 4000",
-          "0: pointer 1717,656 open 0 content 0 tab 1000 hover 0 pressed false active false highlighted -",
-          "850: pointer 1458,368 open 0 content 0 tab 1000 hover 0 pressed false active false highlighted -",
+          "notch: tiles macos-qa,ubuntu-ci,windows-11; tab 3 Spaces; 232x91 loop 4000",
+          "0: pointer 1717,728 open 0 content 0 tab 1000 hover 0 pressed false active false highlighted -",
+          "850: pointer 1458,404 open 0 content 0 tab 1000 hover 0 pressed false active false highlighted -",
           "1350: pointer 1200,79 open 0 content 0 tab 1000 hover 336 pressed false active false highlighted -",
           "1550: pointer 1200,79 open 0 content 0 tab 1000 hover 1043 pressed false active false highlighted -",
           "1700: pointer 1200,79 open 497 content 0 tab 503 hover 501 pressed false active false highlighted -",
           "2400: pointer 1200,79 open 1000 content 1000 tab 0 hover 0 pressed false active false highlighted -",
           "2750: pointer 1201,80 open 1000 content 1000 tab 0 hover 0 pressed false active false highlighted -",
-          "3150: pointer 1544,463 open 1000 content 500 tab 0 hover 0 pressed false active false highlighted -",
-          "3900: pointer 1717,656 open 0 content 0 tab 1000 hover 0 pressed false active false highlighted -",
+          "3150: pointer 1544,511 open 1000 content 500 tab 0 hover 0 pressed false active false highlighted -",
+          "3900: pointer 1717,728 open 0 content 0 tab 1000 hover 0 pressed false active false highlighted -",
           "still: pointer 1200,79 open 1000 content 1000 tab 0 hover 0 pressed false active false highlighted -"
         ],
         [

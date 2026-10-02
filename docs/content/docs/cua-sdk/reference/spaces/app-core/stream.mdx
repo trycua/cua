@@ -17,7 +17,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 These APIs are part of the Cua Spaces app export for building Spaces UIs. They are source-available under FSL-1.1-MIT and ship for Swift only (`import CuaSpacesFFI`); the Rust tab shows the `cua-spaces-ffi` crate they come from. The open source SDK packages for Python, TypeScript and Kotlin do not include them.
 </Callout>
 
-`app_stream_section` builds the Stream rows both apps draw: the Desktop with the OS mark and the display's resolution, then one row per window titled by the window, with the app's icon source and a picture-in-picture button. `app_space_detail_live` adds Memory and Storage to the facts from `Space.usage`.
+`app_stream_section` builds the Stream rows both apps draw: the Desktop with the OS mark and the display's resolution, then one row per window titled by the window, with the app's icon source and a picture-in-picture button. `app_space_detail_live` adds Memory and Storage to the facts from `Space.usage`. `app_desktop_cover` says what the preview card shows before the first frame (Connecting, a Connect button, or the Space's own line) and `app_thumbnail_policy` how fresh the shells keep its blurred preview.
 
 ## `app_space_detail_live`
 
@@ -140,6 +140,123 @@ AppPipEvent::Synced { rows: Vec<String> }
 | `Closed` | A row's panel closed. Fields: `row: String` |
 | `Synced` | The panels open now, as the shell listed them. Fields: `rows: Vec<String>` |
 
+## `app_desktop_cover`
+
+What a Space's preview card shows before (or instead of) its live
+desktop: "Connecting…", a Connect button, or the Space's own line.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func appDesktopCover(input: AppDesktopCoverInput) -> AppDesktopCover
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn app_desktop_cover(input: AppDesktopCoverInput) -> AppDesktopCover
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `input` | [`AppDesktopCoverInput`](#appdesktopcoverinput-record) | required |
+
+**Returns** [`AppDesktopCover`](#appdesktopcover-record)
+
+## `AppDesktopCover` record
+
+Returned by [`app_desktop_cover`](#app_desktop_cover).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `kind` | [`AppDesktopCoverKind`](#appdesktopcoverkind-enum) |  | How it draws. |
+| `text` | `Option<String>` |  | The line, centered. |
+| `button` | `Option<String>` |  | A button under (or instead of) the line. |
+| `button_help` / `buttonHelp` | `Option<String>` |  | Its tooltip. |
+| `open_stream` / `openStream` | `bool` |  | The shell opens a stream session now (none is open, and one is wanted). |
+| `retry` | `bool` |  | The shell starts the open session again (Try again was pressed). |
+
+## `AppDesktopCoverInput` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `can_stream` / `canStream` | `bool` |  | The detail's `can_stream`. |
+| `preview_text` / `previewText` | `String` |  | The detail's `preview_text` (why it cannot stream). |
+| `auto_connect` / `autoConnect` | `bool` |  | Settings: "Connect to the desktop automatically". |
+| `connect_requested` / `connectRequested` | `bool` |  | Connect (or Try again) was pressed for this Space. |
+| `stream` | [`AppStreamPhase`](#appstreamphase-enum) |  | The shell's stream session. |
+
+## `AppDesktopCoverKind` enum
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+.stream
+.connecting
+.connect
+.status
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+AppDesktopCoverKind::Stream
+AppDesktopCoverKind::Connecting
+AppDesktopCoverKind::Connect
+AppDesktopCoverKind::Status
+```
+
+</Tab>
+</Tabs>
+
+| Variant | Description |
+| --- | --- |
+| `Stream` | No cover: the live desktop (or the stream view's own badge). |
+| `Connecting` | The preview with "Connecting…". |
+| `Connect` | The preview with a Connect button. |
+| `Status` | The preview with a line (and maybe a button): the Space cannot stream, or the stream failed. |
+
+## `app_thumbnail_policy`
+
+How fresh the shells keep each Space's thumbnail.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func appThumbnailPolicy() -> AppThumbnailPolicy
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn app_thumbnail_policy() -> AppThumbnailPolicy
+```
+
+</Tab>
+</Tabs>
+
+**Returns** [`AppThumbnailPolicy`](#appthumbnailpolicy-record)
+
+## `AppThumbnailPolicy` record
+
+Returned by [`app_thumbnail_policy`](#app_thumbnail_policy).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `open_interval_ms` / `openIntervalMs` | `u64` |  | While the notch is open: every running Space, this often. |
+| `background_interval_ms` / `backgroundIntervalMs` | `u64` |  | Otherwise (the app visible, not in Low Power Mode): a running Space whose thumbnail is older than this gets a new one. |
+| `max_dimension` / `maxDimension` | `u32` |  | The long edge of a captured thumbnail, in pixels. |
+| `keep_ms` / `keepMs` | `u64` |  | A thumbnail kept on disk longer than this is dropped at launch. |
+
 ## `AppStreamDisplay` record
 
 | Field | Type | Default | Description |
@@ -188,6 +305,44 @@ Returned by [`app_stream_section`](#app_stream_section).
 | `os_name` / `osName` | `Option<String>` |  | The OS name the Space reported ("Ubuntu 24.04"), if any. |
 | `open` | `Vec<String>` |  | Rows whose picture in picture is open (row ids). |
 | `query` | `String` |  | Filter text. |
+
+## `AppStreamPhase` enum
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+.noSession
+.idle
+.connecting
+.streaming
+.suspended
+.failed
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+AppStreamPhase::NoSession
+AppStreamPhase::Idle
+AppStreamPhase::Connecting
+AppStreamPhase::Streaming
+AppStreamPhase::Suspended
+AppStreamPhase::Failed
+```
+
+</Tab>
+</Tabs>
+
+| Variant | Description |
+| --- | --- |
+| `NoSession` | No session yet. |
+| `Idle` | A session that has not started. |
+| `Connecting` | Opening (no frame yet). |
+| `Streaming` | Frames arrive. |
+| `Suspended` | Paused by the Space (the stream view says why). |
+| `Failed` | It could not open. |
 
 ## `AppStreamRowActionId` enum
 

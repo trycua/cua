@@ -28,7 +28,7 @@ final class CuaSpacesMacUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Aurora"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Cua Cloud"].exists)
         XCTAssertTrue(app.staticTexts["Connected"].exists)
-        XCTAssertTrue(app.staticTexts["All"].exists, "the Keyvault categories are in the sidebar")
+        XCTAssertTrue(app.staticTexts["All Items"].exists, "the Keyvault categories are in the sidebar")
     }
 
     func testNewSpaceWalksToCreate() {

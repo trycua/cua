@@ -44,6 +44,46 @@ pub struct CookieItem {
     /// Chrome's `samesite` enum (-1 unspecified, 0 none, 1 lax, 2 strict).
     #[serde(default)]
     pub samesite: i64,
+    /// Every other column of Chrome's current cookie schema the source had
+    /// (flattened into the same JSON object), so the destination's row is
+    /// the source's row. All optional: an older sender omits them and the
+    /// receiver fills Chrome's defaults.
+    #[serde(flatten)]
+    pub extra: CookieExtra,
+}
+
+/// The cookie columns beyond the core ones.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CookieExtra {
+    /// `creation_utc` (Chrome microseconds since 1601).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_utc: Option<i64>,
+    /// `last_access_utc`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_access_utc: Option<i64>,
+    /// `last_update_utc`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_update_utc: Option<i64>,
+    /// Chrome's priority (0 low, 1 medium, 2 high).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<i64>,
+    /// 0 unset, 1 non-secure, 2 secure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_scheme: Option<i64>,
+    /// -1 unspecified.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_port: Option<i64>,
+    /// 0 unknown, 1 http, 2 script, 3 other.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_type: Option<i64>,
+    /// `has_cross_site_ancestor`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_cross_site_ancestor: Option<i64>,
+    /// The top-level site of a partitioned (CHIPS) cookie (written back as
+    /// `top_frame_site_key`, so it stays partitioned); absent or empty for an
+    /// unpartitioned cookie.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partition_key: Option<String>,
 }
 
 impl Drop for CookieItem {
@@ -85,6 +125,7 @@ mod tests {
                 is_secure: true,
                 is_httponly: true,
                 samesite: 1,
+                extra: CookieExtra::default(),
             },
             CookieItem {
                 host_key: "api.github.com".into(),
@@ -95,6 +136,7 @@ mod tests {
                 is_secure: true,
                 is_httponly: false,
                 samesite: -1,
+                extra: CookieExtra::default(),
             },
         ];
         assert_eq!(parse(&serialize(&items)), items);

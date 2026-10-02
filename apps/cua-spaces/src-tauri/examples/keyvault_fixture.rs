@@ -10,7 +10,7 @@
 //! keyvault_fixture request <socket> <label> <target> <reason>
 //!                                                     any caller: file an access request
 //! keyvault_fixture answer <socket> <allow|deny> <n>   first party: answer the n-th pending request
-//! keyvault_fixture unattended <socket> <label>        first party: allow an item in unattended rules
+//! keyvault_fixture unattended <socket> <key|site>     first party: unlock an item (allow unattended access)
 //! keyvault_fixture use <socket> <label> <target>      third party: request, wait up to 60 s, then
 //!                                                     teleport with the granted token
 //! ```
@@ -27,64 +27,38 @@ use std::time::Duration;
 use cua_keyvault::broker::{AccessRequest, Decision, Selector, TeleportRequest, UnlockRequest};
 use cua_keyvault::client::{KeyvaultClient, ServerCheck};
 use cua_keyvault::ipc::Request;
-use cua_keyvault::model::{
-    CookieInfo, ItemKind, ItemMeta, ItemPayload, ItemPolicy, ItemSummary, PayloadEntry,
-};
+use cua_keyvault::model::{ItemMeta, ItemPayload};
 use cua_keyvault::protector::PassphraseProtector;
+use cua_keyvault::record::{self, CookieRecord};
 use cua_keyvault::rollback::FileGenerationAnchor;
 use cua_keyvault::Vault;
 
-fn fake(
-    kind: ItemKind,
-    app: &str,
-    site: Option<&str>,
-    account: Option<&str>,
-    idp: bool,
-) -> (ItemMeta, ItemPayload) {
-    let label = match (site, kind) {
-        (Some(s), _) => format!("{s} ({app}, Default)"),
-        (None, _) => format!("{app} (whole app session)"),
-    };
+/// One fake item: a site's session cookie, or (no site) a file of the app.
+fn fake(app: &str, site: Option<&str>, name: &str) -> (ItemMeta, ItemPayload) {
     let provider = app.to_ascii_lowercase();
-    let meta = ItemMeta {
-        id: String::new(),
-        kind,
-        label,
-        provider_id: provider.clone(),
-        app_display: app.into(),
-        site: site.map(Into::into),
-        account: account.map(Into::into),
-        source: "Default".into(),
-        summary: ItemSummary {
-            cookies: vec![CookieInfo {
-                name: "fixture_session".into(),
-                domain: format!(".{}", site.unwrap_or("example.test")),
-                session: true,
-                expires_ms: None,
-            }],
-            ..Default::default()
-        },
-        warnings: vec![],
-        identity_provider: idp,
-        policy: ItemPolicy {
-            ttl_secs: if idp { 15 * 60 } else { 3600 },
-            ..Default::default()
-        },
-        created_ms: 0,
-        updated_ms: 0,
-        rev: 0,
-        record_digest: String::new(),
-    };
-    let payload = ItemPayload {
-        provider_id: provider,
-        scope: "full".into(),
-        entries: vec![PayloadEntry {
-            rel_path: format!("fixture/{}", site.unwrap_or(app)),
-            mode: 0o600,
+    let new = match site {
+        Some(s) => record::cookie_record(&CookieRecord {
+            creation_utc: None,
+            expires_utc: 0,
+            host_key: format!(".{s}"),
+            http_only: true,
+            last_update_utc: None,
+            name: name.into(),
+            partition_key: None,
+            path: "/".into(),
+            priority: None,
+            same_site: -1,
+            secure: true,
+            source_port: None,
+            source_scheme: None,
             // "FIXTURE-NOT-A-SECRET"
-            data: "RklYVFVSRS1OT1QtQS1TRUNSRVQ=".into(),
-        }],
+            value: b"FIXTURE-NOT-A-SECRET".to_vec(),
+        })
+        .unwrap(),
+        None => record::file_record(name, 0o600, b"FIXTURE-NOT-A-SECRET").unwrap(),
     };
+    let (mut meta, payload) = new.into_item(&provider, app, "Default", "full");
+    meta.identity_provider = site.is_some_and(cua_keyvault::model::is_identity_provider);
     (meta, payload)
 }
 
@@ -97,46 +71,14 @@ fn seed(dir: &Path, passphrase: &str) -> Result<(), String> {
     let mut v = Vault::create(dir, &[&p])
         .and_then(|v| v.with_anchor(Box::new(FileGenerationAnchor::new(anchor))))
         .map_err(|e| e.to_string())?;
-    let items = [
-        fake(
-            ItemKind::BrowserSite,
-            "Chrome",
-            Some("github.com"),
-            Some("ada@example.test"),
-            false,
-        ),
-        fake(
-            ItemKind::BrowserSite,
-            "Chrome",
-            Some("github.com"),
-            Some("grace@example.test"),
-            false,
-        ),
-        fake(
-            ItemKind::BrowserSite,
-            "Chrome",
-            Some("linear.app"),
-            Some("ada@example.test"),
-            false,
-        ),
-        fake(
-            ItemKind::BrowserSite,
-            "Firefox",
-            Some("accounts.google.com"),
-            Some("ada@example.test"),
-            true,
-        ),
-        fake(
-            ItemKind::AppSession,
-            "Slack",
-            None,
-            Some("Example Workspace"),
-            false,
-        ),
+    let items = vec![
+        fake("Chrome", Some("github.com"), "user_session"),
+        fake("Chrome", Some("github.com"), "logged_in"),
+        fake("Chrome", Some("linear.app"), "linear_session"),
+        fake("Firefox", Some("accounts.google.com"), "SID"),
+        fake("Slack", None, "storage/root-state.json"),
     ];
-    for (meta, payload) in items {
-        v.put_item(meta, &payload).map_err(|e| e.to_string())?;
-    }
+    v.upsert_items(items).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -147,10 +89,12 @@ async fn client(sock: &Path) -> Result<KeyvaultClient, String> {
 }
 
 async fn item_by_label(c: &mut KeyvaultClient, label: &str) -> Result<String, String> {
-    let items = c.list_items().await.map_err(|e| e.to_string())?;
-    items
+    // Names show only inside the browse window.
+    c.browse().await.map_err(|e| e.to_string())?;
+    let page = c.list_items().await.map_err(|e| e.to_string())?;
+    page.items
         .into_iter()
-        .find(|i| i.label.contains(label) || i.account.as_deref() == Some(label))
+        .find(|i| i.key == label || i.domain.as_deref().is_some_and(|d| d.contains(label)))
         .map(|i| i.id)
         .ok_or_else(|| format!("no item matching {label:?}"))
 }
@@ -179,7 +123,6 @@ async fn main() -> Result<(), String> {
                     selectors: vec![Selector::Site {
                         app: "chrome".into(),
                         site,
-                        account: None,
                     }],
                     targets: vec![arg(3)?],
                     reason: arg(4)?,
@@ -209,10 +152,9 @@ async fn main() -> Result<(), String> {
         "unattended" => {
             let mut c = client(Path::new(&arg(1)?)).await?;
             let id = item_by_label(&mut c, &arg(2)?).await?;
-            let items = c.list_items().await.map_err(|e| e.to_string())?;
-            let mut policy = items.iter().find(|i| i.id == id).unwrap().policy.clone();
-            policy.unattended = true;
-            c.call(&Request::SetItemPolicy { id, policy })
+            // Unlocked means "allow unattended access"; the daemon asks for
+            // presence.
+            c.set_locked(vec![id], false)
                 .await
                 .map(|_| ())
                 .map_err(|e| e.to_string())
@@ -224,7 +166,6 @@ async fn main() -> Result<(), String> {
                     selectors: vec![Selector::Site {
                         app: "chrome".into(),
                         site: arg(2)?,
-                        account: None,
                     }],
                     targets: vec![arg(3)?],
                     reason: "fixture".into(),

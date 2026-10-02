@@ -4,8 +4,9 @@
 //! The approval sheet for a waiting request.
 //!
 //! Nothing is selected by default: Approve stays disabled until the user
-//! ticks at least one item, and approves only those. A request that would
-//! import new items (sites the vault does not hold yet) is all or nothing,
+//! ticks at least one site, and approves only the items of those. A request
+//! that would save new items (sites the vault does not hold yet) is all or
+//! nothing,
 //! because the broker imports them on approval and their ids are not known
 //! before: the user ticks every row or denies. The daemon then asks for
 //! Touch ID or the login password; no shell runs its own prompt.
@@ -20,7 +21,7 @@ use serde::{Deserialize, Serialize};
 pub struct ApprovalState {
     /// The request.
     pub request_id: String,
-    /// Ticked row keys (item ids, or `import:<n>` for new items).
+    /// Ticked row keys (`<app>|<site>`, or `import:<n>` for new items).
     pub selected: Vec<String>,
 }
 
@@ -47,16 +48,23 @@ pub enum ApprovalAction {
     Clear,
 }
 
-/// One row of the sheet.
+/// One row of the sheet: a site (or an app's files) with how many items
+/// it carries, or an app the approval would save.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalRow {
-    /// Row key.
+    /// Row key: `<app>|<site>`, `<app>|files`, or `import:<n>`.
     pub key: String,
-    /// Site or app.
+    /// The site, or the app for files and imports.
     pub title: String,
-    /// Account, or "Not imported yet".
+    /// "3 cookies, 1 password", or "Not saved yet".
     pub account: String,
+    /// The app's provider id (its icon), when known.
+    pub provider_id: String,
+    /// Items the row stands for.
+    pub items: u32,
+    /// The items' ids.
+    pub item_ids: Vec<String>,
     /// Ticked.
     pub selected: bool,
     /// A new item the approval imports.
@@ -96,33 +104,74 @@ pub struct ApprovalView {
 }
 
 fn rows(o: &KeyvaultOverview, state: &ApprovalState) -> Vec<ApprovalRow> {
+    use super::vault::{KvKind, site_of};
     let Some(p) = o.pending.iter().find(|p| p.id == state.request_id) else {
         return vec![];
     };
-    let mut out: Vec<ApprovalRow> = p
-        .items
-        .iter()
-        .map(|i| ApprovalRow {
-            key: i.id.clone(),
-            title: i.site.clone().unwrap_or_else(|| i.app_display.clone()),
-            account: super::view::account_of(i),
-            selected: state.selected.contains(&i.id),
-            is_import: false,
+    // Group the request's items by app and site (files apart).
+    let mut groups: Vec<(String, String, String, Vec<&super::wire::KvItem>)> = Vec::new();
+    for i in &p.items {
+        let is_file = KvKind::from_wire(&i.kind) == KvKind::File;
+        let (key, title) = if is_file {
+            (
+                format!("{}|files", i.provider_id),
+                format!("{} files", i.app_display),
+            )
+        } else {
+            let site = i.domain.as_deref().map(site_of).filter(|s| !s.is_empty());
+            (
+                format!("{}|{}", i.provider_id, site.clone().unwrap_or_default()),
+                site.unwrap_or_else(|| i.app_display.clone()),
+            )
+        };
+        match groups.iter_mut().find(|g| g.0 == key) {
+            Some(g) => g.3.push(i),
+            None => groups.push((key, title, i.provider_id.clone(), vec![i])),
+        }
+    }
+    let mut out: Vec<ApprovalRow> = groups
+        .into_iter()
+        .map(|(key, title, provider_id, its)| {
+            let mut kinds: Vec<(KvKind, u32)> = Vec::new();
+            for i in &its {
+                let k = KvKind::from_wire(&i.kind);
+                match kinds.iter_mut().find(|(x, _)| *x == k) {
+                    Some((_, n)) => *n += 1,
+                    None => kinds.push((k, 1)),
+                }
+            }
+            ApprovalRow {
+                selected: state.selected.contains(&key),
+                account: kinds
+                    .iter()
+                    .map(|(k, n)| k.plural(*n))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                items: its.len() as u32,
+                item_ids: its.iter().map(|i| i.id.clone()).collect(),
+                key,
+                title,
+                provider_id,
+                is_import: false,
+            }
         })
         .collect();
     out.extend(p.needs_import.iter().enumerate().map(|(n, s)| {
         let key = format!("import:{n}");
-        let title = match s {
-            KvSelector::Site { site, .. } => site.clone(),
-            KvSelector::App { app } => app.clone(),
-            KvSelector::Item { id } => id.clone(),
-            KvSelector::Login { site } => site.clone(),
+        let (title, provider_id) = match s {
+            KvSelector::Site { site, app } => (site.clone(), app.clone()),
+            KvSelector::App { app } => (app.clone(), app.clone()),
+            KvSelector::Item { id } => (id.clone(), String::new()),
+            KvSelector::Login { site } => (site.clone(), String::new()),
         };
         ApprovalRow {
             selected: state.selected.contains(&key),
             key,
             title,
-            account: "Not imported yet".into(),
+            account: "Not saved yet".into(),
+            provider_id,
+            items: 0,
+            item_ids: vec![],
             is_import: true,
         }
     }));
@@ -172,7 +221,7 @@ pub fn view(o: &KeyvaultOverview, state: &ApprovalState) -> ApprovalView {
     } else if disabled {
         Some("Keyvault is off. Turn it on to approve.".to_string())
     } else if ticked > 0 && imports_unticked {
-        Some("This request imports new items; select all or deny.".to_string())
+        Some("This request saves new items; select all or deny.".to_string())
     } else {
         None
     };
@@ -207,8 +256,13 @@ pub fn view(o: &KeyvaultOverview, state: &ApprovalState) -> ApprovalView {
         wants: wants_s,
         summary,
         claims: claims_v,
-        approve_label: match ticked {
-            0 => "Approve".into(),
+        approve_label: match rows
+            .iter()
+            .filter(|r| r.selected)
+            .map(|r| r.items)
+            .sum::<u32>()
+        {
+            0 if ticked == 0 => "Approve".into(),
             1 => "Approve 1 item".into(),
             n => format!("Approve {n} items"),
         },
@@ -237,7 +291,7 @@ pub fn approve_command(o: &KeyvaultOverview, state: &ApprovalState) -> Option<Kv
                 v.rows
                     .iter()
                     .filter(|r| r.selected && !r.is_import)
-                    .map(|r| r.key.clone())
+                    .flat_map(|r| r.item_ids.iter().cloned())
                     .collect(),
             )
         },

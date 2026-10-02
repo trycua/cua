@@ -50,6 +50,22 @@ login](/spaces/guides/site-login), without ever exposing the password to an
 agent. **Keep me signed in** (cookies) does not have this limitation.
 </Callout>
 
+### Choosing sites and sending from the Keyvault
+
+In Cua Spaces, **Keep me signed in** lists the browser's sites with counts
+(for example `github.com, 12 cookies, 3 storage values`) so you send the
+sites you mean to, not the whole profile. It starts from what you sent to that
+Space last time, or from the sites that look like they keep a sign-in; an
+identity provider (Google, Microsoft, Apple, Okta) is never picked for you.
+Other lines of the consent screen can be turned off one by one. Cookies are
+read once to build the list's counts from the plaintext columns of Chrome's
+store; nothing is decrypted until you teleport.
+
+If the Keyvault already holds items for the app (from **Save to Keyvault**),
+the review can **send from the Keyvault** instead: you pick from the saved
+items, nothing is read from this Mac, and macOS does not ask for Keychain
+access. See [Keyvault](/spaces/guides/keyvault).
+
 ## In Cua Spaces
 
 - **Teleport an app…** in a Space's window or viewer opens the picker: search,
@@ -105,6 +121,28 @@ Drops go through `Teleport.parseDrop`, window drags through
 For a web UI, `@trycua/cua/teleport` has the headless picker state machine,
 `<cua-teleport-picker>` and `<cua-teleport-drop>` web components and
 drag-payload helpers over a `TeleportHost` you provide.
+
+## The `cua` keychain on macOS Spaces
+
+Chrome and other Chromium browsers keep their cookie key ("Safe Storage") in
+the Keychain. Session teleport installs that key into the Space's login
+keychain and pre-authorizes the browser. When the login keychain's password
+is not one the Space knows, cua-spacesd keeps the key in its own keychain,
+`~/Library/Keychains/cua.keychain-db`, instead. It behaves like this so that
+no password dialog ever appears in a Space nobody is watching:
+
+- The `cua` keychain is on the keychain search list, after the login keychain.
+  It is not the default keychain, so system services such as Spotlight do not
+  reach for it.
+- cua-spacesd unlocks it when it starts and again every 20 seconds, so it is
+  open after a reboot and within seconds of a wake. The password comes from
+  the Space's protected configuration (`CUA_ENV_LOGIN_KEYCHAIN_PW`,
+  `~/.cua/spacesd/keychain-password`, `/etc/cua/keychain-password`, then the
+  image's account password).
+- It never auto-locks: no lock after a timeout and none on sleep
+  (`security set-keychain-settings` without `-l` or `-u`).
+- Most Spaces never create it: the Cua macOS image gives the login keychain
+  the account password, so the key goes there.
 
 ## Session teleport
 

@@ -78,6 +78,7 @@ pub mod routines;
 pub mod services;
 mod space;
 mod spaces;
+pub mod thumbnails;
 
 #[cfg(feature = "spaces-agents")]
 pub mod agents;
@@ -95,6 +96,7 @@ pub mod install_cache;
 pub mod mcp;
 #[cfg(feature = "spaces-presence")]
 pub mod presence;
+pub mod reattach;
 /// Sharing a Space with other accounts, to watch or to edit, through the
 /// relay.
 #[cfg(feature = "spaces-agents")]

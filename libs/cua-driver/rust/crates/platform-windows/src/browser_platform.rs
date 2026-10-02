@@ -11,10 +11,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use cua_driver_core::browser::platform::{
-    select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
-    BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, IsolatedBrowserProcess, PrepareAction, PrepareOutcome,
-    PrepareRequest,
+    BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
+    BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
+    IsolatedBrowserProcess, PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -27,6 +26,10 @@ use cua_driver_core::browser::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use crate::browser_installation_path::{
+    plain_windows_path, resolve_installation, InstallationEntry, InstallationFs,
+    InstallationResolution,
+};
 use crate::browser_isolated_selection::{
     decide_isolated_browser, InstallationWriteAccess, IsolatedBrowserDecision,
     IsolatedCandidateFacts, NO_PROTECTED_BROWSER_MESSAGE,
@@ -46,9 +49,9 @@ use windows::Win32::NetworkManagement::IpHelper::{
 use windows::Win32::Networking::WinSock::{AF_INET, AF_INET6};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, DELETE, FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, FILE_APPEND_DATA, FILE_DELETE_CHILD,
-    FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, FILE_WRITE_EA, OPEN_EXISTING,
-    WRITE_DAC, WRITE_OWNER,
+    FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA,
+    FILE_WRITE_EA, OPEN_EXISTING, WRITE_DAC, WRITE_OWNER,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
@@ -364,6 +367,18 @@ fn has_trusted_authenticode_identity(
 }
 
 fn authenticode_output(executable: &std::path::Path) -> std::io::Result<std::process::Output> {
+    // Some Windows PowerShell 5.1 builds cannot resolve a `\\?\` verbatim
+    // path through `-LiteralPath` ("A drive named '\?\C' does not exist"),
+    // which would make every candidate look unsigned. Pass the plain path.
+    let executable = executable
+        .to_str()
+        .and_then(plain_windows_path)
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
+                "browser executable {} has no plain Win32 path",
+                executable.display()
+            ))
+        })?;
     let Ok(system32) = system_directory_path() else {
         return Err(std::io::Error::other(
             "could not resolve the Windows system directory",
@@ -381,7 +396,7 @@ fn authenticode_output(executable: &std::path::Path) -> std::io::Result<std::pro
         // The static command imports Security beside the trusted System32
         // PowerShell, ignoring an incompatible inherited PSModulePath. Pass the
         // browser path as data so PowerShell never parses it as command text.
-        .env("CUA_BROWSER_ATTEST_PATH", executable)
+        .env("CUA_BROWSER_ATTEST_PATH", &executable)
         .stdin(Stdio::null())
         .output()
 }
@@ -395,14 +410,17 @@ enum WriteProbe {
 }
 
 fn current_token_write_denial_reason(path: &std::path::Path, directory: bool) -> Option<String> {
-    match current_token_write_probe(path, directory) {
+    match current_token_write_probe(path, directory, false) {
         WriteProbe::Denied => None,
         WriteProbe::Granted(name) => Some(format!("current token was granted {name}")),
         WriteProbe::Failed(reason) => Some(reason),
     }
 }
 
-fn current_token_write_probe(path: &std::path::Path, directory: bool) -> WriteProbe {
+/// Probe `path` for write-class rights. With `link`, the junction or symbolic
+/// link object itself is opened rather than its target, because rewriting or
+/// replacing a link redirects every path through it.
+fn current_token_write_probe(path: &std::path::Path, directory: bool, link: bool) -> WriteProbe {
     use std::os::windows::ffi::OsStrExt;
 
     // This launch boundary keeps the token that runs the browser (the
@@ -439,11 +457,14 @@ fn current_token_write_probe(path: &std::path::Path, directory: bool) -> WritePr
             ("write_owner", WRITE_OWNER.0),
         ]
     };
-    let flags = if directory {
+    let mut flags = if directory {
         FILE_FLAG_BACKUP_SEMANTICS
     } else {
         FILE_FLAGS_AND_ATTRIBUTES(0)
     };
+    if link {
+        flags |= FILE_FLAG_OPEN_REPARSE_POINT;
+    }
     for &(name, right) in rights {
         match unsafe {
             CreateFileW(
@@ -469,31 +490,141 @@ fn current_token_write_probe(path: &std::path::Path, directory: bool) -> WritePr
     WriteProbe::Denied
 }
 
+/// Outcome of resolving and probing one isolated-launch candidate.
+#[derive(Debug, PartialEq, Eq)]
+struct CandidateInstallation {
+    installed: bool,
+    /// The real executable in plain drive form, when it resolved.
+    executable: Option<String>,
+    write_access: InstallationWriteAccess,
+    /// Why the candidate is not `Protected`, for the refusal detail.
+    reason: Option<String>,
+}
+
+/// The real filesystem, as seen by the calling thread's effective token.
+struct WindowsInstallationFs;
+
+impl InstallationFs for WindowsInstallationFs {
+    fn entry(&self, path: &str) -> Result<InstallationEntry, String> {
+        match std::fs::symlink_metadata(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(InstallationEntry::Missing)
+            }
+            Err(error) => Err(error.to_string()),
+            // std reports name-surrogate reparse points (junctions and
+            // symbolic links) as symlinks.
+            Ok(metadata) if metadata.file_type().is_symlink() => std::fs::read_link(path)
+                .map(|target| InstallationEntry::Link(target.to_string_lossy().into_owned()))
+                .map_err(|error| format!("could not read link target: {error}")),
+            Ok(metadata) if metadata.is_dir() => Ok(InstallationEntry::Directory),
+            Ok(_) => Ok(InstallationEntry::File),
+        }
+    }
+
+    fn canonical(&self, path: &str) -> Result<String, String> {
+        std::fs::canonicalize(path)
+            .map(|path| path.to_string_lossy().into_owned())
+            .map_err(|error| error.to_string())
+    }
+}
+
+/// Resolve the candidate below `trusted_root`, following junctions and
+/// symbolic links only when they keep the installation layout, and require
+/// every object on the resolved chain (each link object, each real directory
+/// up to each root, and the executable) to deny write access to the calling
+/// thread's token. The first non-denied probe decides the rejection kind: a
+/// granted right is `WritableByLaunchToken`, a failed probe is `Untrusted`
+/// (fail closed).
+fn windows_installation_write_access_with(
+    executable: &std::path::Path,
+    trusted_root: &std::path::Path,
+    fs: &impl InstallationFs,
+    mut probe: impl FnMut(&std::path::Path, bool, bool) -> WriteProbe,
+) -> CandidateInstallation {
+    let untrusted = |reason: String| CandidateInstallation {
+        installed: true,
+        executable: None,
+        write_access: InstallationWriteAccess::Untrusted,
+        reason: Some(reason),
+    };
+    let (Some(executable_text), Some(root_text)) = (executable.to_str(), trusted_root.to_str())
+    else {
+        return untrusted("installation path is not valid Unicode".to_owned());
+    };
+    let resolved = match resolve_installation(executable_text, root_text, fs) {
+        InstallationResolution::Missing => {
+            return CandidateInstallation {
+                installed: false,
+                executable: None,
+                write_access: InstallationWriteAccess::Untrusted,
+                reason: None,
+            }
+        }
+        InstallationResolution::Untrusted(reason) => return untrusted(reason),
+        InstallationResolution::Resolved(resolved) => resolved,
+    };
+    let mut write_access = InstallationWriteAccess::Protected;
+    let mut reason = None;
+    for target in &resolved.probes {
+        let path = std::path::Path::new(&target.path);
+        match probe(path, target.directory, target.link) {
+            WriteProbe::Denied => continue,
+            WriteProbe::Granted(right) => {
+                write_access = InstallationWriteAccess::WritableByLaunchToken;
+                reason = Some(format!(
+                    "launch token was granted {right} on {}",
+                    target.path
+                ));
+            }
+            WriteProbe::Failed(error) => {
+                write_access = InstallationWriteAccess::Untrusted;
+                reason = Some(format!("{}: {error}", target.path));
+            }
+        }
+        break;
+    }
+    CandidateInstallation {
+        installed: true,
+        executable: Some(resolved.executable),
+        write_access,
+        reason,
+    }
+}
+
 fn windows_installation_write_access(
     executable: &std::path::Path,
     trusted_root: &std::path::Path,
-) -> InstallationWriteAccess {
-    windows_installation_write_access_with_probe(
+) -> CandidateInstallation {
+    windows_installation_write_access_with(
         executable,
         trusted_root,
+        &WindowsInstallationFs,
         current_token_write_probe,
     )
 }
 
-/// Probe the installation for the token that will run the browser. For a
-/// standard-user launch every probe runs while impersonating that token; if
-/// impersonation fails the candidate is `Untrusted` (fail closed).
+/// Resolve and probe the installation for the token that will run the
+/// browser. For a standard-user launch the whole check runs while
+/// impersonating that token; if impersonation fails the candidate is
+/// `Untrusted` (fail closed).
 fn launch_token_installation_write_access(
     context: &BrowserLaunchContext,
     executable: &std::path::Path,
     trusted_root: &std::path::Path,
-) -> InstallationWriteAccess {
+) -> CandidateInstallation {
     match context {
         BrowserLaunchContext::Driver => windows_installation_write_access(executable, trusted_root),
         BrowserLaunchContext::StandardUser(token) => with_impersonation(token, || {
             windows_installation_write_access(executable, trusted_root)
         })
-        .unwrap_or(InstallationWriteAccess::Untrusted),
+        .unwrap_or_else(|error| CandidateInstallation {
+            installed: true,
+            executable: None,
+            write_access: InstallationWriteAccess::Untrusted,
+            reason: Some(format!(
+                "could not impersonate the standard-user launch token: {error}"
+            )),
+        }),
     }
 }
 
@@ -502,56 +633,8 @@ fn trusted_windows_installation(
     executable: &std::path::Path,
     trusted_root: &std::path::Path,
 ) -> bool {
-    windows_installation_write_access(executable, trusted_root)
+    windows_installation_write_access(executable, trusted_root).write_access
         == InstallationWriteAccess::Protected
-}
-
-#[cfg(test)]
-fn trusted_windows_installation_with_probe(
-    executable: &std::path::Path,
-    trusted_root: &std::path::Path,
-    mut cannot_write: impl FnMut(&std::path::Path, bool) -> bool,
-) -> bool {
-    windows_installation_write_access_with_probe(executable, trusted_root, |path, directory| {
-        if cannot_write(path, directory) {
-            WriteProbe::Denied
-        } else {
-            WriteProbe::Granted("test_write")
-        }
-    }) == InstallationWriteAccess::Protected
-}
-
-/// Walk the executable and every ancestor up to `trusted_root`, requiring
-/// each probe to deny write access. The first non-denied probe decides the
-/// rejection kind: a granted right is `WritableByLaunchToken`, a failed probe
-/// is `Untrusted` (fail closed).
-fn windows_installation_write_access_with_probe(
-    executable: &std::path::Path,
-    trusted_root: &std::path::Path,
-    mut probe: impl FnMut(&std::path::Path, bool) -> WriteProbe,
-) -> InstallationWriteAccess {
-    let rejection = |result: WriteProbe| match result {
-        WriteProbe::Denied => None,
-        WriteProbe::Granted(_) => Some(InstallationWriteAccess::WritableByLaunchToken),
-        WriteProbe::Failed(_) => Some(InstallationWriteAccess::Untrusted),
-    };
-    if !executable.starts_with(trusted_root) {
-        return InstallationWriteAccess::Untrusted;
-    }
-    if let Some(rejected) = rejection(probe(executable, false)) {
-        return rejected;
-    }
-    let mut current = executable.parent();
-    while let Some(directory) = current {
-        if let Some(rejected) = rejection(probe(directory, true)) {
-            return rejected;
-        }
-        if directory == trusted_root {
-            return InstallationWriteAccess::Protected;
-        }
-        current = directory.parent();
-    }
-    InstallationWriteAccess::Untrusted
 }
 
 fn isolated_browser_product_name(executable: &std::path::Path) -> &'static str {
@@ -1665,15 +1748,35 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         let context = browser_launch_context()?;
         let mut facts = Vec::new();
         let mut executables = Vec::new();
+        let mut diagnostics = Vec::new();
         for (candidate, trusted_root, expected_cn, expected_org) in isolated_browser_candidates()? {
             let product = isolated_browser_product_name(&candidate);
-            let Ok(executable) = select_isolated_browser_executable([candidate.clone()]) else {
-                facts.push(IsolatedCandidateFacts::missing(product));
+            // Resolves junctions and symbolic links that keep the installation
+            // layout and probes every object on the resolved chain, so the
+            // executable is the real file in plain drive form.
+            let installation =
+                launch_token_installation_write_access(&context, &candidate, &trusted_root);
+            let Some(executable) = installation.executable.filter(|_| installation.installed)
+            else {
+                diagnostics.push(serde_json::json!({
+                    "candidate": candidate.display().to_string(),
+                    "installed": installation.installed,
+                    "reason": installation.reason,
+                }));
+                facts.push(if installation.installed {
+                    IsolatedCandidateFacts {
+                        product,
+                        installed: true,
+                        write_access: InstallationWriteAccess::Untrusted,
+                        vendor_signed: false,
+                    }
+                } else {
+                    IsolatedCandidateFacts::missing(product)
+                });
                 executables.push(None);
                 continue;
             };
-            let write_access =
-                launch_token_installation_write_access(&context, &candidate, &trusted_root);
+            let write_access = installation.write_access;
             // The signature of a writable candidate is read only to explain
             // the refusal; such a candidate is never launched.
             let vendor_signed = write_access != InstallationWriteAccess::Untrusted
@@ -1682,6 +1785,13 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                     expected_cn,
                     expected_org,
                 );
+            diagnostics.push(serde_json::json!({
+                "candidate": candidate.display().to_string(),
+                "installed": true,
+                "resolved": executable,
+                "vendor_signed": vendor_signed,
+                "reason": installation.reason,
+            }));
             let fact = IsolatedCandidateFacts {
                 product,
                 installed: true,
@@ -1705,7 +1815,8 @@ impl BrowserPlatform for WindowsBrowserPlatform {
             IsolatedBrowserDecision::Refuse(message) => Err(refusal(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 message,
-            )),
+            )
+            .with_detail(serde_json::json!({ "candidates": diagnostics }))),
         }
     }
 
@@ -2581,77 +2692,168 @@ mod tests {
         assert!(!trusted_windows_installation(&executable, root.path()));
     }
 
+    /// A link-free installation tree: `.exe` paths are files, the rest are
+    /// directories, and every path is already canonical.
+    struct PlainTreeFs;
+
+    impl InstallationFs for PlainTreeFs {
+        fn entry(&self, path: &str) -> Result<InstallationEntry, String> {
+            Ok(if path.ends_with(".exe") {
+                InstallationEntry::File
+            } else {
+                InstallationEntry::Directory
+            })
+        }
+        fn canonical(&self, path: &str) -> Result<String, String> {
+            Ok(format!(r"\\?\{path}"))
+        }
+    }
+
+    /// A tree whose `Application` directory is a junction to `target`.
+    struct JunctionedTreeFs {
+        target: &'static str,
+    }
+
+    impl InstallationFs for JunctionedTreeFs {
+        fn entry(&self, path: &str) -> Result<InstallationEntry, String> {
+            if path.eq_ignore_ascii_case(r"C:\Program Files\Google\Chrome\Application") {
+                return Ok(InstallationEntry::Link(format!(r"\\?\{}", self.target)));
+            }
+            PlainTreeFs.entry(path)
+        }
+        fn canonical(&self, path: &str) -> Result<String, String> {
+            let relocated = path.replacen(
+                r"C:\Program Files\Google\Chrome\Application",
+                self.target,
+                1,
+            );
+            Ok(format!(r"\\?\{relocated}"))
+        }
+    }
+
+    fn write_access_with_probe(
+        fs: &impl InstallationFs,
+        probe: impl FnMut(&std::path::Path, bool, bool) -> WriteProbe,
+    ) -> CandidateInstallation {
+        let root = std::path::Path::new(r"C:\Program Files");
+        windows_installation_write_access_with(
+            &root.join(r"Google\Chrome\Application\chrome.exe"),
+            root,
+            fs,
+            probe,
+        )
+    }
+
     #[test]
     fn installation_trust_walk_requires_every_probe_to_deny_write() {
         let root = std::path::Path::new(r"C:\Program Files");
-        let executable = root.join(r"Google\Chrome\Application\chrome.exe");
-
-        assert!(trusted_windows_installation_with_probe(
-            &executable,
+        let protected = write_access_with_probe(&PlainTreeFs, |_, _, _| WriteProbe::Denied);
+        assert_eq!(protected.write_access, InstallationWriteAccess::Protected);
+        assert_eq!(
+            protected.executable.as_deref(),
+            Some(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+        );
+        for writable in [r"C:\Program Files\Google\Chrome", r"C:\Program Files"] {
+            let result = write_access_with_probe(&PlainTreeFs, |path, directory, _| {
+                if directory && path == std::path::Path::new(writable) {
+                    WriteProbe::Granted("add_file")
+                } else {
+                    WriteProbe::Denied
+                }
+            });
+            assert_eq!(
+                result.write_access,
+                InstallationWriteAccess::WritableByLaunchToken,
+                "{writable}"
+            );
+        }
+        let outside = windows_installation_write_access_with(
+            std::path::Path::new(r"D:\UserControlled\chrome.exe"),
             root,
-            |_, _| true,
-        ));
-        assert!(!trusted_windows_installation_with_probe(
-            &executable,
-            root,
-            |path, directory| !(directory && path.ends_with(r"Google\Chrome")),
-        ));
-        assert!(!trusted_windows_installation_with_probe(
-            &executable,
-            root,
-            |path, directory| !(directory && path == root),
-        ));
-        assert!(!trusted_windows_installation_with_probe(
-            &std::path::PathBuf::from(r"D:\UserControlled\chrome.exe"),
-            root,
-            |_, _| true,
-        ));
+            &PlainTreeFs,
+            |_, _, _| WriteProbe::Denied,
+        );
+        assert!(outside.installed);
+        assert_eq!(outside.executable, None);
+        assert_eq!(outside.write_access, InstallationWriteAccess::Untrusted);
     }
 
     #[test]
     fn installation_write_access_distinguishes_granted_from_failed_probes() {
         let root = std::path::Path::new(r"C:\Program Files");
         let executable = root.join(r"Google\Chrome\Application\chrome.exe");
-
-        assert_eq!(
-            windows_installation_write_access_with_probe(&executable, root, |_, _| {
+        let failed = write_access_with_probe(&PlainTreeFs, |_, directory, _| {
+            if directory {
                 WriteProbe::Denied
-            }),
-            InstallationWriteAccess::Protected
-        );
-        assert_eq!(
-            windows_installation_write_access_with_probe(&executable, root, |path, directory| {
-                if directory && path == root {
-                    WriteProbe::Granted("add_file")
-                } else {
-                    WriteProbe::Denied
-                }
-            }),
-            InstallationWriteAccess::WritableByLaunchToken
-        );
-        assert_eq!(
-            windows_installation_write_access_with_probe(&executable, root, |_, directory| {
-                if directory {
-                    WriteProbe::Denied
-                } else {
-                    WriteProbe::Failed("write_data probe failed closed".to_owned())
-                }
-            }),
-            InstallationWriteAccess::Untrusted
-        );
-        assert_eq!(
-            windows_installation_write_access_with_probe(
-                std::path::Path::new(r"D:\UserControlled\chrome.exe"),
-                root,
-                |_, _| WriteProbe::Denied,
-            ),
-            InstallationWriteAccess::Untrusted
-        );
+            } else {
+                WriteProbe::Failed("write_data probe failed closed".to_owned())
+            }
+        });
+        assert_eq!(failed.write_access, InstallationWriteAccess::Untrusted);
+        assert!(failed
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("write_data probe failed closed")));
         assert_eq!(isolated_browser_product_name(&executable), "Chrome");
         assert_eq!(
             isolated_browser_product_name(&root.join(r"Microsoft\Edge\Application\msedge.exe")),
             "Edge"
         );
+    }
+
+    #[test]
+    fn junctioned_installation_is_accepted_only_when_the_whole_chain_is_protected() {
+        let fs = JunctionedTreeFs {
+            target: r"E:\Program Files\Google\Chrome\Application",
+        };
+        let mut probed = Vec::new();
+        let protected = write_access_with_probe(&fs, |path, directory, link| {
+            probed.push((path.to_path_buf(), directory, link));
+            WriteProbe::Denied
+        });
+        assert_eq!(protected.write_access, InstallationWriteAccess::Protected);
+        assert_eq!(
+            protected.executable.as_deref(),
+            Some(r"E:\Program Files\Google\Chrome\Application\chrome.exe")
+        );
+        assert!(probed.contains(&(
+            PathBuf::from(r"C:\Program Files\Google\Chrome\Application"),
+            true,
+            true
+        )));
+
+        // The junction itself, each real directory, and the real root must
+        // all deny write access.
+        for writable in [
+            r"C:\Program Files\Google\Chrome\Application",
+            r"E:\Program Files",
+            r"E:\Program Files\Google\Chrome\Application",
+            r"E:\Program Files\Google\Chrome\Application\chrome.exe",
+        ] {
+            let result = write_access_with_probe(&fs, |path, _, _| {
+                if path == std::path::Path::new(writable) {
+                    WriteProbe::Granted("write_dac")
+                } else {
+                    WriteProbe::Denied
+                }
+            });
+            assert_eq!(
+                result.write_access,
+                InstallationWriteAccess::WritableByLaunchToken,
+                "{writable}"
+            );
+            assert!(result.reason.unwrap().contains(writable));
+        }
+
+        // A junction that leaves the installation layout is never followed.
+        let escaped = write_access_with_probe(
+            &JunctionedTreeFs {
+                target: r"C:\Users\Public\Chrome",
+            },
+            |_, _, _| WriteProbe::Denied,
+        );
+        assert_eq!(escaped.write_access, InstallationWriteAccess::Untrusted);
+        assert_eq!(escaped.executable, None);
     }
 
     #[test]
@@ -2697,7 +2899,8 @@ mod tests {
         let context = browser_launch_context().expect("browser launch context");
         if matches!(context, BrowserLaunchContext::StandardUser(_)) {
             assert_eq!(
-                launch_token_installation_write_access(&context, &installed.0, &installed.1),
+                launch_token_installation_write_access(&context, &installed.0, &installed.1)
+                    .write_access,
                 InstallationWriteAccess::Protected,
                 "the standard-user launch token must not be able to modify {}",
                 installed.0.display()

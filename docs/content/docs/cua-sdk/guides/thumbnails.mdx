@@ -1,0 +1,59 @@
+---
+title: Space thumbnails
+description: Read a Space's latest small preview from the cache every client on the machine shares.
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+For a small preview of a Space (a tile, a list row, a placeholder while a
+stream connects), use `Space.thumbnail` rather than `screenshot`. It reads one
+cache that every client on the machine shares (the Spaces app, the CLI, your
+scripts): a small JPEG of the primary display and when it was captured. The
+cached image comes back at once when it is younger than `max_age_ms`; otherwise
+the SDK captures a fresh one through cua-spacesd and keeps it for the next
+caller. When that capture fails, the older image comes back, and
+`captured_at_ms` says how old it is.
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript', 'Swift']}>
+  <Tab value="Python">
+
+```python skip="no-runner"
+import cua
+
+space = await cua.connect().spaces().space("local:dev")
+thumb = await space.thumbnail(max_age_ms=120_000)  # None: any age
+print(thumb.width, thumb.height, thumb.captured_at_ms)
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts skip="no-runner"
+import { connect } from '@trycua/cua';
+
+const space = await connect().spaces().space('local:dev');
+const thumb = await space.thumbnail(120_000n); // undefined: any age
+console.log(thumb.width, thumb.height, thumb.capturedAtMs);
+```
+
+  </Tab>
+  <Tab value="Swift">
+
+```swift skip="no-runner"
+import Cua
+
+let space = try await Cua.connect(address: nil, token: nil).spaces().space(space: "local:dev")
+let thumb = try await space.thumbnail(maxAgeMs: 120_000)  // nil: any age
+print(thumb.width, thumb.height, thumb.capturedAtMs)
+```
+
+  </Tab>
+</Tabs>
+
+The cua daemon owns the cache under `~/.cua/cache/thumbnails`. It keeps the
+latest image per Space across restarts, drops a Space's image when the Space is
+deleted or removed, and caps the cache at 32 MB (the oldest images go first).
+While any client has asked for a thumbnail in the last 10 minutes, the daemon
+also captures a new one for each running Space about every 90 seconds, so a
+preview is seldom more than a couple of minutes old. When nobody asks, it
+captures nothing and puts no load on the guests.

@@ -15,7 +15,7 @@ mod common;
 
 use std::time::Duration;
 
-use common::{PASSWORD, import_passwords, rig};
+use common::{PASSWORD, all_items, import_passwords, rig};
 use cua_keyvault::broker::{
     AccessRequest, ApproveOptions, Decision, ImportSpec, LoginRequest, RuleSpec, Selector,
     SiteChoice, TeleportRequest,
@@ -41,11 +41,10 @@ async fn a_fresh_vault_asks_for_everything() {
     // Items default to "never unattended" with a bounded lifetime on target.
     assert!(!ItemPolicy::default().unattended);
     for it in import_passwords(&r).await {
-        assert!(!it.policy.unattended, "{}", it.label);
+        assert!(!it.policy.unattended, "{}", it.label());
         assert!(it.policy.allowed_targets.is_empty());
     }
-    let sites = r
-        .broker
+    r.broker
         .import(
             &r.cua,
             ImportSpec {
@@ -60,6 +59,11 @@ async fn a_fresh_vault_asks_for_everything() {
         )
         .await
         .unwrap();
+    let sites: Vec<_> = all_items(&r)
+        .await
+        .into_iter()
+        .filter(|i| i.kind == cua_keyvault::ItemKind::Cookie)
+        .collect();
     assert!(!sites[0].policy.unattended);
     // A rule naming an item that was not opted in is refused.
     let err = r
@@ -213,8 +217,7 @@ async fn an_approval_covers_exactly_one_use_by_default() {
 #[tokio::test]
 async fn a_teleport_token_is_one_use_by_default_and_needs_approval() {
     let r = rig().await;
-    let items = r
-        .broker
+    r.broker
         .import(
             &r.cua,
             ImportSpec {
@@ -229,6 +232,7 @@ async fn a_teleport_token_is_one_use_by_default_and_needs_approval() {
         )
         .await
         .unwrap();
+    let items = all_items(&r).await;
     let no_token = r
         .broker
         .teleport(
@@ -237,6 +241,8 @@ async fn a_teleport_token_is_one_use_by_default_and_needs_approval() {
                 token: None,
                 items: vec![items[0].id.clone()],
                 target: "work".into(),
+                include_passwords: false,
+                launch: false,
             },
         )
         .await
@@ -272,6 +278,8 @@ async fn a_teleport_token_is_one_use_by_default_and_needs_approval() {
         token: Some(token),
         items: vec![items[0].id.clone()],
         target: "work".into(),
+        include_passwords: false,
+        launch: false,
     };
     r.broker.teleport(&r.agent, req.clone()).await.unwrap();
     assert!(r.broker.teleport(&r.agent, req).await.is_err());

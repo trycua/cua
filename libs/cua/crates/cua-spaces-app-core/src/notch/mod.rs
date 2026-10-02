@@ -121,8 +121,11 @@ pub const TILE_WIDTH: f64 = 128.0;
 pub const TILE_THUMB_HEIGHT: f64 = 80.0;
 /// Space between tiles.
 pub const TILE_GAP: f64 = 12.0;
-/// Tile row height: the thumbnail, a 6 pt gap and the one-line caption.
-pub const TILE_ROW_HEIGHT: f64 = TILE_THUMB_HEIGHT + 6.0 + 16.0;
+/// A tile's header line: the OS logo and where the Space runs.
+pub const TILE_HEADER_HEIGHT: f64 = 14.0;
+/// Tile row height: the header line, a 5 pt gap, the thumbnail, a 6 pt gap
+/// and the one-line caption.
+pub const TILE_ROW_HEIGHT: f64 = TILE_HEADER_HEIGHT + 5.0 + TILE_THUMB_HEIGHT + 6.0 + 16.0;
 /// Teleport prompt (or permission line) height.
 pub const PROMPT_HEIGHT: f64 = 36.0;
 /// How much taller than the notch the "Teleport to Cua" box grows.
@@ -297,8 +300,13 @@ pub struct NotchTile {
     /// `os-ubuntu`, ..., `os-linux`); the artwork is [`os_icon_svg`], or on
     /// macOS the system symbol [`os_icon_system_symbol`] names.
     pub symbol: String,
-    /// Accessibility label: name, OS and status.
+    /// Accessibility label: name, OS, where it runs and status.
     pub label: String,
+    /// Where it runs, in words, on the tile's header line next to the OS
+    /// logo: "This Mac", the machine that provides it ("Mac mini"), the
+    /// address of one added by address, or the cloud's place ([`location`]).
+    #[serde(default)]
+    pub location: String,
     /// While it is being created: overall progress in thousandths (a ring
     /// over the tile).
     pub progress: Option<u32>,
@@ -395,6 +403,53 @@ pub fn os_icon_system_symbol(id: &str) -> Option<&'static str> {
     (id == "os-macos").then_some("apple.logo")
 }
 
+/// Where a Space runs, in words, for its tile: "This Mac" for one on this
+/// machine; for one your other machine provides, that machine's name (the
+/// relay's device name, else the machine's own row in `spaces`, else its
+/// relay id); for one added by address, its name for the machine, else the
+/// address; for one in your cloud, its place ("AWS \u{b7} us-west-2").
+pub fn location(space: &Space, spaces: &[Space]) -> String {
+    use crate::model::SpaceProvider;
+    let text = |v: &Option<String>| v.clone().filter(|v| !v.trim().is_empty());
+    if space.id == THIS_MACHINE_ID {
+        return "This Mac".into();
+    }
+    match space.provider.unwrap_or(SpaceProvider::Cloud) {
+        SpaceProvider::Local => "This Mac".into(),
+        SpaceProvider::Cloud => crate::spaces::sidebar::location_text(space).into(),
+        SpaceProvider::Direct => text(&space.host_name).unwrap_or_else(|| {
+            space
+                .id
+                .strip_prefix("space://direct/")
+                .or_else(|| space.id.strip_prefix("direct:"))
+                .unwrap_or(&space.id)
+                .to_string()
+        }),
+        SpaceProvider::Relay => {
+            if let Some(place) =
+                text(&space.cloud_place).filter(|_| crate::spaces::sidebar::in_your_cloud(space))
+            {
+                return place;
+            }
+            match text(&space.host) {
+                Some(host) => text(&space.host_name)
+                    .or_else(|| {
+                        spaces
+                            .iter()
+                            .find(|m| {
+                                m.id.strip_prefix("relay:") == Some(host.as_str())
+                                    && text(&m.host).is_none()
+                            })
+                            .map(|m| m.name.clone())
+                    })
+                    .unwrap_or(host),
+                // The machine itself.
+                None => text(&space.host_name).unwrap_or_else(|| space.name.clone()),
+            }
+        }
+    }
+}
+
 /// Whether `space` matches the header's search: every word of `query`
 /// (case-insensitive) is in its name, OS, OS name, status, detail or
 /// group. An empty query matches everything.
@@ -408,6 +463,8 @@ pub fn matches(space: &Space, query: &str) -> bool {
         &format!("{:?}", space.status),
         space.detail.as_str(),
         space.fleet_id.as_deref().unwrap_or_default(),
+        crate::spaces::sidebar::location_text(space),
+        space.host_name.as_deref().unwrap_or_default(),
     ]
     .join("\n")
     .to_lowercase();
@@ -437,14 +494,16 @@ pub fn tiles_matching(spaces: &[Space], targeted: Option<&str>, query: &str) -> 
         .filter(|s| s.id != THIS_MACHINE_ID && matches(s, query))
         .take(MAX_TILES)
         .map(|s| NotchTile {
+            location: location(&s, spaces),
             dim: !s.status.is_live(),
             drop_target: accepts_drop(&s),
             targeted: targeted == Some(s.id.as_str()),
             symbol: os_icon(s.os, s.os_name.as_deref()).into(),
             label: format!(
-                "{}, {}, {}",
+                "{}, {}, {}, {}",
                 s.name,
                 s.os.label(),
+                location(&s, spaces),
                 crate::spaces::sidebar::status_text(&s)
             ),
             progress: s
@@ -1329,8 +1388,56 @@ mod tests {
         assert_eq!(by("b").symbol, "os-windows");
         assert_eq!(by("c").symbol, "os-macos");
         assert_eq!(by("d").symbol, "os-linux", "no distro reported: Tux");
-        assert_eq!(by("b").label, "Lab PC, Windows, Suspended");
+        assert_eq!(by("b").label, "Lab PC, Windows, Cua Cloud, Suspended");
         assert!(by("b").targeted && by("b").dim);
+    }
+
+    #[test]
+    fn tiles_say_where_each_space_runs() {
+        use crate::model::SpaceProvider;
+        let with = |id: &str, name: &str, p: SpaceProvider| {
+            let mut s = space(id, name, SpaceOs::Linux, SpaceStatus::Running);
+            s.provider = Some(p);
+            s
+        };
+        let local = with("local:dev", "Dev", SpaceProvider::Local);
+        let machine = with("relay:m1", "Mac mini", SpaceProvider::Relay);
+        let mut named = with("relay:m1/a", "Aurora", SpaceProvider::Relay);
+        named.host = Some("m1".into());
+        named.host_name = Some("Studio Mac mini".into());
+        let mut unnamed = named.clone();
+        unnamed.id = "relay:m1/b".into();
+        unnamed.host_name = None;
+        let mut stranger = unnamed.clone();
+        stranger.id = "relay:m9/c".into();
+        stranger.host = Some("m9".into());
+        let direct = with("direct:10.0.0.7:8000", "Box", SpaceProvider::Direct);
+        let mut aws = with("relay:aws/x", "Worker", SpaceProvider::Relay);
+        aws.cloud = Some("aws".into());
+        aws.cloud_place = Some("AWS \u{b7} us-west-2".into());
+        let all = vec![
+            local.clone(),
+            machine.clone(),
+            named.clone(),
+            unnamed.clone(),
+            stranger.clone(),
+            direct.clone(),
+            aws.clone(),
+        ];
+        for (s, want) in [
+            (&local, "This Mac"),
+            (&machine, "Mac mini"),
+            (&named, "Studio Mac mini"),
+            (&unnamed, "Mac mini"),
+            (&stranger, "m9"),
+            (&direct, "10.0.0.7:8000"),
+            (&aws, "AWS \u{b7} us-west-2"),
+        ] {
+            assert_eq!(location(s, &all), want, "{}", s.id);
+        }
+        let t = tiles(&[local], None);
+        assert_eq!(t[0].location, "This Mac");
+        assert_eq!(t[0].label, "Dev, Linux, This Mac, Running");
     }
 
     #[test]
@@ -1769,7 +1876,7 @@ mod tests {
             (t.progress, t.progress_label.as_deref()),
             (None, Some("Deleting\u{2026}"))
         );
-        assert_eq!(t.label, "Gone, Linux, Deleting\u{2026}");
+        assert_eq!(t.label, "Gone, Linux, Cua Cloud, Deleting\u{2026}");
     }
 
     #[test]

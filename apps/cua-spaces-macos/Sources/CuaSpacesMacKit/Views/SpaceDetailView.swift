@@ -23,6 +23,9 @@ struct SpaceDetailView: View {
     @State private var dropStatus: TeleportDropZone.Status?
     @State private var agents: AgentRunsModel?
     @State private var sharing: ShareModel?
+    /// Connect (or Try again) was pressed: the stream opens even with
+    /// "Connect to the desktop automatically" off.
+    @State private var connectRequested = false
     @Environment(\.openWindow) private var openWindow
     private let copy = appSpaceDetailCopy()
 
@@ -78,7 +81,15 @@ struct SpaceDetailView: View {
         .toolbar { toolbar(detail) }
         // A delete stops the stream, its pop-outs and the polling at once
         // (and a failed one starts them again).
-        .task(id: live) { await connect(detail) }
+        .task(id: "\(live) \(connectRequested)") { await connect(detail) }
+        // The cover's preview: the shared store's image at once, then one
+        // no older than the background interval.
+        .task(id: live) {
+            guard detail.canStream else { return }
+            await model.thumbnails.refresh(space.id, maxAge: TimeInterval(SpaceThumbnails.policy.backgroundIntervalMs) / 1000)
+        }
+        // Leaving: the last frame is the newest preview there is.
+        .onDisappear { keepLastFrame() }
         .onChange(of: deleting) { _, now in if now { disconnect() } }
         .onChange(of: off) { _, now in if now { disconnect() } }
         .task(id: live) {
@@ -135,40 +146,53 @@ struct SpaceDetailView: View {
     }
 
     @ViewBuilder private func preview(_ detail: AppSpaceDetail) -> some View {
-        if let session, detail.canStream {
-            SpaceScreenView(session: session, isInteractive: true, showsControls: false)
-        } else {
+        if let notice = detail.creditNotice, !detail.canStream {
             ZStack {
                 Rectangle().fill(.quaternary)
-                if let notice = detail.creditNotice {
-                    // Out of Cua Cloud credit: one line and Add credit (the
-                    // website billing page). Local Spaces never see this.
-                    HStack(spacing: 12) {
-                        Text(notice.text).foregroundStyle(.secondary)
-                        Button(notice.button) { model.openBillingPage(notice.url) }
-                            .buttonStyle(.borderedProminent)
-                            .accessibilityIdentifier("add-credit")
-                    }
-                } else {
-                    VStack(spacing: 6) {
-                        HStack(spacing: 8) {
-                            if let progress = detail.progress {
-                                ProgressRing(permille: progress, size: 16)
-                            }
-                            Text(detail.previewText).foregroundStyle(.secondary)
-                        }
-                        // While it downloads: "4.2 of 23.9 GB · 85 MB/s · about 4 min".
-                        if let text = detail.progressText {
-                            Text(text)
-                                .font(.callout.monospacedDigit())
-                                .foregroundStyle(.tertiary)
-                                .lineLimit(1)
-                                .accessibilityIdentifier("space-progress-text")
-                        }
-                    }
+                // Out of Cua Cloud credit: one line and Add credit (the
+                // website billing page). Local Spaces never see this.
+                HStack(spacing: 12) {
+                    Text(notice.text).foregroundStyle(.secondary)
+                    Button(notice.button) { model.openBillingPage(notice.url) }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("add-credit")
                 }
             }
+        } else {
+            StreamPhaseReader(session: detail.canStream ? session : nil) { phase in
+                let cover = model.cover(detail, requested: connectRequested, stream: phase)
+                ZStack {
+                    if let session, detail.canStream {
+                        SpaceScreenView(session: session, isInteractive: true, showsControls: false)
+                    }
+                    if cover.kind != .stream {
+                        DesktopCoverView(cover: cover, image: model.thumbnails[space.id],
+                                         progress: detail.progress, progressText: detail.progressText) {
+                            press(cover)
+                        }
+                        .transition(.opacity)
+                    }
+                }
+                .animation(.easeOut(duration: 0.25), value: cover.kind)
+            }
         }
+    }
+
+    /// The cover's button: Connect opens the stream; Try again starts the
+    /// failed one again.
+    private func press(_ cover: AppDesktopCover) {
+        connectRequested = true
+        guard cover.kind == .status, let session else { return }
+        Task {
+            await session.stop()
+            await session.start()
+        }
+    }
+
+    /// Keeps the stream's last frame as the Space's preview.
+    private func keepLastFrame() {
+        guard let frame = session?.frame, let image = SpaceThumbnails.image(frame) else { return }
+        model.thumbnails.set(space.id, image)
     }
 
     @ViewBuilder private var streamRows: some View {
@@ -276,7 +300,9 @@ struct SpaceDetailView: View {
     }
 
     private func connect(_ detail: AppSpaceDetail) async {
-        guard detail.canStream, session == nil else { return }
+        // The core decides: auto-connect on, or Connect pressed.
+        guard session == nil,
+              model.cover(detail, requested: connectRequested, stream: .noSession).openStream else { return }
         do {
             let provider = try await model.backend.streamProvider(id: space.id)
             self.provider = provider
@@ -298,6 +324,8 @@ struct SpaceDetailView: View {
     /// Stops the live desktop, closes its picture-in-picture panels and
     /// forgets the window list (the Space is being deleted).
     private func disconnect() {
+        keepLastFrame()
+        connectRequested = false
         agents = nil
         pips?.popInAll()
         if let session { Task { await session.stop() } }
@@ -311,6 +339,14 @@ struct SpaceDetailView: View {
         do {
             let context = try await model.backend.teleportContext(id: space.id)
             let t = TeleportModel(spaceName: space.name, teleport: context?.0, space: context?.1)
+            // The review reads saved Keyvault items and a browser's sites
+            // from the Keyvault, and starts from what was sent last time.
+            t.keyvault = model.keyvault
+            t.rememberedChoices = model.settings.teleportChoices
+            t.onRemember = { [weak model] choices in
+                model?.settings.teleportChoices = choices
+                model?.saveSettings()
+            }
             // From <Space>: the window's own stream, here, in a floating panel.
             t.onStreamWindow = { [weak t] id in
                 if let w = streams?.window(id: id) ?? session?.windows.first(where: { $0.id == id }) {
@@ -555,12 +591,29 @@ struct SpaceWindowView: View {
     var body: some View {
         let space = model.spaces.first { $0.id == spaceId }
         Group {
-            if let session {
-                SpaceScreenView(session: session, isInteractive: true, showsControls: true)
-            } else {
+            if let error {
                 ZStack {
                     Rectangle().fill(.quaternary)
-                    Text(error ?? space.map { model.detail($0).previewText } ?? "").foregroundStyle(.secondary)
+                    Text(error).foregroundStyle(.secondary)
+                }
+            } else if let space {
+                // Open is a request to connect: the same cover as the
+                // detail's until the first frame.
+                StreamPhaseReader(session: session) { phase in
+                    let cover = model.cover(model.detail(space), requested: true, stream: phase)
+                    ZStack {
+                        if let session { SpaceScreenView(session: session, isInteractive: true, showsControls: true) }
+                        if cover.kind != .stream {
+                            DesktopCoverView(cover: cover, image: model.thumbnails[spaceId]) {
+                                // Try again.
+                                guard let session else { return }
+                                Task {
+                                    await session.stop()
+                                    await session.start()
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

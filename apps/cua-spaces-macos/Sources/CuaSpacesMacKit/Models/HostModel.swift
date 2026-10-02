@@ -104,6 +104,12 @@ public final class HostModel {
     public private(set) var form: AppHostFormState?
     public private(set) var busy = false
     public private(set) var error: String?
+    /// The last "Set up for access" failure, in plain words with the raw
+    /// error as details. It stays while a retry runs (so Retry can show
+    /// progress) and clears when setup succeeds or the form closes.
+    public private(set) var setupFailure: HostSetupFailure?
+    /// "Set up for access" (or Retry) is running.
+    public var settingUp: Bool { formView?.busy == true }
     /// The signed-in account (relay mode joins as it).
     public var identity: String?
     /// The account's token for relay setup.
@@ -139,16 +145,21 @@ public final class HostModel {
     public func openForm() {
         form = appHostFormInitial()
         error = nil
+        setupFailure = nil
     }
 
-    public func closeForm() { form = nil }
+    public func closeForm() {
+        form = nil
+        setupFailure = nil
+    }
 
     public func send(_ action: AppHostFormAction) {
         guard let f = form else { return }
         form = appHostFormReduce(state: f, action: action)
     }
 
-    /// "Set up for access": host setup with the core's validated request.
+    /// "Set up for access" (and Retry, which runs it again with the same
+    /// choices): host setup with the core's validated request.
     public func submit() async {
         guard let host, let view = formView, view.canSubmit, let request = view.request else { return }
         send(.submit)
@@ -156,9 +167,12 @@ public final class HostModel {
             let token: String? = request.mode == "relay" ? await accountToken?() : nil
             let status = try await host.setupRequest(request: request, accountToken: token)
             form = nil
+            setupFailure = nil
             apply(status)
         } catch {
-            send(.failed(error: LiveSpacesBackend.words(error)))
+            let raw = LiveSpacesBackend.words(error)
+            setupFailure = HostSetupFailure.presenting(raw)
+            send(.failed(error: raw))
         }
     }
 

@@ -524,6 +524,10 @@ pub(crate) fn trusted_app_for(service: &str) -> Option<&'static str> {
         "Chromium Safe Storage" => Some("/Applications/Chromium.app"),
         "Microsoft Edge Safe Storage" => Some("/Applications/Microsoft Edge.app"),
         "Brave Safe Storage" => Some("/Applications/Brave Browser.app"),
+        "Slack Safe Storage" => Some("/Applications/Slack.app"),
+        "discord Safe Storage" => Some("/Applications/Discord.app"),
+        "Code Safe Storage" => Some("/Applications/Visual Studio Code.app"),
+        "Notion Safe Storage" => Some("/Applications/Notion.app"),
         _ => None,
     }
 }

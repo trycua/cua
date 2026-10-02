@@ -24,7 +24,8 @@ use crate::host::{HostEffects, default_host};
 use crate::keychain;
 pub use crate::layout::electron::ElectronApp;
 use crate::layout::electron::{
-    DISCORD, PROFILE_DIRS, PROFILE_FILES, SLACK, UNITY_HUB, app_support_root, home_rel, rel,
+    DISCORD, NOTION, PROFILE_DIRS, PROFILE_FILES, SLACK, UNITY_HUB, VSCODE, app_support_root,
+    home_rel, rel,
 };
 use crate::providers::util::{add_dir_recursive, add_file_best_effort, dir_len, file_len};
 use crate::{
@@ -39,6 +40,10 @@ pub struct ElectronProvider {
     /// Whether the macOS Keychain Safe Storage read is attempted. Disabled by
     /// [`Self::without_keychain`] so tests never touch the real Keychain.
     allow_keychain: bool,
+    /// Cookies and localStorage travel as decrypted items for the destination
+    /// to re-encrypt under its own key, not as raw files plus this machine's
+    /// Safe Storage key ([`Self::structured`]).
+    structured: bool,
     /// Test/override hook: the home the source profile is resolved under.
     home_override: Option<PathBuf>,
     /// Every Keychain, `$HOME` and authorization effect goes through this.
@@ -51,6 +56,7 @@ impl ElectronProvider {
             app,
             max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
             allow_keychain: true,
+            structured: false,
             home_override: None,
             host: default_host(),
         }
@@ -69,6 +75,14 @@ impl ElectronProvider {
 
     pub fn with_max_total_bytes(mut self, bytes: u64) -> Self {
         self.max_total_bytes = bytes;
+        self
+    }
+
+    /// Send cookies and localStorage as items (Chromium underneath: the same
+    /// readers and re-encryption as a Chromium browser), with the app's own
+    /// Safe Storage key never leaving this machine. Off by default.
+    pub fn structured(mut self) -> Self {
+        self.structured = true;
         self
     }
 
@@ -97,6 +111,16 @@ impl ElectronProvider {
 
     /// Unity Hub (also carries the Unity Version Control credentials and the
     /// Editor entitlement from `$HOME`; see [`UNITY_HUB`]).
+    pub fn vscode() -> Self {
+        Self::new(VSCODE)
+    }
+
+    /// Notion.
+    pub fn notion() -> Self {
+        Self::new(NOTION)
+    }
+
+    /// Unity Hub.
     pub fn unity_hub() -> Self {
         Self::new(UNITY_HUB)
     }
@@ -259,7 +283,27 @@ impl ExportProvider for ElectronProvider {
         );
         let wants = |r: &str| include.is_none_or(|set| set.contains(r));
 
+        // Structured: the cookies as decrypted rows and localStorage as items
+        // (their raw files, and the Local State that holds the key, stay home).
+        let mut raw_skip: Vec<&str> = Vec::new();
+        if self.structured {
+            self.add_structured(&mut writer, app, &dir, &wants)?;
+            raw_skip = vec![
+                "Cookies",
+                "Cookies-journal",
+                "Cookies-wal",
+                "Cookies-shm",
+                "Network/Cookies",
+                "Network/Cookies-wal",
+                "Network/Cookies-shm",
+                "Local State",
+            ];
+        }
+
         for (name, _s) in PROFILE_FILES {
+            if raw_skip.contains(name) {
+                continue;
+            }
             if wants(&rel(name)) {
                 let disk = dir.join(name);
                 if disk.is_file() {
@@ -271,7 +315,21 @@ impl ExportProvider for ElectronProvider {
             if wants(&rel(name)) {
                 let disk = dir.join(name);
                 if disk.is_dir() {
-                    add_dir_recursive(&mut writer, &disk, &rel(name))?;
+                    if self.structured && *name == "Local State" {
+                        continue;
+                    }
+                    if self.structured && *name == "Local Storage" {
+                        // Items, not LevelDB files (and any other file under it
+                        // stays a file).
+                        crate::providers::util::add_local_storage(
+                            &mut writer,
+                            &dir,
+                            &disk,
+                            &rel(name),
+                        )?;
+                    } else {
+                        add_dir_recursive(&mut writer, &disk, &rel(name))?;
+                    }
                 }
             }
         }
@@ -310,6 +368,11 @@ impl ExportProvider for ElectronProvider {
             let trust = self.app.macos_app();
             let mut items = Vec::new();
             for service in self.app.keychain_services {
+                // The Safe Storage key stays here when the values travel as
+                // items: the destination makes its own.
+                if self.structured && service.ends_with(" Safe Storage") {
+                    continue;
+                }
                 match keychain::probe_generic(&*self.host, service, None) {
                     keychain::KeychainRead::Read(mut item) => {
                         item.trust_app = Some(trust.clone());
@@ -343,6 +406,53 @@ impl ExportProvider for ElectronProvider {
         }
 
         writer.finish()?;
+        Ok(())
+    }
+}
+
+impl ElectronProvider {
+    /// Cookies as decrypted rows in the reserved `cookies.json` entry, read
+    /// with the app's own Safe Storage key (macOS Keychain), the fixed Linux
+    /// key, or the Windows Local State key. A failure to read is an error: a
+    /// signed-out transfer that looks like a success helps nobody.
+    fn add_structured<W: Write>(
+        &self,
+        writer: &mut BundleWriter<W>,
+        app: &AppRef,
+        dir: &std::path::Path,
+        wants: &dyn Fn(&str) -> bool,
+    ) -> Result<()> {
+        let wants_cookies = ["Cookies", "Network/Cookies"]
+            .iter()
+            .any(|n| wants(&rel(n)));
+        if !wants_cookies || (app.platform == Platform::MacOS && !self.allow_keychain) {
+            return Ok(());
+        }
+        if cua_teleport_bundle::layout::chrome::cookies_store(dir).is_file() {
+            let mut reader = crate::browser_cookies::ChromeCookies::new(self.host.clone())
+                .with_platform(app.platform)
+                .with_profile_dir(dir.to_path_buf());
+            if let Some(service) = self
+                .app
+                .keychain_services
+                .iter()
+                .find(|s| s.ends_with(" Safe Storage"))
+            {
+                reader = reader.with_safe_storage_service(service);
+            }
+            let cookies = reader.read(&[])?;
+            if !cookies.is_empty() {
+                let items: Vec<cua_teleport_bundle::cookies::CookieItem> = cookies
+                    .into_iter()
+                    .map(crate::browser_cookies::DecryptedCookie::into_item)
+                    .collect();
+                writer.add_bytes(
+                    cua_teleport_bundle::cookies::COOKIES_ENTRY,
+                    0o600,
+                    &cua_teleport_bundle::cookies::serialize(&items),
+                )?;
+            }
+        }
         Ok(())
     }
 }
@@ -652,6 +762,83 @@ mod tests {
             paths,
             vec![rel("Cookies")],
             "only checked cookies: {paths:?}"
+        );
+    }
+
+    /// Chromium underneath: structured, the cookies travel decrypted in the
+    /// reserved entry and localStorage as items, no raw store and no Local
+    /// State, and the app's Safe Storage key never leaves.
+    #[test]
+    fn structured_slack_sends_cookies_and_local_storage_as_items() {
+        use cua_teleport_bundle::bundle::BundleReader;
+        let home = tempfile::tempdir().unwrap();
+        let user_data = home.path().join(".config/Slack");
+        std::fs::create_dir_all(&user_data).unwrap();
+        let key = cua_teleport_bundle::chromium_crypto::derive_key(
+            cua_teleport_bundle::chromium_crypto::LINUX_V10_PASSWORD,
+            cua_teleport_bundle::chromium_crypto::LINUX_V10_PBKDF2_ROUNDS,
+        );
+        crate::browser_cookies::write_network_cookies_db_for_tests(
+            &user_data,
+            &[crate::browser_cookies::TestCookieRow {
+                host_key: ".slack.com",
+                name: "d",
+                encrypted_value: cua_teleport_bundle::chromium_crypto::encrypt_v10(
+                    &key,
+                    b"xoxd-session",
+                ),
+                path: "/",
+                expires_utc: 0,
+                is_secure: true,
+                is_httponly: true,
+                samesite: 0,
+            }],
+        )
+        .unwrap();
+        std::fs::write(user_data.join("Local State"), br#"{"x":1}"#).unwrap();
+        cua_chromium_storage::write(
+            &cua_chromium_storage::store_dir(&user_data),
+            &[cua_chromium_storage::LocalStorageItem {
+                origin: "https://app.slack.com".into(),
+                key: "localConfig_v2".into(),
+                value: "{}".into(),
+                key_raw: None,
+                value_raw: None,
+            }],
+            1,
+        )
+        .unwrap();
+        let provider = ElectronProvider::slack()
+            .structured()
+            .with_home(home.path());
+        let app = AppRef {
+            app_id: "slack".into(),
+            display_name: "Slack".into(),
+            platform: Platform::Linux,
+        };
+        let mut buf = Vec::new();
+        provider
+            .capture_selected(&app, TransferScope::FullProfile, None, &mut buf)
+            .unwrap();
+        let entries = BundleReader::open(std::io::Cursor::new(buf))
+            .unwrap()
+            .read_all()
+            .unwrap();
+        let paths: Vec<&str> = entries.iter().map(|e| e.rel_path.as_str()).collect();
+        let get = |p: &str| entries.iter().find(|e| e.rel_path == p).unwrap();
+        let cookies = cua_teleport_bundle::cookies::parse(
+            &get(cua_teleport_bundle::cookies::COOKIES_ENTRY).bytes,
+        );
+        assert_eq!(cookies[0].value, b"xoxd-session");
+        let ls = cua_teleport_bundle::local_storage::parse(
+            &get(cua_teleport_bundle::local_storage::LOCAL_STORAGE_ENTRY).bytes,
+        );
+        assert_eq!(ls[0].key, "localConfig_v2");
+        assert!(
+            !paths.iter().any(|p| p.contains("Cookies")
+                || p.ends_with("Local State")
+                || p.contains("leveldb")),
+            "{paths:?}"
         );
     }
 }

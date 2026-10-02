@@ -215,6 +215,7 @@ pub struct ChromeCookies {
     browser_id: String,
     profile_dir: Option<PathBuf>,
     local_state: Option<PathBuf>,
+    service: Option<&'static str>,
     dpapi: Option<std::sync::Arc<dyn cua_chromium_storage::dpapi::Dpapi>>,
     profile: Option<String>,
 }
@@ -228,6 +229,7 @@ impl ChromeCookies {
             browser_id: "chrome".to_string(),
             profile_dir: None,
             local_state: None,
+            service: None,
             dpapi: None,
             profile: None,
         }
@@ -252,6 +254,14 @@ impl ChromeCookies {
     /// profile; see [`crate::safe_storage::default_local_state`]).
     pub fn with_local_state(mut self, path: impl Into<PathBuf>) -> Self {
         self.local_state = Some(path.into());
+        self
+    }
+
+    /// The macOS Keychain service holding this app's Safe Storage key, for an
+    /// app that is not a catalog browser (an Electron app: `"Slack Safe
+    /// Storage"`).
+    pub fn with_safe_storage_service(mut self, service: &'static str) -> Self {
+        self.service = Some(service);
         self
     }
 
@@ -327,6 +337,7 @@ impl ChromeCookies {
             )));
         }
         let service = match self.platform {
+            Platform::MacOS if self.service.is_some() => self.service.unwrap_or_default(),
             Platform::MacOS => chromium_crypto::macos_safe_storage_service(&self.browser_id)
                 .ok_or_else(|| {
                     TeleportError::Provider(format!(

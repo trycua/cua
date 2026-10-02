@@ -59,6 +59,37 @@ impl ChromeImporter {
     }
 }
 
+/// Writes localStorage items into `profile_dir`'s `Local State/leveldb`
+/// (`Local Storage/leveldb`), beside what the browser already holds. The
+/// destination browser is not running yet (the import launches it afterwards),
+/// so LevelDB's lock is free. A store this import creates is ledgered with its
+/// files so a wipe removes it.
+pub(crate) fn write_local_storage(
+    profile_dir: &Path,
+    items: &[cua_teleport_bundle::local_storage::LocalStorageItem],
+    record: &mut ImportRecord,
+) -> Result<()> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    let store = cua_chromium_storage::store_dir(profile_dir);
+    let existed = store.is_dir();
+    if !existed {
+        record.create_dir_all(&store)?;
+    }
+    let written = cua_chromium_storage::write(&store, items, crate::cookies::chrome_now_utc())
+        .map_err(|e| crate::TeleportError::Provider(e.to_string()))?;
+    record.local_storage_written(&store, &written);
+    if !existed {
+        if let Ok(entries) = std::fs::read_dir(&store) {
+            for e in entries.flatten() {
+                record.file_written(&e.path());
+            }
+        }
+    }
+    Ok(())
+}
+
 impl ImportProvider for ChromeImporter {
     fn id(&self) -> &str {
         ID
@@ -151,29 +182,8 @@ impl ImportProvider for ChromeImporter {
         }
         if let Some(bytes) = local_storage_entry {
             let items = cua_teleport_bundle::local_storage::parse(&bytes);
-            if !items.is_empty() {
-                // Same single-profile scope as the cookies above. The
-                // destination Chrome is not running yet (this import
-                // launches it afterwards), so LevelDB's lock is free.
-                let store = cua_chromium_storage::store_dir(&user_data_dir.join("Default"));
-                let existed = store.is_dir();
-                if !existed {
-                    record.create_dir_all(&store)?;
-                }
-                let written =
-                    cua_chromium_storage::write(&store, &items, crate::cookies::chrome_now_utc())
-                        .map_err(|e| crate::TeleportError::Provider(e.to_string()))?;
-                record.local_storage_written(&store, &written);
-                // The database files themselves are new when it did not
-                // exist: ledger them so a wipe removes them with the keys.
-                if !existed {
-                    if let Ok(entries) = std::fs::read_dir(&store) {
-                        for e in entries.flatten() {
-                            record.file_written(&e.path());
-                        }
-                    }
-                }
-            }
+            // Same single-profile scope as the cookies above.
+            write_local_storage(&user_data_dir.join("Default"), &items, record)?;
         }
         // Suppress the first-run/onboarding flow: on a freshly-imported profile it
         // starts its own new-tab session and discards the transferred session that

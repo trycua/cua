@@ -143,7 +143,7 @@ fn app_mismatch_unknown_provider_and_garbage_are_refused() {
         receiver.import_bytes(b"not a tar", "", false),
         Err(ImportError::InvalidBundle(_))
     ));
-    let unknown = BundleWriter::new(Vec::new(), "vscode", "VS Code", TransferScope::TabsOnly)
+    let unknown = BundleWriter::new(Vec::new(), "blender", "Blender", TransferScope::TabsOnly)
         .finish()
         .unwrap();
     assert!(matches!(

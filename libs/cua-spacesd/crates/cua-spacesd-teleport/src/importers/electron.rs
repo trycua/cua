@@ -13,9 +13,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use cua_teleport_bundle::bundle::{BundleReader, DEFAULT_MAX_TOTAL_BYTES};
+use cua_teleport_bundle::cookies::COOKIES_ENTRY;
 use cua_teleport_bundle::layout::electron::{
-    launch_spec_for, process_pattern, profile_dir, remap, ElectronApp, DISCORD, SLACK, UNITY_HUB,
+    launch_spec_for, process_pattern, profile_dir, remap, ElectronApp, DISCORD, NOTION, SLACK,
+    UNITY_HUB, VSCODE,
 };
+use cua_teleport_bundle::local_storage::LOCAL_STORAGE_ENTRY;
 use cua_teleport_bundle::{LaunchSpec, Platform};
 
 use super::write_entry;
@@ -56,6 +59,16 @@ impl ElectronImporter {
         Self::new(DISCORD)
     }
 
+    /// Visual Studio Code.
+    pub fn vscode() -> Self {
+        Self::new(VSCODE)
+    }
+
+    /// Notion.
+    pub fn notion() -> Self {
+        Self::new(NOTION)
+    }
+
     /// Unity Hub.
     pub fn unity_hub() -> Self {
         Self::new(UNITY_HUB)
@@ -90,8 +103,21 @@ impl ImportProvider for ElectronImporter {
         //    it started with.
         terminate_running(&*self.host, platform, self.app.display);
 
-        record.create_dir_all(&dest_home.join(profile_dir(&self.app, platform)))?;
+        let user_data = dest_home.join(profile_dir(&self.app, platform));
+        record.create_dir_all(&user_data)?;
+        let mut cookies: Option<Vec<u8>> = None;
+        let mut local_storage: Option<Vec<u8>> = None;
         while let Some(entry) = reader.next_entry()? {
+            // Items from the Keyvault: re-encrypted for THIS app's own key
+            // below (never the source's), or written into its own LevelDB.
+            if entry.rel_path == COOKIES_ENTRY {
+                cookies = Some(entry.bytes);
+                continue;
+            }
+            if entry.rel_path == LOCAL_STORAGE_ENTRY {
+                local_storage = Some(entry.bytes);
+                continue;
+            }
             if entry.rel_path == keychain::KEYCHAIN_ENTRY {
                 keychain::install_all_recorded(&*self.host, &entry.bytes, record);
                 continue;
@@ -99,6 +125,32 @@ impl ImportProvider for ElectronImporter {
             if let Some(rel) = remap(&self.app, &entry.rel_path, platform) {
                 write_entry(&dest_home.join(rel), &entry, false, record)?;
             }
+        }
+        // Electron keeps its Chromium profile at the root of userData: the
+        // cookies and Local State sit right there, not under `Default/`.
+        if let Some(bytes) = cookies {
+            let items = cua_teleport_bundle::cookies::parse(&bytes);
+            if let Some(service) = self
+                .app
+                .keychain_services
+                .iter()
+                .find(|s| s.ends_with(" Safe Storage"))
+            {
+                crate::cookies::install_cookies_with(
+                    &*self.host,
+                    &user_data,
+                    &user_data.join("Local State"),
+                    service,
+                    platform,
+                    &cua_chromium_storage::dpapi::SystemDpapi,
+                    &items,
+                    record,
+                )?;
+            }
+        }
+        if let Some(bytes) = local_storage {
+            let items = cua_teleport_bundle::local_storage::parse(&bytes);
+            crate::importers::chrome::write_local_storage(&user_data, &items, record)?;
         }
         Ok(launch_spec_for(platform, self.app.display))
     }
@@ -301,5 +353,61 @@ mod tests {
             .filter(keychain::is_add_command)
             .count();
         assert_eq!(adds, usize::from(cfg!(target_os = "macos")));
+    }
+
+    /// Items from the Keyvault land in the app's own Chromium store at the
+    /// root of its userData: cookies re-encrypted under the destination's key,
+    /// localStorage in its own LevelDB.
+    #[test]
+    fn items_land_in_the_apps_own_userdata_re_encrypted() {
+        use cua_teleport_bundle::chromium_crypto as crypto;
+        use cua_teleport_bundle::cookies::{serialize, CookieItem};
+        use cua_teleport_bundle::local_storage::{serialize as ls_serialize, LocalStorageItem};
+        let dest = tempfile::tempdir().unwrap();
+        let cookies = serialize(&[CookieItem {
+            host_key: ".slack.com".into(),
+            name: "d".into(),
+            value: b"xoxd-session".to_vec(),
+            path: "/".into(),
+            expires_utc: 0,
+            is_secure: true,
+            is_httponly: true,
+            samesite: 0,
+            extra: Default::default(),
+        }]);
+        let ls = ls_serialize(&[LocalStorageItem {
+            origin: "https://app.slack.com".into(),
+            key: "localConfig_v2".into(),
+            value: "{}".into(),
+            key_raw: None,
+            value_raw: None,
+        }]);
+        let b = bundle(
+            "slack",
+            &[
+                ("cookies.json", 0o600, &cookies),
+                ("localstorage.json", 0o600, &ls),
+            ],
+        );
+        ElectronImporter::slack()
+            .with_host(Arc::new(FakeHost::new()))
+            .import_to(&mut Cursor::new(b), dest.path(), Platform::Linux)
+            .unwrap();
+        let user_data = dest.path().join(".config/Slack");
+        let conn = rusqlite::Connection::open(user_data.join("Network/Cookies")).unwrap();
+        let enc: Vec<u8> = conn
+            .query_row(
+                "SELECT encrypted_value FROM cookies WHERE name = 'd'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let key = crypto::derive_key(crypto::LINUX_V10_PASSWORD, crypto::LINUX_V10_PBKDF2_ROUNDS);
+        let plain = crypto::decrypt_prefixed(&key, &enc).unwrap().1;
+        assert!(plain.ends_with(b"xoxd-session"));
+        let got = cua_chromium_storage::read(&cua_chromium_storage::store_dir(&user_data)).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].key, "localConfig_v2");
+        assert!(!dest.path().join("cookies.json").exists());
     }
 }

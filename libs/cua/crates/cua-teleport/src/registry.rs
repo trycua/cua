@@ -76,10 +76,17 @@ impl ExportRegistry {
         let mut registry = Self::new();
         registry.register(Box::new(chrome));
         registry.register(Box::new(FirefoxProvider::new().with_host(host.clone())));
-        registry.register(Box::new(ElectronProvider::slack().with_host(host.clone())));
-        registry.register(Box::new(
-            ElectronProvider::discord().with_host(host.clone()),
-        ));
+        // Electron apps are Chromium underneath: their cookies and
+        // localStorage travel as items, re-encrypted for the destination's
+        // own key (see `ElectronProvider::structured`).
+        for provider in [
+            ElectronProvider::slack(),
+            ElectronProvider::discord(),
+            ElectronProvider::vscode(),
+            ElectronProvider::notion(),
+        ] {
+            registry.register(Box::new(provider.structured().with_host(host.clone())));
+        }
         registry.register(Box::new(
             ElectronProvider::unity_hub().with_host(host.clone()),
         ));

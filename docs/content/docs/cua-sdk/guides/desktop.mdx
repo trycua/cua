@@ -29,6 +29,9 @@ from pathlib import Path
 from cua_sandbox import Image, Sandbox
 
 async with Sandbox.ephemeral(Image.linux()) as sb:
+    # Keys go to the focused window: open a terminal and focus it.
+    await sb.shell.run("DISPLAY=:1 nohup xfce4-terminal --title=demo >/dev/null 2>&1 &")
+    await sb.shell.run("DISPLAY=:1 xdotool search --sync --name demo windowactivate --sync")
     width, height = await sb.get_dimensions()
     await sb.mouse.click(width // 2, height // 2)
     await sb.keyboard.type("hello")
@@ -41,7 +44,7 @@ async with Sandbox.ephemeral(Image.linux()) as sb:
 
 ```ts test="container" id="desktop-typescript"
 import { writeFile } from 'node:fs/promises';
-import { embedded, SandboxCreateOptions } from '@trycua/cua';
+import { embedded, SandboxCreateOptions, SpacesdCommand } from '@trycua/cua';
 
 const sb = await embedded().sandboxes().create(
   SandboxCreateOptions.create({
@@ -50,6 +53,10 @@ const sb = await embedded().sandboxes().create(
 );
 try {
   const env = await sb.spacesd(undefined);
+  // Keys go to the focused window: open a terminal and focus it.
+  const sh = (cmd: string) => env.run(SpacesdCommand.create({ program: 'sh', args: ['-c', cmd] }));
+  await sh('DISPLAY=:1 nohup xfce4-terminal --title=demo >/dev/null 2>&1 &');
+  await sh('DISPLAY=:1 xdotool search --sync --name demo windowactivate --sync');
   const shot = await env.screenshot(undefined);
   await env.click(Math.floor(shot.width / 2), Math.floor(shot.height / 2));
   await env.typeText('hello');

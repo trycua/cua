@@ -204,17 +204,98 @@ pub fn install_cookies(
     items: &[CookieItem],
     record: &mut ImportRecord,
 ) -> Result<usize> {
-    if items.is_empty() {
-        return Ok(0);
+    install_cookies_with(
+        host,
+        profile_dir,
+        &default_local_state(profile_dir),
+        service,
+        platform,
+        &cua_chromium_storage::dpapi::SystemDpapi,
+        items,
+        record,
+    )
+}
+
+/// `Local State` for a browser profile: in its `User Data` parent (`Default`
+/// lives inside it). An Electron app passes its own userData instead.
+pub fn default_local_state(profile_dir: &Path) -> std::path::PathBuf {
+    profile_dir
+        .parent()
+        .unwrap_or(profile_dir)
+        .join("Local State")
+}
+
+/// How values are encrypted for the destination: AES-128-CBC under the
+/// Safe Storage key (macOS, Linux) or AES-256-GCM under the `Local State` key
+/// (Windows).
+pub(crate) enum DestCipher {
+    Cbc(zeroize::Zeroizing<[u8; 16]>),
+    Gcm(zeroize::Zeroizing<[u8; 32]>),
+}
+
+impl DestCipher {
+    /// One value, with the `v10` prefix Chromium stores.
+    pub(crate) fn encrypt(&self, plain: &[u8]) -> Vec<u8> {
+        match self {
+            DestCipher::Cbc(k) => chromium_crypto::encrypt_v10(k, plain),
+            DestCipher::Gcm(k) => {
+                let mut nonce = [0u8; 12];
+                rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce);
+                chromium_crypto::gcm::encrypt(k, &nonce, plain)
+            }
+        }
     }
+}
+
+/// The destination's own cipher: the Safe Storage key (created on first use)
+/// on macOS and Linux, the `Local State` key (created and wrapped with DPAPI
+/// on first use) on Windows. Never the source's.
+pub(crate) fn destination_cipher(
+    host: &dyn HostEffects,
+    local_state: &Path,
+    service: &'static str,
+    platform: Platform,
+    dpapi: &dyn cua_chromium_storage::dpapi::Dpapi,
+    record: &mut ImportRecord,
+) -> Result<DestCipher> {
     if platform == Platform::Windows {
-        return Err(TeleportError::Provider(
-            "re-encrypting cookies for a Windows destination (DPAPI) is not supported yet".into(),
-        ));
+        let existed = local_state.is_file();
+        let mut random = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut random);
+        let (key, created) =
+            cua_chromium_storage::dpapi::ensure_local_state_key(local_state, dpapi, random)
+                .map_err(|e| TeleportError::Provider(format!("Windows browser key: {e}")))?;
+        if created && !existed {
+            // A Local State this import made goes with it on wipe.
+            record.file_written(local_state);
+        }
+        return Ok(DestCipher::Gcm(key));
     }
     let secret = ensure_safe_storage_secret(host, platform, service, record)
         .map_err(|e| TeleportError::Provider(format!("Safe Storage key for {service}: {e}")))?;
-    let key = chromium_crypto::derive_key(&secret, pbkdf2_rounds_for(platform));
+    Ok(DestCipher::Cbc(chromium_crypto::derive_key(
+        &secret,
+        pbkdf2_rounds_for(platform),
+    )))
+}
+
+/// [`install_cookies`] with an explicit `Local State` and DPAPI (Electron apps
+/// keep their `Local State` in their userData; tests inject a fake DPAPI).
+#[allow(clippy::too_many_arguments)]
+pub fn install_cookies_with(
+    host: &dyn HostEffects,
+    profile_dir: &Path,
+    local_state: &Path,
+    service: &'static str,
+    platform: Platform,
+    dpapi: &dyn cua_chromium_storage::dpapi::Dpapi,
+    items: &[CookieItem],
+    record: &mut ImportRecord,
+) -> Result<usize> {
+    if items.is_empty() {
+        return Ok(0);
+    }
+    let key = destination_cipher(host, local_state, service, platform, dpapi, record)?;
     // Which file Chrome reads depends on its version (see
     // [`cookies_db_paths`]), and the destination's Chrome may not have run
     // yet, so write every location it could use. The unused copy is inert.
@@ -229,7 +310,7 @@ pub fn install_cookies(
 /// (created first when absent). Returns how many rows were written.
 fn install_into_db(
     db: &Path,
-    key: &[u8; 16],
+    key: &DestCipher,
     items: &[CookieItem],
     record: &mut ImportRecord,
 ) -> Result<usize> {
@@ -275,7 +356,7 @@ fn install_into_db(
     let mut written = 0usize;
     for item in items {
         let plain = plaintext_for(digest_values, &item.host_key, &item.value);
-        let encrypted = chromium_crypto::encrypt_v10(key, &plain);
+        let encrypted = key.encrypt(&plain);
         let mut args: Vec<rusqlite::types::Value> = Vec::with_capacity(columns.len());
         for column in &columns {
             args.push(match *column {
@@ -868,5 +949,43 @@ mod tests {
             "Microsoft Edge"
         );
         assert_eq!(account_for_service("Weird"), "Weird");
+    }
+
+    /// A Windows destination: cookies are AES-256-GCM (with the host digest)
+    /// under the destination's Local State key, never the source's.
+    #[test]
+    fn a_windows_destination_gets_aes_gcm_cookies_under_its_own_local_state_key() {
+        use cua_chromium_storage::dpapi::{local_state_key, FakeDpapi};
+        use sha2::{Digest, Sha256};
+        let home = tempfile::tempdir().unwrap();
+        let user_data = home.path().join("User Data");
+        let profile = user_data.join("Default");
+        let local_state = user_data.join("Local State");
+        let mut record = ImportRecord::default();
+        let n = install_cookies_with(
+            &FakeHost::new(),
+            &profile,
+            &local_state,
+            "Chrome Safe Storage",
+            Platform::Windows,
+            &FakeDpapi,
+            &[item(".github.com", "user_session", "gh-win")],
+            &mut record,
+        )
+        .unwrap();
+        assert_eq!(n, 1);
+        let conn = rusqlite::Connection::open(profile.join("Network/Cookies")).unwrap();
+        let enc: Vec<u8> = conn
+            .query_row(
+                "SELECT encrypted_value FROM cookies WHERE name = 'user_session'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let key = local_state_key(&local_state, &FakeDpapi).unwrap();
+        let plain = chromium_crypto::gcm::decrypt(&key, &enc).unwrap();
+        assert_eq!(&plain[..32], Sha256::digest(b".github.com").as_slice());
+        assert_eq!(&plain[32..], b"gh-win");
+        assert!(record.files.contains(&local_state));
     }
 }

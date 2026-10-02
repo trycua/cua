@@ -19,10 +19,13 @@ tar = "0.4"
 # destination): PBKDF2-HMAC-SHA1 + AES-128-CBC, RustCrypto crates. Pure: no
 # file or Keychain I/O in this crate, so it is usable on every platform.
 aes = "0.8"
+# Windows `v10` values: AES-256-GCM under the DPAPI-unwrapped Local State key.
+aes-gcm = "0.10"
 cbc = { version = "0.1", features = ["alloc"] }
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 sha1 = "0.10"
 zeroize = "1"
+base64.workspace = true
 
 [dev-dependencies]
 hex = { workspace = true }

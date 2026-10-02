@@ -214,6 +214,8 @@ pub struct ChromeCookies {
     /// [`chromium_crypto::macos_safe_storage_service`].
     browser_id: String,
     profile_dir: Option<PathBuf>,
+    local_state: Option<PathBuf>,
+    dpapi: Option<std::sync::Arc<dyn cua_chromium_storage::dpapi::Dpapi>>,
     profile: Option<String>,
 }
 
@@ -225,6 +227,8 @@ impl ChromeCookies {
             platform: Platform::current(),
             browser_id: "chrome".to_string(),
             profile_dir: None,
+            local_state: None,
+            dpapi: None,
             profile: None,
         }
     }
@@ -244,6 +248,35 @@ impl ChromeCookies {
     }
 
     /// Read this exact profile directory.
+    /// The `Local State` holding the Windows key (default: next to the
+    /// profile; see [`crate::safe_storage::default_local_state`]).
+    pub fn with_local_state(mut self, path: impl Into<PathBuf>) -> Self {
+        self.local_state = Some(path.into());
+        self
+    }
+
+    /// DPAPI for the Windows key (the system's by default).
+    pub fn with_dpapi(
+        mut self,
+        dpapi: std::sync::Arc<dyn cua_chromium_storage::dpapi::Dpapi>,
+    ) -> Self {
+        self.dpapi = Some(dpapi);
+        self
+    }
+
+    fn keys<'a>(&'a self, dir: &std::path::Path, service: &'static str) -> SafeStorageKeys<'a> {
+        let mut k = SafeStorageKeys::new(self.host.as_ref(), self.platform, service)
+            .with_local_state(
+                self.local_state
+                    .clone()
+                    .or_else(|| crate::safe_storage::default_local_state(dir)),
+            );
+        if let Some(d) = &self.dpapi {
+            k = k.with_dpapi(d.clone());
+        }
+        k
+    }
+
     pub fn with_profile_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.profile_dir = Some(dir.into());
         self
@@ -311,7 +344,7 @@ impl ChromeCookies {
             .iter()
             .map(|s| s.trim().to_ascii_lowercase())
             .collect();
-        let mut keys = SafeStorageKeys::new(self.host.as_ref(), self.platform, service);
+        let mut keys = self.keys(&dir, service);
         let mut out = CookieRead::default();
         for r in rows {
             let site = crate::passwords::site_for_host(&r.host_key);
@@ -885,6 +918,42 @@ mod tests {
     }
 
     /// Modern Chrome (96+): only `Network/Cookies` exists.
+    /// A Windows source: `v10` AES-256-GCM cookies under the DPAPI-wrapped
+    /// Local State key (with the Chrome 130 host digest), the app-bound `v20`
+    /// one reported, nothing read from this machine's Keychain.
+    #[test]
+    fn windows_v10_cookies_decrypt_through_local_state_and_v20_is_reported() {
+        use cua_chromium_storage::dpapi::{FakeDpapi, ensure_local_state_key};
+        use sha2::{Digest, Sha256};
+        let root = tempfile::tempdir().unwrap();
+        let profile = root.path().join("Default");
+        let (key, _) =
+            ensure_local_state_key(&root.path().join("Local State"), &FakeDpapi, [6u8; 32])
+                .unwrap();
+        let mut plain = Sha256::digest(b".example.com").to_vec();
+        plain.extend_from_slice(b"win-session");
+        let enc = chromium_crypto::gcm::encrypt(&key, &[2u8; 12], &plain);
+        let mut v20 = b"v20".to_vec();
+        v20.extend_from_slice(&[9u8; 40]);
+        write_modern_cookies_db_for_tests(
+            &profile,
+            &[
+                modern_row(".example.com", "sid", enc, CookieExtras::default()),
+                modern_row(".bank.test", "bound", v20, CookieExtras::default()),
+            ],
+        )
+        .unwrap();
+        let read = ChromeCookies::new(Arc::new(FakeHost::new()))
+            .with_platform(Platform::Windows)
+            .with_profile_dir(&profile)
+            .with_dpapi(Arc::new(FakeDpapi))
+            .read_report(&[])
+            .unwrap();
+        assert_eq!(read.cookies.len(), 1);
+        assert_eq!(read.cookies[0].value.as_str(), "win-session");
+        assert_eq!(read.unavailable.len(), 1);
+    }
+
     #[test]
     fn reads_a_modern_network_cookies_only_profile() {
         let dir = tempfile::tempdir().unwrap();

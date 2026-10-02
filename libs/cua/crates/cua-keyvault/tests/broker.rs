@@ -9,21 +9,23 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use cua_keyvault::broker::{
-    AccessRequest, ApproveOptions, Backend, Broker, BrokerConfig, Candidate, Captured, Decision,
+    AccessRequest, ApproveOptions, Backend, Broker, BrokerConfig, Captured, Decision,
     DeliveryOutcome, FakePresence, ImportSpec, InitRequest, Inventory, RuleSpec, Selector,
     SiteChoice, TeleportRequest, TeleportStage, UnlockRequest,
 };
 use cua_keyvault::model::{
-    CookieInfo, ItemKind, ItemMeta, ItemPayload, ItemPolicy, ItemSummary, NO_EXPIRY, PayloadEntry,
-    RuleCaller,
+    ItemKind, ItemMeta, ItemPolicy, LoginRecord, NO_EXPIRY, PayloadEntry, RuleCaller,
 };
 use cua_keyvault::protector::ProtectorKind;
+use cua_keyvault::record::{self, CookieRecord};
 use cua_keyvault::{CallerIdentity, Error, Signing};
 
 #[derive(Default)]
 #[allow(clippy::type_complexity)]
 struct FakeBackend {
     delivered: Mutex<Vec<(String, String, Vec<String>, u64)>>,
+    /// The cookie hosts each delivery carried (from its `cookies.json`).
+    delivered_hosts: Mutex<Vec<Vec<String>>>,
     wiped: Mutex<Vec<(String, String)>>,
     notified: Mutex<Vec<String>>,
     captures: Mutex<Vec<ImportSpec>>,
@@ -44,48 +46,53 @@ impl FakeBackend {
     }
 }
 
-fn site_item(app: &str, site: &str, passwords: bool) -> Captured {
-    Captured {
-        meta: ItemMeta {
-            id: String::new(),
-            kind: if passwords {
-                ItemKind::SitePasswords
-            } else {
-                ItemKind::BrowserSite
-            },
-            label: format!("{site} ({app})"),
-            provider_id: app.into(),
-            app_display: app.into(),
-            site: Some(site.into()),
-            account: None,
-            source: "Default".into(),
-            summary: ItemSummary {
-                cookies: vec![CookieInfo {
-                    name: "user_session".into(),
-                    domain: format!(".{site}"),
-                    session: true,
-                    expires_ms: None,
-                }],
-                ..Default::default()
-            },
-            warnings: vec![],
-            identity_provider: false,
-            policy: ItemPolicy::default(),
-            created_ms: 0,
-            updated_ms: 0,
-            rev: 0,
-            record_digest: String::new(),
-        },
-        payload: ItemPayload {
-            provider_id: app.into(),
-            scope: "full".into(),
-            entries: vec![PayloadEntry {
-                rel_path: format!("cookies/{site}"),
-                mode: 0o600,
-                data: "RklYVFVSRS1TRUNSRVQ=".into(),
-            }],
-        },
-    }
+fn cap(n: record::NewRecord, app: &str) -> Captured {
+    let (mut meta, payload) = n.into_item(app, app, "Default", "full");
+    meta.session = true;
+    Captured { meta, payload }
+}
+
+/// One cookie of `site`.
+fn cookie_item(app: &str, site: &str, name: &str) -> Captured {
+    cap(
+        record::cookie_record(&CookieRecord {
+            creation_utc: None,
+            expires_utc: 0,
+            host_key: format!(".{site}"),
+            http_only: true,
+            last_update_utc: None,
+            name: name.into(),
+            partition_key: None,
+            path: "/".into(),
+            priority: None,
+            same_site: 1,
+            secure: true,
+            source_port: None,
+            source_scheme: None,
+            value: b"FIXTURE-SECRET".to_vec(),
+        })
+        .unwrap(),
+        app,
+    )
+}
+
+fn file_item(app: &str, path: &str) -> Captured {
+    cap(
+        record::file_record(path, 0o600, b"FILE-SECRET").unwrap(),
+        app,
+    )
+}
+
+fn password_item(app: &str, site: &str, user: &str) -> Captured {
+    cap(
+        record::password_record(&LoginRecord {
+            origin: format!("https://{site}"),
+            username: user.into(),
+            password: "PW-SECRET".into(),
+        })
+        .unwrap(),
+        app,
+    )
 }
 
 #[async_trait::async_trait]
@@ -105,13 +112,10 @@ impl Backend for FakeBackend {
             provider_id: app.into(),
             app_display: app.into(),
             profile: None,
-            candidates: vec![Candidate {
-                kind: ItemKind::BrowserSite,
-                site: Some("github.com".into()),
-                accounts: vec![],
-                label: "github.com".into(),
-                summary: ItemSummary::default(),
-                warnings: vec![],
+            domains: vec![cua_keyvault::broker::DomainInventory {
+                domain: "github.com".into(),
+                cookies: 2,
+                ..Default::default()
             }],
             notes: vec![],
         })
@@ -121,16 +125,19 @@ impl Backend for FakeBackend {
         self.captures.lock().unwrap().push(spec.clone());
         let mut out = Vec::new();
         for s in &spec.sites {
-            out.push(site_item(&spec.app, &s.site, false));
+            out.push(cookie_item(&spec.app, &s.site, "user_session"));
             if s.include_passwords {
-                out.push(site_item(&spec.app, &s.site, true));
+                out.push(password_item(&spec.app, &s.site, "octo"));
             }
         }
         if spec.whole_app {
-            let mut c = site_item(&spec.app, "app", false);
-            c.meta.kind = ItemKind::AppSession;
-            c.meta.site = None;
-            out.push(c);
+            for p in spec
+                .paths
+                .clone()
+                .unwrap_or_else(|| vec!["app/session.json".into()])
+            {
+                out.push(file_item(&spec.app, &p));
+            }
         }
         Ok(out)
     }
@@ -139,13 +146,26 @@ impl Backend for FakeBackend {
         &self,
         target: &str,
         provider_id: &str,
-        payloads: Vec<ItemPayload>,
+        _scope: &str,
+        entries: Vec<PayloadEntry>,
         expires_ms: u64,
     ) -> cua_keyvault::Result<DeliveryOutcome> {
-        let paths: Vec<String> = payloads
+        let paths: Vec<String> = entries.iter().map(|e| e.rel_path.clone()).collect();
+        let hosts: Vec<String> = entries
             .iter()
-            .flat_map(|p| p.entries.iter().map(|e| e.rel_path.clone()))
+            .filter(|e| e.rel_path == record::COOKIES_ENTRY)
+            .flat_map(|e| {
+                use base64::Engine as _;
+                let raw = base64::engine::general_purpose::STANDARD
+                    .decode(&e.data)
+                    .unwrap();
+                let rows: Vec<serde_json::Value> = serde_json::from_slice(&raw).unwrap();
+                rows.iter()
+                    .map(|r| r["host_key"].as_str().unwrap().to_string())
+                    .collect::<Vec<_>>()
+            })
             .collect();
+        self.delivered_hosts.lock().unwrap().push(hosts);
         let mut d = self.delivered.lock().unwrap();
         d.push((target.into(), provider_id.into(), paths.clone(), expires_ms));
         Ok(DeliveryOutcome {
@@ -160,7 +180,8 @@ impl Backend for FakeBackend {
         &self,
         target: &str,
         provider_id: &str,
-        payloads: Vec<ItemPayload>,
+        scope: &str,
+        entries: Vec<PayloadEntry>,
         expires_ms: u64,
         stage: cua_keyvault::broker::StageSink,
     ) -> cua_keyvault::Result<DeliveryOutcome> {
@@ -168,7 +189,7 @@ impl Backend for FakeBackend {
         stage(TeleportStage::Uploading { done: 0, total: 8 });
         stage(TeleportStage::Uploading { done: 8, total: 8 });
         stage(TeleportStage::Importing);
-        self.deliver(target, provider_id, payloads, expires_ms)
+        self.deliver(target, provider_id, scope, entries, expires_ms)
             .await
     }
 
@@ -234,6 +255,13 @@ async fn rig() -> Rig {
     }
 }
 
+/// Every item, with names visible (opens the browse window).
+async fn all_items(r: &Rig) -> Vec<ItemMeta> {
+    r.broker.browse(&r.cua).await.unwrap();
+    r.broker.list_items(&r.cua, 0, 1000).await.unwrap().items
+}
+
+/// Imports `sites` and returns their cookie items, in site order.
 async fn import_sites(r: &Rig, sites: &[&str]) -> Vec<ItemMeta> {
     r.broker
         .import(
@@ -252,7 +280,20 @@ async fn import_sites(r: &Rig, sites: &[&str]) -> Vec<ItemMeta> {
             },
         )
         .await
-        .unwrap()
+        .unwrap();
+    let items = all_items(r).await;
+    sites
+        .iter()
+        .filter_map(|s| {
+            items
+                .iter()
+                .find(|i| {
+                    i.kind == ItemKind::Cookie
+                        && i.domain.as_deref().map(|d| d.trim_start_matches('.')) == Some(*s)
+                })
+                .cloned()
+        })
+        .collect()
 }
 
 async fn grant(
@@ -269,7 +310,6 @@ async fn grant(
                 selectors: vec![Selector::Site {
                     app: "chrome".into(),
                     site: site.into(),
-                    account: None,
                 }],
                 targets: vec![target.into()],
                 uses: Some(0),
@@ -298,7 +338,7 @@ async fn third_parties_cannot_use_first_party_operations() {
     let r = rig().await;
     import_sites(&r, &["github.com"]).await;
     for res in [
-        r.broker.list_items(&r.koala).await.map(|_| ()),
+        r.broker.list_items(&r.koala, 0, 10).await.map(|_| ()),
         r.broker.list_pending(&r.koala).await.map(|_| ()),
         r.broker.set_disabled(&r.koala, false).await,
         r.broker.list_grants(&r.koala).await.map(|_| ()),
@@ -319,7 +359,6 @@ async fn third_parties_cannot_use_first_party_operations() {
                 selectors: vec![Selector::Site {
                     app: "chrome".into(),
                     site: "github.com".into(),
-                    account: None,
                 }],
                 targets: vec!["dev-1".into()],
                 ..Default::default()
@@ -345,11 +384,11 @@ async fn consent_grants_a_caller_bound_scoped_token() {
     let items = import_sites(&r, &["github.com", "gitlab.com"]).await;
     let github = items
         .iter()
-        .find(|i| i.site.as_deref() == Some("github.com"))
+        .find(|i| i.domain.as_deref() == Some(".github.com"))
         .unwrap();
     let gitlab = items
         .iter()
-        .find(|i| i.site.as_deref() == Some("gitlab.com"))
+        .find(|i| i.domain.as_deref() == Some(".gitlab.com"))
         .unwrap();
     let (token, granted) = grant(&r, &r.koala, "github.com", "dev-1").await;
     assert_eq!(granted, vec![github.id.clone()]);
@@ -628,7 +667,10 @@ async fn presence_is_required_to_expand_access() {
     assert!(err.to_string().contains("confirm_passwords"), "{err}");
 }
 
-async fn import_sites_result(r: &Rig, site: &str) -> cua_keyvault::Result<Vec<ItemMeta>> {
+async fn import_sites_result(
+    r: &Rig,
+    site: &str,
+) -> cua_keyvault::Result<cua_keyvault::broker::ImportReport> {
     r.broker
         .import(
             &r.cua,
@@ -723,11 +765,14 @@ async fn revoking_one_site_leaves_the_others() {
     // Deleting github.com wipes nothing of gitlab's delivery.
     let github = items
         .iter()
-        .find(|i| i.site.as_deref() == Some("github.com"))
+        .find(|i| i.domain.as_deref() == Some(".github.com"))
         .unwrap();
-    r.broker.delete_item(&r.cua, &github.id).await.unwrap();
+    r.broker
+        .delete_items(&r.cua, vec![github.id.clone()])
+        .await
+        .unwrap();
     assert!(r.backend.wiped.lock().unwrap().is_empty());
-    let left = r.broker.list_items(&r.cua).await.unwrap();
+    let left = all_items(&r).await;
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].id, i2[0]);
 }
@@ -852,8 +897,16 @@ async fn deliveries_supersede_and_release_wipes() {
     let delivered = r.backend.delivered.lock().unwrap().clone();
     assert_eq!(delivered.len(), 2);
     // The second delivery carries both sites (one live import per target and
-    // browser) and supersedes the first.
-    assert_eq!(delivered[1].2.len(), 2);
+    // browser) and supersedes the first. Cookies travel as one `cookies.json`.
+    assert_eq!(delivered[1].2, vec!["cookies.json".to_string()]);
+    let hosts = r.backend.delivered_hosts.lock().unwrap().clone();
+    assert_eq!(hosts[0], vec![".github.com".to_string()]);
+    let mut both = hosts[1].clone();
+    both.sort();
+    assert_eq!(
+        both,
+        vec![".github.com".to_string(), ".gitlab.com".to_string()]
+    );
     assert_eq!(
         r.backend.wiped.lock().unwrap().as_slice(),
         [("dev-1".to_string(), "imp-1".to_string())]
@@ -974,7 +1027,10 @@ async fn a_copy_without_expiry_still_goes_on_wipe_delete_and_the_kill_switch() {
         ["dev-2", "dev-3"]
     );
     // Deleting the item wipes its copies.
-    r.broker.delete_item(&r.cua, &items[1].id).await.unwrap();
+    r.broker
+        .delete_items(&r.cua, vec![items[1].id.clone()])
+        .await
+        .unwrap();
     assert!(live(r.broker.list_deliveries(&r.cua).await.unwrap()).is_empty());
     // The kill switch wipes the rest.
     teleport_to(&r, &items[0].id, "dev-4").await;
@@ -1081,12 +1137,10 @@ async fn approval_imports_missing_sites_and_can_narrow() {
                     Selector::Site {
                         app: "chrome".into(),
                         site: "github.com".into(),
-                        account: None,
                     },
                     Selector::Site {
                         app: "chrome".into(),
                         site: "bank.example".into(),
-                        account: None,
                     },
                 ],
                 targets: vec!["dev-1".into(), "dev-2".into()],
@@ -1118,7 +1172,7 @@ async fn approval_imports_missing_sites_and_can_narrow() {
         caps.iter()
             .all(|c| c.sites.iter().all(|s| !s.include_passwords))
     );
-    assert_eq!(r.broker.list_items(&r.cua).await.unwrap().len(), 2);
+    assert_eq!(all_items(&r).await.len(), 2);
 }
 
 #[tokio::test]
@@ -1127,7 +1181,7 @@ async fn lock_and_unlock() {
     import_sites(&r, &["github.com"]).await;
     r.broker.lock(&r.cua).await.unwrap();
     assert!(matches!(
-        r.broker.list_items(&r.cua).await,
+        r.broker.list_items(&r.cua, 0, 10).await,
         Err(Error::Locked)
     ));
     assert!(
@@ -1152,7 +1206,7 @@ async fn lock_and_unlock() {
         )
         .await
         .unwrap();
-    assert_eq!(r.broker.list_items(&r.cua).await.unwrap().len(), 1);
+    assert_eq!(all_items(&r).await.len(), 1);
     let v = r.broker.verify_audit(&r.cua).await.unwrap();
     assert!(v.ok());
     assert!(v.entries >= v.unauthenticated);
@@ -1181,7 +1235,6 @@ async fn unsigned_callers_share_one_prompt_budget() {
                         selectors: vec![Selector::Site {
                             app: "chrome".into(),
                             site: "github.com".into(),
-                            account: None,
                         }],
                         targets: vec!["dev-1".into()],
                         ..Default::default()
@@ -1204,43 +1257,88 @@ async fn unsigned_callers_share_one_prompt_budget() {
     assert!(ask(r.koala.clone()).await.is_ok());
 }
 
-/// Red-team F17: bulk `ListItems` returns coarse metadata only (no cookie names
-/// or domains); the full detail needs user presence via `DescribeItem`.
+/// Red-team F17: bulk `ListItems` returns the app, type and lock state only
+/// (no domains or keys); names need the browse window, which needs user
+/// presence, and a third party never gets them at all.
 #[tokio::test]
-async fn bulk_enumeration_is_coarse_and_detail_needs_presence() {
+async fn bulk_enumeration_hides_names_until_the_browse_window_opens() {
     let r = rig().await;
-    let items = import_sites(&r, &["github.com"]).await;
-    let id = items[0].id.clone();
+    import_sites(&r, &["github.com"]).await;
+    // (the helper browsed to read the names back: close the window)
+    r.broker.end_browse(&r.cua).await.unwrap();
 
-    let listed = r.broker.list_items(&r.cua).await.unwrap();
-    let it = listed.iter().find(|i| i.id == id).unwrap();
-    // The item is present with its label and cookie count, but the cookie name
-    // and domain are stripped.
-    assert_eq!(it.summary.cookies.len(), 1);
+    let page = r.broker.list_items(&r.cua, 0, 100).await.unwrap();
+    assert!(!page.names_visible);
+    assert_eq!(page.total, 1);
+    let it = &page.items[0];
+    assert_eq!(it.provider_id, "chrome");
+    assert_eq!(it.kind, ItemKind::Cookie);
     assert!(
-        it.summary.cookies[0].name.is_empty(),
-        "cookie name leaked in bulk list"
+        it.domain.is_none() && it.key.is_empty(),
+        "names leaked in the bulk list"
     );
+    let json = serde_json::to_string(&page).unwrap();
     assert!(
-        it.summary.cookies[0].domain.is_empty(),
-        "cookie domain leaked in bulk list"
+        !json.contains("github.com") && !json.contains("user_session"),
+        "{json}"
     );
 
-    // DescribeItem needs presence.
+    // Browsing needs presence.
     r.presence.set(false);
     assert!(matches!(
-        r.broker.describe_item(&r.cua, &id).await,
+        r.broker.browse(&r.cua).await,
         Err(Error::PresenceFailed(_))
     ));
-    // With presence it returns the full cookie name and domain.
-    r.presence.set(true);
-    let full = r.broker.describe_item(&r.cua, &id).await.unwrap();
-    assert_eq!(full.summary.cookies[0].name, "user_session");
-    assert_eq!(full.summary.cookies[0].domain, ".github.com");
-
-    // A third party cannot describe items at all.
+    assert!(
+        !r.broker
+            .list_items(&r.cua, 0, 100)
+            .await
+            .unwrap()
+            .names_visible
+    );
+    // Inventory is a name map of the host app too: it needs the window.
     assert!(matches!(
-        r.broker.describe_item(&r.koala, &id).await,
+        r.broker.inventory(&r.cua, "chrome", None).await,
+        Err(Error::PresenceFailed(_))
+    ));
+    // With presence the window opens and the names appear.
+    r.presence.set(true);
+    r.broker.browse(&r.cua).await.unwrap();
+    let page = r.broker.list_items(&r.cua, 0, 100).await.unwrap();
+    assert!(page.names_visible);
+    assert_eq!(page.items[0].domain.as_deref(), Some(".github.com"));
+    assert_eq!(page.items[0].key, "user_session");
+    // While it is open, the inventory does not ask again.
+    r.presence.set(false);
+    assert!(r.broker.inventory(&r.cua, "chrome", None).await.is_ok());
+    // Locking the vault closes the window.
+    r.presence.set(true);
+    r.broker.lock(&r.cua).await.unwrap();
+    r.broker
+        .unlock(
+            &r.cua,
+            UnlockRequest {
+                passphrase: Some("correct horse battery".into()),
+                recovery_key: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        !r.broker
+            .list_items(&r.cua, 0, 100)
+            .await
+            .unwrap()
+            .names_visible
+    );
+
+    // A third party cannot browse or list at all.
+    assert!(matches!(
+        r.broker.browse(&r.koala).await,
+        Err(Error::Forbidden(_))
+    ));
+    assert!(matches!(
+        r.broker.list_items(&r.koala, 0, 10).await,
         Err(Error::Forbidden(_))
     ));
 }
@@ -1770,7 +1868,7 @@ async fn import_and_teleport_asks_presence_once_and_delivers_and_saves() {
     assert_eq!(r.backend.delivered.lock().unwrap().len(), 1);
     assert_eq!(r.backend.delivered.lock().unwrap()[0].0, "dev-1");
     // Saved: the item is still in the vault afterward.
-    let items = r.broker.list_items(&r.cua).await.unwrap();
+    let items = all_items(&r).await;
     assert_eq!(items.len(), 1, "{items:?}");
 }
 
@@ -1798,7 +1896,7 @@ async fn import_and_teleport_with_save_false_forgets_the_item_but_keeps_the_deli
     // ...and was never wiped (a save:false teleport is not an undo).
     assert!(r.backend.wiped.lock().unwrap().is_empty());
     // ...but the vault no longer holds the item.
-    assert!(r.broker.list_items(&r.cua).await.unwrap().is_empty());
+    assert!(all_items(&r).await.is_empty());
     // The audit still shows the whole story: capture, authorize, deliver,
     // and the forgetting.
     let tail = r.broker.audit_tail(&r.cua, 100).await.unwrap();

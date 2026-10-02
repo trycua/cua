@@ -282,10 +282,26 @@ pub struct TeleportPlan {
     /// older plan JSON (never retroactively flagged).
     #[serde(default)]
     pub relay_unsealed: bool,
+    /// The sites (registrable domains) whose cookies this plan sends, from
+    /// the review's per-domain choice ([`Consent::cookie_domains`]); `None`
+    /// sends every cookie in the selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cookie_domains: Option<Vec<String>>,
+    /// Send these saved Keyvault items (ids) instead of reading the live
+    /// app ([`Consent::from_vault`]): no fresh capture, so the host's
+    /// Keychain is never asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_vault: Option<Vec<String>>,
+}
+
+/// Whether a manifest key is the browser's cookie store.
+fn is_cookie_key(key: &str) -> bool {
+    let name = key.rsplit('/').next().unwrap_or(key);
+    name.eq_ignore_ascii_case("cookies")
 }
 
 /// Consent, as a UI collects it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Consent {
     /// The user confirmed the consent screen.
     pub approved: bool,
@@ -299,6 +315,19 @@ pub struct Consent {
     /// (S1).
     #[serde(default)]
     pub acknowledge_relay_plaintext: bool,
+    /// The review's per-domain choice: the registrable domains whose cookies
+    /// to send. `None` keeps every cookie the selection holds; `Some` sends
+    /// only these (and, when empty, no cookies at all).
+    #[serde(default)]
+    pub cookie_domains: Option<Vec<String>>,
+    /// Consent items (their keys) the user turned off in the review. They
+    /// are dropped from the plan: not listed, not sent, not counted.
+    #[serde(default)]
+    pub exclude: Vec<String>,
+    /// Send these saved Keyvault items (ids) instead of reading the live
+    /// app. Only an app-state move uses it.
+    #[serde(default)]
+    pub from_vault: Option<Vec<String>>,
 }
 
 /// A plan the user approved. Only [`TeleportPlan::approve`] makes one.
@@ -342,6 +371,34 @@ impl TeleportPlan {
                 crate::RELAY_UNSEALED_WARNING
             )));
         }
+        // What the user turned off in the review leaves the plan: first the
+        // items they excluded, then, when they chose domains, the cookie
+        // store itself if no domain was chosen (nothing to read).
+        let mut drop_keys: Vec<String> = consent.exclude.clone();
+        if consent
+            .cookie_domains
+            .as_ref()
+            .is_some_and(|d| d.is_empty())
+        {
+            drop_keys.extend(
+                self.consent
+                    .iter()
+                    .filter(|c| is_cookie_key(&c.key))
+                    .map(|c| c.key.clone()),
+            );
+        }
+        if !drop_keys.is_empty() {
+            for step in &mut self.steps {
+                if let PlanStep::ImportState { items, .. } = step {
+                    items.retain(|i| !drop_keys.contains(i));
+                }
+            }
+            self.consent.retain(|c| !drop_keys.contains(&c.key));
+            self.total_bytes = self.consent.iter().map(|c| c.bytes).sum();
+            self.sensitive = self.consent.iter().any(|c| c.sensitive);
+        }
+        self.cookie_domains = consent.cookie_domains.clone();
+        self.from_vault = consent.from_vault.clone();
         self.save_to_keyvault = self.sensitive && consent.save_to_keyvault;
         Ok(ApprovedPlan(self))
     }
@@ -582,6 +639,8 @@ pub fn build(
         warnings,
         save_to_keyvault: false,
         relay_unsealed: false,
+        cookie_domains: None,
+        from_vault: None,
     })
 }
 
@@ -1000,6 +1059,7 @@ mod tests {
                 acknowledge_sensitive: true,
                 save_to_keyvault: true,
                 acknowledge_relay_plaintext: false,
+                ..Default::default()
             })
             .unwrap();
         assert!(approved.plan().save_to_keyvault);
@@ -1019,8 +1079,91 @@ mod tests {
                 acknowledge_sensitive: false,
                 save_to_keyvault: true,
                 acknowledge_relay_plaintext: false,
+                ..Default::default()
             })
             .unwrap();
         assert!(!approved.plan().save_to_keyvault);
+    }
+
+    /// The review's choices shape what is approved: excluded items leave the
+    /// plan (and its totals), an empty domain choice drops the cookie store,
+    /// and the domain list and the vault source ride on the approved plan.
+    #[test]
+    fn review_choices_shape_the_approved_plan() {
+        let cc = entry("Google Chrome", "com.google.Chrome");
+        let m = chrome_manifest();
+        let mac = SpaceFacts {
+            os: Platform::MacOS,
+            home: "/Users/lume".into(),
+            importers: vec!["chrome".into()],
+            ..facts("aarch64")
+        };
+        let plan = |opts: &PlanOptions| build(&cc, &mac, opts, Some(&m), &[]);
+        let mut o = PlanOptions::new(MoveKind::AppWithState);
+        o.sensitive_groups = vec![SensitiveGroup::SignIns];
+        let p = plan(&o).unwrap();
+        let keys: Vec<String> = p.consent.iter().map(|c| c.key.clone()).collect();
+        let cookie_key = keys.iter().find(|k| k.ends_with("Cookies")).cloned();
+        let ok = Consent {
+            approved: true,
+            acknowledge_sensitive: true,
+            ..Default::default()
+        };
+        // Excluding an item drops it everywhere, and the totals follow.
+        let victim = keys.last().unwrap().clone();
+        let before = p.total_bytes;
+        let a = p
+            .clone()
+            .approve(Consent {
+                exclude: vec![victim.clone()],
+                ..ok.clone()
+            })
+            .unwrap();
+        assert!(!a.plan().consent.iter().any(|c| c.key == victim));
+        assert!(a.plan().total_bytes < before);
+        for step in &a.plan().steps {
+            if let PlanStep::ImportState { items, .. } = step {
+                assert!(!items.contains(&victim));
+            }
+        }
+        // Domains ride along; an empty choice drops the cookie store itself.
+        let a = p
+            .clone()
+            .approve(Consent {
+                cookie_domains: Some(vec!["github.com".into()]),
+                ..ok.clone()
+            })
+            .unwrap();
+        assert_eq!(
+            a.plan().cookie_domains.as_deref(),
+            Some(&["github.com".to_string()][..])
+        );
+        if let Some(ck) = cookie_key {
+            let none = p
+                .clone()
+                .approve(Consent {
+                    cookie_domains: Some(vec![]),
+                    ..ok.clone()
+                })
+                .unwrap();
+            assert!(!none.plan().consent.iter().any(|c| c.key == ck));
+            assert!(
+                a.plan().consent.iter().any(|c| c.key == ck),
+                "a chosen domain keeps the store"
+            );
+        }
+        // The vault source is carried, never invented.
+        let v = p
+            .clone()
+            .approve(Consent {
+                from_vault: Some(vec!["i1".into()]),
+                ..ok.clone()
+            })
+            .unwrap();
+        assert_eq!(
+            v.plan().from_vault.as_deref(),
+            Some(&["i1".to_string()][..])
+        );
+        assert!(p.approve(ok).unwrap().plan().from_vault.is_none());
     }
 }

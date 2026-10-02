@@ -235,6 +235,42 @@ impl ChromeCookies {
     }
 }
 
+/// One cookie as its store lists it, without its value: what a review
+/// shows (a domain's count and whether it keeps a sign-in) before anything
+/// is decrypted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CookieHostRow {
+    /// The `host_key` column.
+    pub host_key: String,
+    /// The cookie name.
+    pub name: String,
+    /// Chrome's expiry (`0`: a session cookie).
+    pub expires_utc: i64,
+}
+
+impl ChromeCookies {
+    /// Every cookie's host, name and expiry (plaintext columns): nothing is
+    /// decrypted, so the Keychain is never asked.
+    pub fn host_rows(&self) -> Result<Vec<CookieHostRow>, TeleportError> {
+        let dir = self.profile_dir()?;
+        let db = dir.join("Cookies");
+        if !db.is_file() {
+            return Err(TeleportError::Provider(format!(
+                "no cookies: {} has no Cookies database",
+                dir.display()
+            )));
+        }
+        Ok(read_rows(&db)?
+            .into_iter()
+            .map(|r| CookieHostRow {
+                host_key: r.host_key,
+                name: r.name,
+                expires_utc: r.expires_utc,
+            })
+            .collect())
+    }
+}
+
 struct Row {
     host_key: String,
     name: String,

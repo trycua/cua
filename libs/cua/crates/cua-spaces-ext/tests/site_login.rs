@@ -184,10 +184,16 @@ async fn import_decrypts_the_synthetic_profile_into_one_sealed_item() {
             )
             .await
             .unwrap();
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].site.as_deref(), Some("example.test"));
-    assert_eq!(items[0].summary.passwords, 1);
-    let shown = serde_json::to_string(&items).unwrap();
+    assert_eq!(items.saved, 1);
+    r.kv.broker().browse(&r.cua).await.unwrap();
+    let held = r.kv.broker().list_items(&r.cua, 0, 10).await.unwrap().items;
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].kind, cua_keyvault::ItemKind::Password);
+    assert_eq!(
+        held[0].domain.as_deref(),
+        Some("http://login.example.test:8000")
+    );
+    let shown = serde_json::to_string(&held).unwrap();
     assert!(!shown.contains(PASSWORD));
 }
 

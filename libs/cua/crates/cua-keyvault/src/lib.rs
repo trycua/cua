@@ -47,6 +47,7 @@ pub mod macos;
 pub mod model;
 pub mod policy;
 pub mod protector;
+pub mod record;
 pub mod rollback;
 pub mod store;
 /// Broker-side usage telemetry (counts and fixed vocabularies only).
@@ -79,6 +80,12 @@ pub enum Error {
     /// The global kill switch is on.
     #[error("the Keyvault is disabled (global kill switch); enable it in Cua to teleport")]
     Disabled,
+    /// The vault was written by an earlier preview build (format 1, whole-app
+    /// items). It is not migrated.
+    #[error(
+        "the Keyvault was created by an earlier preview (format {0}) and cannot be read; it was set aside"
+    )]
+    OldFormat(u32),
     /// A file failed an integrity check.
     #[error("the Keyvault is damaged: {0}")]
     Corrupt(String),

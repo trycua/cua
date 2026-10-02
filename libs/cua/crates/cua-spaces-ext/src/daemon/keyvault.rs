@@ -29,24 +29,18 @@ use crate::teleport::{AppSessions, TeleportScope};
 use base64::Engine as _;
 use cua_keyvault::broker::{
     AccessRequest, Backend, Broker, BrokerConfig, Captured, CookieFilter, DeliveryOutcome,
-    ImportSpec, Inventory, LoginFill, LoginFilled, PasswordImportSpec, Selector, TeleportRequest,
-    TeleportStage, UserPresence,
+    DomainInventory, ImportSpec, Inventory, LoginFill, LoginFilled, PasswordImportSpec, Selector,
+    TeleportRequest, TeleportStage, UserPresence,
 };
 use cua_keyvault::caller::{CallerIdentity, Signing};
-use cua_keyvault::model::{
-    ItemKind, ItemMeta, ItemPayload, ItemPolicy, ItemSummary, LoginRecord, PayloadEntry,
-};
+use cua_keyvault::model::{ItemKind, LoginRecord, PayloadEntry};
+use cua_keyvault::record::{self, CookieRecord, ExportOptions};
 use cua_keyvault::{Error as KvError, Result as KvResult};
 use cua_spaces::Spaces;
 use cua_spacesd_client::pb;
 use cua_teleport::bundle::{BundleReader, BundleWriter};
 use cua_teleport::{BundleSource, SendOptions, TransferScope};
-// The reserved `cookies.json` bundle entry: decrypted cookies ride sealed in
-// the vault payload exactly like this, then travel unchanged into the
-// delivered bundle (never stripped like `LOGINS_ENTRY`, since cookies ARE
-// what restores the signed-in session -- the receiver's Chrome importer
-// re-encrypts them under the DESTINATION's own Safe Storage key).
-use cua_teleport_bundle::cookies::{COOKIES_ENTRY, CookieItem};
+use cua_teleport_bundle::cookies::CookieItem;
 use sha2::{Digest, Sha256};
 
 /// Base64 for [`PayloadEntry`] bytes (values stay sealed in the vault; only
@@ -107,6 +101,16 @@ impl DaemonBackend {
     pub fn with_platform(mut self, platform: cua_teleport::Platform) -> Self {
         self.platform = platform;
         self
+    }
+
+    /// The name a provider shows (`Google Chrome`), falling back to its id.
+    fn app_display(&self, app: &str) -> String {
+        self.sessions
+            .catalog()
+            .into_iter()
+            .find(|p| p.id == app)
+            .map(|p| p.display_name)
+            .unwrap_or_else(|| app.to_string())
     }
 
     fn password_reader(&self, profile: Option<String>) -> cua_teleport::passwords::ChromePasswords {
@@ -174,7 +178,7 @@ impl DaemonBackend {
         &self,
         app: &str,
         override_paths: Option<&[String]>,
-    ) -> KvResult<(String, Vec<PayloadEntry>)> {
+    ) -> KvResult<(String, String, Vec<PayloadEntry>)> {
         let manifest = self
             .sessions
             .manifest(app, TeleportScope::Full)
@@ -208,6 +212,7 @@ impl DaemonBackend {
         let reader =
             BundleReader::open(Cursor::new(buf)).map_err(|e| backend_err("open bundle", e))?;
         let scope = scope_str(reader.header().scope).to_string();
+        let display = manifest.display_name.clone();
         let entries = reader
             .read_all()
             .map_err(|e| backend_err("read bundle", e))?
@@ -218,7 +223,7 @@ impl DaemonBackend {
                 data: B64.encode(&e.bytes),
             })
             .collect();
-        Ok((scope, entries))
+        Ok((scope, display, entries))
     }
 }
 
@@ -312,67 +317,49 @@ fn chrome_epoch_now_micros() -> i64 {
     unix_micros + UNIX_TO_CHROME_EPOCH_MICROS
 }
 
-/// Milliseconds between the Chrome/Windows epoch (1601-01-01 UTC) and the
-/// Unix epoch -- subtract this from `expires_utc / 1000` (Chrome's own unit,
-/// converted to milliseconds) to get [`CookieInfo::expires_ms`] (Unix ms).
-const CHROME_EPOCH_OFFSET_MS: i64 = 11_644_473_600_000;
+/// Whether a cookie survives the capture's minimization.
+fn keep_cookie(c: &CookieRecord, filter: &CookieFilter) -> bool {
+    // 30 days, in Chrome's own `*_utc` unit (microseconds since
+    // 1601-01-01 UTC): the same "long-lived" cutoff a browser's own "clear
+    // cookies older than" setting uses.
+    const THIRTY_DAYS_CHROME_MICROS: i64 = 30 * 24 * 60 * 60 * 1_000_000;
+    let is_session = c.expires_utc == 0;
+    if filter.session_only && !is_session {
+        return false;
+    }
+    if filter.drop_long_lived
+        && !is_session
+        && c.expires_utc > chrome_epoch_now_micros() + THIRTY_DAYS_CHROME_MICROS
+    {
+        return false;
+    }
+    true
+}
 
-/// A sealed `cookies.json` payload entry for `items` (see
-/// [`cua_teleport_bundle::cookies`]): decrypted cookies, base64-encoded like
-/// every other [`PayloadEntry`], owner-only mode. The vault seals the whole
-/// payload at rest; this is only the wire shape.
-fn cookies_payload_entry(items: &[CookieItem]) -> PayloadEntry {
-    PayloadEntry {
-        rel_path: COOKIES_ENTRY.to_string(),
-        mode: 0o600,
-        data: B64.encode(cua_teleport_bundle::cookies::serialize(items)),
+/// A cookie row the reader decrypted, as the vault's `cookie@1` record.
+fn cookie_record_of(c: &CookieItem) -> CookieRecord {
+    CookieRecord {
+        creation_utc: None,
+        expires_utc: c.expires_utc,
+        host_key: c.host_key.clone(),
+        http_only: c.is_httponly,
+        last_update_utc: None,
+        name: c.name.clone(),
+        partition_key: None,
+        path: c.path.clone(),
+        priority: None,
+        same_site: c.samesite,
+        secure: c.is_secure,
+        source_port: None,
+        source_scheme: None,
+        value: c.value.clone(),
     }
 }
 
-fn browser_meta(app: &str, site: &str, passwords: bool) -> ItemMeta {
-    ItemMeta {
-        id: String::new(),
-        kind: if passwords {
-            ItemKind::SitePasswords
-        } else {
-            ItemKind::BrowserSite
-        },
-        label: format!("{site} ({app})"),
-        provider_id: app.into(),
-        app_display: app.into(),
-        site: Some(site.into()),
-        account: None,
-        source: "default".into(),
-        summary: ItemSummary::default(),
-        warnings: vec![],
-        identity_provider: false,
-        policy: ItemPolicy::default(),
-        created_ms: 0,
-        updated_ms: 0,
-        rev: 0,
-        record_digest: String::new(),
-    }
-}
-
-fn app_meta(app: &str) -> ItemMeta {
-    ItemMeta {
-        id: String::new(),
-        kind: ItemKind::AppSession,
-        label: format!("{app} (whole app session)"),
-        provider_id: app.into(),
-        app_display: app.into(),
-        site: None,
-        account: None,
-        source: "default".into(),
-        summary: ItemSummary::default(),
-        warnings: vec![],
-        identity_provider: false,
-        policy: ItemPolicy::default(),
-        created_ms: 0,
-        updated_ms: 0,
-        rev: 0,
-        record_digest: String::new(),
-    }
+/// Whether a record's domain belongs to one of the chosen sites.
+fn in_sites(domain: &str, sites: &[String]) -> bool {
+    let site = record::site_of(domain);
+    sites.iter().any(|s| record::site_of(s) == site)
 }
 
 #[async_trait::async_trait]
@@ -381,92 +368,109 @@ impl Backend for DaemonBackend {
         self.immutable_id(name)
     }
 
-    fn inventory(&self, app: &str, _profile: Option<&str>) -> KvResult<Inventory> {
+    fn inventory(&self, app: &str, profile: Option<&str>) -> KvResult<Inventory> {
         let manifest = self
             .sessions
             .manifest(app, TeleportScope::Full)
             .map_err(|e| backend_err("read manifest", e))?;
+        // A browser's domains with counts, from the plaintext columns of its
+        // cookie store: nothing is decrypted, so no Keychain prompt.
+        let mut domains: std::collections::BTreeMap<String, DomainInventory> = Default::default();
+        let mut notes = manifest.notes.clone();
+        if app == "chrome" {
+            match self.cookie_reader(profile.map(str::to_string)).host_rows() {
+                Ok(rows) => {
+                    for r in rows {
+                        let site = record::site_of(&r.host_key);
+                        let d = domains
+                            .entry(site.clone())
+                            .or_insert_with(|| DomainInventory {
+                                domain: site.clone(),
+                                identity_provider: cua_keyvault::model::is_identity_provider(&site),
+                                ..Default::default()
+                            });
+                        d.cookies += 1;
+                        if r.expires_utc == 0 {
+                            d.session_cookies += 1;
+                        }
+                        d.signin |= record::looks_like_signin(&r.name);
+                    }
+                }
+                Err(e) => notes.push(format!("cookies were not listed: {e}")),
+            }
+        }
         Ok(Inventory {
             provider_id: manifest.app.clone(),
             app_display: manifest.display_name.clone(),
-            profile: None,
-            candidates: vec![],
-            notes: manifest.notes,
+            profile: profile.map(str::to_string),
+            domains: domains.into_values().collect(),
+            notes,
         })
     }
 
     fn capture(&self, spec: &ImportSpec) -> KvResult<Vec<Captured>> {
-        let (scope, entries) = self.export_entries(&spec.app, spec.paths.as_deref())?;
-        let payload = |kind_entries: &[PayloadEntry]| ItemPayload {
-            provider_id: spec.app.clone(),
-            scope: scope.clone(),
-            entries: kind_entries.to_vec(),
+        let source = spec.profile.clone().unwrap_or_else(|| "default".into());
+        let mut out: Vec<Captured> = Vec::new();
+        let mut display = self.app_display(&spec.app);
+        let keep = |out: &mut Vec<Captured>, display: &str, scope: &str, n: record::NewRecord| {
+            let (meta, payload) = n.into_item(&spec.app, display, &source, scope);
+            out.push(Captured { meta, payload });
         };
-        let mut out = Vec::new();
+        // Sites named one by one (the MCP import path): their cookies, and
+        // on request their saved passwords.
         for s in &spec.sites {
-            let mut meta = browser_meta(&spec.app, &s.site, false);
-            let mut site_entries = entries.clone();
-            // Cookies are the whole point of a `BrowserSite` item (model.rs:
-            // "cookies, and optionally its storage"), so they ride in the
-            // SAME captured item as the rest of the site's profile state,
-            // not a separate sealed-only entry like saved passwords below --
-            // teleport delivers them (that is how the destination arrives
-            // signed in), it just never delivers them as the raw
-            // Safe-Storage-encrypted `Cookies` file: they travel already
-            // decrypted, in the reserved `cookies.json` entry, and the
-            // receiver re-encrypts under the DESTINATION's own key.
-            match self.site_cookies(&spec.app, spec.profile.clone(), &s.site, &spec.cookies) {
-                Ok(cookies) => {
-                    meta.summary.cookies = cookies
-                        .iter()
-                        .map(|c| cua_keyvault::model::CookieInfo {
-                            name: c.name.clone(),
-                            domain: c.host_key.clone(),
-                            session: c.expires_utc == 0,
-                            // `expires_utc` is Chrome's own epoch
-                            // (microseconds since 1601-01-01 UTC);
-                            // `CookieInfo::expires_ms` is Unix ms.
-                            expires_ms: (c.expires_utc != 0)
-                                .then_some(c.expires_utc / 1000 - CHROME_EPOCH_OFFSET_MS),
-                        })
-                        .collect();
-                    if !cookies.is_empty() {
-                        site_entries.push(cookies_payload_entry(&cookies));
-                    }
-                }
-                Err(e) => meta
-                    .warnings
-                    .push(format!("cookies were not read for this site: {e}")),
+            if spec.domains.as_ref().is_some_and(|d| !in_sites(&s.site, d)) {
+                continue;
             }
-            out.push(Captured {
-                meta,
-                payload: payload(&site_entries),
-            });
+            for c in self
+                .site_cookies(&spec.app, spec.profile.clone(), &s.site, &spec.cookies)?
+                .iter()
+            {
+                keep(
+                    &mut out,
+                    &display,
+                    "full",
+                    record::cookie_record(&cookie_record_of(c))?,
+                );
+            }
             if s.include_passwords && spec.confirm_passwords {
-                let mut meta = browser_meta(&spec.app, &s.site, true);
-                let mut entries = entries.clone();
-                // The decrypted logins ride along sealed, for site login;
-                // teleport never delivers them.
-                match self.site_logins(&spec.app, spec.profile.clone(), &s.site) {
-                    Ok(logins) => {
-                        meta.summary.passwords = logins.len() as u32;
-                        entries.push(ItemPayload::logins_entry(&logins)?);
-                    }
-                    Err(e) => meta
-                        .warnings
-                        .push(format!("saved passwords were not read for site login: {e}")),
+                for l in self.site_logins(&spec.app, spec.profile.clone(), &s.site)? {
+                    keep(&mut out, &display, "full", record::password_record(&l)?);
                 }
-                out.push(Captured {
-                    meta,
-                    payload: payload(&entries),
-                });
             }
         }
+        // The app itself: what the provider exports (a browser's selection
+        // or an app's files), turned into records by the app's codec. A
+        // consent-gated file is only exported when the user picked it.
         if spec.whole_app {
-            out.push(Captured {
-                meta: app_meta(&spec.app),
-                payload: payload(&entries),
-            });
+            let (scope, name, entries) = self.export_entries(&spec.app, spec.paths.as_deref())?;
+            display = name;
+            let exported = record::codec_for(&spec.app).export(
+                entries,
+                &ExportOptions {
+                    opted_in: spec.paths.clone().unwrap_or_default(),
+                },
+            )?;
+            for n in exported.records {
+                let pass = match n.kind {
+                    ItemKind::Cookie => {
+                        let c: CookieRecord = serde_json::from_str(&n.record)?;
+                        keep_cookie(&c, &spec.cookies)
+                            && spec
+                                .domains
+                                .as_ref()
+                                .is_none_or(|d| in_sites(&c.host_key, d))
+                    }
+                    ItemKind::LocalStorage => spec
+                        .domains
+                        .as_ref()
+                        .is_none_or(|d| n.domain.as_deref().is_some_and(|o| in_sites(o, d))),
+                    _ => true,
+                };
+                if pass {
+                    keep(&mut out, &display, &scope, n);
+                }
+            }
         }
         Ok(out)
     }
@@ -482,31 +486,17 @@ impl Backend for DaemonBackend {
             .password_reader(spec.profile.clone())
             .read(&spec.sites)
             .map_err(|e| backend_err("read saved passwords", e))?;
-        let mut by_site: std::collections::BTreeMap<String, Vec<LoginRecord>> = Default::default();
-        for l in logins {
-            by_site
-                .entry(l.site.clone())
-                .or_default()
-                .push(LoginRecord {
-                    origin: l.origin.clone(),
-                    username: l.username.clone(),
-                    password: l.password.to_string(),
-                });
-        }
+        let display = self.app_display(&spec.app);
+        let source = spec.profile.clone().unwrap_or_else(|| "default".into());
         let mut out = Vec::new();
-        for (site, logins) in by_site {
-            let mut meta = browser_meta(&spec.app, &site, true);
-            meta.label = format!("{site} passwords ({})", spec.app);
-            meta.source = spec.profile.clone().unwrap_or_else(|| "default".into());
-            meta.summary.passwords = logins.len() as u32;
-            out.push(Captured {
-                meta,
-                payload: ItemPayload {
-                    provider_id: spec.app.clone(),
-                    scope: "full".into(),
-                    entries: vec![ItemPayload::logins_entry(&logins)?],
-                },
-            });
+        for l in logins {
+            let n = record::password_record(&LoginRecord {
+                origin: l.origin.clone(),
+                username: l.username.clone(),
+                password: l.password.to_string(),
+            })?;
+            let (meta, payload) = n.into_item(&spec.app, &display, &source, "full");
+            out.push(Captured { meta, payload });
         }
         Ok(out)
     }
@@ -520,11 +510,19 @@ impl Backend for DaemonBackend {
         &self,
         target: &str,
         provider_id: &str,
-        payloads: Vec<ItemPayload>,
+        scope: &str,
+        entries: Vec<PayloadEntry>,
         expires_ms: u64,
     ) -> KvResult<DeliveryOutcome> {
-        self.deliver_with_progress(target, provider_id, payloads, expires_ms, Arc::new(|_| {}))
-            .await
+        self.deliver_with_progress(
+            target,
+            provider_id,
+            scope,
+            entries,
+            expires_ms,
+            Arc::new(|_| {}),
+        )
+        .await
     }
 
     /// Packs, uploads (with bytes) and imports, telling `stage` each step.
@@ -532,7 +530,8 @@ impl Backend for DaemonBackend {
         &self,
         target: &str,
         provider_id: &str,
-        payloads: Vec<ItemPayload>,
+        scope: &str,
+        entries: Vec<PayloadEntry>,
         expires_ms: u64,
         stage: cua_keyvault::broker::StageSink,
     ) -> KvResult<DeliveryOutcome> {
@@ -541,21 +540,17 @@ impl Backend for DaemonBackend {
         let spacesd = space
             .spacesd()
             .map_err(|e| backend_err("spacesd channel", e))?;
-        let scope = payloads
-            .first()
-            .map(|p| scope_of(&p.scope))
-            .unwrap_or(TransferScope::FullProfile);
-        // Reassemble one SessionBundle in memory from the sealed payloads.
+        let scope = scope_of(scope);
+        // Reassemble one SessionBundle in memory from the codec's entries.
         let mut writer = BundleWriter::new(Vec::new(), provider_id, provider_id, scope);
-        for p in &payloads {
-            for e in &p.entries {
-                let bytes = B64
-                    .decode(&e.data)
-                    .map_err(|err| backend_err("decode payload", err))?;
-                writer
-                    .add_bytes(&e.rel_path, e.mode, &bytes)
-                    .map_err(|err| backend_err("pack bundle", err))?;
-            }
+        for e in &entries {
+            let bytes = cua_keyvault::Zeroizing::new(
+                B64.decode(&e.data)
+                    .map_err(|err| backend_err("decode payload", err))?,
+            );
+            writer
+                .add_bytes(&e.rel_path, e.mode, &bytes)
+                .map_err(|err| backend_err("pack bundle", err))?;
         }
         let bytes = writer
             .finish()

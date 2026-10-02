@@ -28,12 +28,12 @@ use crate::audit::{AuditEntry, Verification};
 #[cfg(unix)]
 use crate::broker::StageSink;
 use crate::broker::{
-    AccessRequest, ApproveOptions, Broker, Decision, ImportSpec, InitRequest, Inventory,
-    LoginOutcome, LoginRequest, PasswordImportSpec, PendingView, RuleSpec, Status, TeleportOutcome,
-    TeleportRequest, TeleportStage, UnlockRequest,
+    AccessRequest, ApproveOptions, Broker, Decision, ImportReport, ImportSpec, InitRequest,
+    Inventory, ItemPage, LockOutcome, LoginOutcome, LoginRequest, PasswordImportSpec, PendingView,
+    RuleSpec, Status, TeleportOutcome, TeleportRequest, TeleportStage, UnlockRequest,
 };
 use crate::caller::{CallerIdentity, TrustPolicy};
-use crate::model::{Delivery, Grant, ItemMeta, ItemPolicy, UnattendedRule, UnlockPolicy};
+use crate::model::{Delivery, Grant, ItemPolicy, UnattendedRule, UnlockPolicy};
 use crate::{Error, Result};
 
 /// Largest frame accepted either way.
@@ -73,13 +73,21 @@ pub enum Request {
         #[serde(default)]
         auto_lock_minutes: Option<u32>,
     },
-    /// Items (coarse: labels and counts only).
-    ListItems,
-    /// One item's full detail (cookie names, domains, origins). Needs presence.
-    DescribeItem {
-        /// Item id.
-        id: String,
+    /// One page of items. Names (domains and keys) only inside the browse
+    /// window; outside it: app, type, lock state and times.
+    ListItems {
+        /// Items to skip.
+        #[serde(default)]
+        offset: usize,
+        /// Page size (default and most: [`crate::broker::MAX_PAGE`]).
+        #[serde(default)]
+        limit: Option<usize>,
     },
+    /// Open the browse window (needs presence): item names become visible
+    /// for a few minutes.
+    Browse,
+    /// Close the browse window.
+    EndBrowse,
     /// A host app's per-site inventory.
     Inventory {
         /// Provider id.
@@ -94,10 +102,23 @@ pub enum Request {
     ImportPasswords(PasswordImportSpec),
     /// Sign in to a site in a target Space with a saved password.
     Login(LoginRequest),
-    /// Delete an item.
-    DeleteItem {
-        /// Item id.
-        id: String,
+    /// Delete items, wiping every live copy of them in Spaces.
+    DeleteItems {
+        /// Item ids.
+        ids: Vec<String>,
+    },
+    /// Lock or unlock items together. Unlocking allows unattended access
+    /// and asks for presence once for the batch.
+    SetLocked {
+        /// Item ids.
+        ids: Vec<String>,
+        /// Lock (true) or unlock.
+        locked: bool,
+    },
+    /// "Never ask again" on the unlock prompt.
+    SetSkipUnlockPrompt {
+        /// On (true) or off.
+        on: bool,
     },
     /// Set an item's policy.
     SetItemPolicy {
@@ -333,15 +354,29 @@ pub async fn dispatch(broker: &Broker, caller: &CallerIdentity, req: Request) ->
                 .set_unlock_policy(caller, policy, auto_lock_minutes)
                 .await
         ),
-        Request::ListItems => reply!(broker.list_items(caller).await),
-        Request::DescribeItem { id } => reply!(broker.describe_item(caller, &id).await),
+        Request::ListItems { offset, limit } => reply!(
+            broker
+                .list_items(caller, offset, limit.unwrap_or(crate::broker::MAX_PAGE))
+                .await
+        ),
+        Request::Browse => reply!(
+            broker
+                .browse(caller)
+                .await
+                .map(|until| serde_json::json!({ "browse_until_ms": until }))
+        ),
+        Request::EndBrowse => reply!(broker.end_browse(caller).await),
         Request::Inventory { app, profile } => {
             reply!(broker.inventory(caller, &app, profile.as_deref()).await)
         }
         Request::Import(spec) => reply!(broker.import(caller, spec).await),
         Request::ImportPasswords(spec) => reply!(broker.import_passwords(caller, spec).await),
         Request::Login(r) => reply!(broker.login(caller, r).await),
-        Request::DeleteItem { id } => reply!(broker.delete_item(caller, &id).await),
+        Request::DeleteItems { ids } => reply!(broker.delete_items(caller, ids).await),
+        Request::SetLocked { ids, locked } => reply!(broker.set_locked(caller, ids, locked).await),
+        Request::SetSkipUnlockPrompt { on } => {
+            reply!(broker.set_skip_unlock_prompt(caller, on).await)
+        }
         Request::SetItemPolicy { id, policy } => {
             reply!(broker.set_item_policy(caller, &id, policy).await)
         }
@@ -817,13 +852,51 @@ impl KeyvaultClient {
     pub async fn lock(&mut self) -> Result<()> {
         self.call(&Request::Lock).await.map(|_| ())
     }
-    /// Items (coarse metadata).
-    pub async fn list_items(&mut self) -> Result<Vec<ItemMeta>> {
-        self.typed(&Request::ListItems).await
+    /// Every item, page by page. Names are present only inside the browse
+    /// window ([`Self::browse`]).
+    pub async fn list_items(&mut self) -> Result<ItemPage> {
+        let mut all = ItemPage::default();
+        loop {
+            let page: ItemPage = self
+                .typed(&Request::ListItems {
+                    offset: all.items.len(),
+                    limit: None,
+                })
+                .await?;
+            let empty = page.items.is_empty();
+            all.total = page.total;
+            all.names_visible = page.names_visible;
+            all.items.extend(page.items);
+            if empty || all.items.len() >= all.total {
+                return Ok(all);
+            }
+        }
     }
-    /// One item's full detail (needs presence).
-    pub async fn describe_item(&mut self, id: &str) -> Result<ItemMeta> {
-        self.typed(&Request::DescribeItem { id: id.into() }).await
+    /// Opens the browse window (the daemon asks for presence). Returns when
+    /// it closes, Unix ms.
+    pub async fn browse(&mut self) -> Result<u64> {
+        let v = self.call(&Request::Browse).await?;
+        Ok(v.get("browse_until_ms")
+            .and_then(Value::as_u64)
+            .unwrap_or(0))
+    }
+    /// Closes the browse window.
+    pub async fn end_browse(&mut self) -> Result<()> {
+        self.call(&Request::EndBrowse).await.map(|_| ())
+    }
+    /// Deletes items and wipes their live copies. Returns the wiped imports.
+    pub async fn delete_items(&mut self, ids: Vec<String>) -> Result<Vec<String>> {
+        self.typed(&Request::DeleteItems { ids }).await
+    }
+    /// Locks or unlocks items together (unlocking asks for presence once).
+    pub async fn set_locked(&mut self, ids: Vec<String>, locked: bool) -> Result<LockOutcome> {
+        self.typed(&Request::SetLocked { ids, locked }).await
+    }
+    /// "Never ask again" on the unlock prompt.
+    pub async fn set_skip_unlock_prompt(&mut self, on: bool) -> Result<()> {
+        self.call(&Request::SetSkipUnlockPrompt { on })
+            .await
+            .map(|_| ())
     }
     /// Inventory.
     pub async fn inventory(&mut self, app: &str, profile: Option<&str>) -> Result<Inventory> {
@@ -834,11 +907,11 @@ impl KeyvaultClient {
         .await
     }
     /// Import.
-    pub async fn import(&mut self, spec: ImportSpec) -> Result<Vec<ItemMeta>> {
+    pub async fn import(&mut self, spec: ImportSpec) -> Result<ImportReport> {
         self.typed(&Request::Import(spec)).await
     }
     /// Import a browser's saved passwords (first party; presence).
-    pub async fn import_passwords(&mut self, spec: PasswordImportSpec) -> Result<Vec<ItemMeta>> {
+    pub async fn import_passwords(&mut self, spec: PasswordImportSpec) -> Result<ImportReport> {
         self.typed(&Request::ImportPasswords(spec)).await
     }
     /// Sign in to a site in a Space with a saved password.

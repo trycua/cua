@@ -192,7 +192,7 @@ async fn scenario() {
         )
         .await
         .unwrap();
-    assert_eq!(items.len(), 1, "one saved login imported");
+    assert_eq!(items.saved, 1, "one saved login imported");
     let sock = home.join("cua.sock");
     let daemon = server::start(
         runtime,

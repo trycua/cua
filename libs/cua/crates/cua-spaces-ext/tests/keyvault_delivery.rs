@@ -167,7 +167,7 @@ async fn rig() -> Rig {
     }
 }
 
-/// Third party requests the `github.com` chrome site into the target; the user
+/// Third party requests the chrome app into the target; the user
 /// approves; the returned token authorizes exactly one delivery.
 async fn grant(r: &Rig, target: &str) -> (String, Vec<String>) {
     let pending = r
@@ -175,10 +175,8 @@ async fn grant(r: &Rig, target: &str) -> (String, Vec<String>) {
         .request_access(
             &r.koala,
             AccessRequest {
-                selectors: vec![Selector::Site {
+                selectors: vec![Selector::App {
                     app: "chrome".into(),
-                    site: "github.com".into(),
-                    account: None,
                 }],
                 targets: vec![target.into()],
                 uses: Some(0),

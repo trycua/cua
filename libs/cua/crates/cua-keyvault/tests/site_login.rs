@@ -14,7 +14,7 @@ use cua_keyvault::broker::{
     AccessRequest, ApproveOptions, BrowserRef, Decision, LoginRequest, RuleSpec, Selector,
     TeleportRequest,
 };
-use cua_keyvault::model::{ItemKind, ItemPolicy, LOGINS_ENTRY, RuleCaller};
+use cua_keyvault::model::{ItemKind, ItemPolicy, RuleCaller};
 use cua_keyvault::{Action, Error};
 
 async fn approved_token(r: &common::Rig, site: &str, target: &str) -> String {
@@ -53,8 +53,8 @@ async fn import_makes_one_sealed_item_per_site() {
     let items = import_passwords(&r).await;
     assert_eq!(items.len(), 2);
     for it in &items {
-        assert_eq!(it.kind, ItemKind::SitePasswords);
-        assert_eq!(it.summary.passwords, 1);
+        assert_eq!(it.kind, ItemKind::Password);
+        assert!(it.domain.is_some() && !it.key.is_empty(), "{it:?}");
     }
     // Presence was asked once, naming the browser.
     let asked = r.presence.asked.lock().unwrap().clone();
@@ -78,8 +78,10 @@ async fn import_makes_one_sealed_item_per_site() {
         )
         .await
         .unwrap();
-    assert_eq!(one.len(), 1);
-    assert_eq!(one[0].site.as_deref(), Some("github.com"));
+    assert_eq!(one.saved, 1);
+    let held = common::all_items(&r2).await;
+    assert_eq!(held[0].domain.as_deref(), Some("https://github.com"));
+    assert_eq!(held[0].key, "octo");
     // A third party may not import.
     assert!(matches!(
         r.broker
@@ -252,7 +254,7 @@ async fn unattended_login_only_after_the_user_writes_a_rule() {
     let items = import_passwords(&r).await;
     let item = items
         .iter()
-        .find(|i| i.site.as_deref() == Some("example.test"))
+        .find(|i| i.domain.as_deref() == Some("http://login.example.test:8000"))
         .unwrap();
     let req = LoginRequest {
         url: "http://login.example.test:8000/".into(),
@@ -342,7 +344,6 @@ async fn saved_logins_are_never_teleported() {
         .await
         .unwrap_err();
     assert!(matches!(none, Error::NotFound(_)), "{none:?}");
-    let _ = LOGINS_ENTRY;
 }
 
 #[tokio::test]

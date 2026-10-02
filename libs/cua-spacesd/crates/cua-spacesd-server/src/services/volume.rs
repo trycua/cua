@@ -330,8 +330,7 @@ async fn clear_stale_mounts() {
         tracing::warn!(path = %p, "clearing a stale volume mount left by a previous daemon");
         let r = if cfg!(target_os = "linux") {
             // Lazy: a dead FUSE/NFS mount may refuse a plain unmount.
-            // SAFETY: geteuid never fails.
-            let root = unsafe { libc::geteuid() } == 0;
+            let root = running_as_root();
             if root {
                 run("umount", &["-l", &p]).await
             } else {
@@ -804,6 +803,18 @@ pub async fn volume_ws(
             // The client left: nothing serves the mount any more.
             state.detach(Some(&session.id)).await;
         })
+}
+
+/// Whether this process runs as root (always false off Unix).
+#[cfg(unix)]
+fn running_as_root() -> bool {
+    // SAFETY: geteuid never fails.
+    unsafe { libc::geteuid() == 0 }
+}
+
+#[cfg(not(unix))]
+fn running_as_root() -> bool {
+    false
 }
 
 #[cfg(test)]

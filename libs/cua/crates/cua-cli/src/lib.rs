@@ -155,6 +155,10 @@ enum Command {
         /// Default sandbox for computer tools.
         #[arg(long, env = "CUA_SANDBOX", default_value = "")]
         sandbox: String,
+        /// Gated actions (cloud, your machines, sensitive files...): `ask`
+        /// the user with Touch ID, or `never` (refuse; for servers).
+        #[arg(long, env = "CUA_MCP_APPROVALS", value_enum, default_value = "ask")]
+        approvals: McpApprovals,
     },
     /// Recorded demonstrations (skills) for agents.
     #[command(subcommand)]
@@ -663,7 +667,27 @@ enum DaemonCmd {
         /// Default sandbox for computer tools.
         #[arg(long, env = "CUA_SANDBOX", default_value = "")]
         sandbox: String,
+        /// Gated actions (cloud, your machines, sensitive files...): `ask`
+        /// the user with Touch ID, or `never` (refuse; for servers).
+        #[arg(long, env = "CUA_MCP_APPROVALS", value_enum, default_value = "ask")]
+        approvals: McpApprovals,
     },
+}
+
+/// `--approvals` of `cua mcp`.
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+enum McpApprovals {
+    Ask,
+    Never,
+}
+
+impl From<McpApprovals> for mcp::Approvals {
+    fn from(a: McpApprovals) -> Self {
+        match a {
+            McpApprovals::Ask => mcp::Approvals::Ask,
+            McpApprovals::Never => mcp::Approvals::Never,
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -1786,15 +1810,17 @@ async fn run_sdk(cli: Cli, out: &mut dyn Write) -> Result<i32, CuaError> {
         Command::Mcp {
             permissions,
             sandbox,
+            approvals,
         }
         | Command::Daemon(DaemonCmd::Mcp {
             permissions,
             sandbox,
+            approvals,
         }) => {
             let perms = mcp::parse_permissions(&permissions);
             // Embedded (no daemon): the account's relay machines, like the daemon.
             host::attach_relay_account(&cua, || host::daemon_relay_account(&util::cua_home()));
-            return mcp::serve_stdio(mcp::server(cua, perms, sandbox)).await;
+            return mcp::serve_stdio(mcp::server_with(cua, perms, sandbox, approvals.into())).await;
         }
         Command::Skills(SkillsCmd::Record {
             sandbox: Some(sb),

@@ -76,6 +76,14 @@ fn text(r: &Value) -> Value {
 async fn mcp_serves_sandbox_computer_and_skills_tools() {
     let env = fixtures::start_env(Some("t"), None).await;
     let h = Home::new();
+    // The sandbox is a machine at an address: controlling it is gated unless
+    // the user turned that setting off.
+    std::fs::create_dir_all(h.cua_home()).unwrap();
+    std::fs::write(
+        h.cua_home().join("approvals.json"),
+        r#"{"require":{"remote_exec":false}}"#,
+    )
+    .unwrap();
     h.run(&[
         "--embedded",
         "sb",
@@ -100,20 +108,35 @@ async fn mcp_serves_sandbox_computer_and_skills_tools() {
         .iter()
         .map(|t| t["name"].as_str().unwrap().to_string())
         .collect();
+    // The agent surface: a few tools with actions, not one tool per call.
+    assert!(names.len() <= 24, "{names:?}");
     for want in [
-        // The Spaces contract (one server with the sandbox tools).
-        "add_space",
+        "list_spaces",
+        "create_space",
+        "space",
         "space_bash",
-        "send_file",
-        "sandbox_list",
-        "computer_screenshot",
-        "computer_window_list",
-        "computer_get_accessibility_tree",
-        "skills_list",
+        "space_files",
+        "computer",
+        "window",
+        "images",
+        "approvals",
+        "more",
     ] {
         assert!(
             names.contains(&want.to_string()),
             "{want} missing: {names:?}"
+        );
+    }
+    for hidden in [
+        "add_space",
+        "sandbox_list",
+        "computer_screenshot",
+        "volume_approve",
+        "skills_list",
+    ] {
+        assert!(
+            !names.contains(&hidden.to_string()),
+            "{hidden} is not listed"
         );
     }
     assert!(tools["result"]["tools"][0]["inputSchema"]["type"] == "object");
@@ -221,12 +244,11 @@ async fn mcp_serves_sandbox_computer_and_skills_tools() {
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
+    assert!(names.contains(&"computer"), "{names:?}");
+    // `window` stays (its read-only actions are permitted); nothing that
+    // writes does.
     assert!(
-        names.contains(&"computer_screenshot") && names.contains(&"sandbox_get"),
-        "{names:?}"
-    );
-    assert!(
-        !names.contains(&"computer_click") && !names.contains(&"sandbox_delete"),
+        !names.contains(&"space_bash") && !names.contains(&"space") && !names.contains(&"images"),
         "{names:?}"
     );
     let denied = m
@@ -238,13 +260,24 @@ async fn mcp_serves_sandbox_computer_and_skills_tools() {
     // Unknown or not-permitted tools are "method not found" (the Spaces
     // server's convention, which its typed client maps).
     assert_eq!(denied["error"]["code"], -32601);
+    // The same call through the agent-surface tool is refused too.
+    let denied = m
+        .call(
+            "tools/call",
+            json!({"name": "window", "arguments": {"action": "close", "window_id": "w"}}),
+        )
+        .await;
+    assert!(
+        denied["error"].is_object() || denied["result"]["isError"] == true,
+        "{denied}"
+    );
     m.close().await;
 
     // `cua daemon mcp` serves the same tools.
     let mut m = Mcp::start(&h, &["--embedded", "daemon", "mcp"]);
     let tools = m.call("tools/list", json!({})).await;
     let n = tools["result"]["tools"].as_array().unwrap().len();
-    assert!(n > 31 + 40, "{n}");
+    assert!((15..=24).contains(&n), "{n}");
     m.close().await;
 }
 
@@ -302,15 +335,39 @@ async fn daemon_mcp_starts_the_daemon_and_serves_its_spaces_runtime() {
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    for t in cua_spaces::contract::tools() {
-        assert!(names.contains(&t.name), "{} missing", t.name);
+    for want in [
+        "space",
+        "space_bash",
+        "space_files",
+        "computer",
+        "volume",
+        "more",
+    ] {
+        assert!(names.contains(&want), "{want} missing: {names:?}");
     }
-    assert!(names.contains(&"computer_screenshot"));
 
+    // Adding a machine is gated: this build cannot ask the user, so it is
+    // refused until the user turns the setting off (Cua Settings).
     let r = m
         .tool(
-            "add_space",
-            json!({"url": d.url(), "token": TOKEN, "name": "stdio"}),
+            "space",
+            json!({"action": "add", "url": d.url(), "token": TOKEN, "name": "stdio"}),
+        )
+        .await;
+    assert_eq!(r["isError"], true, "{r}");
+    assert_eq!(
+        r["structuredContent"]["error"]["kind"], "approval_denied",
+        "{r}"
+    );
+    std::fs::write(
+        h.cua_home().join("approvals.json"),
+        r#"{"require":{"machines":false,"remote_exec":false}}"#,
+    )
+    .unwrap();
+    let r = m
+        .tool(
+            "space",
+            json!({"action": "add", "url": d.url(), "token": TOKEN, "name": "stdio"}),
         )
         .await;
     assert_eq!(r["isError"], false, "{r}");

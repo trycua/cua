@@ -2653,6 +2653,7 @@ dependencies = [
  "cua-media-protocol",
  "cua-sandbox-core",
  "cua-sdk",
+ "cua-spaces",
  "cua-spaces-ext",
  "cua-spaces-ffi",
  "cua-spacesd-client",

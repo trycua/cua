@@ -1,72 +1,31 @@
 ---
 name: cua-volume
-description: Use Cua Volume, the one volume every Space and agent of this user shares. Inside a Space it is mounted as a folder (/volume on Linux, ~/Cua Volume on macOS), so any program reads and writes it directly. Use it for anything that must outlive this Space - your memory and outputs in your agent home, shared reference in public/ - and to hand files to the user or to other agents. Use when the user mentions the volume, Cua Volume, shared files, your home or memory, or saving results.
+description: Use Cua Volume, the user's one versioned volume shared by every Space and agent (mounted at /volume on Linux, ~/Cua Volume on macOS). Use for anything that must outlive a Space, for your memory and outputs, and to hand files to the user or other agents.
 ---
 
 # Cua Volume
 
-One versioned volume per user. Every write is a new version; deletes keep
-history. The same files appear on the user's Mac (Finder) and in every
-Space, within seconds.
+One versioned volume per user: every write is a version, deletes keep history, and the same files show in Finder and in every Space within seconds.
 
-## Where it is
+## Where
 
-| Where you run | Path |
+In a Space: `/volume` (Linux, or `~/Cua Volume`) or `~/Cua Volume` (macOS). Check with `ls /volume ~/"Cua Volume"`. With no mount, use the `volume` tool of the cua MCP server (`ls`, `read`, `write`, `delete`, `history`, `restore`, `sync_status`).
+
+| Folder | You |
 |---|---|
-| A Linux Space | `/volume` (or `~/Cua Volume` when `/volume` is absent) |
-| A macOS Space | `~/Cua Volume` |
-| No mount (Windows for now, or the Space has none) | use the `volume_*` tools below |
+| `public/` | read only |
+| `agents/<you>/` | read and write: memory, `outputs/`, `inbox/` |
+| `spaces/<this space>/` | read and write |
+| anything else | not visible: `volume` `request_access` (prefix, `r` or `rw`, reason); the user approves in Cua |
 
-Check with `ls /volume` or `ls ~/"Cua Volume"`. If neither exists, use the
-tools.
+Put results for the user in `agents/<you>/outputs/` and tell them the path. A refused write means the folder is not yours: ask, do not work around it.
 
-## Layout and what you may do
+## Sync
 
-| Folder | You (an agent in a Space) |
-|---|---|
-| `public/` | read only: shared reference from the user |
-| `agents/<you>/` | read and write: your home (memory, `outputs/`, `inbox/`) |
-| `spaces/<this space>/` | read and write: this Space's scratch and outputs |
-| another agent's home, another Space | not visible; ask with `volume_request_access` |
+- A file from another device can take seconds. Check `volume` `sync_status`: `feed` is `live`, `off` (local storage, nothing to wait for) or `offline` (see `last_error`; say so rather than trust a stale file).
+- Entries carry `sync`: `pending_upload` (others cannot see it yet), `conflict` or `conflict_copy`. Close files before telling the user they are ready.
+- On a conflict the later write wins and the other is kept as `name (conflict from <device> <date>).ext`. Never delete it yourself: tell the user, or merge when asked.
 
-Put results the user should see in `agents/<you>/outputs/` (or this Space's
-folder) and tell them the path. A refused write means the folder is not
-yours: do not retry elsewhere to get around it, ask.
+## Secrets
 
-## Tools (the cua MCP server)
-
-| Tool | Use |
-|---|---|
-| `volume_ls`, `volume_read`, `volume_write` | The same files without the mount; each file's `sync` state |
-| `volume_delete`, `volume_history`, `volume_restore` | Where offered: delete, old versions, restore one |
-| `volume_request_access` | Ask the user for more (a folder, `r` or `rw`, and why); they approve in Cua |
-| `volume_sync_status` | Sync health, each device's last sync, your files still uploading, conflicts |
-
-Inside a Space these tools answer from the user's machine, so they show its
-view of sync, not only this Space's.
-
-## Sync and conflicts
-
-- A file another device just wrote can take a few seconds to arrive. Before
-  relying on one, check `volume_sync_status`: `feed` is `live` (syncing),
-  `off` (storage on this machine only: nothing to wait for) or `offline`
-  (the bucket is unreachable, see `last_error`: say so rather than trust a
-  stale file). `devices` shows when each device last synced.
-- `volume_ls` and `volume_read` mark a file with `sync` when it matters:
-  `pending_upload` (not yet stored, other devices cannot see it yet),
-  `conflict` (a write lost to a later one; kept at `conflict_path`),
-  `conflict_copy`, and `written_by` when another device wrote it last.
-- Your own writes through the mount upload when you close the file (or after
-  a moment without writes). Close files before telling the user they are
-  ready.
-- When two devices change the same file, the later write wins and the other
-  is kept next to it as `name (conflict from <device> <date>).ext`. Nothing
-  is lost. Do not delete a conflict copy yourself: tell the user, or merge
-  the two into the current file if the task asks for it.
-
-## Never put secrets in the volume
-
-API keys, tokens, passwords and private keys belong in the user's Keyvault.
-Writes to agent homes are scanned; a write with a secret is refused
-(`secret_detected`) and logged. Do not work around the refusal: remove the
-secret.
+Never write API keys, tokens or passwords to the volume; they belong in Keyvault. A write with a secret is refused (`secret_detected`) and logged: remove the secret.

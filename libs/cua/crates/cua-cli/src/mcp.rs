@@ -1457,9 +1457,32 @@ fn error_kind(e: &CuaError) -> &'static str {
     }
 }
 
-/// The one MCP server `cua mcp` and `cua daemon mcp` serve: the Spaces
-/// contract (through `cua`) plus the sandbox/computer/skills extension.
-pub fn server(cua: Arc<Cua>, permissions: BTreeSet<String>, default_sandbox: String) -> McpServer {
+/// How `cua mcp` asks the user to approve gated actions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Approvals {
+    /// Ask with Touch ID (or the login password) when this build can.
+    Ask,
+    /// Never ask: gated actions are refused (headless servers, CI).
+    Never,
+}
+
+/// The one MCP server `cua mcp` and `cua daemon mcp` serve: the agent
+/// surface (a small tool list over the Spaces contract and the
+/// sandbox/computer/skills extension), with the user's approval policy
+/// enforced on every call.
+pub fn server_with(
+    cua: Arc<Cua>,
+    permissions: BTreeSet<String>,
+    default_sandbox: String,
+    approvals: Approvals,
+) -> McpServer {
+    let approver: Arc<dyn cua_spaces::approvals::Approver> = match approvals {
+        Approvals::Never => Arc::new(cua_spaces::approvals::NeverApprove),
+        Approvals::Ask => crate::extension::get()
+            .and_then(|e| e.approver())
+            .unwrap_or_else(|| Arc::new(cua_spaces::approvals::NeverApprove)),
+    };
+    let guard = cua_spaces::mcp::gate::Guard::new(cua_home::cua_home(), approver);
     let spaces = cua.spaces();
     let allowed = permissions.clone();
     McpServer::remote(Arc::new(SdkTools(spaces)))
@@ -1467,7 +1490,13 @@ pub fn server(cua: Arc<Cua>, permissions: BTreeSet<String>, default_sandbox: Str
         .with_filter(Arc::new(move |tool: &str| {
             allowed.contains(&format!("spaces:{tool}"))
         }))
-        .with_extension(Arc::new(Server::new(cua, permissions, default_sandbox)))
+        .with_extension(Arc::new(Server::new(
+            cua,
+            permissions,
+            default_sandbox.clone(),
+        )))
+        .with_agent_surface(guard)
+        .with_default_space(default_sandbox)
 }
 
 /// Serves `server` on stdin/stdout until EOF.

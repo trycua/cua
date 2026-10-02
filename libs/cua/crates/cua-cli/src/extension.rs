@@ -59,6 +59,13 @@ pub trait CliExtension: Send + Sync {
     /// requests with.
     fn session_broker(&self) -> Option<Arc<dyn Broker>>;
 
+    /// Asks the user (Touch ID or the login password) to approve an agent's
+    /// action: what `cua mcp` gates on. `None`: this build cannot ask, so
+    /// gated actions are refused.
+    fn approver(&self) -> Option<Arc<dyn cua_spaces::approvals::Approver>> {
+        None
+    }
+
     /// `cua viewer`: the standalone HTML5 viewer server.
     async fn viewer(
         &self,

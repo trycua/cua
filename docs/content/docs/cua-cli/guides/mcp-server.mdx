@@ -22,6 +22,52 @@ claude mcp add cua -- cua mcp --sandbox dev --permissions sandbox:readonly,compu
 [credentials](/cua-cli/guides/authentication#which-credential-fleet-uses).
 Every tool is in [MCP tools](/cua-cli/reference/mcp-tools).
 
+## What the agent sees
+
+The server lists about twenty tools, most with an `action`, to keep the
+agent's context small: `list_spaces`, `create_space`, `space` (start, stop,
+delete, forget, add), `space_bash`, `space_files`, `computer` and `window`
+(a Space's screen), `list_tools` and `call_tool`, `open_browser`, `agent`,
+`volume`, `teleport`, `request_site_login`, `share_space`, `show_space`,
+`notify_user`, `images`, `approvals` and `more`. `more` lists the rarely used
+tools (cloud accounts, persistent agents and routines, hotspot, relay, volume
+storage and sync, skills); with a name it describes one, with `arguments` it
+calls it.
+
+The per-tool names in the reference (`computer_click`, `stop_space`,
+`volume_ls`, ...) still work when called by name, so existing agents and
+scripts keep running; they are just not advertised.
+
+## Approvals
+
+Actions that reach beyond the Space the agent works in ask the user for Touch
+ID (or the login password) first. Cua Spaces, Settings, Agent approvals lists
+them with a switch each, and the server reads the setting on every call.
+
+| Setting | Gated by default | Covers |
+|---------|------------------|--------|
+| Use the cloud | yes | Cloud Spaces, `cloud_connect`, `cloud_sweep` |
+| Add machines | yes | `add_space`, `relay_register_space` |
+| Control your machines | yes | Commands, files and input on `relay:` and `direct:` Spaces, creating on `host:` |
+| Send sensitive files | yes | Uploading SSH keys, cloud credentials, browser profiles, the Cua home |
+| Share API keys | yes | `env_from_host` on agent runs |
+| Run on a schedule | yes | Routines |
+| Change Volume storage | yes | `volume_storage_set`, mount, unmount |
+| Share your network | yes | `hotspot_start` |
+| Show things on your screen | no | Viewer, picture in picture |
+
+Teleport, site logins, sharing a Space, volume grants and computer access
+always ask. Agents cannot approve requests or change access: `volume_approve`,
+`volume_grant` and the other grant tools are refused (`forbidden`), and the
+settings file is changed only with the user's fingerprint. Downloads into the
+Cua home, `~/.ssh`, `~/Library/LaunchAgents` and similar folders are refused.
+The Volume tools run as the calling agent (`host-<client>`), not as the user.
+
+A refused call returns `approval_denied`; the agent should stop and tell the
+user. `cua mcp --approvals never` refuses every gated action without asking
+(for servers with no screen). A build without Cua Spaces cannot ask, so it
+refuses them too.
+
 ## Supported agents
 
 `cua agents setup --agents <id>` installs the cua skills and adds the `cua`

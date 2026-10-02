@@ -35,6 +35,16 @@ pub mod viewer;
 /// The Cua Spaces commands.
 pub struct CuaSpacesCli;
 
+/// Approves an agent's gated action with Touch ID or the login password,
+/// the same prompt the Keyvault and Volume grants use.
+struct TouchIdApprover;
+
+impl cua_spaces::approvals::Approver for TouchIdApprover {
+    fn confirm(&self, reason: &str) -> Result<(), String> {
+        cua_teleport::biometric::authorize_sensitive_export(reason).map_err(|e| e.to_string())
+    }
+}
+
 #[async_trait::async_trait(?Send)]
 impl CliExtension for CuaSpacesCli {
     async fn teleport(
@@ -63,6 +73,10 @@ impl CliExtension for CuaSpacesCli {
         out: &mut dyn Write,
     ) -> Result<i32, CuaError> {
         drive_config::config(cmd, json, out)
+    }
+
+    fn approver(&self) -> Option<Arc<dyn cua_spaces::approvals::Approver>> {
+        Some(Arc::new(TouchIdApprover))
     }
 
     fn session_broker(&self) -> Option<Arc<dyn Broker>> {

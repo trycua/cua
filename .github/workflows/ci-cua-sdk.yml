@@ -37,7 +37,10 @@ permissions:
 
 concurrency:
   group: ci-cua-sdk-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Only superseded PR runs are cancelled. A main run always finishes, so
+  # rust-cache saves the warm build that PR runs restore (cancelled main runs
+  # never saved one, and every smoke job compiled cold).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Cua programs and packages run here never send usage telemetry.
@@ -283,7 +286,9 @@ jobs:
   node:
     name: node smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # A cold macOS run (release cua-sdk, fixtures, both CLIs) passed 45
+    # minutes still compiling, as python smoke did on Windows.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -360,7 +365,8 @@ jobs:
   swift:
     name: swift smoke (macOS)
     runs-on: macos-26
-    timeout-minutes: 45
+    # Cold, the release cua-sdk build alone nears 45 minutes on macos-26.
+    timeout-minutes: 90
     defaults:
       run:
         working-directory: libs/cua

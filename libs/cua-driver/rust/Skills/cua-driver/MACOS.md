@@ -443,6 +443,10 @@ application, resolves each immediate child from live AX state, uses only
 on a best-effort basis.
 It refuses missing, duplicate, disabled, or non-actionable segments and never
 falls back to pixels.
+When a path fails after the tool already opened a menu, it cancels that menu
+and the refusal says whether any menu window it opened is still on screen. If
+the refusal says the menu may still be open, press `escape` on the window
+before other input.
 
 ```bash
 cua-driver invoke_menu \

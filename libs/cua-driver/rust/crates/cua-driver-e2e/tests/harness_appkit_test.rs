@@ -949,6 +949,74 @@ fn harness_appkit_invoke_menu_live_path() {
     );
 }
 
+/// A path that fails after opening a menu closes it again: the next command
+/// through the same menu, with no other activation in between, still runs.
+#[test]
+#[ignore]
+fn harness_appkit_invoke_menu_failed_path_leaves_no_menu_open() {
+    run_case(
+        native_foreground_case(
+            "appkit",
+            "invoke_menu_failed_path",
+            Targeting::Ax,
+            DriverRoute::MacosAxAction,
+        ),
+        |pid, wid, driver| {
+            let refused = driver.call(
+                "invoke_menu",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": wid,
+                    "path": ["Window", "Arrange", "Missing"]
+                }),
+            );
+            assert!(refused.is_error(), "missing menu path was accepted");
+            assert_eq!(
+                refused.structured()["refusal"]["code"],
+                "menu_path_unavailable",
+                "{}",
+                refused.raw
+            );
+
+            let invoked = driver.call(
+                "invoke_menu",
+                serde_json::json!({
+                    "pid": pid,
+                    "window_id": wid,
+                    "path": ["Window", "Arrange", "Left"]
+                }),
+            );
+            assert!(
+                !invoked.is_error(),
+                "invoke_menu failed: {}",
+                invoked.text()
+            );
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            while !snapshot_elements(driver, pid, wid)
+                .tree_text()
+                .contains("menu_action=window_arrange_left")
+            {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "menu command after a failed path did not reach fixture; refusal: {}; command: {}",
+                    refused.raw,
+                    invoked.raw
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            assert!(
+                refused.structured()["refusal"]["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("path segment 2 was not found")
+                        && message.contains("No menu window this call opened is still on screen")),
+                "{}",
+                refused.raw
+            );
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        },
+    );
+}
+
 /// text_input: type_text into the NSTextField, verify the mirror label
 /// shows the typed string. Exercises the AX type_text path
 /// (AXSetAttribute on AXValue, or CGEvent fallback).

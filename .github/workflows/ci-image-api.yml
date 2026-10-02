@@ -12,7 +12,6 @@ on:
       - "libs/python/cua-sandbox/tests/test_image*.py"
       - "libs/python/cua-sandbox/pyproject.toml"
       - "libs/python/cua-sandbox/uv.lock"
-      - "libs/cua/python/**"
       - ".github/workflows/ci-image-api.yml"
       - ".github/workflows/cd-image-api.yml"
   pull_request:
@@ -26,13 +25,16 @@ on:
       - "libs/python/cua-sandbox/tests/test_image*.py"
       - "libs/python/cua-sandbox/pyproject.toml"
       - "libs/python/cua-sandbox/uv.lock"
-      - "libs/cua/python/**"
       - ".github/workflows/ci-image-api.yml"
       - ".github/workflows/cd-image-api.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-image-api-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Cua programs and packages run here never send usage telemetry.
@@ -45,10 +47,9 @@ jobs:
   # required check on every pull request this workflow runs on.
   image-api:
     runs-on: ubuntu-latest
-    # A cold release build of the cua SDK library alone takes 15 minutes or
-    # more on a hosted runner (both runs on PR #19 were cancelled mid-build
-    # at the old 15-minute limit); the rust cache makes warm runs quick.
-    timeout-minutes: 45
+    # Nothing here builds Rust: the checks need the cua-sandbox sources, the
+    # CRD package and a Kind cluster, not the native cua SDK library.
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -62,36 +63,6 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.25.x"
-
-      # cua-sandbox imports the cua SDK, whose Python package loads the
-      # native cua-sdk library: build and stage it before installing.
-      - name: Install protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@1.97.1
-
-      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
-        with:
-          workspaces: libs/cua
-          key: cua-sandbox
-
-      - name: Install Linux build dependencies (cua SDK)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake pkg-config libx11-dev libxkbcommon-dev \
-            libwayland-dev libxcb1-dev libx11-xcb-dev libxkbcommon-x11-dev \
-            libxrandr-dev libxi-dev libudev-dev
-
-      - name: Build the cua SDK library
-        working-directory: libs/cua
-        run: |
-          cargo build --locked --release -p cua-sdk
-          node scripts/stage-uniffi-library.mjs --only=python
 
       - name: Install dependencies
         run: |
@@ -124,6 +95,13 @@ jobs:
           export PATH="$(go env GOPATH)/bin:$PATH"
           kind delete cluster --name cua-image-api
 
+      # test_image.py checks Image descriptors against the native resolver
+      # (Rust, embedding libs/images/sandbox-images.json), so it needs the cua
+      # SDK library built from this commit (a published wheel drifts from main
+      # between releases). CI: Test Python runs it with that library on every
+      # change to libs/python/** and the SDK crates, a superset of this
+      # workflow's Python paths; test_image_api_workflows.py holds both
+      # workflows to that. These tests never load the native library.
       - name: Run focused tests
         run: |
           uv run --project libs/python/cua-sandbox pytest \
@@ -131,7 +109,6 @@ jobs:
             libs/python/cua-sandbox/tests/test_image_model_generation.py \
             libs/python/cua-sandbox/tests/test_image_build_recipe.py \
             libs/python/cua-sandbox/tests/test_image_api_workflows.py \
-            libs/python/cua-sandbox/tests/test_image.py \
             -q
 
       - name: Check formatting and repository hygiene

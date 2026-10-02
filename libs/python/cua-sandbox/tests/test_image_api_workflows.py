@@ -9,6 +9,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CI_WORKFLOW = REPO_ROOT / ".github/workflows/ci-image-api.yml"
 CD_WORKFLOW = REPO_ROOT / ".github/workflows/cd-image-api.yml"
+TEST_PYTHON_WORKFLOW = REPO_ROOT / ".github/workflows/ci-test-python.yml"
 
 
 def test_image_api_ci_covers_the_contract_and_generated_artifacts() -> None:
@@ -32,7 +33,18 @@ def test_image_api_ci_covers_the_contract_and_generated_artifacts() -> None:
     assert "test_image_model_generation.py" in commands
     assert "test_image_build_recipe.py" in commands
     assert "test_image_api_workflows.py" in commands
-    assert "test_image.py" in commands
+    # test_image.py needs the native cua SDK built from this commit: CI: Test
+    # Python's hermetic cua-sandbox suite runs it, on a superset of the paths.
+    test_python = yaml.safe_load(TEST_PYTHON_WORKFLOW.read_text())
+    test_python_paths = test_python[True]["pull_request"]["paths"]
+    for path in pull_request_paths:
+        if path.startswith("libs/python/"):
+            assert "libs/python/**" in test_python_paths
+    suite = test_python["jobs"]["cua-sandbox"]["steps"]
+    suite_commands = "\n".join(step.get("run", "") for step in suite)
+    assert "cargo build --locked --release -p cua-sdk" in suite_commands
+    assert "pytest tests " in suite_commands
+    assert "test_image.py" not in suite_commands
 
     assert workflow["jobs"]["image-api"]["timeout-minutes"] >= 15
     admission = next(

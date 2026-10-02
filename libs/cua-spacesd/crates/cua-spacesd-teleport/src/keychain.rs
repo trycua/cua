@@ -277,7 +277,7 @@ fn install_into(
     // not the default (see target_keychain_path), so an unqualified add
     // would land the item somewhere the partition-list write below does
     // not touch.
-    let line = add_command_line(item, &keychain)?;
+    let line = add_command_line(item, keychain)?;
     let output = host.run(
         &HostCommand::new(EffectKind::KeychainWrite, "security")
             .args(["-q", "-i"])
@@ -295,7 +295,7 @@ fn install_into(
                     &item.service,
                     "-a",
                     &item.account,
-                    &keychain,
+                    keychain,
                 ]),
             )
             .map(|o| o.success)
@@ -857,6 +857,7 @@ mod tests {
         assert!(record.keychain_items.is_empty());
     }
 
+    #[cfg(target_os = "macos")]
     fn chrome_item() -> KeychainItem {
         KeychainItem {
             service: "Chrome Safe Storage".into(),
@@ -866,6 +867,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
     fn partition_calls(host: &FakeHost) -> Vec<crate::host::HostCommand> {
         host.calls_of(EffectKind::KeychainWrite)
             .into_iter()

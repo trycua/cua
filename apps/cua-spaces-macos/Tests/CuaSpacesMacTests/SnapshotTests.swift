@@ -493,6 +493,40 @@ struct SnapshotTests {
         }
     }
 
+    /// Each tile's header: the OS logo, then where the Space runs in grey.
+    /// A Space on this Mac, one on another of your machines, and one on a
+    /// machine with a long name (truncated in the middle).
+    @Test func notchTileLocations() async throws {
+        func row(_ id: String, _ name: String, _ os: AppSpaceOs, _ osName: String, provider: String,
+                 host: String? = nil, hostName: String? = nil) -> AppSpaceRow {
+            AppSpaceRow(id: id, name: name, provider: provider, spacesdVersion: "0.4.0",
+                        features: ["desktop_stream"], addedAt: "2026-09-25T08:00:00Z",
+                        os: os, osName: osName, osPrettyName: nil, image: nil, imageDigest: nil,
+                        kind: nil, arch: "arm64", reachable: true, error: nil, host: host, hostName: hostName,
+                        power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil)
+        }
+        let backend = FixtureSpacesBackend(rows: [
+            row("local:dev", "Dev box", .linux, "Ubuntu", provider: "local"),
+            row("relay:m1/studio", "Studio", .macos, "macOS", provider: "relay", host: "m1", hostName: "Mac mini"),
+            row("relay:m2/ci", "CI runner", .windows, "Windows", provider: "relay", host: "m2",
+                hostName: "Dillon's Mac Studio in the Back Office Rack 3"),
+        ])
+        let m = ViewModelTests().makeModel(backend, kv: FakeKeyvault(try fixtureOverview()),
+                                           host: FixtureHost(), account: FixtureAccount(),
+                                           agents: FixtureAgentSetup())
+        m.onboarding.finish()
+        await m.refresh()
+        m.notch.send(.click)
+        let places = Dictionary(uniqueKeysWithValues: m.notch.view.tiles.map { ($0.id, $0.location) })
+        #expect(places["local:dev"] == "This Mac")
+        #expect(places["relay:m1/studio"] == "Mac mini")
+        #expect(places["relay:m2/ci"] == "Dillon's Mac Studio in the Back Office Rack 3")
+        let c = NotchController(model: m.notch)
+        c.apply(appNotchLayout(screen: NotchGeometry.fallbackScreen, prompt: NotchController.needsRow(m.notch.view)))
+        try assertSnapshot(NotchContentView(model: m.notch, controller: c).background(Color(white: 0.85)),
+                           "notch-tile-locations", size: c.geometry.stage)
+    }
+
     @Test func notchButtonPressed() async throws {
         try await assertNotch("notch-button-pressed") {
             $0.send(.click)

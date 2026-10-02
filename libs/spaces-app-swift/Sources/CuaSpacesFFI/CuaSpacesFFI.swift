@@ -18751,9 +18751,15 @@ public struct AppNotchTile: Equatable, Hashable {
      */
     public var symbol: String
     /**
-     * Accessibility label: name, OS and status.
+     * Accessibility label: name, OS, where it runs and status.
      */
     public var label: String
+    /**
+     * Where it runs, in words, on the tile's header line next to the OS
+     * logo: "This Mac", the machine that provides it ("Mac mini"), the
+     * address of one added by address, or the cloud's place ([`location`]).
+     */
+    public var location: String
     /**
      * While it is being created: overall progress in thousandths (a ring
      * over the tile).
@@ -18799,8 +18805,13 @@ public struct AppNotchTile: Equatable, Hashable {
          * macOS the system symbol [`os_icon_system_symbol`] names.
          */symbol: String,
         /**
-         * Accessibility label: name, OS and status.
+         * Accessibility label: name, OS, where it runs and status.
          */label: String,
+        /**
+         * Where it runs, in words, on the tile's header line next to the OS
+         * logo: "This Mac", the machine that provides it ("Mac mini"), the
+         * address of one added by address, or the cloud's place ([`location`]).
+         */location: String,
         /**
          * While it is being created: overall progress in thousandths (a ring
          * over the tile).
@@ -18821,6 +18832,7 @@ public struct AppNotchTile: Equatable, Hashable {
         self.targeted = targeted
         self.symbol = symbol
         self.label = label
+        self.location = location
         self.progress = progress
         self.progressLabel = progressLabel
         self.signedIn = signedIn
@@ -18851,6 +18863,7 @@ public struct FfiConverterTypeAppNotchTile: FfiConverterRustBuffer {
                 targeted: FfiConverterBool.read(from: &buf),
                 symbol: FfiConverterString.read(from: &buf),
                 label: FfiConverterString.read(from: &buf),
+                location: FfiConverterString.read(from: &buf),
                 progress: FfiConverterOptionUInt32.read(from: &buf),
                 progressLabel: FfiConverterOptionString.read(from: &buf),
                 signedIn: FfiConverterBool.read(from: &buf)
@@ -18867,6 +18880,7 @@ public struct FfiConverterTypeAppNotchTile: FfiConverterRustBuffer {
         FfiConverterBool.write(value.targeted, into: &buf)
         FfiConverterString.write(value.symbol, into: &buf)
         FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.location, into: &buf)
         FfiConverterOptionUInt32.write(value.progress, into: &buf)
         FfiConverterOptionString.write(value.progressLabel, into: &buf)
         FfiConverterBool.write(value.signedIn, into: &buf)

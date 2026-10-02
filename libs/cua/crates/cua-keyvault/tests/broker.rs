@@ -63,6 +63,9 @@ fn cookie_item(app: &str, site: &str, name: &str) -> Captured {
             last_update_utc: None,
             name: name.into(),
             partition_key: None,
+            last_access_utc: None,
+            source_type: None,
+            has_cross_site_ancestor: None,
             path: "/".into(),
             priority: None,
             same_site: 1,
@@ -404,6 +407,7 @@ async fn consent_grants_a_caller_bound_scoped_token() {
         token: Some(token.clone()),
         items,
         target: target.into(),
+        include_passwords: false,
     };
     let out = r
         .broker
@@ -443,6 +447,7 @@ async fn consent_grants_a_caller_bound_scoped_token() {
                     token: Some(forged),
                     items: vec![github.id.clone()],
                     target: "dev-1".into(),
+                    include_passwords: false,
                 }
             )
             .await
@@ -457,6 +462,7 @@ async fn consent_grants_a_caller_bound_scoped_token() {
                     token: None,
                     items: vec![github.id.clone()],
                     target: "dev-1".into(),
+                    include_passwords: false,
                 }
             )
             .await,
@@ -476,6 +482,7 @@ async fn f1_grant_is_bound_to_the_immutable_target_id_not_the_name() {
         token: Some(token),
         items: granted.clone(),
         target: "dev-1".into(),
+        include_passwords: false,
     };
     // While the id is unchanged the token works.
     r.broker.teleport(&r.koala, req.clone()).await.unwrap();
@@ -532,6 +539,7 @@ async fn f1_unattended_rule_is_bound_to_the_immutable_target_id() {
         token: None,
         items: vec![id],
         target: "dev-1".into(),
+        include_passwords: false,
     };
     let out = r.broker.teleport(&r.koala, req.clone()).await.unwrap();
     assert_eq!(out.authority, format!("rule={}", rule.id));
@@ -590,6 +598,7 @@ async fn single_use_grants_and_other_callers_cannot_collect_decisions() {
         token: Some(token),
         items: vec![items[0].id.clone()],
         target: "dev-1".into(),
+        include_passwords: false,
     };
     r.broker.teleport(&r.koala, req.clone()).await.unwrap();
     // Default grants are single use.
@@ -634,6 +643,7 @@ async fn presence_is_required_to_expand_access() {
                     token: None,
                     items: vec![items[0].id.clone()],
                     target: "dev-1".into(),
+                    include_passwords: false,
                 }
             )
             .await,
@@ -697,6 +707,7 @@ async fn kill_switch_blocks_everything_and_kills_old_tokens() {
         token: Some(token),
         items: vec![items[0].id.clone()],
         target: "dev-1".into(),
+        include_passwords: false,
     };
     assert!(matches!(
         r.broker.teleport(&r.koala, req.clone()).await,
@@ -745,7 +756,8 @@ async fn revoking_one_site_leaves_the_others() {
                 TeleportRequest {
                     token: Some(t1),
                     items: i1,
-                    target: "dev-1".into()
+                    target: "dev-1".into(),
+                    include_passwords: false,
                 }
             )
             .await
@@ -758,6 +770,7 @@ async fn revoking_one_site_leaves_the_others() {
                 token: Some(t2),
                 items: i2.clone(),
                 target: "dev-1".into(),
+                include_passwords: false,
             },
         )
         .await
@@ -844,6 +857,7 @@ async fn unattended_rules_need_signed_known_callers_and_expire() {
         token: None,
         items: vec![id.clone()],
         target: "dev-1".into(),
+        include_passwords: false,
     };
     let asked_before = r.presence.asked.lock().unwrap().len();
     let out = r.broker.teleport(&r.koala, req.clone()).await.unwrap();
@@ -889,6 +903,7 @@ async fn deliveries_supersede_and_release_wipes() {
                     token: None,
                     items: vec![id.clone()],
                     target: "dev-1".into(),
+                    include_passwords: false,
                 },
             )
             .await
@@ -935,6 +950,7 @@ async fn teleport_to(r: &Rig, id: &str, target: &str) {
                 token: None,
                 items: vec![id.to_string()],
                 target: target.into(),
+                include_passwords: false,
             },
         )
         .await
@@ -1050,6 +1066,7 @@ async fn audit_records_decisions_without_secrets_or_sites() {
                 token: Some(token.clone()),
                 items,
                 target: "dev-1".into(),
+                include_passwords: false,
             },
         )
         .await
@@ -1062,6 +1079,7 @@ async fn audit_records_decisions_without_secrets_or_sites() {
                 token: Some(token.clone()),
                 items: vec!["00".into()],
                 target: "dev-1".into(),
+                include_passwords: false,
             },
         )
         .await;
@@ -1370,6 +1388,7 @@ async fn broker_records_counts_and_verified_caller_kinds_only() {
                 token: Some(token.clone()),
                 items: granted.clone(),
                 target: "dev-1".into(),
+                include_passwords: false,
             },
         )
         .await
@@ -1383,6 +1402,7 @@ async fn broker_records_counts_and_verified_caller_kinds_only() {
                 token: Some(token),
                 items: granted,
                 target: "dev-1".into(),
+                include_passwords: false,
             },
         )
         .await;
@@ -1713,6 +1733,7 @@ async fn a_delivery_the_audit_log_cannot_record_is_refused() {
                 token: Some(token),
                 items: ids,
                 target: "dev-1".into(),
+                include_passwords: false,
             },
         )
         .await;
@@ -1726,6 +1747,7 @@ async fn a_delivery_the_audit_log_cannot_record_is_refused() {
                 token: None,
                 items: vec![items[0].id.clone()],
                 target: "dev-1".into(),
+                include_passwords: false,
             },
         )
         .await;
@@ -1748,6 +1770,7 @@ async fn deliveries_are_authorized_in_the_log_and_the_kill_switch_wipes_them() {
                 token: Some(token),
                 items: ids,
                 target: "dev-1".into(),
+                include_passwords: false,
             },
         )
         .await
@@ -1759,6 +1782,7 @@ async fn deliveries_are_authorized_in_the_log_and_the_kill_switch_wipes_them() {
                 token: None,
                 items: vec![items[0].id.clone()],
                 target: "dev-2".into(),
+                include_passwords: false,
             },
         )
         .await

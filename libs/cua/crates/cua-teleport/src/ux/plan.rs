@@ -292,6 +292,13 @@ pub struct TeleportPlan {
     /// Keychain is never asked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_vault: Option<Vec<String>>,
+    /// Also send the saved passwords ([`Consent::include_passwords`]).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub include_passwords: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// Whether a manifest key is the browser's cookie store.
@@ -328,6 +335,12 @@ pub struct Consent {
     /// app. Only an app-state move uses it.
     #[serde(default)]
     pub from_vault: Option<Vec<String>>,
+    /// Also send the browser's saved passwords (of the chosen sites): only
+    /// when the user ticked them in the review, and only with
+    /// `acknowledge_sensitive`. They are re-encrypted for the destination
+    /// browser's own key.
+    #[serde(default)]
+    pub include_passwords: bool,
 }
 
 /// A plan the user approved. Only [`TeleportPlan::approve`] makes one.
@@ -361,6 +374,11 @@ impl TeleportPlan {
                 "these secrets need an explicit acknowledgement: {}",
                 secrets.join(", ")
             )));
+        }
+        if consent.include_passwords && !consent.acknowledge_sensitive {
+            return Err(UxError::NotApproved(
+                "saved passwords need an explicit acknowledgement".into(),
+            ));
         }
         if self.relay_unsealed
             && crate::RELAY_SEALING_ENFORCED
@@ -399,6 +417,7 @@ impl TeleportPlan {
         }
         self.cookie_domains = consent.cookie_domains.clone();
         self.from_vault = consent.from_vault.clone();
+        self.include_passwords = consent.include_passwords;
         self.save_to_keyvault = self.sensitive && consent.save_to_keyvault;
         Ok(ApprovedPlan(self))
     }
@@ -641,6 +660,7 @@ pub fn build(
         relay_unsealed: false,
         cookie_domains: None,
         from_vault: None,
+        include_passwords: false,
     })
 }
 

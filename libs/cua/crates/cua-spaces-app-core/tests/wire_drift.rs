@@ -239,10 +239,14 @@ fn the_inventory_mirror_decodes_the_brokers() {
             passwords: 1,
             signin: true,
             identity_provider: false,
+            unavailable: 3,
+            unavailable_reason: "app-bound".into(),
         }],
         notes: vec!["n".into()],
     };
     let k: cua_spaces_app_core::keyvault::KvInventory = round(&inv);
     assert_eq!(k.domains[0].cookies, 4);
+    assert_eq!(k.domains[0].unavailable, 3);
+    assert_eq!(k.domains[0].unavailable_reason, "app-bound");
     assert!(k.domains[0].signin);
 }

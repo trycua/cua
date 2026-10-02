@@ -213,6 +213,7 @@ async fn push_through_keyvault(
         confirm_passwords: true,
         paths: Some(paths.clone()),
         domains: None,
+        passwords: false,
     };
     let mut client = cua_keyvault::client::KeyvaultClient::connect_default()
         .await

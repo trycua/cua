@@ -429,6 +429,7 @@ Returned by [`kv_vault_source`](#kv_vault_source).
 | `count` | `u32` |  | Items that can be sent. |
 | `newest_ms` / `newestMs` | `i64` |  | When the newest was saved, Unix ms (0: none). |
 | `ids` | `Vec<String>` |  | Their ids, in list order. |
+| `password_ids` / `passwordIds` | `Vec<String>` |  | The app's saved passwords (ids), never part of `ids`: they are sent only when ticked in the review. |
 
 ## `KvVaultState` record
 

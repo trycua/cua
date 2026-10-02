@@ -95,14 +95,18 @@ enum KeyvaultFixtures {
 
     /// A Chrome inventory with counts per site, as the review shows it.
     static func chromeInventory() -> KvInventory {
-        func d(_ domain: String, cookies: UInt32, ls: UInt32 = 0, session: UInt32 = 0, signin: Bool, idp: Bool = false) -> KvDomainCount {
-            KvDomainCount(domain: domain, cookies: cookies, sessionCookies: session, localStorage: ls, passwords: 0,
-                          signin: signin, identityProvider: idp)
+        func d(_ domain: String, cookies: UInt32, ls: UInt32 = 0, session: UInt32 = 0, passwords: UInt32 = 0,
+               unavailable: UInt32 = 0, signin: Bool, idp: Bool = false) -> KvDomainCount {
+            KvDomainCount(domain: domain, cookies: cookies, sessionCookies: session, localStorage: ls,
+                          passwords: passwords, signin: signin, identityProvider: idp, unavailable: unavailable,
+                          unavailableReason: unavailable == 0 ? "" :
+                            "Chrome protects it with app-bound encryption, which only Chrome itself can unlock on this PC")
         }
         return KvInventory(providerId: "chrome", appDisplay: "Google Chrome", domains: [
             d("amazon.com", cookies: 14, signin: true),
+            d("bank.example", cookies: 0, unavailable: 3, signin: true),
             d("doubleclick.net", cookies: 9, signin: false),
-            d("github.com", cookies: 12, ls: 3, session: 4, signin: true),
+            d("github.com", cookies: 12, ls: 3, session: 4, passwords: 2, signin: true),
             d("google.com", cookies: 31, signin: true, idp: true),
             d("linear.app", cookies: 6, ls: 2, signin: true),
             d("notion.so", cookies: 8, ls: 5, signin: true),

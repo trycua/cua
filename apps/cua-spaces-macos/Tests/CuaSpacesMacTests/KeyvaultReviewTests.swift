@@ -71,15 +71,50 @@ struct KeyvaultReviewTests {
         let review = try #require(t.review)
         #expect(fake.inventoryAsks == 1)
         #expect(review.offersDomains && !review.needsDomains)
-        #expect(review.domainSummary == "5 of 8 sites", "sign-in sites, never the identity provider")
+        #expect(review.domainSummary == "5 of 9 sites", "sign-in sites, never the identity provider")
         #expect(!review.selectedDomains.contains("google.com") && !review.selectedDomains.contains("doubleclick.net"))
-        #expect(review.domains.first { $0.domain == "github.com" }?.counts == "12 cookies, 3 storage values")
+        #expect(review.domains.first { $0.domain == "github.com" }?.counts == "12 cookies, 3 storage values, 2 passwords")
         #expect(review.offersVault && review.vault.items == 16, "Chrome has 16 saved items a teleport can send (not its 2 passwords)")
         #expect(review.source == .live)
         let consent = appPickerConsent(state: t.state)
         #expect(consent.cookieDomains == review.selectedDomains && consent.fromVault == nil)
         try snap.assertSnapshot(TeleportReview(teleport: t, review: review), "keyvault-review-sites",
                                 size: CGSize(width: 640, height: 760))
+    }
+
+    @Test func cookiesTheBrowserCannotReleaseAreGreyedWithWhyAndNeverSent() async throws {
+        let (t, _) = try await reviewModel()
+        let bank = try #require(t.review?.domains.first { $0.domain == "bank.example" })
+        #expect(!bank.selectable && bank.unavailable == 3)
+        #expect(bank.unavailableNote.hasPrefix("3 cookies cannot be sent: Chrome protects it with app-bound encryption"))
+        // It starts unchecked and a tap does nothing.
+        #expect(!bank.selected)
+        t.send(.toggleDomain(domain: "bank.example"))
+        #expect(appPickerConsent(state: t.state).cookieDomains?.contains("bank.example") == false)
+        t.send(.selectShownDomains(value: true))
+        #expect(appPickerConsent(state: t.state).cookieDomains?.contains("bank.example") == false)
+    }
+
+    @Test func savedPasswordsAreAnExplicitOffByDefaultChoice() async throws {
+        // From the app: the chosen sites' passwords (github.com has 2).
+        let (t, _) = try await reviewModel()
+        let review = try #require(t.review)
+        #expect(review.offersPasswords && !review.includePasswords)
+        #expect(review.passwordsLabel == "Also send 2 saved passwords")
+        #expect(!appPickerConsent(state: t.state).includePasswords)
+        t.send(.togglePasswords(value: true))
+        #expect(appPickerConsent(state: t.state).includePasswords)
+        #expect(sdkConsent(appPickerConsent(state: t.state)).includePasswords, "carried over to the SDK consent")
+        // Dropping the only site that has passwords takes the offer away.
+        t.send(.toggleDomain(domain: "github.com"))
+        #expect(t.review?.offersPasswords == false)
+        #expect(!appPickerConsent(state: t.state).includePasswords)
+        // From the Keyvault: its saved passwords, only when ticked.
+        let (v, _) = try await reviewModel(vault: true)
+        #expect(v.review?.passwordsLabel == "Also send 2 saved passwords")
+        #expect(appPickerConsent(state: v.state).fromVault?.count == 16)
+        v.send(.togglePasswords(value: true))
+        #expect(appPickerConsent(state: v.state).fromVault?.count == 18)
     }
 
     @Test func reviewCanSendFromTheSavedItemsWithoutReadingTheApp() async throws {

@@ -314,6 +314,13 @@ pub struct Consent {
     /// Send these saved Keyvault items instead of reading the live app.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_vault: Option<Vec<String>>,
+    /// Also send the saved passwords (ticked in the review).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub include_passwords: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// The "needs the Cua app" prompt for a Keyvault refusal.
@@ -584,6 +591,14 @@ pub enum PickerEvent {
         now_ms: i64,
         /// The ones chosen to send (ids).
         selected: Vec<String>,
+        /// The app's saved passwords (ids): sent only when ticked.
+        #[serde(default)]
+        password_ids: Vec<String>,
+    },
+    /// Tick or untick "Also send saved passwords".
+    TogglePasswords {
+        /// Ticked.
+        value: bool,
     },
     /// The chosen saved items changed.
     VaultSelection {
@@ -758,13 +773,37 @@ pub fn can_plan(s: &PickerState) -> bool {
     }
 }
 
+/// The saved passwords can be offered: the Keyvault holds some for the app
+/// (sending from it), or a chosen site holds some in the browser (reading it
+/// now).
+pub fn passwords_offered(s: &PickerState) -> bool {
+    match s.choice.source {
+        SendSource::Vault => !s.choice.vault.password_ids.is_empty(),
+        SendSource::Live => password_count(s) > 0,
+    }
+}
+
+/// How many saved passwords ticking the box would send.
+pub fn password_count(s: &PickerState) -> u32 {
+    match s.choice.source {
+        SendSource::Vault => s.choice.vault.password_ids.len() as u32,
+        SendSource::Live => s
+            .choice
+            .domains
+            .iter()
+            .filter(|d| s.choice.selected_domains.contains(&d.domain))
+            .map(|d| d.passwords)
+            .sum(),
+    }
+}
+
 /// The review can be confirmed: a plan, secrets acknowledged when any, and
 /// the relay-plaintext warning acknowledged when it applies (S1).
 pub fn can_confirm(s: &PickerState) -> bool {
     let from_vault_ok = s.choice.source != SendSource::Vault || !s.choice.vault.selected.is_empty();
     from_vault_ok
         && s.plan.as_ref().is_some_and(|p| {
-            (!p.sensitive || s.acknowledged)
+            (!(p.sensitive || s.choice.include_passwords) || s.acknowledged)
                 && (!p.relay_unsealed || s.acknowledged_relay_plaintext)
         })
 }
@@ -800,7 +839,14 @@ pub fn consent(s: &PickerState) -> Consent {
         cookie_domains: (!vault && !s.choice.domains.is_empty())
             .then(|| s.choice.selected_domains.clone()),
         exclude: s.choice.excluded.clone(),
-        from_vault: vault.then(|| s.choice.vault.selected.clone()),
+        from_vault: vault.then(|| {
+            let mut ids = s.choice.vault.selected.clone();
+            if s.choice.include_passwords {
+                ids.extend(s.choice.vault.password_ids.iter().cloned());
+            }
+            ids
+        }),
+        include_passwords: passwords_offered(s) && s.choice.include_passwords,
     }
 }
 
@@ -1111,9 +1157,11 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
             newest_ms,
             now_ms,
             selected,
+            password_ids,
         } => {
             if s.step == Step::Consent {
                 n.choice.vault = VaultSource {
+                    password_ids: password_ids.clone(),
                     available: *count > 0,
                     items: *count,
                     saved: if *newest_ms > 0 {
@@ -1126,6 +1174,11 @@ pub fn reduce(s: &PickerState, e: &PickerEvent) -> PickerState {
                 if *count == 0 {
                     n.choice.source = SendSource::Live;
                 }
+            }
+        }
+        PickerEvent::TogglePasswords { value } => {
+            if s.step == Step::Consent && passwords_offered(s) {
+                n.choice.include_passwords = *value;
             }
         }
         PickerEvent::VaultSelection { selected } => {
@@ -1236,6 +1289,12 @@ pub struct ReviewView {
     pub vault_label: String,
     /// "Read Chrome now (macOS asks for Keychain access)".
     pub live_label: String,
+    /// "Also send saved passwords" shows (there are some to send).
+    pub offers_passwords: bool,
+    /// Ticked.
+    pub include_passwords: bool,
+    /// "Also send 14 saved passwords".
+    pub passwords_label: String,
     /// What the Keychain will do for this source, in a line.
     pub source_note: String,
 }
@@ -1326,7 +1385,21 @@ pub fn review(s: &PickerState) -> Option<ReviewView> {
         } else {
             String::new()
         },
-        needs_acknowledgement: plan.sensitive,
+        offers_passwords: passwords_offered(s),
+        include_passwords: s.choice.include_passwords && passwords_offered(s),
+        passwords_label: {
+            let n = password_count(s);
+            if n == 0 {
+                String::new()
+            } else {
+                format!(
+                    "Also send {n} saved password{}",
+                    if n == 1 { "" } else { "s" }
+                )
+            }
+        },
+        needs_acknowledgement: plan.sensitive
+            || (s.choice.include_passwords && passwords_offered(s)),
         acknowledged: s.acknowledged,
         offers_save_to_keyvault: plan.sensitive,
         save_to_keyvault: s.save_to_keyvault,
@@ -1832,6 +1905,7 @@ mod tests {
                 newest_ms: now - 2 * 24 * 3_600_000,
                 now_ms: now,
                 selected: vec!["a".into(), "b".into()],
+                password_ids: vec![],
             },
         );
         let rv = review(&s).unwrap();
@@ -1889,9 +1963,68 @@ mod tests {
                 newest_ms: 0,
                 now_ms: now,
                 selected: vec![],
+                password_ids: vec![],
             },
         );
         assert_eq!(review(&gone).unwrap().source, SendSource::Live);
         assert!(!review(&gone).unwrap().offers_vault);
+    }
+
+    /// Saved passwords are offered, off by default, never remembered, and
+    /// ticking them adds exactly their ids (from the Keyvault) or the chosen
+    /// sites' passwords (from the app), needs the secrets acknowledged, and
+    /// is refused where there are none.
+    #[test]
+    fn saved_passwords_are_an_explicit_choice_in_the_review() {
+        let now = 1_800_000_000_000_i64;
+        let s = review_state();
+        // Nothing to send: the toggle does nothing and is not offered.
+        let nope = reduce(&s, &PickerEvent::TogglePasswords { value: true });
+        assert!(!review(&nope).unwrap().offers_passwords);
+        assert!(!consent(&nope).include_passwords);
+
+        // From the Keyvault: its password items are offered, off.
+        let s = reduce(
+            &s,
+            &PickerEvent::VaultItems {
+                count: 2,
+                newest_ms: now,
+                now_ms: now,
+                selected: vec!["a".into(), "b".into()],
+                password_ids: vec!["p1".into(), "p2".into(), "p3".into()],
+            },
+        );
+        let s = reduce(
+            &s,
+            &PickerEvent::SendFrom {
+                source: SendSource::Vault,
+            },
+        );
+        let rv = review(&s).unwrap();
+        assert!(rv.offers_passwords && !rv.include_passwords);
+        assert_eq!(rv.passwords_label, "Also send 3 saved passwords");
+        let c = consent(&s);
+        assert!(!c.include_passwords);
+        assert_eq!(c.from_vault, Some(vec!["a".to_string(), "b".to_string()]));
+
+        let on = reduce(&s, &PickerEvent::TogglePasswords { value: true });
+        let c = consent(&on);
+        assert!(c.include_passwords);
+        assert_eq!(
+            c.from_vault,
+            Some(
+                ["a", "b", "p1", "p2", "p3"]
+                    .iter()
+                    .map(|x| x.to_string())
+                    .collect()
+            )
+        );
+        assert!(
+            review(&on).unwrap().needs_acknowledgement,
+            "a password is a secret that must be acknowledged"
+        );
+        // Off again, and a different source forgets nothing but also sends none.
+        let off = reduce(&on, &PickerEvent::TogglePasswords { value: false });
+        assert!(!consent(&off).include_passwords);
     }
 }

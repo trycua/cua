@@ -552,6 +552,10 @@ pub struct TeleportSelection {
     /// the broker authorizes it with the user's presence as it does any
     /// delivery.
     pub from_vault: Option<Vec<String>>,
+    /// Also send the saved passwords (of `cookie_domains`, or every site):
+    /// only when the user ticked them in the review. They are re-encrypted
+    /// for the destination browser's own key.
+    pub include_passwords: bool,
 }
 
 /// Session teleport on a [`Space`]: what it can import, and the export and
@@ -723,6 +727,7 @@ impl SpaceTeleport for Space {
             confirm_passwords: true,
             paths: Some(approval.paths.clone()),
             domains: selection.cookie_domains.clone(),
+            passwords: selection.include_passwords,
         };
         let mut client = cua_keyvault::client::KeyvaultClient::connect_default()
             .await
@@ -743,6 +748,7 @@ impl SpaceTeleport for Space {
                         token: None,
                         items: items.clone(),
                         target: self.id().to_string(),
+                        include_passwords: selection.include_passwords,
                     })
                     .await
                     .map_err(|e| Error::TeleportRefused(format!("{}: {e}", approval.app)))?;

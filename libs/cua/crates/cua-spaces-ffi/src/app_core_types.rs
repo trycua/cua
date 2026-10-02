@@ -2084,6 +2084,13 @@ pub struct AppReviewDomain {
     pub identity_provider: bool,
     /// Chosen to send.
     pub selected: bool,
+    /// Can be chosen: it holds something that can be sent. A site whose
+    /// cookies are all unreadable is greyed out.
+    pub selectable: bool,
+    /// Cookies that cannot be read, shown greyed with `unavailable_note`.
+    pub unavailable: u32,
+    /// "3 cookies cannot be sent: Chrome protects them with ...", or empty.
+    pub unavailable_note: String,
 }
 
 /// A non-cookie consent line the user can turn off.
@@ -2116,6 +2123,8 @@ pub struct AppVaultSource {
     pub saved: String,
     /// The items chosen to send (ids).
     pub selected: Vec<String>,
+    /// The app's saved passwords (ids), sent only when ticked.
+    pub password_ids: Vec<String>,
 }
 
 /// The review's choices.
@@ -2138,6 +2147,9 @@ pub struct AppReviewChoice {
     /// The sites were asked for (a failure counts: the review then sends
     /// what the plan lists).
     pub loaded: bool,
+    /// The saved passwords are ticked to send (off unless the user ticks
+    /// them; never remembered).
+    pub include_passwords: bool,
 }
 
 /// What teleport can do with an app.
@@ -2377,6 +2389,8 @@ pub struct AppTeleportConsent {
     pub exclude: Vec<String>,
     /// Send these saved Keyvault items instead of reading the live app.
     pub from_vault: Option<Vec<String>>,
+    /// Also send the saved passwords (ticked in the review).
+    pub include_passwords: bool,
 }
 
 /// The "needs the Cua app" prompt for a Keyvault refusal.
@@ -2595,6 +2609,13 @@ pub enum AppPickerEvent {
         now_ms: i64,
         /// The ones chosen to send (ids).
         selected: Vec<String>,
+        /// The app's saved passwords (ids): sent only when ticked.
+        password_ids: Vec<String>,
+    },
+    /// Tick or untick "Also send saved passwords".
+    TogglePasswords {
+        /// Ticked.
+        value: bool,
     },
     /// The chosen saved items changed.
     VaultSelection {
@@ -2685,6 +2706,12 @@ pub struct AppReviewView {
     pub vault_label: String,
     /// "Read Chrome now (macOS asks for Keychain access)".
     pub live_label: String,
+    /// "Also send saved passwords" shows (there are some to send).
+    pub offers_passwords: bool,
+    /// Ticked.
+    pub include_passwords: bool,
+    /// "Also send 14 saved passwords".
+    pub passwords_label: String,
     /// What the Keychain will do for this source, in a line.
     pub source_note: String,
 }
@@ -3666,6 +3693,10 @@ pub struct KvDomainCount {
     pub signin: bool,
     /// An identity provider.
     pub identity_provider: bool,
+    /// Cookies that cannot be read (Chrome's app-bound encryption).
+    pub unavailable: u32,
+    /// Why they cannot be read.
+    pub unavailable_reason: String,
 }
 
 /// What a host app offers, per domain (`cua_keyvault::broker::Inventory`).
@@ -4546,6 +4577,9 @@ pub struct KvVaultSource {
     pub newest_ms: i64,
     /// Their ids, in list order.
     pub ids: Vec<String>,
+    /// The app's saved passwords (ids), never part of `ids`: they are sent
+    /// only when ticked in the review.
+    pub password_ids: Vec<String>,
 }
 
 /// A sidebar category.

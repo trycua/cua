@@ -100,6 +100,12 @@ pub struct KvDomainCount {
     /// An identity provider.
     #[serde(default)]
     pub identity_provider: bool,
+    /// Cookies that cannot be read (Chrome's app-bound encryption).
+    #[serde(default)]
+    pub unavailable: u32,
+    /// Why they cannot be read.
+    #[serde(default)]
+    pub unavailable_reason: String,
 }
 
 /// What a host app offers, per domain (`cua_keyvault::broker::Inventory`).

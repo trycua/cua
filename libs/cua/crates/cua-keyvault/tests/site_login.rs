@@ -321,6 +321,7 @@ async fn saved_logins_are_never_teleported() {
                 token: None,
                 items: vec![items[0].id.clone()],
                 target: "work".into(),
+                include_passwords: false,
             },
         )
         .await

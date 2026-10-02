@@ -218,6 +218,7 @@ async fn broker_delivers_a_granted_capability_and_wipes_on_release() {
                 token: Some(token.clone()),
                 items: items.clone(),
                 target: r.target.clone(),
+                include_passwords: false,
             },
         )
         .await
@@ -290,6 +291,7 @@ async fn a_capability_for_a_different_target_is_refused() {
                 token: Some(token),
                 items,
                 target: other,
+                include_passwords: false,
             },
         )
         .await
@@ -315,6 +317,7 @@ async fn a_tripped_kill_switch_denies_delivery() {
                 token: Some(token),
                 items,
                 target: r.target.clone(),
+                include_passwords: false,
             },
         )
         .await

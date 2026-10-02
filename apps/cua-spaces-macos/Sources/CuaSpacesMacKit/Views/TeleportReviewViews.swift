@@ -22,6 +22,18 @@ struct TeleportReview: View {
                 if review.offersDomains { Section { sites } header: { Text("Sites") } }
                 if !review.toggles.isEmpty { Section("Also sent") { items } }
             }
+            if review.offersPasswords {
+                Section {
+                    Toggle(review.passwordsLabel, isOn: Binding(
+                        get: { review.includePasswords },
+                        set: { teleport.send(.togglePasswords(value: $0)) }))
+                        .toggleStyle(.checkbox)
+                        .accessibilityIdentifier("review-passwords")
+                    Text("Off by default. Passwords are re-encrypted for the browser in the Space and need " +
+                         "that browser to have been opened once.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             Section { summary }
             if review.needsAcknowledgement {
                 Toggle("Send the secrets listed above", isOn: Binding(
@@ -94,29 +106,39 @@ struct TeleportReview: View {
             .accessibilityIdentifier("review-sites-search")
             List {
                 ForEach(review.domains, id: \.domain) { d in
-                    HStack(spacing: 8) {
-                        TriCheckbox(state: d.selected ? .on : .off, label: "Send \(d.domain)") {
-                            teleport.send(.toggleDomain(domain: d.domain))
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 8) {
+                            TriCheckbox(state: d.selected ? .on : .off, label: "Send \(d.domain)") {
+                                teleport.send(.toggleDomain(domain: d.domain))
+                            }
+                            .disabled(!d.selectable)
+                            Image(systemName: "globe").foregroundStyle(.secondary).frame(width: 18)
+                            Text(d.domain).lineLimit(1)
+                            Text(d.counts).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+                            Spacer(minLength: 8)
+                            if d.identityProvider {
+                                Text("Identity provider").font(.caption).foregroundStyle(.orange)
+                                    .help("Its session signs in to other apps. Send it only if you mean to.")
+                            } else if d.signin {
+                                Text("Signs you in").font(.caption).foregroundStyle(.secondary)
+                            }
                         }
-                        Image(systemName: "globe").foregroundStyle(.secondary).frame(width: 18)
-                        Text(d.domain).lineLimit(1)
-                        Text(d.counts).font(.callout).foregroundStyle(.secondary).lineLimit(1)
-                        Spacer(minLength: 8)
-                        if d.identityProvider {
-                            Text("Identity provider").font(.caption).foregroundStyle(.orange)
-                                .help("Its session signs in to other apps. Send it only if you mean to.")
-                        } else if d.signin {
-                            Text("Signs you in").font(.caption).foregroundStyle(.secondary)
+                        // What cannot be read, greyed, with why.
+                        if d.unavailable > 0 {
+                            Text(d.unavailableNote).font(.caption).foregroundStyle(.tertiary).lineLimit(2)
+                                .padding(.leading, 52)
+                                .accessibilityIdentifier("review-site-unavailable-\(d.domain)")
                         }
                     }
+                    .opacity(d.selectable ? 1 : 0.55)
                     .contentShape(Rectangle())
-                    .onTapGesture { teleport.send(.toggleDomain(domain: d.domain)) }
+                    .onTapGesture { if d.selectable { teleport.send(.toggleDomain(domain: d.domain)) } }
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("review-site-\(d.domain)")
                 }
             }
             .listStyle(.inset)
-            .frame(height: min(CGFloat(max(review.domains.count, 1)) * 26 + 8, 190))
+            .frame(height: min(CGFloat(max(review.domains.count, 1)) * 26 + CGFloat(review.domains.filter { $0.unavailable > 0 }.count) * 14 + 8, 190))
             .accessibilityIdentifier("review-sites")
         }
     }

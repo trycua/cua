@@ -89,6 +89,13 @@ pub struct ReviewDomain {
     pub identity_provider: bool,
     /// Chosen to send.
     pub selected: bool,
+    /// Can be chosen: it holds something that can be sent. A site whose
+    /// cookies are all unreadable is greyed out.
+    pub selectable: bool,
+    /// Cookies that cannot be read, shown greyed with `unavailable_note`.
+    pub unavailable: u32,
+    /// "3 cookies cannot be sent: Chrome protects them with ...", or empty.
+    pub unavailable_note: String,
 }
 
 /// A non-cookie consent line the user can turn off.
@@ -121,6 +128,9 @@ pub struct VaultSource {
     pub saved: String,
     /// The items chosen to send (ids).
     pub selected: Vec<String>,
+    /// The app's saved passwords (ids), sent only when ticked.
+    #[serde(default)]
+    pub password_ids: Vec<String>,
 }
 
 /// The review's choices.
@@ -144,6 +154,10 @@ pub struct ReviewChoice {
     /// what the plan lists).
     #[serde(default)]
     pub loaded: bool,
+    /// The saved passwords are ticked to send (off unless the user ticks
+    /// them; never remembered).
+    #[serde(default)]
+    pub include_passwords: bool,
 }
 
 /// The sites the minimal default picks: those that look like they keep a
@@ -151,7 +165,7 @@ pub struct ReviewChoice {
 pub fn default_domains(domains: &[KvDomainCount]) -> Vec<String> {
     domains
         .iter()
-        .filter(|d| d.signin && !d.identity_provider)
+        .filter(|d| d.signin && !d.identity_provider && sendable(d))
         .map(|d| d.domain.clone())
         .collect()
 }
@@ -175,6 +189,23 @@ pub fn with_inventory(
     };
     c.domains = domains;
     c
+}
+
+/// The site holds something that can be sent.
+fn sendable(d: &KvDomainCount) -> bool {
+    d.cookies + d.local_storage + d.passwords > 0
+}
+
+fn unavailable_note(d: &KvDomainCount) -> String {
+    if d.unavailable == 0 {
+        return String::new();
+    }
+    format!(
+        "{} cookie{} cannot be sent: {}",
+        d.unavailable,
+        if d.unavailable == 1 { "" } else { "s" },
+        d.unavailable_reason
+    )
 }
 
 fn counts_text(d: &KvDomainCount) -> String {
@@ -206,6 +237,9 @@ pub fn domain_rows(c: &ReviewChoice) -> Vec<ReviewDomain> {
             signin: d.signin,
             identity_provider: d.identity_provider,
             selected: c.selected_domains.contains(&d.domain),
+            selectable: sendable(d),
+            unavailable: d.unavailable,
+            unavailable_note: unavailable_note(d),
             domain: d.domain.clone(),
         })
         .collect()
@@ -223,7 +257,7 @@ pub fn domain_summary(c: &ReviewChoice) -> String {
 
 /// Toggles one site.
 pub fn toggle_domain(c: &mut ReviewChoice, domain: &str) {
-    if !c.domains.iter().any(|d| d.domain == domain) {
+    if !c.domains.iter().any(|d| d.domain == domain && sendable(d)) {
         return;
     }
     match c.selected_domains.iter().position(|d| d == domain) {
@@ -237,7 +271,11 @@ pub fn toggle_domain(c: &mut ReviewChoice, domain: &str) {
 
 /// Selects or clears every site the search shows.
 pub fn set_shown_domains(c: &mut ReviewChoice, value: bool) {
-    let shown: Vec<String> = domain_rows(c).into_iter().map(|r| r.domain).collect();
+    let shown: Vec<String> = domain_rows(c)
+        .into_iter()
+        .filter(|r| r.selectable)
+        .map(|r| r.domain)
+        .collect();
     c.selected_domains.retain(|d| !shown.contains(d));
     if value {
         c.selected_domains.extend(shown);
@@ -264,6 +302,8 @@ mod tests {
             passwords: 0,
             signin,
             identity_provider: idp,
+            unavailable: 0,
+            unavailable_reason: String::new(),
         }
     }
 
@@ -365,5 +405,46 @@ mod tests {
         assert!(c.selected_domains.is_empty());
         set_shown_domains(&mut c, true);
         assert_eq!(c.selected_domains.len(), 4);
+    }
+
+    #[test]
+    fn unreadable_cookies_are_greyed_with_why_and_never_selected() {
+        let mut bank = d("bank.test", 0, 0, true, false);
+        bank.unavailable = 3;
+        bank.unavailable_reason = "Chrome protects it with app-bound encryption".into();
+        let mut mixed = d("mixed.test", 2, 0, true, false);
+        mixed.unavailable = 1;
+        mixed.unavailable_reason = "Chrome protects it with app-bound encryption".into();
+        let inv = KvInventory {
+            provider_id: "chrome".into(),
+            domains: vec![bank, mixed, d("plain.test", 1, 0, true, false)],
+            ..Default::default()
+        };
+        let mut c = with_inventory(ReviewChoice::default(), &inv, None);
+        // Only what can be sent is picked by default.
+        assert_eq!(c.selected_domains, ["mixed.test", "plain.test"]);
+        let rows = domain_rows(&c);
+        let by = |n: &str| rows.iter().find(|r| r.domain == n).unwrap();
+        assert!(!by("bank.test").selectable);
+        assert_eq!(
+            by("bank.test").unavailable_note,
+            "3 cookies cannot be sent: Chrome protects it with app-bound encryption"
+        );
+        assert!(by("mixed.test").selectable);
+        assert_eq!(
+            by("mixed.test").count,
+            2,
+            "the unreadable one is not counted"
+        );
+        assert!(
+            by("mixed.test")
+                .unavailable_note
+                .starts_with("1 cookie cannot")
+        );
+        assert!(by("plain.test").unavailable_note.is_empty());
+        // It cannot be toggled on, singly or with select all.
+        toggle_domain(&mut c, "bank.test");
+        set_shown_domains(&mut c, true);
+        assert_eq!(c.selected_domains, ["mixed.test", "plain.test"]);
     }
 }

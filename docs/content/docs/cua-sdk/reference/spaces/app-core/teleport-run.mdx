@@ -32,6 +32,7 @@ Returned by [`app_picker_consent`](/cua-sdk/reference/spaces/app-core/teleport#a
 | `cookie_domains` / `cookieDomains` | `Option<Vec<String>>` |  | The sites whose cookies to send (the review's per-site choice); `None` when the review did not list sites. |
 | `exclude` | `Vec<String>` |  | Consent items (keys) the user turned off. |
 | `from_vault` / `fromVault` | `Option<Vec<String>>` |  | Send these saved Keyvault items instead of reading the live app. |
+| `include_passwords` / `includePasswords` | `bool` |  | Also send the saved passwords (ticked in the review). |
 
 ## `AppTeleportPlan` record
 

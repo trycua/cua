@@ -68,6 +68,7 @@ impl Broker for KeyvaultBroker {
                 token: Some(token.to_string()),
                 items: vec![item.to_string()],
                 target: target.to_string(),
+                include_passwords: false,
             })
             .await
             .map_err(kv_error)?;

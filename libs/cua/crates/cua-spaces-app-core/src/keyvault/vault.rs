@@ -812,6 +812,10 @@ pub struct KvVaultSource {
     pub newest_ms: i64,
     /// Their ids, in list order.
     pub ids: Vec<String>,
+    /// The app's saved passwords (ids), never part of `ids`: they are sent
+    /// only when ticked in the review.
+    #[serde(default)]
+    pub password_ids: Vec<String>,
 }
 
 /// The saved items of `provider_id` a teleport can send.
@@ -820,11 +824,18 @@ pub fn vault_source(o: &KeyvaultOverview, provider_id: &str) -> KvVaultSource {
         app: Some(provider_id.into()),
         ..Default::default()
     };
-    let items: Vec<&KvItem> = shown(o, &state)
+    let all = shown(o, &state);
+    let password_ids: Vec<String> = all
+        .iter()
+        .filter(|i| KvKind::from_wire(&i.kind) == KvKind::Password)
+        .map(|i| i.id.clone())
+        .collect();
+    let items: Vec<&KvItem> = all
         .into_iter()
         .filter(|i| KvKind::from_wire(&i.kind) != KvKind::Password)
         .collect();
     KvVaultSource {
+        password_ids,
         count: items.len() as u32,
         newest_ms: items.iter().map(|i| i.updated_ms as i64).max().unwrap_or(0),
         ids: items.iter().map(|i| i.id.clone()).collect(),

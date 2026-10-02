@@ -303,6 +303,7 @@ impl Teleport {
             confirm_passwords: true,
             paths: Some(paths.clone()),
             domains: None,
+            passwords: false,
         };
         run(async move {
             let mut client = cua_keyvault::client::KeyvaultClient::connect_default()

@@ -23385,6 +23385,11 @@ public struct AppReviewChoice: Equatable, Hashable {
      * what the plan lists).
      */
     public var loaded: Bool
+    /**
+     * The saved passwords are ticked to send (off unless the user ticks
+     * them; never remembered).
+     */
+    public var includePasswords: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -23411,7 +23416,11 @@ public struct AppReviewChoice: Equatable, Hashable {
         /**
          * The sites were asked for (a failure counts: the review then sends
          * what the plan lists).
-         */loaded: Bool) {
+         */loaded: Bool,
+        /**
+         * The saved passwords are ticked to send (off unless the user ticks
+         * them; never remembered).
+         */includePasswords: Bool) {
         self.source = source
         self.domains = domains
         self.selectedDomains = selectedDomains
@@ -23419,6 +23428,7 @@ public struct AppReviewChoice: Equatable, Hashable {
         self.excluded = excluded
         self.vault = vault
         self.loaded = loaded
+        self.includePasswords = includePasswords
     }
 
 
@@ -23443,7 +23453,8 @@ public struct FfiConverterTypeAppReviewChoice: FfiConverterRustBuffer {
                 query: FfiConverterString.read(from: &buf),
                 excluded: FfiConverterSequenceString.read(from: &buf),
                 vault: FfiConverterTypeAppVaultSource.read(from: &buf),
-                loaded: FfiConverterBool.read(from: &buf)
+                loaded: FfiConverterBool.read(from: &buf),
+                includePasswords: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -23455,6 +23466,7 @@ public struct FfiConverterTypeAppReviewChoice: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.excluded, into: &buf)
         FfiConverterTypeAppVaultSource.write(value.vault, into: &buf)
         FfiConverterBool.write(value.loaded, into: &buf)
+        FfiConverterBool.write(value.includePasswords, into: &buf)
     }
 }
 
@@ -23499,6 +23511,19 @@ public struct AppReviewDomain: Equatable, Hashable {
      * Chosen to send.
      */
     public var selected: Bool
+    /**
+     * Can be chosen: it holds something that can be sent. A site whose
+     * cookies are all unreadable is greyed out.
+     */
+    public var selectable: Bool
+    /**
+     * Cookies that cannot be read, shown greyed with `unavailable_note`.
+     */
+    public var unavailable: UInt32
+    /**
+     * "3 cookies cannot be sent: Chrome protects them with ...", or empty.
+     */
+    public var unavailableNote: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -23520,13 +23545,26 @@ public struct AppReviewDomain: Equatable, Hashable {
          */identityProvider: Bool,
         /**
          * Chosen to send.
-         */selected: Bool) {
+         */selected: Bool,
+        /**
+         * Can be chosen: it holds something that can be sent. A site whose
+         * cookies are all unreadable is greyed out.
+         */selectable: Bool,
+        /**
+         * Cookies that cannot be read, shown greyed with `unavailable_note`.
+         */unavailable: UInt32,
+        /**
+         * "3 cookies cannot be sent: Chrome protects them with ...", or empty.
+         */unavailableNote: String) {
         self.domain = domain
         self.counts = counts
         self.count = count
         self.signin = signin
         self.identityProvider = identityProvider
         self.selected = selected
+        self.selectable = selectable
+        self.unavailable = unavailable
+        self.unavailableNote = unavailableNote
     }
 
 
@@ -23550,7 +23588,10 @@ public struct FfiConverterTypeAppReviewDomain: FfiConverterRustBuffer {
                 count: FfiConverterUInt32.read(from: &buf),
                 signin: FfiConverterBool.read(from: &buf),
                 identityProvider: FfiConverterBool.read(from: &buf),
-                selected: FfiConverterBool.read(from: &buf)
+                selected: FfiConverterBool.read(from: &buf),
+                selectable: FfiConverterBool.read(from: &buf),
+                unavailable: FfiConverterUInt32.read(from: &buf),
+                unavailableNote: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -23561,6 +23602,9 @@ public struct FfiConverterTypeAppReviewDomain: FfiConverterRustBuffer {
         FfiConverterBool.write(value.signin, into: &buf)
         FfiConverterBool.write(value.identityProvider, into: &buf)
         FfiConverterBool.write(value.selected, into: &buf)
+        FfiConverterBool.write(value.selectable, into: &buf)
+        FfiConverterUInt32.write(value.unavailable, into: &buf)
+        FfiConverterString.write(value.unavailableNote, into: &buf)
     }
 }
 
@@ -23790,6 +23834,18 @@ public struct AppReviewView: Equatable, Hashable {
      */
     public var liveLabel: String
     /**
+     * "Also send saved passwords" shows (there are some to send).
+     */
+    public var offersPasswords: Bool
+    /**
+     * Ticked.
+     */
+    public var includePasswords: Bool
+    /**
+     * "Also send 14 saved passwords".
+     */
+    public var passwordsLabel: String
+    /**
      * What the Keychain will do for this source, in a line.
      */
     public var sourceNote: String
@@ -23876,6 +23932,15 @@ public struct AppReviewView: Equatable, Hashable {
          * "Read Chrome now (macOS asks for Keychain access)".
          */liveLabel: String,
         /**
+         * "Also send saved passwords" shows (there are some to send).
+         */offersPasswords: Bool,
+        /**
+         * Ticked.
+         */includePasswords: Bool,
+        /**
+         * "Also send 14 saved passwords".
+         */passwordsLabel: String,
+        /**
          * What the Keychain will do for this source, in a line.
          */sourceNote: String) {
         self.title = title
@@ -23902,6 +23967,9 @@ public struct AppReviewView: Equatable, Hashable {
         self.vault = vault
         self.vaultLabel = vaultLabel
         self.liveLabel = liveLabel
+        self.offersPasswords = offersPasswords
+        self.includePasswords = includePasswords
+        self.passwordsLabel = passwordsLabel
         self.sourceNote = sourceNote
     }
 
@@ -23945,6 +24013,9 @@ public struct FfiConverterTypeAppReviewView: FfiConverterRustBuffer {
                 vault: FfiConverterTypeAppVaultSource.read(from: &buf),
                 vaultLabel: FfiConverterString.read(from: &buf),
                 liveLabel: FfiConverterString.read(from: &buf),
+                offersPasswords: FfiConverterBool.read(from: &buf),
+                includePasswords: FfiConverterBool.read(from: &buf),
+                passwordsLabel: FfiConverterString.read(from: &buf),
                 sourceNote: FfiConverterString.read(from: &buf)
         )
     }
@@ -23974,6 +24045,9 @@ public struct FfiConverterTypeAppReviewView: FfiConverterRustBuffer {
         FfiConverterTypeAppVaultSource.write(value.vault, into: &buf)
         FfiConverterString.write(value.vaultLabel, into: &buf)
         FfiConverterString.write(value.liveLabel, into: &buf)
+        FfiConverterBool.write(value.offersPasswords, into: &buf)
+        FfiConverterBool.write(value.includePasswords, into: &buf)
+        FfiConverterString.write(value.passwordsLabel, into: &buf)
         FfiConverterString.write(value.sourceNote, into: &buf)
     }
 }
@@ -29244,6 +29318,10 @@ public struct AppTeleportConsent: Equatable, Hashable {
      * Send these saved Keyvault items instead of reading the live app.
      */
     public var fromVault: [String]?
+    /**
+     * Also send the saved passwords (ticked in the review).
+     */
+    public var includePasswords: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -29269,7 +29347,10 @@ public struct AppTeleportConsent: Equatable, Hashable {
          */exclude: [String],
         /**
          * Send these saved Keyvault items instead of reading the live app.
-         */fromVault: [String]?) {
+         */fromVault: [String]?,
+        /**
+         * Also send the saved passwords (ticked in the review).
+         */includePasswords: Bool) {
         self.approved = approved
         self.acknowledgeSensitive = acknowledgeSensitive
         self.saveToKeyvault = saveToKeyvault
@@ -29277,6 +29358,7 @@ public struct AppTeleportConsent: Equatable, Hashable {
         self.cookieDomains = cookieDomains
         self.exclude = exclude
         self.fromVault = fromVault
+        self.includePasswords = includePasswords
     }
 
 
@@ -29301,7 +29383,8 @@ public struct FfiConverterTypeAppTeleportConsent: FfiConverterRustBuffer {
                 acknowledgeRelayPlaintext: FfiConverterBool.read(from: &buf),
                 cookieDomains: FfiConverterOptionSequenceString.read(from: &buf),
                 exclude: FfiConverterSequenceString.read(from: &buf),
-                fromVault: FfiConverterOptionSequenceString.read(from: &buf)
+                fromVault: FfiConverterOptionSequenceString.read(from: &buf),
+                includePasswords: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -29313,6 +29396,7 @@ public struct FfiConverterTypeAppTeleportConsent: FfiConverterRustBuffer {
         FfiConverterOptionSequenceString.write(value.cookieDomains, into: &buf)
         FfiConverterSequenceString.write(value.exclude, into: &buf)
         FfiConverterOptionSequenceString.write(value.fromVault, into: &buf)
+        FfiConverterBool.write(value.includePasswords, into: &buf)
     }
 }
 
@@ -30273,6 +30357,10 @@ public struct AppVaultSource: Equatable, Hashable {
      * The items chosen to send (ids).
      */
     public var selected: [String]
+    /**
+     * The app's saved passwords (ids), sent only when ticked.
+     */
+    public var passwordIds: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -30288,11 +30376,15 @@ public struct AppVaultSource: Equatable, Hashable {
          */saved: String,
         /**
          * The items chosen to send (ids).
-         */selected: [String]) {
+         */selected: [String],
+        /**
+         * The app's saved passwords (ids), sent only when ticked.
+         */passwordIds: [String]) {
         self.available = available
         self.items = items
         self.saved = saved
         self.selected = selected
+        self.passwordIds = passwordIds
     }
 
 
@@ -30314,7 +30406,8 @@ public struct FfiConverterTypeAppVaultSource: FfiConverterRustBuffer {
                 available: FfiConverterBool.read(from: &buf),
                 items: FfiConverterUInt32.read(from: &buf),
                 saved: FfiConverterString.read(from: &buf),
-                selected: FfiConverterSequenceString.read(from: &buf)
+                selected: FfiConverterSequenceString.read(from: &buf),
+                passwordIds: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
@@ -30323,6 +30416,7 @@ public struct FfiConverterTypeAppVaultSource: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.items, into: &buf)
         FfiConverterString.write(value.saved, into: &buf)
         FfiConverterSequenceString.write(value.selected, into: &buf)
+        FfiConverterSequenceString.write(value.passwordIds, into: &buf)
     }
 }
 
@@ -33490,6 +33584,14 @@ public struct KvDomainCount: Equatable, Hashable {
      * An identity provider.
      */
     public var identityProvider: Bool
+    /**
+     * Cookies that cannot be read (Chrome's app-bound encryption).
+     */
+    public var unavailable: UInt32
+    /**
+     * Why they cannot be read.
+     */
+    public var unavailableReason: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -33514,7 +33616,13 @@ public struct KvDomainCount: Equatable, Hashable {
          */signin: Bool,
         /**
          * An identity provider.
-         */identityProvider: Bool) {
+         */identityProvider: Bool,
+        /**
+         * Cookies that cannot be read (Chrome's app-bound encryption).
+         */unavailable: UInt32,
+        /**
+         * Why they cannot be read.
+         */unavailableReason: String) {
         self.domain = domain
         self.cookies = cookies
         self.sessionCookies = sessionCookies
@@ -33522,6 +33630,8 @@ public struct KvDomainCount: Equatable, Hashable {
         self.passwords = passwords
         self.signin = signin
         self.identityProvider = identityProvider
+        self.unavailable = unavailable
+        self.unavailableReason = unavailableReason
     }
 
 
@@ -33546,7 +33656,9 @@ public struct FfiConverterTypeKvDomainCount: FfiConverterRustBuffer {
                 localStorage: FfiConverterUInt32.read(from: &buf),
                 passwords: FfiConverterUInt32.read(from: &buf),
                 signin: FfiConverterBool.read(from: &buf),
-                identityProvider: FfiConverterBool.read(from: &buf)
+                identityProvider: FfiConverterBool.read(from: &buf),
+                unavailable: FfiConverterUInt32.read(from: &buf),
+                unavailableReason: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -33558,6 +33670,8 @@ public struct FfiConverterTypeKvDomainCount: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.passwords, into: &buf)
         FfiConverterBool.write(value.signin, into: &buf)
         FfiConverterBool.write(value.identityProvider, into: &buf)
+        FfiConverterUInt32.write(value.unavailable, into: &buf)
+        FfiConverterString.write(value.unavailableReason, into: &buf)
     }
 }
 
@@ -36480,6 +36594,11 @@ public struct KvVaultSource: Equatable, Hashable {
      * Their ids, in list order.
      */
     public var ids: [String]
+    /**
+     * The app's saved passwords (ids), never part of `ids`: they are sent
+     * only when ticked in the review.
+     */
+    public var passwordIds: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -36492,10 +36611,15 @@ public struct KvVaultSource: Equatable, Hashable {
          */newestMs: Int64,
         /**
          * Their ids, in list order.
-         */ids: [String]) {
+         */ids: [String],
+        /**
+         * The app's saved passwords (ids), never part of `ids`: they are sent
+         * only when ticked in the review.
+         */passwordIds: [String]) {
         self.count = count
         self.newestMs = newestMs
         self.ids = ids
+        self.passwordIds = passwordIds
     }
 
 
@@ -36516,7 +36640,8 @@ public struct FfiConverterTypeKvVaultSource: FfiConverterRustBuffer {
             try KvVaultSource(
                 count: FfiConverterUInt32.read(from: &buf),
                 newestMs: FfiConverterInt64.read(from: &buf),
-                ids: FfiConverterSequenceString.read(from: &buf)
+                ids: FfiConverterSequenceString.read(from: &buf),
+                passwordIds: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
@@ -36524,6 +36649,7 @@ public struct FfiConverterTypeKvVaultSource: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.count, into: &buf)
         FfiConverterInt64.write(value.newestMs, into: &buf)
         FfiConverterSequenceString.write(value.ids, into: &buf)
+        FfiConverterSequenceString.write(value.passwordIds, into: &buf)
     }
 }
 
@@ -37456,6 +37582,10 @@ public struct TeleportConsent: Equatable, Hashable {
      * live app: nothing is captured from the host.
      */
     public var fromVault: [String]?
+    /**
+     * Also send the saved passwords: only when ticked in the review.
+     */
+    public var includePasswords: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -37483,7 +37613,10 @@ public struct TeleportConsent: Equatable, Hashable {
         /**
          * Send these saved Keyvault items (ids) instead of reading the
          * live app: nothing is captured from the host.
-         */fromVault: [String]? = nil) {
+         */fromVault: [String]? = nil,
+        /**
+         * Also send the saved passwords: only when ticked in the review.
+         */includePasswords: Bool = false) {
         self.approved = approved
         self.acknowledgeSensitive = acknowledgeSensitive
         self.saveToKeyvault = saveToKeyvault
@@ -37491,6 +37624,7 @@ public struct TeleportConsent: Equatable, Hashable {
         self.cookieDomains = cookieDomains
         self.exclude = exclude
         self.fromVault = fromVault
+        self.includePasswords = includePasswords
     }
 
 
@@ -37515,7 +37649,8 @@ public struct FfiConverterTypeTeleportConsent: FfiConverterRustBuffer {
                 acknowledgeRelayPlaintext: FfiConverterBool.read(from: &buf),
                 cookieDomains: FfiConverterOptionSequenceString.read(from: &buf),
                 exclude: FfiConverterSequenceString.read(from: &buf),
-                fromVault: FfiConverterOptionSequenceString.read(from: &buf)
+                fromVault: FfiConverterOptionSequenceString.read(from: &buf),
+                includePasswords: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -37527,6 +37662,7 @@ public struct FfiConverterTypeTeleportConsent: FfiConverterRustBuffer {
         FfiConverterOptionSequenceString.write(value.cookieDomains, into: &buf)
         FfiConverterSequenceString.write(value.exclude, into: &buf)
         FfiConverterOptionSequenceString.write(value.fromVault, into: &buf)
+        FfiConverterBool.write(value.includePasswords, into: &buf)
     }
 }
 
@@ -44715,7 +44851,18 @@ public enum AppPickerEvent: Equatable, Hashable {
          */nowMs: Int64,
         /**
          * The ones chosen to send (ids).
-         */selected: [String]
+         */selected: [String],
+        /**
+         * The app's saved passwords (ids): sent only when ticked.
+         */passwordIds: [String]
+    )
+    /**
+     * Tick or untick "Also send saved passwords".
+     */
+    case togglePasswords(
+        /**
+         * Ticked.
+         */value: Bool
     )
     /**
      * The chosen saved items changed.
@@ -44834,21 +44981,24 @@ public struct FfiConverterTypeAppPickerEvent: FfiConverterRustBuffer {
         case 22: return .sendFrom(source: try FfiConverterTypeAppSendSource.read(from: &buf)
         )
 
-        case 23: return .vaultItems(count: try FfiConverterUInt32.read(from: &buf), newestMs: try FfiConverterInt64.read(from: &buf), nowMs: try FfiConverterInt64.read(from: &buf), selected: try FfiConverterSequenceString.read(from: &buf)
+        case 23: return .vaultItems(count: try FfiConverterUInt32.read(from: &buf), newestMs: try FfiConverterInt64.read(from: &buf), nowMs: try FfiConverterInt64.read(from: &buf), selected: try FfiConverterSequenceString.read(from: &buf), passwordIds: try FfiConverterSequenceString.read(from: &buf)
         )
 
-        case 24: return .vaultSelection(selected: try FfiConverterSequenceString.read(from: &buf)
+        case 24: return .togglePasswords(value: try FfiConverterBool.read(from: &buf)
         )
 
-        case 25: return .confirm
-
-        case 26: return .progress(event: try FfiConverterTypeAppTeleportRunEvent.read(from: &buf)
+        case 25: return .vaultSelection(selected: try FfiConverterSequenceString.read(from: &buf)
         )
 
-        case 27: return .finished(report: try FfiConverterTypeAppTeleportRunReport.read(from: &buf)
+        case 26: return .confirm
+
+        case 27: return .progress(event: try FfiConverterTypeAppTeleportRunEvent.read(from: &buf)
         )
 
-        case 28: return .back
+        case 28: return .finished(report: try FfiConverterTypeAppTeleportRunReport.read(from: &buf)
+        )
+
+        case 29: return .back
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -44971,35 +45121,41 @@ public struct FfiConverterTypeAppPickerEvent: FfiConverterRustBuffer {
             FfiConverterTypeAppSendSource.write(source, into: &buf)
 
 
-        case let .vaultItems(count,newestMs,nowMs,selected):
+        case let .vaultItems(count,newestMs,nowMs,selected,passwordIds):
             writeInt(&buf, Int32(23))
             FfiConverterUInt32.write(count, into: &buf)
             FfiConverterInt64.write(newestMs, into: &buf)
             FfiConverterInt64.write(nowMs, into: &buf)
             FfiConverterSequenceString.write(selected, into: &buf)
+            FfiConverterSequenceString.write(passwordIds, into: &buf)
+
+
+        case let .togglePasswords(value):
+            writeInt(&buf, Int32(24))
+            FfiConverterBool.write(value, into: &buf)
 
 
         case let .vaultSelection(selected):
-            writeInt(&buf, Int32(24))
+            writeInt(&buf, Int32(25))
             FfiConverterSequenceString.write(selected, into: &buf)
 
 
         case .confirm:
-            writeInt(&buf, Int32(25))
+            writeInt(&buf, Int32(26))
 
 
         case let .progress(event):
-            writeInt(&buf, Int32(26))
+            writeInt(&buf, Int32(27))
             FfiConverterTypeAppTeleportRunEvent.write(event, into: &buf)
 
 
         case let .finished(report):
-            writeInt(&buf, Int32(27))
+            writeInt(&buf, Int32(28))
             FfiConverterTypeAppTeleportRunReport.write(report, into: &buf)
 
 
         case .back:
-            writeInt(&buf, Int32(28))
+            writeInt(&buf, Int32(29))
 
         }
     }

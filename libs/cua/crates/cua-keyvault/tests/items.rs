@@ -361,6 +361,7 @@ async fn unlocked_items_answer_an_agent_without_asking_and_no_value_comes_back()
                 token: Some(token.clone()),
                 items: ids,
                 target: "dev-1".into(),
+                include_passwords: false,
             },
         )
         .await
@@ -395,6 +396,7 @@ async fn unlocked_items_answer_an_agent_without_asking_and_no_value_comes_back()
                     token: Some(token),
                     items: vec![github[0].id.clone()],
                     target: "dev-1".into(),
+                    include_passwords: false,
                 },
             )
             .await
@@ -499,6 +501,7 @@ async fn locking_an_item_revokes_the_unattended_grants_it_backed() {
                 token: Some(token),
                 items: held,
                 target: "dev-1".into(),
+                include_passwords: false,
             },
         )
         .await
@@ -609,6 +612,7 @@ async fn deleting_a_batch_wipes_their_live_copies_and_is_all_or_nothing() {
                     token: None,
                     items: ids(set),
                     target: "dev-1".into(),
+                    include_passwords: false,
                 },
             )
             .await
@@ -678,6 +682,7 @@ async fn sending_part_of_an_app_filters_records_and_nothing_else_leaves() {
                 token: None,
                 items: ids(&chosen),
                 target: "dev-1".into(),
+                include_passwords: false,
             },
         )
         .await
@@ -696,23 +701,46 @@ async fn sending_part_of_an_app_filters_records_and_nothing_else_leaves() {
 }
 
 #[tokio::test]
-async fn saved_passwords_are_never_part_of_a_delivery() {
+async fn saved_passwords_are_delivered_only_when_the_user_ticked_them_and_never_to_an_agent() {
     let r = rig().await;
     let pw = import_passwords(&r).await;
+    assert!(!pw.is_empty());
+    let target = |include: bool, items: Vec<String>| TeleportRequest {
+        token: None,
+        items,
+        target: "dev-1".into(),
+        include_passwords: include,
+    };
+    // Without the explicit choice a password is never part of a delivery.
     let err = r
         .broker
-        .teleport(
-            &r.cua,
-            TeleportRequest {
-                token: None,
-                items: ids(&pw),
-                target: "dev-1".into(),
-            },
-        )
+        .teleport(&r.cua, target(false, ids(&pw)))
         .await
         .unwrap_err();
     assert!(matches!(err, Error::Invalid(_)), "{err:?}");
     assert!(r.backend.delivered.lock().unwrap().is_empty());
+    // A third party cannot ask for them, token or not.
+    let agent = r.broker.teleport(&r.agent, target(true, ids(&pw))).await;
+    assert!(agent.is_err(), "an agent never gets a password delivered");
+    assert!(r.backend.delivered.lock().unwrap().is_empty());
+    // The user's own, explicit choice carries them in their reserved entry,
+    // and the audit log says so.
+    r.broker
+        .teleport(&r.cua, target(true, ids(&pw)))
+        .await
+        .unwrap();
+    let delivered = r.backend.delivered.lock().unwrap().clone();
+    assert_eq!(delivered.len(), 1);
+    assert!(
+        delivered[0].1.iter().any(|p| p == "logins.json"),
+        "{delivered:?}"
+    );
+    let log = r.broker.audit_tail(&r.cua, 50).await.unwrap();
+    assert!(
+        log.iter()
+            .any(|e| e.event.detail.contains("INCLUDING SAVED PASSWORDS")),
+        "{log:?}"
+    );
 }
 
 // ------------------------------------------------------------- old vault
@@ -857,6 +885,7 @@ async fn a_big_file_is_stored_as_a_blob_and_delivered_whole() {
             token: None,
             items: ids(&items),
             target: "dev-1".into(),
+            include_passwords: false,
         },
     )
     .await

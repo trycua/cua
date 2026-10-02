@@ -152,6 +152,9 @@ impl Backend for Profile {
                 last_update_utc: None,
                 name: "session".into(),
                 partition_key: None,
+                last_access_utc: None,
+                source_type: None,
+                has_cross_site_ancestor: None,
                 path: "/".into(),
                 priority: None,
                 same_site: 1,
@@ -324,6 +327,7 @@ async fn the_vault_page_end_to_end_through_the_client() {
                 token: None,
                 items: sel.unlock_ids.clone(),
                 target: "dev-1".into(),
+                include_passwords: false,
             },
         )
         .await

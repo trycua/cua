@@ -49,6 +49,9 @@ Returned by [`app_picker_review`](/cua-sdk/reference/spaces/app-core/teleport#ap
 | `vault` | [`AppVaultSource`](#appvaultsource-record) |  | The saved items. |
 | `vault_label` / `vaultLabel` | `String` |  | "Send from the Keyvault (212 items, saved 2 days ago)". |
 | `live_label` / `liveLabel` | `String` |  | "Read Chrome now (macOS asks for Keychain access)". |
+| `offers_passwords` / `offersPasswords` | `bool` |  | "Also send saved passwords" shows (there are some to send). |
+| `include_passwords` / `includePasswords` | `bool` |  | Ticked. |
+| `passwords_label` / `passwordsLabel` | `String` |  | "Also send 14 saved passwords". |
 | `source_note` / `sourceNote` | `String` |  | What the Keychain will do for this source, in a line. |
 
 ## `AppSendSource` enum
@@ -85,6 +88,7 @@ AppSendSource::Vault
 | `items` | `u32` |  | How many. |
 | `saved` | `String` |  | "saved 2 days ago". |
 | `selected` | `Vec<String>` |  | The items chosen to send (ids). |
+| `password_ids` / `passwordIds` | `Vec<String>` |  | The app's saved passwords (ids), sent only when ticked. |
 
 ## `AppRememberedChoice` record
 
@@ -134,6 +138,7 @@ Returned by [`app_review_remember`](#app_review_remember).
 | `excluded` | `Vec<String>` |  | Consent items (keys) turned off. |
 | `vault` | [`AppVaultSource`](#appvaultsource-record) |  | The saved items. |
 | `loaded` | `bool` |  | The sites were asked for (a failure counts: the review then sends what the plan lists). |
+| `include_passwords` / `includePasswords` | `bool` |  | The saved passwords are ticked to send (off unless the user ticks them; never remembered). |
 
 ## `AppReviewDomain` record
 
@@ -145,6 +150,9 @@ Returned by [`app_review_remember`](#app_review_remember).
 | `signin` | `bool` |  | It looks like it keeps a sign-in. |
 | `identity_provider` / `identityProvider` | `bool` |  | An identity provider: its session unlocks other apps. |
 | `selected` | `bool` |  | Chosen to send. |
+| `selectable` | `bool` |  | Can be chosen: it holds something that can be sent. A site whose cookies are all unreadable is greyed out. |
+| `unavailable` | `u32` |  | Cookies that cannot be read, shown greyed with `unavailable_note`. |
+| `unavailable_note` / `unavailableNote` | `String` |  | "3 cookies cannot be sent: Chrome protects them with ...", or empty. |
 
 ## `AppReviewToggle` record
 

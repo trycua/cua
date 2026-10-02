@@ -228,6 +228,31 @@ impl DaemonBackend {
 }
 
 impl DaemonBackend {
+    /// The decrypted saved logins of `sites` (every site when empty).
+    fn site_logins_for(
+        &self,
+        app: &str,
+        profile: Option<String>,
+        sites: &[String],
+    ) -> KvResult<Vec<LoginRecord>> {
+        if app != "chrome" {
+            return Err(KvError::Unsupported(format!(
+                "saved passwords from {app} are not read yet"
+            )));
+        }
+        Ok(self
+            .password_reader(profile)
+            .read(sites)
+            .map_err(|e| backend_err("read saved passwords", e))?
+            .into_iter()
+            .map(|l| LoginRecord {
+                origin: l.origin.clone(),
+                username: l.username.clone(),
+                password: l.password.to_string(),
+            })
+            .collect())
+    }
+
     /// The decrypted saved logins of one site.
     fn site_logins(
         &self,
@@ -292,16 +317,7 @@ impl DaemonBackend {
                 }
                 true
             })
-            .map(|c| CookieItem {
-                host_key: c.host_key,
-                name: c.name,
-                value: c.value.as_bytes().to_vec(),
-                path: c.path,
-                expires_utc: c.expires_utc,
-                is_secure: c.is_secure,
-                is_httponly: c.is_httponly,
-                samesite: c.samesite,
-            })
+            .map(cua_teleport::browser_cookies::DecryptedCookie::into_item)
             .collect())
     }
 }
@@ -339,19 +355,22 @@ fn keep_cookie(c: &CookieRecord, filter: &CookieFilter) -> bool {
 /// A cookie row the reader decrypted, as the vault's `cookie@1` record.
 fn cookie_record_of(c: &CookieItem) -> CookieRecord {
     CookieRecord {
-        creation_utc: None,
+        creation_utc: c.extra.creation_utc,
         expires_utc: c.expires_utc,
+        has_cross_site_ancestor: c.extra.has_cross_site_ancestor,
         host_key: c.host_key.clone(),
         http_only: c.is_httponly,
-        last_update_utc: None,
+        last_access_utc: c.extra.last_access_utc,
+        last_update_utc: c.extra.last_update_utc,
         name: c.name.clone(),
-        partition_key: None,
+        partition_key: c.extra.partition_key.clone().filter(|k| !k.is_empty()),
         path: c.path.clone(),
-        priority: None,
+        priority: c.extra.priority,
         same_site: c.samesite,
         secure: c.is_secure,
-        source_port: None,
-        source_scheme: None,
+        source_port: c.extra.source_port,
+        source_scheme: c.extra.source_scheme,
+        source_type: c.extra.source_type,
         value: c.value.clone(),
     }
 }
@@ -410,6 +429,12 @@ impl Backend for DaemonBackend {
                                 identity_provider: cua_keyvault::model::is_identity_provider(&site),
                                 ..Default::default()
                             });
+                        if r.app_bound {
+                            d.unavailable += 1;
+                            d.unavailable_reason =
+                                cua_teleport::browser_cookies::APP_BOUND_REASON.into();
+                            continue;
+                        }
                         d.cookies += 1;
                         if r.expires_utc == 0 {
                             d.session_cookies += 1;
@@ -418,6 +443,58 @@ impl Backend for DaemonBackend {
                     }
                 }
                 Err(e) => notes.push(format!("cookies were not listed: {e}")),
+            }
+            // Saved passwords per site, counted from the plaintext columns
+            // (nothing is decrypted); app-bound ones are listed as unreadable.
+            match self
+                .password_reader(profile.map(str::to_string))
+                .count_by_site()
+            {
+                Ok(counts) => {
+                    for (site, (ok, bound)) in counts {
+                        let d = domains
+                            .entry(site.clone())
+                            .or_insert_with(|| DomainInventory {
+                                domain: site.clone(),
+                                identity_provider: cua_keyvault::model::is_identity_provider(&site),
+                                ..Default::default()
+                            });
+                        d.passwords += ok;
+                        if bound > 0 {
+                            d.unavailable += bound;
+                            d.unavailable_reason =
+                                cua_teleport::browser_cookies::APP_BOUND_REASON.into();
+                        }
+                    }
+                }
+                Err(e) => notes.push(format!("saved passwords were not listed: {e}")),
+            }
+            // localStorage values per site, counted from a private copy of the
+            // browser's store (no value is decoded).
+            let reader = self.cookie_reader(profile.map(str::to_string));
+            if let Ok(dir) = reader.profile_dir() {
+                match cua_chromium_storage::count_by_origin(&cua_chromium_storage::store_dir(&dir))
+                {
+                    Ok(counts) => {
+                        for (origin, n) in counts {
+                            let site = record::site_of(&origin);
+                            if site.is_empty() {
+                                continue;
+                            }
+                            let d =
+                                domains
+                                    .entry(site.clone())
+                                    .or_insert_with(|| DomainInventory {
+                                        domain: site.clone(),
+                                        identity_provider:
+                                            cua_keyvault::model::is_identity_provider(&site),
+                                        ..Default::default()
+                                    });
+                            d.local_storage += n;
+                        }
+                    }
+                    Err(e) => notes.push(format!("localStorage was not listed: {e}")),
+                }
             }
         }
         Ok(Inventory {
@@ -472,6 +549,15 @@ impl Backend for DaemonBackend {
                     opted_in: spec.paths.clone().unwrap_or_default(),
                 },
             )?;
+            // Saved passwords: only when the review ticked them. Read with the
+            // source's key here, never written to disk; the receiver
+            // re-encrypts them under its own.
+            if spec.passwords && spec.confirm_passwords {
+                let sites: Vec<String> = spec.domains.clone().unwrap_or_default();
+                for l in self.site_logins_for(&spec.app, spec.profile.clone(), &sites)? {
+                    keep(&mut out, &display, &scope, record::password_record(&l)?);
+                }
+            }
             for n in exported.records {
                 let pass = match n.kind {
                     ItemKind::Cookie => {
@@ -894,6 +980,7 @@ impl SessionBroker for McpSessionBroker {
                             token: Some(token),
                             items: items.clone(),
                             target: target.into(),
+                            include_passwords: false,
                         },
                     )
                     .await

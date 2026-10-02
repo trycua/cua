@@ -234,6 +234,12 @@ pub struct ImportSpec {
     /// only these, even if empty.
     #[serde(default)]
     pub domains: Option<Vec<String>>,
+    /// Also read the browser's saved passwords for `domains` (every site when
+    /// `None`) and deliver them. Only the review's explicit choice sets this;
+    /// it needs `confirm_passwords`, and the passwords are re-encrypted for
+    /// the destination browser's own key.
+    #[serde(default)]
+    pub passwords: bool,
 }
 
 /// One domain a browser holds secrets for, as the inventory shows it:
@@ -261,6 +267,13 @@ pub struct DomainInventory {
     /// An identity provider (its session unlocks other apps).
     #[serde(default)]
     pub identity_provider: bool,
+    /// Cookies this build cannot read (Chrome's app-bound encryption): listed
+    /// so a review can grey them out and say why, never sent.
+    #[serde(default)]
+    pub unavailable: u32,
+    /// Why they cannot be read (empty when none).
+    #[serde(default)]
+    pub unavailable_reason: String,
 }
 
 /// What a host app offers.
@@ -704,6 +717,11 @@ pub struct TeleportRequest {
     pub items: Vec<String>,
     /// Target Space.
     pub target: String,
+    /// Deliver the saved passwords among `items` too. Only the Cua app's own
+    /// interactive request may set this (the user ticked them in the review);
+    /// a token or a rule never delivers a password, whatever it names.
+    #[serde(default)]
+    pub include_passwords: bool,
 }
 
 /// What a teleport did.
@@ -1779,6 +1797,7 @@ impl Broker {
             }
         }
         validate_target(&target)?;
+        let with_passwords = spec.passwords && spec.confirm_passwords;
         let reason = format!(
             "Teleport {} to {} ({})",
             describe_spec(&spec),
@@ -1809,6 +1828,7 @@ impl Broker {
             token: None,
             items: item_ids.clone(),
             target: target.clone(),
+            include_passwords: with_passwords,
         };
         let result = self
             .teleport_inner(caller, req, PresenceAlready::Confirmed, stage.clone())
@@ -3133,13 +3153,16 @@ impl Broker {
                 .min()
                 .unwrap_or(crate::model::DEFAULT_TTL_SECS);
             let auto_wipe = meta.settings.auto_wipe;
+            let passwords_ok =
+                req.include_passwords && authority == Authority::Interactive && caller.first_party;
             let mut out = Vec::new();
             for (provider, (ids, superseded)) in groups {
                 let mut payloads = Vec::new();
                 for i in &ids {
-                    // Saved passwords stay sealed: only the site-login fill
-                    // reads them, never a delivery.
-                    if !meta.items[i].kind.deliverable() {
+                    // Saved passwords stay sealed: the site-login fill reads
+                    // them, and a delivery carries them only when the user
+                    // ticked them in the review (interactive, first party).
+                    if !meta.items[i].kind.deliverable() && !passwords_ok {
                         continue;
                     }
                     // A big file's bytes live in a blob; put them back.
@@ -3182,6 +3205,9 @@ impl Broker {
             let mut e = ev("teleport.authorize", caller, "allow");
             e.target = Some(req.target.clone());
             e.detail = format!("{} items={}", authority.describe(), req.items.len());
+            if req.include_passwords {
+                e.detail.push_str(" INCLUDING SAVED PASSWORDS");
+            }
             Self::audit_required(&mut st, e)?;
         }
         // Phase 2 (unlocked): supersede, deliver.
@@ -3732,7 +3758,7 @@ fn describe_spec(spec: &ImportSpec) -> String {
         let sites: Vec<&str> = spec.sites.iter().map(|s| s.site.as_str()).collect();
         format!("{} from {}", sites.join(", "), spec.app)
     };
-    let pw = if spec.sites.iter().any(|s| s.include_passwords) {
+    let pw = if spec.passwords || spec.sites.iter().any(|s| s.include_passwords) {
         " INCLUDING SAVED PASSWORDS"
     } else {
         ""

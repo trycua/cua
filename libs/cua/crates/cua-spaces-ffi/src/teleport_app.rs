@@ -641,6 +641,9 @@ mod space_side {
         /// live app: nothing is captured from the host.
         #[uniffi(default = None)]
         pub from_vault: Option<Vec<String>>,
+        /// Also send the saved passwords: only when ticked in the review.
+        #[uniffi(default = false)]
+        pub include_passwords: bool,
     }
 
     /// One progress event of [`Teleport::run`].
@@ -870,6 +873,7 @@ mod space_side {
                     cookie_domains: consent.cookie_domains.clone(),
                     exclude: consent.exclude.clone(),
                     from_vault: consent.from_vault.clone(),
+                    include_passwords: consent.include_passwords,
                 })
                 .map_err(crate::teleport_app::ux_err)?;
             let sessions = sessions(self);

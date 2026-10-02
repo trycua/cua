@@ -48,6 +48,11 @@ pub const COOKIES_ENTRY: &str = "cookies.json";
 /// `{origin, key, value}`.
 pub const LOCAL_STORAGE_ENTRY: &str = "localstorage.json";
 
+/// The reserved bundle entry carrying saved passwords the user ticked, for
+/// the receiver to re-encrypt under its own browser key
+/// (`cua_teleport_bundle::logins::LOGINS_ENTRY`).
+pub const LOGINS_ENTRY: &str = "logins.json";
+
 /// Files larger than this are stored as content-addressed blobs and
 /// referenced by hash, never inlined in the record's JSON.
 pub const INLINE_FILE_LIMIT: usize = 64 * 1024;
@@ -104,10 +109,16 @@ pub struct CookieRecord {
     pub creation_utc: Option<i64>,
     /// Expiry, Chrome microseconds since 1601; `0` is a session cookie.
     pub expires_utc: i64,
+    /// Chrome's `has_cross_site_ancestor` (kept when known).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_cross_site_ancestor: Option<i64>,
     /// Host key, exactly as the browser stores it (`.github.com`).
     pub host_key: String,
     /// `HttpOnly`.
     pub http_only: bool,
+    /// Chrome's `last_access_utc` (kept when known).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_access_utc: Option<i64>,
     /// Last update, Chrome microseconds since 1601 (kept when known).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_update_utc: Option<i64>,
@@ -131,9 +142,24 @@ pub struct CookieRecord {
     /// Chrome's source scheme (0 unset, 1 non-secure, 2 secure).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_scheme: Option<i64>,
+    /// Chrome's `source_type` (0 unknown, 1 http, 2 script, 3 other).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_type: Option<i64>,
     /// The value, decrypted.
     #[serde(with = "b64vec")]
     pub value: Vec<u8>,
+}
+
+impl CookieRecord {
+    /// The item key: the cookie's name, and for a partitioned (CHIPS) cookie
+    /// its partition too, so a partitioned cookie never collides with (and
+    /// is never merged into) the same name set without a partition.
+    pub fn key(&self) -> String {
+        match self.partition_key.as_deref().filter(|p| !p.is_empty()) {
+            Some(p) => format!("{} (partitioned: {p})", self.name),
+            None => self.name.clone(),
+        }
+    }
 }
 
 impl std::fmt::Debug for CookieRecord {
@@ -175,6 +201,14 @@ pub struct LocalStorageRecord {
     pub origin: String,
     /// The value.
     pub value: String,
+    /// The exact stored key bytes (base64), only when `key` cannot hold them
+    /// losslessly (a lone UTF-16 surrogate).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_raw: Option<String>,
+    /// The exact stored value bytes (base64), only when `value` cannot hold
+    /// them losslessly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_raw: Option<String>,
 }
 
 impl std::fmt::Debug for LocalStorageRecord {
@@ -190,6 +224,9 @@ impl std::fmt::Debug for LocalStorageRecord {
 impl Drop for LocalStorageRecord {
     fn drop(&mut self) {
         self.value.zeroize();
+        if let Some(raw) = &mut self.value_raw {
+            raw.zeroize();
+        }
     }
 }
 
@@ -326,7 +363,8 @@ pub trait RecordCodec: Send + Sync {
     fn export(&self, entries: Vec<PayloadEntry>, opts: &ExportOptions) -> Result<Exported>;
 
     /// Records back to the native entries the receiver installs. Passwords
-    /// are never part of this (they sign in through site login). Files that
+    /// are only the reserved logins entry, and only when the user ticked
+    /// them (the broker withholds them otherwise). Files that
     /// were stored as blobs must already be inlined (see
     /// [`crate::store::Vault::inline_blobs`]).
     fn import(&self, payloads: &[ItemPayload]) -> Result<Vec<PayloadEntry>>;
@@ -346,6 +384,8 @@ struct CookieRow {
     is_httponly: bool,
     #[serde(default)]
     samesite: i64,
+    #[serde(flatten)]
+    extra: CookieExtra,
 }
 
 impl Drop for CookieRow {
@@ -354,11 +394,56 @@ impl Drop for CookieRow {
     }
 }
 
+/// The cookie columns beyond the core ones, as the bundle carries them
+/// (`cua_teleport_bundle::cookies::CookieExtra`, flattened).
+#[derive(Default, Serialize, Deserialize)]
+struct CookieExtra {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    creation_utc: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_access_utc: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_update_utc: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    priority: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_scheme: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_port: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_type: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    has_cross_site_ancestor: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    partition_key: Option<String>,
+}
+
+/// A saved login as a bundle carries it
+/// (`cua_teleport_bundle::logins::LoginItem`'s wire shape).
+#[derive(Serialize, Deserialize)]
+struct LoginRow {
+    origin: String,
+    username: String,
+    #[serde(with = "b64vec")]
+    password: Vec<u8>,
+    signon_realm: String,
+}
+
+impl Drop for LoginRow {
+    fn drop(&mut self) {
+        self.password.zeroize();
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct StorageRow {
     origin: String,
     key: String,
     value: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key_raw: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    value_raw: Option<String>,
 }
 
 impl Drop for StorageRow {
@@ -382,7 +467,7 @@ pub fn cookie_record(c: &CookieRecord) -> Result<NewRecord> {
     Ok(NewRecord {
         kind: ItemKind::Cookie,
         domain: Some(c.host_key.clone()),
-        key: c.name.clone(),
+        key: c.key(),
         path: Some(c.path.clone()),
         session: c.session(),
         expires_ms: c.expires_ms(),
@@ -461,19 +546,22 @@ impl RecordCodec for GenericCodec {
                         .map_err(|_| Error::Corrupt("cookies.json is not valid".into()))?;
                     for r in &rows {
                         out.records.push(cookie_record(&CookieRecord {
-                            creation_utc: None,
+                            creation_utc: r.extra.creation_utc,
                             expires_utc: r.expires_utc,
+                            has_cross_site_ancestor: r.extra.has_cross_site_ancestor,
                             host_key: r.host_key.clone(),
                             http_only: r.is_httponly,
-                            last_update_utc: None,
+                            last_access_utc: r.extra.last_access_utc,
+                            last_update_utc: r.extra.last_update_utc,
                             name: r.name.clone(),
-                            partition_key: None,
+                            partition_key: r.extra.partition_key.clone().filter(|k| !k.is_empty()),
                             path: r.path.clone(),
-                            priority: None,
+                            priority: r.extra.priority,
                             same_site: r.samesite,
                             secure: r.is_secure,
-                            source_port: None,
-                            source_scheme: None,
+                            source_port: r.extra.source_port,
+                            source_scheme: r.extra.source_scheme,
+                            source_type: r.extra.source_type,
                             value: r.value.clone(),
                         })?);
                     }
@@ -487,6 +575,8 @@ impl RecordCodec for GenericCodec {
                             key: r.key.clone(),
                             origin: r.origin.clone(),
                             value: r.value.clone(),
+                            key_raw: r.key_raw.clone(),
+                            value_raw: r.value_raw.clone(),
                         })?);
                     }
                 }
@@ -502,6 +592,7 @@ impl RecordCodec for GenericCodec {
     fn import(&self, payloads: &[ItemPayload]) -> Result<Vec<PayloadEntry>> {
         let mut cookies: Vec<CookieRow> = Vec::new();
         let mut storage: Vec<StorageRow> = Vec::new();
+        let mut logins: Vec<LoginRow> = Vec::new();
         let mut files: Vec<PayloadEntry> = Vec::new();
         for p in payloads {
             match p.schema.as_str() {
@@ -517,6 +608,17 @@ impl RecordCodec for GenericCodec {
                         is_secure: c.secure,
                         is_httponly: c.http_only,
                         samesite: c.same_site,
+                        extra: CookieExtra {
+                            creation_utc: c.creation_utc,
+                            last_access_utc: c.last_access_utc,
+                            last_update_utc: c.last_update_utc,
+                            priority: c.priority,
+                            source_scheme: c.source_scheme,
+                            source_port: c.source_port,
+                            source_type: c.source_type,
+                            has_cross_site_ancestor: c.has_cross_site_ancestor,
+                            partition_key: c.partition_key.clone(),
+                        },
                     });
                 }
                 LOCAL_STORAGE_V1 => {
@@ -526,6 +628,8 @@ impl RecordCodec for GenericCodec {
                         origin: v.origin.clone(),
                         key: v.key.clone(),
                         value: v.value.clone(),
+                        key_raw: v.key_raw.clone(),
+                        value_raw: v.value_raw.clone(),
                     });
                 }
                 FILE_V1 => {
@@ -548,8 +652,19 @@ impl RecordCodec for GenericCodec {
                         None => files.push(entry),
                     }
                 }
-                // Saved logins never travel as app state.
-                PASSWORD_V1 => {}
+                // A saved login is here only because the user ticked it (the
+                // broker withholds passwords otherwise): it rides in its own
+                // reserved entry, re-encrypted by the receiver.
+                PASSWORD_V1 => {
+                    let l: LoginRecord = serde_json::from_str(&p.record)
+                        .map_err(|_| Error::Corrupt("a password record is not valid".into()))?;
+                    logins.push(LoginRow {
+                        origin: l.origin.clone(),
+                        username: l.username.clone(),
+                        password: l.password.as_bytes().to_vec(),
+                        signon_realm: format!("{}/", l.origin.trim_end_matches('/')),
+                    });
+                }
                 other => {
                     return Err(Error::Unsupported(format!(
                         "this build cannot deliver {other} records"
@@ -562,6 +677,14 @@ impl RecordCodec for GenericCodec {
             let json = zeroize::Zeroizing::new(serde_json::to_vec(&cookies)?);
             files.push(PayloadEntry {
                 rel_path: COOKIES_ENTRY.into(),
+                mode: 0o600,
+                data: b64().encode(json.as_slice()),
+            });
+        }
+        if !logins.is_empty() {
+            let json = zeroize::Zeroizing::new(serde_json::to_vec(&logins)?);
+            files.push(PayloadEntry {
+                rel_path: LOGINS_ENTRY.into(),
                 mode: 0o600,
                 data: b64().encode(json.as_slice()),
             });
@@ -730,6 +853,9 @@ mod tests {
             last_update_utc: None,
             name: name.into(),
             partition_key: None,
+            last_access_utc: None,
+            source_type: None,
+            has_cross_site_ancestor: None,
             path: path.into(),
             priority: None,
             same_site: 1,
@@ -764,9 +890,19 @@ mod tests {
         full.priority = Some(2);
         full.source_port = Some(443);
         full.source_scheme = Some(2);
+        full.source_type = Some(1);
+        full.last_access_utc = Some(3);
+        full.has_cross_site_ancestor = Some(1);
         assert_eq!(
             serde_json::to_string(&full).unwrap(),
-            r#"{"creation_utc":1,"expires_utc":13397000000000000,"host_key":".github.com","http_only":true,"last_update_utc":2,"name":"user_session","partition_key":"https://top.example","path":"/","priority":2,"same_site":1,"secure":true,"source_port":443,"source_scheme":2,"value":"czNjcmV0"}"#
+            r#"{"creation_utc":1,"expires_utc":13397000000000000,"has_cross_site_ancestor":1,"host_key":".github.com","http_only":true,"last_access_utc":3,"last_update_utc":2,"name":"user_session","partition_key":"https://top.example","path":"/","priority":2,"same_site":1,"secure":true,"source_port":443,"source_scheme":2,"source_type":1,"value":"czNjcmV0"}"#
+        );
+        // A partitioned cookie is its own item, never merged into the same
+        // name without a partition.
+        assert_eq!(c.key(), "user_session");
+        assert_eq!(
+            full.key(),
+            "user_session (partitioned: https://top.example)"
         );
         let back: CookieRecord =
             serde_json::from_str(&serde_json::to_string(&full).unwrap()).unwrap();
@@ -779,10 +915,24 @@ mod tests {
             key: "token".into(),
             origin: "https://app.example".into(),
             value: "abc".into(),
+            key_raw: None,
+            value_raw: None,
         };
         assert_eq!(
             serde_json::to_string(&v).unwrap(),
             r#"{"key":"token","origin":"https://app.example","value":"abc"}"#
+        );
+        // A value that is not valid text keeps its exact stored bytes.
+        let raw = LocalStorageRecord {
+            key: "bad".into(),
+            origin: "https://app.example".into(),
+            value: "\u{fffd}".into(),
+            key_raw: None,
+            value_raw: Some("AAA=".into()),
+        };
+        assert_eq!(
+            serde_json::to_string(&raw).unwrap(),
+            "{\"key\":\"bad\",\"origin\":\"https://app.example\",\"value\":\"\u{fffd}\",\"value_raw\":\"AAA=\"}"
         );
     }
 
@@ -894,6 +1044,78 @@ mod tests {
         assert_eq!(by("Local State").unwrap(), b"ls");
     }
 
+    /// Native entries (the bundle's JSON rows) to records and back: every
+    /// cookie attribute and every localStorage value, including one whose
+    /// bytes are not valid text, comes back as it went in.
+    #[test]
+    fn every_cookie_attribute_and_localstorage_value_round_trips_native_to_record_and_back() {
+        let cookies = serde_json::json!([
+            {"host_key": ".example.com", "name": "sid", "value": "djE=", "path": "/",
+             "expires_utc": 13_400_000_000_000_000i64, "is_secure": true, "is_httponly": true,
+             "samesite": 1, "creation_utc": 11, "last_access_utc": 12, "last_update_utc": 13,
+             "priority": 2, "source_scheme": 2, "source_port": 443, "source_type": 1,
+             "has_cross_site_ancestor": 1, "partition_key": "https://top.example"},
+            {"host_key": ".example.com", "name": "sid", "value": "djI=", "path": "/",
+             "expires_utc": 0, "is_secure": false, "is_httponly": false, "samesite": -1}
+        ]);
+        let storage = serde_json::json!([
+            {"origin": "https://github.com", "key": "color_mode", "value": "dark"},
+            {"origin": "https://a.example", "key": "日本", "value": "こんにちは \u{1F642}"},
+            {"origin": "https://a.example", "key": "bad", "value": "\u{fffd}", "value_raw": "AAAA2A=="}
+        ]);
+        let exported = ChromiumCodec
+            .export(
+                vec![
+                    entry(COOKIES_ENTRY, cookies.to_string().as_bytes()),
+                    entry(LOCAL_STORAGE_ENTRY, storage.to_string().as_bytes()),
+                ],
+                &ExportOptions::default(),
+            )
+            .unwrap();
+        // The two cookies are two items: one partitioned, one not.
+        let keys: Vec<(ItemKind, String)> = exported
+            .records
+            .iter()
+            .map(|r| (r.kind, r.key.clone()))
+            .collect();
+        assert!(keys.contains(&(ItemKind::Cookie, "sid".into())));
+        assert!(keys.contains(&(
+            ItemKind::Cookie,
+            "sid (partitioned: https://top.example)".into()
+        )));
+        assert_eq!(
+            exported
+                .records
+                .iter()
+                .filter(|r| r.kind == ItemKind::LocalStorage)
+                .count(),
+            3
+        );
+        let payloads: Vec<ItemPayload> = exported.records.into_iter().map(payload_of).collect();
+        let entries = ChromiumCodec.import(&payloads).unwrap();
+        let by = |p: &str| -> serde_json::Value {
+            let e = entries.iter().find(|e| e.rel_path == p).unwrap();
+            serde_json::from_slice(&b64().decode(&e.data).unwrap()).unwrap()
+        };
+        let sorted = |mut v: serde_json::Value, k: &[&str]| {
+            v.as_array_mut().unwrap().sort_by_key(|x| {
+                k.iter()
+                    .map(|f| x[*f].as_str().unwrap_or_default().to_string())
+                    .collect::<Vec<_>>()
+            });
+            v
+        };
+        assert_eq!(
+            sorted(by(COOKIES_ENTRY), &["host_key", "name", "partition_key"]),
+            sorted(cookies, &["host_key", "name", "partition_key"]),
+            "the receiver gets every attribute the source had"
+        );
+        assert_eq!(
+            sorted(by(LOCAL_STORAGE_ENTRY), &["origin", "key"]),
+            sorted(storage, &["origin", "key"])
+        );
+    }
+
     #[test]
     fn selective_send_is_filtering_records_and_files_dedupe() {
         let mk = |h: &str| payload_of(cookie_record(&cookie(h, "sid", "/", b"v")).unwrap());
@@ -919,7 +1141,7 @@ mod tests {
     }
 
     #[test]
-    fn passwords_never_become_entries_and_unknown_schemas_are_refused() {
+    fn a_password_is_only_the_reserved_logins_entry_and_unknown_schemas_are_refused() {
         let pw = ItemPayload::password(
             "chrome",
             &LoginRecord {
@@ -929,7 +1151,17 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(GenericCodec.import(&[pw]).unwrap().is_empty());
+        // Never a file of app state: only the reserved entry the receiver
+        // re-encrypts (the broker passes a password here only when the user
+        // ticked it).
+        let entries = GenericCodec.import(&[pw]).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].rel_path, LOGINS_ENTRY);
+        let rows: serde_json::Value =
+            serde_json::from_slice(&b64().decode(&entries[0].data).unwrap()).unwrap();
+        assert_eq!(rows[0]["username"], "octo");
+        assert_eq!(rows[0]["signon_realm"], "https://github.com/");
+        assert_eq!(rows[0]["password"], b64().encode(b"pw"));
         let newer = ItemPayload {
             provider_id: "chrome".into(),
             scope: "full".into(),

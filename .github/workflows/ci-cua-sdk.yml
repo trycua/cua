@@ -81,12 +81,12 @@ jobs:
           key: cua-sdk
       - name: Format
         if: runner.os == 'Linux'
-        run: cargo fmt -p cua-sdk -p cua-daemon -p cua-cli -p cua-bindgen -p cua-media-protocol -p cua-media-transport -p cua-media-codec -p cua-media-client -p cua-viewer -p cua-logging -p cua-teleport -p cua-teleport-bundle -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --check
+        run: cargo fmt -p cua-sdk -p cua-daemon -p cua-cli -p cua-bindgen -p cua-media-protocol -p cua-media-transport -p cua-media-codec -p cua-media-client -p cua-viewer -p cua-logging -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --check
       - name: Clippy (native)
         run: >
           cargo clippy --locked -p cua-sdk -p cua-daemon -p cua-cli -p cua-bindgen
           -p cua-media-protocol -p cua-media-transport -p cua-media-client -p cua-viewer -p cua-logging
-          -p cua-teleport -p cua-teleport-bundle -p cua-volume
+          -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
           -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli
           --all-targets --features cua-daemon/test-fixtures,cua-media-client/media-decode -- -D warnings
       - name: Clippy (browser API, host metadata build)
@@ -98,7 +98,7 @@ jobs:
       - name: Test (embedded, daemon over UDS and loopback, CLI, Cua Spaces extensions)
         run: >
           cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon -p cua-cli
-          -p cua-teleport -p cua-teleport-bundle -p cua-volume
+          -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
           -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --test-threads=4
         env:
           # Teleport send acts only on fake hosts in tests; anything that

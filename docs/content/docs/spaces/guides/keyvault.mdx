@@ -98,6 +98,35 @@ An agent uses one only through [site login](/spaces/guides/site-login): you
 approve the sign-in, and the Keyvault types it into the page on the saved
 login's own origin. Chrome on macOS and Linux is supported.
 
+Passwords go into a Space's browser only when you tick **Also send saved
+passwords** in the teleport review (it is off unless you do, and never
+remembered). Each one is re-encrypted for the browser in the Space with that
+browser's own key and written beside the logins it already has, so the browser
+must have been opened once there. An agent can never have a password delivered,
+only used through site login.
+
+## What is an item and what stays a file
+
+For Chrome and the other Chromium browsers each of these is its own item:
+
+- every cookie, with every attribute the browser keeps (creation and update
+  times, priority, source scheme and port, same-site, a partitioned cookie's
+  top-level site). A partitioned cookie stays partitioned and is a different
+  item from the same name without a partition;
+- every localStorage value, read from the browser's own store and written back
+  into the Space's while its browser is not running;
+- saved passwords, as above.
+
+On Windows, Chrome's app-bound encryption keeps a cookie or password readable
+only by Chrome itself. Those are listed in the review, greyed, with that reason,
+and are never sent; the rest of the site still is.
+
+Everything else is saved as a file, by its path: preferences, bookmarks, the
+open tabs and session state, session storage, extensions and, for Electron
+apps such as Slack, their own cookie and localStorage files. A cookie or value
+that cannot be read as an item is not silently dropped: it stays a file or is
+listed as unavailable.
+
 ## Saved sessions (cookies)
 
 The Keyvault holds a browser's cookies one item each, decrypted from Chrome's

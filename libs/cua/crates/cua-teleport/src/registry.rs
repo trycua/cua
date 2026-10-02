@@ -75,7 +75,9 @@ impl ExportRegistry {
         }
         let mut registry = Self::new();
         registry.register(Box::new(chrome));
-        registry.register(Box::new(FirefoxProvider::new().with_host(host.clone())));
+        registry.register(Box::new(
+            FirefoxProvider::new().structured().with_host(host.clone()),
+        ));
         // Electron apps are Chromium underneath: their cookies and
         // localStorage travel as items, re-encrypted for the destination's
         // own key (see `ElectronProvider::structured`).

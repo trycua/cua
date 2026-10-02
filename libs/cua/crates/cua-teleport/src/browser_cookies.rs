@@ -928,7 +928,6 @@ mod tests {
         assert_eq!(rows.iter().filter(|r| r.app_bound).count(), 1);
     }
 
-    /// Modern Chrome (96+): only `Network/Cookies` exists.
     /// A Windows source: `v10` AES-256-GCM cookies under the DPAPI-wrapped
     /// Local State key (with the Chrome 130 host digest), the app-bound `v20`
     /// one reported, nothing read from this machine's Keychain.
@@ -965,6 +964,7 @@ mod tests {
         assert_eq!(read.unavailable.len(), 1);
     }
 
+    /// Modern Chrome (96+): only `Network/Cookies` exists.
     #[test]
     fn reads_a_modern_network_cookies_only_profile() {
         let dir = tempfile::tempdir().unwrap();

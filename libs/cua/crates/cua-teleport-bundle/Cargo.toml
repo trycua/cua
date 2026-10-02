@@ -24,6 +24,9 @@ aes-gcm = "0.10"
 cbc = { version = "0.1", features = ["alloc"] }
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 sha1 = "0.10"
+# Firefox's NSS key derivation (key4.db): HMAC-SHA1 legacy PBE and 3DES.
+hmac = "0.12"
+des = "0.8"
 zeroize = "1"
 base64.workspace = true
 

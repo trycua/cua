@@ -31,6 +31,10 @@ use crate::{
 pub struct FirefoxProvider {
     profile_dir_override: Option<PathBuf>,
     max_total_bytes: u64,
+    /// Cookies, localStorage and (ticked) logins travel as items for the
+    /// destination to write into its own stores, not as raw database files
+    /// ([`Self::structured`]).
+    structured: bool,
     /// Every `$HOME`, Keychain and authorization effect goes through this.
     host: Arc<dyn HostEffects>,
 }
@@ -46,8 +50,18 @@ impl FirefoxProvider {
         Self {
             profile_dir_override: None,
             max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
+            structured: false,
             host: default_host(),
         }
+    }
+
+    /// Send cookies, localStorage and ticked logins as items. Saved logins are
+    /// decrypted with the profile's own `key4.db` only when `logins.json` is
+    /// in the selection (an opt-in), and a profile with a master password is
+    /// refused rather than guessed at.
+    pub fn structured(mut self) -> Self {
+        self.structured = true;
+        self
     }
 
     /// Act on `host` instead of [`default_host`].
@@ -227,9 +241,18 @@ impl ExportProvider for FirefoxProvider {
         }
 
         if scope == TransferScope::FullProfile {
+            if self.structured {
+                self.add_items(&mut writer, &profile, &wants)?;
+            }
             for (name, _sensitive) in PROFILE_FILES {
                 let rel = format!("{BUNDLE_PREFIX}/{name}");
                 if !wants(&rel) {
+                    continue;
+                }
+                // Items replace the raw stores (and the key database that
+                // only the raw login file needs).
+                if self.structured && matches!(*name, "cookies.sqlite" | "logins.json" | "key4.db")
+                {
                     continue;
                 }
                 let disk = profile.join(name);
@@ -244,7 +267,12 @@ impl ExportProvider for FirefoxProvider {
                 }
                 let disk = profile.join(name);
                 if disk.is_dir() {
-                    add_dir_recursive(&mut writer, &disk, &rel)?;
+                    if self.structured && *name == "storage" {
+                        // localStorage is items; the rest of storage stays files.
+                        add_storage_without_ls(&mut writer, &disk, &rel)?;
+                    } else {
+                        add_dir_recursive(&mut writer, &disk, &rel)?;
+                    }
                 }
             }
         }
@@ -252,6 +280,87 @@ impl ExportProvider for FirefoxProvider {
         writer.finish()?;
         Ok(())
     }
+}
+
+impl FirefoxProvider {
+    fn add_items<W: Write>(
+        &self,
+        writer: &mut BundleWriter<W>,
+        profile: &Path,
+        wants: &dyn Fn(&str) -> bool,
+    ) -> Result<()> {
+        let rel = |n: &str| format!("{BUNDLE_PREFIX}/{n}");
+        if wants(&rel("cookies.sqlite")) {
+            let items = crate::firefox_store::read_cookies(profile)?;
+            if !items.is_empty() {
+                writer.add_bytes(
+                    cua_teleport_bundle::cookies::COOKIES_ENTRY,
+                    0o600,
+                    &cua_teleport_bundle::cookies::serialize(&items),
+                )?;
+            }
+        }
+        if wants(&rel("storage")) {
+            let items = crate::firefox_store::read_local_storage(profile)?;
+            if !items.is_empty() {
+                writer.add_bytes(
+                    cua_teleport_bundle::local_storage::LOCAL_STORAGE_ENTRY,
+                    0o600,
+                    &cua_teleport_bundle::local_storage::serialize(&items),
+                )?;
+            }
+        }
+        // Passwords: only because `logins.json` was explicitly selected.
+        if wants(&rel("logins.json")) {
+            let read = crate::firefox_store::read_logins(profile)?;
+            if !read.logins.is_empty() {
+                writer.add_bytes(
+                    cua_teleport_bundle::logins::LOGINS_ENTRY,
+                    0o600,
+                    &cua_teleport_bundle::logins::serialize(&read.logins),
+                )?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `storage/` as files except each origin's `ls/` (its localStorage, sent as
+/// items).
+fn add_storage_without_ls<W: Write>(
+    writer: &mut BundleWriter<W>,
+    disk: &Path,
+    rel: &str,
+) -> Result<()> {
+    fn walk<W: Write>(
+        writer: &mut BundleWriter<W>,
+        dir: &Path,
+        rel: &str,
+        depth: usize,
+    ) -> Result<()> {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Ok(());
+        };
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let path = e.path();
+            let child = format!("{rel}/{name}");
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if meta.is_dir() {
+                // storage/default/<origin>/ls
+                if depth == 2 && name == "ls" {
+                    continue;
+                }
+                walk(writer, &path, &child, depth + 1)?;
+            } else if meta.is_file() {
+                add_file_best_effort(writer, &path, &child)?;
+            }
+        }
+        Ok(())
+    }
+    walk(writer, disk, rel, 0)
 }
 
 /// Resolve the active profile directory under a Firefox root by reading
@@ -829,5 +938,90 @@ mod tests {
     #[test]
     fn mozlz4_rejects_bad_magic() {
         assert!(mozlz4_decode(b"NOTMOZLZ4....").is_none());
+    }
+
+    /// Structured: cookies, localStorage and (selected) logins are items; the
+    /// raw stores and the key database stay home; the rest of storage stays files.
+    #[test]
+    fn structured_export_sends_items_not_the_raw_stores() {
+        use crate::firefox_store::testing::*;
+        use cua_teleport_bundle::bundle::BundleReader;
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("Profiles/abc.default-release");
+        write_cookies(
+            &profile,
+            &[(
+                ".github.com",
+                "user_session",
+                "abc",
+                "/",
+                1_900_000_000_000,
+                "",
+            )],
+        );
+        write_local_storage(
+            &profile,
+            "https+++github.com",
+            "https://github.com",
+            &[("theme", "dark", false)],
+        );
+        std::fs::create_dir_all(profile.join("storage/default/https+++github.com/idb")).unwrap();
+        std::fs::write(
+            profile.join("storage/default/https+++github.com/idb/x.sqlite"),
+            b"idb",
+        )
+        .unwrap();
+        write_logins(
+            &profile,
+            &[("https://github.com", "octo", "gh-pw")],
+            false,
+            b"",
+        );
+        let provider = FirefoxProvider::new()
+            .structured()
+            .with_profile_dir(&profile);
+        let run = |include: Option<HashSet<String>>| {
+            let mut buf = Vec::new();
+            provider
+                .capture_selected(
+                    &app(Platform::Linux),
+                    TransferScope::FullProfile,
+                    include.as_ref(),
+                    &mut buf,
+                )
+                .unwrap();
+            BundleReader::open(std::io::Cursor::new(buf))
+                .unwrap()
+                .read_all()
+                .unwrap()
+        };
+        let entries = run(None);
+        let paths: Vec<&str> = entries.iter().map(|e| e.rel_path.as_str()).collect();
+        for items in ["cookies.json", "localstorage.json", "logins.json"] {
+            assert!(paths.contains(&items), "{items} in {paths:?}");
+        }
+        assert!(
+            !paths.iter().any(|p| p.ends_with("cookies.sqlite")
+                || p.ends_with("key4.db")
+                || p.contains("/ls/")),
+            "{paths:?}"
+        );
+        assert!(
+            paths.iter().any(|p| p.ends_with("idb/x.sqlite")),
+            "other storage stays files"
+        );
+        let logins = cua_teleport_bundle::logins::parse(
+            &entries
+                .iter()
+                .find(|e| e.rel_path == "logins.json")
+                .unwrap()
+                .bytes,
+        );
+        assert_eq!(logins[0].password, b"gh-pw");
+        // Passwords are an opt-in: a selection without logins.json sends none.
+        let default: HashSet<String> = ["firefox/cookies.sqlite".to_string()].into_iter().collect();
+        let entries = run(Some(default));
+        assert!(entries.iter().any(|e| e.rel_path == "cookies.json"));
+        assert!(!entries.iter().any(|e| e.rel_path == "logins.json"));
     }
 }

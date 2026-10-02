@@ -26,6 +26,7 @@
 //! `CUA_ENV_TEST_SANDBOX=1`; tests inject [`FakeHost`]).
 
 pub mod cookies;
+pub mod firefox_items;
 pub mod host;
 pub mod importers;
 pub mod keychain;

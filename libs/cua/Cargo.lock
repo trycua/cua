@@ -2767,6 +2767,7 @@ name = "cua-spaces-ffi"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "cua-chromium-storage",
  "cua-daemon",
  "cua-fleet",
  "cua-host",
@@ -2781,7 +2782,9 @@ dependencies = [
  "cua-spacesd-client",
  "cua-telemetry",
  "cua-teleport",
+ "cua-teleport-bundle",
  "futures-util",
+ "rand 0.9.5",
  "serde",
  "serde_json",
  "tempfile",
@@ -2901,6 +2904,7 @@ dependencies = [
  "serde_json",
  "sha1 0.10.7",
  "sha2 0.10.9",
+ "snap",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
@@ -2916,7 +2920,9 @@ dependencies = [
  "aes-gcm",
  "base64 0.22.1",
  "cbc",
+ "des",
  "hex",
+ "hmac 0.12.1",
  "pbkdf2",
  "serde",
  "serde_json",
@@ -3301,6 +3307,15 @@ dependencies = [
  "quote",
  "rustc_version",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "des"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffdd80ce8ce993de27e9f063a444a4d53ce8e8db4c1f00cc03af5ad5a9867a1e"
+dependencies = [
+ "cipher 0.4.4",
 ]
 
 [[package]]

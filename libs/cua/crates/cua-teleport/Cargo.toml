@@ -36,6 +36,9 @@ cbc = { version = "0.1", features = ["alloc"] }
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 sha1 = "0.10"
 zeroize = "1"
+# Firefox localStorage values are raw Snappy blocks (dom/localstorage/SnappyUtils.cpp).
+snap = "1"
+tempfile.workspace = true
 # The teleport UX core (`ux`): the pinned install manifest the catalog
 # classifies against (`cua_agents::installables`, a pure table).
 cua-agents.workspace = true

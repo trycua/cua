@@ -1856,6 +1856,8 @@ dependencies = [
  "aes-gcm",
  "base64 0.22.1",
  "cbc 0.1.2",
+ "des",
+ "hmac 0.12.1",
  "pbkdf2",
  "serde",
  "serde_json",
@@ -1955,6 +1957,15 @@ name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
+
+[[package]]
+name = "des"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffdd80ce8ce993de27e9f063a444a4d53ce8e8db4c1f00cc03af5ad5a9867a1e"
+dependencies = [
+ "cipher 0.4.4",
+]
 
 [[package]]
 name = "digest"

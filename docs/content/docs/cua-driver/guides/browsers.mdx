@@ -89,8 +89,11 @@ browser_prepare({
 ```
 
 Without a `pid`, the driver launches a vendor-signed system install it can
-verify: Chrome, Edge, or Brave (system Chromium on Linux), never one a standard
-user could modify.
+verify, never one a standard user could modify: Chrome or Edge (system Chromium
+on Linux), or Brave from `/Applications` on macOS, from an all-users install
+under Program Files on Windows, or from Brave's own package under
+`/opt/brave.com` on Linux. Brave's default Windows installer installs per user,
+and Snap and Flatpak installs are not covered; the driver refuses those.
 
 Bind the window of the returned `prepared_pid`. An `isolated_new` profile is
 deleted when the session ends; use `{"mode": "isolated_named", "name": "research"}`

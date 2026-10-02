@@ -27,9 +27,12 @@ use zeroize::Zeroize;
 use crate::audit::{AuditEntry, Verification};
 use crate::broker::{
     AccessRequest, ApproveOptions, Broker, Decision, ImportSpec, InitRequest, Inventory,
-    LoginOutcome, LoginRequest, PasswordImportSpec, PendingView, RuleSpec, StageSink, Status,
-    TeleportOutcome, TeleportRequest, TeleportStage, UnlockRequest,
+    LoginOutcome, LoginRequest, PasswordImportSpec, PendingView, RuleSpec, Status, TeleportOutcome,
+    TeleportRequest, TeleportStage, UnlockRequest,
 };
+// Stage frames stream over the Unix socket only (`teleport_streaming`).
+#[cfg(unix)]
+use crate::broker::StageSink;
 use crate::caller::{CallerIdentity, TrustPolicy};
 use crate::model::{Delivery, Grant, ItemMeta, ItemPolicy, UnattendedRule, UnlockPolicy};
 use crate::{Error, Result};
@@ -255,6 +258,7 @@ impl Response {
         }
     }
 
+    #[cfg(unix)]
     fn stage(s: TeleportStage) -> Self {
         Self {
             ok: true,

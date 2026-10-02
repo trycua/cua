@@ -15,9 +15,8 @@ use cua_keyvault::broker::{
     AccessRequest, Backend, Broker, Captured, Decision, DeliveryOutcome, FakePresence, ImportSpec,
     InitRequest, Inventory, Selector, SiteChoice, TeleportRequest,
 };
-use cua_keyvault::model::{
-    CookieInfo, ItemKind, ItemMeta, ItemPayload, ItemPolicy, ItemSummary, PayloadEntry,
-};
+use cua_keyvault::model::PayloadEntry;
+use cua_keyvault::record::{self, CookieRecord};
 use cua_keyvault::CallerIdentity;
 use cua_spaces_ext::daemon::keyvault::Keyvault;
 use cua_spaces_lib::keyvault::{DirectTransport, KeyvaultCommands, SocketTransport};
@@ -28,54 +27,31 @@ struct FakeBackend {
     wiped: Mutex<Vec<(String, String)>>,
 }
 
-fn fixture(app: &str, site: Option<&str>, account: Option<&str>) -> Captured {
-    let kind = if site.is_some() {
-        ItemKind::BrowserSite
-    } else {
-        ItemKind::AppSession
+/// One captured item: a site's session cookie, or (no site) a file of the
+/// whole app. Fixture bytes only; nothing here is a secret.
+fn fixture(app: &str, site: Option<&str>) -> Captured {
+    let new = match site {
+        Some(s) => record::cookie_record(&CookieRecord {
+            creation_utc: None,
+            expires_utc: 0,
+            host_key: format!(".{s}"),
+            http_only: true,
+            last_update_utc: None,
+            name: "fixture_session".into(),
+            partition_key: None,
+            path: "/".into(),
+            priority: None,
+            same_site: -1,
+            secure: true,
+            source_port: None,
+            source_scheme: None,
+            value: b"FIXTURE-NOT-A-SECRET".to_vec(),
+        })
+        .unwrap(),
+        None => record::file_record("fixture/state.json", 0o600, b"FIXTURE-NOT-A-SECRET").unwrap(),
     };
-    let label = match site {
-        Some(s) => format!("{s} ({app}, Default)"),
-        None => format!("{app} (whole app session)"),
-    };
-    Captured {
-        meta: ItemMeta {
-            id: String::new(),
-            kind,
-            label,
-            provider_id: app.into(),
-            app_display: app.into(),
-            site: site.map(Into::into),
-            account: account.map(Into::into),
-            source: "Default".into(),
-            summary: ItemSummary {
-                cookies: vec![CookieInfo {
-                    name: "fixture_session".into(),
-                    domain: format!(".{}", site.unwrap_or("example.test")),
-                    session: true,
-                    expires_ms: None,
-                }],
-                ..Default::default()
-            },
-            warnings: vec![],
-            identity_provider: site == Some("accounts.example-idp.test"),
-            policy: ItemPolicy::default(),
-            created_ms: 0,
-            updated_ms: 0,
-            rev: 0,
-            record_digest: String::new(),
-        },
-        payload: ItemPayload {
-            provider_id: app.into(),
-            scope: "full".into(),
-            entries: vec![PayloadEntry {
-                rel_path: format!("fixture/{}", site.unwrap_or(app)),
-                mode: 0o600,
-                // "FIXTURE-NOT-A-SECRET"
-                data: "RklYVFVSRS1OT1QtQS1TRUNSRVQ=".into(),
-            }],
-        },
-    }
+    let (meta, payload) = new.into_item(app, app, "Default", "full");
+    Captured { meta, payload }
 }
 
 #[async_trait::async_trait]
@@ -92,10 +68,10 @@ impl Backend for FakeBackend {
         let mut out: Vec<Captured> = spec
             .sites
             .iter()
-            .map(|s| fixture(&spec.app, Some(&s.site), Some("ada@example.test")))
+            .map(|s| fixture(&spec.app, Some(&s.site)))
             .collect();
         if spec.whole_app {
-            out.push(fixture(&spec.app, None, Some("Example Workspace")));
+            out.push(fixture(&spec.app, None));
         }
         Ok(out)
     }
@@ -104,13 +80,11 @@ impl Backend for FakeBackend {
         &self,
         target: &str,
         _provider_id: &str,
-        payloads: Vec<ItemPayload>,
+        _scope: &str,
+        entries: Vec<PayloadEntry>,
         _expires_ms: u64,
     ) -> cua_keyvault::Result<DeliveryOutcome> {
-        let paths: Vec<String> = payloads
-            .iter()
-            .flat_map(|p| p.entries.iter().map(|e| e.rel_path.clone()))
-            .collect();
+        let paths: Vec<String> = entries.iter().map(|e| e.rel_path.clone()).collect();
         let mut d = self.delivered.lock().unwrap();
         d.push((target.into(), paths.clone()));
         Ok(DeliveryOutcome {
@@ -180,7 +154,7 @@ async fn rig() -> Rig {
                         include_passwords: false,
                     },
                     SiteChoice {
-                        site: "accounts.example-idp.test".into(),
+                        site: "accounts.google.com".into(),
                         include_storage: false,
                         include_passwords: false,
                     },
@@ -218,13 +192,26 @@ async fn rig() -> Rig {
     }
 }
 
-fn item_id(items: &[cua_spaces_app_core::keyvault::KvItem], label_prefix: &str) -> String {
+/// The id of the item whose site (or, for a file, whose app) starts with
+/// `prefix`. Names show only inside the browse window.
+fn item_id(items: &[cua_spaces_app_core::keyvault::KvItem], prefix: &str) -> String {
     items
         .iter()
-        .find(|i| i.label.starts_with(label_prefix))
-        .unwrap_or_else(|| panic!("no item {label_prefix}"))
+        .find(|i| {
+            i.domain
+                .as_deref()
+                .is_some_and(|d| d.trim_start_matches('.').starts_with(prefix))
+                || (i.domain.is_none() && i.provider_id == prefix)
+        })
+        .unwrap_or_else(|| panic!("no item {prefix}"))
         .id
         .clone()
+}
+
+/// The items with their names (opens the browse window first).
+async fn named_items(r: &Rig) -> Vec<cua_spaces_app_core::keyvault::KvItem> {
+    r.page.browse().await.unwrap();
+    r.page.overview().await.items
 }
 
 /// A grant for `item` to `target`, requested by the third party and approved
@@ -267,23 +254,29 @@ async fn overview_lists_items_with_nothing_selected_by_default() {
     assert!(o.items.iter().all(|i| !i.policy.unattended));
     assert!(o.rules.is_empty() && o.grants.is_empty());
     assert!(o.pending.is_empty() && o.deliveries.is_empty());
-    // Per site and per account, never values: ListItems is the redacted view.
-    let gh = o
+    // Names stay hidden until the browse window opens; values never show.
+    assert!(!o.names_visible);
+    assert!(o
         .items
         .iter()
-        .find(|i| i.site.as_deref() == Some("github.example.test"))
-        .unwrap();
-    assert_eq!(gh.account.as_deref(), Some("ada@example.test"));
-    assert!(gh
-        .summary
-        .cookies
-        .iter()
-        .all(|c| c.name.is_empty() && c.domain.is_empty()));
+        .all(|i| i.domain.is_none() && i.key.is_empty()));
     let json = serde_json::to_string(&o).unwrap();
     assert!(
-        !json.contains("RklYVFVSRS1OT1QtQS1TRUNSRVQ"),
+        !json.contains("RklYVFVSRS1OT1QtQS1TRUNSRVQ") && !json.contains("FIXTURE-NOT-A-SECRET"),
         "payload leaked"
     );
+    let named = named_items(&r).await;
+    let gh = named
+        .iter()
+        .find(|i| i.domain.as_deref() == Some(".github.example.test"))
+        .unwrap();
+    assert_eq!(
+        (gh.kind.as_str(), gh.key.as_str()),
+        ("cookie", "fixture_session")
+    );
+    assert!(!serde_json::to_string(&named)
+        .unwrap()
+        .contains("FIXTURE-NOT-A-SECRET"));
     // The audit log records the imports and the chain verifies.
     assert!(o.audit.iter().any(|e| e.kind == "item.import"));
     assert!(o.audit_verification.as_ref().unwrap().ok);
@@ -293,7 +286,7 @@ async fn overview_lists_items_with_nothing_selected_by_default() {
 #[tokio::test]
 async fn kill_switch_refuses_teleport_app_and_outstanding_grants() {
     let r = rig().await;
-    let items = r.page.overview().await.items;
+    let items = named_items(&r).await;
     let gh = item_id(&items, "github.example.test");
     let token = granted_token(&r, &gh, "dev-1").await;
 
@@ -362,10 +355,10 @@ async fn kill_switch_refuses_teleport_app_and_outstanding_grants() {
 #[tokio::test]
 async fn per_item_toggles_narrow_freely_and_widen_only_with_presence() {
     let r = rig().await;
-    let items = r.page.overview().await.items;
+    let items = named_items(&r).await;
     let gh = item_id(&items, "github.example.test");
     let slack = item_id(&items, "slack");
-    let idp = item_id(&items, "accounts.example-idp.test");
+    let idp = item_id(&items, "accounts.google.com");
 
     // Widening (on) goes through the daemon's presence gate.
     r.presence.set(false);
@@ -375,32 +368,37 @@ async fn per_item_toggles_narrow_freely_and_widen_only_with_presence() {
         .await
         .is_err());
     r.presence.set(true);
-    let out = r
-        .page
+    r.page
         .set_unattended(&[gh.clone(), slack.clone()], true)
         .await
         .unwrap();
-    assert!(out.iter().all(|i| i.policy.unattended));
     let asked = r.presence.asked.lock().unwrap().len();
-    assert_eq!(asked, 3, "one declined prompt, then one per widened item");
+    assert_eq!(
+        asked, 3,
+        "browsing, one declined prompt, then one for the whole batch"
+    );
 
     // Narrowing (off) never prompts, and touches only the named item.
-    let out = r
-        .page
+    r.page
         .set_unattended(std::slice::from_ref(&gh), false)
         .await
         .unwrap();
-    assert!(!out[0].policy.unattended);
     assert_eq!(r.presence.asked.lock().unwrap().len(), asked);
+    r.page.browse().await.unwrap();
     let o = r.page.overview().await;
     let by_id = |id: &str| o.items.iter().find(|i| i.id == id).unwrap().clone();
     assert!(!by_id(&gh).policy.unattended);
     assert!(by_id(&slack).policy.unattended);
-    assert!(o.audit.iter().filter(|e| e.kind == "item.policy").count() >= 3);
+    assert!(o.audit.iter().any(|e| e.kind == "item.unlock"));
+    assert!(o.audit.iter().any(|e| e.kind == "item.lock"));
 
-    // Identity providers always ask: the page refuses to widen them.
-    let err = r.page.set_unattended(&[idp], true).await.unwrap_err();
-    assert_eq!(err.code, "forbidden");
+    // Identity providers always ask: the vault skips them when widening.
+    let out = r
+        .page
+        .set_locked(std::slice::from_ref(&idp), false)
+        .await
+        .unwrap();
+    assert_eq!(out.skipped, vec![idp]);
 
     // An empty selection is a no-op.
     assert!(r.page.set_unattended(&[], true).await.unwrap().is_empty());
@@ -409,7 +407,7 @@ async fn per_item_toggles_narrow_freely_and_widen_only_with_presence() {
 #[tokio::test]
 async fn pending_requests_can_be_denied_and_grants_revoked() {
     let r = rig().await;
-    let items = r.page.overview().await.items;
+    let items = named_items(&r).await;
     let gh = item_id(&items, "github.example.test");
 
     let pending = r
@@ -456,7 +454,7 @@ async fn pending_requests_can_be_denied_and_grants_revoked() {
 #[tokio::test]
 async fn a_delivery_can_be_wiped_from_the_page() {
     let r = rig().await;
-    let items = r.page.overview().await.items;
+    let items = named_items(&r).await;
     let gh = item_id(&items, "github.example.test");
     let token = granted_token(&r, &gh, "dev-1").await;
     r.broker

@@ -30,6 +30,7 @@ cua-daemon = { workspace = true, features = ["server", "client", "spaces"] }
 cua-fleet.workspace = true
 cua-auth.workspace = true
 cua-teleport.workspace = true
+cua-chromium-storage.workspace = true
 # The reserved `cookies.json` bundle entry format (`daemon::keyvault`'s
 # per-site cookie capture): shared, effect-free wire format, not re-exported
 # by `cua-teleport` (whose own `cookies` module is the unrelated site filter).

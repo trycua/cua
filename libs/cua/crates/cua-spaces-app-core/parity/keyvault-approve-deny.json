@@ -1,6 +1,6 @@
 {
   "name": "keyvault-approve-deny",
-  "about": "Keyvault: categories, an approval with nothing selected, narrowing to one item, an all-or-nothing import request, deny, and the kill switch blocking approval.",
+  "about": "Keyvault: the vault list grouped by app and site (search, multi-select, locks), the unlock prompt and delete confirm, categories, an approval grouped by site with nothing selected, narrowing to one site, an all-or-nothing import request, deny, and the kill switch blocking approval.",
   "now": 1800000000000,
   "overview": {
     "availability": "ready",
@@ -12,56 +12,63 @@
       "disabled": false,
       "caller_first_party": true,
       "caller_display": "Cua (team YCK386LBJ7, signed id \"com.trycua.spaces.macos\")",
-      "items": 4,
+      "items": 8,
       "pending": 2,
-      "unlock_policy": "auto"
+      "unlock_policy": "auto",
+      "skip_unlock_prompt": false
     },
     "items": [
       {
         "id": "gh-ada",
-        "kind": "browser_site",
-        "label": "github.example.test (Chrome, Default)",
+        "kind": "cookie",
         "provider_id": "chrome",
         "app_display": "Chrome",
         "source": "Default",
-        "summary": {
-          "cookies": [],
-          "storage_origins": [],
-          "passwords": 0,
-          "files": [],
-          "keychain_services": [],
-          "bytes": 0
-        },
-        "warnings": [],
+        "bytes": 64,
         "identity_provider": false,
         "policy": {
           "allowed_targets": [],
           "ttl_secs": 3600,
-          "unattended": false
+          "unattended": true
         },
         "created_ms": 1799913600000,
-        "updated_ms": 1799913600000,
+        "updated_ms": 1799999700000,
         "rev": 1,
         "record_digest": "00",
-        "site": "github.example.test",
-        "account": "ada@example.test"
+        "key": "user_session",
+        "domain": ".github.example.test",
+        "path": "/",
+        "session": false
       },
       {
         "id": "gh-bob",
-        "kind": "browser_site",
-        "label": "github.example.test (Chrome, Default)",
+        "kind": "cookie",
         "provider_id": "chrome",
         "app_display": "Chrome",
         "source": "Default",
-        "summary": {
-          "cookies": [],
-          "storage_origins": [],
-          "passwords": 0,
-          "files": [],
-          "keychain_services": [],
-          "bytes": 0
+        "bytes": 64,
+        "identity_provider": false,
+        "policy": {
+          "allowed_targets": [],
+          "ttl_secs": 3600,
+          "unattended": false
         },
-        "warnings": [],
+        "created_ms": 1799913600000,
+        "updated_ms": 1799999700000,
+        "rev": 1,
+        "record_digest": "00",
+        "key": "_gh_sess",
+        "domain": ".github.example.test",
+        "path": "/",
+        "session": false
+      },
+      {
+        "id": "gh-pw",
+        "kind": "password",
+        "provider_id": "chrome",
+        "app_display": "Chrome",
+        "source": "Default",
+        "bytes": 64,
         "identity_provider": false,
         "policy": {
           "allowed_targets": [],
@@ -72,25 +79,36 @@
         "updated_ms": 1799913600000,
         "rev": 1,
         "record_digest": "00",
-        "site": "github.example.test",
-        "account": "bob@example.test"
+        "key": "ada@example.test",
+        "domain": "https://github.example.test"
       },
       {
-        "id": "idp",
-        "kind": "browser_site",
-        "label": "accounts.example-idp.test (Chrome, Default)",
+        "id": "gh-ls",
+        "kind": "local_storage",
         "provider_id": "chrome",
         "app_display": "Chrome",
         "source": "Default",
-        "summary": {
-          "cookies": [],
-          "storage_origins": [],
-          "passwords": 0,
-          "files": [],
-          "keychain_services": [],
-          "bytes": 0
+        "bytes": 64,
+        "identity_provider": false,
+        "policy": {
+          "allowed_targets": [],
+          "ttl_secs": 3600,
+          "unattended": false
         },
-        "warnings": [],
+        "created_ms": 1799913600000,
+        "updated_ms": 1799913600000,
+        "rev": 1,
+        "record_digest": "00",
+        "key": "theme",
+        "domain": "https://github.example.test"
+      },
+      {
+        "id": "idp",
+        "kind": "cookie",
+        "provider_id": "chrome",
+        "app_display": "Chrome",
+        "source": "Default",
+        "bytes": 64,
         "identity_provider": true,
         "policy": {
           "allowed_targets": [],
@@ -101,36 +119,70 @@
         "updated_ms": 1799913600000,
         "rev": 1,
         "record_digest": "00",
-        "site": "accounts.example-idp.test",
-        "account": "ada@example.test"
+        "key": "SID",
+        "domain": ".accounts.example-idp.test",
+        "path": "/",
+        "session": false
       },
       {
-        "id": "slack",
-        "kind": "app_session",
-        "label": "Slack (whole app session)",
-        "provider_id": "slack",
-        "app_display": "Slack",
+        "id": "chrome-bm",
+        "kind": "file",
+        "provider_id": "chrome",
+        "app_display": "Chrome",
         "source": "Default",
-        "summary": {
-          "cookies": [],
-          "storage_origins": [],
-          "passwords": 0,
-          "files": [],
-          "keychain_services": [],
-          "bytes": 0
-        },
-        "warnings": [],
+        "bytes": 64,
         "identity_provider": false,
         "policy": {
           "allowed_targets": [],
           "ttl_secs": 3600,
-          "unattended": true
+          "unattended": false
         },
         "created_ms": 1799913600000,
         "updated_ms": 1799913600000,
         "rev": 1,
         "record_digest": "00",
-        "account": "Example Workspace"
+        "key": "Default/Bookmarks"
+      },
+      {
+        "id": "slack",
+        "kind": "file",
+        "provider_id": "slack",
+        "app_display": "Slack",
+        "source": "Default",
+        "bytes": 64,
+        "identity_provider": false,
+        "policy": {
+          "allowed_targets": [],
+          "ttl_secs": 3600,
+          "unattended": false
+        },
+        "created_ms": 1799913600000,
+        "updated_ms": 1799990000000,
+        "rev": 1,
+        "record_digest": "00",
+        "key": "storage/root-state.json"
+      },
+      {
+        "id": "slack-d",
+        "kind": "cookie",
+        "provider_id": "slack",
+        "app_display": "Slack",
+        "source": "Default",
+        "bytes": 64,
+        "identity_provider": false,
+        "policy": {
+          "allowed_targets": [],
+          "ttl_secs": 3600,
+          "unattended": false
+        },
+        "created_ms": 1799913600000,
+        "updated_ms": 1799913600000,
+        "rev": 1,
+        "record_digest": "00",
+        "key": "d",
+        "domain": ".slack.example.test",
+        "path": "/",
+        "session": false
       }
     ],
     "pending": [
@@ -174,49 +226,33 @@
         "items": [
           {
             "id": "gh-ada",
-            "kind": "browser_site",
-            "label": "github.example.test (Chrome, Default)",
+            "kind": "cookie",
             "provider_id": "chrome",
             "app_display": "Chrome",
             "source": "Default",
-            "summary": {
-              "cookies": [],
-              "storage_origins": [],
-              "passwords": 0,
-              "files": [],
-              "keychain_services": [],
-              "bytes": 0
-            },
-            "warnings": [],
+            "bytes": 64,
             "identity_provider": false,
             "policy": {
               "allowed_targets": [],
               "ttl_secs": 3600,
-              "unattended": false
+              "unattended": true
             },
             "created_ms": 1799913600000,
-            "updated_ms": 1799913600000,
+            "updated_ms": 1799999700000,
             "rev": 1,
             "record_digest": "00",
-            "site": "github.example.test",
-            "account": "ada@example.test"
+            "key": "user_session",
+            "domain": ".github.example.test",
+            "path": "/",
+            "session": false
           },
           {
             "id": "gh-bob",
-            "kind": "browser_site",
-            "label": "github.example.test (Chrome, Default)",
+            "kind": "cookie",
             "provider_id": "chrome",
             "app_display": "Chrome",
             "source": "Default",
-            "summary": {
-              "cookies": [],
-              "storage_origins": [],
-              "passwords": 0,
-              "files": [],
-              "keychain_services": [],
-              "bytes": 0
-            },
-            "warnings": [],
+            "bytes": 64,
             "identity_provider": false,
             "policy": {
               "allowed_targets": [],
@@ -224,11 +260,13 @@
               "unattended": false
             },
             "created_ms": 1799913600000,
-            "updated_ms": 1799913600000,
+            "updated_ms": 1799999700000,
             "rev": 1,
             "record_digest": "00",
-            "site": "github.example.test",
-            "account": "bob@example.test"
+            "key": "_gh_sess",
+            "domain": ".github.example.test",
+            "path": "/",
+            "session": false
           }
         ],
         "needs_import": [],
@@ -275,32 +313,25 @@
         "items": [
           {
             "id": "gh-ada",
-            "kind": "browser_site",
-            "label": "github.example.test (Chrome, Default)",
+            "kind": "cookie",
             "provider_id": "chrome",
             "app_display": "Chrome",
             "source": "Default",
-            "summary": {
-              "cookies": [],
-              "storage_origins": [],
-              "passwords": 0,
-              "files": [],
-              "keychain_services": [],
-              "bytes": 0
-            },
-            "warnings": [],
+            "bytes": 64,
             "identity_provider": false,
             "policy": {
               "allowed_targets": [],
               "ttl_secs": 3600,
-              "unattended": false
+              "unattended": true
             },
             "created_ms": 1799913600000,
-            "updated_ms": 1799913600000,
+            "updated_ms": 1799999700000,
             "rev": 1,
             "record_digest": "00",
-            "site": "github.example.test",
-            "account": "ada@example.test"
+            "key": "user_session",
+            "domain": ".github.example.test",
+            "path": "/",
+            "session": false
           }
         ],
         "needs_import": [
@@ -440,7 +471,9 @@
       "entries": 5,
       "unauthenticated": 0
     },
-    "partialErrors": []
+    "partialErrors": [],
+    "namesVisible": true,
+    "itemsTotal": 8
   },
   "selections": [
     {
@@ -460,8 +493,8 @@
       "category": "recent"
     },
     {
-      "kind": "site",
-      "key": "chrome:github.example.test"
+      "kind": "app",
+      "key": "slack"
     }
   ],
   "approvals": [
@@ -470,7 +503,7 @@
       "actions": [
         {
           "type": "toggle",
-          "key": "gh-bob"
+          "key": "chrome|example.test"
         },
         {
           "type": "toggle",
@@ -481,7 +514,11 @@
         },
         {
           "type": "toggle",
-          "key": "gh-ada"
+          "key": "chrome|example.test"
+        },
+        {
+          "type": "toggle",
+          "key": "chrome|example.test"
         }
       ]
     },
@@ -490,7 +527,7 @@
       "actions": [
         {
           "type": "toggle",
-          "key": "gh-ada"
+          "key": "chrome|example.test"
         },
         {
           "type": "toggle",
@@ -503,10 +540,6 @@
     }
   ],
   "deny": "req-2",
-  "siteToggle": {
-    "key": "chrome:github.example.test",
-    "on": true
-  },
   "disabled": {
     "request": "req-1",
     "actions": [
@@ -514,5 +547,72 @@
         "type": "select-all"
       }
     ]
+  },
+  "vault": {
+    "state": {
+      "query": "",
+      "selected": [],
+      "expanded": []
+    },
+    "actions": [
+      {
+        "type": "toggle-open",
+        "key": "chrome|example.test"
+      },
+      {
+        "type": "toggle",
+        "id": "gh-bob"
+      },
+      {
+        "type": "toggle-group",
+        "key": "chrome|example.test"
+      },
+      {
+        "type": "toggle-group",
+        "key": "chrome"
+      },
+      {
+        "type": "clear"
+      },
+      {
+        "type": "query",
+        "text": "cookie"
+      },
+      {
+        "type": "select-all"
+      },
+      {
+        "type": "query",
+        "text": "slack"
+      },
+      {
+        "type": "select-all"
+      },
+      {
+        "type": "query",
+        "text": "nothing-like-this"
+      }
+    ],
+    "unlock": [
+      {
+        "count": 1,
+        "name": "user_session"
+      },
+      {
+        "count": 3,
+        "name": null
+      }
+    ],
+    "delete": [
+      {
+        "count": 1,
+        "liveCopies": 0
+      },
+      {
+        "count": 3,
+        "liveCopies": 1
+      }
+    ],
+    "app": "slack"
   }
 }

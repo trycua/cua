@@ -59,6 +59,32 @@ pub struct CookieRowRef {
     pub path: String,
 }
 
+/// One saved login an import wrote into an existing `Login Data` database,
+/// identified by what Chromium matches a login on, so `wipe` deletes exactly
+/// this row and nothing the browser already held.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LoginRowRef {
+    /// Absolute path of the `Login Data` database.
+    pub db: PathBuf,
+    /// `logins.origin_url`.
+    pub origin_url: String,
+    /// `logins.username_value`.
+    pub username_value: String,
+    /// `logins.signon_realm`.
+    pub signon_realm: String,
+}
+
+/// The localStorage keys an import wrote into a Chromium `Local Storage`
+/// LevelDB, so `wipe` can delete exactly those (hex, as LevelDB keys are
+/// arbitrary bytes) and leave the browser's own values alone.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StorageKeysRef {
+    /// Absolute path of the `Local Storage/leveldb` directory.
+    pub db: PathBuf,
+    /// Data keys and created `META:` keys, hex.
+    pub keys: Vec<String>,
+}
+
 /// What one import wrote, as reported by the importer while it wrote it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ImportRecord {
@@ -73,6 +99,10 @@ pub struct ImportRecord {
     /// have already called [`Self::file_written`] for it, so this is only
     /// the merge case, into a database the import did not create).
     pub cookie_rows: Vec<CookieRowRef>,
+    /// localStorage keys written into a `Local Storage` LevelDB.
+    pub local_storage: Vec<StorageKeysRef>,
+    /// Saved logins written into an existing `Login Data` database.
+    pub login_rows: Vec<LoginRowRef>,
     /// Things the user should be told about that did not fail the import
     /// (e.g. the app will ask once for a password). Reported back to the
     /// client, never ledgered.
@@ -133,6 +163,51 @@ impl ImportRecord {
         }
     }
 
+    /// Records a saved login written into an existing `Login Data` database.
+    pub fn login_row_written(
+        &mut self,
+        db: &Path,
+        origin_url: &str,
+        username_value: &str,
+        signon_realm: &str,
+    ) {
+        let row = LoginRowRef {
+            db: db.to_path_buf(),
+            origin_url: origin_url.to_owned(),
+            username_value: username_value.to_owned(),
+            signon_realm: signon_realm.to_owned(),
+        };
+        if !self.login_rows.contains(&row) {
+            self.login_rows.push(row);
+        }
+    }
+
+    /// Records localStorage keys written into the LevelDB at `db`.
+    pub fn local_storage_written(&mut self, db: &Path, written: &cua_chromium_storage::Written) {
+        let keys: Vec<String> = written
+            .keys
+            .iter()
+            .chain(&written.meta_keys)
+            .map(hex::encode)
+            .collect();
+        if keys.is_empty() {
+            return;
+        }
+        match self.local_storage.iter_mut().find(|r| r.db == db) {
+            Some(r) => {
+                for k in keys {
+                    if !r.keys.contains(&k) {
+                        r.keys.push(k);
+                    }
+                }
+            }
+            None => self.local_storage.push(StorageKeysRef {
+                db: db.to_path_buf(),
+                keys,
+            }),
+        }
+    }
+
     /// Adds everything in `other` that is not already here.
     pub fn merge(&mut self, other: &ImportRecord) {
         for f in &other.files {
@@ -141,6 +216,23 @@ impl ImportRecord {
         for r in &other.cookie_rows {
             if !self.cookie_rows.contains(r) {
                 self.cookie_rows.push(r.clone());
+            }
+        }
+        for r in &other.login_rows {
+            if !self.login_rows.contains(r) {
+                self.login_rows.push(r.clone());
+            }
+        }
+        for r in &other.local_storage {
+            for k in &r.keys {
+                match self.local_storage.iter_mut().find(|x| x.db == r.db) {
+                    Some(x) if !x.keys.contains(k) => x.keys.push(k.clone()),
+                    Some(_) => {}
+                    None => self.local_storage.push(StorageKeysRef {
+                        db: r.db.clone(),
+                        keys: vec![k.clone()],
+                    }),
+                }
             }
         }
         for d in &other.created_dirs {
@@ -159,6 +251,8 @@ impl ImportRecord {
             && self.created_dirs.is_empty()
             && self.keychain_items.is_empty()
             && self.cookie_rows.is_empty()
+            && self.local_storage.is_empty()
+            && self.login_rows.is_empty()
     }
 }
 
@@ -182,6 +276,12 @@ pub struct Ledger {
     /// predates row-level cookie tracking, not a ledger that lost rows).
     #[serde(default)]
     pub cookie_rows: Vec<CookieRowRef>,
+    /// localStorage keys written into a `Local Storage` LevelDB.
+    #[serde(default)]
+    pub local_storage: Vec<StorageKeysRef>,
+    /// Saved logins written into an existing `Login Data` database.
+    #[serde(default)]
+    pub login_rows: Vec<LoginRowRef>,
     /// Unix ms after which the import is wiped; 0 = never.
     pub expires_at_ms: u64,
     /// Unix ms of the import.
@@ -205,6 +305,8 @@ impl Ledger {
             directories: record.created_dirs.clone(),
             keychain_items: record.keychain_items.clone(),
             cookie_rows: record.cookie_rows.clone(),
+            local_storage: record.local_storage.clone(),
+            login_rows: record.login_rows.clone(),
             expires_at_ms,
             imported_at_ms,
         }
@@ -217,6 +319,8 @@ impl Ledger {
             created_dirs: self.directories.clone(),
             keychain_items: self.keychain_items.clone(),
             cookie_rows: self.cookie_rows.clone(),
+            local_storage: self.local_storage.clone(),
+            login_rows: self.login_rows.clone(),
             notices: Vec::new(),
         }
     }
@@ -406,6 +510,11 @@ pub struct WipeReport {
     /// database itself is never in `removed_paths`: it was not this
     /// import's file to remove).
     pub cookie_rows_removed: u32,
+    /// localStorage keys deleted from a `Local Storage` LevelDB (the
+    /// database itself is never removed).
+    pub local_storage_keys_removed: u32,
+    /// Saved logins deleted from an existing `Login Data` database.
+    pub login_rows_removed: u32,
     /// Ledgered paths refused (outside the home, `..`, symlinks), with why.
     /// Never retried: a refused entry is not trusted.
     pub refused: Vec<(PathBuf, String)>,
@@ -483,6 +592,16 @@ fn delete_cookie_row(db: &Path, host_key: &str, name: &str, path: &str) -> rusql
     )
 }
 
+/// Deletes exactly one saved login from a `Login Data` database. A row that
+/// is not there is not an error.
+fn delete_login_row(row: &LoginRowRef) -> rusqlite::Result<usize> {
+    let conn = rusqlite::Connection::open(&row.db)?;
+    conn.execute(
+        "DELETE FROM logins WHERE origin_url = ?1 AND username_value = ?2 AND signon_realm = ?3",
+        rusqlite::params![row.origin_url, row.username_value, row.signon_realm],
+    )
+}
+
 /// Undoes `ledger` under `dest_home`: removes its files, the directories it
 /// created (see below), its Keychain items and its cookie rows (through
 /// `host` for the Keychain; everything else directly).
@@ -550,6 +669,58 @@ pub fn wipe(ledger: &Ledger, dest_home: &Path, host: &dyn HostEffects) -> WipeRe
                 }
             }
             Err(why) => report.refused.push((row.db.clone(), why)),
+        }
+    }
+    for row in &ledger.login_rows {
+        let rel = match confine(&row.db, dest_home) {
+            Ok(rel) => rel,
+            Err(why) => {
+                report.refused.push((row.db.clone(), why));
+                continue;
+            }
+        };
+        match probe(dest_home, &rel) {
+            Ok(Probe::Missing) => {}
+            Ok(Probe::Present(meta)) if meta.is_dir() => report.refused.push((
+                row.db.clone(),
+                "ledgered as a Login Data database but is a directory".into(),
+            )),
+            Ok(Probe::Present(_)) => match delete_login_row(row) {
+                Ok(n) => report.login_rows_removed += n as u32,
+                Err(e) => {
+                    report.errors.push(format!("{}: {e}", row.db.display()));
+                    report.failed.login_rows.push(row.clone());
+                }
+            },
+            Err(why) => report.refused.push((row.db.clone(), why)),
+        }
+    }
+    for r in &ledger.local_storage {
+        let rel = match confine(&r.db, dest_home) {
+            Ok(rel) => rel,
+            Err(why) => {
+                report.refused.push((r.db.clone(), why));
+                continue;
+            }
+        };
+        match probe(dest_home, &rel) {
+            Ok(Probe::Missing) => {}
+            Ok(Probe::Present(meta)) if !meta.is_dir() => report.refused.push((
+                r.db.clone(),
+                "ledgered as a LevelDB directory but is a file".into(),
+            )),
+            Ok(Probe::Present(_)) => {
+                let keys: Vec<Vec<u8>> =
+                    r.keys.iter().filter_map(|k| hex::decode(k).ok()).collect();
+                match cua_chromium_storage::delete(&r.db, &keys) {
+                    Ok(n) => report.local_storage_keys_removed += n as u32,
+                    Err(e) => {
+                        report.errors.push(format!("{}: {e}", r.db.display()));
+                        report.failed.local_storage.push(r.clone());
+                    }
+                }
+            }
+            Err(why) => report.refused.push((r.db.clone(), why)),
         }
     }
     let mut dirs: Vec<(PathBuf, PathBuf)> = Vec::new();
@@ -749,6 +920,8 @@ mod tests {
             directories: dirs.to_vec(),
             keychain_items: vec![],
             cookie_rows: vec![],
+            local_storage: vec![],
+            login_rows: vec![],
             expires_at_ms: expires,
             imported_at_ms: 1,
         }

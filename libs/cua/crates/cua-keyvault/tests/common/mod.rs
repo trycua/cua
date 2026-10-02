@@ -15,9 +15,8 @@ use cua_keyvault::broker::{
     Backend, Broker, BrokerConfig, Captured, DeliveryOutcome, FakePresence, ImportSpec,
     InitRequest, Inventory, LoginFill, LoginFilled, PasswordImportSpec,
 };
-use cua_keyvault::model::{
-    ItemKind, ItemMeta, ItemPayload, ItemPolicy, ItemSummary, LoginRecord, PayloadEntry,
-};
+use cua_keyvault::model::{ItemKind, ItemMeta, LoginRecord, PayloadEntry};
+use cua_keyvault::record::{self, CookieRecord};
 
 pub const PASSWORD: &str = "s3cret-Pa55";
 
@@ -30,49 +29,97 @@ pub struct FakeBackend {
     pub delivered: Mutex<Vec<(String, Vec<String>)>>,
     /// Refuse the fill (a page on the wrong origin).
     pub refuse_fill: Mutex<bool>,
+    /// (target, import id) of every wipe.
+    pub wiped: Mutex<Vec<(String, String)>>,
+    /// Bumped to make the next capture read different values.
+    pub generation: Mutex<u32>,
+    /// The cookie hosts each delivery carried.
+    pub delivered_hosts: Mutex<Vec<Vec<String>>>,
+    /// The icons the source browser's local store holds (site, png bytes).
+    pub icons: Mutex<Vec<(String, Vec<u8>)>>,
 }
 
-pub fn logins_item(site: &str, logins: &[(&str, &str, &str)]) -> Captured {
-    let records: Vec<LoginRecord> = logins
+fn captured(n: record::NewRecord, app: &str) -> Captured {
+    let (meta, payload) = n.into_item(app, "Chrome", "Default", "full");
+    Captured { meta, payload }
+}
+
+/// One captured Password item per login (the vault keeps one secret per
+/// item, keyed by origin and username).
+pub fn logins_items(logins: &[(&str, &str, &str)]) -> Vec<Captured> {
+    logins
         .iter()
-        .map(|(o, u, p)| LoginRecord {
-            origin: (*o).into(),
-            username: (*u).into(),
-            password: (*p).into(),
+        .map(|(o, u, p)| {
+            captured(
+                record::password_record(&LoginRecord {
+                    origin: (*o).into(),
+                    username: (*u).into(),
+                    password: (*p).into(),
+                })
+                .unwrap(),
+                "chrome",
+            )
         })
-        .collect();
-    Captured {
-        meta: ItemMeta {
-            id: String::new(),
-            kind: ItemKind::SitePasswords,
-            label: format!("{site} passwords (chrome)"),
-            provider_id: "chrome".into(),
-            app_display: "Chrome".into(),
-            site: Some(site.into()),
-            account: None,
-            source: "Default".into(),
-            summary: ItemSummary {
-                passwords: records.len() as u32,
-                ..Default::default()
-            },
-            warnings: vec![],
-            identity_provider: false,
-            policy: ItemPolicy::default(),
-            created_ms: 0,
-            updated_ms: 0,
-            rev: 0,
-            record_digest: String::new(),
-        },
-        payload: ItemPayload {
-            provider_id: "chrome".into(),
-            scope: "full".into(),
-            entries: vec![ItemPayload::logins_entry(&records).unwrap()],
-        },
-    }
+        .collect()
+}
+
+pub fn meta(kind: ItemKind, domain: Option<&str>, key: &str) -> ItemMeta {
+    ItemMeta::draft(kind, "chrome", "Chrome", domain, key)
+}
+
+/// A captured cookie (host `domain`, root path).
+pub fn cookie(domain: &str, name: &str, value: &str) -> Captured {
+    captured(
+        record::cookie_record(&CookieRecord {
+            creation_utc: None,
+            expires_utc: 0,
+            host_key: domain.into(),
+            http_only: true,
+            last_update_utc: None,
+            name: name.into(),
+            partition_key: None,
+            last_access_utc: None,
+            source_type: None,
+            has_cross_site_ancestor: None,
+            path: "/".into(),
+            priority: None,
+            same_site: -1,
+            secure: true,
+            source_port: None,
+            source_scheme: None,
+            value: value.as_bytes().to_vec(),
+        })
+        .unwrap(),
+        "chrome",
+    )
+}
+
+/// A captured file.
+pub fn file(path: &str, contents: &str) -> Captured {
+    captured(
+        record::file_record(path, 0o600, contents.as_bytes()).unwrap(),
+        "chrome",
+    )
 }
 
 #[async_trait::async_trait]
 impl Backend for FakeBackend {
+    fn favicons(
+        &self,
+        _app: &str,
+        _profile: Option<&str>,
+        sites: &[String],
+    ) -> cua_keyvault::Result<Vec<(String, Vec<u8>)>> {
+        Ok(self
+            .icons
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(s, _)| sites.contains(s))
+            .cloned()
+            .collect())
+    }
+
     fn inventory(&self, app: &str, _profile: Option<&str>) -> cua_keyvault::Result<Inventory> {
         Ok(Inventory {
             provider_id: app.into(),
@@ -82,21 +129,35 @@ impl Backend for FakeBackend {
     }
 
     fn capture(&self, spec: &ImportSpec) -> cua_keyvault::Result<Vec<Captured>> {
-        // A browser-site item carrying one cookie bundle entry.
-        Ok(spec
-            .sites
-            .iter()
-            .map(|s| {
-                let mut c = logins_item(&s.site, &[]);
-                c.meta.kind = ItemKind::BrowserSite;
-                c.payload.entries = vec![PayloadEntry {
-                    rel_path: format!("cookies/{}", s.site),
-                    mode: 0o600,
-                    data: "Q09PS0lF".into(),
-                }];
-                c
-            })
-            .collect())
+        // Two cookies per site (a session and a csrf token), and the files
+        // the spec's paths name (a browser's bookmarks and local state by
+        // default). A domain filter keeps only those sites.
+        let wanted = |d: &str| {
+            spec.domains
+                .as_ref()
+                .is_none_or(|ds| ds.iter().any(|x| x == d))
+        };
+        let mut out = Vec::new();
+        let gen_ = *self.generation.lock().unwrap();
+        for s in spec.sites.iter().filter(|s| wanted(&s.site)) {
+            let host = format!(".{}", s.site);
+            out.push(cookie(&host, "session", &format!("sess-{}-{gen_}", s.site)));
+            out.push(cookie(&host, "csrf", &format!("csrf-{}-{gen_}", s.site)));
+        }
+        if spec.whole_app {
+            let paths = spec
+                .paths
+                .clone()
+                .unwrap_or_else(|| vec!["Default/Bookmarks".into(), "Local State".into()]);
+            for p in paths {
+                out.push(file(&p, &format!("contents of {p}")));
+            }
+        }
+        for c in &mut out {
+            c.meta.provider_id = spec.app.clone();
+            c.payload.provider_id = spec.app.clone();
+        }
+        Ok(out)
     }
 
     fn capture_passwords(&self, spec: &PasswordImportSpec) -> cua_keyvault::Result<Vec<Captured>> {
@@ -117,7 +178,7 @@ impl Backend for FakeBackend {
         Ok(all
             .iter()
             .filter(|(site, _)| spec.sites.is_empty() || spec.sites.iter().any(|s| s == site))
-            .map(|(site, l)| logins_item(site, l))
+            .flat_map(|(_, l)| logins_items(l))
             .collect())
     }
 
@@ -125,25 +186,40 @@ impl Backend for FakeBackend {
         &self,
         target: &str,
         _provider_id: &str,
-        payloads: Vec<ItemPayload>,
+        _scope: &str,
+        entries: Vec<PayloadEntry>,
         _expires_ms: u64,
     ) -> cua_keyvault::Result<DeliveryOutcome> {
-        let paths: Vec<String> = payloads
+        use base64::Engine as _;
+        let paths: Vec<String> = entries.iter().map(|e| e.rel_path.clone()).collect();
+        let hosts: Vec<String> = entries
             .iter()
-            .flat_map(|p| p.entries.iter().map(|e| e.rel_path.clone()))
+            .filter(|e| e.rel_path == record::COOKIES_ENTRY)
+            .flat_map(|e| {
+                let raw = base64::engine::general_purpose::STANDARD
+                    .decode(&e.data)
+                    .unwrap();
+                let rows: Vec<serde_json::Value> = serde_json::from_slice(&raw).unwrap();
+                rows.iter()
+                    .map(|r| r["host_key"].as_str().unwrap().to_string())
+                    .collect::<Vec<_>>()
+            })
             .collect();
-        self.delivered
-            .lock()
-            .unwrap()
-            .push((target.into(), paths.clone()));
+        self.delivered_hosts.lock().unwrap().push(hosts);
+        let mut d = self.delivered.lock().unwrap();
+        d.push((target.into(), paths.clone()));
         Ok(DeliveryOutcome {
-            import_id: "imp".into(),
+            import_id: format!("imp-{}", d.len()),
             imported: paths,
             ..Default::default()
         })
     }
 
-    async fn wipe(&self, _target: &str, _import_id: &str) -> cua_keyvault::Result<Vec<String>> {
+    async fn wipe(&self, target: &str, import_id: &str) -> cua_keyvault::Result<Vec<String>> {
+        self.wiped
+            .lock()
+            .unwrap()
+            .push((target.into(), import_id.into()));
         Ok(vec![])
     }
 
@@ -217,7 +293,18 @@ pub async fn rig() -> Rig {
     }
 }
 
-/// Imports the fake browser's saved passwords (first party, presence yes).
+/// Every item with its names visible (opens the browse window first).
+pub async fn all_items(r: &Rig) -> Vec<ItemMeta> {
+    let page = r.broker.list_items(&r.cua, 0, 1000).await.unwrap();
+    if page.names_visible {
+        return page.items;
+    }
+    r.broker.browse(&r.cua).await.unwrap();
+    r.broker.list_items(&r.cua, 0, 1000).await.unwrap().items
+}
+
+/// Imports the fake browser's saved passwords (first party, presence yes)
+/// and returns the password items.
 pub async fn import_passwords(r: &Rig) -> Vec<ItemMeta> {
     r.broker
         .import_passwords(
@@ -228,5 +315,10 @@ pub async fn import_passwords(r: &Rig) -> Vec<ItemMeta> {
             },
         )
         .await
-        .unwrap()
+        .unwrap();
+    all_items(r)
+        .await
+        .into_iter()
+        .filter(|i| i.kind == ItemKind::Password)
+        .collect()
 }

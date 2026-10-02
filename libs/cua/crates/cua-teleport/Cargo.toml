@@ -13,6 +13,8 @@ publish = false
 cua-icon-cache.workspace = true
 cua-home.workspace = true
 cua-teleport-bundle.workspace = true
+# Chromium localStorage (the Local Storage LevelDB) as items.
+cua-chromium-storage.workspace = true
 cua-spacesd-client.workspace = true
 # Sealed delivery to a pinned machine key (S1).
 cua-machine-seal = { path = "../cua-machine-seal" }

@@ -1,6 +1,6 @@
 ---
 title: "Teleport picker"
-description: "The teleport picker and review, and consent."
+description: "The teleport picker and its catalog."
 ---
 
 {/*
@@ -17,7 +17,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 These APIs are part of the Cua Spaces app export for building Spaces UIs. They are source-available under FSL-1.1-MIT and ship for Swift only (`import CuaSpacesFFI`); the Rust tab shows the `cua-spaces-ffi` crate they come from. The open source SDK packages for Python, TypeScript and Kotlin do not include them.
 </Callout>
 
-The picker lists `Teleport.catalog` entries, reviews a `Teleport.plan` with its consent items, and follows the run. The overlays that show a teleport in progress are on [Teleport transfer and drag](/cua-sdk/reference/spaces/app-core/teleport-transfer).
+The picker lists `Teleport.catalog` entries and drives the steps up to the review. The overlays that show a teleport in progress are on [Teleport transfer and drag](/cua-sdk/reference/spaces/app-core/teleport-transfer).
 
 ## `AppEntrySection` record
 
@@ -27,42 +27,6 @@ Returned by [`app_picker_sections`](#app_picker_sections).
 | --- | --- | --- | --- |
 | `title` | `String` |  | "Recent", "Apps", "Not available". |
 | `entries` | [`Vec<AppCatalogEntry>`](#appcatalogentry-record) |  | Entries. |
-
-## `AppReviewView` record
-
-Returned by [`app_picker_review`](#app_picker_review).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `title` | `String` |  | "Teleport Slack to Aurora". |
-| `items` | [`Vec<AppConsentItem>`](#appconsentitem-record) |  | The consent lines. |
-| `steps` | [`Vec<AppPlanStepView>`](#appplanstepview-record) |  | Plan steps. |
-| `needs_acknowledgement` / `needsAcknowledgement` | `bool` |  | The secrets checkbox shows. |
-| `acknowledged` | `bool` |  | Checked. |
-| `offers_save_to_keyvault` / `offersSaveToKeyvault` | `bool` |  | The "Save to Keyvault" checkbox shows (a sensitive plan only: there is nothing to keep sealed otherwise). |
-| `save_to_keyvault` / `saveToKeyvault` | `bool` |  | Checked. |
-| `needs_relay_plaintext_acknowledgement` / `needsRelayPlaintextAcknowledgement` | `bool` |  | The relay-plaintext warning's checkbox shows (S1): this Space predates end-to-end sealing, and the Cua relay could read this secret in transit. |
-| `acknowledged_relay_plaintext` / `acknowledgedRelayPlaintext` | `bool` |  | Checked. |
-| `can_confirm` / `canConfirm` | `bool` |  | "Teleport" is enabled. |
-| `leaves_text` / `leavesText` | `Option<String>` |  | "12 MB leaves this Mac" (none when nothing leaves). |
-| `warnings` | `Vec<String>` |  | Caveats. |
-
-## `AppPlanStepView` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `kind` | `String` |  | `install`, `files`, `state`, `launch`. |
-| `summary` | `String` |  | One line. |
-
-## `AppInstallCuaPrompt` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `installed` | `bool` |  | Cua is installed but not running. |
-| `title` | `String` |  | Title. |
-| `message` | `String` |  | One line. |
-| `action_label` / `actionLabel` | `String` |  | Button. |
-| `url` | `String` |  | Button target: always one of the constants, never from the error. |
 
 ## `AppCatalogEntry` record
 
@@ -75,9 +39,9 @@ Returned by [`app_catalog_entries_from_json`](#app_catalog_entries_from_json), [
 | `host_path` / `hostPath` | `Option<String>` |  | Bundle path. |
 | `host_app_id` / `hostAppId` | `Option<String>` |  | Bundle id. |
 | `version` | `Option<String>` |  | Version. |
-| `capability` | [`AppTeleportCapability`](#appteleportcapability-enum) |  | Capability. |
+| `capability` | [`AppTeleportCapability`](/cua-sdk/reference/spaces/app-core/teleport-run#appteleportcapability-enum) |  | Capability. |
 | `reason` | `Option<String>` |  | Why unsupported, or a caveat. |
-| `moves` | [`Vec<AppTeleportMove>`](#appteleportmove-enum) |  | Offered moves, UI order. |
+| `moves` | [`Vec<AppTeleportMove>`](/cua-sdk/reference/spaces/app-core/teleport-run#appteleportmove-enum) |  | Offered moves, UI order. |
 | `provider_id` / `providerId` | `Option<String>` |  | Provider id. |
 | `sensitive_groups` / `sensitiveGroups` | [`Vec<AppSensitiveGroup>`](/cua-sdk/reference/spaces/app-core/keyvault#appsensitivegroup-enum) |  | The opt-in groups the signed-in state move offers, UI order. |
 | `install_source` / `installSource` | `Option<String>` |  | `manifest`, `image`, `space`. |
@@ -86,17 +50,6 @@ Returned by [`app_catalog_entries_from_json`](#app_catalog_entries_from_json), [
 | `launch_bin` / `launchBin` | `Option<String>` |  | Binary. |
 | `last_used_ms` / `lastUsedMs` | `Option<i64>` |  | Last used (recents). |
 | `json` | `String` |  | The SDK's JSON for this entry. |
-
-## `AppConsentItem` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `kind` | [`AppConsentKind`](#appconsentkind-enum) |  | Kind. |
-| `key` | `String` |  | Stable key. |
-| `label` | `String` |  | Label. |
-| `detail` | `String` |  | Detail. |
-| `bytes` | `u64` |  | Bytes that leave. |
-| `sensitive` | `bool` |  | Credentials, cookies, tokens. |
 
 ## `AppPickerPrimary` record
 
@@ -120,106 +73,19 @@ Returned by [`app_picker_initial`](#app_picker_initial), [`app_picker_reduce`](#
 | `query` | `String` |  | Search. |
 | `selected_id` / `selectedId` | `Option<String>` |  | Highlighted app. |
 | `entry` | [`Option<AppCatalogEntry>`](#appcatalogentry-record) |  | The chosen app. |
-| `moves` | [`Option<AppTeleportMove>`](#appteleportmove-enum) |  | What moves. |
+| `moves` | [`Option<AppTeleportMove>`](/cua-sdk/reference/spaces/app-core/teleport-run#appteleportmove-enum) |  | What moves. |
 | `files` | `Vec<String>` |  | Chosen files. |
 | `sensitive` | [`Vec<AppSensitiveGroup>`](/cua-sdk/reference/spaces/app-core/keyvault#appsensitivegroup-enum) |  | The opt-in groups checked on the options step (only planned with the signed-in state move). Each group's items are secrets the review lists and asks to acknowledge. |
-| `plan` | [`Option<AppTeleportPlan>`](#appteleportplan-record) |  | The plan under review. |
+| `plan` | [`Option<AppTeleportPlan>`](/cua-sdk/reference/spaces/app-core/teleport-run#appteleportplan-record) |  | The plan under review. |
 | `acknowledged` | `bool` |  | Secrets acknowledged. |
 | `save_to_keyvault` / `saveToKeyvault` | `bool` |  | "Save to Keyvault" checked: keep the captured session sealed in the Cua Keyvault after delivery, for reuse without asking again (shown alongside the acknowledgement, only when the plan is sensitive). |
 | `acknowledged_relay_plaintext` / `acknowledgedRelayPlaintext` | `bool` |  | `Plan.relay_unsealed`'s warning acknowledged (S1). |
-| `events` | [`Vec<AppTeleportRunEvent>`](#appteleportrunevent-record) |  | Run events (last `MAX_EVENTS`). |
-| `report` | [`Option<AppTeleportRunReport>`](#appteleportrunreport-record) |  | The run's report. |
+| `choice` | [`AppReviewChoice`](/cua-sdk/reference/spaces/app-core/teleport-review#appreviewchoice-record) |  | What the review sends: which sites, which items, from where. |
+| `events` | [`Vec<AppTeleportRunEvent>`](/cua-sdk/reference/spaces/app-core/teleport-run#appteleportrunevent-record) |  | Run events (last `MAX_EVENTS`). |
+| `report` | [`Option<AppTeleportRunReport>`](/cua-sdk/reference/spaces/app-core/teleport-run#appteleportrunreport-record) |  | The run's report. |
 | `error` | `Option<String>` |  | Error text. |
-| `install_prompt` / `installPrompt` | [`Option<AppInstallCuaPrompt>`](#appinstallcuaprompt-record) |  | The "needs the Cua app" prompt. |
+| `install_prompt` / `installPrompt` | [`Option<AppInstallCuaPrompt>`](/cua-sdk/reference/spaces/app-core/teleport-review#appinstallcuaprompt-record) |  | The "needs the Cua app" prompt. |
 | `error_back` / `errorBack` | [`AppPickerStep`](#apppickerstep-enum) |  | Where Back from an error goes. |
-
-## `AppTeleportConsent` record
-
-Returned by [`app_picker_consent`](#app_picker_consent).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `approved` | `bool` |  | Confirmed. |
-| `acknowledge_sensitive` / `acknowledgeSensitive` | `bool` |  | Secrets acknowledged. |
-| `save_to_keyvault` / `saveToKeyvault` | `bool` |  | "Save to Keyvault" checked. |
-| `acknowledge_relay_plaintext` / `acknowledgeRelayPlaintext` | `bool` |  | `Plan.relay_unsealed`'s warning acknowledged (S1). |
-
-## `AppTeleportPlan` record
-
-Returned by [`app_teleport_plan`](#app_teleport_plan), [`app_teleport_plan_from_json`](#app_teleport_plan_from_json).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `app` | [`AppCatalogEntry`](#appcatalogentry-record) |  | The app. |
-| `space_id` / `spaceId` | `String` |  | Target Space. |
-| `moves` | [`AppTeleportMove`](#appteleportmove-enum) |  | What moves. |
-| `steps` | [`Vec<AppPlanStepView>`](#appplanstepview-record) |  | Steps. |
-| `consent` | [`Vec<AppConsentItem>`](#appconsentitem-record) |  | Consent lines. |
-| `sensitive` | `bool` |  | Any line is a secret. |
-| `total_bytes` / `totalBytes` | `u64` |  | Bytes that leave this machine. |
-| `warnings` | `Vec<String>` |  | Caveats. |
-| `relay_unsealed` / `relayUnsealed` | `bool` |  | This Space is reached through a relay connection that predates end-to-end sealing: a secret this plan sends would cross it in the clear (S1). Needs `acknowledgeRelayPlaintext` the same way a secret needs `acknowledgeSensitive`. Defaults to `false`: older fixtures and a plan from a relay that predates the capability both read as sealed (never retroactively flagged). |
-| `json` | `String` |  | The SDK's JSON for this plan. |
-
-## `AppTeleportRunEvent` record
-
-Returned by [`app_teleport_run_event`](#app_teleport_run_event).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `step` | `u32` |  | Step index. |
-| `steps` | `u32` |  | Steps. |
-| `kind` | `String` |  | Step kind. |
-| `phase` | [`AppTeleportRunPhase`](#appteleportrunphase-enum) |  | Phase. |
-| `detail` | `String` |  | Detail. |
-| `done_bytes` / `doneBytes` | `u64` |  | Bytes done. |
-| `total_bytes` / `totalBytes` | `u64` |  | Bytes total. |
-
-## `AppTeleportRunReport` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `app_id` / `appId` | `String` |  | App id. |
-| `installed` | `Vec<String>` |  | Installed. |
-| `sent` | `Vec<String>` |  | Sent. |
-| `imported` | `Vec<String>` |  | Imported. |
-| `skipped` | `Vec<String>` |  | Skipped. |
-| `launched` | `bool` |  | Launched. |
-
-## `AppConsentKind` enum
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-.install
-.file
-.folder
-.state
-.secret
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-AppConsentKind::Install
-AppConsentKind::File
-AppConsentKind::Folder
-AppConsentKind::State
-AppConsentKind::Secret
-```
-
-</Tab>
-</Tabs>
-
-| Variant | Description |
-| --- | --- |
-| `Install` | An install into the Space. |
-| `File` | A file that leaves this machine. |
-| `Folder` | A folder that leaves this machine. |
-| `State` | App state that leaves this machine. |
-| `Secret` | A secret that leaves this machine. |
 
 ## `AppPickerAction` enum
 
@@ -271,6 +137,16 @@ AppPickerAction::StreamLocalSoon
 .acknowledge(value: Bool)
 .saveToKeyvault(value: Bool)
 .acknowledgeRelayPlaintext(value: Bool)
+.domainsLoaded(inventory: KvInventory, remembered: [String]?)
+.domainsFailed
+.toggleDomain(domain: String)
+.selectShownDomains(value: Bool)
+.domainQuery(text: String)
+.toggleItem(key: String)
+.sendFrom(source: AppSendSource)
+.vaultItems(count: UInt32, newestMs: Int64, nowMs: Int64, selected: [String], passwordIds: [String])
+.togglePasswords(value: Bool)
+.vaultSelection(selected: [String])
 .confirm
 .progress(event: AppTeleportRunEvent)
 .finished(report: AppTeleportRunReport)
@@ -296,6 +172,16 @@ AppPickerEvent::Planned { plan: AppTeleportPlan }
 AppPickerEvent::Acknowledge { value: bool }
 AppPickerEvent::SaveToKeyvault { value: bool }
 AppPickerEvent::AcknowledgeRelayPlaintext { value: bool }
+AppPickerEvent::DomainsLoaded { inventory: KvInventory, remembered: Option<Vec<String>> }
+AppPickerEvent::DomainsFailed
+AppPickerEvent::ToggleDomain { domain: String }
+AppPickerEvent::SelectShownDomains { value: bool }
+AppPickerEvent::DomainQuery { text: String }
+AppPickerEvent::ToggleItem { key: String }
+AppPickerEvent::SendFrom { source: AppSendSource }
+AppPickerEvent::VaultItems { count: u32, newest_ms: i64, now_ms: i64, selected: Vec<String>, password_ids: Vec<String> }
+AppPickerEvent::TogglePasswords { value: bool }
+AppPickerEvent::VaultSelection { selected: Vec<String> }
 AppPickerEvent::Confirm
 AppPickerEvent::Progress { event: AppTeleportRunEvent }
 AppPickerEvent::Finished { report: AppTeleportRunReport }
@@ -322,6 +208,16 @@ AppPickerEvent::Back
 | `Acknowledge` | The secrets checkbox. Fields: `value: bool` |
 | `SaveToKeyvault` | The "Save to Keyvault" checkbox. Fields: `value: bool` |
 | `AcknowledgeRelayPlaintext` | The relay-plaintext warning's checkbox (S1). Fields: `value: bool` |
+| `DomainsLoaded` | The browser's sites with counts arrived (and what was picked last time for this app and Space, if anything). Fields: `inventory: KvInventory`, `remembered: Option<Vec<String>>` |
+| `DomainsFailed` | The inventory could not be read (the review then sends what the plan lists, as before). |
+| `ToggleDomain` | Pick or drop one site. Fields: `domain: String` |
+| `SelectShownDomains` | Pick or drop every site the search shows. Fields: `value: bool` |
+| `DomainQuery` | The sites list's search text. Fields: `text: String` |
+| `ToggleItem` | Turn a consent line on or off. Fields: `key: String` |
+| `SendFrom` | Where to send from. Fields: `source: AppSendSource` |
+| `VaultItems` | The app's saved Keyvault items (what the Keyvault holds for it). Fields: `count: u32`, `newest_ms: i64`, `now_ms: i64`, `selected: Vec<String>`, `password_ids: Vec<String>` |
+| `TogglePasswords` | Tick or untick "Also send saved passwords". Fields: `value: bool` |
+| `VaultSelection` | The chosen saved items changed. Fields: `selected: Vec<String>` |
 | `Confirm` | Confirm the review. |
 | `Progress` | A run event. Fields: `event: AppTeleportRunEvent` |
 | `Finished` | The run finished. Fields: `report: AppTeleportRunReport` |
@@ -396,99 +292,6 @@ AppPickerTab::ThisMac
 | --- | --- |
 | `Space` | This machine's windows, teleported into the Space. |
 | `ThisMac` | The Space's windows, streamed here. |
-
-## `AppTeleportCapability` enum
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-.full
-.installOnly
-.unsupported
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-AppTeleportCapability::Full
-AppTeleportCapability::InstallOnly
-AppTeleportCapability::Unsupported
-```
-
-</Tab>
-</Tabs>
-
-| Variant | Description |
-| --- | --- |
-| `Full` | App and signed-in state. |
-| `InstallOnly` | App, empty or with files. |
-| `Unsupported` | Not available. |
-
-## `AppTeleportMove` enum
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-.appOnly
-.appWithFiles
-.appWithState
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-AppTeleportMove::AppOnly
-AppTeleportMove::AppWithFiles
-AppTeleportMove::AppWithState
-```
-
-</Tab>
-</Tabs>
-
-| Variant | Description |
-| --- | --- |
-| `AppOnly` | Just the app. |
-| `AppWithFiles` | The app with files or folders. |
-| `AppWithState` | The app with its signed-in state. |
-
-## `AppTeleportRunPhase` enum
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-.started
-.progress
-.finished
-.failed
-.done
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-AppTeleportRunPhase::Started
-AppTeleportRunPhase::Progress
-AppTeleportRunPhase::Finished
-AppTeleportRunPhase::Failed
-AppTeleportRunPhase::Done
-```
-
-</Tab>
-</Tabs>
-
-| Variant | Description |
-| --- | --- |
-| `Started` | A step started. |
-| `Progress` | Bytes moved. |
-| `Finished` | A step finished. |
-| `Failed` | A step failed. |
-| `Done` | All done. |
 
 ## `app_catalog_entries_from_json`
 
@@ -596,7 +399,7 @@ pub fn app_picker_consent(state: AppPickerState) -> AppTeleportConsent
 | --- | --- | --- |
 | `state` | [`AppPickerState`](#apppickerstate-record) | required |
 
-**Returns** [`AppTeleportConsent`](#appteleportconsent-record)
+**Returns** [`AppTeleportConsent`](/cua-sdk/reference/spaces/app-core/teleport-run#appteleportconsent-record)
 
 ## `app_picker_initial`
 
@@ -760,7 +563,7 @@ pub fn app_picker_review(state: AppPickerState) -> Option<AppReviewView>
 | --- | --- | --- |
 | `state` | [`AppPickerState`](#apppickerstate-record) | required |
 
-**Returns** [`Option<AppReviewView>`](#appreviewview-record)
+**Returns** [`Option<AppReviewView>`](/cua-sdk/reference/spaces/app-core/teleport-review#appreviewview-record)
 
 ## `app_picker_sections`
 
@@ -842,113 +645,5 @@ pub fn app_picker_status(state: AppPickerState) -> Option<String>
 | Parameter | Type | Default |
 | --- | --- | --- |
 | `state` | [`AppPickerState`](#apppickerstate-record) | required |
-
-**Returns** `Option<String>`
-
-## `app_teleport_plan`
-
-A plan from `Teleport.plan`, as the review's plan.
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-func appTeleportPlan(plan: TeleportPlan) -> AppTeleportPlan
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn app_teleport_plan(plan: TeleportPlan) -> AppTeleportPlan
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `plan` | [`TeleportPlan`](/cua-sdk/reference/spaces/teleport-apps#teleportplan-record) | required |
-
-**Returns** [`AppTeleportPlan`](#appteleportplan-record)
-
-## `app_teleport_plan_from_json`
-
-A teleport plan from JSON (fixtures, parity flows).
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-func appTeleportPlanFromJson(json: String) throws -> AppTeleportPlan
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn app_teleport_plan_from_json(json: String) -> Result<AppTeleportPlan, CuaError>
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `json` | `String` | required |
-
-**Returns** [`AppTeleportPlan`](#appteleportplan-record) · **Raises** [`CuaError`](/cua-sdk/reference/errors)
-
-## `app_teleport_run_event`
-
-An SDK run event as the picker's (`AppPickerEvent.progress`).
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-func appTeleportRunEvent(event: TeleportRunEvent) -> AppTeleportRunEvent
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn app_teleport_run_event(event: TeleportRunEvent) -> AppTeleportRunEvent
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `event` | [`TeleportRunEvent`](/cua-sdk/reference/spaces/teleport-apps#teleportrunevent-record) | required |
-
-**Returns** [`AppTeleportRunEvent`](#appteleportrunevent-record)
-
-## `app_teleport_run_status`
-
-`app_picker_status` for a run's events as the SDK delivered them.
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-func appTeleportRunStatus(events: [TeleportRunEvent]) -> String?
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-pub fn app_teleport_run_status(events: Vec<TeleportRunEvent>) -> Option<String>
-```
-
-</Tab>
-</Tabs>
-
-| Parameter | Type | Default |
-| --- | --- | --- |
-| `events` | [`Vec<TeleportRunEvent>`](/cua-sdk/reference/spaces/teleport-apps#teleportrunevent-record) | required |
 
 **Returns** `Option<String>`

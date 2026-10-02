@@ -101,43 +101,7 @@ struct TeleportPickerSheet: View {
 
     @ViewBuilder private var review: some View {
         if let review = teleport.review {
-            Form {
-                Section {
-                    ForEach(review.items, id: \.key) { item in
-                        LabeledContent(item.label) {
-                            Text(item.sensitive ? "Secret" : item.detail).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                if review.needsAcknowledgement {
-                    Toggle("Send the secrets listed above", isOn: Binding(
-                        get: { review.acknowledged },
-                        set: { teleport.send(.acknowledge(value: $0)) }))
-                        .toggleStyle(.checkbox)
-                }
-                if review.offersSaveToKeyvault {
-                    Toggle("Save to Keyvault for reuse", isOn: Binding(
-                        get: { review.saveToKeyvault },
-                        set: { teleport.send(.saveToKeyvault(value: $0)) }))
-                        .toggleStyle(.checkbox)
-                        .help("Keep this signed-in session sealed in your Cua Keyvault so it can " +
-                              "be delivered again without asking again.")
-                }
-                if review.needsRelayPlaintextAcknowledgement {
-                    Section {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Toggle("Send without end-to-end encryption", isOn: Binding(
-                                get: { review.acknowledgedRelayPlaintext },
-                                set: { teleport.send(.acknowledgeRelayPlaintext(value: $0)) }))
-                                .toggleStyle(.checkbox)
-                            Text("This Space predates end-to-end sealing. The relay could read these secrets in transit.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            .formStyle(.grouped)
+            TeleportReview(teleport: teleport, review: review)
         }
     }
 

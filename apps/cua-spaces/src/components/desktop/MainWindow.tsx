@@ -4,7 +4,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { FIXTURE_SPACES } from '../../model/fixtures';
-import type { KvSelection } from '../../model/keyvault';
 import type { Space } from '../../model/types';
 import {
   deleteFailedText,
@@ -35,7 +34,6 @@ import {
   type OnboardingState,
 } from '../../native/host';
 import { createInstallerBridge, type InstallerBridge } from '../../native/installer';
-import { createKeyvaultBridge, type KeyvaultBridge } from '../../native/keyvault';
 import { createAgentsBridge, type AgentsBridge } from '../../native/persistent';
 import { createDriveBridge, type DriveBridge } from '../../native/drive';
 import { AgentsPage, DrivePage, NotificationsPage, useAgentNotifications } from './AgentsPages';
@@ -74,12 +72,6 @@ import TeleportDropZone from '../TeleportDropZone';
 import { ThisMachinePanel } from '../ThisMachinePanel';
 import { THIS_MACHINE_ID } from '../../model/host';
 import { Thumbnail } from '../Thumbnail';
-import {
-  KeyvaultSidebarSection,
-  KeyvaultView,
-  useKeyvaultActions,
-  useKeyvaultOverview,
-} from './KeyvaultView';
 import { NewSpaceWizard, type CreatePlan, type SpaceHost } from './NewSpaceWizard';
 import type { Experiments } from '../../model/experiments';
 import { useExperiments } from '../../state/experiments';
@@ -94,7 +86,6 @@ export interface MainWindowProps {
   teleport?: TeleportBridge;
   fileSend?: FileSendBridge;
   windowDrag?: WindowDragBridge;
-  keyvault?: KeyvaultBridge;
   /** This device on the relay (Settings → Devices, approvals). */
   devices?: DevicesBridge;
   /** Sharing a Space with other accounts (the Share sheet). */
@@ -149,7 +140,6 @@ export function MainWindow({
   teleport: teleportProp,
   fileSend: fileSendProp,
   windowDrag: windowDragProp,
-  keyvault: keyvaultProp,
   devices: devicesProp,
   share: shareProp,
   cloud: cloudProp,
@@ -166,7 +156,6 @@ export function MainWindow({
   const teleport = useMemo(() => teleportProp ?? createTeleportBridge(), [teleportProp]);
   const fileSend = useMemo(() => fileSendProp ?? createFileSendBridge(), [fileSendProp]);
   const windowDrag = useMemo(() => windowDragProp ?? createWindowDragBridge(), [windowDragProp]);
-  const keyvault = useMemo(() => keyvaultProp ?? createKeyvaultBridge(), [keyvaultProp]);
   const devicesBridge = useMemo(() => devicesProp ?? createDevicesBridge(), [devicesProp]);
   const shareBridge = useMemo(() => shareProp ?? createShareBridge(), [shareProp]);
   const cloudBridge = useMemo(() => cloudProp ?? createCloudBridge(), [cloudProp]);
@@ -236,7 +225,7 @@ export function MainWindow({
   const [hosts, setHosts] = useState<SpaceHost[]>([]);
   // Settings, Experiments: what the window shows (Share, your clouds).
   const experiments = useExperiments();
-  // `?view=new-space|settings|keyvault|this-machine|host-setup|drive|onboarding-presentation|onboarding-drive|onboarding-done` opens that
+  // `?view=new-space|settings|this-machine|host-setup|drive|onboarding-presentation|onboarding-drive|onboarding-done` opens that
   // view on load (the shell sets it from CUA_SPACES_START_VIEW, for demos
   // and captures), as the SwiftUI app's start views do.
   const startView =
@@ -268,29 +257,17 @@ export function MainWindow({
   });
   const [banner, setBanner] = useState<Banner>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [view, setView] = useState<'spaces' | 'settings' | 'keyvault' | 'agents' | 'drive' | 'notifications'>(
+  const [view, setView] = useState<'spaces' | 'settings' | 'agents' | 'drive' | 'notifications'>(
     startView === 'settings'
       ? 'settings'
-      : startView === 'keyvault'
-        ? 'keyvault'
-        : startView === 'drive'
-          ? 'drive'
-          : 'spaces'
+      : startView === 'drive'
+        ? 'drive'
+        : 'spaces'
   );
-  const [kvSelection, setKvSelection] = useState<KvSelection>({
-    kind: 'category',
-    category: 'all',
-  });
-  const kv = useKeyvaultOverview(keyvault, view === 'keyvault');
-  const kvActions = useKeyvaultActions(keyvault, kv.refresh);
   const [menuBar, setMenuBar] = useState<boolean>(() => readMenuBar());
   const openSpace = useCallback((id: string) => {
     setSelectedId(id);
     setView('spaces');
-  }, []);
-  const openKeyvault = useCallback((selection: KvSelection) => {
-    setKvSelection(selection);
-    setView('keyvault');
   }, []);
 
   useEffect(() => {
@@ -421,16 +398,14 @@ export function MainWindow({
         });
         const b = await listen('main:new-space', () => setWizard(true));
         const c = await listen('main:settings', () => setView('settings'));
-        const d = await listen('main:keyvault', () => setView('keyvault'));
         // The menu bar item's Cua Volume conflicts.
-        const e = await listen('main:volume', () => setView('drive'));
+        const d = await listen('main:volume', () => setView('drive'));
         if (cancelled) {
           a();
           b();
           c();
           d();
-          e();
-        } else offs.push(a, b, c, d, e);
+        } else offs.push(a, b, c, d);
       })
       .catch(() => {});
     return () => {
@@ -675,15 +650,6 @@ export function MainWindow({
           {sidebar.emptyText && !sidebar.thisMachine && (
             <p className="dw-hint dw-nav-section">{sidebar.emptyText}</p>
           )}
-          <KeyvaultSidebarSection
-            title={chrome.keyvaultTitle}
-            overview={kv.overview}
-            now={now()}
-            selection={kvSelection}
-            active={view === 'keyvault'}
-            actions={kvActions}
-            onSelect={openKeyvault}
-          />
           <ul className="dw-nav-list" aria-label="Agents">
             {(
               [
@@ -731,13 +697,6 @@ export function MainWindow({
           <DrivePage bridge={agentsBridge} />
         ) : view === 'notifications' ? (
           <NotificationsPage feed={feed} bridge={agentsBridge} now={now} />
-        ) : view === 'keyvault' ? (
-          <KeyvaultView
-            overview={kv.overview}
-            selection={kvSelection}
-            actions={kvActions}
-            now={now}
-          />
         ) : (
           <>
             <header className="dw-toolbar" data-tauri-drag-region>

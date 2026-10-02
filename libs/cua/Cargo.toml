@@ -16,6 +16,8 @@ members = [
     "crates/cua-disk",
     "crates/cua-daemon",
     "crates/cua-teleport-bundle",
+    # Chromium localStorage (Local Storage LevelDB) as items.
+    "crates/cua-chromium-storage",
     "crates/cua-teleport",
     # The Keyvault: the local vault and broker that owns teleport.
     "crates/cua-keyvault",
@@ -163,6 +165,7 @@ cua-agents = { path = "crates/cua-agents", version = "0.1.0" }
 cua-volume = { path = "crates/cua-volume", version = "0.1.0" }
 cua-sdk = { path = "crates/cua-sdk", version = "0.1.0", default-features = false }
 cua-teleport-bundle = { path = "crates/cua-teleport-bundle", version = "0.1.0" }
+cua-chromium-storage = { path = "crates/cua-chromium-storage", version = "0.1.0" }
 cua-teleport = { path = "crates/cua-teleport", version = "0.1.0" }
 cua-keyvault = { path = "crates/cua-keyvault", version = "0.1.0" }
 cua-spaces-app-core = { path = "crates/cua-spaces-app-core", version = "0.1.0" }

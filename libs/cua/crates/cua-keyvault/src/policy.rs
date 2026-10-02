@@ -92,6 +92,29 @@ pub fn validate_rule(rule: &mut UnattendedRule, meta: &Meta, now_ms: u64) -> Res
     Ok(())
 }
 
+/// Whether a request can be answered without asking the user: it names
+/// items, every one of them is unlocked (the user allowed unattended access
+/// when they unlocked it) and is not an identity provider, every target is
+/// one each item may go to, and the actions are only the ones unlocking
+/// covers (writing the item into a Space, or signing in with it).
+pub fn unattended_eligible(
+    items: &[crate::model::ItemMeta],
+    targets: &[String],
+    actions: &[crate::capability::Action],
+) -> bool {
+    use crate::capability::Action;
+    !items.is_empty()
+        && !targets.is_empty()
+        && actions
+            .iter()
+            .all(|a| matches!(a, Action::Teleport | Action::Login))
+        && items.iter().all(|i| {
+            i.policy.unattended
+                && !i.identity_provider
+                && targets.iter().all(|t| i.policy.allows_target(t))
+        })
+}
+
 /// Clamps a grant lifetime.
 pub fn clamp_grant_secs(secs: u64) -> u64 {
     secs.clamp(30, MAX_GRANT_SECS)
@@ -113,7 +136,7 @@ pub fn prune(meta: &mut Meta, now_ms: u64) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ItemKind, ItemMeta, ItemPolicy, ItemSummary, RuleCaller};
+    use crate::model::{ItemKind, ItemMeta, ItemPolicy, RuleCaller};
 
     fn meta_with_item(unattended: bool, targets: Vec<String>) -> Meta {
         let mut m = Meta::default();
@@ -121,15 +144,17 @@ mod tests {
             "i1".into(),
             ItemMeta {
                 id: "i1".into(),
-                kind: ItemKind::BrowserSite,
-                label: "l".into(),
+                kind: ItemKind::Cookie,
                 provider_id: "chrome".into(),
                 app_display: "Chrome".into(),
-                site: None,
-                account: None,
+                domain: Some("example.test".into()),
+                key: "sid".into(),
+                path: None,
                 source: String::new(),
-                summary: ItemSummary::default(),
-                warnings: vec![],
+                session: false,
+                expires_ms: None,
+                bytes: 0,
+                blob: None,
                 identity_provider: false,
                 policy: ItemPolicy {
                     allowed_targets: targets,

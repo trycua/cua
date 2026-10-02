@@ -143,10 +143,14 @@ struct Sidebar: View {
                         .badge(badge(row))
                         .tag(MainSelection.keyvault(.category(category: row.category)))
                 }
-                ForEach(kv.sidebar.sites, id: \.key) { site in
-                    Text(site.title)
-                        .lineLimit(1)
-                        .tag(MainSelection.keyvault(.site(key: site.key)))
+                ForEach(kv.sidebar.apps, id: \.key) { app in
+                    HStack(spacing: 8) {
+                        AppIcon(keyvault: kv, providerId: app.key, name: app.title)
+                            .frame(width: 18, height: 18)
+                        Text(app.title).lineLimit(1)
+                    }
+                    .badge(Int(app.items))
+                    .tag(MainSelection.keyvault(.app(key: app.key)))
                 }
             } header: {
                 KeyvaultHeader(keyvault: kv, title: model.chrome.keyvaultTitle)

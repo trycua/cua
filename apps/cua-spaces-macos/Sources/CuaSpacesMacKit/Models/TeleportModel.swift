@@ -355,14 +355,103 @@ public final class TeleportModel {
                 scope: nil, launch: nil))
             sdkPlan = plan
             send(.planned(plan: appTeleportPlan(plan: plan)))
+            await loadChoices()
         } catch {
             fail(error)
         }
     }
 
+    // MARK: - The review's choices: sites, items, the Keyvault as the source
+
+    /// The Keyvault the review reads saved items and site counts from (the
+    /// app's; the opener sets it).
+    public var keyvault: KeyvaultModel?
+    /// What was sent to each Space last time (the app's settings).
+    public var rememberedChoices: [AppRememberedChoice] = []
+    /// Told the choices to keep after a teleport.
+    public var onRemember: (([AppRememberedChoice]) -> Void)?
+    /// The saved-items list's own state while sending from the Keyvault.
+    public private(set) var reviewVault = KvVaultState(query: "", selected: [], expanded: [], app: nil)
+    /// The sites are being read (Touch ID may be asked).
+    public private(set) var readingSites = false
+
+    var providerId: String? { state.entry?.providerId }
+
+    /// The key a choice is remembered under: the app and this Space.
+    var rememberKey: String? {
+        providerId.map { appReviewRememberKey(app: $0, space: state.spaceName) }
+    }
+
+    /// Reads what the review lets the user choose: the app's saved Keyvault
+    /// items (counts only, no Touch ID) and, for a browser that sends its
+    /// cookies, its sites with counts (nothing decrypted; the daemon asks for
+    /// Touch ID to show names).
+    public func loadChoices() async {
+        guard let provider = providerId, let review else { return }
+        if let keyvault {
+            await keyvault.refresh()
+            let source = kvVaultSource(overview: keyvault.overview, providerId: provider)
+            reviewVault = KvVaultState(query: "", selected: source.ids, expanded: [provider], app: provider)
+            send(.vaultItems(count: source.count, newestMs: source.newestMs,
+                             nowMs: Int64(keyvault.clock().timeIntervalSince1970 * 1000), selected: source.ids,
+                             passwordIds: source.passwordIds))
+        }
+        guard review.needsDomains else { return }
+        guard let client = keyvault?.client else { send(.domainsFailed); return }
+        readingSites = true
+        defer { readingSites = false }
+        do {
+            let inventory = try await client.inventory(app: provider, profile: nil)
+            let remembered = rememberKey.flatMap { appReviewRemembered(choices: rememberedChoices, key: $0) }
+            send(.domainsLoaded(inventory: inventory, remembered: remembered))
+        } catch {
+            send(.domainsFailed)
+        }
+    }
+
+    /// Where the review sends from. The saved items' names need Touch ID the
+    /// first time (the Keyvault's browse window).
+    public func sendFrom(_ source: AppSendSource) async {
+        send(.sendFrom(source: source))
+        if source == .vault, let keyvault, !keyvault.overview.namesVisible { await keyvault.showItems() }
+    }
+
+    /// The Keyvault as the review lists it: what a teleport can send. Saved
+    /// passwords are never delivered (they sign in through site login), so
+    /// they are not offered here.
+    var reviewOverview: KeyvaultOverview? {
+        guard var o = keyvault?.overview else { return nil }
+        o.items.removeAll { $0.kind == "password" }
+        return o
+    }
+
+    /// Next time the review starts from the sites sent now (to this Space).
+    func rememberChoice() {
+        let consent = appPickerConsent(state: state)
+        guard let domains = consent.cookieDomains, consent.fromVault == nil, let key = rememberKey else { return }
+        rememberedChoices = appReviewRemember(choices: rememberedChoices, key: key, domains: domains)
+        onRemember?(rememberedChoices)
+    }
+
+    /// The saved items as the review lists them.
+    public var reviewVaultView: KvVaultView? {
+        guard let keyvault, let overview = reviewOverview else { return nil }
+        return kvVaultView(overview: overview, state: reviewVault,
+                           nowMs: Int64(keyvault.clock().timeIntervalSince1970 * 1000))
+    }
+
+    /// Search, select and open groups in the saved items; the core keeps the
+    /// ones to send.
+    public func sendVault(_ action: KvVaultAction) {
+        guard let overview = reviewOverview else { return }
+        reviewVault = kvVaultReduce(overview: overview, state: reviewVault, action: action)
+        send(.vaultSelection(selected: reviewVault.selected))
+    }
+
     public func confirm() async {
         guard let review, review.canConfirm, let teleport, let space, let plan = sdkPlan else { return }
         let consent = appPickerConsent(state: state)
+        rememberChoice()
         send(.confirm)
         onTransfer?(true)
         defer { onTransfer?(false) }
@@ -419,5 +508,9 @@ func sdkConsent(_ consent: AppTeleportConsent) -> TeleportConsent {
     TeleportConsent(approved: consent.approved,
                     acknowledgeSensitive: consent.acknowledgeSensitive,
                     saveToKeyvault: consent.saveToKeyvault,
-                    acknowledgeRelayPlaintext: consent.acknowledgeRelayPlaintext)
+                    acknowledgeRelayPlaintext: consent.acknowledgeRelayPlaintext,
+                    cookieDomains: consent.cookieDomains,
+                    exclude: consent.exclude,
+                    fromVault: consent.fromVault,
+                    includePasswords: consent.includePasswords)
 }

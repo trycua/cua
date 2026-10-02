@@ -68,6 +68,10 @@ pub struct AppSettings {
     /// The sites the user sent to each Space last time, per app
     /// ([`crate::teleport::review::remember`]): the review starts from them.
     pub teleport_choices: Vec<crate::teleport::review::RememberedChoice>,
+    /// Settings, General: a running Space's desktop streams as soon as it
+    /// is opened (on by default); off, it waits for Connect
+    /// ([`crate::spaces::cover`]).
+    pub auto_connect: bool,
 }
 
 impl Default for AppSettings {
@@ -86,6 +90,7 @@ impl Default for AppSettings {
             dismissed_access: vec![],
             keyvault_site_icons: true,
             teleport_choices: vec![],
+            auto_connect: true,
         }
     }
 }
@@ -263,6 +268,9 @@ pub struct SettingsInput {
     /// shown in the section.
     #[serde(default)]
     pub keyvault_protection: Vec<crate::spaces::sidebar::Fact>,
+    /// "Connect to the desktop automatically" (none: no row; a shell
+    /// without the preview cover leaves it out).
+    pub auto_connect: Option<bool>,
 }
 
 impl Default for SettingsInput {
@@ -286,6 +294,7 @@ impl Default for SettingsInput {
             keyvault_unlock_prompt: None,
             keyvault_site_icons: true,
             keyvault_protection: vec![],
+            auto_connect: None,
         }
     }
 }
@@ -300,6 +309,21 @@ pub const SITE_ICONS_LABEL: &str = "Load site icons from Google";
 /// The line under it.
 pub const SITE_ICONS_NOTE: &str =
     "Sends only the site's domain. Off uses your browser's own icons.";
+
+/// The auto-connect switch's label.
+pub const AUTO_CONNECT_LABEL: &str = "Connect to the desktop automatically";
+
+/// The auto-connect switch: row id `auto-connect`, options `on` and `off`.
+pub fn auto_connect_row(on: bool) -> SettingsRow {
+    let mut r = row("auto-connect", SettingsRowKind::Toggle, AUTO_CONNECT_LABEL);
+    r.options = vec![opt("on", "On", on), opt("off", "Off", !on)];
+    r.help = Some(if on {
+        "Opening a running Space shows its live desktop".into()
+    } else {
+        "Opening a running Space shows a preview and a Connect button".into()
+    });
+    r
+}
 
 /// The Keyvault auto-wipe switch's label.
 pub const AUTO_WIPE_LABEL: &str = "Wipe access from Spaces automatically";
@@ -588,6 +612,9 @@ pub fn page(input: &SettingsInput) -> SettingsPage {
         .map(|l| crate::login_item::rows_with(l, input.experiments.cua_volume))
         .unwrap_or_default();
     general.push(notch);
+    if let Some(on) = input.auto_connect {
+        general.push(auto_connect_row(on));
+    }
     // Where New Space starts: only a choice while the apps offer Cua Cloud.
     if crate::model::CLOUD_SPACES_OFFERED {
         let mut location = row("default-location", Choice, "New Spaces run on");
@@ -917,6 +944,45 @@ mod tests {
         );
         assert_eq!(rows[1].id, "launch-at-login-note");
         assert_eq!(rows[2].id, "notch");
+    }
+
+    #[test]
+    fn auto_connect_is_on_by_default_and_follows_the_notch_row() {
+        assert!(AppSettings::default().auto_connect);
+        // A settings file from before the switch: on.
+        let old: AppSettings = serde_json::from_str(r#"{"menuBar":true}"#).unwrap();
+        assert!(old.auto_connect);
+        let off: AppSettings = serde_json::from_str(r#"{"autoConnect":false}"#).unwrap();
+        assert!(!off.auto_connect);
+        let general = |input: &SettingsInput| {
+            page(input)
+                .sections
+                .into_iter()
+                .find(|s| s.id == "general")
+                .unwrap()
+                .rows
+        };
+        // Not passed (a shell without the cover): no row.
+        assert!(
+            !general(&SettingsInput::default())
+                .iter()
+                .any(|r| r.id == "auto-connect")
+        );
+        let rows = general(&SettingsInput {
+            auto_connect: Some(true),
+            ..Default::default()
+        });
+        let i = rows.iter().position(|r| r.id == "auto-connect").unwrap();
+        assert_eq!(rows[i - 1].id, "notch");
+        let r = &rows[i];
+        assert_eq!(
+            (r.kind, r.label.as_str()),
+            (SettingsRowKind::Toggle, AUTO_CONNECT_LABEL)
+        );
+        let on = |r: &SettingsRow| r.options.iter().find(|o| o.id == "on").unwrap().active;
+        assert!(on(r));
+        assert!(!on(&auto_connect_row(false)));
+        assert!(!AUTO_CONNECT_LABEL.contains('\u{2014}'));
     }
 
     /// Cua Volume off: no Storage section, and the launch-at-login line

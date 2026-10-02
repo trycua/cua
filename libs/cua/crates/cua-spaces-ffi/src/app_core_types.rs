@@ -921,6 +921,90 @@ pub struct AppSpaceDetail {
     pub power_error: Option<String>,
 }
 
+/// Where the shell's stream session stands.
+pub type AppStreamPhase = core::spaces::cover::StreamPhase;
+#[uniffi::remote(Enum)]
+pub enum AppStreamPhase {
+    /// No session yet.
+    NoSession,
+    /// A session that has not started.
+    Idle,
+    /// Opening (no frame yet).
+    Connecting,
+    /// Frames arrive.
+    Streaming,
+    /// Paused by the Space (the stream view says why).
+    Suspended,
+    /// It could not open.
+    Failed,
+}
+
+/// What the cover is built from.
+pub type AppDesktopCoverInput = core::spaces::cover::DesktopCoverInput;
+#[uniffi::remote(Record)]
+pub struct AppDesktopCoverInput {
+    /// The detail's `can_stream`.
+    pub can_stream: bool,
+    /// The detail's `preview_text` (why it cannot stream).
+    pub preview_text: String,
+    /// Settings: "Connect to the desktop automatically".
+    pub auto_connect: bool,
+    /// Connect (or Try again) was pressed for this Space.
+    pub connect_requested: bool,
+    /// The shell's stream session.
+    pub stream: AppStreamPhase,
+}
+
+/// How the cover draws.
+pub type AppDesktopCoverKind = core::spaces::cover::DesktopCoverKind;
+#[uniffi::remote(Enum)]
+pub enum AppDesktopCoverKind {
+    /// No cover: the live desktop (or the stream view's own badge).
+    Stream,
+    /// The preview with "Connecting…".
+    Connecting,
+    /// The preview with a Connect button.
+    Connect,
+    /// The preview with a line (and maybe a button): the Space cannot
+    /// stream, or the stream failed.
+    Status,
+}
+
+/// The cover.
+pub type AppDesktopCover = core::spaces::cover::DesktopCover;
+#[uniffi::remote(Record)]
+pub struct AppDesktopCover {
+    /// How it draws.
+    pub kind: AppDesktopCoverKind,
+    /// The line, centered.
+    pub text: Option<String>,
+    /// A button under (or instead of) the line.
+    pub button: Option<String>,
+    /// Its tooltip.
+    pub button_help: Option<String>,
+    /// The shell opens a stream session now (none is open, and one is
+    /// wanted).
+    pub open_stream: bool,
+    /// The shell starts the open session again (Try again was pressed).
+    pub retry: bool,
+}
+
+/// How fresh the shells keep each Space's thumbnail (the notch tiles and
+/// the preview cover read the same one).
+pub type AppThumbnailPolicy = core::spaces::cover::ThumbnailPolicy;
+#[uniffi::remote(Record)]
+pub struct AppThumbnailPolicy {
+    /// While the notch is open: every running Space, this often.
+    pub open_interval_ms: u64,
+    /// Otherwise (the app visible, not in Low Power Mode): a running Space
+    /// whose thumbnail is older than this gets a new one.
+    pub background_interval_ms: u64,
+    /// The long edge of a captured thumbnail, in pixels.
+    pub max_dimension: u32,
+    /// A thumbnail kept on disk longer than this is dropped at launch.
+    pub keep_ms: u64,
+}
+
 /// A display's size in physical pixels (the primary display of the list).
 pub type AppStreamDisplay = core::spaces::stream::StreamDisplay;
 #[uniffi::remote(Record)]
@@ -1446,8 +1530,12 @@ pub struct AppNotchTile {
     /// `os-ubuntu`, ..., `os-linux`); the artwork is [`os_icon_svg`], or on
     /// macOS the system symbol [`os_icon_system_symbol`] names.
     pub symbol: String,
-    /// Accessibility label: name, OS and status.
+    /// Accessibility label: name, OS, where it runs and status.
     pub label: String,
+    /// Where it runs, in words, on the tile's header line next to the OS
+    /// logo: "This Mac", the machine that provides it ("Mac mini"), the
+    /// address of one added by address, or the cloud's place ([`location`]).
+    pub location: String,
     /// While it is being created: overall progress in thousandths (a ring
     /// over the tile).
     pub progress: Option<u32>,
@@ -6092,6 +6180,10 @@ pub struct AppSettings {
     /// The sites the user sent to each Space last time, per app
     /// ([`crate::teleport::review::remember`]): the review starts from them.
     pub teleport_choices: Vec<AppRememberedChoice>,
+    /// Settings, General: a running Space's desktop streams as soon as it
+    /// is opened (on by default); off, it waits for Connect
+    /// ([`crate::spaces::cover`]).
+    pub auto_connect: bool,
 }
 
 /// A pressed key combination.
@@ -6185,6 +6277,9 @@ pub struct AppSettingsInput {
     /// The Keyvault's protection facts (Touch ID, the daemon's signature),
     /// shown in the section.
     pub keyvault_protection: Vec<AppFact>,
+    /// "Connect to the desktop automatically" (none: no row; a shell
+    /// without the preview cover leaves it out).
+    pub auto_connect: Option<bool>,
 }
 
 /// How a Settings row draws.

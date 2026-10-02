@@ -229,10 +229,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // "Spaces tab in the notch": applied now and on every change.
         Self.followNotchSetting(model, controller)
-        let backend = model.backend
-        controller.thumbnail = { id in
-            await backend.thumbnail(id: id, maxDimension: 320).flatMap(NSImage.init(data:))
-        }
+        // The tiles read the shared thumbnail store (the SDK's cache);
+        // open, every tile asks for one no older than the open interval.
+        let thumbnails = model.thumbnails
+        let openAge = TimeInterval(SpaceThumbnails.policy.openIntervalMs) / 1000
+        controller.thumbnail = { id in await thumbnails.refresh(id, maxAge: openAge) }
+        // Closed too: running Spaces' thumbnails stay a minute or two old
+        // (paused while the app is hidden or in Low Power Mode).
+        thumbnails.keepFresh(running: { model.streamableSpaceIds })
         if let live = model.backend as? LiveSpacesBackend {
             let teleport = live.cua.teleport()
             model.notch.capture = { id in

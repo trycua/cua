@@ -109,10 +109,10 @@
           "os-linux Studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, Running - -",
-          "os-macos Mac, macOS, Running - -",
-          "os-linux Studio, Linux, Running - -",
-          "os-linux Pool C, Linux, Running - -"
+          "os-linux Box, Linux, This Mac, Running - -",
+          "os-macos Mac, macOS, This Mac, Running - -",
+          "os-linux Studio, Linux, Mac mini, Running - -",
+          "os-linux Pool C, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [],
@@ -226,10 +226,10 @@
           "os-linux Studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, Suspending… - -",
-          "os-macos Mac, macOS, Running - -",
-          "os-linux Studio, Linux, Running - -",
-          "os-linux Pool C, Linux, Running - -"
+          "os-linux Box, Linux, This Mac, Suspending… - -",
+          "os-macos Mac, macOS, This Mac, Running - -",
+          "os-linux Studio, Linux, Mac mini, Running - -",
+          "os-linux Pool C, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -345,10 +345,10 @@
           "os-linux Studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, Suspending… - -",
-          "os-macos Mac, macOS, Running - -",
-          "os-linux Studio, Linux, Running - -",
-          "os-linux Pool C, Linux, Running - -"
+          "os-linux Box, Linux, This Mac, Suspending… - -",
+          "os-macos Mac, macOS, This Mac, Running - -",
+          "os-linux Studio, Linux, Mac mini, Running - -",
+          "os-linux Pool C, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -464,10 +464,10 @@
           "os-linux Studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, Suspending… - -",
-          "os-macos Mac, macOS, Running - -",
-          "os-linux Studio, Linux, Running - -",
-          "os-linux Pool C, Linux, Running - -"
+          "os-linux Box, Linux, This Mac, Suspending… - -",
+          "os-macos Mac, macOS, This Mac, Running - -",
+          "os-linux Studio, Linux, Mac mini, Running - -",
+          "os-linux Pool C, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -583,10 +583,10 @@
           "os-linux Studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, Suspending… - -",
-          "os-macos Mac, macOS, Running - -",
-          "os-linux Studio, Linux, Running - -",
-          "os-linux Pool C, Linux, Running - -"
+          "os-linux Box, Linux, This Mac, Suspending… - -",
+          "os-macos Mac, macOS, This Mac, Running - -",
+          "os-linux Studio, Linux, Mac mini, Running - -",
+          "os-linux Pool C, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -702,10 +702,10 @@
           "os-linux Studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, Suspended - -",
-          "os-macos Mac, macOS, Running - -",
-          "os-linux Studio, Linux, Running - -",
-          "os-linux Pool C, Linux, Running - -"
+          "os-linux Box, Linux, This Mac, Suspended - -",
+          "os-macos Mac, macOS, This Mac, Running - -",
+          "os-linux Studio, Linux, Mac mini, Running - -",
+          "os-linux Pool C, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [],
@@ -819,10 +819,10 @@
           "os-linux Studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, Resuming… - -",
-          "os-macos Mac, macOS, Running - -",
-          "os-linux Studio, Linux, Running - -",
-          "os-linux Pool C, Linux, Running - -"
+          "os-linux Box, Linux, This Mac, Resuming… - -",
+          "os-macos Mac, macOS, This Mac, Running - -",
+          "os-linux Studio, Linux, Mac mini, Running - -",
+          "os-linux Pool C, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -939,10 +939,10 @@
           "os-linux Studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, Suspended - -",
-          "os-macos Mac, macOS, Running - -",
-          "os-linux Studio, Linux, Running - -",
-          "os-linux Pool C, Linux, Running - -"
+          "os-linux Box, Linux, This Mac, Suspended - -",
+          "os-macos Mac, macOS, This Mac, Running - -",
+          "os-linux Studio, Linux, Mac mini, Running - -",
+          "os-linux Pool C, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -1059,10 +1059,10 @@
           "os-linux Studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, Suspended - -",
-          "os-macos Mac, macOS, Turning off… - -",
-          "os-linux Studio, Linux, Running - -",
-          "os-linux Pool C, Linux, Running - -"
+          "os-linux Box, Linux, This Mac, Suspended - -",
+          "os-macos Mac, macOS, This Mac, Turning off… - -",
+          "os-linux Studio, Linux, Mac mini, Running - -",
+          "os-linux Pool C, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -1180,10 +1180,10 @@
           "os-linux Studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, Suspended - -",
-          "os-macos Mac, macOS, Turning off… - -",
-          "os-linux Studio, Linux, Running - -",
-          "os-linux Pool C, Linux, Running - -"
+          "os-linux Box, Linux, This Mac, Suspended - -",
+          "os-macos Mac, macOS, This Mac, Turning off… - -",
+          "os-linux Studio, Linux, Mac mini, Running - -",
+          "os-linux Pool C, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -1301,10 +1301,10 @@
           "os-linux Studio [Running] - - <power Turn off>"
         ],
         "tiles": [
-          "os-linux Box, Linux, Suspended - -",
-          "os-macos Mac, macOS, Off - -",
-          "os-linux Studio, Linux, Running - -",
-          "os-linux Pool C, Linux, Running - -"
+          "os-linux Box, Linux, This Mac, Suspended - -",
+          "os-macos Mac, macOS, This Mac, Off - -",
+          "os-linux Studio, Linux, Mac mini, Running - -",
+          "os-linux Pool C, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -1421,10 +1421,10 @@
           "os-linux Studio [Turning off…] - - <power Turning off… busy>"
         ],
         "tiles": [
-          "os-linux Box, Linux, Suspended - -",
-          "os-macos Mac, macOS, Off - -",
-          "os-linux Studio, Linux, Turning off… - -",
-          "os-linux Pool C, Linux, Running - -"
+          "os-linux Box, Linux, This Mac, Suspended - -",
+          "os-macos Mac, macOS, This Mac, Off - -",
+          "os-linux Studio, Linux, Mac mini, Turning off… - -",
+          "os-linux Pool C, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -1542,10 +1542,10 @@
           "os-linux Studio [Turning off…] - - <power Turning off… busy>"
         ],
         "tiles": [
-          "os-linux Box, Linux, Suspended - -",
-          "os-macos Mac, macOS, Off - -",
-          "os-linux Studio, Linux, Turning off… - -",
-          "os-linux Pool C, Linux, Running - -"
+          "os-linux Box, Linux, This Mac, Suspended - -",
+          "os-macos Mac, macOS, This Mac, Off - -",
+          "os-linux Studio, Linux, Mac mini, Turning off… - -",
+          "os-linux Pool C, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -1663,10 +1663,10 @@
           "os-linux Studio [Off] - - <power Turn on on>"
         ],
         "tiles": [
-          "os-linux Box, Linux, Suspended - -",
-          "os-macos Mac, macOS, Off - -",
-          "os-linux Studio, Linux, Off - -",
-          "os-linux Pool C, Linux, Running - -"
+          "os-linux Box, Linux, This Mac, Suspended - -",
+          "os-macos Mac, macOS, This Mac, Off - -",
+          "os-linux Studio, Linux, Mac mini, Off - -",
+          "os-linux Pool C, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -1783,10 +1783,10 @@
           "os-linux Studio [Off] - - <power Turn on on>"
         ],
         "tiles": [
-          "os-linux Box, Linux, Suspended - -",
-          "os-macos Mac, macOS, Turning on… - -",
-          "os-linux Studio, Linux, Off - -",
-          "os-linux Pool C, Linux, Running - -"
+          "os-linux Box, Linux, This Mac, Suspended - -",
+          "os-macos Mac, macOS, This Mac, Turning on… - -",
+          "os-linux Studio, Linux, Mac mini, Off - -",
+          "os-linux Pool C, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -1903,10 +1903,10 @@
           "os-linux Studio [Off] - - <power Turn on on>"
         ],
         "tiles": [
-          "os-linux Box, Linux, Suspended - -",
-          "os-macos Mac, macOS, Deleting… - Deleting…",
-          "os-linux Studio, Linux, Off - -",
-          "os-linux Pool C, Linux, Running - -"
+          "os-linux Box, Linux, This Mac, Suspended - -",
+          "os-macos Mac, macOS, This Mac, Deleting… - Deleting…",
+          "os-linux Studio, Linux, Mac mini, Off - -",
+          "os-linux Pool C, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [
@@ -2000,9 +2000,9 @@
           "os-linux Studio [Off] - - <power Turn on on>"
         ],
         "tiles": [
-          "os-linux Box, Linux, Suspended - -",
-          "os-linux Studio, Linux, Off - -",
-          "os-linux Pool C, Linux, Running - -"
+          "os-linux Box, Linux, This Mac, Suspended - -",
+          "os-linux Studio, Linux, Mac mini, Off - -",
+          "os-linux Pool C, Linux, Cua Cloud, Running - -"
         ]
       },
       "powering": [

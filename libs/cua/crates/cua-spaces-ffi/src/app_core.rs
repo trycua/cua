@@ -168,6 +168,19 @@ pub fn app_space_detail_copy() -> AppDetailCopy {
     core::spaces::sidebar::detail_copy()
 }
 
+/// What a Space's preview card shows before (or instead of) its live
+/// desktop: "Connecting…", a Connect button, or the Space's own line.
+#[uniffi::export]
+pub fn app_desktop_cover(input: AppDesktopCoverInput) -> AppDesktopCover {
+    core::spaces::cover::desktop_cover(&input)
+}
+
+/// How fresh the shells keep each Space's thumbnail.
+#[uniffi::export]
+pub fn app_thumbnail_policy() -> AppThumbnailPolicy {
+    core::spaces::cover::thumbnail_policy()
+}
+
 /// A Space's Stream section: the Desktop row, then one row per window.
 #[uniffi::export]
 pub fn app_stream_section(input: AppStreamSectionInput) -> AppStreamSection {

@@ -8330,6 +8330,210 @@ public func FfiConverterTypeAppDeleteConfirm_lower(_ value: AppDeleteConfirm) ->
 }
 
 
+public struct AppDesktopCover: Equatable, Hashable {
+    /**
+     * How it draws.
+     */
+    public var kind: AppDesktopCoverKind
+    /**
+     * The line, centered.
+     */
+    public var text: String?
+    /**
+     * A button under (or instead of) the line.
+     */
+    public var button: String?
+    /**
+     * Its tooltip.
+     */
+    public var buttonHelp: String?
+    /**
+     * The shell opens a stream session now (none is open, and one is
+     * wanted).
+     */
+    public var openStream: Bool
+    /**
+     * The shell starts the open session again (Try again was pressed).
+     */
+    public var retry: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * How it draws.
+         */kind: AppDesktopCoverKind,
+        /**
+         * The line, centered.
+         */text: String?,
+        /**
+         * A button under (or instead of) the line.
+         */button: String?,
+        /**
+         * Its tooltip.
+         */buttonHelp: String?,
+        /**
+         * The shell opens a stream session now (none is open, and one is
+         * wanted).
+         */openStream: Bool,
+        /**
+         * The shell starts the open session again (Try again was pressed).
+         */retry: Bool) {
+        self.kind = kind
+        self.text = text
+        self.button = button
+        self.buttonHelp = buttonHelp
+        self.openStream = openStream
+        self.retry = retry
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppDesktopCover: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppDesktopCover: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppDesktopCover {
+        return
+            try AppDesktopCover(
+                kind: FfiConverterTypeAppDesktopCoverKind.read(from: &buf),
+                text: FfiConverterOptionString.read(from: &buf),
+                button: FfiConverterOptionString.read(from: &buf),
+                buttonHelp: FfiConverterOptionString.read(from: &buf),
+                openStream: FfiConverterBool.read(from: &buf),
+                retry: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppDesktopCover, into buf: inout [UInt8]) {
+        FfiConverterTypeAppDesktopCoverKind.write(value.kind, into: &buf)
+        FfiConverterOptionString.write(value.text, into: &buf)
+        FfiConverterOptionString.write(value.button, into: &buf)
+        FfiConverterOptionString.write(value.buttonHelp, into: &buf)
+        FfiConverterBool.write(value.openStream, into: &buf)
+        FfiConverterBool.write(value.retry, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDesktopCover_lift(_ buf: RustBuffer) throws -> AppDesktopCover {
+    return try FfiConverterTypeAppDesktopCover.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDesktopCover_lower(_ value: AppDesktopCover) -> RustBuffer {
+    return FfiConverterTypeAppDesktopCover.lower(value)
+}
+
+
+public struct AppDesktopCoverInput: Equatable, Hashable {
+    /**
+     * The detail's `can_stream`.
+     */
+    public var canStream: Bool
+    /**
+     * The detail's `preview_text` (why it cannot stream).
+     */
+    public var previewText: String
+    /**
+     * Settings: "Connect to the desktop automatically".
+     */
+    public var autoConnect: Bool
+    /**
+     * Connect (or Try again) was pressed for this Space.
+     */
+    public var connectRequested: Bool
+    /**
+     * The shell's stream session.
+     */
+    public var stream: AppStreamPhase
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The detail's `can_stream`.
+         */canStream: Bool,
+        /**
+         * The detail's `preview_text` (why it cannot stream).
+         */previewText: String,
+        /**
+         * Settings: "Connect to the desktop automatically".
+         */autoConnect: Bool,
+        /**
+         * Connect (or Try again) was pressed for this Space.
+         */connectRequested: Bool,
+        /**
+         * The shell's stream session.
+         */stream: AppStreamPhase) {
+        self.canStream = canStream
+        self.previewText = previewText
+        self.autoConnect = autoConnect
+        self.connectRequested = connectRequested
+        self.stream = stream
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppDesktopCoverInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppDesktopCoverInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppDesktopCoverInput {
+        return
+            try AppDesktopCoverInput(
+                canStream: FfiConverterBool.read(from: &buf),
+                previewText: FfiConverterString.read(from: &buf),
+                autoConnect: FfiConverterBool.read(from: &buf),
+                connectRequested: FfiConverterBool.read(from: &buf),
+                stream: FfiConverterTypeAppStreamPhase.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppDesktopCoverInput, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.canStream, into: &buf)
+        FfiConverterString.write(value.previewText, into: &buf)
+        FfiConverterBool.write(value.autoConnect, into: &buf)
+        FfiConverterBool.write(value.connectRequested, into: &buf)
+        FfiConverterTypeAppStreamPhase.write(value.stream, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDesktopCoverInput_lift(_ buf: RustBuffer) throws -> AppDesktopCoverInput {
+    return try FfiConverterTypeAppDesktopCoverInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDesktopCoverInput_lower(_ value: AppDesktopCoverInput) -> RustBuffer {
+    return FfiConverterTypeAppDesktopCoverInput.lower(value)
+}
+
+
 public struct AppDetailAction: Equatable, Hashable {
     /**
      * What it does.
@@ -18804,9 +19008,15 @@ public struct AppNotchTile: Equatable, Hashable {
      */
     public var symbol: String
     /**
-     * Accessibility label: name, OS and status.
+     * Accessibility label: name, OS, where it runs and status.
      */
     public var label: String
+    /**
+     * Where it runs, in words, on the tile's header line next to the OS
+     * logo: "This Mac", the machine that provides it ("Mac mini"), the
+     * address of one added by address, or the cloud's place ([`location`]).
+     */
+    public var location: String
     /**
      * While it is being created: overall progress in thousandths (a ring
      * over the tile).
@@ -18852,8 +19062,13 @@ public struct AppNotchTile: Equatable, Hashable {
          * macOS the system symbol [`os_icon_system_symbol`] names.
          */symbol: String,
         /**
-         * Accessibility label: name, OS and status.
+         * Accessibility label: name, OS, where it runs and status.
          */label: String,
+        /**
+         * Where it runs, in words, on the tile's header line next to the OS
+         * logo: "This Mac", the machine that provides it ("Mac mini"), the
+         * address of one added by address, or the cloud's place ([`location`]).
+         */location: String,
         /**
          * While it is being created: overall progress in thousandths (a ring
          * over the tile).
@@ -18874,6 +19089,7 @@ public struct AppNotchTile: Equatable, Hashable {
         self.targeted = targeted
         self.symbol = symbol
         self.label = label
+        self.location = location
         self.progress = progress
         self.progressLabel = progressLabel
         self.signedIn = signedIn
@@ -18904,6 +19120,7 @@ public struct FfiConverterTypeAppNotchTile: FfiConverterRustBuffer {
                 targeted: FfiConverterBool.read(from: &buf),
                 symbol: FfiConverterString.read(from: &buf),
                 label: FfiConverterString.read(from: &buf),
+                location: FfiConverterString.read(from: &buf),
                 progress: FfiConverterOptionUInt32.read(from: &buf),
                 progressLabel: FfiConverterOptionString.read(from: &buf),
                 signedIn: FfiConverterBool.read(from: &buf)
@@ -18920,6 +19137,7 @@ public struct FfiConverterTypeAppNotchTile: FfiConverterRustBuffer {
         FfiConverterBool.write(value.targeted, into: &buf)
         FfiConverterString.write(value.symbol, into: &buf)
         FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.location, into: &buf)
         FfiConverterOptionUInt32.write(value.progress, into: &buf)
         FfiConverterOptionString.write(value.progressLabel, into: &buf)
         FfiConverterBool.write(value.signedIn, into: &buf)
@@ -24902,6 +25120,12 @@ public struct AppSettings: Equatable, Hashable {
      * ([`crate::teleport::review::remember`]): the review starts from them.
      */
     public var teleportChoices: [AppRememberedChoice]
+    /**
+     * Settings, General: a running Space's desktop streams as soon as it
+     * is opened (on by default); off, it waits for Connect
+     * ([`crate::spaces::cover`]).
+     */
+    public var autoConnect: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -24953,7 +25177,12 @@ public struct AppSettings: Equatable, Hashable {
         /**
          * The sites the user sent to each Space last time, per app
          * ([`crate::teleport::review::remember`]): the review starts from them.
-         */teleportChoices: [AppRememberedChoice]) {
+         */teleportChoices: [AppRememberedChoice],
+        /**
+         * Settings, General: a running Space's desktop streams as soon as it
+         * is opened (on by default); off, it waits for Connect
+         * ([`crate::spaces::cover`]).
+         */autoConnect: Bool) {
         self.hotkey = hotkey
         self.menuBar = menuBar
         self.theme = theme
@@ -24967,6 +25196,7 @@ public struct AppSettings: Equatable, Hashable {
         self.dismissedAccess = dismissedAccess
         self.keyvaultSiteIcons = keyvaultSiteIcons
         self.teleportChoices = teleportChoices
+        self.autoConnect = autoConnect
     }
 
 
@@ -24997,7 +25227,8 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
                 experiments: FfiConverterTypeAppExperiments.read(from: &buf),
                 dismissedAccess: FfiConverterSequenceString.read(from: &buf),
                 keyvaultSiteIcons: FfiConverterBool.read(from: &buf),
-                teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from: &buf)
+                teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from: &buf),
+                autoConnect: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -25015,6 +25246,7 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.dismissedAccess, into: &buf)
         FfiConverterBool.write(value.keyvaultSiteIcons, into: &buf)
         FfiConverterSequenceTypeAppRememberedChoice.write(value.teleportChoices, into: &buf)
+        FfiConverterBool.write(value.autoConnect, into: &buf)
     }
 }
 
@@ -25112,6 +25344,11 @@ public struct AppSettingsInput: Equatable, Hashable {
      * shown in the section.
      */
     public var keyvaultProtection: [AppFact]
+    /**
+     * "Connect to the desktop automatically" (none: no row; a shell
+     * without the preview cover leaves it out).
+     */
+    public var autoConnect: Bool?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -25174,7 +25411,11 @@ public struct AppSettingsInput: Equatable, Hashable {
         /**
          * The Keyvault's protection facts (Touch ID, the daemon's signature),
          * shown in the section.
-         */keyvaultProtection: [AppFact]) {
+         */keyvaultProtection: [AppFact],
+        /**
+         * "Connect to the desktop automatically" (none: no row; a shell
+         * without the preview cover leaves it out).
+         */autoConnect: Bool?) {
         self.identity = identity
         self.apiKeyClient = apiKeyClient
         self.signIn = signIn
@@ -25193,6 +25434,7 @@ public struct AppSettingsInput: Equatable, Hashable {
         self.keyvaultUnlockPrompt = keyvaultUnlockPrompt
         self.keyvaultSiteIcons = keyvaultSiteIcons
         self.keyvaultProtection = keyvaultProtection
+        self.autoConnect = autoConnect
     }
 
 
@@ -25228,7 +25470,8 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
                 keyvaultAutoWipe: FfiConverterOptionBool.read(from: &buf),
                 keyvaultUnlockPrompt: FfiConverterOptionBool.read(from: &buf),
                 keyvaultSiteIcons: FfiConverterBool.read(from: &buf),
-                keyvaultProtection: FfiConverterSequenceTypeAppFact.read(from: &buf)
+                keyvaultProtection: FfiConverterSequenceTypeAppFact.read(from: &buf),
+                autoConnect: FfiConverterOptionBool.read(from: &buf)
         )
     }
 
@@ -25251,6 +25494,7 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
         FfiConverterOptionBool.write(value.keyvaultUnlockPrompt, into: &buf)
         FfiConverterBool.write(value.keyvaultSiteIcons, into: &buf)
         FfiConverterSequenceTypeAppFact.write(value.keyvaultProtection, into: &buf)
+        FfiConverterOptionBool.write(value.autoConnect, into: &buf)
     }
 }
 
@@ -29887,6 +30131,94 @@ public func FfiConverterTypeAppThisDevice_lift(_ buf: RustBuffer) throws -> AppT
 #endif
 public func FfiConverterTypeAppThisDevice_lower(_ value: AppThisDevice) -> RustBuffer {
     return FfiConverterTypeAppThisDevice.lower(value)
+}
+
+
+public struct AppThumbnailPolicy: Equatable, Hashable {
+    /**
+     * While the notch is open: every running Space, this often.
+     */
+    public var openIntervalMs: UInt64
+    /**
+     * Otherwise (the app visible, not in Low Power Mode): a running Space
+     * whose thumbnail is older than this gets a new one.
+     */
+    public var backgroundIntervalMs: UInt64
+    /**
+     * The long edge of a captured thumbnail, in pixels.
+     */
+    public var maxDimension: UInt32
+    /**
+     * A thumbnail kept on disk longer than this is dropped at launch.
+     */
+    public var keepMs: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * While the notch is open: every running Space, this often.
+         */openIntervalMs: UInt64,
+        /**
+         * Otherwise (the app visible, not in Low Power Mode): a running Space
+         * whose thumbnail is older than this gets a new one.
+         */backgroundIntervalMs: UInt64,
+        /**
+         * The long edge of a captured thumbnail, in pixels.
+         */maxDimension: UInt32,
+        /**
+         * A thumbnail kept on disk longer than this is dropped at launch.
+         */keepMs: UInt64) {
+        self.openIntervalMs = openIntervalMs
+        self.backgroundIntervalMs = backgroundIntervalMs
+        self.maxDimension = maxDimension
+        self.keepMs = keepMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppThumbnailPolicy: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppThumbnailPolicy: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppThumbnailPolicy {
+        return
+            try AppThumbnailPolicy(
+                openIntervalMs: FfiConverterUInt64.read(from: &buf),
+                backgroundIntervalMs: FfiConverterUInt64.read(from: &buf),
+                maxDimension: FfiConverterUInt32.read(from: &buf),
+                keepMs: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppThumbnailPolicy, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.openIntervalMs, into: &buf)
+        FfiConverterUInt64.write(value.backgroundIntervalMs, into: &buf)
+        FfiConverterUInt32.write(value.maxDimension, into: &buf)
+        FfiConverterUInt64.write(value.keepMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppThumbnailPolicy_lift(_ buf: RustBuffer) throws -> AppThumbnailPolicy {
+    return try FfiConverterTypeAppThumbnailPolicy.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppThumbnailPolicy_lower(_ value: AppThumbnailPolicy) -> RustBuffer {
+    return FfiConverterTypeAppThumbnailPolicy.lower(value)
 }
 
 
@@ -40812,6 +41144,100 @@ public func FfiConverterTypeAppCreateAction_lower(_ value: AppCreateAction) -> R
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum AppDesktopCoverKind: Equatable, Hashable {
+
+    /**
+     * No cover: the live desktop (or the stream view's own badge).
+     */
+    case stream
+    /**
+     * The preview with "Connecting…".
+     */
+    case connecting
+    /**
+     * The preview with a Connect button.
+     */
+    case connect
+    /**
+     * The preview with a line (and maybe a button): the Space cannot
+     * stream, or the stream failed.
+     */
+    case status
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppDesktopCoverKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppDesktopCoverKind: FfiConverterRustBuffer {
+    typealias SwiftType = AppDesktopCoverKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppDesktopCoverKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .stream
+
+        case 2: return .connecting
+
+        case 3: return .connect
+
+        case 4: return .status
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppDesktopCoverKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .stream:
+            writeInt(&buf, Int32(1))
+
+
+        case .connecting:
+            writeInt(&buf, Int32(2))
+
+
+        case .connect:
+            writeInt(&buf, Int32(3))
+
+
+        case .status:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDesktopCoverKind_lift(_ buf: RustBuffer) throws -> AppDesktopCoverKind {
+    return try FfiConverterTypeAppDesktopCoverKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDesktopCoverKind_lower(_ value: AppDesktopCoverKind) -> RustBuffer {
+    return FfiConverterTypeAppDesktopCoverKind.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum AppDetailActionId: Equatable, Hashable {
 
     /**
@@ -47993,6 +48419,119 @@ public func FfiConverterTypeAppStorageRequest_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeAppStorageRequest_lower(_ value: AppStorageRequest) -> RustBuffer {
     return FfiConverterTypeAppStorageRequest.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum AppStreamPhase: Equatable, Hashable {
+
+    /**
+     * No session yet.
+     */
+    case noSession
+    /**
+     * A session that has not started.
+     */
+    case idle
+    /**
+     * Opening (no frame yet).
+     */
+    case connecting
+    /**
+     * Frames arrive.
+     */
+    case streaming
+    /**
+     * Paused by the Space (the stream view says why).
+     */
+    case suspended
+    /**
+     * It could not open.
+     */
+    case failed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppStreamPhase: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppStreamPhase: FfiConverterRustBuffer {
+    typealias SwiftType = AppStreamPhase
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppStreamPhase {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .noSession
+
+        case 2: return .idle
+
+        case 3: return .connecting
+
+        case 4: return .streaming
+
+        case 5: return .suspended
+
+        case 6: return .failed
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppStreamPhase, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .noSession:
+            writeInt(&buf, Int32(1))
+
+
+        case .idle:
+            writeInt(&buf, Int32(2))
+
+
+        case .connecting:
+            writeInt(&buf, Int32(3))
+
+
+        case .streaming:
+            writeInt(&buf, Int32(4))
+
+
+        case .suspended:
+            writeInt(&buf, Int32(5))
+
+
+        case .failed:
+            writeInt(&buf, Int32(6))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppStreamPhase_lift(_ buf: RustBuffer) throws -> AppStreamPhase {
+    return try FfiConverterTypeAppStreamPhase.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppStreamPhase_lower(_ value: AppStreamPhase) -> RustBuffer {
+    return FfiConverterTypeAppStreamPhase.lower(value)
 }
 
 
@@ -59039,6 +59578,17 @@ public func appDeleteFailedText(name: String, error: String) -> String  {
 })
 }
 /**
+ * What a Space's preview card shows before (or instead of) its live
+ * desktop: "Connecting…", a Connect button, or the Space's own line.
+ */
+public func appDesktopCover(input: AppDesktopCoverInput) -> AppDesktopCover  {
+    return try!  FfiConverterTypeAppDesktopCover_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_desktop_cover(
+        FfiConverterTypeAppDesktopCoverInput_lower(input),$0
+    )
+})
+}
+/**
  * A device name as typed for Rename (`None` when empty).
  */
 public func appDevicesCleanName(name: String) -> String?  {
@@ -60857,6 +61407,15 @@ public func appThisMachineSpace(status: AppHostSummaryInput?, nowMs: Int64) -> A
 })
 }
 /**
+ * How fresh the shells keep each Space's thumbnail.
+ */
+public func appThumbnailPolicy() -> AppThumbnailPolicy  {
+    return try!  FfiConverterTypeAppThumbnailPolicy_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_thumbnail_policy($0
+    )
+})
+}
+/**
  * Advances the transfer overlay (`None` hides it).
  */
 public func appTransferReduce(state: AppTransferOverlayState?, signal: AppTransferSignal) -> AppTransferOverlayState?  {
@@ -61557,6 +62116,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_delete_failed_text() != 11381) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_desktop_cover() != 7825) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_devices_clean_name() != 62073) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -62065,6 +62627,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_this_machine_space() != 14017) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_thumbnail_policy() != 18561) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_transfer_reduce() != 56658) {

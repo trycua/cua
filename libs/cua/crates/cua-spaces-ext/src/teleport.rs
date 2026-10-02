@@ -539,6 +539,25 @@ pub struct ImportOptions {
     pub relay_plaintext_ack: bool,
 }
 
+/// What the review chose beyond the approved paths: which sites' cookies to
+/// send, and whether to send saved Keyvault items instead of reading the
+/// live app.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TeleportSelection {
+    /// The registrable domains whose cookies to send (`None`: every cookie in
+    /// the approved selection).
+    pub cookie_domains: Option<Vec<String>>,
+    /// Send these saved Keyvault items (ids) instead of capturing the live
+    /// app. Nothing is read from the host, so its Keychain is never asked;
+    /// the broker authorizes it with the user's presence as it does any
+    /// delivery.
+    pub from_vault: Option<Vec<String>>,
+    /// Also send the saved passwords (of `cookie_domains`, or every site):
+    /// only when the user ticked them in the review. They are re-encrypted
+    /// for the destination browser's own key.
+    pub include_passwords: bool,
+}
+
 /// Session teleport on a [`Space`]: what it can import, and the export and
 /// import of an approved app session.
 #[allow(async_fn_in_trait)]
@@ -567,6 +586,17 @@ pub trait SpaceTeleport {
         sessions: Arc<AppSessions>,
         approval: &Approval,
         options: ImportOptions,
+        stage: &mut (dyn FnMut(cua_keyvault::broker::TeleportStage) + Send),
+    ) -> Result<TeleportReceipt>;
+
+    /// [`Self::teleport_with_progress`] with the review's choices: cookies of
+    /// only some sites, or saved Keyvault items sent without a fresh capture.
+    async fn teleport_selected(
+        &self,
+        sessions: Arc<AppSessions>,
+        approval: &Approval,
+        options: ImportOptions,
+        selection: &TeleportSelection,
         stage: &mut (dyn FnMut(cua_keyvault::broker::TeleportStage) + Send),
     ) -> Result<TeleportReceipt>;
 }
@@ -634,9 +664,9 @@ impl SpaceTeleport for Space {
         // reported back as "not supported by this driver" --
         // `cua-spacesd-server`'s `services/teleport.rs`), so routing
         // through the Keyvault changes nothing about them. `launch_after`
-        // is likewise not threaded through [`Backend::deliver`] yet (every
-        // Keyvault-routed delivery, including the MCP paths, has the same
-        // gap): the app lands but is not auto-launched. `relay_plaintext_ack`
+        // is threaded through the Keyvault's `import_and_teleport` (the
+        // receiver launches the app in the Space's GUI session and the
+        // receipt reports whether it did). `relay_plaintext_ack`
         // (S1) is the direct upload path's own concern -- it answers
         // whether *this* connection crosses an unsealed relay
         // (`self.spacesd()`); the Keyvault's own delivery is a separate
@@ -645,6 +675,24 @@ impl SpaceTeleport for Space {
         // three are tracked as follow-up work, not specific to this path.
         // `save_to_keyvault` is honored below.
         options: ImportOptions,
+        stage: &mut (dyn FnMut(cua_keyvault::broker::TeleportStage) + Send),
+    ) -> Result<TeleportReceipt> {
+        self.teleport_selected(
+            sessions,
+            approval,
+            options,
+            &TeleportSelection::default(),
+            stage,
+        )
+        .await
+    }
+
+    async fn teleport_selected(
+        &self,
+        sessions: Arc<AppSessions>,
+        approval: &Approval,
+        options: ImportOptions,
+        selection: &TeleportSelection,
         stage: &mut (dyn FnMut(cua_keyvault::broker::TeleportStage) + Send),
     ) -> Result<TeleportReceipt> {
         if approval.space != self.id().to_string() {
@@ -678,6 +726,8 @@ impl SpaceTeleport for Space {
             cookies: cua_keyvault::broker::CookieFilter::default(),
             confirm_passwords: true,
             paths: Some(approval.paths.clone()),
+            domains: selection.cookie_domains.clone(),
+            passwords: selection.include_passwords,
         };
         let mut client = cua_keyvault::client::KeyvaultClient::connect_default()
             .await
@@ -688,15 +738,35 @@ impl SpaceTeleport for Space {
                      as the signed `cua` app/CLI"
                 ),
             })?;
-        let outcome = client
-            .import_and_teleport_with_progress(
-                spec,
-                self.id().to_string(),
-                options.save_to_keyvault,
-                stage,
-            )
-            .await
-            .map_err(|e| Error::TeleportRefused(format!("{}: {e}", approval.app)))?;
+        let outcome = match &selection.from_vault {
+            // Saved items: no capture, so nothing is read from the host and
+            // the Keychain is never asked. One delivery, one presence check.
+            Some(items) => {
+                stage(cua_keyvault::broker::TeleportStage::Packing);
+                let out = client
+                    .teleport(cua_keyvault::broker::TeleportRequest {
+                        token: None,
+                        items: items.clone(),
+                        target: self.id().to_string(),
+                        include_passwords: selection.include_passwords,
+                        launch: options.launch_after,
+                    })
+                    .await
+                    .map_err(|e| Error::TeleportRefused(format!("{}: {e}", approval.app)))?;
+                stage(cua_keyvault::broker::TeleportStage::Importing);
+                out
+            }
+            None => client
+                .import_and_teleport_launching(
+                    spec,
+                    self.id().to_string(),
+                    options.save_to_keyvault,
+                    options.launch_after,
+                    stage,
+                )
+                .await
+                .map_err(|e| Error::TeleportRefused(format!("{}: {e}", approval.app)))?,
+        };
         let delivery = outcome.deliveries.first();
         Ok(TeleportReceipt {
             app: approval.app.clone(),
@@ -707,7 +777,7 @@ impl SpaceTeleport for Space {
             bundle_sha256: String::new(),
             imported: delivery.map(|d| d.imported.clone()).unwrap_or_default(),
             skipped: delivery.map(|d| d.skipped.clone()).unwrap_or_default(),
-            launched: false,
+            launched: delivery.is_some_and(|d| d.launched),
         })
     }
 }
@@ -806,7 +876,14 @@ pub(crate) async fn tool(
                 None => current.approving_default(&target, a.acknowledge_sensitive)?,
             };
             let receipt = s
-                .teleport(sessions, &approval, ImportOptions::default())
+                .teleport(
+                    sessions,
+                    &approval,
+                    ImportOptions {
+                        launch_after: true,
+                        ..ImportOptions::default()
+                    },
+                )
                 .await?;
             Ok(ToolOutcome::json(&receipt))
         }

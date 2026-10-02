@@ -178,6 +178,8 @@ impl Session {
 pub struct VolumeShared {
     ctx: ServerContext,
     current: Arc<Mutex<Option<Arc<Session>>>>,
+    /// Held while a detach unmounts, so shutdown can wait for it.
+    unmounting: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl VolumeShared {
@@ -186,6 +188,7 @@ impl VolumeShared {
         let state = Self {
             ctx,
             current: Arc::default(),
+            unmounting: Arc::default(),
         };
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             let mut revoked = state.ctx.session_revocations();
@@ -212,6 +215,7 @@ impl VolumeShared {
     /// Unmounts and forgets the session (`id` must match when given).
     /// Returns whether one was attached.
     async fn detach(&self, id: Option<&str>) -> bool {
+        let _unmounting = self.unmounting.lock().await;
         let session = {
             let mut slot = self.current.lock().expect("volume");
             match slot.as_ref() {
@@ -229,6 +233,115 @@ impl VolumeShared {
         session.stop.cancel();
         tracing::info!(volume = %session.id, "volume detached");
         true
+    }
+
+    /// Shutdown: unmounts whatever is mounted and waits for an unmount
+    /// already under way (bounded, so a stuck umount cannot hold the
+    /// process).
+    pub async fn finish(&self) {
+        let _ = tokio::time::timeout(SHUTDOWN_UNMOUNT_TIMEOUT, self.detach(None)).await;
+    }
+
+    /// Start-up: unmounts a mount a previous daemon left at the volume path
+    /// (it exited without unmounting; nothing serves it, so every access
+    /// hangs until the NFS client gives up). Never blocks start-up for long.
+    pub async fn clear_stale_mount(&self) {
+        let _ = tokio::time::timeout(Duration::from_secs(30), clear_stale_mounts()).await;
+    }
+}
+
+/// How long shutdown waits for the volume to unmount.
+const SHUTDOWN_UNMOUNT_TIMEOUT: Duration = Duration::from_secs(25);
+
+/// The paths a volume may have been mounted at.
+fn stale_candidates() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        return vec![];
+    }
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp"));
+    let mut v = vec![home.join("Cua Volume")];
+    if cfg!(target_os = "linux") {
+        v.push(PathBuf::from("/volume"));
+    }
+    v
+}
+
+/// Whether `table` (macOS `mount` output or Linux `/proc/self/mountinfo`)
+/// lists `path` as a mount point. Compares text only: stat-ing a dead mount
+/// is what hangs.
+fn listed_in_mount_table(table: &str, path: &Path, linux: bool) -> bool {
+    let raw = path.to_string_lossy().to_string();
+    // macOS lists /var, /tmp and /etc as /private/...
+    let private = format!("/private{raw}");
+    table.lines().any(|l| {
+        if linux {
+            l.split(' ')
+                .nth(4)
+                .is_some_and(|m| m.replace("\\040", " ") == raw)
+        } else {
+            [&raw, &private]
+                .iter()
+                .any(|p| l.contains(&format!(" on {p} (")))
+        }
+    })
+}
+
+async fn mount_table() -> String {
+    if cfg!(target_os = "linux") {
+        tokio::fs::read_to_string("/proc/self/mountinfo")
+            .await
+            .unwrap_or_default()
+    } else {
+        // `mount` only reads the kernel's table; it does not stat mounts.
+        match tokio::time::timeout(
+            Duration::from_secs(10),
+            tokio::process::Command::new("/sbin/mount").output(),
+        )
+        .await
+        {
+            Ok(Ok(o)) => String::from_utf8_lossy(&o.stdout).into_owned(),
+            _ => String::new(),
+        }
+    }
+}
+
+async fn clear_stale_mounts() {
+    let table = mount_table().await;
+    for path in stale_candidates() {
+        if !listed_in_mount_table(&table, &path, cfg!(target_os = "linux")) {
+            continue;
+        }
+        // Only a mount that does not answer is stale: a host's own live
+        // mount at the same path (a machine that is both a host and a Space)
+        // is left alone. A dead mount's stat hangs until the NFS timeouts
+        // give up, so it runs on a thread with a deadline.
+        let probe = path.clone();
+        let alive = tokio::time::timeout(
+            Duration::from_secs(5),
+            tokio::task::spawn_blocking(move || std::fs::metadata(&probe).is_ok()),
+        )
+        .await;
+        if matches!(alive, Ok(Ok(true))) {
+            continue;
+        }
+        let p = path.to_string_lossy().to_string();
+        tracing::warn!(path = %p, "clearing a stale volume mount left by a previous daemon");
+        let r = if cfg!(target_os = "linux") {
+            // Lazy: a dead FUSE/NFS mount may refuse a plain unmount.
+            let root = running_as_root();
+            if root {
+                run("umount", &["-l", &p]).await
+            } else {
+                run("sudo", &["-n", "umount", "-l", &p]).await
+            }
+        } else {
+            run("/sbin/umount", &["-f", &p]).await
+        };
+        if let Err(e) = r {
+            tracing::warn!(path = %p, error = %e, "stale volume mount did not unmount");
+        }
     }
 }
 
@@ -320,7 +433,7 @@ async fn mount(session: &Arc<Session>) -> Result<(), String> {
                 let _ = run("/sbin/umount", &["-f", &p]).await;
             }
             let opts = format!(
-                "port={port},mountport={port},vers=3,tcp,nolocks,locallocks,soft,timeo=50,retrans=2,intr,noowners,rsize=1048576,wsize=1048576,actimeo=1",
+                "port={port},mountport={port},vers=3,tcp,nolocks,locallocks,soft,timeo=50,retrans=2,deadtimeout=30,intr,noowners,rsize=1048576,wsize=1048576,actimeo=1",
                 port = session.port
             );
             run("/sbin/mount_nfs", &["-o", &opts, "127.0.0.1:/", &p]).await
@@ -692,9 +805,39 @@ pub async fn volume_ws(
         })
 }
 
+/// Whether this process runs as root (always false off Unix).
+#[cfg(unix)]
+fn running_as_root() -> bool {
+    // SAFETY: geteuid never fails.
+    unsafe { libc::geteuid() == 0 }
+}
+
+#[cfg(not(unix))]
+fn running_as_root() -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_listed_mount_is_found_without_stat() {
+        let mac = "127.0.0.1:/ on /Users/a/Cua Volume (nfs, nodev, nosuid, mounted by a)\n\
+                   /dev/disk3s1 on / (apfs, local)";
+        let p = Path::new("/Users/a/Cua Volume");
+        assert!(listed_in_mount_table(mac, p, false));
+        assert!(!listed_in_mount_table(
+            mac,
+            Path::new("/Users/b/Cua Volume"),
+            false
+        ));
+        let linux =
+            "36 25 0:32 / /volume rw - fuse none rw\n40 25 0:33 / /mnt/my\\040vol rw - tmpfs";
+        assert!(listed_in_mount_table(linux, Path::new("/volume"), true));
+        assert!(listed_in_mount_table(linux, Path::new("/mnt/my vol"), true));
+        assert!(!listed_in_mount_table(linux, Path::new("/vol"), true));
+    }
 
     #[test]
     fn the_backend_and_path_follow_the_guest() {

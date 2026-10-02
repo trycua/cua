@@ -280,7 +280,7 @@ impl crate::Spaces {
         if let Some(old) = self.inner.hotspots.lock().await.remove(&key) {
             let _ = old.stop().await;
         }
-        let hotspot = s.start_hotspot(options).await?;
+        let hotspot = s.start_hotspot(options.clone()).await?;
         let status = HotspotStatus {
             space: key.clone(),
             state: "waiting_for_peer".into(),
@@ -291,8 +291,88 @@ impl crate::Spaces {
             bytes_in: 0,
             served_here: true,
         };
-        self.inner.hotspots.lock().await.insert(key, hotspot);
+        let id = hotspot.id().to_string();
+        self.inner
+            .hotspots
+            .lock()
+            .await
+            .insert(key.clone(), hotspot);
+        self.supervise_hotspot(key, id, options);
         Ok(status)
+    }
+
+    /// Re-starts the hotspot of `key` when its guest daemon restarts (the
+    /// socket closes and the new daemon has no hotspot), until it is
+    /// stopped or replaced.
+    fn supervise_hotspot(&self, key: String, id: String, options: HotspotOptions) {
+        use crate::reattach::{Attempt, Health, Policy, supervise};
+        let spaces = self.clone();
+        // The hotspot this supervisor last saw; another id means a caller
+        // replaced it (and started its own supervisor).
+        let mine = Arc::new(std::sync::Mutex::new(Some(id)));
+        tokio::spawn(async move {
+            let health = {
+                let (spaces, key, mine) = (spaces.clone(), key.clone(), mine.clone());
+                move || {
+                    let (spaces, key, mine) = (spaces.clone(), key.clone(), mine.clone());
+                    async move {
+                        let (id, running) = {
+                            let map = spaces.inner.hotspots.lock().await;
+                            match map.get(&key) {
+                                Some(h) => (h.id().to_string(), h.is_running()),
+                                None => return Health::Gone,
+                            }
+                        };
+                        {
+                            let mut m = mine.lock().expect("hotspot id");
+                            match m.as_deref() {
+                                None => *m = Some(id.clone()),
+                                Some(seen) if seen != id => return Health::Gone,
+                                _ => {}
+                            }
+                        }
+                        if !running {
+                            return Health::Down;
+                        }
+                        // The socket is open; does the guest still have its
+                        // half? A restarted daemon reports no hotspot.
+                        let Ok(space) = spaces.space(&key).await else {
+                            return Health::Healthy;
+                        };
+                        match space.hotspot_status().await {
+                            Ok(s) if s.state == "stopped" || s.hotspot_id != id => Health::Down,
+                            _ => Health::Healthy,
+                        }
+                    }
+                }
+            };
+            let reattach = {
+                let (spaces, key, mine) = (spaces.clone(), key.clone(), mine.clone());
+                move || {
+                    let (spaces, key, mine, options) =
+                        (spaces.clone(), key.clone(), mine.clone(), options.clone());
+                    async move {
+                        let space = spaces.space(&key).await.map_err(|e| e.to_string())?;
+                        // Hold the map across the start so a stop cannot slip in.
+                        let mut map = spaces.inner.hotspots.lock().await;
+                        if !map.contains_key(&key) {
+                            return Ok(Attempt::Unsupported);
+                        }
+                        let fresh = space
+                            .start_hotspot(options)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        tracing::info!(space = %key, "hotspot re-attached after the guest daemon restarted");
+                        *mine.lock().expect("hotspot id") = Some(fresh.id().to_string());
+                        if let Some(old) = map.insert(key, fresh) {
+                            drop(old);
+                        }
+                        Ok(Attempt::Attached)
+                    }
+                }
+            };
+            supervise(Policy::default(), health, reattach).await;
+        });
     }
 
     /// Stops the hotspot of one Space, or of every Space when `None`.

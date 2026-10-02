@@ -359,7 +359,7 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
                     "The Cua daemon asks for Touch ID or your login password to import saved passwords."
                 );
             }
-            let items = c
+            let r = c
                 .import_passwords(cua_keyvault::broker::PasswordImportSpec {
                     app: a.browser,
                     profile: a.profile,
@@ -368,28 +368,11 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
                 .await
                 .map_err(kv_error)?;
             if json {
-                let rows: Vec<serde_json::Value> = items
-                    .iter()
-                    .map(|i| {
-                        serde_json::json!({"id": i.id, "site": i.site,
-                            "passwords": i.summary.passwords})
-                    })
-                    .collect();
-                util::json_line(out, &serde_json::json!({ "imported": rows }));
-            } else if items.is_empty() {
+                util::json_line(out, &serde_json::json!({ "imported": r }));
+            } else if r.saved == 0 {
                 line(out, "No saved passwords found.");
             } else {
-                for i in &items {
-                    line(
-                        out,
-                        format!(
-                            "{}  {} saved password{}",
-                            i.site.as_deref().unwrap_or(&i.label),
-                            i.summary.passwords,
-                            if i.summary.passwords == 1 { "" } else { "s" }
-                        ),
-                    );
-                }
+                line(out, import_summary(&r, "saved password"));
             }
         }
         KeyvaultCmd::ImportSession(a) => {
@@ -419,44 +402,20 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
                 },
                 confirm_passwords: a.include_passwords,
                 paths: None,
+                domains: None,
+                passwords: false,
             };
-            let items = c.import(spec).await.map_err(kv_error)?;
+            let r = c.import(spec).await.map_err(kv_error)?;
             if json {
-                let rows: Vec<serde_json::Value> = items
-                    .iter()
-                    .map(|i| {
-                        serde_json::json!({"id": i.id, "label": i.label,
-                            "site": i.site, "cookies": i.summary.cookies.len(),
-                            "passwords": i.summary.passwords})
-                    })
-                    .collect();
-                util::json_line(out, &serde_json::json!({ "imported": rows }));
-            } else if items.is_empty() {
+                util::json_line(out, &serde_json::json!({ "imported": r }));
+            } else if r.saved == 0 {
                 line(out, "Nothing to import.");
             } else {
-                for i in &items {
-                    let what = match i.kind {
-                        cua_keyvault::ItemKind::BrowserSite => format!(
-                            "{} cookie{}",
-                            i.summary.cookies.len(),
-                            if i.summary.cookies.len() == 1 {
-                                ""
-                            } else {
-                                "s"
-                            }
-                        ),
-                        cua_keyvault::ItemKind::AppSession => "session".to_string(),
-                        cua_keyvault::ItemKind::SitePasswords => format!(
-                            "{} saved password{}",
-                            i.summary.passwords,
-                            if i.summary.passwords == 1 { "" } else { "s" }
-                        ),
-                    };
-                    line(out, format!("{}  {what}", i.label));
-                }
+                line(out, import_summary(&r, "item"));
                 line(
                     out,
-                    "Sealed in the Keyvault. Deliver it with `cua teleport push --sandbox NAME` \
+                    "Sealed in the Keyvault, grouped by app. Saving the same app again updates \
+                     these items. Deliver them with `cua teleport push --sandbox NAME` \
                      or the review sheet's \"Save to Keyvault\".",
                 );
             }
@@ -470,7 +429,7 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
                         serde_json::json!({"id": p.id, "caller": p.caller_display,
                             "agent": p.request.agent, "actions": p.request.actions,
                             "targets": p.request.targets,
-                            "items": p.items.iter().map(|i| i.label.clone()).collect::<Vec<_>>()})
+                            "items": p.items.iter().map(|i| i.redacted().label()).collect::<Vec<_>>()})
                     })
                     .collect();
                 util::json_line(out, &serde_json::json!({ "requests": rows }));
@@ -481,7 +440,14 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
                     let what: Vec<String> = p
                         .items
                         .iter()
-                        .map(|i| i.site.clone().unwrap_or_else(|| i.label.clone()))
+                        .map(|i| {
+                            i.domain
+                                .as_deref()
+                                .map(cua_keyvault::record::site_of)
+                                .unwrap_or_else(|| i.label())
+                        })
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .into_iter()
                         .collect();
                     let verb = if p.request.actions.contains(&cua_keyvault::Action::Login) {
                         "sign in to"
@@ -528,6 +494,22 @@ pub async fn run(cmd: KeyvaultCmd, json: bool, out: &mut dyn Write) -> Result<i3
         }
     }
     Ok(0)
+}
+
+/// "Saved 4 items: 3 new, 1 updated" (counts only; never a name or a value).
+fn import_summary(r: &cua_keyvault::broker::ImportReport, noun: &str) -> String {
+    let plural = if r.saved == 1 { "" } else { "s" };
+    let mut parts = Vec::new();
+    if r.created > 0 {
+        parts.push(format!("{} new", r.created));
+    }
+    if r.updated > 0 {
+        parts.push(format!("{} updated", r.updated));
+    }
+    if r.unchanged > 0 {
+        parts.push(format!("{} unchanged", r.unchanged));
+    }
+    format!("Saved {} {noun}{plural}: {}", r.saved, parts.join(", "))
 }
 
 #[cfg(test)]

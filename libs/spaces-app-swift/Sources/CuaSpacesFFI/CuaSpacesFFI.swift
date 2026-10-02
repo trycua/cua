@@ -1090,6 +1090,17 @@ public protocol KeyvaultClientProtocol: AnyObject, Sendable {
     func execute(command: KvCommand) async throws  -> KvOutcome
 
     /**
+     * Site icons the vault holds (not secret; empty while names are hidden).
+     */
+    func favicons() async  -> [KvFavicon]
+
+    /**
+     * What `app` holds, per domain with counts (the daemon asks for Touch ID
+     * when the browse window is closed). Never a value.
+     */
+    func inventory(app: String, profile: String?) async throws  -> KvInventory
+
+    /**
      * Locks the vault.
      */
     func lock() async throws
@@ -1199,6 +1210,48 @@ open func execute(command: KvCommand)async throws  -> KvOutcome  {
             completeFunc: ffi_cua_spaces_ffi_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_spaces_ffi_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeKvOutcome_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Site icons the vault holds (not secret; empty while names are hidden).
+     */
+open func favicons()async  -> [KvFavicon]  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_spaces_ffi_fn_method_keyvaultclient_favicons(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_spaces_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_spaces_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_spaces_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeKvFavicon.lift,
+            errorHandler: nil
+
+        )
+}
+
+    /**
+     * What `app` holds, per domain with counts (the daemon asks for Touch ID
+     * when the browse window is closed). Never a value.
+     */
+open func inventory(app: String, profile: String?)async throws  -> KvInventory  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_spaces_ffi_fn_method_keyvaultclient_inventory(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(app),FfiConverterOptionString.lower(profile)
+                )
+            },
+            pollFunc: ffi_cua_spaces_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_spaces_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_spaces_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeKvInventory_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -8274,6 +8327,210 @@ public func FfiConverterTypeAppDeleteConfirm_lift(_ buf: RustBuffer) throws -> A
 #endif
 public func FfiConverterTypeAppDeleteConfirm_lower(_ value: AppDeleteConfirm) -> RustBuffer {
     return FfiConverterTypeAppDeleteConfirm.lower(value)
+}
+
+
+public struct AppDesktopCover: Equatable, Hashable {
+    /**
+     * How it draws.
+     */
+    public var kind: AppDesktopCoverKind
+    /**
+     * The line, centered.
+     */
+    public var text: String?
+    /**
+     * A button under (or instead of) the line.
+     */
+    public var button: String?
+    /**
+     * Its tooltip.
+     */
+    public var buttonHelp: String?
+    /**
+     * The shell opens a stream session now (none is open, and one is
+     * wanted).
+     */
+    public var openStream: Bool
+    /**
+     * The shell starts the open session again (Try again was pressed).
+     */
+    public var retry: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * How it draws.
+         */kind: AppDesktopCoverKind,
+        /**
+         * The line, centered.
+         */text: String?,
+        /**
+         * A button under (or instead of) the line.
+         */button: String?,
+        /**
+         * Its tooltip.
+         */buttonHelp: String?,
+        /**
+         * The shell opens a stream session now (none is open, and one is
+         * wanted).
+         */openStream: Bool,
+        /**
+         * The shell starts the open session again (Try again was pressed).
+         */retry: Bool) {
+        self.kind = kind
+        self.text = text
+        self.button = button
+        self.buttonHelp = buttonHelp
+        self.openStream = openStream
+        self.retry = retry
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppDesktopCover: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppDesktopCover: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppDesktopCover {
+        return
+            try AppDesktopCover(
+                kind: FfiConverterTypeAppDesktopCoverKind.read(from: &buf),
+                text: FfiConverterOptionString.read(from: &buf),
+                button: FfiConverterOptionString.read(from: &buf),
+                buttonHelp: FfiConverterOptionString.read(from: &buf),
+                openStream: FfiConverterBool.read(from: &buf),
+                retry: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppDesktopCover, into buf: inout [UInt8]) {
+        FfiConverterTypeAppDesktopCoverKind.write(value.kind, into: &buf)
+        FfiConverterOptionString.write(value.text, into: &buf)
+        FfiConverterOptionString.write(value.button, into: &buf)
+        FfiConverterOptionString.write(value.buttonHelp, into: &buf)
+        FfiConverterBool.write(value.openStream, into: &buf)
+        FfiConverterBool.write(value.retry, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDesktopCover_lift(_ buf: RustBuffer) throws -> AppDesktopCover {
+    return try FfiConverterTypeAppDesktopCover.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDesktopCover_lower(_ value: AppDesktopCover) -> RustBuffer {
+    return FfiConverterTypeAppDesktopCover.lower(value)
+}
+
+
+public struct AppDesktopCoverInput: Equatable, Hashable {
+    /**
+     * The detail's `can_stream`.
+     */
+    public var canStream: Bool
+    /**
+     * The detail's `preview_text` (why it cannot stream).
+     */
+    public var previewText: String
+    /**
+     * Settings: "Connect to the desktop automatically".
+     */
+    public var autoConnect: Bool
+    /**
+     * Connect (or Try again) was pressed for this Space.
+     */
+    public var connectRequested: Bool
+    /**
+     * The shell's stream session.
+     */
+    public var stream: AppStreamPhase
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The detail's `can_stream`.
+         */canStream: Bool,
+        /**
+         * The detail's `preview_text` (why it cannot stream).
+         */previewText: String,
+        /**
+         * Settings: "Connect to the desktop automatically".
+         */autoConnect: Bool,
+        /**
+         * Connect (or Try again) was pressed for this Space.
+         */connectRequested: Bool,
+        /**
+         * The shell's stream session.
+         */stream: AppStreamPhase) {
+        self.canStream = canStream
+        self.previewText = previewText
+        self.autoConnect = autoConnect
+        self.connectRequested = connectRequested
+        self.stream = stream
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppDesktopCoverInput: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppDesktopCoverInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppDesktopCoverInput {
+        return
+            try AppDesktopCoverInput(
+                canStream: FfiConverterBool.read(from: &buf),
+                previewText: FfiConverterString.read(from: &buf),
+                autoConnect: FfiConverterBool.read(from: &buf),
+                connectRequested: FfiConverterBool.read(from: &buf),
+                stream: FfiConverterTypeAppStreamPhase.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppDesktopCoverInput, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.canStream, into: &buf)
+        FfiConverterString.write(value.previewText, into: &buf)
+        FfiConverterBool.write(value.autoConnect, into: &buf)
+        FfiConverterBool.write(value.connectRequested, into: &buf)
+        FfiConverterTypeAppStreamPhase.write(value.stream, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDesktopCoverInput_lift(_ buf: RustBuffer) throws -> AppDesktopCoverInput {
+    return try FfiConverterTypeAppDesktopCoverInput.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDesktopCoverInput_lower(_ value: AppDesktopCoverInput) -> RustBuffer {
+    return FfiConverterTypeAppDesktopCoverInput.lower(value)
 }
 
 
@@ -18751,9 +19008,15 @@ public struct AppNotchTile: Equatable, Hashable {
      */
     public var symbol: String
     /**
-     * Accessibility label: name, OS and status.
+     * Accessibility label: name, OS, where it runs and status.
      */
     public var label: String
+    /**
+     * Where it runs, in words, on the tile's header line next to the OS
+     * logo: "This Mac", the machine that provides it ("Mac mini"), the
+     * address of one added by address, or the cloud's place ([`location`]).
+     */
+    public var location: String
     /**
      * While it is being created: overall progress in thousandths (a ring
      * over the tile).
@@ -18799,8 +19062,13 @@ public struct AppNotchTile: Equatable, Hashable {
          * macOS the system symbol [`os_icon_system_symbol`] names.
          */symbol: String,
         /**
-         * Accessibility label: name, OS and status.
+         * Accessibility label: name, OS, where it runs and status.
          */label: String,
+        /**
+         * Where it runs, in words, on the tile's header line next to the OS
+         * logo: "This Mac", the machine that provides it ("Mac mini"), the
+         * address of one added by address, or the cloud's place ([`location`]).
+         */location: String,
         /**
          * While it is being created: overall progress in thousandths (a ring
          * over the tile).
@@ -18821,6 +19089,7 @@ public struct AppNotchTile: Equatable, Hashable {
         self.targeted = targeted
         self.symbol = symbol
         self.label = label
+        self.location = location
         self.progress = progress
         self.progressLabel = progressLabel
         self.signedIn = signedIn
@@ -18851,6 +19120,7 @@ public struct FfiConverterTypeAppNotchTile: FfiConverterRustBuffer {
                 targeted: FfiConverterBool.read(from: &buf),
                 symbol: FfiConverterString.read(from: &buf),
                 label: FfiConverterString.read(from: &buf),
+                location: FfiConverterString.read(from: &buf),
                 progress: FfiConverterOptionUInt32.read(from: &buf),
                 progressLabel: FfiConverterOptionString.read(from: &buf),
                 signedIn: FfiConverterBool.read(from: &buf)
@@ -18867,6 +19137,7 @@ public struct FfiConverterTypeAppNotchTile: FfiConverterRustBuffer {
         FfiConverterBool.write(value.targeted, into: &buf)
         FfiConverterString.write(value.symbol, into: &buf)
         FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.location, into: &buf)
         FfiConverterOptionUInt32.write(value.progress, into: &buf)
         FfiConverterOptionString.write(value.progressLabel, into: &buf)
         FfiConverterBool.write(value.signedIn, into: &buf)
@@ -21649,6 +21920,10 @@ public struct AppPickerState: Equatable, Hashable {
      */
     public var acknowledgedRelayPlaintext: Bool
     /**
+     * What the review sends: which sites, which items, from where.
+     */
+    public var choice: AppReviewChoice
+    /**
      * Run events (last [`MAX_EVENTS`]).
      */
     public var events: [AppTeleportRunEvent]
@@ -21716,6 +21991,9 @@ public struct AppPickerState: Equatable, Hashable {
          * [`Plan::relay_unsealed`]'s warning acknowledged (S1).
          */acknowledgedRelayPlaintext: Bool,
         /**
+         * What the review sends: which sites, which items, from where.
+         */choice: AppReviewChoice,
+        /**
          * Run events (last [`MAX_EVENTS`]).
          */events: [AppTeleportRunEvent],
         /**
@@ -21743,6 +22021,7 @@ public struct AppPickerState: Equatable, Hashable {
         self.acknowledged = acknowledged
         self.saveToKeyvault = saveToKeyvault
         self.acknowledgedRelayPlaintext = acknowledgedRelayPlaintext
+        self.choice = choice
         self.events = events
         self.report = report
         self.error = error
@@ -21779,6 +22058,7 @@ public struct FfiConverterTypeAppPickerState: FfiConverterRustBuffer {
                 acknowledged: FfiConverterBool.read(from: &buf),
                 saveToKeyvault: FfiConverterBool.read(from: &buf),
                 acknowledgedRelayPlaintext: FfiConverterBool.read(from: &buf),
+                choice: FfiConverterTypeAppReviewChoice.read(from: &buf),
                 events: FfiConverterSequenceTypeAppTeleportRunEvent.read(from: &buf),
                 report: FfiConverterOptionTypeAppTeleportRunReport.read(from: &buf),
                 error: FfiConverterOptionString.read(from: &buf),
@@ -21801,6 +22081,7 @@ public struct FfiConverterTypeAppPickerState: FfiConverterRustBuffer {
         FfiConverterBool.write(value.acknowledged, into: &buf)
         FfiConverterBool.write(value.saveToKeyvault, into: &buf)
         FfiConverterBool.write(value.acknowledgedRelayPlaintext, into: &buf)
+        FfiConverterTypeAppReviewChoice.write(value.choice, into: &buf)
         FfiConverterSequenceTypeAppTeleportRunEvent.write(value.events, into: &buf)
         FfiConverterOptionTypeAppTeleportRunReport.write(value.report, into: &buf)
         FfiConverterOptionString.write(value.error, into: &buf)
@@ -23011,6 +23292,72 @@ public func FfiConverterTypeAppRefreshReport_lower(_ value: AppRefreshReport) ->
 }
 
 
+public struct AppRememberedChoice: Equatable, Hashable {
+    /**
+     * `<app>|<space>`.
+     */
+    public var key: String
+    /**
+     * The sites (registrable domains) that were sent.
+     */
+    public var domains: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `<app>|<space>`.
+         */key: String,
+        /**
+         * The sites (registrable domains) that were sent.
+         */domains: [String]) {
+        self.key = key
+        self.domains = domains
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppRememberedChoice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppRememberedChoice: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppRememberedChoice {
+        return
+            try AppRememberedChoice(
+                key: FfiConverterString.read(from: &buf),
+                domains: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppRememberedChoice, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterSequenceString.write(value.domains, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRememberedChoice_lift(_ buf: RustBuffer) throws -> AppRememberedChoice {
+    return try FfiConverterTypeAppRememberedChoice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppRememberedChoice_lower(_ value: AppRememberedChoice) -> RustBuffer {
+    return FfiConverterTypeAppRememberedChoice.lower(value)
+}
+
+
 public struct AppRemoteWindow: Equatable, Hashable {
     /**
      * Stable key.
@@ -23225,6 +23572,382 @@ public func FfiConverterTypeAppRemoteWindowGroup_lower(_ value: AppRemoteWindowG
 }
 
 
+public struct AppReviewChoice: Equatable, Hashable {
+    /**
+     * Where to send from.
+     */
+    public var source: AppSendSource
+    /**
+     * The browser's sites with counts (none until read, or for an app that
+     * is not a browser).
+     */
+    public var domains: [KvDomainCount]
+    /**
+     * The sites chosen.
+     */
+    public var selectedDomains: [String]
+    /**
+     * The sites list's search text.
+     */
+    public var query: String
+    /**
+     * Consent items (keys) turned off.
+     */
+    public var excluded: [String]
+    /**
+     * The saved items.
+     */
+    public var vault: AppVaultSource
+    /**
+     * The sites were asked for (a failure counts: the review then sends
+     * what the plan lists).
+     */
+    public var loaded: Bool
+    /**
+     * The saved passwords are ticked to send (off unless the user ticks
+     * them; never remembered).
+     */
+    public var includePasswords: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Where to send from.
+         */source: AppSendSource,
+        /**
+         * The browser's sites with counts (none until read, or for an app that
+         * is not a browser).
+         */domains: [KvDomainCount],
+        /**
+         * The sites chosen.
+         */selectedDomains: [String],
+        /**
+         * The sites list's search text.
+         */query: String,
+        /**
+         * Consent items (keys) turned off.
+         */excluded: [String],
+        /**
+         * The saved items.
+         */vault: AppVaultSource,
+        /**
+         * The sites were asked for (a failure counts: the review then sends
+         * what the plan lists).
+         */loaded: Bool,
+        /**
+         * The saved passwords are ticked to send (off unless the user ticks
+         * them; never remembered).
+         */includePasswords: Bool) {
+        self.source = source
+        self.domains = domains
+        self.selectedDomains = selectedDomains
+        self.query = query
+        self.excluded = excluded
+        self.vault = vault
+        self.loaded = loaded
+        self.includePasswords = includePasswords
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppReviewChoice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppReviewChoice: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppReviewChoice {
+        return
+            try AppReviewChoice(
+                source: FfiConverterTypeAppSendSource.read(from: &buf),
+                domains: FfiConverterSequenceTypeKvDomainCount.read(from: &buf),
+                selectedDomains: FfiConverterSequenceString.read(from: &buf),
+                query: FfiConverterString.read(from: &buf),
+                excluded: FfiConverterSequenceString.read(from: &buf),
+                vault: FfiConverterTypeAppVaultSource.read(from: &buf),
+                loaded: FfiConverterBool.read(from: &buf),
+                includePasswords: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppReviewChoice, into buf: inout [UInt8]) {
+        FfiConverterTypeAppSendSource.write(value.source, into: &buf)
+        FfiConverterSequenceTypeKvDomainCount.write(value.domains, into: &buf)
+        FfiConverterSequenceString.write(value.selectedDomains, into: &buf)
+        FfiConverterString.write(value.query, into: &buf)
+        FfiConverterSequenceString.write(value.excluded, into: &buf)
+        FfiConverterTypeAppVaultSource.write(value.vault, into: &buf)
+        FfiConverterBool.write(value.loaded, into: &buf)
+        FfiConverterBool.write(value.includePasswords, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppReviewChoice_lift(_ buf: RustBuffer) throws -> AppReviewChoice {
+    return try FfiConverterTypeAppReviewChoice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppReviewChoice_lower(_ value: AppReviewChoice) -> RustBuffer {
+    return FfiConverterTypeAppReviewChoice.lower(value)
+}
+
+
+public struct AppReviewDomain: Equatable, Hashable {
+    /**
+     * The site (`github.com`).
+     */
+    public var domain: String
+    /**
+     * "12 cookies, 2 storage values".
+     */
+    public var counts: String
+    /**
+     * Items the site holds.
+     */
+    public var count: UInt32
+    /**
+     * It looks like it keeps a sign-in.
+     */
+    public var signin: Bool
+    /**
+     * An identity provider: its session unlocks other apps.
+     */
+    public var identityProvider: Bool
+    /**
+     * Chosen to send.
+     */
+    public var selected: Bool
+    /**
+     * Can be chosen: it holds something that can be sent. A site whose
+     * cookies are all unreadable is greyed out.
+     */
+    public var selectable: Bool
+    /**
+     * Cookies that cannot be read, shown greyed with `unavailable_note`.
+     */
+    public var unavailable: UInt32
+    /**
+     * "3 cookies cannot be sent: Chrome protects them with ...", or empty.
+     */
+    public var unavailableNote: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The site (`github.com`).
+         */domain: String,
+        /**
+         * "12 cookies, 2 storage values".
+         */counts: String,
+        /**
+         * Items the site holds.
+         */count: UInt32,
+        /**
+         * It looks like it keeps a sign-in.
+         */signin: Bool,
+        /**
+         * An identity provider: its session unlocks other apps.
+         */identityProvider: Bool,
+        /**
+         * Chosen to send.
+         */selected: Bool,
+        /**
+         * Can be chosen: it holds something that can be sent. A site whose
+         * cookies are all unreadable is greyed out.
+         */selectable: Bool,
+        /**
+         * Cookies that cannot be read, shown greyed with `unavailable_note`.
+         */unavailable: UInt32,
+        /**
+         * "3 cookies cannot be sent: Chrome protects them with ...", or empty.
+         */unavailableNote: String) {
+        self.domain = domain
+        self.counts = counts
+        self.count = count
+        self.signin = signin
+        self.identityProvider = identityProvider
+        self.selected = selected
+        self.selectable = selectable
+        self.unavailable = unavailable
+        self.unavailableNote = unavailableNote
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppReviewDomain: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppReviewDomain: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppReviewDomain {
+        return
+            try AppReviewDomain(
+                domain: FfiConverterString.read(from: &buf),
+                counts: FfiConverterString.read(from: &buf),
+                count: FfiConverterUInt32.read(from: &buf),
+                signin: FfiConverterBool.read(from: &buf),
+                identityProvider: FfiConverterBool.read(from: &buf),
+                selected: FfiConverterBool.read(from: &buf),
+                selectable: FfiConverterBool.read(from: &buf),
+                unavailable: FfiConverterUInt32.read(from: &buf),
+                unavailableNote: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppReviewDomain, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.domain, into: &buf)
+        FfiConverterString.write(value.counts, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+        FfiConverterBool.write(value.signin, into: &buf)
+        FfiConverterBool.write(value.identityProvider, into: &buf)
+        FfiConverterBool.write(value.selected, into: &buf)
+        FfiConverterBool.write(value.selectable, into: &buf)
+        FfiConverterUInt32.write(value.unavailable, into: &buf)
+        FfiConverterString.write(value.unavailableNote, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppReviewDomain_lift(_ buf: RustBuffer) throws -> AppReviewDomain {
+    return try FfiConverterTypeAppReviewDomain.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppReviewDomain_lower(_ value: AppReviewDomain) -> RustBuffer {
+    return FfiConverterTypeAppReviewDomain.lower(value)
+}
+
+
+public struct AppReviewToggle: Equatable, Hashable {
+    /**
+     * The consent item's key.
+     */
+    public var key: String
+    /**
+     * Label.
+     */
+    public var label: String
+    /**
+     * Detail.
+     */
+    public var detail: String
+    /**
+     * Bytes that leave.
+     */
+    public var bytes: UInt64
+    /**
+     * A secret.
+     */
+    public var sensitive: Bool
+    /**
+     * Sent (not turned off).
+     */
+    public var selected: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The consent item's key.
+         */key: String,
+        /**
+         * Label.
+         */label: String,
+        /**
+         * Detail.
+         */detail: String,
+        /**
+         * Bytes that leave.
+         */bytes: UInt64,
+        /**
+         * A secret.
+         */sensitive: Bool,
+        /**
+         * Sent (not turned off).
+         */selected: Bool) {
+        self.key = key
+        self.label = label
+        self.detail = detail
+        self.bytes = bytes
+        self.sensitive = sensitive
+        self.selected = selected
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppReviewToggle: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppReviewToggle: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppReviewToggle {
+        return
+            try AppReviewToggle(
+                key: FfiConverterString.read(from: &buf),
+                label: FfiConverterString.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf),
+                bytes: FfiConverterUInt64.read(from: &buf),
+                sensitive: FfiConverterBool.read(from: &buf),
+                selected: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppReviewToggle, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterUInt64.write(value.bytes, into: &buf)
+        FfiConverterBool.write(value.sensitive, into: &buf)
+        FfiConverterBool.write(value.selected, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppReviewToggle_lift(_ buf: RustBuffer) throws -> AppReviewToggle {
+    return try FfiConverterTypeAppReviewToggle.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppReviewToggle_lower(_ value: AppReviewToggle) -> RustBuffer {
+    return FfiConverterTypeAppReviewToggle.lower(value)
+}
+
+
 public struct AppReviewView: Equatable, Hashable {
     /**
      * "Teleport Slack to Aurora".
@@ -23277,6 +24000,73 @@ public struct AppReviewView: Equatable, Hashable {
      * Caveats.
      */
     public var warnings: [String]
+    /**
+     * Lines the user can turn off (files, folders, state, secrets), each
+     * with whether it is sent. The cookie store is the site list below.
+     */
+    public var toggles: [AppReviewToggle]
+    /**
+     * The plan sends a browser's cookies, so the sites can be chosen.
+     */
+    public var offersDomains: Bool
+    /**
+     * The sites have not been read yet (the shell asks the Keyvault for
+     * them, which may ask for Touch ID).
+     */
+    public var needsDomains: Bool
+    /**
+     * The sites with counts, filtered by the search.
+     */
+    public var domains: [AppReviewDomain]
+    /**
+     * "3 of 12 sites".
+     */
+    public var domainSummary: String
+    /**
+     * The sites search text.
+     */
+    public var domainQuery: String
+    /**
+     * The sites chosen (what is remembered for next time).
+     */
+    public var selectedDomains: [String]
+    /**
+     * Where it sends from.
+     */
+    public var source: AppSendSource
+    /**
+     * The app has saved Keyvault items to send instead of reading the live
+     * app.
+     */
+    public var offersVault: Bool
+    /**
+     * The saved items.
+     */
+    public var vault: AppVaultSource
+    /**
+     * "Send from the Keyvault (212 items, saved 2 days ago)".
+     */
+    public var vaultLabel: String
+    /**
+     * "Read Chrome now (macOS asks for Keychain access)".
+     */
+    public var liveLabel: String
+    /**
+     * "Also send saved passwords" shows (there are some to send).
+     */
+    public var offersPasswords: Bool
+    /**
+     * Ticked.
+     */
+    public var includePasswords: Bool
+    /**
+     * "Also send 14 saved passwords".
+     */
+    public var passwordsLabel: String
+    /**
+     * What the Keychain will do for this source, in a line.
+     */
+    public var sourceNote: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -23319,7 +24109,58 @@ public struct AppReviewView: Equatable, Hashable {
          */leavesText: String?,
         /**
          * Caveats.
-         */warnings: [String]) {
+         */warnings: [String],
+        /**
+         * Lines the user can turn off (files, folders, state, secrets), each
+         * with whether it is sent. The cookie store is the site list below.
+         */toggles: [AppReviewToggle],
+        /**
+         * The plan sends a browser's cookies, so the sites can be chosen.
+         */offersDomains: Bool,
+        /**
+         * The sites have not been read yet (the shell asks the Keyvault for
+         * them, which may ask for Touch ID).
+         */needsDomains: Bool,
+        /**
+         * The sites with counts, filtered by the search.
+         */domains: [AppReviewDomain],
+        /**
+         * "3 of 12 sites".
+         */domainSummary: String,
+        /**
+         * The sites search text.
+         */domainQuery: String,
+        /**
+         * The sites chosen (what is remembered for next time).
+         */selectedDomains: [String],
+        /**
+         * Where it sends from.
+         */source: AppSendSource,
+        /**
+         * The app has saved Keyvault items to send instead of reading the live
+         * app.
+         */offersVault: Bool,
+        /**
+         * The saved items.
+         */vault: AppVaultSource,
+        /**
+         * "Send from the Keyvault (212 items, saved 2 days ago)".
+         */vaultLabel: String,
+        /**
+         * "Read Chrome now (macOS asks for Keychain access)".
+         */liveLabel: String,
+        /**
+         * "Also send saved passwords" shows (there are some to send).
+         */offersPasswords: Bool,
+        /**
+         * Ticked.
+         */includePasswords: Bool,
+        /**
+         * "Also send 14 saved passwords".
+         */passwordsLabel: String,
+        /**
+         * What the Keychain will do for this source, in a line.
+         */sourceNote: String) {
         self.title = title
         self.items = items
         self.steps = steps
@@ -23332,6 +24173,22 @@ public struct AppReviewView: Equatable, Hashable {
         self.canConfirm = canConfirm
         self.leavesText = leavesText
         self.warnings = warnings
+        self.toggles = toggles
+        self.offersDomains = offersDomains
+        self.needsDomains = needsDomains
+        self.domains = domains
+        self.domainSummary = domainSummary
+        self.domainQuery = domainQuery
+        self.selectedDomains = selectedDomains
+        self.source = source
+        self.offersVault = offersVault
+        self.vault = vault
+        self.vaultLabel = vaultLabel
+        self.liveLabel = liveLabel
+        self.offersPasswords = offersPasswords
+        self.includePasswords = includePasswords
+        self.passwordsLabel = passwordsLabel
+        self.sourceNote = sourceNote
     }
 
 
@@ -23361,7 +24218,23 @@ public struct FfiConverterTypeAppReviewView: FfiConverterRustBuffer {
                 acknowledgedRelayPlaintext: FfiConverterBool.read(from: &buf),
                 canConfirm: FfiConverterBool.read(from: &buf),
                 leavesText: FfiConverterOptionString.read(from: &buf),
-                warnings: FfiConverterSequenceString.read(from: &buf)
+                warnings: FfiConverterSequenceString.read(from: &buf),
+                toggles: FfiConverterSequenceTypeAppReviewToggle.read(from: &buf),
+                offersDomains: FfiConverterBool.read(from: &buf),
+                needsDomains: FfiConverterBool.read(from: &buf),
+                domains: FfiConverterSequenceTypeAppReviewDomain.read(from: &buf),
+                domainSummary: FfiConverterString.read(from: &buf),
+                domainQuery: FfiConverterString.read(from: &buf),
+                selectedDomains: FfiConverterSequenceString.read(from: &buf),
+                source: FfiConverterTypeAppSendSource.read(from: &buf),
+                offersVault: FfiConverterBool.read(from: &buf),
+                vault: FfiConverterTypeAppVaultSource.read(from: &buf),
+                vaultLabel: FfiConverterString.read(from: &buf),
+                liveLabel: FfiConverterString.read(from: &buf),
+                offersPasswords: FfiConverterBool.read(from: &buf),
+                includePasswords: FfiConverterBool.read(from: &buf),
+                passwordsLabel: FfiConverterString.read(from: &buf),
+                sourceNote: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -23378,6 +24251,22 @@ public struct FfiConverterTypeAppReviewView: FfiConverterRustBuffer {
         FfiConverterBool.write(value.canConfirm, into: &buf)
         FfiConverterOptionString.write(value.leavesText, into: &buf)
         FfiConverterSequenceString.write(value.warnings, into: &buf)
+        FfiConverterSequenceTypeAppReviewToggle.write(value.toggles, into: &buf)
+        FfiConverterBool.write(value.offersDomains, into: &buf)
+        FfiConverterBool.write(value.needsDomains, into: &buf)
+        FfiConverterSequenceTypeAppReviewDomain.write(value.domains, into: &buf)
+        FfiConverterString.write(value.domainSummary, into: &buf)
+        FfiConverterString.write(value.domainQuery, into: &buf)
+        FfiConverterSequenceString.write(value.selectedDomains, into: &buf)
+        FfiConverterTypeAppSendSource.write(value.source, into: &buf)
+        FfiConverterBool.write(value.offersVault, into: &buf)
+        FfiConverterTypeAppVaultSource.write(value.vault, into: &buf)
+        FfiConverterString.write(value.vaultLabel, into: &buf)
+        FfiConverterString.write(value.liveLabel, into: &buf)
+        FfiConverterBool.write(value.offersPasswords, into: &buf)
+        FfiConverterBool.write(value.includePasswords, into: &buf)
+        FfiConverterString.write(value.passwordsLabel, into: &buf)
+        FfiConverterString.write(value.sourceNote, into: &buf)
     }
 }
 
@@ -24220,6 +25109,23 @@ public struct AppSettings: Equatable, Hashable {
      * ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
      */
     public var dismissedAccess: [String]
+    /**
+     * Keyvault rows may load a site's icon from Google's favicon service
+     * when the source browser had none (Settings, Keyvault; on by default).
+     * Off, only icons read locally are shown.
+     */
+    public var keyvaultSiteIcons: Bool
+    /**
+     * The sites the user sent to each Space last time, per app
+     * ([`crate::teleport::review::remember`]): the review starts from them.
+     */
+    public var teleportChoices: [AppRememberedChoice]
+    /**
+     * Settings, General: a running Space's desktop streams as soon as it
+     * is opened (on by default); off, it waits for Connect
+     * ([`crate::spaces::cover`]).
+     */
+    public var autoConnect: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -24262,7 +25168,21 @@ public struct AppSettings: Equatable, Hashable {
          * Keyvault copies (import ids) the user dismissed from the notch: it no
          * longer shows them, nothing is revoked or wiped
          * ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
-         */dismissedAccess: [String]) {
+         */dismissedAccess: [String],
+        /**
+         * Keyvault rows may load a site's icon from Google's favicon service
+         * when the source browser had none (Settings, Keyvault; on by default).
+         * Off, only icons read locally are shown.
+         */keyvaultSiteIcons: Bool,
+        /**
+         * The sites the user sent to each Space last time, per app
+         * ([`crate::teleport::review::remember`]): the review starts from them.
+         */teleportChoices: [AppRememberedChoice],
+        /**
+         * Settings, General: a running Space's desktop streams as soon as it
+         * is opened (on by default); off, it waits for Connect
+         * ([`crate::spaces::cover`]).
+         */autoConnect: Bool) {
         self.hotkey = hotkey
         self.menuBar = menuBar
         self.theme = theme
@@ -24274,6 +25194,9 @@ public struct AppSettings: Equatable, Hashable {
         self.launchAtLogin = launchAtLogin
         self.experiments = experiments
         self.dismissedAccess = dismissedAccess
+        self.keyvaultSiteIcons = keyvaultSiteIcons
+        self.teleportChoices = teleportChoices
+        self.autoConnect = autoConnect
     }
 
 
@@ -24302,7 +25225,10 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
                 updateChannel: FfiConverterTypeAppUpdateChannel.read(from: &buf),
                 launchAtLogin: FfiConverterOptionBool.read(from: &buf),
                 experiments: FfiConverterTypeAppExperiments.read(from: &buf),
-                dismissedAccess: FfiConverterSequenceString.read(from: &buf)
+                dismissedAccess: FfiConverterSequenceString.read(from: &buf),
+                keyvaultSiteIcons: FfiConverterBool.read(from: &buf),
+                teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from: &buf),
+                autoConnect: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -24318,6 +25244,9 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
         FfiConverterOptionBool.write(value.launchAtLogin, into: &buf)
         FfiConverterTypeAppExperiments.write(value.experiments, into: &buf)
         FfiConverterSequenceString.write(value.dismissedAccess, into: &buf)
+        FfiConverterBool.write(value.keyvaultSiteIcons, into: &buf)
+        FfiConverterSequenceTypeAppRememberedChoice.write(value.teleportChoices, into: &buf)
+        FfiConverterBool.write(value.autoConnect, into: &buf)
     }
 }
 
@@ -24400,6 +25329,26 @@ public struct AppSettingsInput: Equatable, Hashable {
      * Keyvault section).
      */
     public var keyvaultAutoWipe: Bool?
+    /**
+     * The unlock prompt shows (false once the user chose "Never ask
+     * again"); none until the broker told it.
+     */
+    public var keyvaultUnlockPrompt: Bool?
+    /**
+     * Load site icons from Google when the browser had none
+     * ([`AppSettings::keyvault_site_icons`]).
+     */
+    public var keyvaultSiteIcons: Bool
+    /**
+     * The Keyvault's protection facts (Touch ID, the daemon's signature),
+     * shown in the section.
+     */
+    public var keyvaultProtection: [AppFact]
+    /**
+     * "Connect to the desktop automatically" (none: no row; a shell
+     * without the preview cover leaves it out).
+     */
+    public var autoConnect: Bool?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -24450,7 +25399,23 @@ public struct AppSettingsInput: Equatable, Hashable {
         /**
          * The Keyvault's auto-wipe, once the broker told it (none: no
          * Keyvault section).
-         */keyvaultAutoWipe: Bool?) {
+         */keyvaultAutoWipe: Bool?,
+        /**
+         * The unlock prompt shows (false once the user chose "Never ask
+         * again"); none until the broker told it.
+         */keyvaultUnlockPrompt: Bool?,
+        /**
+         * Load site icons from Google when the browser had none
+         * ([`AppSettings::keyvault_site_icons`]).
+         */keyvaultSiteIcons: Bool,
+        /**
+         * The Keyvault's protection facts (Touch ID, the daemon's signature),
+         * shown in the section.
+         */keyvaultProtection: [AppFact],
+        /**
+         * "Connect to the desktop automatically" (none: no row; a shell
+         * without the preview cover leaves it out).
+         */autoConnect: Bool?) {
         self.identity = identity
         self.apiKeyClient = apiKeyClient
         self.signIn = signIn
@@ -24466,6 +25431,10 @@ public struct AppSettingsInput: Equatable, Hashable {
         self.loginItem = loginItem
         self.experiments = experiments
         self.keyvaultAutoWipe = keyvaultAutoWipe
+        self.keyvaultUnlockPrompt = keyvaultUnlockPrompt
+        self.keyvaultSiteIcons = keyvaultSiteIcons
+        self.keyvaultProtection = keyvaultProtection
+        self.autoConnect = autoConnect
     }
 
 
@@ -24498,7 +25467,11 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
                 billing: FfiConverterOptionTypeAppBillingStatus.read(from: &buf),
                 loginItem: FfiConverterOptionTypeAppLoginItemInput.read(from: &buf),
                 experiments: FfiConverterTypeAppExperiments.read(from: &buf),
-                keyvaultAutoWipe: FfiConverterOptionBool.read(from: &buf)
+                keyvaultAutoWipe: FfiConverterOptionBool.read(from: &buf),
+                keyvaultUnlockPrompt: FfiConverterOptionBool.read(from: &buf),
+                keyvaultSiteIcons: FfiConverterBool.read(from: &buf),
+                keyvaultProtection: FfiConverterSequenceTypeAppFact.read(from: &buf),
+                autoConnect: FfiConverterOptionBool.read(from: &buf)
         )
     }
 
@@ -24518,6 +25491,10 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
         FfiConverterOptionTypeAppLoginItemInput.write(value.loginItem, into: &buf)
         FfiConverterTypeAppExperiments.write(value.experiments, into: &buf)
         FfiConverterOptionBool.write(value.keyvaultAutoWipe, into: &buf)
+        FfiConverterOptionBool.write(value.keyvaultUnlockPrompt, into: &buf)
+        FfiConverterBool.write(value.keyvaultSiteIcons, into: &buf)
+        FfiConverterSequenceTypeAppFact.write(value.keyvaultProtection, into: &buf)
+        FfiConverterOptionBool.write(value.autoConnect, into: &buf)
     }
 }
 
@@ -28572,6 +29549,23 @@ public struct AppTeleportConsent: Equatable, Hashable {
      * [`Plan::relay_unsealed`]'s warning acknowledged (S1).
      */
     public var acknowledgeRelayPlaintext: Bool
+    /**
+     * The sites whose cookies to send (the review's per-site choice);
+     * `None` when the review did not list sites.
+     */
+    public var cookieDomains: [String]?
+    /**
+     * Consent items (keys) the user turned off.
+     */
+    public var exclude: [String]
+    /**
+     * Send these saved Keyvault items instead of reading the live app.
+     */
+    public var fromVault: [String]?
+    /**
+     * Also send the saved passwords (ticked in the review).
+     */
+    public var includePasswords: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -28587,11 +29581,28 @@ public struct AppTeleportConsent: Equatable, Hashable {
          */saveToKeyvault: Bool,
         /**
          * [`Plan::relay_unsealed`]'s warning acknowledged (S1).
-         */acknowledgeRelayPlaintext: Bool) {
+         */acknowledgeRelayPlaintext: Bool,
+        /**
+         * The sites whose cookies to send (the review's per-site choice);
+         * `None` when the review did not list sites.
+         */cookieDomains: [String]?,
+        /**
+         * Consent items (keys) the user turned off.
+         */exclude: [String],
+        /**
+         * Send these saved Keyvault items instead of reading the live app.
+         */fromVault: [String]?,
+        /**
+         * Also send the saved passwords (ticked in the review).
+         */includePasswords: Bool) {
         self.approved = approved
         self.acknowledgeSensitive = acknowledgeSensitive
         self.saveToKeyvault = saveToKeyvault
         self.acknowledgeRelayPlaintext = acknowledgeRelayPlaintext
+        self.cookieDomains = cookieDomains
+        self.exclude = exclude
+        self.fromVault = fromVault
+        self.includePasswords = includePasswords
     }
 
 
@@ -28613,7 +29624,11 @@ public struct FfiConverterTypeAppTeleportConsent: FfiConverterRustBuffer {
                 approved: FfiConverterBool.read(from: &buf),
                 acknowledgeSensitive: FfiConverterBool.read(from: &buf),
                 saveToKeyvault: FfiConverterBool.read(from: &buf),
-                acknowledgeRelayPlaintext: FfiConverterBool.read(from: &buf)
+                acknowledgeRelayPlaintext: FfiConverterBool.read(from: &buf),
+                cookieDomains: FfiConverterOptionSequenceString.read(from: &buf),
+                exclude: FfiConverterSequenceString.read(from: &buf),
+                fromVault: FfiConverterOptionSequenceString.read(from: &buf),
+                includePasswords: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -28622,6 +29637,10 @@ public struct FfiConverterTypeAppTeleportConsent: FfiConverterRustBuffer {
         FfiConverterBool.write(value.acknowledgeSensitive, into: &buf)
         FfiConverterBool.write(value.saveToKeyvault, into: &buf)
         FfiConverterBool.write(value.acknowledgeRelayPlaintext, into: &buf)
+        FfiConverterOptionSequenceString.write(value.cookieDomains, into: &buf)
+        FfiConverterSequenceString.write(value.exclude, into: &buf)
+        FfiConverterOptionSequenceString.write(value.fromVault, into: &buf)
+        FfiConverterBool.write(value.includePasswords, into: &buf)
     }
 }
 
@@ -29115,6 +30134,94 @@ public func FfiConverterTypeAppThisDevice_lower(_ value: AppThisDevice) -> RustB
 }
 
 
+public struct AppThumbnailPolicy: Equatable, Hashable {
+    /**
+     * While the notch is open: every running Space, this often.
+     */
+    public var openIntervalMs: UInt64
+    /**
+     * Otherwise (the app visible, not in Low Power Mode): a running Space
+     * whose thumbnail is older than this gets a new one.
+     */
+    public var backgroundIntervalMs: UInt64
+    /**
+     * The long edge of a captured thumbnail, in pixels.
+     */
+    public var maxDimension: UInt32
+    /**
+     * A thumbnail kept on disk longer than this is dropped at launch.
+     */
+    public var keepMs: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * While the notch is open: every running Space, this often.
+         */openIntervalMs: UInt64,
+        /**
+         * Otherwise (the app visible, not in Low Power Mode): a running Space
+         * whose thumbnail is older than this gets a new one.
+         */backgroundIntervalMs: UInt64,
+        /**
+         * The long edge of a captured thumbnail, in pixels.
+         */maxDimension: UInt32,
+        /**
+         * A thumbnail kept on disk longer than this is dropped at launch.
+         */keepMs: UInt64) {
+        self.openIntervalMs = openIntervalMs
+        self.backgroundIntervalMs = backgroundIntervalMs
+        self.maxDimension = maxDimension
+        self.keepMs = keepMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppThumbnailPolicy: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppThumbnailPolicy: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppThumbnailPolicy {
+        return
+            try AppThumbnailPolicy(
+                openIntervalMs: FfiConverterUInt64.read(from: &buf),
+                backgroundIntervalMs: FfiConverterUInt64.read(from: &buf),
+                maxDimension: FfiConverterUInt32.read(from: &buf),
+                keepMs: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppThumbnailPolicy, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.openIntervalMs, into: &buf)
+        FfiConverterUInt64.write(value.backgroundIntervalMs, into: &buf)
+        FfiConverterUInt32.write(value.maxDimension, into: &buf)
+        FfiConverterUInt64.write(value.keepMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppThumbnailPolicy_lift(_ buf: RustBuffer) throws -> AppThumbnailPolicy {
+    return try FfiConverterTypeAppThumbnailPolicy.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppThumbnailPolicy_lower(_ value: AppThumbnailPolicy) -> RustBuffer {
+    return FfiConverterTypeAppThumbnailPolicy.lower(value)
+}
+
+
 public struct AppTile: Equatable, Hashable {
     /**
      * Stable id (`linux`, `cloud`, `vm`, ...).
@@ -29562,6 +30669,102 @@ public func FfiConverterTypeAppUsageToggle_lift(_ buf: RustBuffer) throws -> App
 #endif
 public func FfiConverterTypeAppUsageToggle_lower(_ value: AppUsageToggle) -> RustBuffer {
     return FfiConverterTypeAppUsageToggle.lower(value)
+}
+
+
+public struct AppVaultSource: Equatable, Hashable {
+    /**
+     * The app has saved items that can be sent (passwords never are).
+     */
+    public var available: Bool
+    /**
+     * How many.
+     */
+    public var items: UInt32
+    /**
+     * "saved 2 days ago".
+     */
+    public var saved: String
+    /**
+     * The items chosen to send (ids).
+     */
+    public var selected: [String]
+    /**
+     * The app's saved passwords (ids), sent only when ticked.
+     */
+    public var passwordIds: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The app has saved items that can be sent (passwords never are).
+         */available: Bool,
+        /**
+         * How many.
+         */items: UInt32,
+        /**
+         * "saved 2 days ago".
+         */saved: String,
+        /**
+         * The items chosen to send (ids).
+         */selected: [String],
+        /**
+         * The app's saved passwords (ids), sent only when ticked.
+         */passwordIds: [String]) {
+        self.available = available
+        self.items = items
+        self.saved = saved
+        self.selected = selected
+        self.passwordIds = passwordIds
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppVaultSource: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppVaultSource: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppVaultSource {
+        return
+            try AppVaultSource(
+                available: FfiConverterBool.read(from: &buf),
+                items: FfiConverterUInt32.read(from: &buf),
+                saved: FfiConverterString.read(from: &buf),
+                selected: FfiConverterSequenceString.read(from: &buf),
+                passwordIds: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppVaultSource, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.available, into: &buf)
+        FfiConverterUInt32.write(value.items, into: &buf)
+        FfiConverterString.write(value.saved, into: &buf)
+        FfiConverterSequenceString.write(value.selected, into: &buf)
+        FfiConverterSequenceString.write(value.passwordIds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppVaultSource_lift(_ buf: RustBuffer) throws -> AppVaultSource {
+    return try FfiConverterTypeAppVaultSource.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppVaultSource_lower(_ value: AppVaultSource) -> RustBuffer {
+    return FfiConverterTypeAppVaultSource.lower(value)
 }
 
 
@@ -31045,9 +32248,17 @@ public struct KeyvaultOverview: Equatable, Hashable {
      */
     public var serverVerified: Bool
     /**
-     * Items.
+     * The vault's secret items, in order (app, domain, key).
      */
     public var items: [KvItem]
+    /**
+     * Domains and keys are present in `items` (the browse window is open).
+     */
+    public var namesVisible: Bool
+    /**
+     * Items in the vault.
+     */
+    public var itemsTotal: UInt32
     /**
      * Pending requests.
      */
@@ -31094,8 +32305,14 @@ public struct KeyvaultOverview: Equatable, Hashable {
          * The daemon was checked against Cua's signature.
          */serverVerified: Bool,
         /**
-         * Items.
+         * The vault's secret items, in order (app, domain, key).
          */items: [KvItem],
+        /**
+         * Domains and keys are present in `items` (the browse window is open).
+         */namesVisible: Bool,
+        /**
+         * Items in the vault.
+         */itemsTotal: UInt32,
         /**
          * Pending requests.
          */pending: [KvPending],
@@ -31122,6 +32339,8 @@ public struct KeyvaultOverview: Equatable, Hashable {
         self.status = status
         self.serverVerified = serverVerified
         self.items = items
+        self.namesVisible = namesVisible
+        self.itemsTotal = itemsTotal
         self.pending = pending
         self.grants = grants
         self.rules = rules
@@ -31152,6 +32371,8 @@ public struct FfiConverterTypeKeyvaultOverview: FfiConverterRustBuffer {
                 status: FfiConverterOptionTypeKvStatus.read(from: &buf),
                 serverVerified: FfiConverterBool.read(from: &buf),
                 items: FfiConverterSequenceTypeKvItem.read(from: &buf),
+                namesVisible: FfiConverterBool.read(from: &buf),
+                itemsTotal: FfiConverterUInt32.read(from: &buf),
                 pending: FfiConverterSequenceTypeKvPending.read(from: &buf),
                 grants: FfiConverterSequenceTypeKvGrant.read(from: &buf),
                 rules: FfiConverterSequenceTypeKvRule.read(from: &buf),
@@ -31168,6 +32389,8 @@ public struct FfiConverterTypeKeyvaultOverview: FfiConverterRustBuffer {
         FfiConverterOptionTypeKvStatus.write(value.status, into: &buf)
         FfiConverterBool.write(value.serverVerified, into: &buf)
         FfiConverterSequenceTypeKvItem.write(value.items, into: &buf)
+        FfiConverterBool.write(value.namesVisible, into: &buf)
+        FfiConverterUInt32.write(value.itemsTotal, into: &buf)
         FfiConverterSequenceTypeKvPending.write(value.pending, into: &buf)
         FfiConverterSequenceTypeKvGrant.write(value.grants, into: &buf)
         FfiConverterSequenceTypeKvRule.write(value.rules, into: &buf)
@@ -31438,19 +32661,117 @@ public func FfiConverterTypeKvAccessRow_lower(_ value: KvAccessRow) -> RustBuffe
 }
 
 
-public struct KvApprovalRow: Equatable, Hashable {
+public struct KvAppRow: Equatable, Hashable {
     /**
-     * Row key.
+     * The provider id (`chrome`): the key, and what the icon is looked up by.
      */
     public var key: String
     /**
-     * Site or app.
+     * "Google Chrome".
      */
     public var title: String
     /**
-     * Account, or "Not imported yet".
+     * Items.
+     */
+    public var items: UInt32
+    /**
+     * Something waits for this app.
+     */
+    public var waiting: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The provider id (`chrome`): the key, and what the icon is looked up by.
+         */key: String,
+        /**
+         * "Google Chrome".
+         */title: String,
+        /**
+         * Items.
+         */items: UInt32,
+        /**
+         * Something waits for this app.
+         */waiting: Bool) {
+        self.key = key
+        self.title = title
+        self.items = items
+        self.waiting = waiting
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvAppRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvAppRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvAppRow {
+        return
+            try KvAppRow(
+                key: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                items: FfiConverterUInt32.read(from: &buf),
+                waiting: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvAppRow, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterUInt32.write(value.items, into: &buf)
+        FfiConverterBool.write(value.waiting, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvAppRow_lift(_ buf: RustBuffer) throws -> KvAppRow {
+    return try FfiConverterTypeKvAppRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvAppRow_lower(_ value: KvAppRow) -> RustBuffer {
+    return FfiConverterTypeKvAppRow.lower(value)
+}
+
+
+public struct KvApprovalRow: Equatable, Hashable {
+    /**
+     * Row key: `<app>|<site>`, `<app>|files`, or `import:<n>`.
+     */
+    public var key: String
+    /**
+     * The site, or the app for files and imports.
+     */
+    public var title: String
+    /**
+     * "3 cookies, 1 password", or "Not saved yet".
      */
     public var account: String
+    /**
+     * The app's provider id (its icon), when known.
+     */
+    public var providerId: String
+    /**
+     * Items the row stands for.
+     */
+    public var items: UInt32
+    /**
+     * The items' ids.
+     */
+    public var itemIds: [String]
     /**
      * Ticked.
      */
@@ -31464,14 +32785,23 @@ public struct KvApprovalRow: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * Row key.
+         * Row key: `<app>|<site>`, `<app>|files`, or `import:<n>`.
          */key: String,
         /**
-         * Site or app.
+         * The site, or the app for files and imports.
          */title: String,
         /**
-         * Account, or "Not imported yet".
+         * "3 cookies, 1 password", or "Not saved yet".
          */account: String,
+        /**
+         * The app's provider id (its icon), when known.
+         */providerId: String,
+        /**
+         * Items the row stands for.
+         */items: UInt32,
+        /**
+         * The items' ids.
+         */itemIds: [String],
         /**
          * Ticked.
          */selected: Bool,
@@ -31481,6 +32811,9 @@ public struct KvApprovalRow: Equatable, Hashable {
         self.key = key
         self.title = title
         self.account = account
+        self.providerId = providerId
+        self.items = items
+        self.itemIds = itemIds
         self.selected = selected
         self.isImport = isImport
     }
@@ -31504,6 +32837,9 @@ public struct FfiConverterTypeKvApprovalRow: FfiConverterRustBuffer {
                 key: FfiConverterString.read(from: &buf),
                 title: FfiConverterString.read(from: &buf),
                 account: FfiConverterString.read(from: &buf),
+                providerId: FfiConverterString.read(from: &buf),
+                items: FfiConverterUInt32.read(from: &buf),
+                itemIds: FfiConverterSequenceString.read(from: &buf),
                 selected: FfiConverterBool.read(from: &buf),
                 isImport: FfiConverterBool.read(from: &buf)
         )
@@ -31513,6 +32849,9 @@ public struct FfiConverterTypeKvApprovalRow: FfiConverterRustBuffer {
         FfiConverterString.write(value.key, into: &buf)
         FfiConverterString.write(value.title, into: &buf)
         FfiConverterString.write(value.account, into: &buf)
+        FfiConverterString.write(value.providerId, into: &buf)
+        FfiConverterUInt32.write(value.items, into: &buf)
+        FfiConverterSequenceString.write(value.itemIds, into: &buf)
         FfiConverterBool.write(value.selected, into: &buf)
         FfiConverterBool.write(value.isImport, into: &buf)
     }
@@ -31540,7 +32879,7 @@ public struct KvApprovalState: Equatable, Hashable {
      */
     public var requestId: String
     /**
-     * Ticked row keys (item ids, or `import:<n>` for new items).
+     * Ticked row keys (`<app>|<site>`, or `import:<n>` for new items).
      */
     public var selected: [String]
 
@@ -31551,7 +32890,7 @@ public struct KvApprovalState: Equatable, Hashable {
          * The request.
          */requestId: String,
         /**
-         * Ticked row keys (item ids, or `import:<n>` for new items).
+         * Ticked row keys (`<app>|<site>`, or `import:<n>` for new items).
          */selected: [String]) {
         self.requestId = requestId
         self.selected = selected
@@ -32144,158 +33483,6 @@ public func FfiConverterTypeKvCategoryRow_lower(_ value: KvCategoryRow) -> RustB
 }
 
 
-public struct KvConsentChip: Equatable, Hashable {
-    /**
-     * Kind.
-     */
-    public var kind: KvConsentChipKind
-    /**
-     * Text.
-     */
-    public var text: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Kind.
-         */kind: KvConsentChipKind,
-        /**
-         * Text.
-         */text: String) {
-        self.kind = kind
-        self.text = text
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension KvConsentChip: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeKvConsentChip: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvConsentChip {
-        return
-            try KvConsentChip(
-                kind: FfiConverterTypeKvConsentChipKind.read(from: &buf),
-                text: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: KvConsentChip, into buf: inout [UInt8]) {
-        FfiConverterTypeKvConsentChipKind.write(value.kind, into: &buf)
-        FfiConverterString.write(value.text, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeKvConsentChip_lift(_ buf: RustBuffer) throws -> KvConsentChip {
-    return try FfiConverterTypeKvConsentChip.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeKvConsentChip_lower(_ value: KvConsentChip) -> RustBuffer {
-    return FfiConverterTypeKvConsentChip.lower(value)
-}
-
-
-public struct KvCookieInfo: Equatable, Hashable {
-    /**
-     * Name.
-     */
-    public var name: String
-    /**
-     * Domain.
-     */
-    public var domain: String
-    /**
-     * Session cookie.
-     */
-    public var session: Bool
-    /**
-     * Expiry.
-     */
-    public var expiresMs: Int64?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Name.
-         */name: String,
-        /**
-         * Domain.
-         */domain: String,
-        /**
-         * Session cookie.
-         */session: Bool,
-        /**
-         * Expiry.
-         */expiresMs: Int64?) {
-        self.name = name
-        self.domain = domain
-        self.session = session
-        self.expiresMs = expiresMs
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension KvCookieInfo: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeKvCookieInfo: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvCookieInfo {
-        return
-            try KvCookieInfo(
-                name: FfiConverterString.read(from: &buf),
-                domain: FfiConverterString.read(from: &buf),
-                session: FfiConverterBool.read(from: &buf),
-                expiresMs: FfiConverterOptionInt64.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: KvCookieInfo, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.name, into: &buf)
-        FfiConverterString.write(value.domain, into: &buf)
-        FfiConverterBool.write(value.session, into: &buf)
-        FfiConverterOptionInt64.write(value.expiresMs, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeKvCookieInfo_lift(_ buf: RustBuffer) throws -> KvCookieInfo {
-    return try FfiConverterTypeKvCookieInfo.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeKvCookieInfo_lower(_ value: KvCookieInfo) -> RustBuffer {
-    return FfiConverterTypeKvCookieInfo.lower(value)
-}
-
-
 public struct KvCredentialForm: Equatable, Hashable {
     /**
      * Setup or unlock.
@@ -32488,6 +33675,92 @@ public func FfiConverterTypeKvDecision_lower(_ value: KvDecision) -> RustBuffer 
 }
 
 
+public struct KvDeleteConfirm: Equatable, Hashable {
+    /**
+     * "Delete 3 items?"
+     */
+    public var title: String
+    /**
+     * What deleting does.
+     */
+    public var message: String
+    /**
+     * "Delete".
+     */
+    public var confirm: String
+    /**
+     * "Cancel".
+     */
+    public var cancel: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Delete 3 items?"
+         */title: String,
+        /**
+         * What deleting does.
+         */message: String,
+        /**
+         * "Delete".
+         */confirm: String,
+        /**
+         * "Cancel".
+         */cancel: String) {
+        self.title = title
+        self.message = message
+        self.confirm = confirm
+        self.cancel = cancel
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvDeleteConfirm: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvDeleteConfirm: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvDeleteConfirm {
+        return
+            try KvDeleteConfirm(
+                title: FfiConverterString.read(from: &buf),
+                message: FfiConverterString.read(from: &buf),
+                confirm: FfiConverterString.read(from: &buf),
+                cancel: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvDeleteConfirm, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+        FfiConverterString.write(value.confirm, into: &buf)
+        FfiConverterString.write(value.cancel, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvDeleteConfirm_lift(_ buf: RustBuffer) throws -> KvDeleteConfirm {
+    return try FfiConverterTypeKvDeleteConfirm.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvDeleteConfirm_lower(_ value: KvDeleteConfirm) -> RustBuffer {
+    return FfiConverterTypeKvDeleteConfirm.lower(value)
+}
+
+
 public struct KvDelivery: Equatable, Hashable {
     /**
      * Import id.
@@ -32611,6 +33884,208 @@ public func FfiConverterTypeKvDelivery_lift(_ buf: RustBuffer) throws -> KvDeliv
 #endif
 public func FfiConverterTypeKvDelivery_lower(_ value: KvDelivery) -> RustBuffer {
     return FfiConverterTypeKvDelivery.lower(value)
+}
+
+
+public struct KvDomainCount: Equatable, Hashable {
+    /**
+     * Registrable domain.
+     */
+    public var domain: String
+    /**
+     * Cookies.
+     */
+    public var cookies: UInt32
+    /**
+     * Cookies without an expiry.
+     */
+    public var sessionCookies: UInt32
+    /**
+     * localStorage values.
+     */
+    public var localStorage: UInt32
+    /**
+     * Saved passwords.
+     */
+    public var passwords: UInt32
+    /**
+     * Looks like it keeps a sign-in.
+     */
+    public var signin: Bool
+    /**
+     * An identity provider.
+     */
+    public var identityProvider: Bool
+    /**
+     * Cookies that cannot be read (Chrome's app-bound encryption).
+     */
+    public var unavailable: UInt32
+    /**
+     * Why they cannot be read.
+     */
+    public var unavailableReason: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Registrable domain.
+         */domain: String,
+        /**
+         * Cookies.
+         */cookies: UInt32,
+        /**
+         * Cookies without an expiry.
+         */sessionCookies: UInt32,
+        /**
+         * localStorage values.
+         */localStorage: UInt32,
+        /**
+         * Saved passwords.
+         */passwords: UInt32,
+        /**
+         * Looks like it keeps a sign-in.
+         */signin: Bool,
+        /**
+         * An identity provider.
+         */identityProvider: Bool,
+        /**
+         * Cookies that cannot be read (Chrome's app-bound encryption).
+         */unavailable: UInt32,
+        /**
+         * Why they cannot be read.
+         */unavailableReason: String) {
+        self.domain = domain
+        self.cookies = cookies
+        self.sessionCookies = sessionCookies
+        self.localStorage = localStorage
+        self.passwords = passwords
+        self.signin = signin
+        self.identityProvider = identityProvider
+        self.unavailable = unavailable
+        self.unavailableReason = unavailableReason
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvDomainCount: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvDomainCount: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvDomainCount {
+        return
+            try KvDomainCount(
+                domain: FfiConverterString.read(from: &buf),
+                cookies: FfiConverterUInt32.read(from: &buf),
+                sessionCookies: FfiConverterUInt32.read(from: &buf),
+                localStorage: FfiConverterUInt32.read(from: &buf),
+                passwords: FfiConverterUInt32.read(from: &buf),
+                signin: FfiConverterBool.read(from: &buf),
+                identityProvider: FfiConverterBool.read(from: &buf),
+                unavailable: FfiConverterUInt32.read(from: &buf),
+                unavailableReason: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvDomainCount, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.domain, into: &buf)
+        FfiConverterUInt32.write(value.cookies, into: &buf)
+        FfiConverterUInt32.write(value.sessionCookies, into: &buf)
+        FfiConverterUInt32.write(value.localStorage, into: &buf)
+        FfiConverterUInt32.write(value.passwords, into: &buf)
+        FfiConverterBool.write(value.signin, into: &buf)
+        FfiConverterBool.write(value.identityProvider, into: &buf)
+        FfiConverterUInt32.write(value.unavailable, into: &buf)
+        FfiConverterString.write(value.unavailableReason, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvDomainCount_lift(_ buf: RustBuffer) throws -> KvDomainCount {
+    return try FfiConverterTypeKvDomainCount.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvDomainCount_lower(_ value: KvDomainCount) -> RustBuffer {
+    return FfiConverterTypeKvDomainCount.lower(value)
+}
+
+
+public struct KvFavicon: Equatable, Hashable {
+    /**
+     * The site (registrable domain).
+     */
+    public var site: String
+    /**
+     * PNG, base64.
+     */
+    public var png: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The site (registrable domain).
+         */site: String,
+        /**
+         * PNG, base64.
+         */png: String) {
+        self.site = site
+        self.png = png
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvFavicon: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvFavicon: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvFavicon {
+        return
+            try KvFavicon(
+                site: FfiConverterString.read(from: &buf),
+                png: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvFavicon, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.site, into: &buf)
+        FfiConverterString.write(value.png, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvFavicon_lift(_ buf: RustBuffer) throws -> KvFavicon {
+    return try FfiConverterTypeKvFavicon.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvFavicon_lower(_ value: KvFavicon) -> RustBuffer {
+    return FfiConverterTypeKvFavicon.lower(value)
 }
 
 
@@ -32780,53 +34255,149 @@ public func FfiConverterTypeKvGrant_lower(_ value: KvGrant) -> RustBuffer {
 }
 
 
+public struct KvInventory: Equatable, Hashable {
+    /**
+     * Provider id.
+     */
+    public var providerId: String
+    /**
+     * App name.
+     */
+    public var appDisplay: String
+    /**
+     * Domains with counts.
+     */
+    public var domains: [KvDomainCount]
+    /**
+     * Notes.
+     */
+    public var notes: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Provider id.
+         */providerId: String,
+        /**
+         * App name.
+         */appDisplay: String,
+        /**
+         * Domains with counts.
+         */domains: [KvDomainCount],
+        /**
+         * Notes.
+         */notes: [String]) {
+        self.providerId = providerId
+        self.appDisplay = appDisplay
+        self.domains = domains
+        self.notes = notes
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvInventory: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvInventory: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvInventory {
+        return
+            try KvInventory(
+                providerId: FfiConverterString.read(from: &buf),
+                appDisplay: FfiConverterString.read(from: &buf),
+                domains: FfiConverterSequenceTypeKvDomainCount.read(from: &buf),
+                notes: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvInventory, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.providerId, into: &buf)
+        FfiConverterString.write(value.appDisplay, into: &buf)
+        FfiConverterSequenceTypeKvDomainCount.write(value.domains, into: &buf)
+        FfiConverterSequenceString.write(value.notes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvInventory_lift(_ buf: RustBuffer) throws -> KvInventory {
+    return try FfiConverterTypeKvInventory.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvInventory_lower(_ value: KvInventory) -> RustBuffer {
+    return FfiConverterTypeKvInventory.lower(value)
+}
+
+
 public struct KvItem: Equatable, Hashable {
     /**
      * Id.
      */
     public var id: String
     /**
-     * `browser_site`, `site_passwords`, `app_session`.
+     * `cookie`, `local_storage`, `password` or `file`.
      */
     public var kind: String
     /**
-     * Label.
-     */
-    public var label: String
-    /**
-     * Provider.
+     * The source app (`chrome`, `slack`).
      */
     public var providerId: String
     /**
-     * App.
+     * The app's name.
      */
     public var appDisplay: String
     /**
-     * Site.
+     * A cookie's host, a storage value's or password's origin; none for a
+     * file or when the names are hidden.
      */
-    public var site: String?
+    public var domain: String?
     /**
-     * Account.
+     * A cookie name, storage key, username or file path; empty when the
+     * names are hidden.
      */
-    public var account: String?
+    public var key: String
+    /**
+     * A cookie's path.
+     */
+    public var path: String?
     /**
      * Profile.
      */
     public var source: String
     /**
-     * Summary.
+     * A cookie without an expiry.
      */
-    public var summary: KvItemSummary
+    public var session: Bool
     /**
-     * Warnings.
+     * A cookie's expiry, Unix ms.
      */
-    public var warnings: [String]
+    public var expiresMs: Int64?
     /**
-     * Identity providers always ask.
+     * Bytes.
+     */
+    public var bytes: UInt64
+    /**
+     * The blob a big file's bytes live in.
+     */
+    public var blob: String?
+    /**
+     * Identity providers always ask: they cannot be unlocked.
      */
     public var identityProvider: Bool
     /**
-     * Policy.
+     * Policy: `unattended` is the unlock.
      */
     public var policy: KvItemPolicy
     /**
@@ -32834,7 +34405,7 @@ public struct KvItem: Equatable, Hashable {
      */
     public var createdMs: UInt64
     /**
-     * Updated.
+     * Last saved.
      */
     public var updatedMs: UInt64
     /**
@@ -32853,43 +34424,51 @@ public struct KvItem: Equatable, Hashable {
          * Id.
          */id: String,
         /**
-         * `browser_site`, `site_passwords`, `app_session`.
+         * `cookie`, `local_storage`, `password` or `file`.
          */kind: String,
         /**
-         * Label.
-         */label: String,
-        /**
-         * Provider.
+         * The source app (`chrome`, `slack`).
          */providerId: String,
         /**
-         * App.
+         * The app's name.
          */appDisplay: String,
         /**
-         * Site.
-         */site: String?,
+         * A cookie's host, a storage value's or password's origin; none for a
+         * file or when the names are hidden.
+         */domain: String?,
         /**
-         * Account.
-         */account: String?,
+         * A cookie name, storage key, username or file path; empty when the
+         * names are hidden.
+         */key: String,
+        /**
+         * A cookie's path.
+         */path: String?,
         /**
          * Profile.
          */source: String,
         /**
-         * Summary.
-         */summary: KvItemSummary,
+         * A cookie without an expiry.
+         */session: Bool,
         /**
-         * Warnings.
-         */warnings: [String],
+         * A cookie's expiry, Unix ms.
+         */expiresMs: Int64?,
         /**
-         * Identity providers always ask.
+         * Bytes.
+         */bytes: UInt64,
+        /**
+         * The blob a big file's bytes live in.
+         */blob: String?,
+        /**
+         * Identity providers always ask: they cannot be unlocked.
          */identityProvider: Bool,
         /**
-         * Policy.
+         * Policy: `unattended` is the unlock.
          */policy: KvItemPolicy,
         /**
          * Created.
          */createdMs: UInt64,
         /**
-         * Updated.
+         * Last saved.
          */updatedMs: UInt64,
         /**
          * Revision.
@@ -32899,14 +34478,16 @@ public struct KvItem: Equatable, Hashable {
          */recordDigest: String) {
         self.id = id
         self.kind = kind
-        self.label = label
         self.providerId = providerId
         self.appDisplay = appDisplay
-        self.site = site
-        self.account = account
+        self.domain = domain
+        self.key = key
+        self.path = path
         self.source = source
-        self.summary = summary
-        self.warnings = warnings
+        self.session = session
+        self.expiresMs = expiresMs
+        self.bytes = bytes
+        self.blob = blob
         self.identityProvider = identityProvider
         self.policy = policy
         self.createdMs = createdMs
@@ -32933,14 +34514,16 @@ public struct FfiConverterTypeKvItem: FfiConverterRustBuffer {
             try KvItem(
                 id: FfiConverterString.read(from: &buf),
                 kind: FfiConverterString.read(from: &buf),
-                label: FfiConverterString.read(from: &buf),
                 providerId: FfiConverterString.read(from: &buf),
                 appDisplay: FfiConverterString.read(from: &buf),
-                site: FfiConverterOptionString.read(from: &buf),
-                account: FfiConverterOptionString.read(from: &buf),
+                domain: FfiConverterOptionString.read(from: &buf),
+                key: FfiConverterString.read(from: &buf),
+                path: FfiConverterOptionString.read(from: &buf),
                 source: FfiConverterString.read(from: &buf),
-                summary: FfiConverterTypeKvItemSummary.read(from: &buf),
-                warnings: FfiConverterSequenceString.read(from: &buf),
+                session: FfiConverterBool.read(from: &buf),
+                expiresMs: FfiConverterOptionInt64.read(from: &buf),
+                bytes: FfiConverterUInt64.read(from: &buf),
+                blob: FfiConverterOptionString.read(from: &buf),
                 identityProvider: FfiConverterBool.read(from: &buf),
                 policy: FfiConverterTypeKvItemPolicy.read(from: &buf),
                 createdMs: FfiConverterUInt64.read(from: &buf),
@@ -32953,14 +34536,16 @@ public struct FfiConverterTypeKvItem: FfiConverterRustBuffer {
     public static func write(_ value: KvItem, into buf: inout [UInt8]) {
         FfiConverterString.write(value.id, into: &buf)
         FfiConverterString.write(value.kind, into: &buf)
-        FfiConverterString.write(value.label, into: &buf)
         FfiConverterString.write(value.providerId, into: &buf)
         FfiConverterString.write(value.appDisplay, into: &buf)
-        FfiConverterOptionString.write(value.site, into: &buf)
-        FfiConverterOptionString.write(value.account, into: &buf)
+        FfiConverterOptionString.write(value.domain, into: &buf)
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterOptionString.write(value.path, into: &buf)
         FfiConverterString.write(value.source, into: &buf)
-        FfiConverterTypeKvItemSummary.write(value.summary, into: &buf)
-        FfiConverterSequenceString.write(value.warnings, into: &buf)
+        FfiConverterBool.write(value.session, into: &buf)
+        FfiConverterOptionInt64.write(value.expiresMs, into: &buf)
+        FfiConverterUInt64.write(value.bytes, into: &buf)
+        FfiConverterOptionString.write(value.blob, into: &buf)
         FfiConverterBool.write(value.identityProvider, into: &buf)
         FfiConverterTypeKvItemPolicy.write(value.policy, into: &buf)
         FfiConverterUInt64.write(value.createdMs, into: &buf)
@@ -33062,208 +34647,6 @@ public func FfiConverterTypeKvItemPolicy_lower(_ value: KvItemPolicy) -> RustBuf
 }
 
 
-public struct KvItemRow: Equatable, Hashable {
-    /**
-     * The item.
-     */
-    public var item: KvItem
-    /**
-     * "ada@example.com", "Whole app session", or the profile.
-     */
-    public var account: String
-    /**
-     * Strongest first; `asks` when nothing else applies.
-     */
-    public var consent: [KvConsentChip]
-    /**
-     * The unattended switch can be changed (not an identity provider).
-     */
-    public var toggleEnabled: Bool
-    /**
-     * The switch's tooltip.
-     */
-    public var toggleHelp: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * The item.
-         */item: KvItem,
-        /**
-         * "ada@example.com", "Whole app session", or the profile.
-         */account: String,
-        /**
-         * Strongest first; `asks` when nothing else applies.
-         */consent: [KvConsentChip],
-        /**
-         * The unattended switch can be changed (not an identity provider).
-         */toggleEnabled: Bool,
-        /**
-         * The switch's tooltip.
-         */toggleHelp: String) {
-        self.item = item
-        self.account = account
-        self.consent = consent
-        self.toggleEnabled = toggleEnabled
-        self.toggleHelp = toggleHelp
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension KvItemRow: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeKvItemRow: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvItemRow {
-        return
-            try KvItemRow(
-                item: FfiConverterTypeKvItem.read(from: &buf),
-                account: FfiConverterString.read(from: &buf),
-                consent: FfiConverterSequenceTypeKvConsentChip.read(from: &buf),
-                toggleEnabled: FfiConverterBool.read(from: &buf),
-                toggleHelp: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: KvItemRow, into buf: inout [UInt8]) {
-        FfiConverterTypeKvItem.write(value.item, into: &buf)
-        FfiConverterString.write(value.account, into: &buf)
-        FfiConverterSequenceTypeKvConsentChip.write(value.consent, into: &buf)
-        FfiConverterBool.write(value.toggleEnabled, into: &buf)
-        FfiConverterString.write(value.toggleHelp, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeKvItemRow_lift(_ buf: RustBuffer) throws -> KvItemRow {
-    return try FfiConverterTypeKvItemRow.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeKvItemRow_lower(_ value: KvItemRow) -> RustBuffer {
-    return FfiConverterTypeKvItemRow.lower(value)
-}
-
-
-public struct KvItemSummary: Equatable, Hashable {
-    /**
-     * Cookies.
-     */
-    public var cookies: [KvCookieInfo]
-    /**
-     * Storage origins.
-     */
-    public var storageOrigins: [String]
-    /**
-     * Saved passwords.
-     */
-    public var passwords: UInt32
-    /**
-     * Files.
-     */
-    public var files: [String]
-    /**
-     * Keychain services.
-     */
-    public var keychainServices: [String]
-    /**
-     * Bytes.
-     */
-    public var bytes: UInt64
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Cookies.
-         */cookies: [KvCookieInfo],
-        /**
-         * Storage origins.
-         */storageOrigins: [String],
-        /**
-         * Saved passwords.
-         */passwords: UInt32,
-        /**
-         * Files.
-         */files: [String],
-        /**
-         * Keychain services.
-         */keychainServices: [String],
-        /**
-         * Bytes.
-         */bytes: UInt64) {
-        self.cookies = cookies
-        self.storageOrigins = storageOrigins
-        self.passwords = passwords
-        self.files = files
-        self.keychainServices = keychainServices
-        self.bytes = bytes
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension KvItemSummary: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeKvItemSummary: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvItemSummary {
-        return
-            try KvItemSummary(
-                cookies: FfiConverterSequenceTypeKvCookieInfo.read(from: &buf),
-                storageOrigins: FfiConverterSequenceString.read(from: &buf),
-                passwords: FfiConverterUInt32.read(from: &buf),
-                files: FfiConverterSequenceString.read(from: &buf),
-                keychainServices: FfiConverterSequenceString.read(from: &buf),
-                bytes: FfiConverterUInt64.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: KvItemSummary, into buf: inout [UInt8]) {
-        FfiConverterSequenceTypeKvCookieInfo.write(value.cookies, into: &buf)
-        FfiConverterSequenceString.write(value.storageOrigins, into: &buf)
-        FfiConverterUInt32.write(value.passwords, into: &buf)
-        FfiConverterSequenceString.write(value.files, into: &buf)
-        FfiConverterSequenceString.write(value.keychainServices, into: &buf)
-        FfiConverterUInt64.write(value.bytes, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeKvItemSummary_lift(_ buf: RustBuffer) throws -> KvItemSummary {
-    return try FfiConverterTypeKvItemSummary.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeKvItemSummary_lower(_ value: KvItemSummary) -> RustBuffer {
-    return FfiConverterTypeKvItemSummary.lower(value)
-}
-
-
 public struct KvLabels: Equatable, Hashable {
     /**
      * "Deny".
@@ -33297,18 +34680,6 @@ public struct KvLabels: Equatable, Hashable {
      * "Protection".
      */
     public var protectionTitle: String
-    /**
-     * A site's accounts section.
-     */
-    public var accountsTitle: String
-    /**
-     * A site's app fact.
-     */
-    public var appLabel: String
-    /**
-     * A site's switch.
-     */
-    public var everyAccount: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -33336,16 +34707,7 @@ public struct KvLabels: Equatable, Hashable {
          */confirmNote: String,
         /**
          * "Protection".
-         */protectionTitle: String,
-        /**
-         * A site's accounts section.
-         */accountsTitle: String,
-        /**
-         * A site's app fact.
-         */appLabel: String,
-        /**
-         * A site's switch.
-         */everyAccount: String) {
+         */protectionTitle: String) {
         self.deny = deny
         self.review = review
         self.cancel = cancel
@@ -33354,9 +34716,6 @@ public struct KvLabels: Equatable, Hashable {
         self.revokeAll = revokeAll
         self.confirmNote = confirmNote
         self.protectionTitle = protectionTitle
-        self.accountsTitle = accountsTitle
-        self.appLabel = appLabel
-        self.everyAccount = everyAccount
     }
 
 
@@ -33382,10 +34741,7 @@ public struct FfiConverterTypeKvLabels: FfiConverterRustBuffer {
                 unlock: FfiConverterString.read(from: &buf),
                 revokeAll: FfiConverterString.read(from: &buf),
                 confirmNote: FfiConverterString.read(from: &buf),
-                protectionTitle: FfiConverterString.read(from: &buf),
-                accountsTitle: FfiConverterString.read(from: &buf),
-                appLabel: FfiConverterString.read(from: &buf),
-                everyAccount: FfiConverterString.read(from: &buf)
+                protectionTitle: FfiConverterString.read(from: &buf)
         )
     }
 
@@ -33398,9 +34754,6 @@ public struct FfiConverterTypeKvLabels: FfiConverterRustBuffer {
         FfiConverterString.write(value.revokeAll, into: &buf)
         FfiConverterString.write(value.confirmNote, into: &buf)
         FfiConverterString.write(value.protectionTitle, into: &buf)
-        FfiConverterString.write(value.accountsTitle, into: &buf)
-        FfiConverterString.write(value.appLabel, into: &buf)
-        FfiConverterString.write(value.everyAccount, into: &buf)
     }
 }
 
@@ -33426,9 +34779,9 @@ public struct KvListView: Equatable, Hashable {
      */
     public var title: String
     /**
-     * Sites (All, or the one site).
+     * The vault list shows (All Items, or one app).
      */
-    public var sites: [KvSiteGroup]
+    public var vault: Bool
     /**
      * Waiting.
      */
@@ -33442,7 +34795,7 @@ public struct KvListView: Equatable, Hashable {
      */
     public var recent: [KvRecentRow]
     /**
-     * "No items yet." and friends.
+     * "Nothing is waiting." and friends.
      */
     public var emptyText: String?
 
@@ -33453,8 +34806,8 @@ public struct KvListView: Equatable, Hashable {
          * Title.
          */title: String,
         /**
-         * Sites (All, or the one site).
-         */sites: [KvSiteGroup],
+         * The vault list shows (All Items, or one app).
+         */vault: Bool,
         /**
          * Waiting.
          */pending: [KvPendingRow],
@@ -33465,10 +34818,10 @@ public struct KvListView: Equatable, Hashable {
          * Recent.
          */recent: [KvRecentRow],
         /**
-         * "No items yet." and friends.
+         * "Nothing is waiting." and friends.
          */emptyText: String?) {
         self.title = title
-        self.sites = sites
+        self.vault = vault
         self.pending = pending
         self.access = access
         self.recent = recent
@@ -33492,7 +34845,7 @@ public struct FfiConverterTypeKvListView: FfiConverterRustBuffer {
         return
             try KvListView(
                 title: FfiConverterString.read(from: &buf),
-                sites: FfiConverterSequenceTypeKvSiteGroup.read(from: &buf),
+                vault: FfiConverterBool.read(from: &buf),
                 pending: FfiConverterSequenceTypeKvPendingRow.read(from: &buf),
                 access: FfiConverterSequenceTypeKvAccessRow.read(from: &buf),
                 recent: FfiConverterSequenceTypeKvRecentRow.read(from: &buf),
@@ -33502,7 +34855,7 @@ public struct FfiConverterTypeKvListView: FfiConverterRustBuffer {
 
     public static func write(_ value: KvListView, into buf: inout [UInt8]) {
         FfiConverterString.write(value.title, into: &buf)
-        FfiConverterSequenceTypeKvSiteGroup.write(value.sites, into: &buf)
+        FfiConverterBool.write(value.vault, into: &buf)
         FfiConverterSequenceTypeKvPendingRow.write(value.pending, into: &buf)
         FfiConverterSequenceTypeKvAccessRow.write(value.access, into: &buf)
         FfiConverterSequenceTypeKvRecentRow.write(value.recent, into: &buf)
@@ -33588,9 +34941,17 @@ public struct KvPage: Equatable, Hashable {
      */
     public var hasItems: Bool
     /**
-     * Search shows (more than six items).
+     * Search shows (any item exists).
      */
     public var searchVisible: Bool
+    /**
+     * "Never ask again" on the unlock prompt is on (Settings turns it off).
+     */
+    public var skipUnlockPrompt: Bool
+    /**
+     * An earlier preview's vault was set aside: one line to show.
+     */
+    public var resetNotice: String?
     /**
      * Pending requests (the sidebar badge).
      */
@@ -33657,8 +35018,14 @@ public struct KvPage: Equatable, Hashable {
          * Items exist.
          */hasItems: Bool,
         /**
-         * Search shows (more than six items).
+         * Search shows (any item exists).
          */searchVisible: Bool,
+        /**
+         * "Never ask again" on the unlock prompt is on (Settings turns it off).
+         */skipUnlockPrompt: Bool,
+        /**
+         * An earlier preview's vault was set aside: one line to show.
+         */resetNotice: String?,
         /**
          * Pending requests (the sidebar badge).
          */pendingCount: UInt32,
@@ -33687,6 +35054,8 @@ public struct KvPage: Equatable, Hashable {
         self.revokeAll = revokeAll
         self.hasItems = hasItems
         self.searchVisible = searchVisible
+        self.skipUnlockPrompt = skipUnlockPrompt
+        self.resetNotice = resetNotice
         self.pendingCount = pendingCount
         self.killSwitchHelp = killSwitchHelp
         self.labels = labels
@@ -33725,6 +35094,8 @@ public struct FfiConverterTypeKvPage: FfiConverterRustBuffer {
                 revokeAll: FfiConverterBool.read(from: &buf),
                 hasItems: FfiConverterBool.read(from: &buf),
                 searchVisible: FfiConverterBool.read(from: &buf),
+                skipUnlockPrompt: FfiConverterBool.read(from: &buf),
+                resetNotice: FfiConverterOptionString.read(from: &buf),
                 pendingCount: FfiConverterUInt32.read(from: &buf),
                 killSwitchHelp: FfiConverterString.read(from: &buf),
                 labels: FfiConverterTypeKvLabels.read(from: &buf),
@@ -33749,6 +35120,8 @@ public struct FfiConverterTypeKvPage: FfiConverterRustBuffer {
         FfiConverterBool.write(value.revokeAll, into: &buf)
         FfiConverterBool.write(value.hasItems, into: &buf)
         FfiConverterBool.write(value.searchVisible, into: &buf)
+        FfiConverterBool.write(value.skipUnlockPrompt, into: &buf)
+        FfiConverterOptionString.write(value.resetNotice, into: &buf)
         FfiConverterUInt32.write(value.pendingCount, into: &buf)
         FfiConverterString.write(value.killSwitchHelp, into: &buf)
         FfiConverterTypeKvLabels.write(value.labels, into: &buf)
@@ -34340,25 +35713,25 @@ public func FfiConverterTypeKvRuleCaller_lower(_ value: KvRuleCaller) -> RustBuf
 
 public struct KvSidebar: Equatable, Hashable {
     /**
-     * All, Waiting, Access, Recent.
+     * All Items, Waiting, Access, Recent.
      */
     public var categories: [KvCategoryRow]
     /**
-     * One row per site or app.
+     * One row per app, by name.
      */
-    public var sites: [KvSiteRow]
+    public var apps: [KvAppRow]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(
         /**
-         * All, Waiting, Access, Recent.
+         * All Items, Waiting, Access, Recent.
          */categories: [KvCategoryRow],
         /**
-         * One row per site or app.
-         */sites: [KvSiteRow]) {
+         * One row per app, by name.
+         */apps: [KvAppRow]) {
         self.categories = categories
-        self.sites = sites
+        self.apps = apps
     }
 
 
@@ -34378,13 +35751,13 @@ public struct FfiConverterTypeKvSidebar: FfiConverterRustBuffer {
         return
             try KvSidebar(
                 categories: FfiConverterSequenceTypeKvCategoryRow.read(from: &buf),
-                sites: FfiConverterSequenceTypeKvSiteRow.read(from: &buf)
+                apps: FfiConverterSequenceTypeKvAppRow.read(from: &buf)
         )
     }
 
     public static func write(_ value: KvSidebar, into buf: inout [UInt8]) {
         FfiConverterSequenceTypeKvCategoryRow.write(value.categories, into: &buf)
-        FfiConverterSequenceTypeKvSiteRow.write(value.sites, into: &buf)
+        FfiConverterSequenceTypeKvAppRow.write(value.apps, into: &buf)
     }
 }
 
@@ -34470,294 +35843,6 @@ public func FfiConverterTypeKvSigningBadge_lower(_ value: KvSigningBadge) -> Rus
 }
 
 
-public struct KvSiteDetail: Equatable, Hashable {
-    /**
-     * The group.
-     */
-    public var group: KvSiteGroup
-    /**
-     * The site switch shows (more than one account).
-     */
-    public var siteSwitch: Bool
-    /**
-     * The site switch's state.
-     */
-    public var siteState: KvTri
-    /**
-     * The site switch can be flipped.
-     */
-    public var siteSwitchEnabled: Bool
-    /**
-     * Its tooltip.
-     */
-    public var siteSwitchHelp: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * The group.
-         */group: KvSiteGroup,
-        /**
-         * The site switch shows (more than one account).
-         */siteSwitch: Bool,
-        /**
-         * The site switch's state.
-         */siteState: KvTri,
-        /**
-         * The site switch can be flipped.
-         */siteSwitchEnabled: Bool,
-        /**
-         * Its tooltip.
-         */siteSwitchHelp: String) {
-        self.group = group
-        self.siteSwitch = siteSwitch
-        self.siteState = siteState
-        self.siteSwitchEnabled = siteSwitchEnabled
-        self.siteSwitchHelp = siteSwitchHelp
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension KvSiteDetail: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeKvSiteDetail: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvSiteDetail {
-        return
-            try KvSiteDetail(
-                group: FfiConverterTypeKvSiteGroup.read(from: &buf),
-                siteSwitch: FfiConverterBool.read(from: &buf),
-                siteState: FfiConverterTypeKvTri.read(from: &buf),
-                siteSwitchEnabled: FfiConverterBool.read(from: &buf),
-                siteSwitchHelp: FfiConverterString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: KvSiteDetail, into buf: inout [UInt8]) {
-        FfiConverterTypeKvSiteGroup.write(value.group, into: &buf)
-        FfiConverterBool.write(value.siteSwitch, into: &buf)
-        FfiConverterTypeKvTri.write(value.siteState, into: &buf)
-        FfiConverterBool.write(value.siteSwitchEnabled, into: &buf)
-        FfiConverterString.write(value.siteSwitchHelp, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeKvSiteDetail_lift(_ buf: RustBuffer) throws -> KvSiteDetail {
-    return try FfiConverterTypeKvSiteDetail.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeKvSiteDetail_lower(_ value: KvSiteDetail) -> RustBuffer {
-    return FfiConverterTypeKvSiteDetail.lower(value)
-}
-
-
-public struct KvSiteGroup: Equatable, Hashable {
-    /**
-     * Stable key.
-     */
-    public var key: String
-    /**
-     * "github.com" or "Slack".
-     */
-    public var title: String
-    /**
-     * "Chrome", "Slack".
-     */
-    public var app: String
-    /**
-     * Accounts.
-     */
-    public var rows: [KvItemRow]
-    /**
-     * Unattended across rows.
-     */
-    public var unattended: KvTri
-    /**
-     * Every row is an identity provider.
-     */
-    public var locked: Bool
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Stable key.
-         */key: String,
-        /**
-         * "github.com" or "Slack".
-         */title: String,
-        /**
-         * "Chrome", "Slack".
-         */app: String,
-        /**
-         * Accounts.
-         */rows: [KvItemRow],
-        /**
-         * Unattended across rows.
-         */unattended: KvTri,
-        /**
-         * Every row is an identity provider.
-         */locked: Bool) {
-        self.key = key
-        self.title = title
-        self.app = app
-        self.rows = rows
-        self.unattended = unattended
-        self.locked = locked
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension KvSiteGroup: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeKvSiteGroup: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvSiteGroup {
-        return
-            try KvSiteGroup(
-                key: FfiConverterString.read(from: &buf),
-                title: FfiConverterString.read(from: &buf),
-                app: FfiConverterString.read(from: &buf),
-                rows: FfiConverterSequenceTypeKvItemRow.read(from: &buf),
-                unattended: FfiConverterTypeKvTri.read(from: &buf),
-                locked: FfiConverterBool.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: KvSiteGroup, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.key, into: &buf)
-        FfiConverterString.write(value.title, into: &buf)
-        FfiConverterString.write(value.app, into: &buf)
-        FfiConverterSequenceTypeKvItemRow.write(value.rows, into: &buf)
-        FfiConverterTypeKvTri.write(value.unattended, into: &buf)
-        FfiConverterBool.write(value.locked, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeKvSiteGroup_lift(_ buf: RustBuffer) throws -> KvSiteGroup {
-    return try FfiConverterTypeKvSiteGroup.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeKvSiteGroup_lower(_ value: KvSiteGroup) -> RustBuffer {
-    return FfiConverterTypeKvSiteGroup.lower(value)
-}
-
-
-public struct KvSiteRow: Equatable, Hashable {
-    /**
-     * Group key.
-     */
-    public var key: String
-    /**
-     * "github.com" or "Slack".
-     */
-    public var title: String
-    /**
-     * Accounts.
-     */
-    public var accounts: UInt32
-    /**
-     * Something waits for this site.
-     */
-    public var waiting: Bool
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(
-        /**
-         * Group key.
-         */key: String,
-        /**
-         * "github.com" or "Slack".
-         */title: String,
-        /**
-         * Accounts.
-         */accounts: UInt32,
-        /**
-         * Something waits for this site.
-         */waiting: Bool) {
-        self.key = key
-        self.title = title
-        self.accounts = accounts
-        self.waiting = waiting
-    }
-
-
-
-
-}
-
-#if compiler(>=6)
-extension KvSiteRow: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeKvSiteRow: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvSiteRow {
-        return
-            try KvSiteRow(
-                key: FfiConverterString.read(from: &buf),
-                title: FfiConverterString.read(from: &buf),
-                accounts: FfiConverterUInt32.read(from: &buf),
-                waiting: FfiConverterBool.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: KvSiteRow, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.key, into: &buf)
-        FfiConverterString.write(value.title, into: &buf)
-        FfiConverterUInt32.write(value.accounts, into: &buf)
-        FfiConverterBool.write(value.waiting, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeKvSiteRow_lift(_ buf: RustBuffer) throws -> KvSiteRow {
-    return try FfiConverterTypeKvSiteRow.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeKvSiteRow_lower(_ value: KvSiteRow) -> RustBuffer {
-    return FfiConverterTypeKvSiteRow.lower(value)
-}
-
-
 public struct KvStatus: Equatable, Hashable {
     /**
      * Version.
@@ -34814,6 +35899,19 @@ public struct KvStatus: Equatable, Hashable {
      * `windows-credential`, `passphrase`, `recovery`).
      */
     public var unlockProtectors: [String]
+    /**
+     * The browse window is open until this time, Unix ms: item names are
+     * visible until then.
+     */
+    public var browseUntilMs: UInt64?
+    /**
+     * "Never ask again" on the unlock prompt is on.
+     */
+    public var skipUnlockPrompt: Bool?
+    /**
+     * An earlier preview's vault was found and set aside.
+     */
+    public var resetNotice: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -34859,7 +35957,17 @@ public struct KvStatus: Equatable, Hashable {
         /**
          * Protector kinds that can unlock this vault now (`macos-keychain`,
          * `windows-credential`, `passphrase`, `recovery`).
-         */unlockProtectors: [String]) {
+         */unlockProtectors: [String],
+        /**
+         * The browse window is open until this time, Unix ms: item names are
+         * visible until then.
+         */browseUntilMs: UInt64?,
+        /**
+         * "Never ask again" on the unlock prompt is on.
+         */skipUnlockPrompt: Bool?,
+        /**
+         * An earlier preview's vault was found and set aside.
+         */resetNotice: String?) {
         self.version = version
         self.initialized = initialized
         self.unlocked = unlocked
@@ -34873,6 +35981,9 @@ public struct KvStatus: Equatable, Hashable {
         self.osProtectorAvailable = osProtectorAvailable
         self.passphraseAvailable = passphraseAvailable
         self.unlockProtectors = unlockProtectors
+        self.browseUntilMs = browseUntilMs
+        self.skipUnlockPrompt = skipUnlockPrompt
+        self.resetNotice = resetNotice
     }
 
 
@@ -34903,7 +36014,10 @@ public struct FfiConverterTypeKvStatus: FfiConverterRustBuffer {
                 autoWipe: FfiConverterOptionBool.read(from: &buf),
                 osProtectorAvailable: FfiConverterBool.read(from: &buf),
                 passphraseAvailable: FfiConverterBool.read(from: &buf),
-                unlockProtectors: FfiConverterSequenceString.read(from: &buf)
+                unlockProtectors: FfiConverterSequenceString.read(from: &buf),
+                browseUntilMs: FfiConverterOptionUInt64.read(from: &buf),
+                skipUnlockPrompt: FfiConverterOptionBool.read(from: &buf),
+                resetNotice: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -34921,6 +36035,9 @@ public struct FfiConverterTypeKvStatus: FfiConverterRustBuffer {
         FfiConverterBool.write(value.osProtectorAvailable, into: &buf)
         FfiConverterBool.write(value.passphraseAvailable, into: &buf)
         FfiConverterSequenceString.write(value.unlockProtectors, into: &buf)
+        FfiConverterOptionUInt64.write(value.browseUntilMs, into: &buf)
+        FfiConverterOptionBool.write(value.skipUnlockPrompt, into: &buf)
+        FfiConverterOptionString.write(value.resetNotice, into: &buf)
     }
 }
 
@@ -34937,6 +36054,1182 @@ public func FfiConverterTypeKvStatus_lift(_ buf: RustBuffer) throws -> KvStatus 
 #endif
 public func FfiConverterTypeKvStatus_lower(_ value: KvStatus) -> RustBuffer {
     return FfiConverterTypeKvStatus.lower(value)
+}
+
+
+public struct KvUnlockPrompt: Equatable, Hashable {
+    /**
+     * "Allow unattended access?"
+     */
+    public var title: String
+    /**
+     * What it allows.
+     */
+    public var message: String
+    /**
+     * "3 items" (a batch), or the one item's name.
+     */
+    public var subject: String
+    /**
+     * "Deny".
+     */
+    public var deny: String
+    /**
+     * "Allow".
+     */
+    public var allow: String
+    /**
+     * "Never ask again".
+     */
+    public var neverAsk: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Allow unattended access?"
+         */title: String,
+        /**
+         * What it allows.
+         */message: String,
+        /**
+         * "3 items" (a batch), or the one item's name.
+         */subject: String,
+        /**
+         * "Deny".
+         */deny: String,
+        /**
+         * "Allow".
+         */allow: String,
+        /**
+         * "Never ask again".
+         */neverAsk: String) {
+        self.title = title
+        self.message = message
+        self.subject = subject
+        self.deny = deny
+        self.allow = allow
+        self.neverAsk = neverAsk
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvUnlockPrompt: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvUnlockPrompt: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvUnlockPrompt {
+        return
+            try KvUnlockPrompt(
+                title: FfiConverterString.read(from: &buf),
+                message: FfiConverterString.read(from: &buf),
+                subject: FfiConverterString.read(from: &buf),
+                deny: FfiConverterString.read(from: &buf),
+                allow: FfiConverterString.read(from: &buf),
+                neverAsk: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvUnlockPrompt, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+        FfiConverterString.write(value.subject, into: &buf)
+        FfiConverterString.write(value.deny, into: &buf)
+        FfiConverterString.write(value.allow, into: &buf)
+        FfiConverterString.write(value.neverAsk, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvUnlockPrompt_lift(_ buf: RustBuffer) throws -> KvUnlockPrompt {
+    return try FfiConverterTypeKvUnlockPrompt.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvUnlockPrompt_lower(_ value: KvUnlockPrompt) -> RustBuffer {
+    return FfiConverterTypeKvUnlockPrompt.lower(value)
+}
+
+
+public struct KvVaultApp: Equatable, Hashable {
+    /**
+     * Group key: the provider id (`chrome`).
+     */
+    public var key: String
+    /**
+     * The provider id, for the app's icon.
+     */
+    public var providerId: String
+    /**
+     * "Google Chrome".
+     */
+    public var name: String
+    /**
+     * Items.
+     */
+    public var count: UInt32
+    /**
+     * "212 items, 14 unlocked".
+     */
+    public var summary: String
+    /**
+     * Grey time of the newest save.
+     */
+    public var updated: String
+    /**
+     * Selection of its items.
+     */
+    public var selected: KvTri
+    /**
+     * Lock of its items.
+     */
+    public var lock: KvLock
+    /**
+     * Items a click on the lock unlocks (locked, not identity providers).
+     */
+    public var unlockIds: [String]
+    /**
+     * Items a click on the lock locks (unlocked).
+     */
+    public var lockIds: [String]
+    /**
+     * Open.
+     */
+    public var `open`: Bool
+    /**
+     * Sites with their items, by name.
+     */
+    public var sites: [KvVaultSite]
+    /**
+     * Files, when it has any.
+     */
+    public var files: KvVaultFiles?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Group key: the provider id (`chrome`).
+         */key: String,
+        /**
+         * The provider id, for the app's icon.
+         */providerId: String,
+        /**
+         * "Google Chrome".
+         */name: String,
+        /**
+         * Items.
+         */count: UInt32,
+        /**
+         * "212 items, 14 unlocked".
+         */summary: String,
+        /**
+         * Grey time of the newest save.
+         */updated: String,
+        /**
+         * Selection of its items.
+         */selected: KvTri,
+        /**
+         * Lock of its items.
+         */lock: KvLock,
+        /**
+         * Items a click on the lock unlocks (locked, not identity providers).
+         */unlockIds: [String],
+        /**
+         * Items a click on the lock locks (unlocked).
+         */lockIds: [String],
+        /**
+         * Open.
+         */`open`: Bool,
+        /**
+         * Sites with their items, by name.
+         */sites: [KvVaultSite],
+        /**
+         * Files, when it has any.
+         */files: KvVaultFiles?) {
+        self.key = key
+        self.providerId = providerId
+        self.name = name
+        self.count = count
+        self.summary = summary
+        self.updated = updated
+        self.selected = selected
+        self.lock = lock
+        self.unlockIds = unlockIds
+        self.lockIds = lockIds
+        self.`open` = `open`
+        self.sites = sites
+        self.files = files
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvVaultApp: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvVaultApp: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvVaultApp {
+        return
+            try KvVaultApp(
+                key: FfiConverterString.read(from: &buf),
+                providerId: FfiConverterString.read(from: &buf),
+                name: FfiConverterString.read(from: &buf),
+                count: FfiConverterUInt32.read(from: &buf),
+                summary: FfiConverterString.read(from: &buf),
+                updated: FfiConverterString.read(from: &buf),
+                selected: FfiConverterTypeKvTri.read(from: &buf),
+                lock: FfiConverterTypeKvLock.read(from: &buf),
+                unlockIds: FfiConverterSequenceString.read(from: &buf),
+                lockIds: FfiConverterSequenceString.read(from: &buf),
+                open: FfiConverterBool.read(from: &buf),
+                sites: FfiConverterSequenceTypeKvVaultSite.read(from: &buf),
+                files: FfiConverterOptionTypeKvVaultFiles.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvVaultApp, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.providerId, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterString.write(value.updated, into: &buf)
+        FfiConverterTypeKvTri.write(value.selected, into: &buf)
+        FfiConverterTypeKvLock.write(value.lock, into: &buf)
+        FfiConverterSequenceString.write(value.unlockIds, into: &buf)
+        FfiConverterSequenceString.write(value.lockIds, into: &buf)
+        FfiConverterBool.write(value.`open`, into: &buf)
+        FfiConverterSequenceTypeKvVaultSite.write(value.sites, into: &buf)
+        FfiConverterOptionTypeKvVaultFiles.write(value.files, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultApp_lift(_ buf: RustBuffer) throws -> KvVaultApp {
+    return try FfiConverterTypeKvVaultApp.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultApp_lower(_ value: KvVaultApp) -> RustBuffer {
+    return FfiConverterTypeKvVaultApp.lower(value)
+}
+
+
+public struct KvVaultFiles: Equatable, Hashable {
+    /**
+     * Group key.
+     */
+    public var key: String
+    /**
+     * Files.
+     */
+    public var count: UInt32
+    /**
+     * Selection of its items.
+     */
+    public var selected: KvTri
+    /**
+     * Lock of its items.
+     */
+    public var lock: KvLock
+    /**
+     * Items a click on the lock unlocks (locked, not identity providers).
+     */
+    public var unlockIds: [String]
+    /**
+     * Items a click on the lock locks (unlocked).
+     */
+    public var lockIds: [String]
+    /**
+     * Open.
+     */
+    public var `open`: Bool
+    /**
+     * Its rows (empty while closed, unless searching).
+     */
+    public var rows: [KvVaultRow]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Group key.
+         */key: String,
+        /**
+         * Files.
+         */count: UInt32,
+        /**
+         * Selection of its items.
+         */selected: KvTri,
+        /**
+         * Lock of its items.
+         */lock: KvLock,
+        /**
+         * Items a click on the lock unlocks (locked, not identity providers).
+         */unlockIds: [String],
+        /**
+         * Items a click on the lock locks (unlocked).
+         */lockIds: [String],
+        /**
+         * Open.
+         */`open`: Bool,
+        /**
+         * Its rows (empty while closed, unless searching).
+         */rows: [KvVaultRow]) {
+        self.key = key
+        self.count = count
+        self.selected = selected
+        self.lock = lock
+        self.unlockIds = unlockIds
+        self.lockIds = lockIds
+        self.`open` = `open`
+        self.rows = rows
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvVaultFiles: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvVaultFiles: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvVaultFiles {
+        return
+            try KvVaultFiles(
+                key: FfiConverterString.read(from: &buf),
+                count: FfiConverterUInt32.read(from: &buf),
+                selected: FfiConverterTypeKvTri.read(from: &buf),
+                lock: FfiConverterTypeKvLock.read(from: &buf),
+                unlockIds: FfiConverterSequenceString.read(from: &buf),
+                lockIds: FfiConverterSequenceString.read(from: &buf),
+                open: FfiConverterBool.read(from: &buf),
+                rows: FfiConverterSequenceTypeKvVaultRow.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvVaultFiles, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+        FfiConverterTypeKvTri.write(value.selected, into: &buf)
+        FfiConverterTypeKvLock.write(value.lock, into: &buf)
+        FfiConverterSequenceString.write(value.unlockIds, into: &buf)
+        FfiConverterSequenceString.write(value.lockIds, into: &buf)
+        FfiConverterBool.write(value.`open`, into: &buf)
+        FfiConverterSequenceTypeKvVaultRow.write(value.rows, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultFiles_lift(_ buf: RustBuffer) throws -> KvVaultFiles {
+    return try FfiConverterTypeKvVaultFiles.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultFiles_lower(_ value: KvVaultFiles) -> RustBuffer {
+    return FfiConverterTypeKvVaultFiles.lower(value)
+}
+
+
+public struct KvVaultRow: Equatable, Hashable {
+    /**
+     * Item id.
+     */
+    public var id: String
+    /**
+     * Type.
+     */
+    public var kind: KvKind
+    /**
+     * "Cookie".
+     */
+    public var kindLabel: String
+    /**
+     * The type's SF Symbol.
+     */
+    public var symbol: String
+    /**
+     * The key: a cookie name, storage key, username or file name.
+     */
+    public var title: String
+    /**
+     * Grey line: the domain, or the file's folder.
+     */
+    public var subtitle: String
+    /**
+     * Grey time: "2 min ago".
+     */
+    public var updated: String
+    /**
+     * Locked (needs approval for every use).
+     */
+    public var locked: Bool
+    /**
+     * The lock icon: `lock.fill` or `lock.open`.
+     */
+    public var lockSymbol: String
+    /**
+     * The lock's tooltip and accessibility label.
+     */
+    public var lockHelp: String
+    /**
+     * Identity provider: always asks, cannot be unlocked.
+     */
+    public var identityProvider: Bool
+    /**
+     * Selected.
+     */
+    public var selected: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Item id.
+         */id: String,
+        /**
+         * Type.
+         */kind: KvKind,
+        /**
+         * "Cookie".
+         */kindLabel: String,
+        /**
+         * The type's SF Symbol.
+         */symbol: String,
+        /**
+         * The key: a cookie name, storage key, username or file name.
+         */title: String,
+        /**
+         * Grey line: the domain, or the file's folder.
+         */subtitle: String,
+        /**
+         * Grey time: "2 min ago".
+         */updated: String,
+        /**
+         * Locked (needs approval for every use).
+         */locked: Bool,
+        /**
+         * The lock icon: `lock.fill` or `lock.open`.
+         */lockSymbol: String,
+        /**
+         * The lock's tooltip and accessibility label.
+         */lockHelp: String,
+        /**
+         * Identity provider: always asks, cannot be unlocked.
+         */identityProvider: Bool,
+        /**
+         * Selected.
+         */selected: Bool) {
+        self.id = id
+        self.kind = kind
+        self.kindLabel = kindLabel
+        self.symbol = symbol
+        self.title = title
+        self.subtitle = subtitle
+        self.updated = updated
+        self.locked = locked
+        self.lockSymbol = lockSymbol
+        self.lockHelp = lockHelp
+        self.identityProvider = identityProvider
+        self.selected = selected
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvVaultRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvVaultRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvVaultRow {
+        return
+            try KvVaultRow(
+                id: FfiConverterString.read(from: &buf),
+                kind: FfiConverterTypeKvKind.read(from: &buf),
+                kindLabel: FfiConverterString.read(from: &buf),
+                symbol: FfiConverterString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                subtitle: FfiConverterString.read(from: &buf),
+                updated: FfiConverterString.read(from: &buf),
+                locked: FfiConverterBool.read(from: &buf),
+                lockSymbol: FfiConverterString.read(from: &buf),
+                lockHelp: FfiConverterString.read(from: &buf),
+                identityProvider: FfiConverterBool.read(from: &buf),
+                selected: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvVaultRow, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterTypeKvKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.kindLabel, into: &buf)
+        FfiConverterString.write(value.symbol, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.subtitle, into: &buf)
+        FfiConverterString.write(value.updated, into: &buf)
+        FfiConverterBool.write(value.locked, into: &buf)
+        FfiConverterString.write(value.lockSymbol, into: &buf)
+        FfiConverterString.write(value.lockHelp, into: &buf)
+        FfiConverterBool.write(value.identityProvider, into: &buf)
+        FfiConverterBool.write(value.selected, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultRow_lift(_ buf: RustBuffer) throws -> KvVaultRow {
+    return try FfiConverterTypeKvVaultRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultRow_lower(_ value: KvVaultRow) -> RustBuffer {
+    return FfiConverterTypeKvVaultRow.lower(value)
+}
+
+
+public struct KvVaultSelection: Equatable, Hashable {
+    /**
+     * Selected items.
+     */
+    public var count: UInt32
+    /**
+     * Their ids, in list order.
+     */
+    public var ids: [String]
+    /**
+     * "3 selected".
+     */
+    public var title: String
+    /**
+     * Some selected item is locked and may be unlocked.
+     */
+    public var canUnlock: Bool
+    /**
+     * Some selected item is unlocked.
+     */
+    public var canLock: Bool
+    /**
+     * Selected items that always ask (identity providers).
+     */
+    public var alwaysAsk: UInt32
+    /**
+     * The ids to send when unlocking (locked, not identity providers).
+     */
+    public var unlockIds: [String]
+    /**
+     * The ids to send when locking (unlocked).
+     */
+    public var lockIds: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Selected items.
+         */count: UInt32,
+        /**
+         * Their ids, in list order.
+         */ids: [String],
+        /**
+         * "3 selected".
+         */title: String,
+        /**
+         * Some selected item is locked and may be unlocked.
+         */canUnlock: Bool,
+        /**
+         * Some selected item is unlocked.
+         */canLock: Bool,
+        /**
+         * Selected items that always ask (identity providers).
+         */alwaysAsk: UInt32,
+        /**
+         * The ids to send when unlocking (locked, not identity providers).
+         */unlockIds: [String],
+        /**
+         * The ids to send when locking (unlocked).
+         */lockIds: [String]) {
+        self.count = count
+        self.ids = ids
+        self.title = title
+        self.canUnlock = canUnlock
+        self.canLock = canLock
+        self.alwaysAsk = alwaysAsk
+        self.unlockIds = unlockIds
+        self.lockIds = lockIds
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvVaultSelection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvVaultSelection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvVaultSelection {
+        return
+            try KvVaultSelection(
+                count: FfiConverterUInt32.read(from: &buf),
+                ids: FfiConverterSequenceString.read(from: &buf),
+                title: FfiConverterString.read(from: &buf),
+                canUnlock: FfiConverterBool.read(from: &buf),
+                canLock: FfiConverterBool.read(from: &buf),
+                alwaysAsk: FfiConverterUInt32.read(from: &buf),
+                unlockIds: FfiConverterSequenceString.read(from: &buf),
+                lockIds: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvVaultSelection, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.count, into: &buf)
+        FfiConverterSequenceString.write(value.ids, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterBool.write(value.canUnlock, into: &buf)
+        FfiConverterBool.write(value.canLock, into: &buf)
+        FfiConverterUInt32.write(value.alwaysAsk, into: &buf)
+        FfiConverterSequenceString.write(value.unlockIds, into: &buf)
+        FfiConverterSequenceString.write(value.lockIds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultSelection_lift(_ buf: RustBuffer) throws -> KvVaultSelection {
+    return try FfiConverterTypeKvVaultSelection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultSelection_lower(_ value: KvVaultSelection) -> RustBuffer {
+    return FfiConverterTypeKvVaultSelection.lower(value)
+}
+
+
+public struct KvVaultSite: Equatable, Hashable {
+    /**
+     * Group key.
+     */
+    public var key: String
+    /**
+     * "github.com".
+     */
+    public var site: String
+    /**
+     * Items (all of them, even while closed).
+     */
+    public var count: UInt32
+    /**
+     * "12 cookies, 2 storage values".
+     */
+    public var counts: String
+    /**
+     * Grey time of the newest save.
+     */
+    public var updated: String
+    /**
+     * Selection of its items.
+     */
+    public var selected: KvTri
+    /**
+     * Lock of its items.
+     */
+    public var lock: KvLock
+    /**
+     * Items a click on the lock unlocks (locked, not identity providers).
+     */
+    public var unlockIds: [String]
+    /**
+     * Items a click on the lock locks (unlocked).
+     */
+    public var lockIds: [String]
+    /**
+     * Open.
+     */
+    public var `open`: Bool
+    /**
+     * Its rows (empty while closed, unless searching).
+     */
+    public var rows: [KvVaultRow]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Group key.
+         */key: String,
+        /**
+         * "github.com".
+         */site: String,
+        /**
+         * Items (all of them, even while closed).
+         */count: UInt32,
+        /**
+         * "12 cookies, 2 storage values".
+         */counts: String,
+        /**
+         * Grey time of the newest save.
+         */updated: String,
+        /**
+         * Selection of its items.
+         */selected: KvTri,
+        /**
+         * Lock of its items.
+         */lock: KvLock,
+        /**
+         * Items a click on the lock unlocks (locked, not identity providers).
+         */unlockIds: [String],
+        /**
+         * Items a click on the lock locks (unlocked).
+         */lockIds: [String],
+        /**
+         * Open.
+         */`open`: Bool,
+        /**
+         * Its rows (empty while closed, unless searching).
+         */rows: [KvVaultRow]) {
+        self.key = key
+        self.site = site
+        self.count = count
+        self.counts = counts
+        self.updated = updated
+        self.selected = selected
+        self.lock = lock
+        self.unlockIds = unlockIds
+        self.lockIds = lockIds
+        self.`open` = `open`
+        self.rows = rows
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvVaultSite: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvVaultSite: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvVaultSite {
+        return
+            try KvVaultSite(
+                key: FfiConverterString.read(from: &buf),
+                site: FfiConverterString.read(from: &buf),
+                count: FfiConverterUInt32.read(from: &buf),
+                counts: FfiConverterString.read(from: &buf),
+                updated: FfiConverterString.read(from: &buf),
+                selected: FfiConverterTypeKvTri.read(from: &buf),
+                lock: FfiConverterTypeKvLock.read(from: &buf),
+                unlockIds: FfiConverterSequenceString.read(from: &buf),
+                lockIds: FfiConverterSequenceString.read(from: &buf),
+                open: FfiConverterBool.read(from: &buf),
+                rows: FfiConverterSequenceTypeKvVaultRow.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvVaultSite, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.key, into: &buf)
+        FfiConverterString.write(value.site, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+        FfiConverterString.write(value.counts, into: &buf)
+        FfiConverterString.write(value.updated, into: &buf)
+        FfiConverterTypeKvTri.write(value.selected, into: &buf)
+        FfiConverterTypeKvLock.write(value.lock, into: &buf)
+        FfiConverterSequenceString.write(value.unlockIds, into: &buf)
+        FfiConverterSequenceString.write(value.lockIds, into: &buf)
+        FfiConverterBool.write(value.`open`, into: &buf)
+        FfiConverterSequenceTypeKvVaultRow.write(value.rows, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultSite_lift(_ buf: RustBuffer) throws -> KvVaultSite {
+    return try FfiConverterTypeKvVaultSite.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultSite_lower(_ value: KvVaultSite) -> RustBuffer {
+    return FfiConverterTypeKvVaultSite.lower(value)
+}
+
+
+public struct KvVaultSource: Equatable, Hashable {
+    /**
+     * Items that can be sent.
+     */
+    public var count: UInt32
+    /**
+     * When the newest was saved, Unix ms (0: none).
+     */
+    public var newestMs: Int64
+    /**
+     * Their ids, in list order.
+     */
+    public var ids: [String]
+    /**
+     * The app's saved passwords (ids), never part of `ids`: they are sent
+     * only when ticked in the review.
+     */
+    public var passwordIds: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Items that can be sent.
+         */count: UInt32,
+        /**
+         * When the newest was saved, Unix ms (0: none).
+         */newestMs: Int64,
+        /**
+         * Their ids, in list order.
+         */ids: [String],
+        /**
+         * The app's saved passwords (ids), never part of `ids`: they are sent
+         * only when ticked in the review.
+         */passwordIds: [String]) {
+        self.count = count
+        self.newestMs = newestMs
+        self.ids = ids
+        self.passwordIds = passwordIds
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvVaultSource: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvVaultSource: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvVaultSource {
+        return
+            try KvVaultSource(
+                count: FfiConverterUInt32.read(from: &buf),
+                newestMs: FfiConverterInt64.read(from: &buf),
+                ids: FfiConverterSequenceString.read(from: &buf),
+                passwordIds: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvVaultSource, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.count, into: &buf)
+        FfiConverterInt64.write(value.newestMs, into: &buf)
+        FfiConverterSequenceString.write(value.ids, into: &buf)
+        FfiConverterSequenceString.write(value.passwordIds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultSource_lift(_ buf: RustBuffer) throws -> KvVaultSource {
+    return try FfiConverterTypeKvVaultSource.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultSource_lower(_ value: KvVaultSource) -> RustBuffer {
+    return FfiConverterTypeKvVaultSource.lower(value)
+}
+
+
+public struct KvVaultState: Equatable, Hashable {
+    /**
+     * The search text.
+     */
+    public var query: String
+    /**
+     * Selected item ids.
+     */
+    public var selected: [String]
+    /**
+     * Open groups (their keys); the rest are closed.
+     */
+    public var expanded: [String]
+    /**
+     * Narrowed to one app (its provider id), as the sidebar picks it.
+     */
+    public var app: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The search text.
+         */query: String,
+        /**
+         * Selected item ids.
+         */selected: [String],
+        /**
+         * Open groups (their keys); the rest are closed.
+         */expanded: [String],
+        /**
+         * Narrowed to one app (its provider id), as the sidebar picks it.
+         */app: String?) {
+        self.query = query
+        self.selected = selected
+        self.expanded = expanded
+        self.app = app
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvVaultState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvVaultState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvVaultState {
+        return
+            try KvVaultState(
+                query: FfiConverterString.read(from: &buf),
+                selected: FfiConverterSequenceString.read(from: &buf),
+                expanded: FfiConverterSequenceString.read(from: &buf),
+                app: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvVaultState, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.query, into: &buf)
+        FfiConverterSequenceString.write(value.selected, into: &buf)
+        FfiConverterSequenceString.write(value.expanded, into: &buf)
+        FfiConverterOptionString.write(value.app, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultState_lift(_ buf: RustBuffer) throws -> KvVaultState {
+    return try FfiConverterTypeKvVaultState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultState_lower(_ value: KvVaultState) -> RustBuffer {
+    return FfiConverterTypeKvVaultState.lower(value)
+}
+
+
+public struct KvVaultView: Equatable, Hashable {
+    /**
+     * Apps, by name.
+     */
+    public var apps: [KvVaultApp]
+    /**
+     * Items shown (after search).
+     */
+    public var shown: UInt32
+    /**
+     * Items in the vault.
+     */
+    public var total: UInt32
+    /**
+     * "No items yet." and friends.
+     */
+    public var emptyText: String?
+    /**
+     * Domains and keys are hidden until the user confirms with Touch ID.
+     */
+    public var namesHidden: Bool
+    /**
+     * What to say about it.
+     */
+    public var hiddenNote: String?
+    /**
+     * The button that opens the names.
+     */
+    public var showNamesLabel: String
+    /**
+     * The search field's prompt.
+     */
+    public var searchPrompt: String
+    /**
+     * The selection.
+     */
+    public var selection: KvVaultSelection
+    /**
+     * Select all is offered.
+     */
+    public var canSelectAll: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Apps, by name.
+         */apps: [KvVaultApp],
+        /**
+         * Items shown (after search).
+         */shown: UInt32,
+        /**
+         * Items in the vault.
+         */total: UInt32,
+        /**
+         * "No items yet." and friends.
+         */emptyText: String?,
+        /**
+         * Domains and keys are hidden until the user confirms with Touch ID.
+         */namesHidden: Bool,
+        /**
+         * What to say about it.
+         */hiddenNote: String?,
+        /**
+         * The button that opens the names.
+         */showNamesLabel: String,
+        /**
+         * The search field's prompt.
+         */searchPrompt: String,
+        /**
+         * The selection.
+         */selection: KvVaultSelection,
+        /**
+         * Select all is offered.
+         */canSelectAll: Bool) {
+        self.apps = apps
+        self.shown = shown
+        self.total = total
+        self.emptyText = emptyText
+        self.namesHidden = namesHidden
+        self.hiddenNote = hiddenNote
+        self.showNamesLabel = showNamesLabel
+        self.searchPrompt = searchPrompt
+        self.selection = selection
+        self.canSelectAll = canSelectAll
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvVaultView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvVaultView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvVaultView {
+        return
+            try KvVaultView(
+                apps: FfiConverterSequenceTypeKvVaultApp.read(from: &buf),
+                shown: FfiConverterUInt32.read(from: &buf),
+                total: FfiConverterUInt32.read(from: &buf),
+                emptyText: FfiConverterOptionString.read(from: &buf),
+                namesHidden: FfiConverterBool.read(from: &buf),
+                hiddenNote: FfiConverterOptionString.read(from: &buf),
+                showNamesLabel: FfiConverterString.read(from: &buf),
+                searchPrompt: FfiConverterString.read(from: &buf),
+                selection: FfiConverterTypeKvVaultSelection.read(from: &buf),
+                canSelectAll: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvVaultView, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeKvVaultApp.write(value.apps, into: &buf)
+        FfiConverterUInt32.write(value.shown, into: &buf)
+        FfiConverterUInt32.write(value.total, into: &buf)
+        FfiConverterOptionString.write(value.emptyText, into: &buf)
+        FfiConverterBool.write(value.namesHidden, into: &buf)
+        FfiConverterOptionString.write(value.hiddenNote, into: &buf)
+        FfiConverterString.write(value.showNamesLabel, into: &buf)
+        FfiConverterString.write(value.searchPrompt, into: &buf)
+        FfiConverterTypeKvVaultSelection.write(value.selection, into: &buf)
+        FfiConverterBool.write(value.canSelectAll, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultView_lift(_ buf: RustBuffer) throws -> KvVaultView {
+    return try FfiConverterTypeKvVaultView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultView_lower(_ value: KvVaultView) -> RustBuffer {
+    return FfiConverterTypeKvVaultView.lower(value)
 }
 
 
@@ -35607,6 +37900,24 @@ public struct TeleportConsent: Equatable, Hashable {
      * Saw and accepted `TeleportPlan.relay_unsealed`'s warning (S1).
      */
     public var acknowledgeRelayPlaintext: Bool
+    /**
+     * The review's per-site choice: the sites whose cookies to send
+     * (`None`: every cookie in the selection).
+     */
+    public var cookieDomains: [String]?
+    /**
+     * Consent items (their keys) the user turned off.
+     */
+    public var exclude: [String]
+    /**
+     * Send these saved Keyvault items (ids) instead of reading the
+     * live app: nothing is captured from the host.
+     */
+    public var fromVault: [String]?
+    /**
+     * Also send the saved passwords: only when ticked in the review.
+     */
+    public var includePasswords: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -35623,11 +37934,29 @@ public struct TeleportConsent: Equatable, Hashable {
          */saveToKeyvault: Bool = false,
         /**
          * Saw and accepted `TeleportPlan.relay_unsealed`'s warning (S1).
-         */acknowledgeRelayPlaintext: Bool = false) {
+         */acknowledgeRelayPlaintext: Bool = false,
+        /**
+         * The review's per-site choice: the sites whose cookies to send
+         * (`None`: every cookie in the selection).
+         */cookieDomains: [String]? = nil,
+        /**
+         * Consent items (their keys) the user turned off.
+         */exclude: [String] = [],
+        /**
+         * Send these saved Keyvault items (ids) instead of reading the
+         * live app: nothing is captured from the host.
+         */fromVault: [String]? = nil,
+        /**
+         * Also send the saved passwords: only when ticked in the review.
+         */includePasswords: Bool = false) {
         self.approved = approved
         self.acknowledgeSensitive = acknowledgeSensitive
         self.saveToKeyvault = saveToKeyvault
         self.acknowledgeRelayPlaintext = acknowledgeRelayPlaintext
+        self.cookieDomains = cookieDomains
+        self.exclude = exclude
+        self.fromVault = fromVault
+        self.includePasswords = includePasswords
     }
 
 
@@ -35649,7 +37978,11 @@ public struct FfiConverterTypeTeleportConsent: FfiConverterRustBuffer {
                 approved: FfiConverterBool.read(from: &buf),
                 acknowledgeSensitive: FfiConverterBool.read(from: &buf),
                 saveToKeyvault: FfiConverterBool.read(from: &buf),
-                acknowledgeRelayPlaintext: FfiConverterBool.read(from: &buf)
+                acknowledgeRelayPlaintext: FfiConverterBool.read(from: &buf),
+                cookieDomains: FfiConverterOptionSequenceString.read(from: &buf),
+                exclude: FfiConverterSequenceString.read(from: &buf),
+                fromVault: FfiConverterOptionSequenceString.read(from: &buf),
+                includePasswords: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -35658,6 +37991,10 @@ public struct FfiConverterTypeTeleportConsent: FfiConverterRustBuffer {
         FfiConverterBool.write(value.acknowledgeSensitive, into: &buf)
         FfiConverterBool.write(value.saveToKeyvault, into: &buf)
         FfiConverterBool.write(value.acknowledgeRelayPlaintext, into: &buf)
+        FfiConverterOptionSequenceString.write(value.cookieDomains, into: &buf)
+        FfiConverterSequenceString.write(value.exclude, into: &buf)
+        FfiConverterOptionSequenceString.write(value.fromVault, into: &buf)
+        FfiConverterBool.write(value.includePasswords, into: &buf)
     }
 }
 
@@ -38801,6 +41138,100 @@ public func FfiConverterTypeAppCreateAction_lift(_ buf: RustBuffer) throws -> Ap
 #endif
 public func FfiConverterTypeAppCreateAction_lower(_ value: AppCreateAction) -> RustBuffer {
     return FfiConverterTypeAppCreateAction.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum AppDesktopCoverKind: Equatable, Hashable {
+
+    /**
+     * No cover: the live desktop (or the stream view's own badge).
+     */
+    case stream
+    /**
+     * The preview with "Connecting…".
+     */
+    case connecting
+    /**
+     * The preview with a Connect button.
+     */
+    case connect
+    /**
+     * The preview with a line (and maybe a button): the Space cannot
+     * stream, or the stream failed.
+     */
+    case status
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppDesktopCoverKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppDesktopCoverKind: FfiConverterRustBuffer {
+    typealias SwiftType = AppDesktopCoverKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppDesktopCoverKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .stream
+
+        case 2: return .connecting
+
+        case 3: return .connect
+
+        case 4: return .status
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppDesktopCoverKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .stream:
+            writeInt(&buf, Int32(1))
+
+
+        case .connecting:
+            writeInt(&buf, Int32(2))
+
+
+        case .connect:
+            writeInt(&buf, Int32(3))
+
+
+        case .status:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDesktopCoverKind_lift(_ buf: RustBuffer) throws -> AppDesktopCoverKind {
+    return try FfiConverterTypeAppDesktopCoverKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppDesktopCoverKind_lower(_ value: AppDesktopCoverKind) -> RustBuffer {
+    return FfiConverterTypeAppDesktopCoverKind.lower(value)
 }
 
 
@@ -42775,6 +45206,99 @@ public enum AppPickerEvent: Equatable, Hashable {
          */value: Bool
     )
     /**
+     * The browser's sites with counts arrived (and what was picked last time
+     * for this app and Space, if anything).
+     */
+    case domainsLoaded(
+        /**
+         * The inventory.
+         */inventory: KvInventory,
+        /**
+         * The sites sent last time.
+         */remembered: [String]?
+    )
+    /**
+     * The inventory could not be read (the review then sends what the plan
+     * lists, as before).
+     */
+    case domainsFailed
+    /**
+     * Pick or drop one site.
+     */
+    case toggleDomain(
+        /**
+         * The site.
+         */domain: String
+    )
+    /**
+     * Pick or drop every site the search shows.
+     */
+    case selectShownDomains(
+        /**
+         * Pick (true) or drop.
+         */value: Bool
+    )
+    /**
+     * The sites list's search text.
+     */
+    case domainQuery(
+        /**
+         * Text.
+         */text: String
+    )
+    /**
+     * Turn a consent line on or off.
+     */
+    case toggleItem(
+        /**
+         * The consent item's key.
+         */key: String
+    )
+    /**
+     * Where to send from.
+     */
+    case sendFrom(
+        /**
+         * The source.
+         */source: AppSendSource
+    )
+    /**
+     * The app's saved Keyvault items (what the Keyvault holds for it).
+     */
+    case vaultItems(
+        /**
+         * How many can be sent.
+         */count: UInt32,
+        /**
+         * When the newest was saved, Unix ms.
+         */newestMs: Int64,
+        /**
+         * Now, Unix ms.
+         */nowMs: Int64,
+        /**
+         * The ones chosen to send (ids).
+         */selected: [String],
+        /**
+         * The app's saved passwords (ids): sent only when ticked.
+         */passwordIds: [String]
+    )
+    /**
+     * Tick or untick "Also send saved passwords".
+     */
+    case togglePasswords(
+        /**
+         * Ticked.
+         */value: Bool
+    )
+    /**
+     * The chosen saved items changed.
+     */
+    case vaultSelection(
+        /**
+         * The ids.
+         */selected: [String]
+    )
+    /**
      * Confirm the review.
      */
     case confirm
@@ -42863,15 +45387,44 @@ public struct FfiConverterTypeAppPickerEvent: FfiConverterRustBuffer {
         case 15: return .acknowledgeRelayPlaintext(value: try FfiConverterBool.read(from: &buf)
         )
 
-        case 16: return .confirm
-
-        case 17: return .progress(event: try FfiConverterTypeAppTeleportRunEvent.read(from: &buf)
+        case 16: return .domainsLoaded(inventory: try FfiConverterTypeKvInventory.read(from: &buf), remembered: try FfiConverterOptionSequenceString.read(from: &buf)
         )
 
-        case 18: return .finished(report: try FfiConverterTypeAppTeleportRunReport.read(from: &buf)
+        case 17: return .domainsFailed
+
+        case 18: return .toggleDomain(domain: try FfiConverterString.read(from: &buf)
         )
 
-        case 19: return .back
+        case 19: return .selectShownDomains(value: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 20: return .domainQuery(text: try FfiConverterString.read(from: &buf)
+        )
+
+        case 21: return .toggleItem(key: try FfiConverterString.read(from: &buf)
+        )
+
+        case 22: return .sendFrom(source: try FfiConverterTypeAppSendSource.read(from: &buf)
+        )
+
+        case 23: return .vaultItems(count: try FfiConverterUInt32.read(from: &buf), newestMs: try FfiConverterInt64.read(from: &buf), nowMs: try FfiConverterInt64.read(from: &buf), selected: try FfiConverterSequenceString.read(from: &buf), passwordIds: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 24: return .togglePasswords(value: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 25: return .vaultSelection(selected: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 26: return .confirm
+
+        case 27: return .progress(event: try FfiConverterTypeAppTeleportRunEvent.read(from: &buf)
+        )
+
+        case 28: return .finished(report: try FfiConverterTypeAppTeleportRunReport.read(from: &buf)
+        )
+
+        case 29: return .back
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -42959,22 +45512,76 @@ public struct FfiConverterTypeAppPickerEvent: FfiConverterRustBuffer {
             FfiConverterBool.write(value, into: &buf)
 
 
-        case .confirm:
+        case let .domainsLoaded(inventory,remembered):
             writeInt(&buf, Int32(16))
+            FfiConverterTypeKvInventory.write(inventory, into: &buf)
+            FfiConverterOptionSequenceString.write(remembered, into: &buf)
+
+
+        case .domainsFailed:
+            writeInt(&buf, Int32(17))
+
+
+        case let .toggleDomain(domain):
+            writeInt(&buf, Int32(18))
+            FfiConverterString.write(domain, into: &buf)
+
+
+        case let .selectShownDomains(value):
+            writeInt(&buf, Int32(19))
+            FfiConverterBool.write(value, into: &buf)
+
+
+        case let .domainQuery(text):
+            writeInt(&buf, Int32(20))
+            FfiConverterString.write(text, into: &buf)
+
+
+        case let .toggleItem(key):
+            writeInt(&buf, Int32(21))
+            FfiConverterString.write(key, into: &buf)
+
+
+        case let .sendFrom(source):
+            writeInt(&buf, Int32(22))
+            FfiConverterTypeAppSendSource.write(source, into: &buf)
+
+
+        case let .vaultItems(count,newestMs,nowMs,selected,passwordIds):
+            writeInt(&buf, Int32(23))
+            FfiConverterUInt32.write(count, into: &buf)
+            FfiConverterInt64.write(newestMs, into: &buf)
+            FfiConverterInt64.write(nowMs, into: &buf)
+            FfiConverterSequenceString.write(selected, into: &buf)
+            FfiConverterSequenceString.write(passwordIds, into: &buf)
+
+
+        case let .togglePasswords(value):
+            writeInt(&buf, Int32(24))
+            FfiConverterBool.write(value, into: &buf)
+
+
+        case let .vaultSelection(selected):
+            writeInt(&buf, Int32(25))
+            FfiConverterSequenceString.write(selected, into: &buf)
+
+
+        case .confirm:
+            writeInt(&buf, Int32(26))
 
 
         case let .progress(event):
-            writeInt(&buf, Int32(17))
+            writeInt(&buf, Int32(27))
             FfiConverterTypeAppTeleportRunEvent.write(event, into: &buf)
 
 
         case let .finished(report):
-            writeInt(&buf, Int32(18))
+            writeInt(&buf, Int32(28))
             FfiConverterTypeAppTeleportRunReport.write(report, into: &buf)
 
 
         case .back:
-            writeInt(&buf, Int32(19))
+            writeInt(&buf, Int32(29))
 
         }
     }
@@ -44128,6 +46735,81 @@ public func FfiConverterTypeAppRuntime_lift(_ buf: RustBuffer) throws -> AppRunt
 #endif
 public func FfiConverterTypeAppRuntime_lower(_ value: AppRuntime) -> RustBuffer {
     return FfiConverterTypeAppRuntime.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum AppSendSource: Equatable, Hashable {
+
+    /**
+     * Read the live app now (a browser's cookies are decrypted, so macOS asks
+     * for Keychain access).
+     */
+    case live
+    /**
+     * Send the items saved in the Keyvault for this app. Nothing is read from
+     * the host.
+     */
+    case vault
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppSendSource: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppSendSource: FfiConverterRustBuffer {
+    typealias SwiftType = AppSendSource
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppSendSource {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .live
+
+        case 2: return .vault
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppSendSource, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .live:
+            writeInt(&buf, Int32(1))
+
+
+        case .vault:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSendSource_lift(_ buf: RustBuffer) throws -> AppSendSource {
+    return try FfiConverterTypeAppSendSource.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppSendSource_lower(_ value: AppSendSource) -> RustBuffer {
+    return FfiConverterTypeAppSendSource.lower(value)
 }
 
 
@@ -45737,6 +48419,119 @@ public func FfiConverterTypeAppStorageRequest_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeAppStorageRequest_lower(_ value: AppStorageRequest) -> RustBuffer {
     return FfiConverterTypeAppStorageRequest.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum AppStreamPhase: Equatable, Hashable {
+
+    /**
+     * No session yet.
+     */
+    case noSession
+    /**
+     * A session that has not started.
+     */
+    case idle
+    /**
+     * Opening (no frame yet).
+     */
+    case connecting
+    /**
+     * Frames arrive.
+     */
+    case streaming
+    /**
+     * Paused by the Space (the stream view says why).
+     */
+    case suspended
+    /**
+     * It could not open.
+     */
+    case failed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension AppStreamPhase: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppStreamPhase: FfiConverterRustBuffer {
+    typealias SwiftType = AppStreamPhase
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppStreamPhase {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .noSession
+
+        case 2: return .idle
+
+        case 3: return .connecting
+
+        case 4: return .streaming
+
+        case 5: return .suspended
+
+        case 6: return .failed
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: AppStreamPhase, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .noSession:
+            writeInt(&buf, Int32(1))
+
+
+        case .idle:
+            writeInt(&buf, Int32(2))
+
+
+        case .connecting:
+            writeInt(&buf, Int32(3))
+
+
+        case .streaming:
+            writeInt(&buf, Int32(4))
+
+
+        case .suspended:
+            writeInt(&buf, Int32(5))
+
+
+        case .failed:
+            writeInt(&buf, Int32(6))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppStreamPhase_lift(_ buf: RustBuffer) throws -> AppStreamPhase {
+    return try FfiConverterTypeAppStreamPhase.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppStreamPhase_lower(_ value: AppStreamPhase) -> RustBuffer {
+    return FfiConverterTypeAppStreamPhase.lower(value)
 }
 
 
@@ -47904,7 +50699,7 @@ public func FfiConverterTypeKvApprovalAction_lower(_ value: KvApprovalAction) ->
 public enum KvCategory: Equatable, Hashable {
 
     /**
-     * Every site.
+     * Every item, grouped by app.
      */
     case all
     /**
@@ -48016,7 +50811,8 @@ public enum KvCommand: Equatable, Hashable {
          */disabled: Bool
     )
     /**
-     * Per-item unattended (turning on asks for Touch ID).
+     * Per-item unattended (turning on asks for Touch ID): the same as
+     * [`KvCommand::SetLocked`] with `locked` the other way round.
      */
     case setUnattended(
         /**
@@ -48026,6 +50822,42 @@ public enum KvCommand: Equatable, Hashable {
          * On.
          */unattended: Bool
     )
+    /**
+     * Lock or unlock items together. Unlocking allows unattended access and
+     * asks for Touch ID once for the whole batch; locking does not.
+     */
+    case setLocked(
+        /**
+         * Items.
+         */itemIds: [String],
+        /**
+         * Lock (true) or unlock.
+         */locked: Bool
+    )
+    /**
+     * Delete items, wiping every live copy of them in Spaces.
+     */
+    case deleteItems(
+        /**
+         * Items.
+         */itemIds: [String]
+    )
+    /**
+     * "Never ask again" on the unlock prompt (Settings turns it back on).
+     */
+    case setSkipUnlockPrompt(
+        /**
+         * On.
+         */on: Bool
+    )
+    /**
+     * Show item names for a few minutes (the daemon asks for Touch ID).
+     */
+    case browse
+    /**
+     * Hide item names again.
+     */
+    case endBrowse
     /**
      * Revoke a grant (`*`: all).
      */
@@ -48110,22 +50942,35 @@ public struct FfiConverterTypeKvCommand: FfiConverterRustBuffer {
         case 4: return .setUnattended(itemIds: try FfiConverterSequenceString.read(from: &buf), unattended: try FfiConverterBool.read(from: &buf)
         )
 
-        case 5: return .revokeGrant(id: try FfiConverterString.read(from: &buf)
+        case 5: return .setLocked(itemIds: try FfiConverterSequenceString.read(from: &buf), locked: try FfiConverterBool.read(from: &buf)
         )
 
-        case 6: return .removeRule(id: try FfiConverterString.read(from: &buf)
+        case 6: return .deleteItems(itemIds: try FfiConverterSequenceString.read(from: &buf)
         )
 
-        case 7: return .setAutoWipe(on: try FfiConverterBool.read(from: &buf)
+        case 7: return .setSkipUnlockPrompt(on: try FfiConverterBool.read(from: &buf)
         )
 
-        case 8: return .release(target: try FfiConverterString.read(from: &buf)
+        case 8: return .browse
+
+        case 9: return .endBrowse
+
+        case 10: return .revokeGrant(id: try FfiConverterString.read(from: &buf)
         )
 
-        case 9: return .approve(requestId: try FfiConverterString.read(from: &buf), items: try FfiConverterOptionSequenceString.read(from: &buf)
+        case 11: return .removeRule(id: try FfiConverterString.read(from: &buf)
         )
 
-        case 10: return .deny(requestId: try FfiConverterString.read(from: &buf)
+        case 12: return .setAutoWipe(on: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 13: return .release(target: try FfiConverterString.read(from: &buf)
+        )
+
+        case 14: return .approve(requestId: try FfiConverterString.read(from: &buf), items: try FfiConverterOptionSequenceString.read(from: &buf)
+        )
+
+        case 15: return .deny(requestId: try FfiConverterString.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -48155,34 +51000,58 @@ public struct FfiConverterTypeKvCommand: FfiConverterRustBuffer {
             FfiConverterBool.write(unattended, into: &buf)
 
 
-        case let .revokeGrant(id):
+        case let .setLocked(itemIds,locked):
             writeInt(&buf, Int32(5))
-            FfiConverterString.write(id, into: &buf)
+            FfiConverterSequenceString.write(itemIds, into: &buf)
+            FfiConverterBool.write(locked, into: &buf)
 
 
-        case let .removeRule(id):
+        case let .deleteItems(itemIds):
             writeInt(&buf, Int32(6))
-            FfiConverterString.write(id, into: &buf)
+            FfiConverterSequenceString.write(itemIds, into: &buf)
 
 
-        case let .setAutoWipe(on):
+        case let .setSkipUnlockPrompt(on):
             writeInt(&buf, Int32(7))
             FfiConverterBool.write(on, into: &buf)
 
 
-        case let .release(target):
+        case .browse:
             writeInt(&buf, Int32(8))
+
+
+        case .endBrowse:
+            writeInt(&buf, Int32(9))
+
+
+        case let .revokeGrant(id):
+            writeInt(&buf, Int32(10))
+            FfiConverterString.write(id, into: &buf)
+
+
+        case let .removeRule(id):
+            writeInt(&buf, Int32(11))
+            FfiConverterString.write(id, into: &buf)
+
+
+        case let .setAutoWipe(on):
+            writeInt(&buf, Int32(12))
+            FfiConverterBool.write(on, into: &buf)
+
+
+        case let .release(target):
+            writeInt(&buf, Int32(13))
             FfiConverterString.write(target, into: &buf)
 
 
         case let .approve(requestId,items):
-            writeInt(&buf, Int32(9))
+            writeInt(&buf, Int32(14))
             FfiConverterString.write(requestId, into: &buf)
             FfiConverterOptionSequenceString.write(items, into: &buf)
 
 
         case let .deny(requestId):
-            writeInt(&buf, Int32(10))
+            writeInt(&buf, Int32(15))
             FfiConverterString.write(requestId, into: &buf)
 
         }
@@ -48202,109 +51071,6 @@ public func FfiConverterTypeKvCommand_lift(_ buf: RustBuffer) throws -> KvComman
 #endif
 public func FfiConverterTypeKvCommand_lower(_ value: KvCommand) -> RustBuffer {
     return FfiConverterTypeKvCommand.lower(value)
-}
-
-
-// Note that we don't yet support `indirect` for enums.
-// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
-
-public enum KvConsentChipKind: Equatable, Hashable {
-
-    /**
-     * A request waits.
-     */
-    case pending
-    /**
-     * A copy is in a Space.
-     */
-    case delivered
-    /**
-     * A live grant.
-     */
-    case granted
-    /**
-     * An unattended rule.
-     */
-    case rule
-    /**
-     * Nothing: asks every time.
-     */
-    case asks
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension KvConsentChipKind: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeKvConsentChipKind: FfiConverterRustBuffer {
-    typealias SwiftType = KvConsentChipKind
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvConsentChipKind {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-
-        case 1: return .pending
-
-        case 2: return .delivered
-
-        case 3: return .granted
-
-        case 4: return .rule
-
-        case 5: return .asks
-
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: KvConsentChipKind, into buf: inout [UInt8]) {
-        switch value {
-
-
-        case .pending:
-            writeInt(&buf, Int32(1))
-
-
-        case .delivered:
-            writeInt(&buf, Int32(2))
-
-
-        case .granted:
-            writeInt(&buf, Int32(3))
-
-
-        case .rule:
-            writeInt(&buf, Int32(4))
-
-
-        case .asks:
-            writeInt(&buf, Int32(5))
-
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeKvConsentChipKind_lift(_ buf: RustBuffer) throws -> KvConsentChipKind {
-    return try FfiConverterTypeKvConsentChipKind.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeKvConsentChipKind_lower(_ value: KvConsentChipKind) -> RustBuffer {
-    return FfiConverterTypeKvConsentChipKind.lower(value)
 }
 
 
@@ -48467,6 +51233,182 @@ public func FfiConverterTypeKvFormMode_lower(_ value: KvFormMode) -> RustBuffer 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum KvKind: Equatable, Hashable {
+
+    /**
+     * A cookie.
+     */
+    case cookie
+    /**
+     * A localStorage value.
+     */
+    case localStorage
+    /**
+     * A saved password.
+     */
+    case password
+    /**
+     * A file.
+     */
+    case file
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvKind: FfiConverterRustBuffer {
+    typealias SwiftType = KvKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .cookie
+
+        case 2: return .localStorage
+
+        case 3: return .password
+
+        case 4: return .file
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: KvKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .cookie:
+            writeInt(&buf, Int32(1))
+
+
+        case .localStorage:
+            writeInt(&buf, Int32(2))
+
+
+        case .password:
+            writeInt(&buf, Int32(3))
+
+
+        case .file:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvKind_lift(_ buf: RustBuffer) throws -> KvKind {
+    return try FfiConverterTypeKvKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvKind_lower(_ value: KvKind) -> RustBuffer {
+    return FfiConverterTypeKvKind.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum KvLock: Equatable, Hashable {
+
+    /**
+     * Every item needs approval for each use.
+     */
+    case locked
+    /**
+     * Every item allows unattended access.
+     */
+    case unlocked
+    /**
+     * Some of each.
+     */
+    case mixed
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvLock: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvLock: FfiConverterRustBuffer {
+    typealias SwiftType = KvLock
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvLock {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .locked
+
+        case 2: return .unlocked
+
+        case 3: return .mixed
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: KvLock, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .locked:
+            writeInt(&buf, Int32(1))
+
+
+        case .unlocked:
+            writeInt(&buf, Int32(2))
+
+
+        case .mixed:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvLock_lift(_ buf: RustBuffer) throws -> KvLock {
+    return try FfiConverterTypeKvLock.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvLock_lower(_ value: KvLock) -> RustBuffer {
+    return FfiConverterTypeKvLock.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum KvMethod: Equatable, Hashable {
 
     /**
@@ -48555,12 +51497,35 @@ public enum KvOutcome: Equatable, Hashable {
          */key: String?
     )
     /**
-     * Items after a policy change.
+     * Items locked or unlocked. Identity providers always ask: they are in
+     * `skipped`, never changed.
      */
-    case items(
+    case locked(
         /**
-         * Items.
-         */items: [KvItem]
+         * Items whose lock changed.
+         */changed: [String],
+        /**
+         * Items left locked (identity providers).
+         */skipped: [String]
+    )
+    /**
+     * Items deleted.
+     */
+    case deleted(
+        /**
+         * Items deleted.
+         */count: UInt32,
+        /**
+         * Copies wiped in Spaces.
+         */wiped: [String]
+    )
+    /**
+     * The browse window is open until then, Unix ms.
+     */
+    case browsing(
+        /**
+         * When it closes.
+         */untilMs: UInt64
     )
     /**
      * Grants revoked.
@@ -48612,16 +51577,22 @@ public struct FfiConverterTypeKvOutcome: FfiConverterRustBuffer {
         case 2: return .recoveryKey(key: try FfiConverterOptionString.read(from: &buf)
         )
 
-        case 3: return .items(items: try FfiConverterSequenceTypeKvItem.read(from: &buf)
+        case 3: return .locked(changed: try FfiConverterSequenceString.read(from: &buf), skipped: try FfiConverterSequenceString.read(from: &buf)
         )
 
-        case 4: return .revoked(count: try FfiConverterUInt32.read(from: &buf)
+        case 4: return .deleted(count: try FfiConverterUInt32.read(from: &buf), wiped: try FfiConverterSequenceString.read(from: &buf)
         )
 
-        case 5: return .wiped(imports: try FfiConverterSequenceString.read(from: &buf)
+        case 5: return .browsing(untilMs: try FfiConverterUInt64.read(from: &buf)
         )
 
-        case 6: return .granted(grant: try FfiConverterTypeKvGrant.read(from: &buf)
+        case 6: return .revoked(count: try FfiConverterUInt32.read(from: &buf)
+        )
+
+        case 7: return .wiped(imports: try FfiConverterSequenceString.read(from: &buf)
+        )
+
+        case 8: return .granted(grant: try FfiConverterTypeKvGrant.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -48641,23 +51612,35 @@ public struct FfiConverterTypeKvOutcome: FfiConverterRustBuffer {
             FfiConverterOptionString.write(key, into: &buf)
 
 
-        case let .items(items):
+        case let .locked(changed,skipped):
             writeInt(&buf, Int32(3))
-            FfiConverterSequenceTypeKvItem.write(items, into: &buf)
+            FfiConverterSequenceString.write(changed, into: &buf)
+            FfiConverterSequenceString.write(skipped, into: &buf)
+
+
+        case let .deleted(count,wiped):
+            writeInt(&buf, Int32(4))
+            FfiConverterUInt32.write(count, into: &buf)
+            FfiConverterSequenceString.write(wiped, into: &buf)
+
+
+        case let .browsing(untilMs):
+            writeInt(&buf, Int32(5))
+            FfiConverterUInt64.write(untilMs, into: &buf)
 
 
         case let .revoked(count):
-            writeInt(&buf, Int32(4))
+            writeInt(&buf, Int32(6))
             FfiConverterUInt32.write(count, into: &buf)
 
 
         case let .wiped(imports):
-            writeInt(&buf, Int32(5))
+            writeInt(&buf, Int32(7))
             FfiConverterSequenceString.write(imports, into: &buf)
 
 
         case let .granted(grant):
-            writeInt(&buf, Int32(6))
+            writeInt(&buf, Int32(8))
             FfiConverterTypeKvGrant.write(grant, into: &buf)
 
         }
@@ -48694,11 +51677,11 @@ public enum KvSelection: Equatable, Hashable {
          */category: KvCategory
     )
     /**
-     * A site.
+     * One app's items.
      */
-    case site(
+    case app(
         /**
-         * Group key.
+         * Its provider id.
          */key: String
     )
 
@@ -48725,7 +51708,7 @@ public struct FfiConverterTypeKvSelection: FfiConverterRustBuffer {
         case 1: return .category(category: try FfiConverterTypeKvCategory.read(from: &buf)
         )
 
-        case 2: return .site(key: try FfiConverterString.read(from: &buf)
+        case 2: return .app(key: try FfiConverterString.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -48741,7 +51724,7 @@ public struct FfiConverterTypeKvSelection: FfiConverterRustBuffer {
             FfiConverterTypeKvCategory.write(category, into: &buf)
 
 
-        case let .site(key):
+        case let .app(key):
             writeInt(&buf, Int32(2))
             FfiConverterString.write(key, into: &buf)
 
@@ -48787,10 +51770,7 @@ public enum KvSelector: Equatable, Hashable {
          */app: String,
         /**
          * Site.
-         */site: String,
-        /**
-         * Account.
-         */account: String?
+         */site: String
     )
     /**
      * A whole app.
@@ -48832,7 +51812,7 @@ public struct FfiConverterTypeKvSelector: FfiConverterRustBuffer {
         case 1: return .item(id: try FfiConverterString.read(from: &buf)
         )
 
-        case 2: return .site(app: try FfiConverterString.read(from: &buf), site: try FfiConverterString.read(from: &buf), account: try FfiConverterOptionString.read(from: &buf)
+        case 2: return .site(app: try FfiConverterString.read(from: &buf), site: try FfiConverterString.read(from: &buf)
         )
 
         case 3: return .app(app: try FfiConverterString.read(from: &buf)
@@ -48854,11 +51834,10 @@ public struct FfiConverterTypeKvSelector: FfiConverterRustBuffer {
             FfiConverterString.write(id, into: &buf)
 
 
-        case let .site(app,site,account):
+        case let .site(app,site):
             writeInt(&buf, Int32(2))
             FfiConverterString.write(app, into: &buf)
             FfiConverterString.write(site, into: &buf)
-            FfiConverterOptionString.write(account, into: &buf)
 
 
         case let .app(app):
@@ -49253,6 +52232,144 @@ public func FfiConverterTypeKvTri_lift(_ buf: RustBuffer) throws -> KvTri {
 #endif
 public func FfiConverterTypeKvTri_lower(_ value: KvTri) -> RustBuffer {
     return FfiConverterTypeKvTri.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum KvVaultAction: Equatable, Hashable {
+
+    /**
+     * The search text changed.
+     */
+    case query(
+        /**
+         * Text.
+         */text: String
+    )
+    /**
+     * Select or deselect one item.
+     */
+    case toggle(
+        /**
+         * Item id.
+         */id: String
+    )
+    /**
+     * Select or deselect every shown item of an app, a site or the files
+     * of an app (all of them when any is unselected, none when all are).
+     */
+    case toggleGroup(
+        /**
+         * Group key.
+         */key: String
+    )
+    /**
+     * Select every shown item.
+     */
+    case selectAll
+    /**
+     * Deselect everything.
+     */
+    case clear
+    /**
+     * Open or close a group.
+     */
+    case toggleOpen(
+        /**
+         * Group key.
+         */key: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvVaultAction: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvVaultAction: FfiConverterRustBuffer {
+    typealias SwiftType = KvVaultAction
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvVaultAction {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .query(text: try FfiConverterString.read(from: &buf)
+        )
+
+        case 2: return .toggle(id: try FfiConverterString.read(from: &buf)
+        )
+
+        case 3: return .toggleGroup(key: try FfiConverterString.read(from: &buf)
+        )
+
+        case 4: return .selectAll
+
+        case 5: return .clear
+
+        case 6: return .toggleOpen(key: try FfiConverterString.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: KvVaultAction, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .query(text):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(text, into: &buf)
+
+
+        case let .toggle(id):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(id, into: &buf)
+
+
+        case let .toggleGroup(key):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(key, into: &buf)
+
+
+        case .selectAll:
+            writeInt(&buf, Int32(4))
+
+
+        case .clear:
+            writeInt(&buf, Int32(5))
+
+
+        case let .toggleOpen(key):
+            writeInt(&buf, Int32(6))
+            FfiConverterString.write(key, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultAction_lift(_ buf: RustBuffer) throws -> KvVaultAction {
+    return try FfiConverterTypeKvVaultAction.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvVaultAction_lower(_ value: KvVaultAction) -> RustBuffer {
+    return FfiConverterTypeKvVaultAction.lower(value)
 }
 
 
@@ -51430,30 +54547,6 @@ fileprivate struct FfiConverterOptionTypeKvCredentialForm: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeKvSiteDetail: FfiConverterRustBuffer {
-    typealias SwiftType = KvSiteDetail?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeKvSiteDetail.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeKvSiteDetail.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterOptionTypeKvStatus: FfiConverterRustBuffer {
     typealias SwiftType = KvStatus?
 
@@ -51470,6 +54563,54 @@ fileprivate struct FfiConverterOptionTypeKvStatus: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeKvStatus.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeKvUnlockPrompt: FfiConverterRustBuffer {
+    typealias SwiftType = KvUnlockPrompt?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeKvUnlockPrompt.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeKvUnlockPrompt.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeKvVaultFiles: FfiConverterRustBuffer {
+    typealias SwiftType = KvVaultFiles?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeKvVaultFiles.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeKvVaultFiles.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -54171,6 +57312,31 @@ fileprivate struct FfiConverterSequenceTypeAppPreviewSegment: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAppRememberedChoice: FfiConverterRustBuffer {
+    typealias SwiftType = [AppRememberedChoice]
+
+    public static func write(_ value: [AppRememberedChoice], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppRememberedChoice.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppRememberedChoice] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppRememberedChoice]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppRememberedChoice.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAppRemoteWindow: FfiConverterRustBuffer {
     typealias SwiftType = [AppRemoteWindow]
 
@@ -54213,6 +57379,56 @@ fileprivate struct FfiConverterSequenceTypeAppRemoteWindowGroup: FfiConverterRus
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeAppRemoteWindowGroup.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppReviewDomain: FfiConverterRustBuffer {
+    typealias SwiftType = [AppReviewDomain]
+
+    public static func write(_ value: [AppReviewDomain], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppReviewDomain.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppReviewDomain] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppReviewDomain]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppReviewDomain.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAppReviewToggle: FfiConverterRustBuffer {
+    typealias SwiftType = [AppReviewToggle]
+
+    public static func write(_ value: [AppReviewToggle], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppReviewToggle.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppReviewToggle] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppReviewToggle]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppReviewToggle.read(from: &buf))
         }
         return seq
     }
@@ -54971,6 +58187,31 @@ fileprivate struct FfiConverterSequenceTypeKvAccessRow: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeKvAppRow: FfiConverterRustBuffer {
+    typealias SwiftType = [KvAppRow]
+
+    public static func write(_ value: [KvAppRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeKvAppRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [KvAppRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [KvAppRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeKvAppRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeKvApprovalRow: FfiConverterRustBuffer {
     typealias SwiftType = [KvApprovalRow]
 
@@ -55046,56 +58287,6 @@ fileprivate struct FfiConverterSequenceTypeKvCategoryRow: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeKvConsentChip: FfiConverterRustBuffer {
-    typealias SwiftType = [KvConsentChip]
-
-    public static func write(_ value: [KvConsentChip], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeKvConsentChip.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [KvConsentChip] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [KvConsentChip]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeKvConsentChip.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterSequenceTypeKvCookieInfo: FfiConverterRustBuffer {
-    typealias SwiftType = [KvCookieInfo]
-
-    public static func write(_ value: [KvCookieInfo], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeKvCookieInfo.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [KvCookieInfo] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [KvCookieInfo]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeKvCookieInfo.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterSequenceTypeKvDelivery: FfiConverterRustBuffer {
     typealias SwiftType = [KvDelivery]
 
@@ -55113,6 +58304,56 @@ fileprivate struct FfiConverterSequenceTypeKvDelivery: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeKvDelivery.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeKvDomainCount: FfiConverterRustBuffer {
+    typealias SwiftType = [KvDomainCount]
+
+    public static func write(_ value: [KvDomainCount], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeKvDomainCount.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [KvDomainCount] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [KvDomainCount]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeKvDomainCount.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeKvFavicon: FfiConverterRustBuffer {
+    typealias SwiftType = [KvFavicon]
+
+    public static func write(_ value: [KvFavicon], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeKvFavicon.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [KvFavicon] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [KvFavicon]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeKvFavicon.read(from: &buf))
         }
         return seq
     }
@@ -55163,31 +58404,6 @@ fileprivate struct FfiConverterSequenceTypeKvItem: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeKvItem.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterSequenceTypeKvItemRow: FfiConverterRustBuffer {
-    typealias SwiftType = [KvItemRow]
-
-    public static func write(_ value: [KvItemRow], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeKvItemRow.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [KvItemRow] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [KvItemRow]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeKvItemRow.read(from: &buf))
         }
         return seq
     }
@@ -55321,23 +58537,23 @@ fileprivate struct FfiConverterSequenceTypeKvRuleCaller: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeKvSiteGroup: FfiConverterRustBuffer {
-    typealias SwiftType = [KvSiteGroup]
+fileprivate struct FfiConverterSequenceTypeKvVaultApp: FfiConverterRustBuffer {
+    typealias SwiftType = [KvVaultApp]
 
-    public static func write(_ value: [KvSiteGroup], into buf: inout [UInt8]) {
+    public static func write(_ value: [KvVaultApp], into buf: inout [UInt8]) {
         let len = Int32(value.count)
         writeInt(&buf, len)
         for item in value {
-            FfiConverterTypeKvSiteGroup.write(item, into: &buf)
+            FfiConverterTypeKvVaultApp.write(item, into: &buf)
         }
     }
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [KvSiteGroup] {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [KvVaultApp] {
         let len: Int32 = try readInt(&buf)
-        var seq = [KvSiteGroup]()
+        var seq = [KvVaultApp]()
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeKvSiteGroup.read(from: &buf))
+            seq.append(try FfiConverterTypeKvVaultApp.read(from: &buf))
         }
         return seq
     }
@@ -55346,23 +58562,48 @@ fileprivate struct FfiConverterSequenceTypeKvSiteGroup: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeKvSiteRow: FfiConverterRustBuffer {
-    typealias SwiftType = [KvSiteRow]
+fileprivate struct FfiConverterSequenceTypeKvVaultRow: FfiConverterRustBuffer {
+    typealias SwiftType = [KvVaultRow]
 
-    public static func write(_ value: [KvSiteRow], into buf: inout [UInt8]) {
+    public static func write(_ value: [KvVaultRow], into buf: inout [UInt8]) {
         let len = Int32(value.count)
         writeInt(&buf, len)
         for item in value {
-            FfiConverterTypeKvSiteRow.write(item, into: &buf)
+            FfiConverterTypeKvVaultRow.write(item, into: &buf)
         }
     }
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [KvSiteRow] {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [KvVaultRow] {
         let len: Int32 = try readInt(&buf)
-        var seq = [KvSiteRow]()
+        var seq = [KvVaultRow]()
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeKvSiteRow.read(from: &buf))
+            seq.append(try FfiConverterTypeKvVaultRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeKvVaultSite: FfiConverterRustBuffer {
+    typealias SwiftType = [KvVaultSite]
+
+    public static func write(_ value: [KvVaultSite], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeKvVaultSite.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [KvVaultSite] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [KvVaultSite]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeKvVaultSite.read(from: &buf))
         }
         return seq
     }
@@ -56333,6 +59574,17 @@ public func appDeleteFailedText(name: String, error: String) -> String  {
     uniffi_cua_spaces_ffi_fn_func_app_delete_failed_text(
         FfiConverterString.lower(name),
         FfiConverterString.lower(error),$0
+    )
+})
+}
+/**
+ * What a Space's preview card shows before (or instead of) its live
+ * desktop: "Connecting…", a Connect button, or the Space's own line.
+ */
+public func appDesktopCover(input: AppDesktopCoverInput) -> AppDesktopCover  {
+    return try!  FfiConverterTypeAppDesktopCover_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_desktop_cover(
+        FfiConverterTypeAppDesktopCoverInput_lower(input),$0
     )
 })
 }
@@ -57476,6 +60728,40 @@ public func appRefreshReportFromJson(json: String)throws  -> AppRefreshReport  {
 })
 }
 /**
+ * `choices` with the sites just sent remembered for `key`.
+ */
+public func appReviewRemember(choices: [AppRememberedChoice], key: String, domains: [String]) -> [AppRememberedChoice]  {
+    return try!  FfiConverterSequenceTypeAppRememberedChoice.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_review_remember(
+        FfiConverterSequenceTypeAppRememberedChoice.lower(choices),
+        FfiConverterString.lower(key),
+        FfiConverterSequenceString.lower(domains),$0
+    )
+})
+}
+/**
+ * The key a review's site choice is remembered under (`<app>|<space>`).
+ */
+public func appReviewRememberKey(app: String, space: String) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_review_remember_key(
+        FfiConverterString.lower(app),
+        FfiConverterString.lower(space),$0
+    )
+})
+}
+/**
+ * What was picked last time for `key` (an app and a Space), if anything.
+ */
+public func appReviewRemembered(choices: [AppRememberedChoice], key: String) -> [String]?  {
+    return try!  FfiConverterOptionSequenceString.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_review_remembered(
+        FfiConverterSequenceTypeAppRememberedChoice.lower(choices),
+        FfiConverterString.lower(key),$0
+    )
+})
+}
+/**
  * The Space list's first state.
  */
 public func appRosterInitial(spaces: [AppSpace]) -> AppRosterState  {
@@ -58121,6 +61407,15 @@ public func appThisMachineSpace(status: AppHostSummaryInput?, nowMs: Int64) -> A
 })
 }
 /**
+ * How fresh the shells keep each Space's thumbnail.
+ */
+public func appThumbnailPolicy() -> AppThumbnailPolicy  {
+    return try!  FfiConverterTypeAppThumbnailPolicy_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_app_thumbnail_policy($0
+    )
+})
+}
+/**
  * Advances the transfer overlay (`None` hides it).
  */
 public func appTransferReduce(state: AppTransferOverlayState?, signal: AppTransferSignal) -> AppTransferOverlayState?  {
@@ -58342,6 +61637,27 @@ public func kvCredentialForm(overview: KeyvaultOverview) -> KvCredentialForm?  {
 })
 }
 /**
+ * The command that deletes items and wipes their copies in Spaces.
+ */
+public func kvDeleteCommand(ids: [String]) -> KvCommand  {
+    return try!  FfiConverterTypeKvCommand_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_kv_delete_command(
+        FfiConverterSequenceString.lower(ids),$0
+    )
+})
+}
+/**
+ * The delete confirmation.
+ */
+public func kvDeleteConfirm(count: UInt32, liveCopies: UInt32) -> KvDeleteConfirm  {
+    return try!  FfiConverterTypeKvDeleteConfirm_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_kv_delete_confirm(
+        FfiConverterUInt32.lower(count),
+        FfiConverterUInt32.lower(liveCopies),$0
+    )
+})
+}
+/**
  * A duration in words ("5 min").
  */
 public func kvDuration(ms: Int64) -> String  {
@@ -58361,15 +61677,36 @@ public func kvLabels() -> KvLabels  {
 })
 }
 /**
- * The list for a sidebar selection.
+ * The pane for a sidebar selection (the vault list is [`kv_vault_view`]).
  */
-public func kvList(overview: KeyvaultOverview, selection: KvSelection, nowMs: Int64, query: String) -> KvListView  {
+public func kvList(overview: KeyvaultOverview, selection: KvSelection, nowMs: Int64) -> KvListView  {
     return try!  FfiConverterTypeKvListView_lift(try! rustCall() {
     uniffi_cua_spaces_ffi_fn_func_kv_list(
         FfiConverterTypeKeyvaultOverview_lower(overview),
         FfiConverterTypeKvSelection_lower(selection),
-        FfiConverterInt64.lower(nowMs),
-        FfiConverterString.lower(query),$0
+        FfiConverterInt64.lower(nowMs),$0
+    )
+})
+}
+/**
+ * How many Spaces hold a live copy of any of `ids`.
+ */
+public func kvLiveCopySpaces(overview: KeyvaultOverview, ids: [String], nowMs: Int64) -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_kv_live_copy_spaces(
+        FfiConverterTypeKeyvaultOverview_lower(overview),
+        FfiConverterSequenceString.lower(ids),
+        FfiConverterInt64.lower(nowMs),$0
+    )
+})
+}
+/**
+ * The command that locks items.
+ */
+public func kvLockCommand(ids: [String]) -> KvCommand  {
+    return try!  FfiConverterTypeKvCommand_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_kv_lock_command(
+        FfiConverterSequenceString.lower(ids),$0
     )
 })
 }
@@ -58443,7 +61780,7 @@ public func kvSharingLabel(overview: KeyvaultOverview, nowMs: Int64) -> String? 
 })
 }
 /**
- * The Passwords-style sidebar.
+ * The sidebar: All Items, Waiting, Access, Recent, and one row per app.
  */
 public func kvSidebar(overview: KeyvaultOverview, nowMs: Int64) -> KvSidebar  {
     return try!  FfiConverterTypeKvSidebar_lift(try! rustCall() {
@@ -58469,29 +61806,6 @@ public func kvSignedInSpaces(overview: KeyvaultOverview, nowMs: Int64, dismissed
 })
 }
 /**
- * One site's detail.
- */
-public func kvSiteDetail(overview: KeyvaultOverview, key: String, nowMs: Int64) -> KvSiteDetail?  {
-    return try!  FfiConverterOptionTypeKvSiteDetail.lift(try! rustCall() {
-    uniffi_cua_spaces_ffi_fn_func_kv_site_detail(
-        FfiConverterTypeKeyvaultOverview_lower(overview),
-        FfiConverterString.lower(key),
-        FfiConverterInt64.lower(nowMs),$0
-    )
-})
-}
-/**
- * The site switch's command.
- */
-public func kvSiteToggle(group: KvSiteGroup, on: Bool) -> KvCommand  {
-    return try!  FfiConverterTypeKvCommand_lift(try! rustCall() {
-    uniffi_cua_spaces_ffi_fn_func_kv_site_toggle(
-        FfiConverterTypeKvSiteGroup_lower(group),
-        FfiConverterBool.lower(on),$0
-    )
-})
-}
-/**
  * The Access row of `space`'s copies, to focus from its "Signed in" badge.
  */
 public func kvSpaceAccessKey(overview: KeyvaultOverview, nowMs: Int64, space: AppSpace) -> String?  {
@@ -58500,6 +61814,87 @@ public func kvSpaceAccessKey(overview: KeyvaultOverview, nowMs: Int64, space: Ap
         FfiConverterTypeKeyvaultOverview_lower(overview),
         FfiConverterInt64.lower(nowMs),
         FfiConverterTypeAppSpace_lower(space),$0
+    )
+})
+}
+/**
+ * The command that unlocks items (the daemon asks for Touch ID once).
+ */
+public func kvUnlockCommand(ids: [String]) -> KvCommand  {
+    return try!  FfiConverterTypeKvCommand_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_kv_unlock_command(
+        FfiConverterSequenceString.lower(ids),$0
+    )
+})
+}
+/**
+ * The unlock prompt for `count` items (`name`: the one item's name). None
+ * when the user chose "Never ask again".
+ */
+public func kvUnlockPrompt(overview: KeyvaultOverview, count: UInt32, name: String?) -> KvUnlockPrompt?  {
+    return try!  FfiConverterOptionTypeKvUnlockPrompt.lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_kv_unlock_prompt(
+        FfiConverterTypeKeyvaultOverview_lower(overview),
+        FfiConverterUInt32.lower(count),
+        FfiConverterOptionString.lower(name),$0
+    )
+})
+}
+/**
+ * The unlock prompt whatever the setting says.
+ */
+public func kvUnlockPromptAlways(count: UInt32, name: String?) -> KvUnlockPrompt  {
+    return try!  FfiConverterTypeKvUnlockPrompt_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_kv_unlock_prompt_always(
+        FfiConverterUInt32.lower(count),
+        FfiConverterOptionString.lower(name),$0
+    )
+})
+}
+/**
+ * The selection without what the vault no longer holds.
+ */
+public func kvVaultPrune(overview: KeyvaultOverview, state: KvVaultState) -> KvVaultState  {
+    return try!  FfiConverterTypeKvVaultState_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_kv_vault_prune(
+        FfiConverterTypeKeyvaultOverview_lower(overview),
+        FfiConverterTypeKvVaultState_lower(state),$0
+    )
+})
+}
+/**
+ * The vault list's next state (search, selection, open groups).
+ */
+public func kvVaultReduce(overview: KeyvaultOverview, state: KvVaultState, action: KvVaultAction) -> KvVaultState  {
+    return try!  FfiConverterTypeKvVaultState_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_kv_vault_reduce(
+        FfiConverterTypeKeyvaultOverview_lower(overview),
+        FfiConverterTypeKvVaultState_lower(state),
+        FfiConverterTypeKvVaultAction_lower(action),$0
+    )
+})
+}
+/**
+ * What the Keyvault holds for `provider_id` that a teleport can send.
+ */
+public func kvVaultSource(overview: KeyvaultOverview, providerId: String) -> KvVaultSource  {
+    return try!  FfiConverterTypeKvVaultSource_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_kv_vault_source(
+        FfiConverterTypeKeyvaultOverview_lower(overview),
+        FfiConverterString.lower(providerId),$0
+    )
+})
+}
+/**
+ * The vault list: apps, sites and items with their locks, the selection and
+ * the batch bar.
+ */
+public func kvVaultView(overview: KeyvaultOverview, state: KvVaultState, nowMs: Int64) -> KvVaultView  {
+    return try!  FfiConverterTypeKvVaultView_lift(try! rustCall() {
+    uniffi_cua_spaces_ffi_fn_func_kv_vault_view(
+        FfiConverterTypeKeyvaultOverview_lower(overview),
+        FfiConverterTypeKvVaultState_lower(state),
+        FfiConverterInt64.lower(nowMs),$0
     )
 })
 }
@@ -58719,6 +62114,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_delete_failed_text() != 11381) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_desktop_cover() != 7825) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_app_devices_clean_name() != 62073) {
@@ -59042,6 +62440,15 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_refresh_report_from_json() != 63623) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_review_remember() != 9631) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_review_remember_key() != 37113) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_review_remembered() != 62742) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_roster_initial() != 64316) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -59222,6 +62629,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_app_this_machine_space() != 14017) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_app_thumbnail_policy() != 18561) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_app_transfer_reduce() != 56658) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -59285,13 +62695,25 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_kv_credential_form() != 40935) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cua_spaces_ffi_checksum_func_kv_delete_command() != 38222) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_kv_delete_confirm() != 319) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cua_spaces_ffi_checksum_func_kv_duration() != 51253) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_kv_labels() != 10991) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_kv_list() != 17849) {
+    if (uniffi_cua_spaces_ffi_checksum_func_kv_list() != 17291) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_kv_live_copy_spaces() != 53230) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_kv_lock_command() != 45339) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_kv_overview_from_json() != 48866) {
@@ -59312,19 +62734,34 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_spaces_ffi_checksum_func_kv_sharing_label() != 21406) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_kv_sidebar() != 64808) {
+    if (uniffi_cua_spaces_ffi_checksum_func_kv_sidebar() != 55835) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_kv_signed_in_spaces() != 26065) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_spaces_ffi_checksum_func_kv_site_detail() != 19420) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cua_spaces_ffi_checksum_func_kv_site_toggle() != 62757) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_cua_spaces_ffi_checksum_func_kv_space_access_key() != 62359) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_kv_unlock_command() != 15701) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_kv_unlock_prompt() != 36334) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_kv_unlock_prompt_always() != 11194) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_kv_vault_prune() != 34533) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_kv_vault_reduce() != 45396) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_kv_vault_source() != 38295) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_func_kv_vault_view() != 26773) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_func_kv_visible_sharing_label() != 41274) {
@@ -59346,6 +62783,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_execute() != 54541) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_favicons() != 17072) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_inventory() != 27868) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_lock() != 58127) {

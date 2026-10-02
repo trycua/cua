@@ -257,6 +257,9 @@ mod tests {
                 os_protector_available: os,
                 passphrase_available: true,
                 unlock_protectors: unlock.iter().map(|s| s.to_string()).collect(),
+                browse_until_ms: None,
+                skip_unlock_prompt: None,
+                reset_notice: None,
             }),
             ..Default::default()
         }

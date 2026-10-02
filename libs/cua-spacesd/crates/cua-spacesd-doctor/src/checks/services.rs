@@ -14,11 +14,19 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 use crate::{Ctx, Recorder};
 
+/// The per-step wait of a probe (connect, banner, HTTP reply): 5 s, stretched
+/// by `CUA_DOCTOR_TIMEOUT_SCALE` like the check's own budget, so a slow guest
+/// (QEMU TCG) is not failed by a service that is merely slow to answer.
+fn step_timeout() -> Duration {
+    crate::scaled(Duration::from_secs(5))
+}
+
 async fn banner(stream: &mut tokio::net::TcpStream, expect: &str) -> Result<String, String> {
     let mut buf = [0u8; 64];
-    let n = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buf))
+    let wait = step_timeout();
+    let n = tokio::time::timeout(wait, stream.read(&mut buf))
         .await
-        .map_err(|_| "no banner within 5 s".to_owned())?
+        .map_err(|_| format!("no banner within {} s", wait.as_secs()))?
         .map_err(|e| e.to_string())?;
     let text = String::from_utf8_lossy(&buf[..n]).trim().to_owned();
     if text.starts_with(expect) {
@@ -29,8 +37,9 @@ async fn banner(stream: &mut tokio::net::TcpStream, expect: &str) -> Result<Stri
 }
 
 async fn probe(service: &ServiceClaim) -> Result<String, String> {
+    let wait = step_timeout();
     let mut stream = tokio::time::timeout(
-        Duration::from_secs(5),
+        wait,
         tokio::net::TcpStream::connect(("127.0.0.1", service.port)),
     )
     .await
@@ -48,9 +57,9 @@ async fn probe(service: &ServiceClaim) -> Result<String, String> {
                 .await
                 .map_err(|e| e.to_string())?;
             let mut head = [0u8; 64];
-            let n = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut head))
+            let n = tokio::time::timeout(wait, stream.read(&mut head))
                 .await
-                .map_err(|_| "no HTTP reply within 5 s".to_owned())?
+                .map_err(|_| format!("no HTTP reply within {} s", wait.as_secs()))?
                 .map_err(|e| e.to_string())?;
             let line = String::from_utf8_lossy(&head[..n])
                 .lines()

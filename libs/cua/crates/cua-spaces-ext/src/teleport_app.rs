@@ -25,7 +25,9 @@ pub use cua_teleport::ux::{
 };
 use cua_teleport::ux::{InstallSource, MoveKind};
 
-use crate::teleport::{AppSessions, ImportOptions, SpaceTeleport as _, TeleportScope};
+use crate::teleport::{
+    AppSessions, ImportOptions, SpaceTeleport as _, TeleportScope, TeleportSelection,
+};
 use cua_spaces::Space;
 use cua_spaces::error::{Error, Result};
 
@@ -309,10 +311,18 @@ impl SpaceAppTeleport for Space {
                 // The plan's consent already listed and acknowledged these
                 // exact items.
                 let approval = manifest.approving(&self.id().to_string(), items, plan.sensitive)?;
-                let cookies = items.iter().any(|i| i.to_lowercase().contains("cookies"));
+                // Saved Keyvault items are sent without reading the live app,
+                // so the host's Keychain is never asked.
+                let cookies = plan.from_vault.is_none()
+                    && items.iter().any(|i| i.to_lowercase().contains("cookies"));
+                let selection = TeleportSelection {
+                    cookie_domains: plan.cookie_domains.clone(),
+                    from_vault: plan.from_vault.clone(),
+                    include_passwords: plan.include_passwords,
+                };
                 let app = plan.app.name.clone();
                 let receipt = self
-                    .teleport_with_progress(
+                    .teleport_selected(
                         sessions.clone(),
                         &approval,
                         ImportOptions {
@@ -325,6 +335,7 @@ impl SpaceAppTeleport for Space {
                             // user's acknowledgement (S1).
                             relay_plaintext_ack: plan.relay_unsealed,
                         },
+                        &selection,
                         &mut |st| {
                             let (done, total) = match &st {
                                 TeleportStage::Uploading { done, total } => (*done, *total),

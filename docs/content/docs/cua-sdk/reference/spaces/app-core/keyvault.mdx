@@ -97,6 +97,8 @@ the daemon ask for Touch ID. No call returns a secret value.
 | --- | --- |
 | [`new`](#keyvaultclientnew) | The broker in `cua_home` (`None`: `$CUA_HOME`, else `~/.cua`). |
 | [`execute`](#keyvaultclientexecute) | Runs one page action (a broker request). |
+| [`favicons`](#keyvaultclientfavicons) | Site icons the vault holds (not secret; empty while names are hidden). |
+| [`inventory`](#keyvaultclientinventory) | What `app` holds, per domain with counts (the daemon asks for Touch ID when the browse window is closed). |
 | [`lock`](#keyvaultclientlock) | Locks the vault. |
 | [`overview`](#keyvaultclientoverview) | Everything the page shows. |
 | [`setup_with_passphrase`](#keyvaultclientsetup_with_passphrase) | Creates the vault with a passphrase (and a recovery key, returned once). |
@@ -155,6 +157,58 @@ pub async fn execute(&self, command: KvCommand) -> Result<KvOutcome, CuaError>
 | `command` | [`KvCommand`](#kvcommand-enum) | required |
 
 **Returns** [`KvOutcome`](#kvoutcome-enum) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
+
+### `KeyvaultClient.favicons`
+
+Site icons the vault holds (not secret; empty while names are hidden).
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func favicons() async -> [KvFavicon]
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn favicons(&self) -> Vec<KvFavicon>
+```
+
+</Tab>
+</Tabs>
+
+**Returns** [`Vec<KvFavicon>`](#kvfavicon-record) · **Async**
+
+### `KeyvaultClient.inventory`
+
+What `app` holds, per domain with counts (the daemon asks for Touch ID
+when the browse window is closed). Never a value.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func inventory(app: String, profile: String?) async throws -> KvInventory
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub async fn inventory(&self, app: String, profile: Option<String>) -> Result<KvInventory, CuaError>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `app` | `String` | required |
+| `profile` | `Option<String>` | required |
+
+**Returns** [`KvInventory`](#kvinventory-record) · **Async** · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
 ### `KeyvaultClient.lock`
 
@@ -269,7 +323,9 @@ Returned by [`KeyvaultClient.overview`](#keyvaultclientoverview), [`kv_overview_
 | `message` | `Option<String>` |  | A sentence when not ready. |
 | `status` | [`Option<KvStatus>`](#kvstatus-record) |  | The broker's status. |
 | `server_verified` / `serverVerified` | `bool` |  | The daemon was checked against Cua's signature. |
-| `items` | [`Vec<KvItem>`](#kvitem-record) |  | Items. |
+| `items` | [`Vec<KvItem>`](#kvitem-record) |  | The vault's secret items, in order (app, domain, key). |
+| `names_visible` / `namesVisible` | `bool` |  | Domains and keys are present in `items` (the browse window is open). |
+| `items_total` / `itemsTotal` | `u32` |  | Items in the vault. |
 | `pending` | [`Vec<KvPending>`](#kvpending-record) |  | Pending requests. |
 | `grants` | [`Vec<KvGrant>`](#kvgrant-record) |  | Grants. |
 | `rules` | [`Vec<KvRule>`](#kvrule-record) |  | Rules. |
@@ -319,15 +375,6 @@ Returned by [`KeyvaultClient.overview`](#keyvaultclientoverview), [`kv_overview_
 | `launched_by` / `launchedBy` | `Option<String>` |  | Launched by. |
 | `verified_name` / `verifiedName` | `Option<String>` |  | OS-verified leaf name. |
 
-## `KvCookieInfo` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `name` | `String` |  | Name. |
-| `domain` | `String` |  | Domain. |
-| `session` | `bool` |  | Session cookie. |
-| `expires_ms` / `expiresMs` | `Option<i64>` |  | Expiry. |
-
 ## `KvCredentialForm` record
 
 Returned by [`kv_credential_form`](#kv_credential_form).
@@ -354,6 +401,29 @@ Returned by [`kv_credential_form`](#kv_credential_form).
 | `expires_ms` / `expiresMs` | `u64` |  | Wiped at (`KV_NO_EXPIRY`: only when wiped). |
 | `wiped` | `bool` |  | Already wiped. |
 
+## `KvDomainCount` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `domain` | `String` |  | Registrable domain. |
+| `cookies` | `u32` |  | Cookies. |
+| `session_cookies` / `sessionCookies` | `u32` |  | Cookies without an expiry. |
+| `local_storage` / `localStorage` | `u32` |  | localStorage values. |
+| `passwords` | `u32` |  | Saved passwords. |
+| `signin` | `bool` |  | Looks like it keeps a sign-in. |
+| `identity_provider` / `identityProvider` | `bool` |  | An identity provider. |
+| `unavailable` | `u32` |  | Cookies that cannot be read (Chrome's app-bound encryption). |
+| `unavailable_reason` / `unavailableReason` | `String` |  | Why they cannot be read. |
+
+## `KvFavicon` record
+
+Returned by [`KeyvaultClient.favicons`](#keyvaultclientfavicons).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `site` | `String` |  | The site (registrable domain). |
+| `png` | `String` |  | PNG, base64. |
+
 ## `KvGrant` record
 
 | Field | Type | Default | Description |
@@ -371,24 +441,37 @@ Returned by [`kv_credential_form`](#kv_credential_form).
 | `revoked` | `bool` |  | Revoked. |
 | `agent` | `Option<String>` |  | The named agent it was approved for. |
 
+## `KvInventory` record
+
+Returned by [`KeyvaultClient.inventory`](#keyvaultclientinventory).
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `provider_id` / `providerId` | `String` |  | Provider id. |
+| `app_display` / `appDisplay` | `String` |  | App name. |
+| `domains` | [`Vec<KvDomainCount>`](#kvdomaincount-record) |  | Domains with counts. |
+| `notes` | `Vec<String>` |  | Notes. |
+
 ## `KvItem` record
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `id` | `String` |  | Id. |
-| `kind` | `String` |  | `browser_site`, `site_passwords`, `app_session`. |
-| `label` | `String` |  | Label. |
-| `provider_id` / `providerId` | `String` |  | Provider. |
-| `app_display` / `appDisplay` | `String` |  | App. |
-| `site` | `Option<String>` |  | Site. |
-| `account` | `Option<String>` |  | Account. |
+| `kind` | `String` |  | `cookie`, `local_storage`, `password` or `file`. |
+| `provider_id` / `providerId` | `String` |  | The source app (`chrome`, `slack`). |
+| `app_display` / `appDisplay` | `String` |  | The app's name. |
+| `domain` | `Option<String>` |  | A cookie's host, a storage value's or password's origin; none for a file or when the names are hidden. |
+| `key` | `String` |  | A cookie name, storage key, username or file path; empty when the names are hidden. |
+| `path` | `Option<String>` |  | A cookie's path. |
 | `source` | `String` |  | Profile. |
-| `summary` | [`KvItemSummary`](#kvitemsummary-record) |  | Summary. |
-| `warnings` | `Vec<String>` |  | Warnings. |
-| `identity_provider` / `identityProvider` | `bool` |  | Identity providers always ask. |
-| `policy` | [`KvItemPolicy`](#kvitempolicy-record) |  | Policy. |
+| `session` | `bool` |  | A cookie without an expiry. |
+| `expires_ms` / `expiresMs` | `Option<i64>` |  | A cookie's expiry, Unix ms. |
+| `bytes` | `u64` |  | Bytes. |
+| `blob` | `Option<String>` |  | The blob a big file's bytes live in. |
+| `identity_provider` / `identityProvider` | `bool` |  | Identity providers always ask: they cannot be unlocked. |
+| `policy` | [`KvItemPolicy`](#kvitempolicy-record) |  | Policy: `unattended` is the unlock. |
 | `created_ms` / `createdMs` | `u64` |  | Created. |
-| `updated_ms` / `updatedMs` | `u64` |  | Updated. |
+| `updated_ms` / `updatedMs` | `u64` |  | Last saved. |
 | `rev` | `u64` |  | Revision. |
 | `record_digest` / `recordDigest` | `String` |  | Digest. |
 
@@ -399,17 +482,6 @@ Returned by [`kv_credential_form`](#kv_credential_form).
 | `allowed_targets` / `allowedTargets` | `Vec<String>` |  | Allowed targets (empty: any). |
 | `ttl_secs` / `ttlSecs` | `u64` |  | Delivery lifetime. |
 | `unattended` | `bool` |  | Unattended rules may use it. |
-
-## `KvItemSummary` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `cookies` | [`Vec<KvCookieInfo>`](#kvcookieinfo-record) |  | Cookies. |
-| `storage_origins` / `storageOrigins` | `Vec<String>` |  | Storage origins. |
-| `passwords` | `u32` |  | Saved passwords. |
-| `files` | `Vec<String>` |  | Files. |
-| `keychain_services` / `keychainServices` | `Vec<String>` |  | Keychain services. |
-| `bytes` | `u64` |  | Bytes. |
 
 ## `KvLabels` record
 
@@ -425,9 +497,6 @@ Returned by [`kv_labels`](#kv_labels).
 | `revoke_all` / `revokeAll` | `String` |  | "Revoke all". |
 | `confirm_note` / `confirmNote` | `String` |  | Under the approval sheet. |
 | `protection_title` / `protectionTitle` | `String` |  | "Protection". |
-| `accounts_title` / `accountsTitle` | `String` |  | A site's accounts section. |
-| `app_label` / `appLabel` | `String` |  | A site's app fact. |
-| `every_account` / `everyAccount` | `String` |  | A site's switch. |
 
 ## `KvPassphraseCheck` record
 
@@ -489,6 +558,9 @@ Returned by [`kv_passphrase_check`](#kv_passphrase_check).
 | `os_protector_available` / `osProtectorAvailable` | `bool` |  | The daemon can create the OS key store protector (setup offers Touch ID); false for a development daemon, which is passphrase-only. |
 | `passphrase_available` / `passphraseAvailable` | `bool` |  | A passphrase can always be chosen. |
 | `unlock_protectors` / `unlockProtectors` | `Vec<String>` |  | Protector kinds that can unlock this vault now (`macos-keychain`, `windows-credential`, `passphrase`, `recovery`). |
+| `browse_until_ms` / `browseUntilMs` | `Option<u64>` |  | The browse window is open until this time, Unix ms: item names are visible until then. |
+| `skip_unlock_prompt` / `skipUnlockPrompt` | `Option<bool>` |  | "Never ask again" on the unlock prompt is on. |
+| `reset_notice` / `resetNotice` | `Option<String>` |  | An earlier preview's vault was found and set aside. |
 
 ## `KvVerification` record
 
@@ -510,6 +582,11 @@ Returned by [`kv_passphrase_check`](#kv_passphrase_check).
 .unlock
 .setDisabled(disabled: Bool)
 .setUnattended(itemIds: [String], unattended: Bool)
+.setLocked(itemIds: [String], locked: Bool)
+.deleteItems(itemIds: [String])
+.setSkipUnlockPrompt(on: Bool)
+.browse
+.endBrowse
 .revokeGrant(id: String)
 .removeRule(id: String)
 .setAutoWipe(on: Bool)
@@ -526,6 +603,11 @@ KvCommand::Setup
 KvCommand::Unlock
 KvCommand::SetDisabled { disabled: bool }
 KvCommand::SetUnattended { item_ids: Vec<String>, unattended: bool }
+KvCommand::SetLocked { item_ids: Vec<String>, locked: bool }
+KvCommand::DeleteItems { item_ids: Vec<String> }
+KvCommand::SetSkipUnlockPrompt { on: bool }
+KvCommand::Browse
+KvCommand::EndBrowse
 KvCommand::RevokeGrant { id: String }
 KvCommand::RemoveRule { id: String }
 KvCommand::SetAutoWipe { on: bool }
@@ -542,7 +624,12 @@ KvCommand::Deny { request_id: String }
 | `Setup` | Create the vault with the OS key store (the daemon asks for presence). A passphrase never travels in a command: the shells pass it to `KeyvaultCommands::setup_with_passphrase` directly. |
 | `Unlock` | Unlock with the OS key store (a passphrase goes to `KeyvaultCommands::unlock_with_passphrase`). |
 | `SetDisabled` | The kill switch (turning it off asks for Touch ID). Fields: `disabled: bool` |
-| `SetUnattended` | Per-item unattended (turning on asks for Touch ID). Fields: `item_ids: Vec<String>`, `unattended: bool` |
+| `SetUnattended` | Per-item unattended (turning on asks for Touch ID): the same as `KvCommand.SetLocked` with `locked` the other way round. Fields: `item_ids: Vec<String>`, `unattended: bool` |
+| `SetLocked` | Lock or unlock items together. Unlocking allows unattended access and asks for Touch ID once for the whole batch; locking does not. Fields: `item_ids: Vec<String>`, `locked: bool` |
+| `DeleteItems` | Delete items, wiping every live copy of them in Spaces. Fields: `item_ids: Vec<String>` |
+| `SetSkipUnlockPrompt` | "Never ask again" on the unlock prompt (Settings turns it back on). Fields: `on: bool` |
+| `Browse` | Show item names for a few minutes (the daemon asks for Touch ID). |
+| `EndBrowse` | Hide item names again. |
 | `RevokeGrant` | Revoke a grant (`*`: all). Fields: `id: String` |
 | `RemoveRule` | Remove a rule. Fields: `id: String` |
 | `SetAutoWipe` | Auto-wipe of delivered copies (turning it off asks for Touch ID). Fields: `on: bool` |
@@ -610,7 +697,9 @@ KvMethod::Passphrase
 ```swift
 .done
 .recoveryKey(key: String?)
-.items(items: [KvItem])
+.locked(changed: [String], skipped: [String])
+.deleted(count: UInt32, wiped: [String])
+.browsing(untilMs: UInt64)
 .revoked(count: UInt32)
 .wiped(imports: [String])
 .granted(grant: KvGrant)
@@ -622,7 +711,9 @@ KvMethod::Passphrase
 ```rust
 KvOutcome::Done
 KvOutcome::RecoveryKey { key: Option<String> }
-KvOutcome::Items { items: Vec<KvItem> }
+KvOutcome::Locked { changed: Vec<String>, skipped: Vec<String> }
+KvOutcome::Deleted { count: u32, wiped: Vec<String> }
+KvOutcome::Browsing { until_ms: u64 }
 KvOutcome::Revoked { count: u32 }
 KvOutcome::Wiped { imports: Vec<String> }
 KvOutcome::Granted { grant: KvGrant }
@@ -635,7 +726,9 @@ KvOutcome::Granted { grant: KvGrant }
 | --- | --- |
 | `Done` | Nothing to show. |
 | `RecoveryKey` | The recovery key, shown once and never stored. Fields: `key: Option<String>` |
-| `Items` | Items after a policy change. Fields: `items: Vec<KvItem>` |
+| `Locked` | Items locked or unlocked. Identity providers always ask: they are in `skipped`, never changed. Fields: `changed: Vec<String>`, `skipped: Vec<String>` |
+| `Deleted` | Items deleted. Fields: `count: u32`, `wiped: Vec<String>` |
+| `Browsing` | The browse window is open until then, Unix ms. Fields: `until_ms: u64` |
 | `Revoked` | Grants revoked. Fields: `count: u32` |
 | `Wiped` | Imports wiped. Fields: `imports: Vec<String>` |
 | `Granted` | The grant an approval minted. Fields: `grant: KvGrant` |
@@ -647,7 +740,7 @@ KvOutcome::Granted { grant: KvGrant }
 
 ```swift
 .item(id: String)
-.site(app: String, site: String, account: String?)
+.site(app: String, site: String)
 .app(app: String)
 .login(site: String)
 ```
@@ -657,7 +750,7 @@ KvOutcome::Granted { grant: KvGrant }
 
 ```rust
 KvSelector::Item { id: String }
-KvSelector::Site { app: String, site: String, account: Option<String> }
+KvSelector::Site { app: String, site: String }
 KvSelector::App { app: String }
 KvSelector::Login { site: String }
 ```
@@ -668,7 +761,7 @@ KvSelector::Login { site: String }
 | Variant | Description |
 | --- | --- |
 | `Item` | An existing item. Fields: `id: String` |
-| `Site` | A site of an app. Fields: `app: String`, `site: String`, `account: Option<String>` |
+| `Site` | A site of an app. Fields: `app: String`, `site: String` |
 | `App` | A whole app. Fields: `app: String` |
 | `Login` | A site's saved password, used to sign in (never delivered). Fields: `site: String` |
 

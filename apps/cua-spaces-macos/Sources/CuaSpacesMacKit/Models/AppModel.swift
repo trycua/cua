@@ -142,6 +142,9 @@ public final class AppModel {
             hostArch: Self.hostArch, storage: nil, cloudPricing: nil, clouds: [], hosts: [],
             experiments: settings.experiments, gpus: nil))
         self.notch = NotchModel()
+        // The notch tiles and the preview cover read one thumbnail store,
+        // filled from the SDK's shared cache.
+        notch.thumbnails.fetch = { [backend] id, maxAgeMs in await backend.thumbnail(id: id, maxAgeMs: maxAgeMs) }
         // The app core's usage events for each step (the Tauri app sends
         // the same ones): the first run, Settings, Storage, enrollment.
         onboarding.telemetry = telemetry
@@ -150,6 +153,7 @@ public final class AppModel {
         // Live Keyvault sign-ins show left of the notch (and in the menu).
         // Dismissed ones stay hidden across launches (Settings file).
         keyvault.dismissed = settings.dismissedAccess
+        keyvault.siteIconsFromGoogle = { [weak self] in self?.settings.keyvaultSiteIcons ?? true }
         keyvault.onSharing = { [weak self] _ in self?.syncNotchKeyvault() }
         keyvault.onDismissed = { [weak self] ids in
             guard let self else { return }
@@ -215,6 +219,23 @@ public final class AppModel {
         guard case .space = selection else { return nil }
         let id = sidebar.selectedId
         return spaces.first { $0.id == id }
+    }
+
+    /// Every Space's latest thumbnail: the notch tiles' and the preview
+    /// cover's one store.
+    public var thumbnails: SpaceThumbnails { notch.thumbnails }
+
+    /// The Spaces that can stream now (running and reachable).
+    public var streamableSpaceIds: [String] {
+        spaces.filter { appSpaceDetail(space: $0).canStream }.map(\.id)
+    }
+
+    /// What the Space's preview card shows over (or instead of) its live
+    /// desktop, from the core.
+    public func cover(_ detail: AppSpaceDetail, requested: Bool, stream: AppStreamPhase) -> AppDesktopCover {
+        appDesktopCover(input: AppDesktopCoverInput(
+            canStream: detail.canStream, previewText: detail.previewText,
+            autoConnect: settings.autoConnect, connectRequested: requested, stream: stream))
     }
 
     /// The detail without what Settings, Experiments hides (Share while
@@ -330,6 +351,10 @@ public final class AppModel {
             recompose()
             loaded = true
             if selection == nil, let first = sidebar.selectedId { selection = .space(first) }
+            // A preview for every running Space from the daemon's cache
+            // (it survives restarts), before one is opened.
+            let running = streamableSpaceIds
+            Task { await thumbnails.warm(running) }
         } catch {
             show(error: "Could not list Spaces: \(LiveSpacesBackend.words(error))")
         }
@@ -620,7 +645,10 @@ public final class AppModel {
             menuBar: settings.menuBar, defaultLocation: settings.defaultLocation, locationLockedBy: nil,
             telemetry: telemetryInput, agents: agentRows, agentsBusy: agentsBusy, agentsPending: agentsPending,
             billing: identity == nil ? nil : billingStatus, loginItem: loginItemInput,
-            experiments: settings.experiments, keyvaultAutoWipe: keyvault.autoWipe))
+            experiments: settings.experiments, keyvaultAutoWipe: keyvault.autoWipe,
+            keyvaultUnlockPrompt: keyvault.unlockPromptShows,
+            keyvaultSiteIcons: settings.keyvaultSiteIcons, keyvaultProtection: keyvault.page.protection,
+            autoConnect: settings.autoConnect))
     }
 
     /// Settings, General with Settings, Storage after General while the Cua
@@ -758,10 +786,23 @@ public final class AppModel {
         case "default-location":
             settings.defaultLocation = option == "cloud" ? .cloud : .local
             saveSettings()
+        case "auto-connect":
+            settings.autoConnect = option == "on"
+            saveSettings()
         case "launch-at-login":
             setLaunchAtLogin(option == "on")
         case "keyvault-auto-wipe":
             await keyvault.setAutoWipe(option == "on")
+            if let error = keyvault.error { show(error: error) }
+        case "keyvault-site-icons":
+            settings.keyvaultSiteIcons = option == "on"
+            saveSettings()
+            // Turning it on asks for the rows' icons again.
+            if settings.keyvaultSiteIcons { await keyvault.loadIcons() }
+        case "keyvault-unlock-prompt":
+            // On shows the prompt (Never ask again off); off is the stored
+            // "Never ask again".
+            await keyvault.setSkipUnlockPrompt(option != "on")
             if let error = keyvault.error { show(error: error) }
         case "telemetry":
             do {

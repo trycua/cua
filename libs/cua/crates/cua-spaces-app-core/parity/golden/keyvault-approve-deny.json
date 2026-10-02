@@ -3,16 +3,15 @@
   "frames": [
     {
       "sidebar": {
+        "apps": [
+          "Chrome (6) waiting",
+          "Slack (2)"
+        ],
         "categories": [
-          "All:4",
+          "All Items:8",
           "Waiting:2",
           "Access:3",
           "Recent"
-        ],
-        "sites": [
-          "accounts.example-idp.test (1)",
-          "github.example.test (2) waiting",
-          "Slack (1)"
         ]
       }
     },
@@ -40,12 +39,8 @@
         "empty": null,
         "pending": [],
         "recent": [],
-        "sites": [
-          "accounts.example-idp.test [off]: ada@example.test off locked <asks:Asks every time>",
-          "github.example.test [off]: ada@example.test off <pending:Waiting: com.example.koalabot; pending:Waiting: com.example.koalabot> | bob@example.test off <pending:Waiting: com.example.koalabot>",
-          "Slack [on]: Example Workspace on <delivered:In dev-2, wiped in 30 min; granted:com.example.koalabot → dev-2, 10 min; rule:Rule: com.example.koalabot → any Space>"
-        ],
-        "title": "All"
+        "title": "All Items",
+        "vault": true
       },
       "list": {
         "category": "all",
@@ -57,12 +52,12 @@
         "access": [],
         "empty": null,
         "pending": [
-          "com.example.koalabot (ad hoc, untrusted) github.example.test (2 accounts) → aurora for 15 min",
-          "com.example.koalabot (ad hoc, untrusted) github.example.test, linear.example.test (not imported) → aurora for 15 min"
+          "com.example.koalabot (ad hoc, untrusted) example.test (2 items) → aurora for 15 min",
+          "com.example.koalabot (ad hoc, untrusted) example.test, linear.example.test (not saved) → aurora for 15 min"
         ],
         "recent": [],
-        "sites": [],
-        "title": "Waiting"
+        "title": "Waiting",
+        "vault": false
       },
       "list": {
         "category": "waiting",
@@ -72,15 +67,15 @@
     {
       "frame": {
         "access": [
-          "com.example.koalabot → dev-2 / Slack (whole app session) · 10 min [Revoke]",
-          "Rule: com.example.koalabot → any Space / Slack (whole app session) [Remove]",
+          "com.example.koalabot → dev-2 / storage/root-state.json · 10 min [Revoke]",
+          "Rule: com.example.koalabot → any Space / storage/root-state.json [Remove]",
           "Copy in dev-2 / wiped in 30 min [Wipe]"
         ],
         "empty": null,
         "pending": [],
         "recent": [],
-        "sites": [],
-        "title": "Access"
+        "title": "Access",
+        "vault": false
       },
       "list": {
         "category": "access",
@@ -94,12 +89,12 @@
         "pending": [],
         "recent": [
           "Keyvault turned off Cua (info) now",
-          "Refused github.example.test (Chrome, Default) → dev-9 (deny) now",
-          "Approved Slack (whole app session) → dev-2 (ok) 1 min ago",
-          "Asked Slack (whole app session) (info) 2 min ago"
+          "Refused example.test / _gh_sess → dev-9 (deny) now",
+          "Approved storage/root-state.json → dev-2 (ok) 1 min ago",
+          "Asked storage/root-state.json (info) 2 min ago"
         ],
-        "sites": [],
-        "title": "Recent"
+        "title": "Recent",
+        "vault": false
       },
       "list": {
         "category": "recent",
@@ -112,14 +107,12 @@
         "empty": null,
         "pending": [],
         "recent": [],
-        "sites": [
-          "github.example.test [off]: ada@example.test off <pending:Waiting: com.example.koalabot; pending:Waiting: com.example.koalabot> | bob@example.test off <pending:Waiting: com.example.koalabot>"
-        ],
-        "title": "github.example.test"
+        "title": "Slack",
+        "vault": true
       },
       "list": {
-        "key": "chrome:github.example.test",
-        "kind": "site"
+        "key": "slack",
+        "kind": "app"
       }
     },
     {
@@ -135,20 +128,19 @@
           "Says: \"open the pull request\" (unverified)"
         ],
         "rows": [
-          "[ ] github.example.test ada@example.test",
-          "[ ] github.example.test bob@example.test"
+          "[ ] example.test 2 cookies"
         ],
         "title": "Allow com.example.koalabot?"
       }
     },
     {
       "action": {
-        "key": "gh-bob",
+        "key": "chrome|example.test",
         "type": "toggle"
       },
       "approval": "req-1",
       "frame": {
-        "approveLabel": "Approve 1 item",
+        "approveLabel": "Approve 2 items",
         "badge": "ad hoc, untrusted",
         "blockedReason": null,
         "canApprove": true,
@@ -157,8 +149,7 @@
           "Says: \"open the pull request\" (unverified)"
         ],
         "rows": [
-          "[ ] github.example.test ada@example.test",
-          "[x] github.example.test bob@example.test"
+          "[x] example.test 2 cookies"
         ],
         "title": "Allow com.example.koalabot?"
       }
@@ -170,7 +161,7 @@
       },
       "approval": "req-1",
       "frame": {
-        "approveLabel": "Approve 1 item",
+        "approveLabel": "Approve 2 items",
         "badge": "ad hoc, untrusted",
         "blockedReason": null,
         "canApprove": true,
@@ -179,8 +170,7 @@
           "Says: \"open the pull request\" (unverified)"
         ],
         "rows": [
-          "[ ] github.example.test ada@example.test",
-          "[x] github.example.test bob@example.test"
+          "[x] example.test 2 cookies"
         ],
         "title": "Allow com.example.koalabot?"
       }
@@ -200,20 +190,40 @@
           "Says: \"open the pull request\" (unverified)"
         ],
         "rows": [
-          "[x] github.example.test ada@example.test",
-          "[x] github.example.test bob@example.test"
+          "[x] example.test 2 cookies"
         ],
         "title": "Allow com.example.koalabot?"
       }
     },
     {
       "action": {
-        "key": "gh-ada",
+        "key": "chrome|example.test",
         "type": "toggle"
       },
       "approval": "req-1",
       "frame": {
-        "approveLabel": "Approve 1 item",
+        "approveLabel": "Approve",
+        "badge": "ad hoc, untrusted",
+        "blockedReason": null,
+        "canApprove": false,
+        "claims": [
+          "Calls itself \"OpenKoalaBots\" (unverified)",
+          "Says: \"open the pull request\" (unverified)"
+        ],
+        "rows": [
+          "[ ] example.test 2 cookies"
+        ],
+        "title": "Allow com.example.koalabot?"
+      }
+    },
+    {
+      "action": {
+        "key": "chrome|example.test",
+        "type": "toggle"
+      },
+      "approval": "req-1",
+      "frame": {
+        "approveLabel": "Approve 2 items",
         "badge": "ad hoc, untrusted",
         "blockedReason": null,
         "canApprove": true,
@@ -222,8 +232,7 @@
           "Says: \"open the pull request\" (unverified)"
         ],
         "rows": [
-          "[ ] github.example.test ada@example.test",
-          "[x] github.example.test bob@example.test"
+          "[x] example.test 2 cookies"
         ],
         "title": "Allow com.example.koalabot?"
       }
@@ -232,6 +241,7 @@
       "approval": "req-1",
       "approveCommand": {
         "items": [
+          "gh-ada",
           "gh-bob"
         ],
         "requestId": "req-1",
@@ -250,29 +260,29 @@
           "Says: \"check the build\" (unverified)"
         ],
         "rows": [
-          "[ ] github.example.test ada@example.test",
-          "[ ] linear.example.test Not imported yet"
+          "[ ] example.test 1 cookie",
+          "[ ] linear.example.test Not saved yet"
         ],
         "title": "Allow com.example.koalabot?"
       }
     },
     {
       "action": {
-        "key": "gh-ada",
+        "key": "chrome|example.test",
         "type": "toggle"
       },
       "approval": "req-2",
       "frame": {
         "approveLabel": "Approve 1 item",
         "badge": "ad hoc, untrusted",
-        "blockedReason": "This request imports new items; select all or deny.",
+        "blockedReason": "This request saves new items; select all or deny.",
         "canApprove": false,
         "claims": [
           "Says: \"check the build\" (unverified)"
         ],
         "rows": [
-          "[x] github.example.test ada@example.test",
-          "[ ] linear.example.test Not imported yet"
+          "[x] example.test 1 cookie",
+          "[ ] linear.example.test Not saved yet"
         ],
         "title": "Allow com.example.koalabot?"
       }
@@ -284,7 +294,7 @@
       },
       "approval": "req-2",
       "frame": {
-        "approveLabel": "Approve 2 items",
+        "approveLabel": "Approve 1 item",
         "badge": "ad hoc, untrusted",
         "blockedReason": null,
         "canApprove": true,
@@ -292,8 +302,8 @@
           "Says: \"check the build\" (unverified)"
         ],
         "rows": [
-          "[x] github.example.test ada@example.test",
-          "[x] linear.example.test Not imported yet"
+          "[x] example.test 1 cookie",
+          "[x] linear.example.test Not saved yet"
         ],
         "title": "Allow com.example.koalabot?"
       }
@@ -312,8 +322,8 @@
           "Says: \"check the build\" (unverified)"
         ],
         "rows": [
-          "[ ] github.example.test ada@example.test",
-          "[ ] linear.example.test Not imported yet"
+          "[ ] example.test 1 cookie",
+          "[ ] linear.example.test Not saved yet"
         ],
         "title": "Allow com.example.koalabot?"
       }
@@ -329,19 +339,316 @@
       }
     },
     {
-      "siteDetail": {
-        "enabled": true,
-        "state": "off",
-        "switch": true
-      },
-      "siteToggle": {
-        "itemIds": [
-          "gh-ada",
-          "gh-bob"
+      "frame": {
+        "canLock": false,
+        "canUnlock": false,
+        "empty": null,
+        "lines": [
+          "[ ] Chrome chrome | 6 items, 1 unlocked | mixed | 5 min ago",
+          "  [ ] example-idp.test | 1 cookie | locked | 24 h ago",
+          "  [ ] example.test | 1 password, 2 cookies, 1 storage value | mixed | 5 min ago",
+          "  [ ] files (1) | locked",
+          "[ ] Slack slack | 2 items | locked | 3 h ago",
+          "  [ ] example.test | 1 cookie | locked | 24 h ago",
+          "  [ ] files (1) | locked"
         ],
-        "type": "set-unattended",
-        "unattended": true
+        "selection": "0 selected (unlock 0 / lock 0 / always ask 0)",
+        "shown": "8/8"
+      },
+      "vault": "open"
+    },
+    {
+      "frame": {
+        "canLock": false,
+        "canUnlock": false,
+        "empty": null,
+        "lines": [
+          "[ ] Chrome chrome | 6 items, 1 unlocked | mixed | 5 min ago",
+          "  [ ] example-idp.test | 1 cookie | locked | 24 h ago",
+          "  [ ] example.test | 1 password, 2 cookies, 1 storage value | mixed | 5 min ago | open",
+          "    [ ] Password ada@example.test | https://github.example.test | lock.fill | 24 h ago",
+          "    [ ] Cookie _gh_sess | .github.example.test | lock.fill | 5 min ago",
+          "    [ ] Cookie user_session | .github.example.test | lock.open | 5 min ago",
+          "    [ ] Local storage theme | https://github.example.test | lock.fill | 24 h ago",
+          "  [ ] files (1) | locked",
+          "[ ] Slack slack | 2 items | locked | 3 h ago",
+          "  [ ] example.test | 1 cookie | locked | 24 h ago",
+          "  [ ] files (1) | locked"
+        ],
+        "selection": "0 selected (unlock 0 / lock 0 / always ask 0)",
+        "shown": "8/8"
+      },
+      "vault": {
+        "key": "chrome|example.test",
+        "type": "toggle-open"
       }
+    },
+    {
+      "frame": {
+        "canLock": false,
+        "canUnlock": true,
+        "empty": null,
+        "lines": [
+          "[-] Chrome chrome | 6 items, 1 unlocked | mixed | 5 min ago",
+          "  [ ] example-idp.test | 1 cookie | locked | 24 h ago",
+          "  [-] example.test | 1 password, 2 cookies, 1 storage value | mixed | 5 min ago | open",
+          "    [ ] Password ada@example.test | https://github.example.test | lock.fill | 24 h ago",
+          "    [x] Cookie _gh_sess | .github.example.test | lock.fill | 5 min ago",
+          "    [ ] Cookie user_session | .github.example.test | lock.open | 5 min ago",
+          "    [ ] Local storage theme | https://github.example.test | lock.fill | 24 h ago",
+          "  [ ] files (1) | locked",
+          "[ ] Slack slack | 2 items | locked | 3 h ago",
+          "  [ ] example.test | 1 cookie | locked | 24 h ago",
+          "  [ ] files (1) | locked"
+        ],
+        "selection": "1 selected (unlock 1 / lock 0 / always ask 0)",
+        "shown": "8/8"
+      },
+      "vault": {
+        "id": "gh-bob",
+        "type": "toggle"
+      }
+    },
+    {
+      "frame": {
+        "canLock": true,
+        "canUnlock": true,
+        "empty": null,
+        "lines": [
+          "[-] Chrome chrome | 6 items, 1 unlocked | mixed | 5 min ago",
+          "  [ ] example-idp.test | 1 cookie | locked | 24 h ago",
+          "  [x] example.test | 1 password, 2 cookies, 1 storage value | mixed | 5 min ago | open",
+          "    [x] Password ada@example.test | https://github.example.test | lock.fill | 24 h ago",
+          "    [x] Cookie _gh_sess | .github.example.test | lock.fill | 5 min ago",
+          "    [x] Cookie user_session | .github.example.test | lock.open | 5 min ago",
+          "    [x] Local storage theme | https://github.example.test | lock.fill | 24 h ago",
+          "  [ ] files (1) | locked",
+          "[ ] Slack slack | 2 items | locked | 3 h ago",
+          "  [ ] example.test | 1 cookie | locked | 24 h ago",
+          "  [ ] files (1) | locked"
+        ],
+        "selection": "4 selected (unlock 3 / lock 1 / always ask 0)",
+        "shown": "8/8"
+      },
+      "vault": {
+        "key": "chrome|example.test",
+        "type": "toggle-group"
+      }
+    },
+    {
+      "frame": {
+        "canLock": true,
+        "canUnlock": true,
+        "empty": null,
+        "lines": [
+          "[x] Chrome chrome | 6 items, 1 unlocked | mixed | 5 min ago",
+          "  [x] example-idp.test | 1 cookie | locked | 24 h ago",
+          "  [x] example.test | 1 password, 2 cookies, 1 storage value | mixed | 5 min ago | open",
+          "    [x] Password ada@example.test | https://github.example.test | lock.fill | 24 h ago",
+          "    [x] Cookie _gh_sess | .github.example.test | lock.fill | 5 min ago",
+          "    [x] Cookie user_session | .github.example.test | lock.open | 5 min ago",
+          "    [x] Local storage theme | https://github.example.test | lock.fill | 24 h ago",
+          "  [x] files (1) | locked",
+          "[ ] Slack slack | 2 items | locked | 3 h ago",
+          "  [ ] example.test | 1 cookie | locked | 24 h ago",
+          "  [ ] files (1) | locked"
+        ],
+        "selection": "6 selected (unlock 4 / lock 1 / always ask 1)",
+        "shown": "8/8"
+      },
+      "vault": {
+        "key": "chrome",
+        "type": "toggle-group"
+      }
+    },
+    {
+      "frame": {
+        "canLock": false,
+        "canUnlock": false,
+        "empty": null,
+        "lines": [
+          "[ ] Chrome chrome | 6 items, 1 unlocked | mixed | 5 min ago",
+          "  [ ] example-idp.test | 1 cookie | locked | 24 h ago",
+          "  [ ] example.test | 1 password, 2 cookies, 1 storage value | mixed | 5 min ago | open",
+          "    [ ] Password ada@example.test | https://github.example.test | lock.fill | 24 h ago",
+          "    [ ] Cookie _gh_sess | .github.example.test | lock.fill | 5 min ago",
+          "    [ ] Cookie user_session | .github.example.test | lock.open | 5 min ago",
+          "    [ ] Local storage theme | https://github.example.test | lock.fill | 24 h ago",
+          "  [ ] files (1) | locked",
+          "[ ] Slack slack | 2 items | locked | 3 h ago",
+          "  [ ] example.test | 1 cookie | locked | 24 h ago",
+          "  [ ] files (1) | locked"
+        ],
+        "selection": "0 selected (unlock 0 / lock 0 / always ask 0)",
+        "shown": "8/8"
+      },
+      "vault": {
+        "type": "clear"
+      }
+    },
+    {
+      "frame": {
+        "canLock": false,
+        "canUnlock": false,
+        "empty": null,
+        "lines": [
+          "[ ] Chrome chrome | 3 items, 1 unlocked | mixed | 5 min ago",
+          "  [ ] example-idp.test | 1 cookie | locked | 24 h ago | open",
+          "    [ ] Cookie SID | .accounts.example-idp.test | lock.fill | 24 h ago | always asks",
+          "  [ ] example.test | 2 cookies | mixed | 5 min ago | open",
+          "    [ ] Cookie _gh_sess | .github.example.test | lock.fill | 5 min ago",
+          "    [ ] Cookie user_session | .github.example.test | lock.open | 5 min ago",
+          "[ ] Slack slack | 1 item | locked | 24 h ago",
+          "  [ ] example.test | 1 cookie | locked | 24 h ago | open",
+          "    [ ] Cookie d | .slack.example.test | lock.fill | 24 h ago"
+        ],
+        "selection": "0 selected (unlock 0 / lock 0 / always ask 0)",
+        "shown": "4/8"
+      },
+      "vault": {
+        "text": "cookie",
+        "type": "query"
+      }
+    },
+    {
+      "frame": {
+        "canLock": true,
+        "canUnlock": true,
+        "empty": null,
+        "lines": [
+          "[x] Chrome chrome | 3 items, 1 unlocked | mixed | 5 min ago",
+          "  [x] example-idp.test | 1 cookie | locked | 24 h ago | open",
+          "    [x] Cookie SID | .accounts.example-idp.test | lock.fill | 24 h ago | always asks",
+          "  [x] example.test | 2 cookies | mixed | 5 min ago | open",
+          "    [x] Cookie _gh_sess | .github.example.test | lock.fill | 5 min ago",
+          "    [x] Cookie user_session | .github.example.test | lock.open | 5 min ago",
+          "[x] Slack slack | 1 item | locked | 24 h ago",
+          "  [x] example.test | 1 cookie | locked | 24 h ago | open",
+          "    [x] Cookie d | .slack.example.test | lock.fill | 24 h ago"
+        ],
+        "selection": "4 selected (unlock 2 / lock 1 / always ask 1)",
+        "shown": "4/8"
+      },
+      "vault": {
+        "type": "select-all"
+      }
+    },
+    {
+      "frame": {
+        "canLock": false,
+        "canUnlock": true,
+        "empty": null,
+        "lines": [
+          "[-] Slack slack | 2 items | locked | 3 h ago",
+          "  [x] example.test | 1 cookie | locked | 24 h ago | open",
+          "    [x] Cookie d | .slack.example.test | lock.fill | 24 h ago",
+          "  [ ] files (1) | locked | open",
+          "    [ ] File root-state.json | storage | lock.fill | 3 h ago"
+        ],
+        "selection": "1 selected (unlock 1 / lock 0 / always ask 0)",
+        "shown": "2/8"
+      },
+      "vault": {
+        "text": "slack",
+        "type": "query"
+      }
+    },
+    {
+      "frame": {
+        "canLock": false,
+        "canUnlock": true,
+        "empty": null,
+        "lines": [
+          "[x] Slack slack | 2 items | locked | 3 h ago",
+          "  [x] example.test | 1 cookie | locked | 24 h ago | open",
+          "    [x] Cookie d | .slack.example.test | lock.fill | 24 h ago",
+          "  [x] files (1) | locked | open",
+          "    [x] File root-state.json | storage | lock.fill | 3 h ago"
+        ],
+        "selection": "2 selected (unlock 2 / lock 0 / always ask 0)",
+        "shown": "2/8"
+      },
+      "vault": {
+        "type": "select-all"
+      }
+    },
+    {
+      "frame": {
+        "canLock": false,
+        "canUnlock": false,
+        "empty": "No matches",
+        "lines": [],
+        "selection": "0 selected (unlock 0 / lock 0 / always ask 0)",
+        "shown": "0/8"
+      },
+      "vault": {
+        "text": "nothing-like-this",
+        "type": "query"
+      }
+    },
+    {
+      "frame": {
+        "canLock": false,
+        "canUnlock": false,
+        "empty": null,
+        "lines": [
+          "[ ] Slack slack | 2 items | locked | 3 h ago",
+          "  [ ] example.test | 1 cookie | locked | 24 h ago",
+          "  [ ] files (1) | locked"
+        ],
+        "selection": "0 selected (unlock 0 / lock 0 / always ask 0)",
+        "shown": "2/8"
+      },
+      "vaultApp": "slack"
+    },
+    {
+      "frame": [
+        "Allow unattended access?",
+        "This will allow any agent with access to the Cua Spaces MCP to write this key into your connected Spaces. The secrets are not sent directly to any agents.",
+        "user_session",
+        "Deny / Allow / Never ask again"
+      ],
+      "unlockPrompt": {
+        "count": 1,
+        "name": "user_session"
+      }
+    },
+    {
+      "frame": [
+        "Allow unattended access?",
+        "This will allow any agent with access to the Cua Spaces MCP to write these keys into your connected Spaces. The secrets are not sent directly to any agents.",
+        "3 items",
+        "Deny / Allow / Never ask again"
+      ],
+      "unlockPrompt": {
+        "count": 3,
+        "name": null
+      }
+    },
+    {
+      "unlockPromptSkipped": null
+    },
+    {
+      "deleteConfirm": {
+        "count": 1,
+        "liveCopies": 0
+      },
+      "frame": [
+        "Delete this item?",
+        "It is removed from the Keyvault and cannot be recovered.",
+        "Delete / Cancel"
+      ]
+    },
+    {
+      "deleteConfirm": {
+        "count": 3,
+        "liveCopies": 1
+      },
+      "frame": [
+        "Delete 3 items?",
+        "They are removed from the Keyvault and cannot be recovered. Copies delivered to a Space will be wiped as well.",
+        "Delete / Cancel"
+      ]
     },
     {
       "page": {
@@ -373,15 +680,14 @@
           "Says: \"open the pull request\" (unverified)"
         ],
         "rows": [
-          "[x] github.example.test ada@example.test",
-          "[x] github.example.test bob@example.test"
+          "[x] example.test 2 cookies"
         ],
         "title": "Allow com.example.koalabot?"
       }
     },
     {
       "badges": [
-        "All:-",
+        "All Items:-",
         "Waiting:2",
         "Access:-",
         "Recent:-"
@@ -398,10 +704,7 @@
         "unlock: Unlock",
         "revokeAll: Revoke all",
         "confirmNote: Touch ID confirms in the Cua daemon.",
-        "protectionTitle: Protection",
-        "accountsTitle: Accounts",
-        "appLabel: App",
-        "everyAccount: Every account unattended"
+        "protectionTitle: Protection"
       ],
       "recoveryKey": "Recovery key, shown once: ABCD-EFGH"
     }

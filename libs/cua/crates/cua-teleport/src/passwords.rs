@@ -198,6 +198,12 @@ impl ChromePasswords {
     /// to decrypt fails the read: a partial import would silently lose a
     /// credential the user asked for.
     pub fn read(&self, sites: &[String]) -> Result<Vec<SavedLogin>, TeleportError> {
+        self.read_report(sites).map(|r| r.logins)
+    }
+
+    /// [`Self::read`], also reporting the logins that cannot be read (a
+    /// Chromium app-bound `v20` value) instead of failing the whole read.
+    pub fn read_report(&self, sites: &[String]) -> Result<PasswordRead, TeleportError> {
         let dir = self.profile_dir()?;
         let db = dir.join("Login Data");
         if !db.is_file() {
@@ -212,7 +218,7 @@ impl ChromePasswords {
             .map(|s| s.trim().to_ascii_lowercase())
             .collect();
         let mut keys = SafeStorageKeys::new(self.host.as_ref(), self.platform, MAC_SAFE_STORAGE);
-        let mut out = Vec::new();
+        let mut out = PasswordRead::default();
         for r in rows {
             let Some(origin) = origin_of(&r.origin_url) else {
                 continue;
@@ -224,13 +230,77 @@ impl ChromePasswords {
             if r.password_value.is_empty() {
                 continue;
             }
+            if crate::browser_cookies::is_app_bound(&r.password_value) {
+                out.unavailable.push(UnavailableLogin {
+                    origin,
+                    site,
+                    username: r.username_value,
+                    reason: crate::browser_cookies::APP_BOUND_REASON.into(),
+                });
+                continue;
+            }
             let password = decrypt_password(&mut keys, &r.password_value)?;
-            out.push(SavedLogin {
+            out.logins.push(SavedLogin {
                 origin,
                 site,
                 username: r.username_value,
                 password,
             });
+        }
+        Ok(out)
+    }
+}
+
+/// What one read produced: the logins that decrypted and the ones that cannot
+/// (and why).
+#[derive(Debug, Default)]
+pub struct PasswordRead {
+    /// Decrypted logins.
+    pub logins: Vec<SavedLogin>,
+    /// Logins this build cannot read.
+    pub unavailable: Vec<UnavailableLogin>,
+}
+
+/// A login that cannot be read, never with its value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnavailableLogin {
+    /// The page origin.
+    pub origin: String,
+    /// The registrable-domain site.
+    pub site: String,
+    /// The username.
+    pub username: String,
+    /// Why, in a sentence.
+    pub reason: String,
+}
+
+impl ChromePasswords {
+    /// How many saved logins each site holds and how many of them are
+    /// app-bound (unreadable), from the plaintext columns: nothing is
+    /// decrypted, so the Keychain is never asked.
+    pub fn count_by_site(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, (u32, u32)>, TeleportError> {
+        let dir = self.profile_dir()?;
+        let db = dir.join("Login Data");
+        let mut out: std::collections::BTreeMap<String, (u32, u32)> = Default::default();
+        if !db.is_file() {
+            return Ok(out);
+        }
+        for r in read_rows(&db)? {
+            let Some(origin) = origin_of(&r.origin_url) else {
+                continue;
+            };
+            if r.password_value.is_empty() {
+                continue;
+            }
+            let site = site_for_host(&host_of_origin(&origin));
+            let e = out.entry(site).or_default();
+            if crate::browser_cookies::is_app_bound(&r.password_value) {
+                e.1 += 1;
+            } else {
+                e.0 += 1;
+            }
         }
         Ok(out)
     }

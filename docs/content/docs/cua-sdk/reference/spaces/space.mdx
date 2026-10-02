@@ -31,7 +31,7 @@ Returned by [`Spaces.space`](/cua-sdk/reference/spaces#spacesspace).
 | [`hotspot_status`](#spacehotspot_status) | This Space's hotspot status. |
 | [`list_tools`](#spacelist_tools) | Tools of the Space's MCP service (`driver`, the default). |
 | [`request_site_login`](#spacerequest_site_login) | Signs in to a site in this Space's browser with a password the user saved in the Cua Keyvault. |
-| [`screenshot`](#spacescreenshot) | Captures the Space's display (the app's tile thumbnails): PNG at full size on the primary display unless `options` say otherwise. |
+| [`screenshot`](#spacescreenshot) | Captures the Space's display: PNG at full size on the primary display unless `options` say otherwise (for a small preview, `Space.thumbnail` reads the shared cache instead). |
 | [`send_file`](#spacesend_file) | Drops a host file or folder into the Space's `~/Downloads[/subdir]` (TeleportService.ReceiveFiles, per-file SHA-256). |
 | [`set_presence_settings`](#spaceset_presence_settings) | Sets this Space's presence settings. |
 | [`share`](#spaceshare) | Lets `who` (a verified email or an account id) watch (`viewer`, the default) or use (`editor`) this Space through the relay. |
@@ -59,6 +59,7 @@ Returned by [`Spaces.space`](/cua-sdk/reference/spaces#spacesspace).
 | [`stream_session`](/cua-sdk/reference/spaces/streams#spacestream_session) | Opens a media session and delivers keyframe-gated encoded frames and audio to the sinks (one delivery thread; decoding stays with the caller). |
 | [`teleport`](/cua-sdk/reference/spaces/teleport#spaceteleport) | Teleports `app`'s session into this Space. |
 | [`teleport_manifest`](/cua-sdk/reference/spaces/teleport#spaceteleport_manifest) | What teleporting `app` (`full` or `tabs`) would move from this host. |
+| [`thumbnail`](/cua-sdk/reference/spaces/windows#spacethumbnail) | The Space's latest thumbnail (a small JPEG of its primary display) from the cache every client on this machine shares: returned at once when it is younger than `max_age_ms` (unset: any age), else captured fresh through cua-spacesd and kept for the next caller. |
 | [`usage`](/cua-sdk/reference/spaces/windows#spaceusage) | Memory and storage use now (cheap: poll it at a low rate while a detail is visible). |
 | [`websocket_headers`](/cua-sdk/reference/spaces/streams#spacewebsocket_headers) | Headers a media WebSocket to this Space needs besides its ticket. |
 | [`window_thumbnail`](/cua-sdk/reference/spaces/windows#spacewindow_thumbnail) | A small JPEG preview of one of the Space's windows (`window_id` and `epoch` from `windows`), at most `max_dimension` px, reused for a few seconds (the SDK's preview cache); `None` when the guest captured nothing. |
@@ -466,10 +467,10 @@ pub async fn request_site_login(&self, url: String, options: Option<SiteLoginOpt
 
 ### `Space.screenshot`
 
-Captures the Space's display (the app's tile thumbnails): PNG at
-full size on the primary display unless `options` say otherwise.
-Fails with `CapabilityMissing` (`spacesd`) when the image runs no
-cua-spacesd.
+Captures the Space's display: PNG at full size on the primary
+display unless `options` say otherwise (for a small preview,
+`Space.thumbnail` reads the shared cache instead). Fails with
+`CapabilityMissing` (`spacesd`) when the image runs no cua-spacesd.
 
 <Tabs items={['Python', 'TypeScript', 'Swift', 'Kotlin', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Python">

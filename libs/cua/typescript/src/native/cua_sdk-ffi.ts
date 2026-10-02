@@ -2073,6 +2073,11 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_fn_method_space_thumbnail": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_fn_method_space_unshare": {
       args: [FfiType.Handle, FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -4268,6 +4273,11 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_sdk_checksum_method_space_thumbnail": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
     "uniffi_cua_sdk_checksum_method_space_unshare": {
       args: [],
       ret: FfiType.UInt16,
@@ -5501,6 +5511,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_fn_method_space_supports(uniffiSelf: bigint, feature: Uint8Array, uniffi_out_err: UniffiRustCallStatus): number;
     uniffi_cua_sdk_fn_method_space_teleport(uniffiSelf: bigint, app: Uint8Array, scope: Uint8Array, approver: bigint, requestId: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_teleport_manifest(uniffiSelf: bigint, app: Uint8Array, scope: Uint8Array): bigint;
+    uniffi_cua_sdk_fn_method_space_thumbnail(uniffiSelf: bigint, maxAgeMs: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_unshare(uniffiSelf: bigint, who: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_upload(uniffiSelf: bigint, localPath: Uint8Array, dest: Uint8Array): bigint;
     uniffi_cua_sdk_fn_method_space_usage(uniffiSelf: bigint): bigint;
@@ -5940,6 +5951,7 @@ interface NativeModuleInterface {
     uniffi_cua_sdk_checksum_method_space_supports(): number;
     uniffi_cua_sdk_checksum_method_space_teleport(): number;
     uniffi_cua_sdk_checksum_method_space_teleport_manifest(): number;
+    uniffi_cua_sdk_checksum_method_space_thumbnail(): number;
     uniffi_cua_sdk_checksum_method_space_unshare(): number;
     uniffi_cua_sdk_checksum_method_space_upload(): number;
     uniffi_cua_sdk_checksum_method_space_usage(): number;

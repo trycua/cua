@@ -32,13 +32,13 @@ use crate::capability::{Action, Capability, Caveat, VerifyContext};
 use crate::crypto::{self, SecretKey};
 use crate::model::{
     DEFAULT_GRANT_SECS, DEFAULT_RULE_SECS, Delivery, Grant, ItemKind, ItemMeta, ItemPayload,
-    ItemPolicy, ItemSummary, MAX_TTL_SECS, RuleCaller, Settings, UnattendedRule, UnlockPolicy,
+    ItemPolicy, MAX_TTL_SECS, PayloadEntry, RuleCaller, Settings, UnattendedRule, UnlockPolicy,
 };
 use crate::policy::{self, Authority};
 use crate::protector::{
     PassphraseProtector, Protector, ProtectorKind, RecoveryKey, RecoveryProtector,
 };
-use crate::store::Vault;
+use crate::store::{UpsertOutcome, Vault};
 use crate::{Error, Result};
 
 /// Pending consent requests per caller (per budget bucket).
@@ -123,17 +123,16 @@ pub enum Selector {
         /// Item id.
         id: String,
     },
-    /// One site of a browser (`app`: `chrome`, `firefox`).
+    /// Every cookie, storage value and file one site of an app holds
+    /// (`app`: `chrome`, `firefox`).
     Site {
         /// Provider id.
         app: String,
         /// Registrable domain (`github.com`).
         site: String,
-        /// Account, when known.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        account: Option<String>,
     },
-    /// A whole app session (`slack`, `discord`, `claude-code`).
+    /// Everything an app holds that can be delivered (`slack`, `discord`,
+    /// `chrome`): its cookies, storage values and files, never passwords.
     App {
         /// Provider id.
         app: String,
@@ -150,16 +149,21 @@ impl Selector {
     fn matches(&self, item: &ItemMeta) -> bool {
         match self {
             Selector::Item { id } => &item.id == id,
-            Selector::Site { app, site, account } => {
-                item.kind == ItemKind::BrowserSite
+            Selector::Site { app, site } => {
+                item.kind.deliverable()
                     && &item.provider_id == app
-                    && item.site.as_deref() == Some(site.as_str())
-                    && (account.is_none() || item.account == *account)
+                    && item
+                        .domain
+                        .as_deref()
+                        .is_some_and(|d| host_in_site(&crate::record::host_of(d), site))
             }
-            Selector::App { app } => item.kind == ItemKind::AppSession && &item.provider_id == app,
+            Selector::App { app } => item.kind.deliverable() && &item.provider_id == app,
             Selector::Login { site } => {
-                item.kind == ItemKind::SitePasswords
-                    && item.site.as_deref().is_some_and(|s| host_in_site(site, s))
+                item.kind == ItemKind::Password
+                    && item.domain.as_deref().is_some_and(|d| {
+                        let h = crate::record::host_of(d);
+                        host_in_site(&h, site) || host_in_site(site, &h)
+                    })
             }
         }
     }
@@ -224,26 +228,52 @@ pub struct ImportSpec {
     /// independent selection mechanism.
     #[serde(default)]
     pub paths: Option<Vec<String>>,
+    /// The registrable domains whose cookies, storage values and passwords
+    /// to keep, the review sheet's per-domain choice. `None` keeps
+    /// everything the capture read (or what `sites` names); `Some` keeps
+    /// only these, even if empty.
+    #[serde(default)]
+    pub domains: Option<Vec<String>>,
+    /// Also read the browser's saved passwords for `domains` (every site when
+    /// `None`) and deliver them. Only the review's explicit choice sets this;
+    /// it needs `confirm_passwords`, and the passwords are re-encrypted for
+    /// the destination browser's own key.
+    #[serde(default)]
+    pub passwords: bool,
 }
 
-/// One importable thing, as the inventory shows it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Candidate {
-    /// Kind.
-    pub kind: ItemKind,
-    /// Site (browsers) or `None` (whole app).
+/// One domain a browser holds secrets for, as the inventory shows it:
+/// counts only, never values.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DomainInventory {
+    /// Registrable domain (`github.com`).
+    pub domain: String,
+    /// Cookies.
     #[serde(default)]
-    pub site: Option<String>,
-    /// Account or workspace names, when detectable.
+    pub cookies: u32,
+    /// Cookies without an expiry (they die with the browser session).
     #[serde(default)]
-    pub accounts: Vec<String>,
-    /// Label.
-    pub label: String,
-    /// Contents, without values.
-    pub summary: ItemSummary,
-    /// Warnings (device-bound sessions and so on).
+    pub session_cookies: u32,
+    /// localStorage values.
     #[serde(default)]
-    pub warnings: Vec<String>,
+    pub local_storage: u32,
+    /// Saved passwords.
+    #[serde(default)]
+    pub passwords: u32,
+    /// Looks like it keeps a sign-in (a session or auth cookie): what a
+    /// minimal teleport carries.
+    #[serde(default)]
+    pub signin: bool,
+    /// An identity provider (its session unlocks other apps).
+    #[serde(default)]
+    pub identity_provider: bool,
+    /// Cookies this build cannot read (Chrome's app-bound encryption): listed
+    /// so a review can grey them out and say why, never sent.
+    #[serde(default)]
+    pub unavailable: u32,
+    /// Why they cannot be read (empty when none).
+    #[serde(default)]
+    pub unavailable_reason: String,
 }
 
 /// What a host app offers.
@@ -256,8 +286,10 @@ pub struct Inventory {
     /// Profile read.
     #[serde(default)]
     pub profile: Option<String>,
-    /// Candidates. Nothing is selected by default.
-    pub candidates: Vec<Candidate>,
+    /// Domains with secrets, with counts. Empty for an app that is not a
+    /// browser. Nothing is selected by default.
+    #[serde(default)]
+    pub domains: Vec<DomainInventory>,
     /// Notes.
     #[serde(default)]
     pub notes: Vec<String>,
@@ -338,13 +370,15 @@ pub trait Backend: Send + Sync {
     fn inventory(&self, app: &str, profile: Option<&str>) -> Result<Inventory>;
     /// Captures the chosen items. Blocking. Called only after user presence.
     fn capture(&self, spec: &ImportSpec) -> Result<Vec<Captured>>;
-    /// Builds one bundle from same-provider payloads and imports it into
-    /// `target`; the receiver wipes it on its own at `expires_ms`.
+    /// Builds one bundle from the entries a codec made of same-provider
+    /// records and imports it into `target`; the receiver wipes it on its
+    /// own at `expires_ms`. `scope` is `tabs` or `full`.
     async fn deliver(
         &self,
         target: &str,
         provider_id: &str,
-        payloads: Vec<ItemPayload>,
+        scope: &str,
+        entries: Vec<PayloadEntry>,
         expires_ms: u64,
     ) -> Result<DeliveryOutcome>;
     /// [`Self::deliver`], telling `stage` when it packs, uploads (with
@@ -353,18 +387,48 @@ pub trait Backend: Send + Sync {
         &self,
         target: &str,
         provider_id: &str,
-        payloads: Vec<ItemPayload>,
+        scope: &str,
+        entries: Vec<PayloadEntry>,
         expires_ms: u64,
         stage: StageSink,
     ) -> Result<DeliveryOutcome> {
         let _ = stage;
-        self.deliver(target, provider_id, payloads, expires_ms)
+        self.deliver(target, provider_id, scope, entries, expires_ms)
+            .await
+    }
+    /// [`Self::deliver_with_progress`], also asking the receiver to launch the
+    /// imported app in the Space's logged-in GUI session (`launch`). The
+    /// default ignores `launch` (a backend that cannot launch reports
+    /// `launched: false` in its [`DeliveryOutcome`]).
+    #[allow(clippy::too_many_arguments)]
+    async fn deliver_launching(
+        &self,
+        target: &str,
+        provider_id: &str,
+        scope: &str,
+        entries: Vec<PayloadEntry>,
+        expires_ms: u64,
+        stage: StageSink,
+        launch: bool,
+    ) -> Result<DeliveryOutcome> {
+        let _ = launch;
+        self.deliver_with_progress(target, provider_id, scope, entries, expires_ms, stage)
             .await
     }
     /// Wipes an earlier import from `target`.
     async fn wipe(&self, target: &str, import_id: &str) -> Result<Vec<String>>;
     /// Tells the UI a consent request is waiting (open the Keyvault page).
     fn notify_consent(&self, _pending: &PendingView) {}
+    /// The icons of `sites` from the source app's own local store, as
+    /// `(site, png)`. Never from the network. Blocking. The default has none.
+    fn favicons(
+        &self,
+        _app: &str,
+        _profile: Option<&str>,
+        _sites: &[String],
+    ) -> Result<Vec<(String, Vec<u8>)>> {
+        Ok(Vec::new())
+    }
     /// Reads a browser profile's saved passwords, one
     /// [`ItemKind::SitePasswords`] item per site whose payload holds only
     /// [`crate::model::LOGINS_ENTRY`]. Blocking. Called only after user
@@ -672,6 +736,15 @@ pub struct TeleportRequest {
     pub items: Vec<String>,
     /// Target Space.
     pub target: String,
+    /// Launch the delivered app in the Space once it is imported (the
+    /// teleport's `launch_after`); a backend that cannot launch ignores it.
+    #[serde(default)]
+    pub launch: bool,
+    /// Deliver the saved passwords among `items` too. Only the Cua app's own
+    /// interactive request may set this (the user ticked them in the review);
+    /// a token or a rule never delivers a password, whatever it names.
+    #[serde(default)]
+    pub include_passwords: bool,
 }
 
 /// What a teleport did.
@@ -728,6 +801,17 @@ pub struct Status {
     /// it. Empty when there is no vault.
     #[serde(default)]
     pub unlock_protectors: Vec<ProtectorKind>,
+    /// The browse window is open until this time, Unix ms (first party
+    /// only): item names are visible until then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browse_until_ms: Option<u64>,
+    /// "Never ask again" on the unlock prompt is on (first party only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_unlock_prompt: Option<bool>,
+    /// Set when an earlier preview's vault was found and set aside, so a
+    /// new one is created (one line for the UI).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_notice: Option<String>,
 }
 
 /// Creating a vault. Its `Debug` never prints the passphrase, and the
@@ -812,6 +896,63 @@ pub struct RuleSpec {
     pub note: String,
 }
 
+/// A site's icon (`png`: base64).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SiteIcon {
+    /// The site.
+    pub site: String,
+    /// PNG, base64.
+    pub png: String,
+}
+
+/// The most items one save, delete or lock call takes.
+pub const MAX_ITEMS_PER_SAVE: usize = 100_000;
+
+/// What storing a capture did.
+struct Stored {
+    items: Vec<ItemMeta>,
+    /// Ids of the items that did not exist before.
+    created: Vec<String>,
+    report: ImportReport,
+}
+
+/// What saving into the vault did, in counts (the vault upserts by key:
+/// saving the same app again updates its items and never duplicates them).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportReport {
+    /// Items saved or refreshed.
+    pub saved: usize,
+    /// New items.
+    pub created: usize,
+    /// Existing items whose value changed.
+    pub updated: usize,
+    /// Existing items saved again with the same value.
+    pub unchanged: usize,
+}
+
+/// The most items one [`Broker::list_items`] page returns.
+pub const MAX_PAGE: usize = 1000;
+
+/// One page of items.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemPage {
+    /// The page.
+    pub items: Vec<ItemMeta>,
+    /// Items in the vault.
+    pub total: usize,
+    /// The browse window is open: domains and keys are present.
+    pub names_visible: bool,
+}
+
+/// What [`Broker::set_locked`] changed.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LockOutcome {
+    /// Items whose lock changed.
+    pub changed: Vec<String>,
+    /// Identity provider items asked to unlock: they always ask.
+    pub skipped: Vec<String>,
+}
+
 /// Broker configuration.
 #[derive(Clone, Debug)]
 pub struct BrokerConfig {
@@ -839,6 +980,10 @@ struct State {
     /// Consent-request timestamps across every caller (global rate limit).
     global_requests: VecDeque<u64>,
     presence_until_ms: u64,
+    /// The browse window: until this time the first-party list returns item
+    /// names (domains and keys), opened with user presence. Closed, it
+    /// returns the app, type and lock state only.
+    browse_until_ms: u64,
     /// Callers verified during this run (rules may name them).
     seen: HashMap<String, CallerIdentity>,
 }
@@ -858,6 +1003,8 @@ pub struct Broker {
     /// Why this daemon cannot create the OS key store protector (`None`: it
     /// can). Computed once: the daemon's own signature does not change.
     os_enroll_block: std::sync::OnceLock<Option<String>>,
+    /// See [`Status::reset_notice`].
+    reset_notice: Option<String>,
 }
 
 fn uid() -> Result<String> {
@@ -903,12 +1050,40 @@ impl Broker {
         backend: Arc<dyn Backend>,
         presence: Arc<dyn UserPresence>,
     ) -> Result<Self> {
+        let mut reset_notice = None;
         let vault = if Vault::exists(&cfg.dir) {
-            Some(Vault::open(&cfg.dir)?.with_anchor(generation_anchor(&cfg))?)
+            match Vault::open(&cfg.dir) {
+                Ok(v) => Some(v.with_anchor(generation_anchor(&cfg))?),
+                // A vault from an earlier preview (whole-app items) is not
+                // migrated. It is set aside, not deleted, and a new one is
+                // set up.
+                Err(Error::OldFormat(f)) => {
+                    let name = cfg
+                        .dir
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "keyvault".into());
+                    let aside = cfg.dir.with_file_name(format!("{name}.preview-v{f}"));
+                    let aside = if aside.exists() {
+                        cfg.dir
+                            .with_file_name(format!("{name}.preview-v{f}-{}", crate::now_ms()))
+                    } else {
+                        aside
+                    };
+                    std::fs::rename(&cfg.dir, &aside).map_err(|_| Error::OldFormat(f))?;
+                    reset_notice = Some(format!(
+                        "An earlier preview's Keyvault was set aside at {}. Set up a new one.",
+                        aside.display()
+                    ));
+                    None
+                }
+                Err(e) => return Err(e),
+            }
         } else {
             None
         };
         Ok(Self {
+            reset_notice,
             cfg,
             backend,
             presence,
@@ -1112,6 +1287,17 @@ impl Broker {
             },
             os_protector_available: self.os_enroll_block().is_none(),
             passphrase_available: true,
+            browse_until_ms: if fp && crate::now_ms() < st.browse_until_ms {
+                Some(st.browse_until_ms)
+            } else {
+                None
+            },
+            skip_unlock_prompt: if fp {
+                meta.map(|m| m.settings.skip_unlock_prompt)
+            } else {
+                None
+            },
+            reset_notice: self.reset_notice.clone(),
             unlock_protectors: match (&st.vault, fp) {
                 (Some(v), true) => {
                     let os_ok = self.os_use_block().is_none();
@@ -1308,6 +1494,7 @@ impl Broker {
             v.lock();
         }
         st.presence_until_ms = 0;
+        st.browse_until_ms = 0;
         Ok(())
     }
 
@@ -1417,55 +1604,95 @@ impl Broker {
     // Items
     // ------------------------------------------------------------------
 
-    /// Every item's coarse metadata (first party). Never payloads, and never
-    /// the cookie names, domains or storage origins: bulk enumeration returns
-    /// only labels and counts, so an injected or confused-deputy first-party
-    /// client cannot harvest the user's whole logged-in map without presence
-    /// (red-team F17). Per-item detail comes from [`Broker::describe_item`],
-    /// which requires presence.
-    pub async fn list_items(&self, caller: &CallerIdentity) -> Result<Vec<ItemMeta>> {
-        policy::require_first_party(caller, "listing Keyvault items")?;
-        self.ensure_session(caller).await?;
-        let mut st = self.state.lock().await;
-        Ok(Self::vault_mut(&mut st)?
-            .meta()?
-            .items
-            .values()
-            .map(|i| i.redacted())
-            .collect())
-    }
+    /// How long a browse window stays open once the user confirmed presence.
+    pub const BROWSE_WINDOW_MS: u64 = 5 * 60_000;
 
-    /// One item's full metadata, including cookie names and domains and storage
-    /// origins (first party + user presence). This detail set is a sensitive
-    /// map of the user's logged-in life, so it is gated on presence even for a
-    /// first party, whose address space may have been injected (red-team
-    /// F17/F3). Never returns payload values.
-    pub async fn describe_item(&self, caller: &CallerIdentity, id: &str) -> Result<ItemMeta> {
-        policy::require_first_party(caller, "reading item detail")?;
-        let label = {
+    /// Opens the browse window (first party + user presence): for a few
+    /// minutes [`Broker::list_items`] returns item names (domains and
+    /// keys) as well as apps, types and lock states. Returns when the
+    /// window closes, Unix ms. Names are a sensitive map of the user's
+    /// logged-in life, so the bulk list never has them without this
+    /// (red-team F17). Values are never returned, here or anywhere.
+    pub async fn browse(&self, caller: &CallerIdentity) -> Result<u64> {
+        policy::require_first_party(caller, "browsing the Keyvault")?;
+        self.ensure_session(caller).await?;
+        {
             let mut st = self.state.lock().await;
-            Self::vault_mut(&mut st)?
-                .meta()?
-                .items
-                .get(id)
-                .map(|i| i.label.clone())
-                .ok_or_else(|| Error::NotFound(format!("item {id}")))?
-        };
+            Self::vault_mut(&mut st)?;
+        }
         self.confirm(format!(
-            "Show the saved cookie names and domains for {label} ({})",
+            "Show what the Cua Keyvault holds ({})",
             caller.display()
         ))
         .await?;
+        let until = crate::now_ms() + Self::BROWSE_WINDOW_MS;
         let mut st = self.state.lock().await;
-        Self::vault_mut(&mut st)?
-            .meta()?
-            .items
-            .get(id)
-            .cloned()
-            .ok_or_else(|| Error::NotFound(format!("item {id}")))
+        Self::vault_mut(&mut st)?;
+        st.browse_until_ms = until;
+        Self::audit(&mut st, ev("vault.browse", caller, "ok"));
+        Ok(until)
     }
 
-    /// What a host app offers, per site (first party; reads metadata only).
+    /// Closes the browse window now.
+    pub async fn end_browse(&self, caller: &CallerIdentity) -> Result<()> {
+        policy::require_first_party(caller, "browsing the Keyvault")?;
+        self.state.lock().await.browse_until_ms = 0;
+        Ok(())
+    }
+
+    /// Opens the browse window unless it is already open.
+    async fn ensure_browsing(&self, caller: &CallerIdentity) -> Result<()> {
+        let open = crate::now_ms() < self.state.lock().await.browse_until_ms;
+        if open {
+            return Ok(());
+        }
+        self.browse(caller).await.map(|_| ())
+    }
+
+    /// One page of the vault's items (first party), ordered by app, domain
+    /// and key. Inside the browse window ([`Broker::browse`]) they carry
+    /// their domains and keys; outside it they carry only the app, type,
+    /// lock state and timestamps, so an injected or confused-deputy
+    /// first-party client cannot harvest the user's logged-in map without
+    /// presence (red-team F17). Never payloads.
+    pub async fn list_items(
+        &self,
+        caller: &CallerIdentity,
+        offset: usize,
+        limit: usize,
+    ) -> Result<ItemPage> {
+        policy::require_first_party(caller, "listing Keyvault items")?;
+        self.ensure_session(caller).await?;
+        let mut st = self.state.lock().await;
+        let names = crate::now_ms() < st.browse_until_ms;
+        let meta = Self::vault_mut(&mut st)?.meta()?;
+        let mut all: Vec<&ItemMeta> = meta.items.values().collect();
+        all.sort_by(|a, b| {
+            (&a.provider_id, &a.domain, a.kind, &a.key, &a.id).cmp(&(
+                &b.provider_id,
+                &b.domain,
+                b.kind,
+                &b.key,
+                &b.id,
+            ))
+        });
+        let total = all.len();
+        let items = all
+            .into_iter()
+            .skip(offset)
+            .take(limit.clamp(1, MAX_PAGE))
+            .map(|i| if names { i.clone() } else { i.redacted() })
+            .collect();
+        Ok(ItemPage {
+            items,
+            total,
+            names_visible: names,
+        })
+    }
+
+    /// What a host app offers, per domain, with counts (first party; needs
+    /// the browse window, so it asks for presence when that is closed).
+    /// Reads metadata only, never values.
     pub async fn inventory(
         &self,
         caller: &CallerIdentity,
@@ -1473,6 +1700,7 @@ impl Broker {
         profile: Option<&str>,
     ) -> Result<Inventory> {
         policy::require_first_party(caller, "reading host apps")?;
+        self.ensure_browsing(caller).await?;
         let b = self.backend.clone();
         let (app, profile) = (app.to_string(), profile.map(str::to_string));
         tokio::task::spawn_blocking(move || b.inventory(&app, profile.as_deref()))
@@ -1482,7 +1710,7 @@ impl Broker {
 
     /// Imports sites or an app session into the vault (first party +
     /// presence). Each site becomes its own item.
-    pub async fn import(&self, caller: &CallerIdentity, spec: ImportSpec) -> Result<Vec<ItemMeta>> {
+    pub async fn import(&self, caller: &CallerIdentity, spec: ImportSpec) -> Result<ImportReport> {
         let r = self.import_inner(caller, spec).await;
         self.record_action(KeyvaultAction::Import, KeyvaultMethod::None, &r);
         r
@@ -1492,7 +1720,7 @@ impl Broker {
         &self,
         caller: &CallerIdentity,
         spec: ImportSpec,
-    ) -> Result<Vec<ItemMeta>> {
+    ) -> Result<ImportReport> {
         policy::require_first_party(caller, "importing into the Keyvault")?;
         {
             let st = self.state.lock().await;
@@ -1502,7 +1730,8 @@ impl Broker {
         }
         let reason = import_reason(&spec, caller);
         self.confirm(reason).await?;
-        self.import_confirmed(caller, spec).await
+        let captured = self.capture_confirmed(spec).await?;
+        Ok(self.store_captured(caller, captured).await?.report)
     }
 
     async fn import_confirmed(
@@ -1511,7 +1740,7 @@ impl Broker {
         spec: ImportSpec,
     ) -> Result<Vec<ItemMeta>> {
         let captured = self.capture_confirmed(spec).await?;
-        self.store_captured(caller, captured).await
+        Ok(self.store_captured(caller, captured).await?.items)
     }
 
     /// The capture half of [`Self::import_confirmed`] (after presence):
@@ -1578,6 +1807,22 @@ impl Broker {
         save: bool,
         stage: Option<StageSink>,
     ) -> Result<TeleportOutcome> {
+        self.import_and_teleport_launching(caller, spec, target, save, true, stage)
+            .await
+    }
+
+    /// [`Self::import_and_teleport_with_progress`] with an explicit `launch`:
+    /// whether the Space opens the app after importing it (the default for a
+    /// teleport; `cua teleport push --no-launch` turns it off).
+    pub async fn import_and_teleport_launching(
+        &self,
+        caller: &CallerIdentity,
+        spec: ImportSpec,
+        target: String,
+        save: bool,
+        launch: bool,
+        stage: Option<StageSink>,
+    ) -> Result<TeleportOutcome> {
         let tell = |s: TeleportStage| {
             if let Some(f) = &stage {
                 f(s);
@@ -1591,6 +1836,7 @@ impl Broker {
             }
         }
         validate_target(&target)?;
+        let with_passwords = spec.passwords && spec.confirm_passwords;
         let reason = format!(
             "Teleport {} to {} ({})",
             describe_spec(&spec),
@@ -1603,7 +1849,8 @@ impl Broker {
         if save {
             tell(TeleportStage::Saving);
         }
-        let items = self.store_captured(caller, captured).await?;
+        let stored = self.store_captured(caller, captured).await?;
+        let items = stored.items;
         let item_ids: Vec<String> = items.iter().map(|m| m.id.clone()).collect();
         if item_ids.is_empty() {
             return Err(Error::Invalid(
@@ -1620,36 +1867,45 @@ impl Broker {
             token: None,
             items: item_ids.clone(),
             target: target.clone(),
+            include_passwords: with_passwords,
+            launch: false,
         };
         let result = self
-            .teleport_inner(caller, req, PresenceAlready::Confirmed, stage.clone())
+            .teleport_inner(
+                caller,
+                req,
+                PresenceAlready::Confirmed,
+                stage.clone(),
+                launch,
+            )
             .await;
         crate::telemetry::teleport(&self.telemetry, caller, &app, started, &result, n);
-        if !save {
-            for id in &item_ids {
-                if let Err(e) = self.forget_item(caller, id).await {
-                    tracing::warn!(
-                        item = %id,
-                        error = %e,
-                        "keyvault: could not forget an unsaved item after teleport"
-                    );
-                }
+        if !save && !stored.created.is_empty() {
+            // Only what this call added is forgotten; an item that was
+            // already saved stays (and holds the value just read).
+            if let Err(e) = self.forget_items(caller, &stored.created).await {
+                tracing::warn!(
+                    error = %e,
+                    "keyvault: could not forget unsaved items after teleport"
+                );
             }
         }
         result
     }
 
-    /// Crypto-shreds `id`'s vault record (like [`Self::delete_item`]) but
-    /// never wipes a delivery it already made: used only by
+    /// Crypto-shreds these vault records (like [`Self::delete_items`]) but
+    /// never wipes a delivery they already made: used only by
     /// [`Self::import_and_teleport`]'s `save: false`, where the point is to
     /// forget the vault copy while leaving what was just delivered in place.
-    async fn forget_item(&self, caller: &CallerIdentity, id: &str) -> Result<()> {
-        policy::require_first_party(caller, "forgetting an unsaved Keyvault item")?;
+    async fn forget_items(&self, caller: &CallerIdentity, ids: &[String]) -> Result<()> {
+        policy::require_first_party(caller, "forgetting unsaved Keyvault items")?;
         let mut st = self.state.lock().await;
-        Self::vault_mut(&mut st)?.delete_item(id)?;
+        Self::vault_mut(&mut st)?.delete_items(ids)?;
         let mut e = ev("item.delete", caller, "ok");
-        e.item = Some(id.into());
-        e.detail = "not saved (import_and_teleport save=false)".into();
+        e.detail = format!(
+            "not saved (import_and_teleport save=false) count={}",
+            ids.len()
+        );
         Self::audit(&mut st, e);
         Ok(())
     }
@@ -1662,7 +1918,7 @@ impl Broker {
         &self,
         caller: &CallerIdentity,
         spec: PasswordImportSpec,
-    ) -> Result<Vec<ItemMeta>> {
+    ) -> Result<ImportReport> {
         let r = self.import_passwords_inner(caller, spec).await;
         self.record_action(KeyvaultAction::Import, KeyvaultMethod::None, &r);
         r
@@ -1672,7 +1928,7 @@ impl Broker {
         &self,
         caller: &CallerIdentity,
         spec: PasswordImportSpec,
-    ) -> Result<Vec<ItemMeta>> {
+    ) -> Result<ImportReport> {
         policy::require_first_party(caller, "importing saved passwords")?;
         if spec.app.trim().is_empty() {
             return Err(Error::Invalid("name the browser to import from".into()));
@@ -1699,69 +1955,280 @@ impl Broker {
         let captured = tokio::task::spawn_blocking(move || b.capture_passwords(&spec2))
             .await
             .map_err(|e| Error::Backend(e.to_string()))??;
-        self.store_captured(caller, captured).await
+        Ok(self.store_captured(caller, captured).await?.report)
     }
 
     async fn store_captured(
         &self,
         caller: &CallerIdentity,
         captured: Vec<Captured>,
-    ) -> Result<Vec<ItemMeta>> {
+    ) -> Result<Stored> {
+        if captured.len() > MAX_ITEMS_PER_SAVE {
+            return Err(Error::Invalid(format!(
+                "{} items in one save; the limit is {MAX_ITEMS_PER_SAVE}",
+                captured.len()
+            )));
+        }
+        let mut batch = Vec::with_capacity(captured.len());
+        for c in captured {
+            let mut m = c.meta;
+            if m.key.is_empty() {
+                return Err(Error::Invalid("an item needs a key".into()));
+            }
+            if !m.kind.keyed_by_path() && m.domain.as_deref().is_none_or(str::is_empty) {
+                return Err(Error::Invalid(format!(
+                    "a {} item needs a domain",
+                    m.kind.label().to_lowercase()
+                )));
+            }
+            if m.kind.keyed_by_path() {
+                m.domain = None;
+            }
+            m.identity_provider = m
+                .domain
+                .as_deref()
+                .is_some_and(crate::model::is_identity_provider);
+            if m.identity_provider {
+                m.policy.ttl_secs = m.policy.ttl_secs.min(crate::model::IDP_TTL_SECS);
+                m.policy.unattended = false;
+            }
+            batch.push((m, c.payload));
+        }
+        // Site icons, from the browser's own local store (never the network).
+        let icons = self.capture_favicons(&batch).await;
         let mut st = self.state.lock().await;
         let v = Self::vault_mut(&mut st)?;
-        let mut out = Vec::new();
-        for c in captured {
-            // Re-importing the same site replaces the old item's payload and
-            // keeps its id, policy and grants.
-            let existing = v
-                .meta()?
-                .items
-                .values()
-                .find(|i| {
-                    i.provider_id == c.meta.provider_id
-                        && i.kind == c.meta.kind
-                        && i.site == c.meta.site
-                        && i.account == c.meta.account
-                        && i.source == c.meta.source
-                })
-                .map(|i| i.id.clone());
-            let id = match existing {
-                Some(id) => {
-                    v.replace_payload(&id, &c.payload)?;
-                    let summary = c.meta.summary.clone();
-                    let warnings = c.meta.warnings.clone();
-                    v.update_meta(|m| {
-                        let it = m.items.get_mut(&id).expect("exists");
-                        it.summary = summary;
-                        it.warnings = warnings;
-                        Ok(())
-                    })?;
-                    id
-                }
-                None => v.put_item(c.meta, &c.payload)?,
-            };
-            out.push(v.meta()?.items[&id].clone());
+        // Saving the same app again upserts by key: same item, same lock.
+        let saved = v.upsert_items(batch)?;
+        if let Err(e) = v.set_favicons(icons) {
+            tracing::warn!(error = %e, "keyvault: could not keep site icons");
         }
-        for it in &out {
-            let mut e = ev("item.import", caller, "ok");
-            e.item = Some(it.id.clone());
-            Self::audit(&mut st, e);
-        }
-        Ok(out)
+        let meta = v.meta()?;
+        let items: Vec<ItemMeta> = saved.iter().map(|u| meta.items[&u.id].clone()).collect();
+        let count = |o: UpsertOutcome| saved.iter().filter(|u| u.outcome == o).count();
+        let created: Vec<String> = saved
+            .iter()
+            .filter(|u| u.outcome == UpsertOutcome::Created)
+            .map(|u| u.id.clone())
+            .collect();
+        let mut e = ev("item.import", caller, "ok");
+        e.detail = format!(
+            "items={} created={} updated={} unchanged={}",
+            saved.len(),
+            created.len(),
+            count(UpsertOutcome::Updated),
+            count(UpsertOutcome::Unchanged)
+        );
+        Self::audit(&mut st, e);
+        let report = ImportReport {
+            saved: saved.len(),
+            created: created.len(),
+            updated: count(UpsertOutcome::Updated),
+            unchanged: count(UpsertOutcome::Unchanged),
+        };
+        Ok(Stored {
+            items,
+            created,
+            report,
+        })
     }
 
-    /// Deletes an item and wipes its live deliveries (first party).
-    pub async fn delete_item(&self, caller: &CallerIdentity, id: &str) -> Result<Vec<String>> {
+    /// Icons for the sites of what is about to be saved. Best effort: a
+    /// missing or unreadable store means the globe stands in.
+    async fn capture_favicons(&self, batch: &[(ItemMeta, ItemPayload)]) -> Vec<(String, String)> {
+        use base64::Engine as _;
+        let Some((first, _)) = batch.first() else {
+            return Vec::new();
+        };
+        let (app, source) = (first.provider_id.clone(), first.source.clone());
+        let mut sites: Vec<String> = batch
+            .iter()
+            .filter(|(m, _)| m.provider_id == app)
+            .filter_map(|(m, _)| m.domain.as_deref().map(crate::record::site_of))
+            .filter(|s| !s.is_empty())
+            .collect();
+        sites.sort();
+        sites.dedup();
+        if sites.is_empty() {
+            return Vec::new();
+        }
+        let b = self.backend.clone();
+        let profile = (!source.is_empty() && source != "default").then_some(source);
+        let r =
+            tokio::task::spawn_blocking(move || b.favicons(&app, profile.as_deref(), &sites)).await;
+        match r {
+            Ok(Ok(v)) => v
+                .into_iter()
+                .map(|(s, png)| (s, base64::engine::general_purpose::STANDARD.encode(png)))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Site icons for the list (first party; needs the browse window, since
+    /// the sites are names). `png` is base64.
+    pub async fn list_favicons(&self, caller: &CallerIdentity) -> Result<Vec<SiteIcon>> {
+        policy::require_first_party(caller, "listing site icons")?;
+        let mut st = self.state.lock().await;
+        let open = crate::now_ms() < st.browse_until_ms;
+        let meta = Self::vault_mut(&mut st)?.meta()?;
+        if !open {
+            return Ok(Vec::new());
+        }
+        Ok(meta
+            .favicons
+            .iter()
+            .map(|(site, png)| SiteIcon {
+                site: site.clone(),
+                png: png.clone(),
+            })
+            .collect())
+    }
+
+    /// Deletes items (first party) and wipes every live copy of them in
+    /// every Space, then shreds the vault records. Nothing is deleted when
+    /// any id is unknown. Returns the wiped import ids.
+    pub async fn delete_items(
+        &self,
+        caller: &CallerIdentity,
+        ids: Vec<String>,
+    ) -> Result<Vec<String>> {
         policy::require_first_party(caller, "deleting Keyvault items")?;
+        if ids.is_empty() || ids.len() > MAX_ITEMS_PER_SAVE {
+            return Err(Error::Invalid("name the items to delete".into()));
+        }
+        {
+            let mut st = self.state.lock().await;
+            let meta = Self::vault_mut(&mut st)?.meta()?;
+            if let Some(missing) = ids.iter().find(|i| !meta.items.contains_key(*i)) {
+                return Err(Error::NotFound(format!("item {missing}")));
+            }
+        }
         let wiped = self
-            .wipe_where(caller, |d| d.items.iter().any(|i| i == id))
+            .wipe_where(caller, |d| d.items.iter().any(|i| ids.contains(i)))
             .await?;
         let mut st = self.state.lock().await;
-        Self::vault_mut(&mut st)?.delete_item(id)?;
+        let removed = Self::vault_mut(&mut st)?.delete_items(&ids)?;
         let mut e = ev("item.delete", caller, "ok");
-        e.item = Some(id.into());
+        if let [only] = removed.as_slice() {
+            e.item = Some(only.id.clone());
+        }
+        e.detail = format!("count={} wiped={}", removed.len(), wiped.len());
         Self::audit(&mut st, e);
         Ok(wiped)
+    }
+
+    /// Locks or unlocks items (first party). Locked is the default: every
+    /// use needs the user's approval. Unlocked allows unattended access:
+    /// any agent with access to the Cua Spaces MCP may have the item
+    /// written into the user's connected Spaces without asking each time.
+    /// The secrets are never sent to the agent, only delivered into Spaces.
+    ///
+    /// Unlocking widens access, so it asks for user presence ONCE for the
+    /// whole batch. Locking narrows it and does not; it also revokes the
+    /// unattended grants still alive for those items. An identity provider
+    /// item always asks and is reported in [`LockOutcome::skipped`].
+    pub async fn set_locked(
+        &self,
+        caller: &CallerIdentity,
+        ids: Vec<String>,
+        locked: bool,
+    ) -> Result<LockOutcome> {
+        policy::require_first_party(caller, "locking Keyvault items")?;
+        if ids.is_empty() || ids.len() > MAX_ITEMS_PER_SAVE {
+            return Err(Error::Invalid("name the items to lock or unlock".into()));
+        }
+        let mut seen = std::collections::HashSet::new();
+        let ids: Vec<String> = ids.into_iter().filter(|i| seen.insert(i.clone())).collect();
+        let (changed, skipped) = {
+            let mut st = self.state.lock().await;
+            if !locked && Self::settings(&st)?.disabled {
+                return Err(Error::Disabled);
+            }
+            let meta = Self::vault_mut(&mut st)?.meta()?;
+            let mut changed = Vec::new();
+            let mut skipped = Vec::new();
+            for id in &ids {
+                let it = meta
+                    .items
+                    .get(id)
+                    .ok_or_else(|| Error::NotFound(format!("item {id}")))?;
+                if locked {
+                    if !it.locked() {
+                        changed.push(id.clone());
+                    }
+                } else if it.identity_provider {
+                    skipped.push(id.clone());
+                } else if it.locked() {
+                    changed.push(id.clone());
+                }
+            }
+            (changed, skipped)
+        };
+        if changed.is_empty() {
+            return Ok(LockOutcome { changed, skipped });
+        }
+        if !locked {
+            self.confirm(format!(
+                "Allow unattended access to {} Keyvault item{}: any agent with the Cua Spaces MCP may write {} into your connected Spaces ({})",
+                changed.len(),
+                if changed.len() == 1 { "" } else { "s" },
+                if changed.len() == 1 { "it" } else { "them" },
+                caller.display()
+            ))
+            .await?;
+        }
+        let mut st = self.state.lock().await;
+        let v = Self::vault_mut(&mut st)?;
+        v.update_meta(|m| {
+            for id in &changed {
+                let it = m
+                    .items
+                    .get_mut(id)
+                    .ok_or_else(|| Error::NotFound(format!("item {id}")))?;
+                it.policy.unattended = !locked;
+            }
+            if locked {
+                // Rules and unattended grants that relied on the unlock lose
+                // the item (and a grant left with nothing is revoked).
+                for r in &mut m.rules {
+                    r.items.retain(|i| !changed.contains(i));
+                }
+                m.rules.retain(|r| !r.items.is_empty());
+                for g in m.grants.iter_mut().filter(|g| g.unattended) {
+                    if g.items.iter().any(|i| changed.contains(i)) {
+                        g.revoked = true;
+                    }
+                }
+            }
+            Ok(())
+        })?;
+        let mut e = ev(
+            if locked { "item.lock" } else { "item.unlock" },
+            caller,
+            "ok",
+        );
+        e.detail = format!("count={}", changed.len());
+        Self::audit(&mut st, e);
+        Ok(LockOutcome { changed, skipped })
+    }
+
+    /// "Never ask again" on the unlock prompt (first party): the app skips
+    /// its explanation of what unlocking allows. It never skips the
+    /// presence check [`Broker::set_locked`] asks for, and turning it off
+    /// again (Settings) restores the prompt. Nothing is widened by it.
+    pub async fn set_skip_unlock_prompt(&self, caller: &CallerIdentity, on: bool) -> Result<()> {
+        policy::require_first_party(caller, "changing Keyvault settings")?;
+        let mut st = self.state.lock().await;
+        let v = Self::vault_mut(&mut st)?;
+        v.update_meta(|m| {
+            m.settings.skip_unlock_prompt = on;
+            Ok(())
+        })?;
+        let mut e = ev("settings.update", caller, "ok");
+        e.detail = format!("skip_unlock_prompt={on}");
+        Self::audit(&mut st, e);
+        Ok(())
     }
 
     /// Sets an item's policy (first party; widening needs presence).
@@ -1773,7 +2240,7 @@ impl Broker {
     ) -> Result<ItemMeta> {
         policy::require_first_party(caller, "changing item policies")?;
         new.ttl_secs = new.ttl_secs.clamp(60, MAX_TTL_SECS);
-        let (old, label) = {
+        let (old, label, idp) = {
             let mut st = self.state.lock().await;
             let it = Self::vault_mut(&mut st)?
                 .meta()?
@@ -1781,8 +2248,13 @@ impl Broker {
                 .get(id)
                 .cloned()
                 .ok_or_else(|| Error::NotFound(format!("item {id}")))?;
-            (it.policy.clone(), it.label.clone())
+            (it.policy.clone(), it.label(), it.identity_provider)
         };
+        if idp && new.unattended {
+            return Err(Error::Forbidden(
+                "identity provider sessions always ask; they cannot be unlocked".into(),
+            ));
+        }
         if old.widened_by(&new) {
             self.confirm(format!("Widen the Keyvault policy for {label}"))
                 .await?;
@@ -1939,6 +2411,19 @@ impl Broker {
             needs_import,
             created_ms: now,
         };
+        // Every item is unlocked: the user already allowed unattended access
+        // (with presence) when they unlocked it, so this is answered
+        // without a prompt. The caller still never sees a value: it gets a
+        // capability token for a delivery INTO the Space.
+        if view.needs_import.is_empty()
+            && policy::unattended_eligible(
+                &view.items,
+                &view.request.targets,
+                &view.request.actions,
+            )
+        {
+            return self.auto_grant(st, view);
+        }
         st.pending.insert(
             view.id.clone(),
             Pending {
@@ -1969,6 +2454,82 @@ impl Broker {
         // The requesting caller may be an unverified third party; do not hand it
         // the exact cookie names and domains of the user's existing items
         // (red-team F17). It only needs the request id and its own selection.
+        let mut caller_view = view;
+        caller_view.items = caller_view.items.iter().map(|i| i.redacted()).collect();
+        Ok(caller_view)
+    }
+
+    /// Answers an unattended-eligible request (see
+    /// [`policy::unattended_eligible`]): mints the grant the user would
+    /// have approved, short and single-use unless the request asked
+    /// otherwise, and audits it as unattended.
+    fn auto_grant(
+        &self,
+        mut st: tokio::sync::MutexGuard<'_, State>,
+        view: PendingView,
+    ) -> Result<PendingView> {
+        let targets = view.request.targets.clone();
+        let target_ids = self.resolve_target_ids(&targets)?;
+        let now = crate::now_ms();
+        let secs =
+            policy::clamp_grant_secs(view.request.duration_secs.unwrap_or(DEFAULT_GRANT_SECS));
+        let uses = match view.request.uses {
+            Some(0) => None,
+            Some(n) => Some(n.min(1000)),
+            None => Some(1),
+        };
+        let item_ids: Vec<String> = view.items.iter().map(|i| i.id.clone()).collect();
+        let grant = Grant {
+            id: uid()?,
+            request_id: view.id.clone(),
+            caller_fp: view.caller_fp.clone(),
+            caller_display: view.caller_display.clone(),
+            items: item_ids.clone(),
+            targets: targets.clone(),
+            target_ids,
+            actions: view.request.actions.clone(),
+            created_ms: now,
+            not_after_ms: now + secs * 1000,
+            uses_left: uses,
+            revoked: false,
+            agent: view.request.agent.clone(),
+            unattended: true,
+        };
+        let v = Self::vault_mut(&mut st)?;
+        let epoch = v.update_meta(|m| {
+            m.grants.push(grant.clone());
+            Ok(m.epoch)
+        })?;
+        let token = self.mint(&grant, epoch)?;
+        st.decided.insert(
+            view.id.clone(),
+            (
+                view.caller_fp.clone(),
+                Decision::Granted {
+                    token: token.encode(),
+                    grant_id: grant.id.clone(),
+                    items: item_ids,
+                    targets,
+                    not_after_ms: grant.not_after_ms,
+                },
+            ),
+        );
+        let mut e = ev("consent.allow", &view.caller, "allow");
+        e.target = view.request.targets.first().cloned();
+        e.detail = format!(
+            "request={} grant={} requester={} secs={secs} unattended (items unlocked) items={}",
+            view.id,
+            grant.id,
+            view.caller_fp,
+            view.items.len()
+        );
+        Self::audit(&mut st, e);
+        drop(st);
+        self.decided.notify_waiters();
+        crate::telemetry::consent(
+            &self.telemetry,
+            cua_telemetry::events::ConsentDecision::Approved,
+        );
         let mut caller_view = view;
         caller_view.items = caller_view.items.iter().map(|i| i.redacted()).collect();
         Ok(caller_view)
@@ -2145,7 +2706,13 @@ impl Broker {
                 Some(a) => format!("agent {a} ({})", view.caller_display),
                 None => view.caller_display.clone(),
             };
-            let sites: Vec<String> = view.items.iter().filter_map(|i| i.site.clone()).collect();
+            let mut sites: Vec<String> = view
+                .items
+                .iter()
+                .filter_map(|i| i.domain.as_deref().map(crate::record::site_of))
+                .collect();
+            sites.sort();
+            sites.dedup();
             format!(
                 "Allow {who} to sign in to {} in {} ({})",
                 if sites.is_empty() {
@@ -2205,7 +2772,7 @@ impl Broker {
                     if !it.policy.allows_target(t) {
                         return Err(Error::Forbidden(format!(
                             "item {} may not go to {t} (its policy)",
-                            it.label
+                            it.label()
                         )));
                     }
                 }
@@ -2225,6 +2792,7 @@ impl Broker {
             uses_left: uses,
             revoked: false,
             agent: view.request.agent.clone(),
+            unattended: false,
         };
         let epoch = v.update_meta(|m| {
             m.grants.push(grant.clone());
@@ -2457,8 +3025,9 @@ impl Broker {
                 })
                 .unwrap_or_default()
         };
+        let launch = req.launch;
         let r = self
-            .teleport_inner(caller, req, PresenceAlready::NotConfirmed, None)
+            .teleport_inner(caller, req, PresenceAlready::NotConfirmed, None, launch)
             .await;
         crate::telemetry::teleport(&self.telemetry, caller, &app, started, &r, items);
         r
@@ -2470,6 +3039,7 @@ impl Broker {
         req: TeleportRequest,
         presence: PresenceAlready,
         stage: Option<StageSink>,
+        launch: bool,
     ) -> Result<TeleportOutcome> {
         validate_target(&req.target)?;
         if req.items.is_empty() {
@@ -2631,19 +3201,28 @@ impl Broker {
                 .min()
                 .unwrap_or(crate::model::DEFAULT_TTL_SECS);
             let auto_wipe = meta.settings.auto_wipe;
+            let passwords_ok =
+                req.include_passwords && authority == Authority::Interactive && caller.first_party;
             let mut out = Vec::new();
             for (provider, (ids, superseded)) in groups {
                 let mut payloads = Vec::new();
                 for i in &ids {
-                    // Saved logins stay sealed: only the site-login fill
-                    // reads them, never a delivery.
-                    let p = v.read_payload(i)?.deliverable();
-                    if !p.entries.is_empty() {
-                        payloads.push(p);
+                    // Saved passwords stay sealed: the site-login fill reads
+                    // them, and a delivery carries them only when the user
+                    // ticked them in the review (interactive, first party).
+                    if !meta.items[i].kind.deliverable() && !passwords_ok {
+                        continue;
                     }
+                    // A big file's bytes live in a blob; put them back.
+                    payloads.push(v.inline_blobs(&v.read_payload(i)?)?);
                 }
                 if !payloads.is_empty() {
-                    out.push((provider, ids, payloads, superseded));
+                    // Items are one secret apiece: the provider's codec
+                    // reassembles them into the entries the receiver
+                    // installs (and re-encrypts for its own machine).
+                    let scope = payloads[0].scope.clone();
+                    let entries = crate::record::codec_for(&provider).import(&payloads)?;
+                    out.push((provider, ids, scope, entries, superseded));
                 }
             }
             if out.is_empty() {
@@ -2653,11 +3232,7 @@ impl Broker {
                         .into(),
                 ));
             }
-            let labels: Vec<String> = req
-                .items
-                .iter()
-                .map(|i| meta.items[i].label.clone())
-                .collect();
+            let labels: Vec<String> = req.items.iter().map(|i| meta.items[i].label()).collect();
             (authority, out, labels, ttl, auto_wipe)
         };
         if authority == Authority::Interactive && presence == PresenceAlready::NotConfirmed {
@@ -2678,6 +3253,9 @@ impl Broker {
             let mut e = ev("teleport.authorize", caller, "allow");
             e.target = Some(req.target.clone());
             e.detail = format!("{} items={}", authority.describe(), req.items.len());
+            if req.include_passwords {
+                e.detail.push_str(" INCLUDING SAVED PASSWORDS");
+            }
             Self::audit_required(&mut st, e)?;
         }
         // Phase 2 (unlocked): supersede, deliver.
@@ -2690,27 +3268,54 @@ impl Broker {
             ..Default::default()
         };
         let mut delivered = Vec::new();
-        for (provider, ids, payloads, superseded) in groups {
+        for (provider, ids, scope, entries, superseded) in groups {
             for d in &superseded {
                 // Best effort: a failed wipe of the superseded import still
                 // leaves its own TTL to clean up.
                 let _ = self.backend.wipe(&req.target, &d.import_id).await;
             }
             let res = match &stage {
+                Some(sink) if launch => {
+                    self.backend
+                        .deliver_launching(
+                            &req.target,
+                            &provider,
+                            &scope,
+                            entries,
+                            expires_ms,
+                            sink.clone(),
+                            true,
+                        )
+                        .await
+                }
                 Some(sink) => {
                     self.backend
                         .deliver_with_progress(
                             &req.target,
                             &provider,
-                            payloads,
+                            &scope,
+                            entries,
                             expires_ms,
                             sink.clone(),
                         )
                         .await
                 }
+                None if launch => {
+                    self.backend
+                        .deliver_launching(
+                            &req.target,
+                            &provider,
+                            &scope,
+                            entries,
+                            expires_ms,
+                            Arc::new(|_| {}),
+                            true,
+                        )
+                        .await
+                }
                 None => {
                     self.backend
-                        .deliver(&req.target, &provider, payloads, expires_ms)
+                        .deliver(&req.target, &provider, &scope, entries, expires_ms)
                         .await
                 }
             };
@@ -2815,15 +3420,25 @@ impl Broker {
             };
             let v = Self::vault_mut(&mut st)?;
             let meta = v.meta()?.clone();
-            let candidates: Vec<&ItemMeta> = meta
+            // One password per item (keyed by origin + username): the ones
+            // saved for exactly this origin, for this user when asked, and
+            // allowed in this Space.
+            let mut candidates: Vec<&ItemMeta> = meta
                 .items
                 .values()
                 .filter(|i| {
-                    i.kind == ItemKind::SitePasswords
-                        && i.site.as_deref().is_some_and(|s| host_in_site(&host, s))
+                    i.kind == ItemKind::Password
+                        && i.domain
+                            .as_deref()
+                            .is_some_and(|d| d.eq_ignore_ascii_case(&origin))
                         && i.policy.allows_target(&req.target)
+                        && req
+                            .username
+                            .as_deref()
+                            .is_none_or(|u| u.eq_ignore_ascii_case(&i.key))
                 })
                 .collect();
+            candidates.sort_by(|a, b| a.key.cmp(&b.key));
             if candidates.is_empty() {
                 denied(&mut st, format!("origin={origin} no saved password"));
                 return Err(Error::NotFound(format!(
@@ -2891,8 +3506,8 @@ impl Broker {
                 return Err(err);
             };
             let v = Self::vault_mut(&mut st)?;
-            let logins = v.read_payload(&item_id)?.logins()?;
-            let pick = logins.iter().find(|l| {
+            let saved = v.read_payload(&item_id)?.login()?;
+            let pick = Some(&saved).filter(|l| {
                 l.origin == origin
                     && req
                         .username
@@ -2900,7 +3515,7 @@ impl Broker {
                         .is_none_or(|u| u.eq_ignore_ascii_case(&l.username))
             });
             let Some(login) = pick.cloned() else {
-                drop(logins);
+                drop(saved);
                 denied(
                     &mut st,
                     format!("origin={origin} no saved login for this origin"),
@@ -2913,7 +3528,7 @@ impl Broker {
                         .unwrap_or_default()
                 )));
             };
-            drop(logins);
+            drop(saved);
             if let Authority::Grant(g) = &authority {
                 let v = Self::vault_mut(&mut st)?;
                 v.update_meta(|m| {
@@ -2925,7 +3540,11 @@ impl Broker {
                     Ok(())
                 })?;
             }
-            let site = meta.items[&item_id].site.clone().unwrap_or_default();
+            let site = meta.items[&item_id]
+                .domain
+                .as_deref()
+                .map(crate::record::site_of)
+                .unwrap_or_default();
             // The agent the user approved (the grant's) names the use; a
             // caller cannot relabel an approved sign-in as another agent's.
             let approved_agent = match &authority {
@@ -3184,10 +3803,10 @@ fn human_secs(secs: u64) -> String {
 }
 
 fn describe_selection(view: &PendingView) -> String {
-    let mut parts: Vec<String> = view.items.iter().map(|i| i.label.clone()).collect();
+    let mut parts: Vec<String> = view.items.iter().map(|i| i.label()).collect();
     for s in &view.needs_import {
         match s {
-            Selector::Site { app, site, .. } => parts.push(format!("{site} ({app}, import)")),
+            Selector::Site { app, site } => parts.push(format!("{site} ({app}, import)")),
             Selector::App { app } => parts.push(format!("the whole {app} session (import)")),
             Selector::Item { id } => parts.push(id.clone()),
             Selector::Login { site } => parts.push(format!("the saved password for {site}")),
@@ -3213,7 +3832,7 @@ fn describe_spec(spec: &ImportSpec) -> String {
         let sites: Vec<&str> = spec.sites.iter().map(|s| s.site.as_str()).collect();
         format!("{} from {}", sites.join(", "), spec.app)
     };
-    let pw = if spec.sites.iter().any(|s| s.include_passwords) {
+    let pw = if spec.passwords || spec.sites.iter().any(|s| s.include_passwords) {
         " INCLUDING SAVED PASSWORDS"
     } else {
         ""
@@ -3233,7 +3852,7 @@ fn imports_for(needs: &[Selector], opts: &ApproveOptions) -> Vec<ImportSpec> {
     let mut by_app: BTreeMap<String, ImportSpec> = BTreeMap::new();
     for s in needs {
         match s {
-            Selector::Site { app, site, .. } => {
+            Selector::Site { app, site } => {
                 let spec = by_app.entry(app.clone()).or_insert_with(|| ImportSpec {
                     app: app.clone(),
                     cookies: opts.cookies,

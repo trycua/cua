@@ -8306,10 +8306,10 @@ public protocol SpaceProtocol: AnyObject, Sendable {
     func requestSiteLogin(url: String, options: SiteLoginOptions?) async throws  -> SiteLoginReport
 
     /**
-     * Captures the Space's display (the app's tile thumbnails): PNG at
-     * full size on the primary display unless `options` say otherwise.
-     * Fails with `CapabilityMissing` (`spacesd`) when the image runs no
-     * cua-spacesd.
+     * Captures the Space's display: PNG at full size on the primary
+     * display unless `options` say otherwise (for a small preview,
+     * [`Space::thumbnail`] reads the shared cache instead). Fails with
+     * `CapabilityMissing` (`spacesd`) when the image runs no cua-spacesd.
      */
     func screenshot(options: ScreenshotOptions?) async throws  -> Screenshot
 
@@ -8391,6 +8391,17 @@ public protocol SpaceProtocol: AnyObject, Sendable {
      * What teleporting `app` (`full` or `tabs`) would move from this host.
      */
     func teleportManifest(app: String, scope: String?) async throws  -> TeleportManifest
+
+    /**
+     * The Space's latest thumbnail (a small JPEG of its primary display)
+     * from the cache every client on this machine shares: returned at
+     * once when it is younger than `max_age_ms` (unset: any age), else
+     * captured fresh through cua-spacesd and kept for the next caller.
+     * When that capture fails, the older one comes back (`captured_at_ms`
+     * says how old). Asking keeps the daemon refreshing running Spaces'
+     * thumbnails in the background for a while (about every 90 s).
+     */
+    func thumbnail(maxAgeMs: UInt64?) async throws  -> SpaceThumbnail
 
     /**
      * Stops sharing this Space with `who` at once, or with everyone when
@@ -8972,10 +8983,10 @@ open func requestSiteLogin(url: String, options: SiteLoginOptions?)async throws 
 }
 
     /**
-     * Captures the Space's display (the app's tile thumbnails): PNG at
-     * full size on the primary display unless `options` say otherwise.
-     * Fails with `CapabilityMissing` (`spacesd`) when the image runs no
-     * cua-spacesd.
+     * Captures the Space's display: PNG at full size on the primary
+     * display unless `options` say otherwise (for a small preview,
+     * [`Space::thumbnail`] reads the shared cache instead). Fails with
+     * `CapabilityMissing` (`spacesd`) when the image runs no cua-spacesd.
      */
 open func screenshot(options: ScreenshotOptions?)async throws  -> Screenshot  {
     return
@@ -9217,6 +9228,32 @@ open func teleportManifest(app: String, scope: String?)async throws  -> Teleport
             completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
             freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeTeleportManifest_lift,
+            errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * The Space's latest thumbnail (a small JPEG of its primary display)
+     * from the cache every client on this machine shares: returned at
+     * once when it is younger than `max_age_ms` (unset: any age), else
+     * captured fresh through cua-spacesd and kept for the next caller.
+     * When that capture fails, the older one comes back (`captured_at_ms`
+     * says how old). Asking keeps the daemon refreshing running Spaces'
+     * thumbnails in the background for a while (about every 90 s).
+     */
+open func thumbnail(maxAgeMs: UInt64?)async throws  -> SpaceThumbnail  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_sdk_fn_method_space_thumbnail(
+                    self.uniffiCloneHandle(),
+                    FfiConverterOptionUInt64.lower(maxAgeMs)
+                )
+            },
+            pollFunc: ffi_cua_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSpaceThumbnail_lift,
             errorHandler: FfiConverterTypeCuaError_lift
         )
 }
@@ -31197,6 +31234,106 @@ public func FfiConverterTypeSpaceStreamTicket_lower(_ value: SpaceStreamTicket) 
 
 
 /**
+ * A Space's latest thumbnail, from the cache every client on this machine
+ * shares ([`crate::native::spaces::Space::thumbnail`]).
+ */
+public struct SpaceThumbnail: Equatable, Hashable {
+    /**
+     * Encoded image (a small JPEG of the primary display).
+     */
+    public var image: Data
+    /**
+     * Encoding.
+     */
+    public var format: ImageFormat
+    /**
+     * Pixel width.
+     */
+    public var width: UInt32
+    /**
+     * Pixel height.
+     */
+    public var height: UInt32
+    /**
+     * When it was captured, Unix milliseconds.
+     */
+    public var capturedAtMs: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Encoded image (a small JPEG of the primary display).
+         */image: Data,
+        /**
+         * Encoding.
+         */format: ImageFormat,
+        /**
+         * Pixel width.
+         */width: UInt32,
+        /**
+         * Pixel height.
+         */height: UInt32,
+        /**
+         * When it was captured, Unix milliseconds.
+         */capturedAtMs: UInt64) {
+        self.image = image
+        self.format = format
+        self.width = width
+        self.height = height
+        self.capturedAtMs = capturedAtMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SpaceThumbnail: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSpaceThumbnail: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpaceThumbnail {
+        return
+            try SpaceThumbnail(
+                image: FfiConverterData.read(from: &buf),
+                format: FfiConverterTypeImageFormat.read(from: &buf),
+                width: FfiConverterUInt32.read(from: &buf),
+                height: FfiConverterUInt32.read(from: &buf),
+                capturedAtMs: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SpaceThumbnail, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.image, into: &buf)
+        FfiConverterTypeImageFormat.write(value.format, into: &buf)
+        FfiConverterUInt32.write(value.width, into: &buf)
+        FfiConverterUInt32.write(value.height, into: &buf)
+        FfiConverterUInt64.write(value.capturedAtMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceThumbnail_lift(_ buf: RustBuffer) throws -> SpaceThumbnail {
+    return try FfiConverterTypeSpaceThumbnail.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSpaceThumbnail_lower(_ value: SpaceThumbnail) -> RustBuffer {
+    return FfiConverterTypeSpaceThumbnail.lower(value)
+}
+
+
+/**
  * A tool of a Space's MCP service.
  */
 public struct SpaceToolInfo: Equatable, Hashable {
@@ -40437,7 +40574,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cua_sdk_checksum_method_space_request_site_login() != 2223) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cua_sdk_checksum_method_space_screenshot() != 9108) {
+    if (uniffi_cua_sdk_checksum_method_space_screenshot() != 41142) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_send_file() != 29056) {
@@ -40471,6 +40608,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_teleport_manifest() != 31596) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_sdk_checksum_method_space_thumbnail() != 10979) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_sdk_checksum_method_space_unshare() != 58172) {

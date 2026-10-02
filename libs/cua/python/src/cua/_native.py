@@ -1047,7 +1047,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_request_site_login() != 2223:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cua_sdk_checksum_method_space_screenshot() != 9108:
+    if lib.uniffi_cua_sdk_checksum_method_space_screenshot() != 41142:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_send_file() != 29056:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1070,6 +1070,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_sdk_checksum_method_space_teleport() != 14760:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_teleport_manifest() != 31596:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_sdk_checksum_method_space_thumbnail() != 10979:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_sdk_checksum_method_space_unshare() != 58172:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -3548,6 +3550,11 @@ _UniffiLib.uniffi_cua_sdk_fn_method_space_teleport_manifest.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_sdk_fn_method_space_teleport_manifest.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_sdk_fn_method_space_thumbnail.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_sdk_fn_method_space_thumbnail.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_sdk_fn_method_space_unshare.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -5202,6 +5209,9 @@ _UniffiLib.uniffi_cua_sdk_checksum_method_space_teleport.restype = ctypes.c_uint
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_teleport_manifest.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_teleport_manifest.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_thumbnail.argtypes = (
+)
+_UniffiLib.uniffi_cua_sdk_checksum_method_space_thumbnail.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_unshare.argtypes = (
 )
 _UniffiLib.uniffi_cua_sdk_checksum_method_space_unshare.restype = ctypes.c_uint16
@@ -19787,6 +19797,64 @@ class _UniffiFfiConverterTypeSpaceStreamTicket(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.needs_headers, buf)
 
 @dataclass
+class SpaceThumbnail:
+    """
+    A Space's latest thumbnail, from the cache every client on this machine
+    shares ([`crate::native::spaces::Space::thumbnail`]).
+"""
+    def __init__(self, *, image:bytes, format:ImageFormat, width:int, height:int, captured_at_ms:int):
+        self.image = image
+        self.format = format
+        self.width = width
+        self.height = height
+        self.captured_at_ms = captured_at_ms
+
+
+
+
+    def __str__(self):
+        return "SpaceThumbnail(image={}, format={}, width={}, height={}, captured_at_ms={})".format(self.image, self.format, self.width, self.height, self.captured_at_ms)
+    def __eq__(self, other):
+        if self.image != other.image:
+            return False
+        if self.format != other.format:
+            return False
+        if self.width != other.width:
+            return False
+        if self.height != other.height:
+            return False
+        if self.captured_at_ms != other.captured_at_ms:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSpaceThumbnail(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SpaceThumbnail(
+            image=_UniffiFfiConverterBytes.read(buf),
+            format=_UniffiFfiConverterTypeImageFormat.read(buf),
+            width=_UniffiFfiConverterUInt32.read(buf),
+            height=_UniffiFfiConverterUInt32.read(buf),
+            captured_at_ms=_UniffiFfiConverterUInt64.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterBytes.check_lower(value.image)
+        _UniffiFfiConverterTypeImageFormat.check_lower(value.format)
+        _UniffiFfiConverterUInt32.check_lower(value.width)
+        _UniffiFfiConverterUInt32.check_lower(value.height)
+        _UniffiFfiConverterUInt64.check_lower(value.captured_at_ms)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterBytes.write(value.image, buf)
+        _UniffiFfiConverterTypeImageFormat.write(value.format, buf)
+        _UniffiFfiConverterUInt32.write(value.width, buf)
+        _UniffiFfiConverterUInt32.write(value.height, buf)
+        _UniffiFfiConverterUInt64.write(value.captured_at_ms, buf)
+
+@dataclass
 class SpaceToolInfo:
     """
     A tool of a Space's MCP service.
@@ -32134,10 +32202,10 @@ class SpaceProtocol(typing.Protocol):
         raise NotImplementedError
     async def screenshot(self, options: typing.Optional[ScreenshotOptions]) -> Screenshot:
         """
-        Captures the Space's display (the app's tile thumbnails): PNG at
-        full size on the primary display unless `options` say otherwise.
-        Fails with `CapabilityMissing` (`spacesd`) when the image runs no
-        cua-spacesd.
+        Captures the Space's display: PNG at full size on the primary
+        display unless `options` say otherwise (for a small preview,
+        [`Space::thumbnail`] reads the shared cache instead). Fails with
+        `CapabilityMissing` (`spacesd`) when the image runs no cua-spacesd.
 """
         raise NotImplementedError
     async def send_file(self, local_path: str,options: SpaceSendFileOptions) -> SpaceSendFileReport:
@@ -32217,6 +32285,17 @@ class SpaceProtocol(typing.Protocol):
     async def teleport_manifest(self, app: str,scope: typing.Optional[str]) -> TeleportManifest:
         """
         What teleporting `app` (`full` or `tabs`) would move from this host.
+"""
+        raise NotImplementedError
+    async def thumbnail(self, max_age_ms: typing.Optional[int]) -> SpaceThumbnail:
+        """
+        The Space's latest thumbnail (a small JPEG of its primary display)
+        from the cache every client on this machine shares: returned at
+        once when it is younger than `max_age_ms` (unset: any age), else
+        captured fresh through cua-spacesd and kept for the next caller.
+        When that capture fails, the older one comes back (`captured_at_ms`
+        says how old). Asking keeps the daemon refreshing running Spaces'
+        thumbnails in the background for a while (about every 90 s).
 """
         raise NotImplementedError
     async def unshare(self, who: typing.Optional[str]) -> SpaceShares:
@@ -32835,10 +32914,10 @@ class Space(SpaceProtocol):
         )
     async def screenshot(self, options: typing.Optional[ScreenshotOptions]) -> Screenshot:
         """
-        Captures the Space's display (the app's tile thumbnails): PNG at
-        full size on the primary display unless `options` say otherwise.
-        Fails with `CapabilityMissing` (`spacesd`) when the image runs no
-        cua-spacesd.
+        Captures the Space's display: PNG at full size on the primary
+        display unless `options` say otherwise (for a small preview,
+        [`Space::thumbnail`] reads the shared cache instead). Fails with
+        `CapabilityMissing` (`spacesd`) when the image runs no cua-spacesd.
 """
 
         _UniffiFfiConverterOptionalTypeScreenshotOptions.check_lower(options)
@@ -33112,6 +33191,32 @@ class Space(SpaceProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_sdk_fn_method_space_teleport_manifest(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def thumbnail(self, max_age_ms: typing.Optional[int]) -> SpaceThumbnail:
+        """
+        The Space's latest thumbnail (a small JPEG of its primary display)
+        from the cache every client on this machine shares: returned at
+        once when it is younger than `max_age_ms` (unset: any age), else
+        captured fresh through cua-spacesd and kept for the next caller.
+        When that capture fails, the older one comes back (`captured_at_ms`
+        says how old). Asking keeps the daemon refreshing running Spaces'
+        thumbnails in the background for a while (about every 90 s).
+"""
+
+        _UniffiFfiConverterOptionalUInt64.check_lower(max_age_ms)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterOptionalUInt64.lower(max_age_ms),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSpaceThumbnail.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeCuaError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_sdk_fn_method_space_thumbnail(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_sdk_rust_future_free_rust_buffer,
@@ -37470,6 +37575,7 @@ __all__ = [
     "SpaceStreamOptions",
     "SpaceStreamStats",
     "SpaceStreamTicket",
+    "SpaceThumbnail",
     "SpaceToolInfo",
     "SpaceToolResult",
     "SpaceTransferReport",

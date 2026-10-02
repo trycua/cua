@@ -190,6 +190,49 @@ struct SnapshotTests {
         try assertSnapshot(view, "space-preview", size: CGSize(width: 520, height: 480))
     }
 
+    /// The preview card while the stream opens and while it waits for
+    /// Connect: the Space's thumbnail blurred and dimmed with the core's
+    /// words centered, or plain black when there is no thumbnail yet.
+    @Test func desktopCover() async throws {
+        let m = try await model()
+        let space = try #require(m.spaces.first { m.detail($0).canStream })
+        let detail = m.detail(space)
+        let preview = DesktopCoverTests.desktop()
+        func card(_ cover: AppDesktopCover, _ image: NSImage?) -> some View {
+            Form {
+                Section {
+                    PreviewCard(session: nil) { DesktopCoverView(cover: cover, image: image) }
+                }
+            }
+            .formStyle(.grouped)
+        }
+        let size = CGSize(width: 520, height: 360)
+        let connecting = m.cover(detail, requested: false, stream: .noSession)
+        #expect(connecting.kind == .connecting)
+        try assertSnapshot(card(connecting, preview), "space-cover-connecting", size: size)
+        try assertSnapshot(card(connecting, nil), "space-cover-connecting-black", size: size)
+        await m.choose(row: "auto-connect", option: "off")
+        let manual = m.cover(detail, requested: false, stream: .noSession)
+        #expect(manual.kind == .connect)
+        try assertSnapshot(card(manual, preview), "space-cover-connect", size: size)
+        try assertSnapshot(card(manual, nil), "space-cover-connect-black", size: size)
+        // A Space that cannot stream: its line on the same blurred preview.
+        let stopped = appDesktopCover(input: AppDesktopCoverInput(
+            canStream: false, previewText: "Stopped", autoConnect: true, connectRequested: false,
+            stream: .noSession))
+        try assertSnapshot(card(stopped, preview), "space-cover-stopped", size: size)
+    }
+
+    /// Settings, General: "Connect to the desktop automatically", on by
+    /// default (the `settings` reference), then off.
+    @Test func settingsAutoConnectOff() async throws {
+        let m = try await model()
+        m.settings.experiments.cuaVolume = true
+        await m.choose(row: "auto-connect", option: "off")
+        await m.loadSettings()
+        try assertSnapshot(SettingsView(model: m), "settings-auto-connect-off", size: CGSize(width: 520, height: 640))
+    }
+
     /// "Teleport an app…" as the core's grid: sections, a tile previewing
     /// its app's frontmost window, icons, the app that cannot move dimmed.
     @Test func teleportPickerGrid() async throws {
@@ -346,14 +389,14 @@ struct SnapshotTests {
         let m = try await model()
         let sel = KvSelection.category(category: .all)
         m.keyvault.selection = sel
-        try assertSnapshot(CategoryList(keyvault: m.keyvault, page: m.keyvault.page), "keyvault-all",
+        try assertSnapshot(VaultList(keyvault: m.keyvault, page: m.keyvault.page), "keyvault-all",
                            size: CGSize(width: 640, height: 520))
     }
 
     @Test func approvalSheet() async throws {
         let m = try await model()
         m.keyvault.openApproval("req-1")
-        m.keyvault.sendApproval(.toggle(key: "gh-ada"))
+        m.keyvault.sendApproval(.toggle(key: "chrome|example.test"))
         try assertSnapshot(ApprovalSheet(keyvault: m.keyvault), "approval", size: CGSize(width: 480, height: 360))
     }
 
@@ -491,6 +534,40 @@ struct SnapshotTests {
             $0.send(.click)
             $0.highlight = NotchHighlight(.button(.list))
         }
+    }
+
+    /// Each tile's header: the OS logo, then where the Space runs in grey.
+    /// A Space on this Mac, one on another of your machines, and one on a
+    /// machine with a long name (truncated in the middle).
+    @Test func notchTileLocations() async throws {
+        func row(_ id: String, _ name: String, _ os: AppSpaceOs, _ osName: String, provider: String,
+                 host: String? = nil, hostName: String? = nil) -> AppSpaceRow {
+            AppSpaceRow(id: id, name: name, provider: provider, spacesdVersion: "0.4.0",
+                        features: ["desktop_stream"], addedAt: "2026-09-25T08:00:00Z",
+                        os: os, osName: osName, osPrettyName: nil, image: nil, imageDigest: nil,
+                        kind: nil, arch: "arm64", reachable: true, error: nil, host: host, hostName: hostName,
+                        power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil)
+        }
+        let backend = FixtureSpacesBackend(rows: [
+            row("local:dev", "Dev box", .linux, "Ubuntu", provider: "local"),
+            row("relay:m1/studio", "Studio", .macos, "macOS", provider: "relay", host: "m1", hostName: "Mac mini"),
+            row("relay:m2/ci", "CI runner", .windows, "Windows", provider: "relay", host: "m2",
+                hostName: "Dillon's Mac Studio in the Back Office Rack 3"),
+        ])
+        let m = ViewModelTests().makeModel(backend, kv: FakeKeyvault(try fixtureOverview()),
+                                           host: FixtureHost(), account: FixtureAccount(),
+                                           agents: FixtureAgentSetup())
+        m.onboarding.finish()
+        await m.refresh()
+        m.notch.send(.click)
+        let places = Dictionary(uniqueKeysWithValues: m.notch.view.tiles.map { ($0.id, $0.location) })
+        #expect(places["local:dev"] == "This Mac")
+        #expect(places["relay:m1/studio"] == "Mac mini")
+        #expect(places["relay:m2/ci"] == "Dillon's Mac Studio in the Back Office Rack 3")
+        let c = NotchController(model: m.notch)
+        c.apply(appNotchLayout(screen: NotchGeometry.fallbackScreen, prompt: NotchController.needsRow(m.notch.view)))
+        try assertSnapshot(NotchContentView(model: m.notch, controller: c).background(Color(white: 0.85)),
+                           "notch-tile-locations", size: c.geometry.stage)
     }
 
     @Test func notchButtonPressed() async throws {

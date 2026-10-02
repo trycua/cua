@@ -1,0 +1,28 @@
+{
+  "arch": "arm64",
+  "digest": "sha256:470f89eecf3edf93c35db7040b933d889c1b48b48277499ba79333c450be3d31",
+  "lanes": {
+    "container": {
+      "counts": {
+        "fail": 0,
+        "pass": 114,
+        "skip": 8,
+        "warn": 0
+      },
+      "date": "2026-09-27T01:40:46Z",
+      "manifest_sha256": "fcd654fcaa4ae7c35a04cd15cd28cbb7fc18b507c68b0e7b8ced30bb68b8de67",
+      "producer": "cua-spacesd",
+      "report": "ghcr.io/trycua/bench-web@sha256:0a336e6f36313334acfc77b12b7c175a9f18c5c6c52d494256deb989bf59a7d1",
+      "spacesd_version": "0.1.0",
+      "status": "pass",
+      "strict": true,
+      "workflow_run": null
+    }
+  },
+  "os": "linux",
+  "repo": "ghcr.io/trycua/bench-web",
+  "schema_version": 1,
+  "status": "pass",
+  "updated": "2026-09-27T01:40:46Z",
+  "variant": "rootfs"
+}

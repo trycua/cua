@@ -1,5 +1,0 @@
-.build/
-lib/
-*.xcframework
-.swiftpm/
-build/

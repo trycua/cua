@@ -1,0 +1,28 @@
+{
+  "arch": "arm64",
+  "digest": "sha256:a25bd001951f701d3657e0ec7a3e58cb91f75a23d22c52feb3fb4d6fa15cdaa1",
+  "lanes": {
+    "lume": {
+      "counts": {
+        "fail": 0,
+        "pass": 78,
+        "skip": 9,
+        "warn": 0
+      },
+      "date": "2026-09-26T18:49:06Z",
+      "manifest_sha256": "dbd7eab2cdc06fbd1ecbcfc2b065b300d91efdca0f676401041cd45d166e5ce1",
+      "producer": "cua-spacesd",
+      "report": "ghcr.io/trycua/macos@sha256:504d670c47cb721efccaf6c5f96941b2bda07937cdbe8d308e656cd09ad52635",
+      "spacesd_version": "0.1.0",
+      "status": "pass",
+      "strict": true,
+      "workflow_run": null
+    }
+  },
+  "os": "macos",
+  "repo": "ghcr.io/trycua/macos",
+  "schema_version": 1,
+  "status": "pass",
+  "updated": "2026-09-26T18:49:06Z",
+  "variant": "lume"
+}

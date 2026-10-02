@@ -1,9 +1,0 @@
-{
-  "data_images": [
-    "Image"
-  ],
-  "data_json": "Value:string",
-  "event_name": "Value:string",
-  "timestamp": "Value:string",
-  "trajectory_id": "Value:string"
-}

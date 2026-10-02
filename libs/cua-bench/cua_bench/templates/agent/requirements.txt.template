@@ -1,7 +1,0 @@
-# Core dependencies
-cua-bench>=0.1.0
-
-# Add your agent's dependencies below
-# Example for LLM-based agents:
-# anthropic>=0.20.0
-# openai>=1.0.0

@@ -1,5 +1,0 @@
-"""{{agent_name}} agent package."""
-
-from .agent import {{class_name}}
-
-__all__ = ["{{class_name}}"]

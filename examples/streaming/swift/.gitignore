@@ -1,4 +1,0 @@
-.build/
-.swiftpm/
-out/
-*.jsonl

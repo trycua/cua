@@ -1,18 +1,18 @@
 {
   "arch": "x86_64",
-  "digest": "sha256:e0e66f53d5eaf4445b245b57ab98c259afa287c673f76194f53584d941d775d4",
+  "digest": "sha256:79e718fc3d58c4c962c2f3ee89ac63c4bc729d751e825b142ff416cb4dfe96cd",
   "lanes": {
     "windows": {
       "counts": {
         "fail": 0,
         "pass": 79,
-        "skip": 11,
+        "skip": 10,
         "warn": 0
       },
-      "date": "2026-10-01T22:08:21Z",
-      "manifest_sha256": "ac4fe8d05bdcd187d74f5a381aa771c8e92eb64010545cd590aff25d92c43b79",
+      "date": "2026-09-30T12:49:16Z",
+      "manifest_sha256": "032f16d493f74729f1e95e3e00834ac75a770c39aeecc4a20c49bd123f4f9a68",
       "producer": "cua-spacesd",
-      "report": "ghcr.io/trycua/windows@sha256:610e1783acebe08264fd452c8d73344cc3f194951222b685a116ac721554fdb5",
+      "report": "ghcr.io/trycua/windows@sha256:07734405e5005585b386dbf4d506b337b7e77add31bcc2701b27cb76d22e9583",
       "spacesd_version": "0.1.0",
       "status": "pass",
       "strict": true,
@@ -23,6 +23,6 @@
   "repo": "ghcr.io/trycua/windows",
   "schema_version": 1,
   "status": "pass",
-  "updated": "2026-10-01T22:08:21Z",
+  "updated": "2026-09-30T12:49:16Z",
   "variant": "containerdisk"
 }

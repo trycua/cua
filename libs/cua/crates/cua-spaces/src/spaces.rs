@@ -2159,7 +2159,10 @@ impl Spaces {
         {
             Ok(s) => s,
             Err(e) => {
-                if let Ok(sb) = self.inner.sandboxes.connect(&name).await {
+                // Only a sandbox this create made is its to delete: a name
+                // already in use (an existing Space whose token differs
+                // fails this handshake) is left alone.
+                if fresh && let Ok(sb) = self.inner.sandboxes.connect(&name).await {
                     let _ = sb.delete().await;
                 }
                 return Err(e);

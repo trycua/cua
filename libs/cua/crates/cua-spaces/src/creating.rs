@@ -607,7 +607,13 @@ impl Spaces {
                 },
             }
         }
-        if !j.id.is_empty() {
+        // A create that started a Space that existed before keeps it listed:
+        // unlisting it would hide a Space this create did not make.
+        let kept_existing = j
+            .made
+            .iter()
+            .any(|m| matches!(m, Made::LocalSandbox { fresh: false, .. }));
+        if !j.id.is_empty() && !kept_existing {
             let _ = self.inner.registry.remove(&j.id);
         }
         let mut msg = format!("Cancelled {}", display(&j.id, &j.name));

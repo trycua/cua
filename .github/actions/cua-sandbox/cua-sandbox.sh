@@ -66,6 +66,9 @@ default_name() {
 }
 
 name="${CUA_SB_NAME:-$(default_name)}"
+# The cleanup deletes this sandbox: only names in the CI/test namespace.
+[[ "$name" =~ ^cua-(ci|e2e)-[a-z0-9-]+$ ]] ||
+    { echo "cua-sandbox: name must start with cua-ci- or cua-e2e- (got '$name')" >&2; exit 2; }
 state="${CUA_SB_STATE:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/cua-sandbox-$name}"
 mkdir -p "$state/artifacts"
 on="${CUA_SB_ON:-local}"
@@ -216,6 +219,11 @@ create() {
         args+=(${items[@]+"${items[@]}"})
     fi
     log "cua ${args[*]}"
+    # Never adopt a sandbox that was already there: the cleanup would
+    # delete something this run did not make.
+    if "$cua" sb info "$ref" --json >/dev/null 2>&1; then
+        die "$ref already exists; this action only deletes sandboxes it creates"
+    fi
     : >"$state/created"
     "$cua" "${args[@]}" >"$state/create.json" 2> >(tee "$state/artifacts/create.log" >&2)
     local created

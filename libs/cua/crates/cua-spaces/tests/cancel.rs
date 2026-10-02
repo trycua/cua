@@ -365,3 +365,34 @@ async fn a_cancel_while_connecting_removes_the_running_instance() {
     assert!(!e.rt.running.lock().unwrap().contains_key("connecting"));
     assert_eq!(journals(&e.spaces), 0);
 }
+
+/// A create given the name of a Space that already runs (its cua-spacesd
+/// answers another token, so readiness and the handshake fail) never
+/// deletes it: only what a create made is its to remove.
+#[tokio::test]
+async fn a_failed_create_never_deletes_an_existing_space_of_that_name() {
+    let e = env();
+    e.rt.boots.store(true, std::sync::atomic::Ordering::SeqCst);
+    let mute = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    e.rt.port.store(
+        mute.local_addr().unwrap().port(),
+        std::sync::atomic::Ordering::SeqCst,
+    );
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((sock, _)) = mute.accept().await {
+            held.push(sock);
+        }
+    });
+    let name = "space-0123456789";
+    e.rt.running.lock().unwrap().insert(name.into(), true);
+    let mut opts = local(Some(name), "p5");
+    opts.timeout = Some(Duration::from_secs(3));
+    assert!(e.spaces.create(opts).await.is_err());
+    assert!(e.rt.running.lock().unwrap().contains_key(name));
+    assert!(
+        e.rt.deleted.lock().unwrap().is_empty(),
+        "{:?}",
+        e.rt.deleted.lock().unwrap()
+    );
+}

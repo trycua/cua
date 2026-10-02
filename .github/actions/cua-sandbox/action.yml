@@ -34,7 +34,7 @@ inputs:
       MODAL_TOKEN_SECRET; modal also needs cua-modal-helper on PATH).
     default: local
   name:
-    description: "Sandbox name (default cua-ci-<run id>-<attempt>-<job>)."
+    description: "Sandbox name (default cua-ci-<run id>-<attempt>-<job>). Must start with cua-ci- or cua-e2e-: cleanup deletes it, and a name that already exists is refused."
     default: ""
   overlay:
     description: >-

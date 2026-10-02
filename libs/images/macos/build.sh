@@ -101,6 +101,10 @@ fi
 MACOS_BASE_IMAGE="$MACOS_BASE_REPO:$MACOS_BASE_TAG"
 BASE_IMAGE="${BASE_IMAGE:-$MACOS_BASE_IMAGE}"
 VM="${VM:-cua-e2e-macos-$TIER-$$}"
+# Only names in the test namespace: the cleanup deletes this VM, so a typo
+# or a reused name must never point it at a user's Space (`space-<hex>`).
+[[ "$VM" =~ ^cua-(e2e|ci)-[A-Za-z0-9._-]+$ ]] ||
+    { echo "--name must start with cua-e2e- or cua-ci- (got '$VM')" >&2; exit 2; }
 CACHE="${CUA_MACOS_CACHE:-$HOME/.cache/cua-images/macos-cache}"
 XCODE_CACHE="${CUA_XCODE_CACHE:-$HOME/XcodesCache}"
 REV="$(git -C "$REPO" rev-parse HEAD)"
@@ -203,9 +207,13 @@ python3 "$REPO/libs/images/common/tools/cua-image-manifest" generate \
 # sanitize-guest.sh removes the guest copy before the push.
 (umask 077; openssl rand -hex 32 >"$SETUP/env-token")
 
+# Set once this run made $VM: a VM that was already there is never stopped
+# or deleted by the cleanup.
+CREATED=0
 cleanup() {
     rm -f "$SETUP/env-token"
     rm -rf "$SETUP/cache"
+    [ "$CREATED" = 1 ] || return 0
     lume stop "$VM" >/dev/null 2>&1 || true
     # If `lume serve` went away, `lume stop` cannot reach the VM: end the
     # detached `lume run` this script started (matched by its unique VM name).
@@ -216,9 +224,14 @@ cleanup() {
 trap cleanup EXIT
 
 # --- VM ----------------------------------------------------------------------
+if lume get "$VM" --format json >/dev/null 2>&1; then
+    echo "$VM already exists: delete it yourself or pick another --name (this build only deletes VMs it made)" >&2
+    exit 1
+fi
 if [ -n "$BASE_VM" ]; then
     log "cloning $BASE_VM -> $VM"
     lume clone "$BASE_VM" "$VM"
+    CREATED=1
 else
     if [ "$BASE_IMAGE" = "$MACOS_BASE_IMAGE" ]; then
         [ "$(crane digest "$BASE_IMAGE")" = "$MACOS_BASE_DIGEST" ] ||
@@ -226,6 +239,9 @@ else
     fi
     log "pulling $BASE_IMAGE -> $VM"
     ref="${BASE_IMAGE#ghcr.io/}"
+    # A pull that fails part-way may leave $VM behind: it is ours (it did not
+    # exist above), so the cleanup may delete it.
+    CREATED=1
     lume pull "${ref#*/}" "$VM" --registry ghcr.io --organization "${ref%%/*}"
 fi
 base_memory="$(lume get "$VM" --format json | python3 -c 'import json,sys;d=json.load(sys.stdin);d=d[0] if isinstance(d,list) else d;print(d["memorySize"])')"

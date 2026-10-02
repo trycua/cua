@@ -992,15 +992,28 @@ impl Runtime {
                 },
             );
         }
+        let mut gone = Vec::new();
         {
             let handles = self.inner.handles.lock().unwrap();
             for (key, h) in handles.iter() {
-                let status = out
-                    .get(key)
-                    .map(|r| r.status.clone())
-                    .unwrap_or(Status::Running);
+                let status = match out.get(key) {
+                    Some(r) => r.status.clone(),
+                    // A named local sandbox always has a state file (or a
+                    // listed instance). Neither left: another process (the
+                    // Spaces app, another CLI) deleted it while this daemon
+                    // held a handle. Not `ready`: forget the handle.
+                    None if deleted_elsewhere(&h.sandbox) => {
+                        gone.push(key.clone());
+                        continue;
+                    }
+                    None => Status::Running,
+                };
                 out.insert(key.clone(), record_of(key, h, status));
             }
+        }
+        for key in gone {
+            tracing::info!(sandbox = %key, "forgetting a handle whose sandbox was deleted elsewhere");
+            self.forget(&key).await;
         }
         Ok(out
             .into_values()
@@ -1567,6 +1580,13 @@ fn placement_words_of(runtime_type: &str) -> (String, String) {
             r.to_string()
         },
     )
+}
+
+/// A cached handle whose sandbox is gone from disk: a named (not
+/// ephemeral) local sandbox that is in neither the state files nor the
+/// local engine's listing. Direct and cloud handles are never judged so.
+fn deleted_elsewhere(sb: &Sandbox) -> bool {
+    sb.provider() == ProviderKind::Local && !sb.is_ephemeral() && sb.runtime_type() != "direct"
 }
 
 fn record_of(key: &str, h: &Handle, status: Status) -> SandboxRecord {

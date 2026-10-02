@@ -133,11 +133,14 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Runner hygiene
         run: |
-          # Stale CI VMs from cancelled runs (never the SDK's cua-base-* cache).
+          # Stale tier VMs from this workflow's cancelled runs only: exactly
+          # cua-ci-<run id>-<attempt>-<tier>, as PREFIX names them. Never
+          # another job's sandbox, the SDK's cua-base-* cache or a Space.
           lume ls --format json | python3 -c '
-          import json, sys
+          import json, re, sys
+          ours = re.compile(r"cua-ci-[0-9]+-[0-9]+-(slim|full|xcode)")
           for vm in json.load(sys.stdin):
-              if vm["name"].startswith("cua-ci-") and vm.get("status") != "running":
+              if ours.fullmatch(vm["name"]) and vm.get("status") != "running":
                   print(vm["name"])' | while read -r vm; do lume delete "$vm" --force || true; done
           free_gb="$(df -g "$HOME" | awk 'NR==2 {print $4}')"
           [ "$free_gb" -ge 200 ] || { echo "::error::only ${free_gb} GB free; the tiers need 200 GB"; exit 1; }

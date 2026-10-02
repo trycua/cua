@@ -105,6 +105,10 @@ done
 
 # --- create the VM (CI-specific: the hand-run path starts from a live VM) ----
 echo "==> Cloning $BASE_IMAGE -> $GOLDEN"
+# The rebuild deletes $GOLDEN first: only a golden-build name, never the base
+# or any other VM (a user's Space is `space-<hex>`).
+[[ "$GOLDEN" =~ ^(cua-spaces-golden|cua-(ci|e2e)-)[A-Za-z0-9._-]*$ ]] && [ "$GOLDEN" != "$BASE_IMAGE" ] ||
+  { echo "FATAL: GOLDEN must be cua-spaces-golden* or cua-ci-*/cua-e2e-* and not the base (got '$GOLDEN')" >&2; exit 2; }
 lume delete "$GOLDEN" --force >/dev/null 2>&1 || true
 lume clone "$BASE_IMAGE" "$GOLDEN"
 # Never `lume run --no-display`; drive it through the API so no window opens on

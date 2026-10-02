@@ -21,6 +21,7 @@ class TestResolveReleasePleaseRequest(unittest.TestCase):
             "libs/python/cua-sandbox": "0.4.3",
             "libs/cua-spacesd": "0.1.0",
             "libs/cua": "0.2.0",
+            "apps/cua-spaces-macos": "0.1.0",
         }
 
     def test_resolves_each_component_path(self) -> None:
@@ -48,6 +49,12 @@ class TestResolveReleasePleaseRequest(unittest.TestCase):
         request = MODULE.resolve_request(self.manifest, "cua-sdk", "patch")
         self.assertEqual(request["path"], "libs/cua")
         self.assertEqual(request["release_as"], "0.2.1")
+
+    def test_resolves_cua_spaces_to_the_macos_app(self) -> None:
+        request = MODULE.resolve_request(self.manifest, "cua-spaces", "patch")
+        self.assertEqual(request["path"], "apps/cua-spaces-macos")
+        self.assertEqual(request["current_version"], "0.1.0")
+        self.assertEqual(request["release_as"], "0.1.1")
 
     def test_calculates_patch_minor_and_major_versions(self) -> None:
         self.assertEqual(MODULE.bump_version("0.9.0", "patch"), "0.9.1")

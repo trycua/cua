@@ -387,35 +387,37 @@
         }
       ]
     },
-    "apps/cua-spaces": {
+    "apps/cua-spaces-macos": {
       "release-type": "simple",
       "component": "cua-spaces",
       "package-name": "cua-spaces",
       "bump-minor-pre-major": true,
       "version-file": "VERSION",
       "changelog-path": "CHANGELOG.md",
-      "exclude-paths": [
-        "apps/cua-spaces/docs"
-      ],
       "extra-files": [
         {
+          "type": "xml",
+          "path": "Support/Info.plist",
+          "xpath": "//dict/key[text()='CFBundleShortVersionString']/following-sibling::string[1]"
+        },
+        {
           "type": "json",
-          "path": "package.json",
+          "path": "/apps/cua-spaces/package.json",
           "jsonpath": "$.version"
         },
         {
           "type": "json",
-          "path": "src-tauri/tauri.conf.json",
+          "path": "/apps/cua-spaces/src-tauri/tauri.conf.json",
           "jsonpath": "$.version"
         },
         {
           "type": "toml",
-          "path": "src-tauri/Cargo.toml",
+          "path": "/apps/cua-spaces/src-tauri/Cargo.toml",
           "jsonpath": "$.package.version"
         },
         {
           "type": "toml",
-          "path": "src-tauri/Cargo.lock",
+          "path": "/apps/cua-spaces/src-tauri/Cargo.lock",
           "jsonpath": "$.package[?(@.name.value=='cua-spaces-app')].version"
         }
       ]

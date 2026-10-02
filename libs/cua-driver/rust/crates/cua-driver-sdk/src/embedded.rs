@@ -838,6 +838,9 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
     upper.starts_with("LC_")
         || upper == WINDOW_CHANGE_TIMEOUT_ENV
         || upper == WINDOW_CHANGE_POLL_ENV
+        || cua_driver_core::input_pacing::ALL
+            .iter()
+            .any(|k| upper == k.env)
         || matches!(
             upper.as_str(),
             "PATH"
@@ -1430,5 +1433,45 @@ mod tests {
 
         assert_eq!(host.state(), EmbeddedDriverHostState::Stopped);
         assert!(!socket_path.exists());
+    }
+
+    /// The pacing knobs must survive both propagation paths into a child
+    /// launch — inherited from the parent environment and supplied as
+    /// explicit overrides. An allowlist miss silently strips a
+    /// deployment's pacing configuration in embedded/worker modes.
+    #[test]
+    fn pacing_knobs_propagate_inherited_and_explicit() {
+        let names = cua_driver_core::input_pacing::ALL.map(|k| k.env);
+        for name in names {
+            assert!(allowed_environment_name(name), "{name} not allowlisted");
+        }
+        // Inherited: the parent's value rides into the child set.
+        let inherited = names.map(|n| (n.to_owned(), "7".to_owned()));
+        let merged = merge_safe_environment(inherited, &[]);
+        for name in names {
+            assert!(
+                merged
+                    .iter()
+                    .any(|v| v.name.eq_ignore_ascii_case(name) && v.value == "7"),
+                "{name} stripped from the inherited environment"
+            );
+        }
+        // Explicit: an override supplied at launch is accepted.
+        let overrides: Vec<EmbeddedEnvironmentVariable> = names
+            .iter()
+            .map(|n| EmbeddedEnvironmentVariable {
+                name: (*n).to_owned(),
+                value: "3".to_owned(),
+            })
+            .collect();
+        let merged = merge_safe_environment(std::iter::empty(), &overrides);
+        for name in names {
+            assert!(
+                merged
+                    .iter()
+                    .any(|v| v.name.eq_ignore_ascii_case(name) && v.value == "3"),
+                "{name} rejected as an explicit override"
+            );
+        }
     }
 }

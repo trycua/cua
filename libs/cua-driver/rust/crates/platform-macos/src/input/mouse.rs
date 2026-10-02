@@ -164,7 +164,7 @@ fn click_at_xy_desktop_inner(
             .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(move) failed"))?;
             moved.set_flags(flags);
             moved.post(CGEventTapLocation::HID);
-            std::thread::sleep(std::time::Duration::from_millis(12));
+            std::thread::sleep(super::pacing::mouse_primer_settle());
         }
 
         for pair_index in 0..count.max(1) {
@@ -176,7 +176,7 @@ fn click_at_xy_desktop_inner(
                 (pair_index + 1) as i64,
             );
             down.post(CGEventTapLocation::HID);
-            std::thread::sleep(std::time::Duration::from_millis(28));
+            std::thread::sleep(super::pacing::click_gap());
             let up = CGEvent::new_mouse_event(source.clone(), up_ty, point, btn)
                 .map_err(|_| anyhow::anyhow!("CGEvent::new_mouse_event(up) failed"))?;
             up.set_flags(flags);
@@ -186,7 +186,7 @@ fn click_at_xy_desktop_inner(
             );
             up.post(CGEventTapLocation::HID);
             if count > 1 {
-                std::thread::sleep(std::time::Duration::from_millis(80));
+                std::thread::sleep(super::pacing::multi_click_gap());
             }
         }
         Ok(())
@@ -355,7 +355,7 @@ fn click_at_xy_inner(
             click_group_id,
             post_mode,
         );
-        std::thread::sleep(std::time::Duration::from_millis(12));
+        std::thread::sleep(super::pacing::mouse_primer_settle());
 
         for pair_index in 0..count {
             let click_state = (pair_index + 1) as i64;
@@ -385,7 +385,7 @@ fn click_at_xy_inner(
             // 28 ms down→up gap: an NSButton's mouseDown enters a modal
             // tracking loop that polls for the matching mouseUp; too tight a
             // gap can race the loop's first poll and the click is dropped.
-            std::thread::sleep(std::time::Duration::from_millis(28));
+            std::thread::sleep(super::pacing::click_gap());
 
             let up = CGEvent::new_mouse_event(
                 source.clone(),
@@ -411,7 +411,7 @@ fn click_at_xy_inner(
             );
 
             if count > 1 {
-                std::thread::sleep(std::time::Duration::from_millis(80));
+                std::thread::sleep(super::pacing::multi_click_gap());
             }
         }
         Ok(())
@@ -548,7 +548,11 @@ fn chromium_click_route_plan(
             phase: 3,
             button_number: 0,
             subtype: 3,
-            delay_after_ms: if pair_index < click_pairs { 80 } else { 0 },
+            delay_after_ms: if pair_index < click_pairs {
+                super::pacing::multi_click_gap().as_millis() as u64
+            } else {
+                0
+            },
         });
     }
     steps
@@ -799,7 +803,7 @@ where
         click_group_id,
         MousePostMode::Both,
     );
-    std::thread::sleep(std::time::Duration::from_millis(12));
+    std::thread::sleep(super::pacing::mouse_primer_settle());
 
     // MouseDown at start.
     let down = CGEvent::new_mouse_event(source.clone(), down_type, from_pt, cg_button)
@@ -1358,7 +1362,7 @@ fn right_click_at_xy_inner(
         click_group_id,
         MousePostMode::Both,
     );
-    std::thread::sleep(std::time::Duration::from_millis(12));
+    std::thread::sleep(super::pacing::mouse_primer_settle());
 
     let down = CGEvent::new_mouse_event(
         source.clone(),
@@ -1373,7 +1377,7 @@ fn right_click_at_xy_inner(
     // button_number = 1 (right). Stamping 0 here routes the event as a left
     // button-number on the receiving side even though the type is rightMouseDown.
     post_mouse_event(pid, &down, window_local, wid, click_group_id, 1, 1, 3);
-    std::thread::sleep(std::time::Duration::from_millis(28));
+    std::thread::sleep(super::pacing::click_gap());
 
     let up = CGEvent::new_mouse_event(
         source,
@@ -1582,7 +1586,7 @@ pub fn scroll_wheel_at_xy(
         ),
         MousePostMode::Both,
     );
-    std::thread::sleep(std::time::Duration::from_millis(12));
+    std::thread::sleep(super::pacing::mouse_primer_settle());
 
     for _ in 0..ticks.max(1) {
         // Fresh source per event, matching the click primitives.

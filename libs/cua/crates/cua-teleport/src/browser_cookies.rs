@@ -185,7 +185,7 @@ impl ChromeCookies {
     /// cookie the destination needs and still report success.
     pub fn read(&self, sites: &[String]) -> Result<Vec<DecryptedCookie>, TeleportError> {
         let dir = self.profile_dir()?;
-        // `Default/Network/Cookies` first (Chrome 96+), then `Default/Cookies`.
+        // `Default/Cookies` or `Default/Network/Cookies`, whichever is newer.
         let db = cua_teleport_bundle::layout::chrome::cookies_store(&dir);
         if !db.is_file() {
             return Err(TeleportError::Provider(format!(
@@ -523,26 +523,64 @@ mod tests {
         assert_eq!(read_linux(&profile).unwrap().len(), 1);
     }
 
-    /// Both exist (a profile Chrome migrated): the modern one is read.
+    fn touch(path: &std::path::Path, secs_ago: u64) {
+        let t = std::time::SystemTime::now() - std::time::Duration::from_secs(secs_ago);
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
+    }
+
+    /// Both exist: the newer one is read, in either direction.
     #[test]
-    fn prefers_network_cookies_over_a_stale_legacy_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let profile = dir.path().join("Default");
-        write_cookies_db_for_tests(&profile, &[]).unwrap();
-        write_network_cookies_db_for_tests(&profile, &one_row()).unwrap();
-        assert_eq!(read_linux(&profile).unwrap().len(), 1);
+    fn reads_the_newer_of_two_cookie_stores() {
+        for network_newer in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let profile = dir.path().join("Default");
+            write_cookies_db_for_tests(&profile, &[]).unwrap();
+            write_network_cookies_db_for_tests(&profile, &one_row()).unwrap();
+            if !network_newer {
+                // Swap the contents: the root file holds the row and is newer.
+                std::fs::remove_dir_all(profile.join("Network")).unwrap();
+                std::fs::remove_file(profile.join("Cookies")).unwrap();
+                write_network_cookies_db_for_tests(&profile, &[]).unwrap();
+                write_cookies_db_for_tests(&profile, &one_row()).unwrap();
+            }
+            let (new, old) = if network_newer {
+                (profile.join("Network/Cookies"), profile.join("Cookies"))
+            } else {
+                (profile.join("Cookies"), profile.join("Network/Cookies"))
+            };
+            touch(&old, 600);
+            touch(&new, 5);
+            let got = read_linux(&profile).unwrap();
+            assert_eq!(got.len(), 1, "network_newer={network_newer}");
+        }
     }
 
     #[test]
-    fn cookies_store_prefers_network_and_falls_back_to_legacy() {
+    fn cookies_store_picks_by_mtime_wal_included() {
         use cua_teleport_bundle::layout::chrome::cookies_store;
         let d = tempfile::tempdir().unwrap();
         let p = d.path();
-        assert_eq!(cookies_store(p), p.join("Network/Cookies"));
+        // Neither: the root path, what current Chrome creates.
+        assert_eq!(cookies_store(p), p.join("Cookies"));
         std::fs::write(p.join("Cookies"), b"x").unwrap();
         assert_eq!(cookies_store(p), p.join("Cookies"));
         std::fs::create_dir_all(p.join("Network")).unwrap();
         std::fs::write(p.join("Network/Cookies"), b"x").unwrap();
+        touch(&p.join("Cookies"), 600);
+        touch(&p.join("Network/Cookies"), 5);
+        assert_eq!(cookies_store(p), p.join("Network/Cookies"));
+        touch(&p.join("Cookies"), 1);
+        touch(&p.join("Network/Cookies"), 600);
+        assert_eq!(cookies_store(p), p.join("Cookies"));
+        // A fresh -wal on the network store makes it the live one.
+        std::fs::write(p.join("Network/Cookies-wal"), b"x").unwrap();
+        touch(&p.join("Network/Cookies-wal"), 0);
+        touch(&p.join("Cookies"), 100);
         assert_eq!(cookies_store(p), p.join("Network/Cookies"));
     }
 

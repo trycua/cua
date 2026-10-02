@@ -1452,6 +1452,8 @@ pub fn plan_from_template(t: &Template) -> Result<LocalFleetPlan>
 pub fn pool_image(image: &str) -> Option<&str>
 /// Pool `pool`'s template image as an ...
 pub async fn pool_image_info(fleet: &FleetClient, pool: &str, creds: Option<&RegistryCredentials>) -> Result<Option<ImageInfo>>
+/// Deletes the runtimes cua set up itself ...
+pub fn remove_builtin_runtimes() -> Result<(), String>
 
 // mod byoc
 /// The error a cloud word without a ...
@@ -1610,7 +1612,7 @@ pub const DEFAULT_PATH: &str = "/mcp";
 
 // mod settings
 /// Every setting, in display order.
-pub const KEYS: [Key; 7] = _;
+pub const KEYS: [Key; 8] = _;
 ```
 
 ## Type aliases

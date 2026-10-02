@@ -38,6 +38,7 @@ More of this crate: [client](/cua-sdk/reference/rust/cua-spaces-client), [agents
 - `presence`: Presence: who is looking at a Space and where their ...
 - `presence::art`: The shared presence cursor art (ass ...
 - `presence::view`: The presence netcode model every client draws from ...
+- `reattach`: Keeping a host-served link to a Space alive across ...
 - `registry`: The persisted Spaces registry.
 - `relay`: `relay:<machine-id>`: machines of the signed-in cua.ai ...
 - `routines`: Routines: recurring tasks a Bot runs on a schedule.
@@ -949,6 +950,54 @@ pub enum Provider {
 impl Provider {
   fn as_str(self) -> &'static str;
   fn parse(s: &str) -> Option<Self>;
+}
+```
+
+### `reattach::Attempt`
+
+What a re-attach attempt did.
+
+```rust
+pub enum Attempt {
+  Attached,
+  Unsupported,
+}
+```
+
+### `reattach::Backoff`
+
+Exponential backoff between failed attempts.
+
+```rust
+pub struct Backoff { /* private fields */ }
+impl Backoff {
+  fn new(policy: &Policy) -> Self;
+  fn fail(&mut self) -> Duration;
+  fn reset(&mut self);
+}
+```
+
+### `reattach::Health`
+
+What a link looks like right now.
+
+```rust
+pub enum Health {
+  Healthy,
+  Down,
+  Gone,
+}
+```
+
+### `reattach::Policy`
+
+Timing of `supervise`.
+
+```rust
+pub struct Policy {
+  pub poll: Duration,
+  pub initial_backoff: Duration,
+  pub max_backoff: Duration,
 }
 ```
 
@@ -2142,6 +2191,10 @@ pub fn cursor_art_svg(shape: CursorShape, color: &str, size: f64) -> String
 // mod presence::view
 /// Opacity of a cursor idle for `idle_ms`.
 pub fn idle_alpha(idle_ms: f64) -> f64
+
+// mod reattach
+/// Checks a link every `policy.poll` and ...
+pub async fn supervise<H, HF, R, RF>(policy: Policy, health: H, reattach: R) where H: FnMut() -> HF, HF: Future<Output = Health>, R: FnMut() -> RF, RF: Future<Output = Result<Attempt, String>>
 
 // mod registry
 /// The cua home: `$CUA_HOME`, else ...

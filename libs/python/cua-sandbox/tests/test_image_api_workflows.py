@@ -42,7 +42,7 @@ def test_image_api_ci_covers_the_contract_and_generated_artifacts() -> None:
             assert "libs/python/**" in test_python_paths
     suite = test_python["jobs"]["cua-sandbox"]["steps"]
     suite_commands = "\n".join(step.get("run", "") for step in suite)
-    assert "cargo build --locked --release -p cua-sdk" in suite_commands
+    assert "cargo build --locked -p cua-sdk" in suite_commands
     assert "pytest tests " in suite_commands
     assert "test_image.py" not in suite_commands
 

@@ -100,6 +100,8 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       CARGO_BUILD_JOBS: "4"
+      # Line tables keep backtraces useful at a fraction of the debug info.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -122,12 +124,14 @@ jobs:
 
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
 
+      # Debug, like the fixture: one profile, so the fixture reuses the
+      # library's dependency builds (a release library doubled the build).
       - name: Build the cua SDK library and the spacesd MockServer fixture
         working-directory: libs/cua
         run: |
-          cargo build --locked --release -p cua-sdk
+          cargo build --locked -p cua-sdk
           scripts/build-test-fixtures.sh
-          node scripts/stage-uniffi-library.mjs --only=python
+          node scripts/stage-uniffi-library.mjs --only=python --profile=debug
 
       - name: Install cua-sandbox
         working-directory: libs/python/cua-sandbox

@@ -30,7 +30,7 @@ async def test_snapshot_linux():
     """Linux: create → install cowsay → snapshot → boot from snapshot → verify."""
     t_create_start = time.monotonic()
 
-    async with Sandbox.ephemeral(Image.linux("ubuntu", "24.04")) as sb:
+    async with Sandbox.ephemeral(Image.linux("ubuntu", "24.04"), local=False) as sb:
         # Install something unique
         result = await sb.shell.run(
             "apt-get update -qq && apt-get install -y -qq cowsay", timeout=120
@@ -52,7 +52,7 @@ async def test_snapshot_linux():
 
     # Boot from snapshot image — should be faster (COW fork)
     t_fork_start = time.monotonic()
-    async with Sandbox.ephemeral(cowsay_image) as sb2:
+    async with Sandbox.ephemeral(cowsay_image, local=False) as sb2:
         t_fork = time.monotonic() - t_fork_start
 
         # cowsay should still be installed
@@ -73,7 +73,7 @@ async def test_snapshot_android():
     FDROID_APK = "https://f-droid.org/F-Droid.apk"
     t_create_start = time.monotonic()
 
-    async with Sandbox.ephemeral(Image.android("14").apk_install(FDROID_APK)) as sb:
+    async with Sandbox.ephemeral(Image.android("14").apk_install(FDROID_APK), local=False) as sb:
         t_create = time.monotonic() - t_create_start
 
         # Verify F-Droid installed (sb.shell.run on android → adb shell)
@@ -89,7 +89,7 @@ async def test_snapshot_android():
 
     # Boot from snapshot — F-Droid should persist
     t_fork_start = time.monotonic()
-    async with Sandbox.ephemeral(fdroid_image) as sb2:
+    async with Sandbox.ephemeral(fdroid_image, local=False) as sb2:
         t_fork = time.monotonic() - t_fork_start
 
         result = await sb2.shell.run("pm list packages org.fdroid.fdroid")

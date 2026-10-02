@@ -322,6 +322,12 @@ final class Server: @unchecked Sendable {
                     return try await self.handlePullStart(request.body)
                 }),
             Route(
+                method: "POST", path: "/lume/pull/cancel",
+                handler: { [weak self] request in
+                    guard let self else { throw HTTPError.internalError }
+                    return try await self.handlePullCancel(request.body)
+                }),
+            Route(
                 method: "POST", path: "/lume/prune",
                 handler: { [weak self] _ in
                     guard let self else { throw HTTPError.internalError }

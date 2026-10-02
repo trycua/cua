@@ -1,0 +1,141 @@
+---
+title: Platform support
+description: Proven operating systems, Linux window systems, and browser routes, with known boundaries and remaining work.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A capability counts as supported only when a Rust harness test observes the
+result in application- or desktop-owned state (see
+[How Cua Driver works](/cua-driver/concepts/how-cua-driver-works#how-it-is-validated)).
+Unsupported routes return a structured refusal.
+
+| Level | Meaning |
+| --- | --- |
+| Supported | Proven against app-owned or desktop-owned state. |
+| Supported with limits | Common paths proven; some delivery shapes refuse. |
+| Experimental | Backend exists; coverage incomplete. Assume nothing unlisted works. |
+
+## Operating systems
+
+| Platform | APIs | State |
+| --- | --- | --- |
+| Windows | Win32, UI Automation, native input, window messages | Supported. Coverage: Electron, Tauri, WPF, WinUI 3, WebView2. Some background Chromium gestures and elevated-integrity targets refuse or are unproven. |
+| macOS | AppKit, Accessibility, Quartz/HID, ScreenCaptureKit | Supported. Coverage: Electron, Tauri, AppKit, SwiftUI, WKWebView. Needs Accessibility and Screen Recording. Some background scroll and drag shapes refuse. |
+| Linux X11 | X11/EWMH, XTest, AT-SPI | Supported with toolkit limits. Toolkits that reject synthetic background events get an explicit refusal. |
+| Linux Wayland | AT-SPI plus compositor-specific discovery, capture, activation, and portal input | Supported with compositor limits. Semantic background actions work where the app exposes them; raw input to an occluded window generally does not. |
+
+## Linux window systems
+
+"Wayland" is not one API: each compositor exposes different discovery,
+capture, activation, and input. Native Wayland is opt-in with
+`CUA_DRIVER_RS_ENABLE_WAYLAND=1`; without it, Wayland sessions use XWayland
+routes where the app has a real X11 window.
+
+| Environment | State | Proven | Main limits |
+| --- | --- | --- | --- |
+| X11/Xorg | Supported | Discovery, capture, AT-SPI, foreground input, semantic background actions, desktop scope | Raw background delivery depends on the toolkit. |
+| Sway (wlroots) | Supported with limits | The full Electron, Tauri, GTK, and capture catalog | Focus-bound raw background input refuses. Other wlroots compositors unproven. |
+| GNOME/Mutter | Supported with limits | AT-SPI, GTK controls, compositor geometry and capture, foreground activation, portal/libei input | Needs the bundled [WinRects Shell helper](/cua-driver/quickstart) and one Shell restart. Portal video recording incomplete. |
+| KDE/KWin | Experimental | Plasma 6 startup, GTK AT-SPI discovery, portal availability | The KWin helper is read-only; raw target-addressed input refuses. |
+| Hyprland / Omarchy | Experimental | [Qualified isolated input](#hyprland-and-omarchy) since 0.24.0 | Does not inherit Sway coverage. |
+| `cua-compositor` (nested) | Experimental | Native GTK behavior, capture, per-surface raw input | Owns its own compositor; says nothing about stock Wayland. |
+| XWayland | Supported with limits | X11 routes for real X11 windows; AT-SPI fallback | Depends on whether the app actually uses X11. |
+
+X11 window capture supports packed 16-, 24-, and 32-bit TrueColor and
+DirectColor images. DirectColor capture reads the window's current colormap for
+each frame, including palette changes that do not repaint the window. Other
+indexed visual classes remain outside the native capture path.
+
+Distribution names (Ubuntu, Arch) do not matter much; what matters is the
+display session and the app's backend. A portal grant belongs to the runtime
+that received it and may prompt again after a restart.
+
+### Hyprland and Omarchy
+
+Omarchy is an Arch setup built on Hyprland. Modern Hyprland is not wlroots, so
+Sway results do not carry over. An optional Hyprland plugin, off by default and
+outside the normal installer, adds two independent agent seats (`Cua-Agent`,
+`Cua-Agent-2`) for isolated background input. Cua Driver 0.24.0 shipped it with
+a narrow qualification:
+
+- Apps: Calc from `libreoffice-fresh 26.2.5-3` and Inkscape `1.4.4-6`, checked
+  against package metadata before every action.
+- The plugin's Hyprland ABI and compiler toolchain must match the compositor.
+- Not covered: Chromium, Electron, and XWayland raw input; Unicode and IME;
+  multiple layouts; modified pointer gestures.
+- Explicit foreground actions change focus and pointer and do not restore them.
+
+Evidence for this feature is recorded in PRs
+[#3547](https://github.com/trycua/cua/pull/3547),
+[#3557](https://github.com/trycua/cua/pull/3557), and
+[#3572](https://github.com/trycua/cua/pull/3572). General Hyprland support
+still needs an accepted input and permission design, packaged install and
+upgrade proof, and the full native catalog on an integrated candidate.
+
+## Browser routes
+
+Browser mutation always starts from an exact native `(pid, window_id)` binding.
+
+| Surface | Proven | Limit |
+| --- | --- | --- |
+| Chrome and Edge on Windows | Snapshot, navigate, type, trusted background click, DOM pointer actions, dialogs, file assignment, downloads, frames, multi-tab | Elevated-integrity targets refuse. |
+| Chrome on macOS; Chrome and Edge on Linux X11 | The same, except trusted pointer input | Trusted pointer returns `browser_input_trust_unavailable`; Linux dialogs need foreground. |
+| Chrome on Sway | Exact binding when compositor identity and geometry agree | Generic GNOME or KDE Wayland is read-only. |
+| Electron (Windows, macOS, X11, Sway) | Typed mutation while one native window maps to one page | A second page or window invalidates the route. |
+| Brave, Vivaldi, Opera, Arc | Detected, not release-accepted | Use at your own risk. |
+| Tauri, WKWebView, WebKitGTK, split-process WebView2, Safari, Firefox | Browser identity and a clean refusal | Use native accessibility and pixel actions. |
+
+Logged-in profile attachment is covered in [Browsers](/cua-driver/guides/browsers#attach-to-a-logged-in-profile).
+
+## Boundaries and remaining work
+
+These are operating-system boundaries, not bugs; the driver refuses instead of
+working around them:
+
+- **Windows integrity levels:** a lower-integrity process cannot inject input
+  into a higher-integrity (elevated) app.
+- **Standard Wayland:** an ordinary client cannot send raw input to an
+  unfocused, occluded window. AT-SPI actions still work in the background.
+- **macOS:** off-Space SwiftUI trees, keyboard commits to minimized windows,
+  and apps that accept only HID-tap input. Workarounds are in
+  [Troubleshoot](/cua-driver/guides/troubleshoot#known-limits).
+
+### Off-Space windows on macOS
+
+macOS omits windows on other Spaces from an app's `AXWindows` list. For AppKit
+windows, the driver recovers the requested window by its exact CGWindowID, so
+`get_window_state`, element actions, and background pixel actions keep working
+while the window stays on its Space. The user's current Space, frontmost app,
+and keyboard focus do not change. Recovery probes the first 2,000 accessibility
+element ids of the app; a window beyond that limit reports
+`ax_window_unresolved`. The agent cursor does not paint while an action targets
+a window on another Space. Windows virtual desktops and Linux workspaces do not
+yet suppress the cursor for off-workspace targets.
+
+### Desktop captures leave out the agent cursor
+
+`get_desktop_state` keeps the driver's own agent cursor and session pill out of
+the PNG it returns. Every response reports the outcome in
+`structuredContent.agent_overlay_capture`: `excluded` with the native `method`,
+`not_present` when no overlay pixels were on screen, or `not_excluded` with a
+`reason`.
+
+| Platform | How the cursor is left out |
+| --- | --- |
+| macOS 14 or later | ScreenCaptureKit display filter; the `screencapture` fallback reports `not_excluded`. |
+| Windows 10 2004 or later | `WDA_EXCLUDEFROMCAPTURE` for the length of the capture; older builds report `not_excluded`. |
+| Linux X11 | The overlay hides for the root grab (`method` ends in `+x11_save_under` without a compositor). |
+| Linux Wayland | The compositor draws the cursor into the output; captures report `not_excluded`. |
+
+Open evidence gaps, with no dates promised: broader WPF and WinUI 3 gestures,
+WebView2 native input, a controlled `background_uipi_blocked` fixture, more
+AppKit actions and SwiftUI popovers, real-Xorg multi-pointer, GNOME and KDE
+renderer catalogs, and the full nested-compositor catalog. A row changes only
+when an unchanged catalog cell produces new app-owned evidence at an exact
+source commit.
+
+<Callout type="info">
+  Contributors: source layout, harnesses, and runner commands are in the repository's
+  `libs/cua-driver/README.md` and `libs/cua-driver/docs/test-harnesses-guide.md`.
+</Callout>

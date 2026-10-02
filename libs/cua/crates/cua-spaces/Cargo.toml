@@ -1,0 +1,106 @@
+[package]
+name = "cua-spaces"
+description = "Cua Spaces runtime: a registry of spacesd sandboxes plus the Spaces primitives (files, streams, presence, hotspot, services, agents), the Spaces MCP server and the extension points for teleport, the Cua Volume and persistent agents."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = [
+    "spaces-files",
+    "spaces-stream",
+    "spaces-presence",
+    "spaces-hotspot",
+    "spaces-volume",
+    "spaces-agents",
+    "mcp",
+    "mcp-http",
+    "mcp-client",
+]
+# send_file (TeleportService.ReceiveFiles) with gitignore-aware folder walks.
+spaces-files = ["dep:ignore"]
+# Stream targets, media tickets, and `StreamSession` (rcdp wire v2 through
+# the streaming client Cua Spaces registers, delivered to FrameSink /
+# AudioSink callbacks).
+spaces-stream = []
+# PresenceService: join, roster, cursors.
+spaces-presence = []
+# Reverse-SOCKS hotspot: this machine serves a Space's egress.
+spaces-hotspot = ["dep:cua-hotspot", "dep:tokio-tungstenite"]
+# Cua Volume mounted in a Space's guest, served from this host.
+spaces-volume = ["dep:cua-hotspot", "dep:tokio-tungstenite"]
+# Agent CLIs in a Space as detached, tagged spacesd processes.
+spaces-agents = ["dep:cua-agents", "dep:reqwest", "dep:tar"]
+# The Spaces MCP server (stdio). Hosted by `cua daemon mcp`.
+mcp = []
+# The same server over MCP streamable HTTP.
+mcp-http = ["mcp", "dep:axum"]
+# The typed control-plane client (folded from libs/spaces-sdk's
+# cua-spaces-core) and its `cua.control.session/1` conformance fixture.
+mcp-client = ["mcp"]
+
+[[bin]]
+name = "cua-spaces-control-fixtures"
+path = "src/bin/cua-spaces-control-fixtures.rs"
+required-features = ["mcp-client"]
+
+[dependencies]
+# Host Spaces use counts (fixed words only).
+cua-telemetry.workspace = true
+cua-spaces-contract = { path = "../cua-spaces-contract" }
+cua-proto = { workspace = true, features = ["client", "serde"] }
+cua-spacesd-client.workspace = true
+cua-home.workspace = true
+cua-icon-cache.workspace = true
+cua-agents = { workspace = true, optional = true }
+cua-fleet.workspace = true
+cua-image.workspace = true
+cua-sandbox-core.workspace = true
+# The cua-relay machine directory (`space://relay/<id>`) and AccountTokens.
+cua-host.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+humantime.workspace = true
+http.workspace = true
+pbjson-types.workspace = true
+prost.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+tonic = { workspace = true, default-features = false, features = ["codegen"] }
+tracing.workspace = true
+url.workspace = true
+# Routines: daily and weekly slots in local time.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+# Optional modules.
+ignore = { version = "0.4", optional = true }
+# Agent homes move in and out of a Space as one archive.
+tar = { version = "0.4", optional = true }
+cua-hotspot = { path = "../cua-hotspot", optional = true }
+tokio-tungstenite = { workspace = true, optional = true }
+# The host cache of pinned install archives (spaces-agents).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"], optional = true }
+axum = { workspace = true, optional = true, features = ["json"] }
+
+[dev-dependencies]
+cua-sandbox-core = { workspace = true, features = ["testing"] }
+cua-host = { workspace = true, features = ["testing"] }
+cua-spacesd-client = { workspace = true, features = ["testing"] }
+cua-fleet = { workspace = true, features = ["testing"] }
+cua-proto = { workspace = true, features = ["client", "server", "serde"] }
+tonic = { workspace = true, default-features = false, features = ["codegen", "server", "router", "channel"] }
+tokio-stream = { workspace = true, features = ["net"] }
+tokio = { workspace = true, features = ["test-util"] }
+tempfile.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }

@@ -18,10 +18,6 @@ repository = "https://github.com/trycua/cua"
 dev = [
     "cua-core",
     "cua-agent",
-    "cua-computer",
-    "cua-computer-server",
-    "cua-som",
-    "cua-mcp-server",
     "black>=23.0.0",
     "ipykernel>=6.29.5",
     "jedi>=0.19.2",
@@ -69,21 +65,24 @@ constraint-dependencies = [
 members = [
     "libs/python/agent",
     "libs/python/core",
-    "libs/python/computer",
-    "libs/python/computer-server",
     "libs/python/som",
-    "libs/python/mcp-server",
     "libs/python/bench-ui",
 ]
 
 [tool.uv.sources]
 cua-agent = { workspace = true }
 cua-core = { workspace = true }
-cua-computer = { workspace = true }
-cua-computer-server = { workspace = true }
 cua-som = { workspace = true }
-cua-mcp-server = { workspace = true }
 cua-bench-ui = { workspace = true }
+# cua-sandbox is not a workspace member (it pulls the native cua-fleet wheel
+# from the cua-wheels index); consumers resolve it from the in-repo path.
+cua-sandbox = { path = "libs/python/cua-sandbox", editable = true }
+# cua-sandbox depends on the cua SDK (UniFFI binding), built from the repo.
+cua = { path = "libs/cua/python", editable = true }
+
+[[tool.uv.index]]
+name = "cua-wheels"
+url = "https://wheels.cua.ai/simple"
 
 [tool.black]
 line-length = 100

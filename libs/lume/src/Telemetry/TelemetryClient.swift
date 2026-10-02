@@ -341,9 +341,15 @@ final class TelemetryClient: @unchecked Sendable {
   @discardableResult
   func flush(timeout: TimeInterval = Constants.flushTimeout) async -> Bool {
     let group = pendingRequests
-    return await Task.detached {
-      Self.waitForPendingRequests(group, timeout: timeout)
-    }.value
+    // The blocking wait runs on a GCD thread, never a Swift concurrency
+    // pool thread: the sends it waits for run on that pool, and blocking
+    // pool threads (a few flushes at once on a small machine) starves them
+    // until the timeout.
+    return await withCheckedContinuation { continuation in
+      DispatchQueue.global(qos: .utility).async {
+        continuation.resume(returning: Self.waitForPendingRequests(group, timeout: timeout))
+      }
+    }
   }
 
   private static func waitForPendingRequests(
@@ -561,7 +567,7 @@ final class TelemetryClient: @unchecked Sendable {
     let allowedKeys: Swift.Set<String> = [
       "asynchronous", "cache_hit", "cpu", "daemon_was_running", "disk_size",
       "disk_size_gb", "duration_bucket", "error_class", "failure_class", "guest_os",
-      "has_unattended", "headless", "install_channel", "memory", "memory_gb", "mode",
+      "has_unattended", "headless", "image", "install_channel", "memory", "memory_gb", "mode",
       "operation", "os_type", "outcome", "phase", "product_version", "protocol", "source",
       "success", "target_version", "tool_name", "transport",
     ]
@@ -609,6 +615,8 @@ final class TelemetryClient: @unchecked Sendable {
       return ["none", "installer_exit", "installer_launch", "unknown"].contains(value)
     case "guest_os", "os_type":
       return ["macos", "linux", "windows", "unknown"].contains(value)
+    case "image":
+      return value == "custom" || catalogImages.contains(value)
     case "install_channel":
       return Constants.allowedInstallChannels.contains(value)
     case "mode":
@@ -677,6 +685,41 @@ final class TelemetryClient: @unchecked Sendable {
 
   private static func normalizedUpdateFailureClass(_ raw: String) -> String {
     ["installer_exit", "installer_launch"].contains(raw) ? raw : "unknown"
+  }
+
+  /// Images Cua publishes for Lume (the cua catalog's `macos:<major>` ids
+  /// and the trycua Lume repositories). Anything else is `custom`.
+  static let catalogImages: Swift.Set<String> = [
+    "macos:26", "macos:15",
+    "macos-tahoe-vanilla", "macos-tahoe-cua", "macos-tahoe-xcode",
+    "macos-sequoia-vanilla", "macos-sequoia-cua", "macos-sequoia-xcode",
+  ]
+
+  /// The telemetry value of an image reference: its catalog id, else
+  /// `custom`. The reference itself (a private registry, org, repository,
+  /// tag or digest) is never sent.
+  static func imageId(
+    _ reference: String, registry: String = "ghcr.io", organization: String = "trycua"
+  ) -> String {
+    guard registry.lowercased() == "ghcr.io", organization.lowercased() == "trycua" else {
+      return "custom"
+    }
+    var ref = reference.trimmingCharacters(in: .whitespaces).lowercased()
+    if let at = ref.firstIndex(of: "@") { ref = String(ref[..<at]) }
+    if ref.hasPrefix("ghcr.io/trycua/") { ref.removeFirst("ghcr.io/trycua/".count) }
+    guard !ref.isEmpty, !ref.contains("/") else { return "custom" }
+    if catalogImages.contains(ref) { return ref }
+    let parts = ref.split(separator: ":", maxSplits: 1).map(String.init)
+    let repo = parts.first ?? ref
+    let tag = parts.count > 1 ? parts[1] : "latest"
+    // `macos:<major>` is only an id with its tag; Lume repositories are
+    // ids by name with their published tags (`latest` or a version).
+    if repo != "macos", catalogImages.contains(repo),
+      tag == "latest" || tag.allSatisfy({ $0.isNumber || $0 == "." })
+    {
+      return repo
+    }
+    return "custom"
   }
 
   static func strictReleaseVersion(_ raw: String?) -> String? {

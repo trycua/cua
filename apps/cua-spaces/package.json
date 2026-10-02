@@ -1,0 +1,42 @@
+{
+  "name": "@cua/cua-spaces",
+  "private": true,
+  "version": "0.3.0",
+  "license": "FSL-1.1-MIT",
+  "description": "Cua Spaces notch fleet portal - Tauri 2 prototype with synthetic data",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/build-core-wasm.mjs && vite",
+    "build": "node scripts/build-core-wasm.mjs && tsc -p tsconfig.json --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "node scripts/build-core-wasm.mjs && vitest run",
+    "test:watch": "vitest",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build --no-bundle",
+    "core": "node scripts/build-core-wasm.mjs",
+    "typecheck": "node scripts/build-core-wasm.mjs && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.5.0",
+    "@tauri-apps/plugin-process": "^2.0.0",
+    "@tauri-apps/plugin-updater": "^2.0.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.5.0",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.4.1",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.1.3"
+  }
+}

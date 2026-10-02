@@ -109,10 +109,8 @@ impl ServiceSessionClient {
 
     pub(crate) fn close(&self) {
         let mut connection = self.connection.lock().unwrap();
-        if connection.closed {
-            if self.resume_connection(&mut connection).is_err() {
-                return;
-            }
+        if connection.closed && self.resume_connection(&mut connection).is_err() {
+            return;
         }
         let request = DaemonRequest {
             method: "trusted_session_end".into(),

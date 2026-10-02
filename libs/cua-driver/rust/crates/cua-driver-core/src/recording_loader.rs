@@ -259,10 +259,9 @@ fn parse_click_turn(action_path: &Path) -> Option<ClickEvent> {
                     .unwrap_or(""),
             )?
         }
-    } else if let Some(cp) = v.get("click_point") {
-        (double_value(cp.get("x"))?, double_value(cp.get("y"))?)
     } else {
-        return None;
+        let cp = v.get("click_point")?;
+        (double_value(cp.get("x"))?, double_value(cp.get("y"))?)
     };
 
     let t_ms = double_value(v.get("t_ms_from_session_start"))?;

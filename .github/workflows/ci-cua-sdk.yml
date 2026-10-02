@@ -1,0 +1,401 @@
+name: "CI: cua SDK"
+
+# cua-sdk (UniFFI), cua-daemon, the cua CLI, the Cua Spaces crates
+# (cua-spaces-ext, cua-spaces-ffi, cua-spaces-cli; teleport send in
+# cua-teleport and cua-teleport-bundle, the Cua Volume in cua-volume) and the
+# shared media crates (cua-media-*, cua-viewer), plus every language binding:
+# Rust tests in both topologies, binding drift (--check), a Kotlin compile
+# check, Python/Node/Swift smoke tests (and spaces-sdk-swift) against
+# loopback fixtures, and the browser (wasm32) build.
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua/**"
+      - "libs/spaces-sdk-swift/**"
+      # cua-test-fixtures and the Spaces suites link a real driver core.
+      - "libs/cua-spacesd/**"
+      - "libs/cua-driver/rust/**"
+      - "libs/fleet/sdk/**"
+      - "libs/fleet/sdk-schema/**"
+      - ".github/workflows/ci-cua-sdk.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua/**"
+      - "libs/spaces-sdk-swift/**"
+      # cua-test-fixtures and the Spaces suites link a real driver core.
+      - "libs/cua-spacesd/**"
+      - "libs/cua-driver/rust/**"
+      - "libs/fleet/sdk/**"
+      - "libs/fleet/sdk-schema/**"
+      - ".github/workflows/ci-cua-sdk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-sdk-${{ github.workflow }}-${{ github.ref }}
+  # Only superseded PR runs are cancelled. A main run always finishes, so
+  # rust-cache saves the warm build that PR runs restore (cancelled main runs
+  # never saved one, and every smoke job compiled cold).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  CARGO_TERM_COLOR: always
+  # Big debug test binaries (Spaces, conformance) exhaust link memory with
+  # full debug info; line tables keep backtraces useful.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_BUILD_JOBS: "4"
+
+jobs:
+  rust:
+    name: rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-26, windows-latest]
+    defaults:
+      run:
+        working-directory: libs/cua
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-sdk
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt -p cua-sdk -p cua-daemon -p cua-cli -p cua-bindgen -p cua-media-protocol -p cua-media-transport -p cua-media-codec -p cua-media-client -p cua-viewer -p cua-logging -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --check
+      - name: Clippy (native)
+        run: >
+          cargo clippy --locked -p cua-sdk -p cua-daemon -p cua-cli -p cua-bindgen
+          -p cua-media-protocol -p cua-media-transport -p cua-media-client -p cua-viewer -p cua-logging
+          -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
+          -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli
+          --all-targets --features cua-daemon/test-fixtures,cua-media-client/media-decode -- -D warnings
+      - name: Clippy (browser API, host metadata build)
+        if: runner.os == 'Linux'
+        run: cargo clippy --locked -p cua-sdk --no-default-features --features web -- -D warnings
+      - name: Build (wasm32)
+        if: runner.os == 'Linux'
+        run: cargo build --locked -p cua-sdk --target wasm32-unknown-unknown --no-default-features
+      - name: Test (embedded, daemon over UDS and loopback, CLI, Cua Spaces extensions)
+        run: >
+          cargo test --locked --no-fail-fast -p cua-sdk -p cua-daemon -p cua-cli
+          -p cua-teleport -p cua-teleport-bundle -p cua-chromium-storage -p cua-volume
+          -p cua-spaces-ext -p cua-spaces-ffi -p cua-spaces-cli -- --test-threads=4
+        env:
+          # Teleport send acts only on fake hosts in tests; anything that
+          # reaches the real host fails closed.
+          CUA_ENV_TEST_SANDBOX: "1"
+          # Test threads get 8 MiB, like the CLI's runtime: unoptimized
+          # Windows frames are large and the CLI tests drive whole commands.
+          RUST_MIN_STACK: "8388608"
+      - name: Test (shared media crates and clients)
+        run: >
+          cargo test --locked --no-fail-fast -p cua-media-protocol -p cua-media-transport -p cua-media-client -p cua-viewer -p cua-logging
+          --features cua-media-client/media-decode,cua-media-transport/quic -- --test-threads=4
+      # cua-media-codec's ScreenCaptureKit audio needs the macOS 26 SDK (the
+      # spacesd CI builds it on macos-26); test the rest here.
+      - name: Clippy and test (cua-media-codec)
+        run: |
+          features=()
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            features=(--no-default-features --features "openh264,opus,hw")
+          fi
+          cargo clippy --locked -p cua-media-codec "${features[@]}" --all-targets -- -D warnings
+          cargo test --locked --no-fail-fast -p cua-media-codec "${features[@]}" -- --test-threads=4
+      # The streaming bench (libs/cua/bench/streaming, its own workspace) is
+      # otherwise built only by the nightly bench; lint it with the SDK.
+      - name: Format and clippy (streaming bench)
+        if: runner.os == 'Linux'
+        working-directory: libs/cua/bench/streaming
+        run: |
+          cargo fmt -- --check
+          cargo clippy --locked --all-targets -- -D warnings
+      # libs/cua is the client and shared-format side: it must never depend
+      # on the server workspace (libs/cua-spacesd), and the media client
+      # must stay free of the server/provider/platform stack.
+      - name: Client/server dependency boundary
+        if: runner.os == 'Linux'
+        run: |
+          if cargo metadata --locked --format-version 1 | grep -o '"manifest_path":"[^"]*"' | grep 'libs/cua-spacesd/'; then
+            echo "libs/cua depends on crates in libs/cua-spacesd" >&2
+            exit 1
+          fi
+          tree="$(cargo tree --locked -p cua-media-client -e normal --features media-decode)"
+          if printf '%s\n' "$tree" | grep -E 'cua-spacesd|platform-(macos|windows|linux)|screencapturekit'; then
+            echo "cua-media-client depends on server-side crates" >&2
+            exit 1
+          fi
+
+  # The Spaces suites (cua-spaces, cua-daemon, cua-sdk) against a real
+  # cua-spacesd server core in process. A standalone workspace so libs/cua
+  # never depends on the driver workspace (see the boundary check above).
+  spaces-e2e:
+    name: spaces e2e (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-26]
+    defaults:
+      run:
+        working-directory: libs/cua-spacesd/tests/spaces-e2e
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua-spacesd/tests/spaces-e2e
+          key: cua-spaces-e2e
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt -- --check
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked -- --test-threads=4
+        env:
+          CUA_ENV_TEST_SANDBOX: "1"
+
+  bindings:
+    name: bindings drift (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-26]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-sdk-bindings
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua/typescript/package-lock.json
+      - name: Install pinned UBRN
+        run: npm --prefix libs/cua/typescript ci --ignore-scripts
+      - name: Generated bindings are up to date
+        run: node libs/cua/scripts/generate-uniffi-bindings.mjs --check
+      - name: Spaces contract manifest and fixtures are up to date
+        if: runner.os == 'Linux'
+        working-directory: libs/cua
+        run: |
+          cargo run --locked -q -p cua-spaces-contract --bin cua-spaces-contract-gen -- --check
+          cargo run --locked -q -p cua-spaces --bin cua-spaces-control-fixtures -- --check
+
+  kotlin:
+    # The generated binding must compile (an exported `close` once clashed
+    # with AutoCloseable.close; uniffi.toml renames such methods).
+    name: kotlin compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container: gradle:8.10.2-jdk17
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Compile the generated Kotlin binding
+        run: gradle --no-daemon -p libs/cua/kotlin compileKotlin
+
+  python:
+    name: python smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # A cold Windows run builds cua-sdk (release), the fixtures and the CLI:
+    # it passed 45 minutes still compiling.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-26, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-sdk-python
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      # The wheel ships the MIT `cua`; the suite also runs the daemon of the
+      # Cua Spaces build (cua-spaces-cli), a Unix-socket test skipped on Windows.
+      - name: Build the SDK, fixtures and CLIs
+        working-directory: libs/cua
+        run: |
+          cargo build --locked --release -p cua-sdk
+          scripts/build-test-fixtures.sh
+          cargo build --locked -p cua-cli
+          if [ "$RUNNER_OS" != Windows ]; then cargo build --locked -p cua-spaces-cli; fi
+          node scripts/stage-uniffi-library.mjs --only=python
+      - name: Build the platform wheel
+        working-directory: libs/cua/python
+        run: uv run --no-project --python 3.12 --with build python build_wheel.py --cli ../target/debug/cua --out-dir dist
+      - name: Smoke-test the installed wheel
+        working-directory: libs/cua/python
+        run: |
+          WHEEL=$(ls dist/*.whl)
+          uv run --no-project --isolated --python 3.12 --with pytest --with "$WHEEL" pytest -q -p no:cacheprovider tests
+
+  node:
+    name: node smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # A cold macOS run (release cua-sdk, fixtures, both CLIs) passed 45
+    # minutes still compiling, as python smoke did on Windows.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-26]
+    defaults:
+      run:
+        working-directory: libs/cua
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-sdk-node
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua/typescript/package-lock.json
+      - name: Build and stage
+        run: |
+          npm --prefix typescript ci --ignore-scripts
+          cargo build --locked --release -p cua-sdk
+          scripts/build-test-fixtures.sh
+          cargo build --locked -p cua-cli -p cua-spaces-cli
+          node scripts/stage-uniffi-library.mjs --only=node
+      - name: Test
+        run: npm --prefix typescript test
+
+  browser:
+    name: browser (wasm32) build + smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: libs/cua
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-sdk-browser
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua/typescript/package-lock.json
+      - name: Install wasm-bindgen 0.2.126 and UBRN
+        run: |
+          cargo install wasm-bindgen-cli --version 0.2.126 --locked
+          npm --prefix typescript ci --ignore-scripts
+      - name: Build @trycua/cua/browser
+        run: node scripts/build-wasm.mjs
+      - name: Smoke-test the wasm build over gRPC-Web
+        run: |
+          scripts/build-test-fixtures.sh
+          cd typescript && node --test test/browser.test.mjs
+
+  swift:
+    name: swift smoke (macOS)
+    runs-on: macos-26
+    # Cold, the release cua-sdk build alone nears 45 minutes on macos-26.
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: libs/cua
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "29.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: libs/cua
+          key: cua-sdk-swift
+      - name: Dev dylib
+        run: |
+          cargo build --locked --release -p cua-sdk
+          scripts/build-test-fixtures.sh
+          node scripts/stage-uniffi-library.mjs --only=swift
+          swift/scripts/test.sh
+      - name: spaces-sdk-swift (the CuaSpaces overlay, against the fixtures)
+        working-directory: libs/spaces-sdk-swift
+        env:
+          CUA_REQUIRE_FIXTURES: "1"
+        run: |
+          ../cua/swift/scripts/fresh-abi.sh . debug
+          swift test
+      - name: XCFramework (static) binary target
+        run: |
+          swift/scripts/build-xcframework.sh
+          cd swift && rm -rf .build && CUA_SWIFT_XCFRAMEWORK=build/CuaSDKFFI.xcframework scripts/test.sh

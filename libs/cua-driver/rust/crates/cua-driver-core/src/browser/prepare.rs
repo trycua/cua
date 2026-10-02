@@ -416,7 +416,16 @@ fn isolated_browser_command(executable: &str, profile: &Path) -> Command {
             .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
             && std::env::var_os("WAYLAND_DISPLAY").is_some()
             && std::env::var_os("DISPLAY").is_none();
-        let no_sandbox = std::env::var("CUA_E2E_BROWSER_NO_SANDBOX").as_deref() == Ok("1");
+        // The runtime cannot give Chromium its own sandbox (a container
+        // without unprivileged user namespaces): the container boundary is
+        // the sandbox. Set by the image (libs/images/linux detects it), never
+        // guessed here; CUA_E2E_BROWSER_NO_SANDBOX is the older test spelling.
+        let no_sandbox = [
+            "CUA_DRIVER_BROWSER_NO_SANDBOX",
+            "CUA_E2E_BROWSER_NO_SANDBOX",
+        ]
+        .iter()
+        .any(|name| std::env::var(name).as_deref() == Ok("1"));
         configure_linux_isolated_browser_command(&mut command, native_wayland, no_sandbox);
     }
     let stderr = if std::env::var_os("CUA_E2E_BROWSER_STDERR").is_some() {

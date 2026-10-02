@@ -53,7 +53,7 @@ LUME_HOME="${LUME_HOME:-$HOME/.lume}"
 LUME_CHANNEL=""
 LUME_CHANNEL_EXPLICIT=false
 # ~~~ BAKED_VERSION: auto-updated in the release PR — do not edit ~~~
-LUME_BAKED_VERSION="0.5.3" # x-release-please-version
+LUME_BAKED_VERSION="0.6.0" # x-release-please-version
 # ~~~ END_BAKED_VERSION ~~~
 
 # Default port for lume serve (default: 7777)

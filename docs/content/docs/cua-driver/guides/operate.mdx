@@ -1,0 +1,319 @@
+---
+title: Keep Cua Driver running and updated
+description: Keep the Cua Driver daemon running, update it, choose a release channel, personalize the agent cursor, and control telemetry.
+---
+
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+## Keep it running
+
+MCP clients on macOS and all one-shot `cua-driver call` commands need a
+running daemon. Apps that use `CuaDriver.create()` do not.
+
+<Tabs items={['macOS', 'Windows', 'Linux']}>
+  <Tab value="macOS">
+
+Save a LaunchAgent at `~/Library/LaunchAgents/com.trycua.cua-driver.plist`
+(from a repo checkout, `bash libs/cua-driver/scripts/install-local.sh --autostart`
+writes it for you):
+
+```xml skip="host-install"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.trycua.cua-driver</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Applications/CuaDriver.app/Contents/MacOS/cua-driver</string>
+    <string>serve</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+</dict>
+</plist>
+```
+
+```bash skip="host-install"
+launchctl load ~/Library/LaunchAgents/com.trycua.cua-driver.plist
+```
+
+The LaunchAgent daemon is attributed to `com.trycua.driver`, so its grants
+persist across reboots.
+
+  </Tab>
+  <Tab value="Windows">
+
+Run once from RDP or the local console (not SSH or `SYSTEM`):
+
+```powershell test="cli-shape" id="cua-driver-autostart-enable"
+cua-driver autostart enable
+cua-driver autostart kick
+cua-driver autostart status
+```
+
+`enable` registers the `cua-driver-serve` Scheduled Task with
+`LogonType: Interactive`, so the daemon lives in your desktop session. It is
+idempotent and survives RDP disconnects. Only `not-registered` from `status`
+means the task is absent. Remove it with `cua-driver autostart disable`.
+
+  </Tab>
+  <Tab value="Linux">
+
+Save `~/.config/systemd/user/cua-driver.service`:
+
+```ini skip="host-install"
+[Unit]
+Description=cua-driver background daemon
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/cua-driver serve
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
+```
+
+```bash skip="host-install"
+systemctl --user daemon-reload
+systemctl --user enable --now cua-driver.service
+```
+
+On a headless box, use `WantedBy=default.target` and run
+`loginctl enable-linger $USER`.
+
+  </Tab>
+</Tabs>
+
+```bash test="cli-shape" id="cua-driver-status"
+cua-driver status
+cua-driver stop
+```
+
+`stop` ends the daemon; the autostart entry brings it back at the next logon.
+
+### Pin a permission mode
+
+Mode flags are read once at start, so put them in the autostart entry.
+
+<Tabs items={['macOS', 'Windows', 'Linux']}>
+  <Tab value="macOS">
+
+Add each flag as its own `<string>` after `serve`, with an absolute path
+(`launchd` does not expand `~`), then `launchctl unload` and `load` the plist:
+
+```xml skip="host-install"
+  <string>serve</string>
+  <string>--permission-mode</string>
+  <string>bounded</string>
+  <string>--capability-manifest</string>
+  <string>/Users/you/cua-session.yaml</string>
+  <string>--approve-capability-manifest</string>
+```
+
+  </Tab>
+  <Tab value="Windows">
+
+The task always runs a bare `serve`, so set User environment variables and
+restart:
+
+```powershell test="cli-shape" id="cua-driver-stop"
+setx CUA_DRIVER_PERMISSION_MODE bounded
+setx CUA_DRIVER_CAPABILITY_MANIFEST_FILE "$env:USERPROFILE\cua-capabilities.yaml"
+setx CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED 1
+cua-driver stop
+cua-driver autostart kick
+```
+
+  </Tab>
+  <Tab value="Linux">
+
+```ini skip="host-install"
+ExecStart=%h/.local/bin/cua-driver serve --permission-mode bounded --capability-manifest %h/cua-session.yaml --approve-capability-manifest
+```
+
+Then `systemctl --user daemon-reload` and `systemctl --user restart cua-driver.service`.
+
+  </Tab>
+</Tabs>
+
+A bad configuration fails startup instead of falling back to `standard`. A
+user policy file works the same way: set `CUA_DRIVER_POLICY_FILE` in the
+plist's `EnvironmentVariables`, the unit, or the User environment.
+
+## Update
+
+```bash test="cli-shape" id="cua-driver-check-update"
+cua-driver check-update
+cua-driver update --apply
+```
+
+`check-update` only checks (`--json` for scripts, `--no-cache` to skip the
+20-hour cache); `update --apply` runs the canonical installer. Then restart the
+daemon with your usual start command (`open -n -g -a CuaDriver --args serve`,
+`cua-driver autostart kick`, or `cua-driver serve`), keeping any mode flags. The
+same check is the `check_for_update` MCP tool.
+
+```bash test="cli-shape" id="cua-driver-update-2"
+if cua-driver check-update --json | jq -e '.update_available' > /dev/null; then
+  cua-driver update --apply
+fi
+```
+
+`mcp`, `serve`, and `doctor` print a banner when a newer release exists. Turn
+the check off for one run with `CUA_DRIVER_RS_UPDATE_CHECK=false`, or always:
+
+```bash test="cli-shape" id="cua-driver-config-set"
+cua-driver config set update_check_enabled false
+```
+
+If pacman owns the executable, update with `sudo pacman -Syu`; Driver's own
+update and channel commands refuse with pacman guidance (builds with
+[#3636](https://github.com/trycua/cua/pull/3636)).
+
+### Before updating to token-only element targeting
+
+Releases that include [#3873](https://github.com/trycua/cua/pull/3873) address
+accessibility elements only by `element_token`. Update scripts, agents, and
+wrappers that act on elements before you update:
+
+1. Pass `element_token` instead of `element_index` or `snapshot_id`. Read it
+   from `structuredContent.elements[].element_token` in the latest
+   `get_window_state` result and send it with the window's `pid`. The token
+   names its window, so `window_id` is optional; a different `window_id` is
+   refused with `conflicting_element_target`. `get_window_state` still returns
+   `element_index` and `snapshot_id` for display and correlation.
+2. Remove arguments that a tool does not advertise. Tools with closed input
+   schemas now refuse unknown argument names with `invalid_arguments`
+   (`<tool>: unknown argument <name>`) instead of ignoring them. This includes
+   `element_index` and `snapshot_id` on action tools, and `from_zoom` on the
+   Windows `type_text`, `press_key`, and `hotkey` tools, which Windows read
+   without advertising. Pass window coordinates or an `element_token` there.
+3. Read a window before you use window-relative pixels. Pixel actions and
+   `zoom` against a window target return `screenshot_context_missing` until
+   the same session has read that window with a screenshot; Driver no longer
+   assumes native pixels. `from_zoom` coordinates return `zoom_context_missing`
+   once a newer read replaces the zoomed snapshot. Coordinates for a desktop
+   target are unaffected.
+4. Re-read after a stale token. Each `get_window_state` call replaces the
+   previous snapshot of that window and lists the ids it replaced in
+   `invalidated_snapshot_ids`. An older token, or a token from another Driver
+   runtime, is refused with `stale_element_token`, which lists the process's
+   current snapshots. Earlier releases reported a token from another runtime
+   as `generation_mismatch`.
+
+Each one-shot `cua-driver call` without a `session` label runs in its own
+disposable session, and that session's snapshots are retired when the call
+returns. Pass the same `session` label to the read and to the actions that use
+its tokens or pixels.
+
+### Channels
+
+Stable is the default. Nightlies are immutable builds of `main`.
+
+```bash test="cli-shape" id="cua-driver-channel-set-nightly"
+cua-driver channel status
+cua-driver channel set nightly
+cua-driver update --apply
+```
+
+`channel set` only saves the preference; `update --apply` installs. Fresh
+installs can choose the channel directly:
+
+<Tabs items={['macOS and Linux', 'Windows']}>
+  <Tab value="macOS and Linux">
+
+```bash skip="host-install"
+curl -fsSL https://cua.ai/driver/install.sh | bash -s -- --channel nightly
+```
+
+  </Tab>
+  <Tab value="Windows">
+
+```powershell skip="host-install"
+& ([scriptblock]::Create((irm https://cua.ai/driver/install.ps1))) -Channel nightly
+```
+
+  </Tab>
+</Tabs>
+
+On Windows, the installer adds its directory to your User `Path`; to skip that:
+
+```powershell test="windows" id="install-no-path-update"
+& ([scriptblock]::Create((irm https://cua.ai/driver/install.ps1))) -NoPathUpdate
+```
+
+To pin one exact nightly for a single install, set `CUA_DRIVER_RS_VERSION` to
+its full `nightly-cua-driver-rs-v…` tag from the GitHub release before running
+the installer. The pin does not change the saved channel and never falls back
+to another release.
+
+## Personalize the cursor
+
+The agent's cursor is an overlay, not the real pointer: a session-colored
+pointer (`cua.default`, the only built-in theme) with a badge showing the
+session name, delivery (`background` or `foreground`), and target (`ax`,
+`pixel`, `browser`, or `desktop`). It is a visual aid, not an authorization
+signal.
+
+![All session badge combinations for background and foreground delivery across accessibility, pixel, browser, and desktop targets](https://github.com/user-attachments/assets/071dbfd0-b0d4-442f-9654-994c84db3029)
+
+```bash test="cli-shape" id="cua-driver"
+cua-driver start_session '{"session":"research"}'
+cua-driver set_agent_cursor_theme \
+  '{"session":"research","theme_id":"cua.default","reduced_motion":"auto"}'
+cua-driver get_agent_cursor_state '{"session":"research"}'
+```
+
+`set_agent_cursor_enabled` hides or shows it; `set_agent_cursor_motion` tunes
+movement. Labels longer than 28 characters are shortened.
+
+A custom theme is a dotLottie archive with a `cua/theme.json` manifest
+(`"schema": "cua.cursor-theme/2"`), 128×128 30 fps animations for all twelve
+actions (`idle`, `observe`, `click`, `drag`, `scroll`, `text`, `key`,
+`navigate`, `app`, `transfer`, `record`, `system`), a still frame each, and an
+author and license. Compile and install it locally; agents can select an
+installed ID but never install one:
+
+```bash test="cli-shape" id="cua-driver-cursor-theme-validate"
+cua-driver cursor-theme validate theme.lottie
+cua-driver cursor-theme build theme.lottie --output theme.cua-theme
+cua-driver cursor-theme preview theme.cua-theme --output preview
+cua-driver cursor-theme install theme.cua-theme
+cua-driver cursor-theme list
+cua-driver cursor-theme uninstall com.example.cursor.studio
+```
+
+## Telemetry
+
+Cua Driver sends content-free, pseudonymous usage events to PostHog's EU
+endpoint, on by default. The installer shows a notice before the first event.
+
+```bash test="cli-shape" id="cua-driver-telemetry-status"
+cua-driver telemetry status --json
+cua-driver telemetry disable
+cua-driver telemetry inspect cua_driver_mcp_tool_completed --json
+cua-driver telemetry reset-id
+```
+
+`CUA_DRIVER_RS_TELEMETRY_ENABLED=false` overrides the saved setting for one
+process. The switches every Cua program shares also turn it off:
+`DO_NOT_TRACK=1`, `CUA_TELEMETRY=0` and `cua telemetry off` (see
+[Telemetry and privacy](/cua-sdk/concepts/telemetry)). `inspect` builds an event locally without sending it; `reset-id`
+creates a new installation ID (`uninstall --purge` removes local state).
+
+Events carry the product version, OS family and major version, architecture,
+transport, built-in tool names (any other tool is `other`), and bucketed
+durations and outcomes. GeoIP lookup is disabled on every event. Never collected: prompts, tool arguments or
+results, typed text, screenshots, accessibility trees, window titles, app
+names, file paths, URLs, or error messages. The update check is separate and
+not controlled by this setting. See the
+[privacy policy](https://cua.ai/privacy-policy).

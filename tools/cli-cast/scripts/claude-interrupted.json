@@ -1,0 +1,15 @@
+{
+  "name": "claude-interrupted",
+  "description": "A turn cancelled with Esc while the agent is still working. Exercises the interrupted state and a turn boundary that is not a completion.",
+  "cmd": ["claude", "--permission-mode", "acceptEdits"],
+  "steps": [
+    {"wait": 6},
+    {"send": "Write a detailed 500 word essay about the history of the calculator into ESSAY.md."},
+    {"wait": 1.5},
+    {"key": "enter"},
+    {"wait": 6},
+    {"key": "esc"},
+    {"wait": 6},
+    {"wait": 6}
+  ]
+}

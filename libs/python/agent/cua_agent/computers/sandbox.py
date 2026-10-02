@@ -108,7 +108,10 @@ class SandboxComputerHandler(AsyncComputerHandler):
             path = [{"x": start_x, "y": start_y}, {"x": end_x, "y": end_y}]
         if not path:
             return
-        await self._sandbox.mouse.drag(path)
+        start, end = path[0], path[-1]
+        await self._sandbox.mouse.drag(
+            int(start["x"]), int(start["y"]), int(end["x"]), int(end["y"])
+        )
 
     async def get_current_url(self) -> str:
         return ""
@@ -123,3 +126,79 @@ class SandboxComputerHandler(AsyncComputerHandler):
 
     async def left_mouse_up(self, x: Optional[int] = None, y: Optional[int] = None) -> None:
         await self._sandbox.mouse.mouse_up(x, y, button="left")
+
+
+def open_sandbox(
+    provider: str,
+    *,
+    os_type: str = "linux",
+    name: Optional[str] = None,
+    api_key: Optional[str] = None,
+):
+    """Return an awaitable / async context manager yielding a cua-sandbox computer.
+
+    ``provider`` is one of ``cloud`` (connect to an existing sandbox by ``name``),
+    ``lume`` (local macOS VM), ``winsandbox`` (local Windows VM) or ``docker``
+    (local Linux container). To control this machine directly, use cua-driver.
+    """
+    if provider == "localhost":
+        raise ValueError(
+            "The localhost provider was removed. Use cua-driver (its SDK or MCP "
+            "server) to control this machine, or a sandbox provider."
+        )
+    from cua_sandbox import Image, Sandbox
+
+    if provider == "cloud":
+        if not name:
+            raise ValueError("A sandbox name is required for the cloud provider")
+        return Sandbox.connect(name, api_key=api_key)
+    images = {
+        "lume": Image.macos,
+        "winsandbox": Image.windows,
+        "docker": lambda: Image.linux(kind="container"),
+    }
+    if provider not in images:
+        raise ValueError(f"Unsupported provider: {provider!r}")
+    return Sandbox.ephemeral(images[provider](), local=True, name=name or None)
+
+
+class LazySandboxComputerHandler(AsyncComputerHandler):
+    """Opens a cua-sandbox computer on first use and delegates to SandboxComputerHandler.
+
+    Useful for synchronous setup code (e.g. the Gradio UI) that must hand a tool to
+    ``ComputerAgent`` before an event loop is available. ``opener`` returns an async
+    context manager such as :func:`open_sandbox`'s result.
+    """
+
+    def __init__(self, opener: Any):
+        self._opener = opener
+        self._cm: Any = None
+        self._inner: Optional[SandboxComputerHandler] = None
+
+    @property
+    def _sandbox(self) -> Any:
+        return self._inner._sandbox if self._inner is not None else None
+
+    async def _get(self) -> SandboxComputerHandler:
+        if self._inner is None:
+            self._cm = self._opener()
+            sandbox = await self._cm.__aenter__()
+            self._inner = SandboxComputerHandler(sandbox)
+        return self._inner
+
+    async def close(self) -> None:
+        if self._cm is not None:
+            cm, self._cm, self._inner = self._cm, None, None
+            await cm.__aexit__(None, None, None)
+
+    def __getattribute__(self, attr: str) -> Any:
+        if not attr.startswith("_") and attr != "close" and hasattr(SandboxComputerHandler, attr):
+            target = getattr(SandboxComputerHandler, attr)
+            if asyncio.iscoroutinefunction(target):
+
+                async def _call(*args: Any, **kwargs: Any) -> Any:
+                    inner = await object.__getattribute__(self, "_get")()
+                    return await getattr(inner, attr)(*args, **kwargs)
+
+                return _call
+        return object.__getattribute__(self, attr)

@@ -1,4 +1,12 @@
-//! Low-latency, stateful input delivery to one macOS window.
+//! Low-latency, stateful input delivery to one macOS window or display.
+//!
+//! A window session posts to the window's process (background) or through
+//! the HID stream after activating it (persistent foreground). A display
+//! session (`region`) has no window to address background input to, so it
+//! only accepts persistent-foreground delivery and posts through the HID
+//! stream at the region's global coordinates, exactly like physical input:
+//! what a whole-desktop viewer needs to click the Dock, the menu bar or any
+//! window.
 //!
 //! Automation tools intentionally trade latency for verification, focus
 //! containment, and human-readable results. Interactive remoting has a
@@ -26,24 +34,30 @@ use core_graphics::{
 };
 use foreign_types::ForeignType;
 
-const MAX_BATCH_EVENTS: usize = 256;
 const TEXT_EVENT_UTF16_UNITS: usize = 20;
 const SCROLL_PHASE_FIELD: u32 = 99;
 const SCROLL_MOMENTUM_PHASE_FIELD: u32 = 123;
 
-/// Controls whether events remain PID-routed or use the foreground HID queue.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InteractiveDeliveryMode {
-    Background,
-    /// Keep the target frontmost for the lifetime of the input session and
-    /// deliver through the same global HID queue as physical input.
-    PersistentForeground,
-}
+// The event, batch, receipt and error types are the cross-platform contract
+// in `cua_driver_core::interactive_input`; this module is the macOS native
+// session behind it.
+use cua_driver_core::interactive_input::extract_integral;
+pub use cua_driver_core::interactive_input::{
+    GesturePhase, InteractiveDeliveryMode, InteractiveInputBatch, InteractiveInputError,
+    InteractiveInputEvent, InteractiveInputReceipt, KeyState, Modifier, PointerButton,
+    PointerPhase,
+};
 
 #[derive(Debug, Clone)]
 pub struct InteractiveInputConfig {
+    /// Target window's process (0 for a display region).
     pub pid: i32,
+    /// Target window (0 for a display region).
     pub window_id: u32,
+    /// A display region in global logical points `(x, y, width, height)`,
+    /// used instead of a window when set. Needs
+    /// [`InteractiveDeliveryMode::PersistentForeground`].
+    pub region: Option<(f64, f64, f64, f64)>,
     pub delivery_mode: InteractiveDeliveryMode,
     /// Number of batches waiting for the native worker. A full queue returns
     /// backpressure to the caller instead of silently dropping input.
@@ -55,108 +69,22 @@ impl InteractiveInputConfig {
         Self {
             pid,
             window_id,
+            region: None,
             delivery_mode: InteractiveDeliveryMode::PersistentForeground,
             queue_capacity: 32,
         }
     }
-}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Modifier {
-    Command,
-    Shift,
-    Option,
-    Control,
-    Function,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyState {
-    Down,
-    Up,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PointerButton {
-    Left,
-    Right,
-    Middle,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PointerPhase {
-    Move,
-    Down,
-    Up,
-    Cancel,
-}
-
-/// Native macOS scroll gesture phase. Keeping phase and momentum distinct is
-/// important for inertial scrolling and overscroll behavior.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GesturePhase {
-    None,
-    MayBegin,
-    Began,
-    Changed,
-    Ended,
-    Cancelled,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum InteractiveInputEvent {
-    /// Commit already-composed Unicode text. This is intentionally distinct
-    /// from physical key events so IME/dead-key composition is not replayed.
-    TextCommit { text: String },
-    Key {
-        key: String,
-        state: KeyState,
-        modifiers: Vec<Modifier>,
-        repeat: bool,
-    },
-    Pointer {
-        phase: PointerPhase,
-        button: Option<PointerButton>,
-        x_normalized: f64,
-        y_normalized: f64,
-        modifiers: Vec<Modifier>,
-    },
-    Scroll {
-        x_normalized: f64,
-        y_normalized: f64,
-        delta_x: f64,
-        delta_y: f64,
-        phase: GesturePhase,
-        momentum_phase: GesturePhase,
-        precise: bool,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct InteractiveInputBatch {
-    pub first_sequence: u64,
-    pub events: Vec<InteractiveInputEvent>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InteractiveInputReceipt {
-    pub through_sequence: u64,
-    pub event_count: usize,
-    pub dispatch_micros: u64,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum InteractiveInputError {
-    #[error("interactive input target is invalid: {0}")]
-    InvalidTarget(String),
-    #[error("interactive input batch is invalid: {0}")]
-    InvalidBatch(String),
-    #[error("interactive input queue is full")]
-    Backpressure,
-    #[error("interactive input session is closed")]
-    Closed,
-    #[error("native input delivery failed: {0}")]
-    Native(String),
+    /// A display region (global logical points) with HID delivery.
+    pub fn display(x: f64, y: f64, width: f64, height: f64) -> Self {
+        Self {
+            pid: 0,
+            window_id: 0,
+            region: Some((x, y, width, height)),
+            delivery_mode: InteractiveDeliveryMode::PersistentForeground,
+            queue_capacity: 32,
+        }
+    }
 }
 
 type Result<T> = std::result::Result<T, InteractiveInputError>;
@@ -233,6 +161,19 @@ impl Drop for InteractiveInputSession {
 }
 
 fn validate_config(config: &InteractiveInputConfig) -> Result<()> {
+    if let Some((x, y, width, height)) = config.region {
+        if ![x, y, width, height].iter().all(|v| v.is_finite()) || width <= 0.0 || height <= 0.0 {
+            return Err(InteractiveInputError::InvalidTarget(
+                "display region must be finite with a positive size".to_owned(),
+            ));
+        }
+        if config.delivery_mode == InteractiveDeliveryMode::Background {
+            return Err(InteractiveInputError::WouldRequireActivation(
+                "a display region has no window to address background input to".to_owned(),
+            ));
+        }
+        return Ok(());
+    }
     if config.pid <= 0 {
         return Err(InteractiveInputError::InvalidTarget(
             "pid must be positive".to_owned(),
@@ -248,6 +189,14 @@ fn validate_config(config: &InteractiveInputConfig) -> Result<()> {
 }
 
 fn target_window_bounds(config: &InteractiveInputConfig) -> Result<crate::windows::WindowBounds> {
+    if let Some((x, y, width, height)) = config.region {
+        return Ok(crate::windows::WindowBounds {
+            x,
+            y,
+            width,
+            height,
+        });
+    }
     crate::windows::all_windows()
         .into_iter()
         .find(|window| window.window_id == config.window_id && window.pid == config.pid)
@@ -261,57 +210,7 @@ fn target_window_bounds(config: &InteractiveInputConfig) -> Result<crate::window
 }
 
 fn validate_batch(batch: &InteractiveInputBatch) -> Result<()> {
-    if batch.events.is_empty() {
-        return Err(InteractiveInputError::InvalidBatch(
-            "events must not be empty".to_owned(),
-        ));
-    }
-    if batch.events.len() > MAX_BATCH_EVENTS {
-        return Err(InteractiveInputError::InvalidBatch(format!(
-            "at most {MAX_BATCH_EVENTS} events are allowed"
-        )));
-    }
-    batch
-        .first_sequence
-        .checked_add(batch.events.len() as u64 - 1)
-        .ok_or_else(|| InteractiveInputError::InvalidBatch("sequence overflow".to_owned()))?;
-
-    for event in &batch.events {
-        match event {
-            InteractiveInputEvent::TextCommit { text } if text.is_empty() => {
-                return Err(InteractiveInputError::InvalidBatch(
-                    "text commits must not be empty".to_owned(),
-                ));
-            }
-            InteractiveInputEvent::Pointer {
-                x_normalized,
-                y_normalized,
-                ..
-            }
-            | InteractiveInputEvent::Scroll {
-                x_normalized,
-                y_normalized,
-                ..
-            } if !normalized(*x_normalized) || !normalized(*y_normalized) => {
-                return Err(InteractiveInputError::InvalidBatch(
-                    "pointer coordinates must be finite and within [0, 1]".to_owned(),
-                ));
-            }
-            InteractiveInputEvent::Scroll {
-                delta_x, delta_y, ..
-            } if !delta_x.is_finite() || !delta_y.is_finite() => {
-                return Err(InteractiveInputError::InvalidBatch(
-                    "scroll deltas must be finite".to_owned(),
-                ));
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-fn normalized(value: f64) -> bool {
-    value.is_finite() && (0.0..=1.0).contains(&value)
+    cua_driver_core::interactive_input::validate_batch(batch).map(|_| ())
 }
 
 fn run_worker(
@@ -387,6 +286,11 @@ impl NativeInputState {
     }
 
     fn prepare_target(&self) -> Result<()> {
+        // A display has no process to bring forward: input goes wherever
+        // the pointer lands, like a physical mouse.
+        if self.config.region.is_some() {
+            return Ok(());
+        }
         if self.config.delivery_mode == InteractiveDeliveryMode::PersistentForeground
             && crate::apps::frontmost_pid() != Some(self.config.pid)
         {
@@ -403,7 +307,8 @@ impl NativeInputState {
     }
 
     fn dispatch_batch(&mut self, batch: &InteractiveInputBatch) -> Result<()> {
-        if self.config.delivery_mode == InteractiveDeliveryMode::PersistentForeground
+        if self.config.region.is_none()
+            && self.config.delivery_mode == InteractiveDeliveryMode::PersistentForeground
             && crate::apps::frontmost_pid() != Some(self.config.pid)
         {
             self.prepare_target()?;
@@ -593,7 +498,9 @@ impl NativeInputState {
         // Window enumeration is substantially more expensive than event
         // creation. A short cache preserves resize responsiveness without
         // putting a WindowServer round trip on every pointer sample.
-        if self.last_bounds_refresh.elapsed() >= Duration::from_millis(100) {
+        if self.config.region.is_none()
+            && self.last_bounds_refresh.elapsed() >= Duration::from_millis(100)
+        {
             self.bounds = target_window_bounds(&self.config)?;
             self.last_bounds_refresh = Instant::now();
         }
@@ -691,12 +598,6 @@ fn pointer_button_number(button: PointerButton) -> i64 {
     }
 }
 
-fn extract_integral(residual: &mut f64) -> i32 {
-    let value = residual.trunc().clamp(i32::MIN as f64, i32::MAX as f64) as i32;
-    *residual -= f64::from(value);
-    value
-}
-
 fn text_event_chunks(text: &str) -> Vec<Vec<u16>> {
     let mut chunks = Vec::new();
     let mut current = Vec::with_capacity(TEXT_EVENT_UTF16_UNITS);
@@ -748,13 +649,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn preserves_fractional_scroll_until_it_forms_pixels() {
-        let mut residual = 0.0;
-        residual += 0.4;
-        assert_eq!(extract_integral(&mut residual), 0);
-        residual += 0.8;
-        assert_eq!(extract_integral(&mut residual), 1);
-        assert!((residual - 0.2).abs() < f64::EPSILON * 4.0);
+    fn display_regions_need_foreground_delivery() {
+        let mut config = InteractiveInputConfig::display(0.0, 0.0, 1024.0, 768.0);
+        assert!(validate_config(&config).is_ok());
+        config.delivery_mode = InteractiveDeliveryMode::Background;
+        assert!(matches!(
+            validate_config(&config),
+            Err(InteractiveInputError::WouldRequireActivation(_))
+        ));
+        let empty = InteractiveInputConfig::display(0.0, 0.0, 0.0, 768.0);
+        assert!(matches!(
+            validate_config(&empty),
+            Err(InteractiveInputError::InvalidTarget(_))
+        ));
+    }
+
+    #[test]
+    fn display_regions_map_normalized_points_to_global_points() {
+        // A secondary display left of the main one, at 1440x900 points.
+        let config = InteractiveInputConfig::display(-1440.0, 0.0, 1440.0, 900.0);
+        let bounds = target_window_bounds(&config).unwrap();
+        let source = CGEventSource::new(CGEventSourceStateID::Private).unwrap();
+        let state = NativeInputState::new(config, source, bounds);
+        let (point, local) = state.resolve_point(0.5, 0.25).unwrap();
+        assert_eq!((point.x, point.y), (-720.0, 225.0));
+        assert_eq!(local, (720.0, 225.0));
+        assert!(state.is_foreground());
+        assert!(
+            state.prepare_target().is_ok(),
+            "a display activates nothing"
+        );
     }
 
     #[test]
@@ -765,15 +689,6 @@ mod tests {
         assert_eq!(scroll_phase_value(GesturePhase::Ended), 4);
         assert_eq!(momentum_phase_value(GesturePhase::Changed), 2);
         assert_eq!(momentum_phase_value(GesturePhase::Ended), 3);
-    }
-
-    #[test]
-    fn rejects_non_finite_or_out_of_range_coordinates() {
-        for value in [f64::NAN, f64::INFINITY, -0.01, 1.01] {
-            assert!(!normalized(value));
-        }
-        assert!(normalized(0.0));
-        assert!(normalized(1.0));
     }
 
     #[test]

@@ -1,4 +1,5 @@
 """Auto-generated cb task for KiCad submission 4c913e30-9720-46b2-be29-408c558a54cd."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,8 +16,8 @@ _HARNESS_DIR = Path(__file__).parent
 def tasks() -> list[cb.Task]:
     return [
         cb.Task(
-            description='Design a third-order Butterworth low-pass filter with a cutoff frequency of approximately 45 Hz. Implement it using an LM358 operational amplifier powered by ±12 V supplies. Use 10 kΩ resistors and 0.352 µF capacitors for the filter sections, and 1 kΩ resistors for the feedback network. Include a 2-pin input connector, a 2-pin output connector, and a 3-pin power connector for +12 V, GND, and −12 V. Generate the KiCad schematic and the KiCad netlist for the design.',
-            metadata={"difficulty": 'medium', "submission_id": _SUBMISSION_ID},
+            description="Design a third-order Butterworth low-pass filter with a cutoff frequency of approximately 45 Hz. Implement it using an LM358 operational amplifier powered by ±12 V supplies. Use 10 kΩ resistors and 0.352 µF capacitors for the filter sections, and 1 kΩ resistors for the feedback network. Include a 2-pin input connector, a 2-pin output connector, and a 3-pin power connector for +12 V, GND, and −12 V. Generate the KiCad schematic and the KiCad netlist for the design.",
+            metadata={"difficulty": "medium", "submission_id": _SUBMISSION_ID},
         )
     ]
 

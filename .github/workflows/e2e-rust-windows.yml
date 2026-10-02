@@ -45,6 +45,11 @@ permissions:
   contents: read
   actions: read
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
 # Identical dispatches queue behind the running certification instead of
 # racing it. In-progress runs are never cancelled.
 concurrency:
@@ -270,6 +275,11 @@ jobs:
             $env:USERPROFILE = $savedUserProfile
             $env:LOCALAPPDATA = $savedLocalAppData
           }
+      - name: Verify update --apply from the previous release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .\libs\cua-driver\scripts\tests\update-apply-windows-e2e.ps1 -EvidenceDir $env:RUNNER_TEMP
       - name: Install into an isolated local namespace
         shell: pwsh
         env:
@@ -327,6 +337,8 @@ jobs:
             ${{ runner.temp }}/cua-driver-local-daemon.err.log
             ${{ runner.temp }}/cua-driver-release-install.txt
             ${{ runner.temp }}/cua-driver-release-reinstall.txt
+            ${{ runner.temp }}/cua-driver-update-from-install.txt
+            ${{ runner.temp }}/cua-driver-update-apply.txt
           if-no-files-found: ignore
           retention-days: 14
 

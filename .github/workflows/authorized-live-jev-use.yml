@@ -14,6 +14,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
 jobs:
   source:
     name: Validate canonical source

@@ -1,0 +1,63 @@
+[package]
+name = "cua-teleport"
+description = "Teleport SEND (client side): describe, capture and upload a desktop app session into a sandbox through cua.env.v1 TeleportService."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license = "FSL-1.1-MIT"
+repository.workspace = true
+publish = false
+
+[dependencies]
+cua-icon-cache.workspace = true
+cua-home.workspace = true
+cua-teleport-bundle.workspace = true
+# Chromium localStorage (the Local Storage LevelDB) as items.
+cua-chromium-storage.workspace = true
+cua-spacesd-client.workspace = true
+# Sealed delivery to a pinned machine key (S1).
+cua-machine-seal = { path = "../cua-machine-seal" }
+tokio = { workspace = true }
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+rand.workspace = true
+thiserror.workspace = true
+# Item counts in consent manifests (Chrome/Firefox SQLite databases, opened
+# read-only and immutable).
+rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
+# Decrypting Chrome's saved passwords for the Keyvault (`passwords`):
+# Chrome's own PBKDF2-HMAC-SHA1 + AES-128-CBC scheme, RustCrypto crates.
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+sha1 = "0.10"
+zeroize = "1"
+# The teleport UX core (`ux`): the pinned install manifest the catalog
+# classifies against (`cua_agents::installables`, a pure table).
+cua-agents.workspace = true
+# Host app metadata (macOS Info.plist is often binary).
+plist = "1"
+# Window thumbnails for the drag preview: PNG-encoded, kept in memory.
+png = "0.18"
+
+# macOS-only: LocalAuthentication (Touch ID / device passcode) gate for
+# sensitive session exports.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSError", "NSData", "NSDictionary", "NSGeometry", "NSURL", "NSArray"] }
+objc2-local-authentication = { version = "0.3", default-features = false, features = ["std", "LAContext", "block2"] }
+block2 = "0.6"
+# `ux::window`: CGWindowList enumeration, the dragged window's thumbnail and
+# the listen-only CGEventTap behind window-drag detection.
+core-graphics = "0.25"
+core-foundation = "0.10"
+# `ux::icon`: an app bundle's Finder icon as PNG (NSWorkspace).
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSGraphics", "NSGraphicsContext", "NSRunningApplication", "libc"] }
+
+[dev-dependencies]
+cua-spacesd-client = { workspace = true, features = ["testing"] }
+tempfile.workspace = true

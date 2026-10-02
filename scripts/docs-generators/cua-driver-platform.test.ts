@@ -1,24 +1,35 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import test from 'node:test';
 import {
   extractDocumentation,
+  loadSnapshots,
+  mcpSnapshot,
+  referenceFiles,
   referencePlatform,
-  syncReferences,
+  referencePlatforms,
+  snapshotPath,
+  undocumentedParameters,
   type DumpDocsOutput,
 } from './cua-driver';
+import { stableJson } from './lib/mdx';
 
-const platforms = [
-  { host: 'linux', name: 'Linux', outputFile: 'mcp-tools-linux.mdx' },
-  { host: 'darwin', name: 'macOS', outputFile: 'mcp-tools.mdx' },
-  { host: 'win32', name: 'Windows', outputFile: 'mcp-tools-windows.mdx' },
+const CLI_COMMANDS = [
+  'mcp', 'mcp-config', 'list-tools', 'describe', 'call', 'manifest', 'dump-docs', 'serve', 'stop', 'status', 'sessions',
+  'revoke', 'autostart', 'permissions', 'doctor', 'diagnose', 'recording', 'history', 'config', 'telemetry',
+  'cursor-theme', 'skills', 'extension', 'perception', 'check-update', 'update', 'channel',
 ];
 
 function docs(description = 'Inspect the native tree.'): DumpDocsOutput {
   return {
-    cli: { name: 'cua-driver', version: '1.0.0', abstract: 'Shared CLI.', commands: [] },
+    cli: {
+      name: 'cua-driver',
+      version: '1.0.0',
+      abstract: 'Shared CLI.',
+      commands: CLI_COMMANDS.map((name) => ({ name, abstract: `${name}.`, arguments: [], options: [], flags: [], subcommands: [] })),
+    },
     mcp: {
       version: '1.0.0',
       tools: [
@@ -61,64 +72,76 @@ test('documentation extraction isolates both policy layers only in its metadata 
 });
 
 test('maps native hosts and refuses unsupported hosts before generation', () => {
-  for (const platform of platforms) assert.deepEqual(referencePlatform(platform.host), platform);
+  assert.deepEqual(referencePlatform('darwin'), { host: 'darwin', key: 'macos', name: 'macOS' });
+  assert.deepEqual(referencePlatform('win32').key, 'windows');
   assert.throws(() => referencePlatform('freebsd'), /not implemented/);
 });
 
-for (const expected of platforms) {
-  test(`${expected.host} generation and checking own only the native MCP and shared CLI files`, (t) => {
-    const dir = mkdtempSync(join(tmpdir(), 'cua-docs-test-'));
-    t.after(() => rmSync(dir, { recursive: true, force: true }));
-    const platform = referencePlatform(expected.host);
-    const others = platforms.filter((other) => other.host !== expected.host);
-    writeFileSync(join(dir, 'mcp-tool-notes.mdx'), 'Shared guidance.');
-    for (const other of others) writeFileSync(join(dir, other.outputFile), 'Other platform.');
-    assert.deepEqual(syncReferences(dir, docs(), '1.0.0', platform, true), [
-      'cli-reference.mdx',
-      expected.outputFile,
-    ]);
-    assert.equal(readdirSync(dir).length, platforms.length);
-    syncReferences(dir, docs(), '1.0.0', platform, false);
-    assert.deepEqual(syncReferences(dir, docs(), '1.0.0', platform, false), []);
-    assert.deepEqual(syncReferences(dir, docs(), '1.0.0', platform, true), []);
-    assert.equal(readFileSync(join(dir, 'mcp-tool-notes.mdx'), 'utf8'), 'Shared guidance.');
-    const before = readFileSync(join(dir, expected.outputFile), 'utf8');
-    assert.ok(before.includes(`title: MCP Tools (${expected.name})`));
-    for (const other of others) {
-      assert.ok(before.includes(`/reference/cua-driver/${other.outputFile.replace('.mdx', '')}`));
-    }
-    assert.ok(before.includes('/reference/cua-driver/mcp-tool-notes'));
-    assert.ok(before.includes('### `get_window_state`'));
-    assert.ok(before.includes('- `pid` (integer, required): Native process.'));
-    assert.deepEqual(
-      syncReferences(dir, docs('Updated native description.'), '1.0.0', platform, true),
-      [expected.outputFile]
-    );
-    assert.equal(readFileSync(join(dir, expected.outputFile), 'utf8'), before);
-    syncReferences(dir, docs('Updated native description.'), '1.0.0', platform, false);
-    assert.match(
-      readFileSync(join(dir, expected.outputFile), 'utf8'),
-      /Updated native description/
-    );
-    for (const other of others)
-      assert.equal(readFileSync(join(dir, other.outputFile), 'utf8'), 'Other platform.');
-    assert.deepEqual(
-      readdirSync(dir).sort(),
-      ['cli-reference.mdx', 'mcp-tool-notes.mdx', ...platforms.map((p) => p.outputFile)].sort()
-    );
-  });
+function specDir(t: { after: (fn: () => void) => void }): { out: string; specs: string } {
+  const root = mkdtempSync(join(tmpdir(), 'cua-docs-driver-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const specs = join(root, 'specs');
+  mkdirSync(specs);
+  for (const p of referencePlatforms) {
+    writeFileSync(snapshotPath(p, specs), stableJson(mcpSnapshot(docs(`${p.name} tree.`).mcp)));
+  }
+  return { out: join(root, 'reference'), specs };
 }
 
-test('shared CLI rendering does not depend on native MCP definitions or platform', (t) => {
-  const dir = mkdtempSync(join(tmpdir(), 'cua-docs-parity-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  syncReferences(dir, docs('AT-SPI tree.'), '1.0.0', referencePlatform('linux'), false);
-  const cli = readFileSync(join(dir, 'cli-reference.mdx'), 'utf8');
-  for (const platform of platforms.filter((p) => p.host !== 'linux')) {
-    assert.deepEqual(
-      syncReferences(dir, docs(platform.name), '1.0.0', referencePlatform(platform.host), false),
-      [platform.outputFile]
-    );
-    assert.equal(readFileSync(join(dir, 'cli-reference.mdx'), 'utf8'), cli);
-  }
+test('each host refreshes only its own registry snapshot; pages merge all three', (t) => {
+  const { out, specs } = specDir(t);
+  const linux = referencePlatform('linux');
+  const files = referenceFiles(docs('Fresh Linux tree.'), linux, out, specs);
+  const snapshots = [...files.keys()].filter((f) => f.startsWith(specs)).map((f) => basename(f)).sort();
+  assert.deepEqual(snapshots, ['cua-driver-mcp-linux.json', 'cua-driver.json']);
+  const page = files.get(join(out, 'mcp-tools', 'window-state.mdx'))!;
+  assert.ok(page.includes("<Tabs items={['macOS', 'Linux', 'Windows']}"));
+  assert.ok(page.includes('Fresh Linux tree.') && page.includes('macOS tree.') && page.includes('Windows tree.'));
+  // The shared parameter is listed once, outside the tabs.
+  assert.ok(page.includes('<span id="get_window_state--pid"></span>`pid` | `integer` | required | Native process. |'));
 });
+
+test('pages are identical whichever host renders them', (t) => {
+  const { out, specs } = specDir(t);
+  const pages = (host: string) =>
+    [...referenceFiles(docs(`${referencePlatform(host).name} tree.`), referencePlatform(host), out, specs)]
+      .filter(([f]) => f.endsWith('.mdx'))
+      .map(([f, c]) => `${f}\n${c}`)
+      .join('\n');
+  assert.equal(pages('darwin'), pages('linux'));
+  assert.equal(pages('linux'), pages('win32'));
+});
+
+test('a tool without a docs category fails generation', (t) => {
+  const { out, specs } = specDir(t);
+  const extra = docs();
+  extra.mcp.tools.push({ name: 'brand_new_tool', description: 'New.', input_schema: { type: 'object', properties: {} } });
+  assert.throws(() => referenceFiles(extra, referencePlatform('darwin'), out, specs), /without a docs category: brand_new_tool/);
+});
+
+test('undocumentedParameters lists top-level params with a missing or blank description', () => {
+  const snapshot = mcpSnapshot(docs().mcp);
+  assert.deepEqual(undocumentedParameters(snapshot), []);
+  snapshot.tools[0].input_schema.properties = {
+    pid: { type: 'integer', description: 'Native process.' },
+    window_id: { type: 'integer' },
+    query: { type: 'string', description: '  ' },
+  };
+  assert.deepEqual(undocumentedParameters(snapshot), ['get_window_state.window_id', 'get_window_state.query']);
+});
+
+// Every parameter in a committed native snapshot must carry a description:
+// the MCP reference renders it verbatim. Fix a failure at the tool's schema
+// source in libs/cua-driver/rust/crates, then regenerate on that host. A
+// snapshot with a `provenance` note is not a native dump and is enforced once
+// a native run replaces it (the same rule runs natively in the Rust
+// protocol_schema_test on every platform).
+for (const [platform, snapshot] of loadSnapshots()) {
+  test(`every ${platform.name} MCP parameter has a description`, (t) => {
+    if (snapshot.provenance) {
+      t.skip(`not a native dump: ${snapshot.provenance}`);
+      return;
+    }
+    assert.deepEqual(undocumentedParameters(snapshot), []);
+  });
+}

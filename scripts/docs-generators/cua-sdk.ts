@@ -810,10 +810,19 @@ export const PAGES: PageSpec[] = [
   {
     slug: 'spaces/app-core/teleport',
     title: 'Teleport picker',
-    description: 'The teleport picker and review, consent, the transfer overlay and drag-and-drop.',
-    intro: 'The picker lists `Teleport.catalog` entries, reviews a `Teleport.plan` with its consent items, and follows the run. The transfer and drag overlays show a teleport in progress.',
+    description: 'The teleport picker and review, and consent.',
+    intro: 'The picker lists `Teleport.catalog` entries, reviews a `Teleport.plan` with its consent items, and follows the run. The overlays that show a teleport in progress are on [Teleport transfer and drag](/cua-sdk/reference/spaces/app-core/teleport-transfer).',
     items: ['AppEntrySection', 'AppReviewView', 'AppPlanStepView', 'AppInstallCuaPrompt'],
-    prefixes: ['AppPicker', 'app_picker_', 'AppTeleport', 'app_teleport_', 'AppTransfer', 'app_transfer_', 'AppDragOverlay', 'AppCatalog', 'app_catalog_', 'AppConsent'],
+    prefixes: ['AppPicker', 'app_picker_', 'AppTeleport', 'app_teleport_', 'AppCatalog', 'app_catalog_', 'AppConsent'],
+    spaces: true,
+  },
+  {
+    slug: 'spaces/app-core/teleport-transfer',
+    title: 'Teleport transfer and drag',
+    description: 'The overlays that show a teleport in progress: the transfer overlay and drag-and-drop onto a Space.',
+    intro: 'The transfer overlay follows a running teleport step by step; the drag overlay shows a file or app dragged onto a Space.',
+    items: [],
+    prefixes: ['AppTransfer', 'app_transfer_', 'AppDragOverlay'],
     spaces: true,
   },
   {

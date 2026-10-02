@@ -1,6 +1,6 @@
 ---
 title: "Teleport picker"
-description: "The teleport picker and review, consent, the transfer overlay and drag-and-drop."
+description: "The teleport picker and review, and consent."
 ---
 
 {/*
@@ -17,7 +17,7 @@ import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 These APIs are part of the Cua Spaces app export for building Spaces UIs. They are source-available under FSL-1.1-MIT and ship for Swift only (`import CuaSpacesFFI`); the Rust tab shows the `cua-spaces-ffi` crate they come from. The open source SDK packages for Python, TypeScript and Kotlin do not include them.
 </Callout>
 
-The picker lists `Teleport.catalog` entries, reviews a `Teleport.plan` with its consent items, and follows the run. The transfer and drag overlays show a teleport in progress.
+The picker lists `Teleport.catalog` entries, reviews a `Teleport.plan` with its consent items, and follows the run. The overlays that show a teleport in progress are on [Teleport transfer and drag](/cua-sdk/reference/spaces/app-core/teleport-transfer).
 
 ## `AppEntrySection` record
 
@@ -98,23 +98,6 @@ Returned by [`app_catalog_entries_from_json`](#app_catalog_entries_from_json), [
 | `bytes` | `u64` |  | Bytes that leave. |
 | `sensitive` | `bool` |  | Credentials, cookies, tokens. |
 
-## `AppDragOverlayState` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `phase` | [`AppDragOverlayPhase`](#appdragoverlayphase-enum) |  | Phase. |
-| `window_id` / `windowId` | `Option<u32>` |  | CoreGraphics id of the dragged window. |
-| `app_name` / `appName` | `Option<String>` |  | The dragged app's name. |
-| `target_space_id` / `targetSpaceId` | `Option<String>` |  | The tile under the cursor (selector only). |
-| `ghost` | `Option<String>` |  | The captured ghost (a data URL or a shell-local image key). |
-
-## `AppDragOverlayTransition` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `state` | [`AppDragOverlayState`](#appdragoverlaystate-record) |  | New state. |
-| `effects` | [`Vec<AppDragOverlayEffect>`](#appdragoverlayeffect-enum) |  | Effects. |
-
 ## `AppPickerPrimary` record
 
 Returned by [`app_picker_primary`](#app_picker_primary).
@@ -180,6 +163,8 @@ Returned by [`app_teleport_plan`](#app_teleport_plan), [`app_teleport_plan_from_
 
 ## `AppTeleportRunEvent` record
 
+Returned by [`app_teleport_run_event`](#app_teleport_run_event).
+
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `step` | `u32` |  | Step index. |
@@ -200,28 +185,6 @@ Returned by [`app_teleport_plan`](#app_teleport_plan), [`app_teleport_plan_from_
 | `imported` | `Vec<String>` |  | Imported. |
 | `skipped` | `Vec<String>` |  | Skipped. |
 | `launched` | `bool` |  | Launched. |
-
-## `AppTransferOverlayState` record
-
-Returned by [`app_transfer_reduce`](#app_transfer_reduce).
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `phase` | [`AppTransferPhase`](#apptransferphase-enum) |  | Phase. |
-| `app_name` / `appName` | `String` |  | App being teleported. |
-| `message` | `Option<String>` |  | Failure reason. |
-| `sent_bytes` / `sentBytes` | `Option<f64>` |  | Bytes sent. |
-| `total_bytes` / `totalBytes` | `Option<f64>` |  | Total bytes. |
-
-## `AppTransferSignal` record
-
-| Field | Type | Default | Description |
-| --- | --- | --- | --- |
-| `status` | [`AppTransferStatus`](#apptransferstatus-enum) |  | Status. |
-| `app_name` / `appName` | `Option<String>` |  | App name. |
-| `message` | `Option<String>` |  | Message. |
-| `sent_bytes` / `sentBytes` | `Option<f64>` |  | Bytes sent. |
-| `total_bytes` / `totalBytes` | `Option<f64>` |  | Total bytes. |
 
 ## `AppConsentKind` enum
 
@@ -257,105 +220,6 @@ AppConsentKind::Secret
 | `Folder` | A folder that leaves this machine. |
 | `State` | App state that leaves this machine. |
 | `Secret` | A secret that leaves this machine. |
-
-## `AppDragOverlayEffect` enum
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-.capture(windowId: UInt32?)
-.commit(spaceId: String)
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-AppDragOverlayEffect::Capture { window_id: Option<u32> }
-AppDragOverlayEffect::Commit { space_id: String }
-```
-
-</Tab>
-</Tabs>
-
-| Variant | Description |
-| --- | --- |
-| `Capture` | Capture the ghost (needs Screen Recording; none is fine). Fields: `window_id: Option<u32>` |
-| `Commit` | Teleport to this Space. Fields: `space_id: String` |
-
-## `AppDragOverlayEvent` enum
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-.start(windowId: UInt32?, appName: String?)
-.enterNotch
-.leaveNotch
-.over(spaceId: String)
-.out
-.ghostReady(ghost: String?)
-.drop(spaceId: String?)
-.cancel
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-AppDragOverlayEvent::Start { window_id: Option<u32>, app_name: Option<String> }
-AppDragOverlayEvent::EnterNotch
-AppDragOverlayEvent::LeaveNotch
-AppDragOverlayEvent::Over { space_id: String }
-AppDragOverlayEvent::Out
-AppDragOverlayEvent::GhostReady { ghost: Option<String> }
-AppDragOverlayEvent::Drop { space_id: Option<String> }
-AppDragOverlayEvent::Cancel
-```
-
-</Tab>
-</Tabs>
-
-| Variant | Description |
-| --- | --- |
-| `Start` | A supported window drag began. Fields: `window_id: Option<u32>`, `app_name: Option<String>` |
-| `EnterNotch` | The cursor reached the notch box. |
-| `LeaveNotch` | The cursor left the selector. |
-| `Over` | Over a Space tile. Fields: `space_id: String` |
-| `Out` | Off every tile. |
-| `GhostReady` | The ghost capture finished. Fields: `ghost: Option<String>` |
-| `Drop` | Released; the tile under the cursor, if any. Fields: `space_id: Option<String>` |
-| `Cancel` | Abort. |
-
-## `AppDragOverlayPhase` enum
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-.idle
-.prompt
-.selector
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-AppDragOverlayPhase::Idle
-AppDragOverlayPhase::Prompt
-AppDragOverlayPhase::Selector
-```
-
-</Tab>
-</Tabs>
-
-| Variant | Description |
-| --- | --- |
-| `Idle` | Nothing showing. |
-| `Prompt` | The "Teleport to Cua" box. |
-| `Selector` | The Space tiles as drop targets. |
 
 ## `AppPickerAction` enum
 
@@ -625,64 +489,6 @@ AppTeleportRunPhase::Done
 | `Finished` | A step finished. |
 | `Failed` | A step failed. |
 | `Done` | All done. |
-
-## `AppTransferPhase` enum
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-.active
-.error
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-AppTransferPhase::Active
-AppTransferPhase::Error
-```
-
-</Tab>
-</Tabs>
-
-| Variant | Description |
-| --- | --- |
-| `Active` | Uploading. |
-| `Error` | Failed. |
-
-## `AppTransferStatus` enum
-
-<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
-<Tab value="Swift">
-
-```swift
-.start
-.progress
-.done
-.error
-```
-
-</Tab>
-<Tab value="Rust">
-
-```rust
-AppTransferStatus::Start
-AppTransferStatus::Progress
-AppTransferStatus::Done
-AppTransferStatus::Error
-```
-
-</Tab>
-</Tabs>
-
-| Variant | Description |
-| --- | --- |
-| `Start` | Began (or retried). |
-| `Progress` | Bytes moved. |
-| `Done` | Finished. |
-| `Error` | Failed. |
 
 ## `app_catalog_entries_from_json`
 
@@ -1011,6 +817,34 @@ pub fn app_picker_sensitive_options(state: AppPickerState) -> Vec<AppSensitiveOp
 
 **Returns** [`Vec<AppSensitiveOption>`](/cua-sdk/reference/spaces/app-core/keyvault#appsensitiveoption-record)
 
+## `app_picker_status`
+
+What the run is doing, in words ("Packing profile", "Uploading 12 /
+80 MB"), for the line under the progress bar; none unless running.
+
+<Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
+<Tab value="Swift">
+
+```swift
+func appPickerStatus(state: AppPickerState) -> String?
+```
+
+</Tab>
+<Tab value="Rust">
+
+```rust
+pub fn app_picker_status(state: AppPickerState) -> Option<String>
+```
+
+</Tab>
+</Tabs>
+
+| Parameter | Type | Default |
+| --- | --- | --- |
+| `state` | [`AppPickerState`](#apppickerstate-record) | required |
+
+**Returns** `Option<String>`
+
 ## `app_teleport_plan`
 
 A plan from `Teleport.plan`, as the review's plan.
@@ -1065,22 +899,22 @@ pub fn app_teleport_plan_from_json(json: String) -> Result<AppTeleportPlan, CuaE
 
 **Returns** [`AppTeleportPlan`](#appteleportplan-record) · **Raises** [`CuaError`](/cua-sdk/reference/errors)
 
-## `app_transfer_reduce`
+## `app_teleport_run_event`
 
-Advances the transfer overlay (`None` hides it).
+An SDK run event as the picker's (`AppPickerEvent.progress`).
 
 <Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Swift">
 
 ```swift
-func appTransferReduce(state: AppTransferOverlayState?, signal: AppTransferSignal) -> AppTransferOverlayState?
+func appTeleportRunEvent(event: TeleportRunEvent) -> AppTeleportRunEvent
 ```
 
 </Tab>
 <Tab value="Rust">
 
 ```rust
-pub fn app_transfer_reduce(state: Option<AppTransferOverlayState>, signal: AppTransferSignal) -> Option<AppTransferOverlayState>
+pub fn app_teleport_run_event(event: TeleportRunEvent) -> AppTeleportRunEvent
 ```
 
 </Tab>
@@ -1088,27 +922,26 @@ pub fn app_transfer_reduce(state: Option<AppTransferOverlayState>, signal: AppTr
 
 | Parameter | Type | Default |
 | --- | --- | --- |
-| `state` | [`Option<AppTransferOverlayState>`](#apptransferoverlaystate-record) | required |
-| `signal` | [`AppTransferSignal`](#apptransfersignal-record) | required |
+| `event` | [`TeleportRunEvent`](/cua-sdk/reference/spaces/teleport-apps#teleportrunevent-record) | required |
 
-**Returns** [`Option<AppTransferOverlayState>`](#apptransferoverlaystate-record)
+**Returns** [`AppTeleportRunEvent`](#appteleportrunevent-record)
 
-## `app_transfer_title`
+## `app_teleport_run_status`
 
-The transfer overlay's title.
+`app_picker_status` for a run's events as the SDK delivered them.
 
 <Tabs items={['Swift', 'Rust']} groupId="sdk-lang" persist>
 <Tab value="Swift">
 
 ```swift
-func appTransferTitle(state: AppTransferOverlayState) -> String
+func appTeleportRunStatus(events: [TeleportRunEvent]) -> String?
 ```
 
 </Tab>
 <Tab value="Rust">
 
 ```rust
-pub fn app_transfer_title(state: AppTransferOverlayState) -> String
+pub fn app_teleport_run_status(events: Vec<TeleportRunEvent>) -> Option<String>
 ```
 
 </Tab>
@@ -1116,6 +949,6 @@ pub fn app_transfer_title(state: AppTransferOverlayState) -> String
 
 | Parameter | Type | Default |
 | --- | --- | --- |
-| `state` | [`AppTransferOverlayState`](#apptransferoverlaystate-record) | required |
+| `events` | [`Vec<TeleportRunEvent>`](/cua-sdk/reference/spaces/teleport-apps#teleportrunevent-record) | required |
 
-**Returns** `String`
+**Returns** `Option<String>`

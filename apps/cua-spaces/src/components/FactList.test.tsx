@@ -42,7 +42,7 @@ describe("FactList (the Space detail's facts)", () => {
   it("shows Image, the full System string, Memory, and no Location", () => {
     render(<FactList facts={spaceDetail(space, usage).facts} />);
     const labels = Array.from(document.querySelectorAll("dt")).map((e) => e.textContent);
-    expect(labels).toEqual(["Status", "Image", "System", "Kind", "Memory", "Identifier"]);
+    expect(labels).toEqual(["Status", "Image", "Identifier", "System", "Kind", "Memory"]);
     expect(within(row("Kind")).getByText("Container")).toBeInTheDocument();
     expect(within(row("Image")).getByText("ghcr.io/trycua/linux:24.04-slim")).toHaveAttribute(
       "title",

@@ -327,6 +327,7 @@ pub fn opts(on: &str) -> SandboxCreateOptions {
         network: None,
         overlays: vec![],
         keep_on_failure: false,
+        gpu: None,
     }
 }
 

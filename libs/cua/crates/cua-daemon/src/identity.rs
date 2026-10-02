@@ -130,10 +130,12 @@ mod tests {
         std::fs::write(&app, b"").unwrap();
         // No bundled cua: nothing expected.
         assert_eq!(bundled_cua_of(&app), None);
-        std::fs::write(macos.join("cua"), b"").unwrap();
-        let want = macos.join("cua").canonicalize().unwrap();
+        // The bundled CLI carries the host's executable suffix.
+        let cua = macos.join(if cfg!(windows) { "cua.exe" } else { "cua" });
+        std::fs::write(&cua, b"").unwrap();
+        let want = cua.canonicalize().unwrap();
         assert_eq!(bundled_cua_of(&app), Some(want.clone()));
-        assert_eq!(bundled_cua_of(&macos.join("cua")), Some(want));
+        assert_eq!(bundled_cua_of(&cua), Some(want));
         // A CLI outside any bundle shares whatever daemon runs.
         assert_eq!(bundled_cua_of(&dir.path().join("cua")), None);
     }

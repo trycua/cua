@@ -619,6 +619,7 @@ Returned by [`app_settings_input_from_json`](#app_settings_input_from_json).
 | `billing` | [`Option<AppBillingStatus>`](/cua-sdk/reference/spaces/app-core/billing#appbillingstatus-record) |  | The account's Cua Cloud billing, once read (signed in). |
 | `login_item` / `loginItem` | [`Option<AppLoginItemInput>`](#apploginiteminput-record) |  | Launch at login, once the system was asked (none: no rows). |
 | `experiments` | [`AppExperiments`](/cua-sdk/reference/spaces/app-core/experiments#appexperiments-record) |  | Settings, Experiments (what the page mentions follows them). |
+| `keyvault_auto_wipe` / `keyvaultAutoWipe` | `Option<bool>` |  | The Keyvault's auto-wipe, once the broker told it (none: no Keyvault section). |
 
 ## `AppSettingsOption` record
 

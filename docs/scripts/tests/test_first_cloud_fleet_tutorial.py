@@ -19,7 +19,7 @@ RECOVERY = DOCS / "content/docs/fleets/guides/troubleshoot.mdx"
 PYTHON_SOURCE = DOCS / "public/scripts/first-cloud-fleet/first_cloud_fleet.py"
 TYPESCRIPT_SOURCE = DOCS / "public/scripts/first-cloud-fleet/first-cloud-fleet.ts.txt"
 IMAGE_REF = "registry.example/cua-image@sha256:" + "1" * 64
-SANDBOX_VERSION = "0.8.0"
+SANDBOX_VERSION = "0.9.0"
 
 
 class PythonExampleTests(unittest.TestCase):

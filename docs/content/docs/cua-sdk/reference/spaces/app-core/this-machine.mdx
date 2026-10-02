@@ -194,6 +194,8 @@ Returned by [`app_host_panel`](#app_host_panel).
 | `permissions` | [`Vec<AppPermissionRow>`](#apppermissionrow-record) |  | Panes still to grant. |
 | `open_settings_label` / `openSettingsLabel` | `String` |  | The permission rows' button. |
 | `actions` | [`Vec<AppHostAction>`](#apphostaction-record) |  | Buttons, primary first. |
+| `intro` | `Option<String>` |  | Before setup: what this machine is and why set it up. |
+| `setup_choices` / `setupChoices` | [`Vec<AppHostSetupChoice>`](#apphostsetupchoice-record) |  | Before setup: the ways to set it up, shown inline. |
 
 ## `AppHostPermissionInput` record
 
@@ -226,6 +228,14 @@ Returned by [`app_host_setting_change`](#app_host_setting_change).
 | --- | --- | --- | --- |
 | `share_desktop` / `shareDesktop` | `Option<bool>` |  | Share this desktop. |
 | `provide_spaces` / `provideSpaces` | `Option<bool>` |  | Provide Spaces. |
+
+## `AppHostSetupChoice` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | `String` |  | The form's profile: `desktop` or `spare`. |
+| `label` | `String` |  | Label. |
+| `button_label` / `buttonLabel` | `String` |  | The button that opens the form with this choice. |
 
 ## `AppHostSetupRequest` record
 

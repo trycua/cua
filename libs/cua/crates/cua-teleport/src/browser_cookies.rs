@@ -684,6 +684,7 @@ mod tests {
     }
     use super::*;
     use crate::host::FakeHost;
+    #[cfg(target_os = "macos")]
     use crate::host::{EffectKind, HostOutput};
     use std::sync::Arc;
 
@@ -911,6 +912,7 @@ mod tests {
         assert_eq!(cookies_store(p), p.join("Network/Cookies"));
     }
 
+    // Reads the macOS login Keychain through `security`: only meaningful there.
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_cookies_use_the_named_browsers_safe_storage_item() {

@@ -1,0 +1,153 @@
+---
+title: Create a Space with the Cua SDK
+description: Create a Linux Space on your own machine from Python or TypeScript, run a command in it, take a screenshot, ask Cua Driver for its windows, watch it, and delete it.
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+A Space is a desktop your agents can use and you can watch. In this
+walkthrough you create one on your own machine from code, run a command in it,
+take a screenshot, ask Cua Driver which windows it sees, watch the desktop,
+and delete the Space. Nothing leaves your machine.
+
+Requirements: Docker (or Podman or Colima) and about 4 GB of free memory.
+
+## 1. Install
+
+```bash skip="host-install"
+curl -fsSL https://cua.ai/install.sh | sh   # the cua CLI
+cua runtime doctor                          # checks the container engine
+```
+
+<Tabs groupId="sdk-lang" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```bash skip="host-install"
+pip install cua
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```bash skip="host-install"
+npm install @trycua/cua
+```
+
+  </Tab>
+</Tabs>
+
+## 2. Create a Space and use it
+
+The program passes no location, so the Space runs on this machine: the
+canonical Linux desktop (`ghcr.io/trycua/linux:24.04`) in a container.
+
+<Tabs groupId="sdk-lang" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```python title="first_space.py" test="container" id="first-space"
+import asyncio
+
+import cua
+
+
+async def main():
+    spaces = cua.embedded().spaces()
+    created = await spaces.create(cua.SpaceCreateOptions())
+    space = await spaces.space(created.space.id)
+    print("space:", created.space.id)
+
+    # Run a command.
+    out = await space.bash("uname -sm", None)
+    print(out.stdout.strip())
+
+    # Take a screenshot.
+    shot = await space.screenshot(None)
+    with open("space.png", "wb") as f:
+        f.write(shot.image)
+    print("screenshot: space.png")
+
+    # Ask Cua Driver in the Space which windows are open.
+    windows = await space.call_tool("list_windows", None, None, None)
+    print("driver:", "error" if windows.is_error else "ok")
+
+    # Delete the Space. Comment this out to keep it and watch it (step 3).
+    await spaces.delete(created.space.id)
+
+
+asyncio.run(main())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts title="first-space.ts" test="container" id="first-space-ts"
+import { writeFile } from 'node:fs/promises';
+import { embedded, SpaceCreateOptions } from '@trycua/cua';
+
+const spaces = embedded().spaces();
+const created = await spaces.create(SpaceCreateOptions.create({}));
+const id = created.space!.id;
+const space = await spaces.space(id);
+console.log('space:', id);
+
+// Run a command.
+console.log((await space.bash('uname -sm', undefined)).stdout.trim());
+
+// Take a screenshot.
+const shot = await space.screenshot(undefined);
+await writeFile('space.png', Buffer.from(shot.image));
+console.log('screenshot: space.png');
+
+// Ask Cua Driver in the Space which windows are open.
+const windows = await space.callTool('list_windows', undefined, undefined, undefined);
+console.log('driver:', windows.isError ? 'error' : 'ok');
+
+// Delete the Space. Comment this out to keep it and watch it (step 3).
+await spaces.delete_(id);
+```
+
+  </Tab>
+</Tabs>
+
+Run it with `python first_space.py` or `npx tsx first-space.ts`. The first
+run pulls the image, which can take a few minutes.
+
+```text output
+space: local:space-1a2b3c
+Linux x86_64
+screenshot: space.png
+driver: ok
+```
+
+`space.png` holds the desktop. On Apple silicon `uname` prints `aarch64`.
+
+## 3. Watch it
+
+Keep the Space (comment out the delete line), run the program again, then open
+its desktop in your browser with the id it printed:
+
+```bash test="cli-shape" id="first-space-view"
+cua sb view local:space-1a2b3c
+```
+
+The [Cua Spaces app](/spaces) lists the same Space, since the app, the CLI and
+the SDK share one registry.
+
+## 4. Clean up
+
+The program deletes its Space. One you kept goes with:
+
+```bash test="cli-shape" id="first-space-delete"
+cua spaces delete local:space-1a2b3c
+```
+
+`cua spaces ls` shows what is left.
+
+## Next
+
+- [Reach another machine](/cua-sdk#reach-another-machine): connect the SDK to
+  any machine that runs cua-spacesd, by address and token.
+- [Host Spaces on your spare Mac](/start-here/host-spaces-on-your-spare-mac):
+  let your laptop create Spaces on another machine, over the relay, ssh or
+  Tailscale.
+- [Add a Space](/spaces/guides/add-a-space): any image, progress, GPUs.

@@ -88,12 +88,12 @@ const config = {
       },
       {
         source: '/tutorials/your-first-cloud-sandbox',
-        destination: '/tutorials/your-first-cloud-fleet',
+        destination: '/start-here/create-a-space-with-the-sdk',
         permanent: true,
       },
       {
         source: '/tutorials/your-first-local-sandbox',
-        destination: '/tutorials/your-first-cloud-fleet',
+        destination: '/start-here/create-a-space-with-the-sdk',
         permanent: true,
       },
       {

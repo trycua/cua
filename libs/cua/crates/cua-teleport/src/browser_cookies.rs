@@ -185,7 +185,8 @@ impl ChromeCookies {
     /// cookie the destination needs and still report success.
     pub fn read(&self, sites: &[String]) -> Result<Vec<DecryptedCookie>, TeleportError> {
         let dir = self.profile_dir()?;
-        let db = dir.join("Cookies");
+        // `Default/Network/Cookies` first (Chrome 96+), then `Default/Cookies`.
+        let db = cua_teleport_bundle::layout::chrome::cookies_store(&dir);
         if !db.is_file() {
             return Err(TeleportError::Provider(format!(
                 "no cookies: {} has no Cookies database",
@@ -332,11 +333,31 @@ pub fn write_cookies_db_for_tests(
     profile_dir: &Path,
     rows: &[TestCookieRow<'_>],
 ) -> Result<(), TeleportError> {
-    std::fs::create_dir_all(profile_dir)
+    write_cookies_db_at(profile_dir, &profile_dir.join("Cookies"), rows)
+}
+
+/// Like [`write_cookies_db_for_tests`], in modern Chrome's layout
+/// (`Network/Cookies`, no legacy file).
+pub fn write_network_cookies_db_for_tests(
+    profile_dir: &Path,
+    rows: &[TestCookieRow<'_>],
+) -> Result<(), TeleportError> {
+    write_cookies_db_at(
+        profile_dir,
+        &profile_dir.join("Network").join("Cookies"),
+        rows,
+    )
+}
+
+fn write_cookies_db_at(
+    profile_dir: &Path,
+    db: &Path,
+    rows: &[TestCookieRow<'_>],
+) -> Result<(), TeleportError> {
+    std::fs::create_dir_all(db.parent().unwrap_or(profile_dir))
         .map_err(|e| TeleportError::Provider(format!("profile dir: {e}")))?;
-    let db = profile_dir.join("Cookies");
     let run = || -> rusqlite::Result<()> {
-        let conn = rusqlite::Connection::open(&db)?;
+        let conn = rusqlite::Connection::open(db)?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS cookies (host_key TEXT NOT NULL, name TEXT NOT NULL, \
              value TEXT NOT NULL, encrypted_value BLOB NOT NULL, path TEXT NOT NULL, \
@@ -461,6 +482,70 @@ mod tests {
     }
 
     #[cfg(target_os = "macos")]
+    fn one_row() -> Vec<TestCookieRow<'static>> {
+        vec![TestCookieRow {
+            host_key: ".github.com",
+            name: "user_session",
+            encrypted_value: v10_row(chromium_crypto::LINUX_V10_PASSWORD, 1, "gh-session-abc"),
+            path: "/",
+            expires_utc: 0,
+            is_secure: true,
+            is_httponly: true,
+            samesite: 1,
+        }]
+    }
+
+    fn read_linux(profile: &Path) -> Result<Vec<DecryptedCookie>, TeleportError> {
+        ChromeCookies::new(std::sync::Arc::new(FakeHost::new()))
+            .with_platform(Platform::Linux)
+            .with_profile_dir(profile)
+            .read(&[])
+    }
+
+    /// Modern Chrome (96+): only `Network/Cookies` exists.
+    #[test]
+    fn reads_a_modern_network_cookies_only_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("Profile 1");
+        write_network_cookies_db_for_tests(&profile, &one_row()).unwrap();
+        assert!(!profile.join("Cookies").exists());
+        let got = read_linux(&profile).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].value.as_str(), "gh-session-abc");
+    }
+
+    /// Older Chrome: only the legacy root `Cookies` exists.
+    #[test]
+    fn reads_a_legacy_cookies_only_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("Default");
+        write_cookies_db_for_tests(&profile, &one_row()).unwrap();
+        assert_eq!(read_linux(&profile).unwrap().len(), 1);
+    }
+
+    /// Both exist (a profile Chrome migrated): the modern one is read.
+    #[test]
+    fn prefers_network_cookies_over_a_stale_legacy_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = dir.path().join("Default");
+        write_cookies_db_for_tests(&profile, &[]).unwrap();
+        write_network_cookies_db_for_tests(&profile, &one_row()).unwrap();
+        assert_eq!(read_linux(&profile).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn cookies_store_prefers_network_and_falls_back_to_legacy() {
+        use cua_teleport_bundle::layout::chrome::cookies_store;
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path();
+        assert_eq!(cookies_store(p), p.join("Network/Cookies"));
+        std::fs::write(p.join("Cookies"), b"x").unwrap();
+        assert_eq!(cookies_store(p), p.join("Cookies"));
+        std::fs::create_dir_all(p.join("Network")).unwrap();
+        std::fs::write(p.join("Network/Cookies"), b"x").unwrap();
+        assert_eq!(cookies_store(p), p.join("Network/Cookies"));
+    }
+
     #[test]
     fn macos_cookies_use_the_named_browsers_safe_storage_item() {
         let dir = tempfile::tempdir().unwrap();

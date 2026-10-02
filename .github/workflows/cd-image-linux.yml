@@ -128,9 +128,12 @@ jobs:
       stamp: ${{ steps.meta.outputs.stamp }}
       publish: ${{ steps.meta.outputs.publish }}
       spacesd_source: ${{ steps.meta.outputs.spacesd_source }}
+      spacesd_version: ${{ steps.meta.outputs.spacesd_version }}
     steps:
       - id: meta
         env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.spacesd_version }}
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
           SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -158,12 +161,31 @@ jobs:
           if [ "$publish" = true ] && [ "$source" = none ]; then
             echo "::error::spacesd_source=none cannot be published"; exit 1
           fi
+          # source=release: pin one published cua-spacesd release. `latest` is the
+          # newest cua-spacesd-v* release that is neither a draft nor a
+          # prerelease (GitHub's own "latest" is repo-wide, so not usable).
+          version="${INPUT_VERSION:-latest}"
+          version="${version#cua-spacesd-v}"; version="${version#v}"
+          if [ "$source" = release ]; then
+            if [ "$version" = latest ]; then
+              version="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+                --jq '[.[] | select(.draft == false and .prerelease == false and (.tag_name | startswith("cua-spacesd-v")))][0].tag_name // ""')"
+              version="${version#cua-spacesd-v}"
+              [ -n "$version" ] || { echo "::error::no published cua-spacesd-v* release"; exit 1; }
+            fi
+            for arch in x86_64 aarch64; do
+              gh release view "cua-spacesd-v$version" -R "$GITHUB_REPOSITORY" --json assets \
+                --jq '.assets[].name' | grep -qx "cua-spacesd-linux-$arch.tar.gz" \
+                || { echo "::error::cua-spacesd-v$version has no cua-spacesd-linux-$arch.tar.gz"; exit 1; }
+            done
+          fi
           {
             # The per-arch children's tag: dated, so immutable once pushed.
             echo "tag=build-$stamp"
             echo "stamp=$stamp"
             echo "publish=$publish"
             echo "spacesd_source=$source"
+            echo "spacesd_version=$version"
           } | tee -a "$GITHUB_OUTPUT"
 
   spacesd:
@@ -241,7 +263,7 @@ jobs:
       TIER: ${{ matrix.tier }}
       STAMP: ${{ needs.meta.outputs.stamp }}
       SPACESD_SOURCE: ${{ needs.meta.outputs.spacesd_source }}
-      SPACESD_VERSION: ${{ inputs.spacesd_version || 'latest' }}
+      SPACESD_VERSION: ${{ needs.meta.outputs.spacesd_version }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Fetch cua-spacesd
@@ -262,8 +284,15 @@ jobs:
           scripts/images/install-release-tools.sh --free-disk
       - name: cua images release (build, gates, stage)
         run: |
+          # prepare only builds cua-spacesd from source: skip it unless the
+          # image takes that build (the Dockerfile still bind-mounts dist/).
+          steps=prepare,build,gate,stage
+          if [ "$SPACESD_SOURCE" != local ]; then
+            steps=build,gate,stage
+            mkdir -p "$IMAGE_DIR/dist"
+          fi
           cua images release "$IMAGE_DIR" --tier "$TIER" --arch "$ARCH" --stamp "$STAMP" --work release \
-            --steps prepare,build,gate,stage \
+            --steps "$steps" \
             --var "spacesd_source=$SPACESD_SOURCE" --var "spacesd_version=$SPACESD_VERSION"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()

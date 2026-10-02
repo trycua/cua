@@ -1,4 +1,4 @@
-"""One Cua SDK tree: every task page shows local and cloud with one API."""
+"""One Cua SDK tree: task pages lead with local, which needs no `local=`."""
 
 from pathlib import Path
 import json
@@ -7,8 +7,8 @@ import unittest
 
 DOCS = Path(__file__).resolve().parents[2] / "content" / "docs"
 
-# Task pages whose code is the same local and cloud: each shows both sides,
-# as Local/Cloud tabs or a snippet with a one-line `local=` comment.
+# Task pages: local is the default, so their examples pass no `local=` and
+# show no cloud variant (the cloud has its own guide).
 UNIFIED = (
     "cua-sdk/index",
     "cua-sdk/quickstart",
@@ -26,13 +26,13 @@ def page(slug: str) -> str:
 
 
 class UnifiedSandboxDocsTests(unittest.TestCase):
-    def test_task_pages_show_local_and_cloud(self):
+    def test_task_pages_lead_with_local(self):
         for slug in UNIFIED:
             with self.subTest(slug=slug):
                 text = page(slug)
-                tabs = "'Local', 'Cloud'" in text
-                both = "local=True" in text and ("local=False" in text or "local=True  #" in text)
-                self.assertTrue(tabs or both, f"{slug} shows only one side")
+                self.assertNotIn("'Local', 'Cloud'", text, f"{slug} has a cloud tab")
+                self.assertNotIn("local=False", text, f"{slug} shows a cloud example")
+                self.assertNotRegex(text, r"local=True[,)]", f"{slug} passes the default")
 
     def test_pages_stay_short(self):
         for folder in ("cua-sdk", "fleets"):

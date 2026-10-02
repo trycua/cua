@@ -805,6 +805,18 @@ pub async fn volume_ws(
         })
 }
 
+/// Whether this process runs as root (always false off Unix).
+#[cfg(unix)]
+fn running_as_root() -> bool {
+    // SAFETY: geteuid never fails.
+    unsafe { libc::geteuid() == 0 }
+}
+
+#[cfg(not(unix))]
+fn running_as_root() -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -849,16 +861,4 @@ mod tests {
             );
         }
     }
-}
-
-/// Whether this process runs as root (always false off Unix).
-#[cfg(unix)]
-fn running_as_root() -> bool {
-    // SAFETY: geteuid never fails.
-    unsafe { libc::geteuid() == 0 }
-}
-
-#[cfg(not(unix))]
-fn running_as_root() -> bool {
-    false
 }

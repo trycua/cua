@@ -34,7 +34,7 @@ class Approver(cua.TeleportApprover):
 
 def test_every_contract_tool_maps_to_a_generated_method():
     rows = cua.spaces_tool_methods()
-    assert len(rows) == 79
+    assert len(rows) == 86
     classes = {"Spaces": cua.Spaces, "Space": cua.Space}
     for row in rows:
         cls, method = row.method.split(".")

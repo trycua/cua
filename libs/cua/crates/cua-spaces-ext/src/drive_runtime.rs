@@ -88,6 +88,9 @@ pub(crate) struct DriveRuntime {
     /// Why a Space that connected has no volume (the attach failed, or its
     /// image has no volume), until it mounts or the Space goes.
     unavailable: std::sync::Mutex<BTreeMap<String, String>>,
+    /// Per Space, the task that re-mounts the volume when the guest daemon
+    /// restarts (see [`spawn_attach`]).
+    watchers: std::sync::Mutex<BTreeMap<String, tokio::task::JoinHandle<()>>>,
     pub(crate) volume_auto: bool,
 }
 
@@ -98,6 +101,7 @@ impl Default for DriveRuntime {
             service: tokio::sync::OnceCell::new(),
             volumes: tokio::sync::Mutex::new(BTreeMap::new()),
             unavailable: std::sync::Mutex::new(BTreeMap::new()),
+            watchers: std::sync::Mutex::new(BTreeMap::new()),
             volume_auto: true,
         }
     }
@@ -228,6 +232,7 @@ impl SpacesDrive for Spaces {
         let Ok(ext) = self.drive_extension() else {
             return;
         };
+        ext.runtime.stop_watchers();
         let all: Vec<Mounted> = std::mem::take(&mut *ext.runtime.volumes.lock().await)
             .into_values()
             .collect();
@@ -386,8 +391,22 @@ impl SpacesDrive for Spaces {
 }
 
 impl DriveRuntime {
+    fn stop_watcher(&self, id: &str) {
+        if let Some(t) = self.watchers.lock().expect("volume watchers").remove(id) {
+            t.abort();
+        }
+    }
+
+    pub(crate) fn stop_watchers(&self) {
+        let all = std::mem::take(&mut *self.watchers.lock().expect("volume watchers"));
+        for t in all.into_values() {
+            t.abort();
+        }
+    }
+
     /// Unmounts `id`'s volume; whether there was one.
     pub(crate) async fn detach(&self, id: &str) -> bool {
+        self.stop_watcher(id);
         self.note_unavailable(id, None);
         let m = self.volumes.lock().await.remove(id);
         match m {
@@ -411,22 +430,115 @@ pub(crate) fn spawn_attach(spaces: &Spaces, id: &str) {
     if !(id.starts_with("local:") || id.starts_with("cloud:")) {
         return;
     }
-    let spaces = spaces.clone();
+    let Ok(ext) = spaces.drive_extension() else {
+        return;
+    };
     let key = id.to_string();
-    tokio::spawn(async move {
-        // Bounded: the Space is ready either way; a volume that cannot
-        // mount says why (`volume_sync_status`, `cua volume status`).
-        let why = match tokio::time::timeout(ATTACH_TIMEOUT, spaces.volume_attach(&key)).await {
-            Ok(Ok(_)) => return,
-            Ok(Err(e)) => format!("Cua Volume not mounted: {e}"),
-            Err(_) => format!(
-                "Cua Volume not mounted: no answer within {} s",
-                ATTACH_TIMEOUT.as_secs()
-            ),
-        };
-        tracing::warn!(space = %key, "{why}");
-        if let Ok(ext) = spaces.drive_extension() {
-            ext.runtime.note_unavailable(&key, Some(why));
+    let task = tokio::spawn(keep_attached(spaces.clone(), key.clone()));
+    // A fresh connection replaces the old watcher.
+    if let Some(old) = ext
+        .runtime
+        .watchers
+        .lock()
+        .expect("volume watchers")
+        .insert(key, task)
+    {
+        old.abort();
+    }
+}
+
+/// Mounts the Space's volume and keeps it mounted: when the guest daemon
+/// restarts (an update, a crash, a reboot) its mount and its half of the
+/// socket are gone, so the volume is mounted again, with a backoff while the
+/// daemon is still coming up. Ends when the Space is dropped or its volume
+/// detached (both abort this task) or when the guest has no mount backend.
+async fn keep_attached(spaces: Spaces, key: String) {
+    use cua_spaces::reattach::{Attempt, Policy, supervise};
+    let health = {
+        let (spaces, key) = (spaces.clone(), key.clone());
+        move || {
+            let (spaces, key) = (spaces.clone(), key.clone());
+            async move { volume_health(&spaces, &key).await }
         }
-    });
+    };
+    let reattach = {
+        let (spaces, key) = (spaces.clone(), key.clone());
+        move || {
+            let (spaces, key) = (spaces.clone(), key.clone());
+            async move {
+                // Bounded: the Space is ready either way; a volume that
+                // cannot mount says why (`volume_sync_status`,
+                // `cua volume status`).
+                let r = tokio::time::timeout(ATTACH_TIMEOUT, remount(&spaces, &key)).await;
+                let why = match r {
+                    Ok(Ok(Some(_))) => return Ok(Attempt::Attached),
+                    Ok(Ok(None)) => return Ok(Attempt::Unsupported),
+                    Ok(Err(e)) => format!("Cua Volume not mounted: {e}"),
+                    Err(_) => format!(
+                        "Cua Volume not mounted: no answer within {} s",
+                        ATTACH_TIMEOUT.as_secs()
+                    ),
+                };
+                if let Ok(ext) = spaces.drive_extension() {
+                    ext.runtime.note_unavailable(&key, Some(why.clone()));
+                }
+                Err(why)
+            }
+        }
+    };
+    supervise(Policy::default(), health, reattach).await;
+}
+
+/// Whether the Space's volume is mounted and served: this side's socket is
+/// open and the guest still reports its mount.
+async fn volume_health(spaces: &Spaces, key: &str) -> cua_spaces::reattach::Health {
+    use cua_spaces::reattach::Health;
+    let Ok(ext) = spaces.drive_extension() else {
+        return Health::Gone;
+    };
+    let live = ext
+        .runtime
+        .volumes
+        .lock()
+        .await
+        .get(key)
+        .map(|m| m.attachment.is_live());
+    match live {
+        None | Some(false) => Health::Down,
+        Some(true) => match spaces.space(key).await {
+            // A restarted daemon answers `detached`: it knows nothing of the
+            // socket this side still holds.
+            Ok(s) => match s.volume_status().await {
+                Ok(st) if st.state == "detached" || st.state == "error" => Health::Down,
+                _ => Health::Healthy,
+            },
+            Err(_) => Health::Healthy,
+        },
+    }
+}
+
+/// Mounts again: drops what is left of the old attachment (keeping a
+/// persistent agent's view on it), then attaches.
+async fn remount(spaces: &Spaces, key: &str) -> Result<Option<VolumeInfo>> {
+    let ext = spaces.drive_extension()?;
+    let holder = {
+        let mut volumes = ext.runtime.volumes.lock().await;
+        match volumes.remove(key) {
+            Some(old) => {
+                let holder = old.holder.clone();
+                drop(volumes);
+                old.detach().await;
+                holder
+            }
+            None => None,
+        }
+    };
+    let info = spaces.volume_attach(key).await?;
+    if let (Some(agent), Some(_)) = (holder, &info) {
+        let _ = spaces.volume_for_agent(key, &agent).await;
+    }
+    if info.is_some() {
+        tracing::info!(space = %key, "Cua Volume mounted again");
+    }
+    Ok(info)
 }

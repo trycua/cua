@@ -1,15 +1,17 @@
 ---
 title: Host Spaces on your spare Mac
-description: 'Turn a spare Mac mini (or any machine) into a place your laptop and your agents create Spaces on, without sharing its own desktop.'
+description: 'Turn a spare Mac mini (or any machine) into a place your laptop and your agents create Spaces on, over the relay, ssh or Tailscale, without sharing its own desktop.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Spaces run on your Mac, on your machines, or in the cloud (Cua cloud, or [your own AWS, Google Cloud or Modal account](/cua-sdk/guides/your-cloud)). A spare Mac mini
-in a closet can run Spaces for your laptop: your laptop, or a coding agent on
-it, asks for them through the cua.ai relay, and the Mac mini runs them with
-its own runtimes (Lume for macOS VMs, Docker for Linux). Its own desktop,
-shell and files stay private.
+Spaces run on your own Mac, on your other machines, and in your own cloud
+account ([AWS, Google Cloud or Modal](/cua-sdk/guides/your-cloud)). In this walkthrough a spare Mac mini in a closet runs Spaces for
+your laptop: your laptop, or a coding agent on it, asks for them through the
+cua.ai relay or [directly over Tailscale](#over-tailscale-without-the-relay),
+and the Mac mini runs them with its own runtimes (Lume for macOS VMs, Docker
+for Linux). You can set the Mac up [over ssh](#over-ssh-or-tailscale). Its own
+desktop, shell and files stay private.
 
 ## Set up the spare Mac
 

@@ -71,6 +71,15 @@ public enum AppEnvironment {
             }
         }
         let keyvault = KeyvaultModel(client: fixtures ? nil : KeyvaultClient(cuaHome: nil))
+        if !fixtures {
+            // Icons: caches survive restarts; fixtures never resolve apps or
+            // touch the network.
+            let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+                .appendingPathComponent("com.trycua.cua-spaces/icons")
+            keyvault.appIcons = AppIconCache(dir: caches?.appendingPathComponent("apps"))
+            keyvault.siteIconStore = SiteIconStore(dir: caches?.appendingPathComponent("sites"))
+            keyvault.iconScale = Int(NSScreen.main?.backingScaleFactor ?? 2)
+        }
         let live = backend as? LiveSpacesBackend
         // Fixtures never touch the host service, the account, the telemetry
         // config or the coding agents' configs.

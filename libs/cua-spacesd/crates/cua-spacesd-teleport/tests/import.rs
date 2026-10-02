@@ -13,10 +13,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use cua_spacesd_teleport::bundle::BundleWriter;
+use cua_spacesd_teleport::host::HostOutput;
 use cua_spacesd_teleport::{EffectKind, FakeHost, ImportError, Receiver, TransferScope};
 
 fn fake_receiver(dest: &Path) -> (Arc<FakeHost>, Receiver) {
-    let host = Arc::new(FakeHost::new());
+    // Every host command "succeeds" (`open` returns 0), nothing real runs.
+    let host = Arc::new(FakeHost::new().with_responder(|_| Ok(HostOutput::ok("501"))));
     let receiver = Receiver::with_host(dest.to_path_buf(), host.clone());
     (host, receiver)
 }
@@ -53,8 +55,18 @@ fn import_lands_files_and_launches_through_the_fake_host() {
         .import_bytes(&chrome_bundle(), "chrome", true)
         .unwrap();
     assert_eq!(outcome.provider_id, "chrome");
-    assert!(outcome.launched);
-    assert_eq!(outcome.pid, Some(0));
+    assert!(outcome.launched, "{:?}", outcome.launch_error);
+    assert!(outcome.launch_error.is_none());
+    // macOS opens the app through LaunchServices (no pid); elsewhere the
+    // program is spawned.
+    assert_eq!(
+        outcome.pid,
+        if cfg!(target_os = "macos") {
+            None
+        } else {
+            Some(0)
+        }
+    );
     // The import remaps the Chrome profile to the DESTINATION platform's
     // user-data directory.
     let user_data_dir = if cfg!(target_os = "macos") {
@@ -71,10 +83,43 @@ fn import_lands_files_and_launches_through_the_fake_host() {
     );
     let launches = host.calls_of(EffectKind::AppLaunch);
     assert_eq!(launches.len(), 1, "{:?}", host.calls());
+    if cfg!(target_os = "macos") {
+        assert_eq!(launches[0].program, "/usr/bin/open");
+        assert_eq!(
+            launches[0].args[..2],
+            ["-a", "/Applications/Google Chrome.app"]
+        );
+    }
     assert!(launches[0]
         .args
         .iter()
         .any(|a| a.starts_with("--user-data-dir=")));
+}
+
+/// A launch that fails is reported with its reason, not silently dropped, and
+/// does not fail the import.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_failed_launch_is_reported_and_the_import_still_succeeds() {
+    let dest = tempfile::tempdir().unwrap();
+    let host = Arc::new(FakeHost::new().with_responder(|c| {
+        Ok(if c.kind == EffectKind::AppLaunch {
+            HostOutput {
+                success: false,
+                stdout: vec![],
+                stderr: b"The application cannot be opened".to_vec(),
+            }
+        } else {
+            HostOutput::ok("501")
+        })
+    }));
+    let receiver = Receiver::with_host(dest.path().to_path_buf(), host);
+    let outcome = receiver
+        .import_bytes(&chrome_bundle(), "chrome", true)
+        .unwrap();
+    assert!(!outcome.launched);
+    let why = outcome.launch_error.expect("reason");
+    assert!(why.contains("cannot be opened"), "{why}");
 }
 
 #[test]

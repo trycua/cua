@@ -168,6 +168,19 @@ pub fn app_space_detail_copy() -> AppDetailCopy {
     core::spaces::sidebar::detail_copy()
 }
 
+/// What a Space's preview card shows before (or instead of) its live
+/// desktop: "Connecting…", a Connect button, or the Space's own line.
+#[uniffi::export]
+pub fn app_desktop_cover(input: AppDesktopCoverInput) -> AppDesktopCover {
+    core::spaces::cover::desktop_cover(&input)
+}
+
+/// How fresh the shells keep each Space's thumbnail.
+#[uniffi::export]
+pub fn app_thumbnail_policy() -> AppThumbnailPolicy {
+    core::spaces::cover::thumbnail_policy()
+}
+
 /// A Space's Stream section: the Desktop row, then one row per window.
 #[uniffi::export]
 pub fn app_stream_section(input: AppStreamSectionInput) -> AppStreamSection {
@@ -1040,6 +1053,31 @@ pub fn app_picker_review(state: AppPickerState) -> Option<AppReviewView> {
     core::teleport::flow::review(&state)
 }
 
+/// The key a review's site choice is remembered under (`<app>|<space>`).
+#[uniffi::export]
+pub fn app_review_remember_key(app: String, space: String) -> String {
+    core::teleport::review::remember_key(&app, &space)
+}
+
+/// What was picked last time for `key` (an app and a Space), if anything.
+#[uniffi::export]
+pub fn app_review_remembered(
+    choices: Vec<AppRememberedChoice>,
+    key: String,
+) -> Option<Vec<String>> {
+    core::teleport::review::remembered(&choices, &key)
+}
+
+/// `choices` with the sites just sent remembered for `key`.
+#[uniffi::export]
+pub fn app_review_remember(
+    choices: Vec<AppRememberedChoice>,
+    key: String,
+    domains: Vec<String>,
+) -> Vec<AppRememberedChoice> {
+    core::teleport::review::remember(&choices, &key, &domains)
+}
+
 /// The consent the confirmed review carries.
 #[uniffi::export]
 pub fn app_picker_consent(state: AppPickerState) -> AppTeleportConsent {
@@ -1050,6 +1088,36 @@ pub fn app_picker_consent(state: AppPickerState) -> AppTeleportConsent {
 #[uniffi::export]
 pub fn app_picker_progress(state: AppPickerState) -> f64 {
     core::teleport::flow::progress(&state)
+}
+
+/// What the run is doing, in words ("Packing profile", "Uploading 12 /
+/// 80 MB"), for the line under the progress bar; none unless running.
+#[uniffi::export]
+pub fn app_picker_status(state: AppPickerState) -> Option<String> {
+    core::teleport::flow::status(&state)
+}
+
+/// [`app_picker_status`] for a run's events as the SDK delivered them.
+#[uniffi::export]
+pub fn app_teleport_run_status(events: Vec<crate::TeleportRunEvent>) -> Option<String> {
+    let events: Vec<_> = events.into_iter().map(app_teleport_run_event).collect();
+    core::teleport::flow::run_status(&events)
+}
+
+/// An SDK run event as the picker's (`AppPickerEvent.progress`).
+#[uniffi::export]
+pub fn app_teleport_run_event(event: crate::TeleportRunEvent) -> AppTeleportRunEvent {
+    use core::teleport::flow::RunPhase;
+    AppTeleportRunEvent {
+        step: event.step,
+        steps: event.steps,
+        kind: event.kind,
+        phase: serde_json::from_value(serde_json::Value::String(event.phase))
+            .unwrap_or(RunPhase::Progress),
+        detail: event.detail,
+        done_bytes: event.done_bytes,
+        total_bytes: event.total_bytes,
+    }
 }
 
 /// "12 MB".
@@ -1312,37 +1380,136 @@ pub fn kv_sharing_label(overview: KeyvaultOverview, now_ms: i64) -> Option<Strin
     core::keyvault::view::sharing_label(&overview, now_ms)
 }
 
-/// The Passwords-style sidebar.
+/// [`kv_sharing_label`] without the copies the user dismissed (import ids):
+/// the notch indicator.
+#[uniffi::export]
+pub fn kv_visible_sharing_label(
+    overview: KeyvaultOverview,
+    now_ms: i64,
+    dismissed: Vec<String>,
+) -> Option<String> {
+    core::keyvault::view::visible_sharing_label(&overview, now_ms, &dismissed)
+}
+
+/// The ids of `spaces` signed in through the Keyvault (a live copy is in
+/// them), less the `dismissed` copies: "Signed in" in the Spaces list
+/// (nothing dismissed), the key on notch tiles.
+#[uniffi::export]
+pub fn kv_signed_in_spaces(
+    overview: KeyvaultOverview,
+    now_ms: i64,
+    dismissed: Vec<String>,
+    spaces: Vec<AppSpace>,
+) -> Vec<String> {
+    core::keyvault::view::signed_in_spaces(&overview, now_ms, &dismissed, &spaces)
+}
+
+/// The dismissed copies still live.
+#[uniffi::export]
+pub fn kv_prune_dismissed(
+    overview: KeyvaultOverview,
+    now_ms: i64,
+    dismissed: Vec<String>,
+) -> Vec<String> {
+    core::keyvault::view::prune_dismissed(&overview, now_ms, &dismissed)
+}
+
+/// The Access row of `space`'s copies, to focus from its "Signed in" badge.
+#[uniffi::export]
+pub fn kv_space_access_key(
+    overview: KeyvaultOverview,
+    now_ms: i64,
+    space: AppSpace,
+) -> Option<String> {
+    core::keyvault::view::space_access_key(&overview, now_ms, &space)
+}
+
+/// The sidebar: All Items, Waiting, Access, Recent, and one row per app.
 #[uniffi::export]
 pub fn kv_sidebar(overview: KeyvaultOverview, now_ms: i64) -> KvSidebar {
     core::keyvault::browse::sidebar(&overview, now_ms)
 }
 
-/// The list for a sidebar selection.
+/// The pane for a sidebar selection (the vault list is [`kv_vault_view`]).
 #[uniffi::export]
-pub fn kv_list(
-    overview: KeyvaultOverview,
-    selection: KvSelection,
-    now_ms: i64,
-    query: String,
-) -> KvListView {
-    core::keyvault::browse::list(&overview, &selection, now_ms, &query)
+pub fn kv_list(overview: KeyvaultOverview, selection: KvSelection, now_ms: i64) -> KvListView {
+    core::keyvault::browse::list(&overview, &selection, now_ms)
 }
 
-/// One site's detail.
+/// The vault list's next state (search, selection, open groups).
 #[uniffi::export]
-pub fn kv_site_detail(
+pub fn kv_vault_reduce(
     overview: KeyvaultOverview,
-    key: String,
-    now_ms: i64,
-) -> Option<KvSiteDetail> {
-    core::keyvault::browse::site_detail(&overview, &key, now_ms)
+    state: KvVaultState,
+    action: KvVaultAction,
+) -> KvVaultState {
+    core::keyvault::vault::reduce(&overview, &state, &action)
 }
 
-/// The site switch's command.
+/// The vault list: apps, sites and items with their locks, the selection and
+/// the batch bar.
 #[uniffi::export]
-pub fn kv_site_toggle(group: KvSiteGroup, on: bool) -> KvCommand {
-    core::keyvault::view::site_toggle(&group, on)
+pub fn kv_vault_view(overview: KeyvaultOverview, state: KvVaultState, now_ms: i64) -> KvVaultView {
+    core::keyvault::vault::view(&overview, &state, now_ms)
+}
+
+/// The selection without what the vault no longer holds.
+#[uniffi::export]
+pub fn kv_vault_prune(overview: KeyvaultOverview, state: KvVaultState) -> KvVaultState {
+    core::keyvault::vault::prune(&overview, &state)
+}
+
+/// What the Keyvault holds for `provider_id` that a teleport can send.
+#[uniffi::export]
+pub fn kv_vault_source(overview: KeyvaultOverview, provider_id: String) -> KvVaultSource {
+    core::keyvault::vault::vault_source(&overview, &provider_id)
+}
+
+/// The command that locks items.
+#[uniffi::export]
+pub fn kv_lock_command(ids: Vec<String>) -> KvCommand {
+    core::keyvault::vault::lock_command(&ids)
+}
+
+/// The command that unlocks items (the daemon asks for Touch ID once).
+#[uniffi::export]
+pub fn kv_unlock_command(ids: Vec<String>) -> KvCommand {
+    core::keyvault::vault::unlock_command(&ids)
+}
+
+/// The command that deletes items and wipes their copies in Spaces.
+#[uniffi::export]
+pub fn kv_delete_command(ids: Vec<String>) -> KvCommand {
+    core::keyvault::vault::delete_command(&ids)
+}
+
+/// The unlock prompt for `count` items (`name`: the one item's name). None
+/// when the user chose "Never ask again".
+#[uniffi::export]
+pub fn kv_unlock_prompt(
+    overview: KeyvaultOverview,
+    count: u32,
+    name: Option<String>,
+) -> Option<KvUnlockPrompt> {
+    core::keyvault::vault::unlock_prompt(&overview, count, name.as_deref())
+}
+
+/// The unlock prompt whatever the setting says.
+#[uniffi::export]
+pub fn kv_unlock_prompt_always(count: u32, name: Option<String>) -> KvUnlockPrompt {
+    core::keyvault::vault::unlock_prompt_always(count, name.as_deref())
+}
+
+/// The delete confirmation.
+#[uniffi::export]
+pub fn kv_delete_confirm(count: u32, live_copies: u32) -> KvDeleteConfirm {
+    core::keyvault::vault::delete_confirm(count, live_copies)
+}
+
+/// How many Spaces hold a live copy of any of `ids`.
+#[uniffi::export]
+pub fn kv_live_copy_spaces(overview: KeyvaultOverview, ids: Vec<String>, now_ms: i64) -> u32 {
+    core::keyvault::vault::live_copy_spaces(&overview, &ids, now_ms)
 }
 
 /// Opens the approval sheet with nothing selected.
@@ -1471,6 +1638,14 @@ impl KeyvaultClient {
             .unwrap_or_default()
     }
 
+    /// Site icons the vault holds (not secret; empty while names are hidden).
+    pub async fn favicons(&self) -> Vec<KvFavicon> {
+        let inner = self.inner.clone();
+        cua_sdk::support::run(async move { Ok(inner.favicons().await) })
+            .await
+            .unwrap_or_default()
+    }
+
     /// Runs one page action (a broker request).
     pub async fn execute(&self, command: KvCommand) -> Result<KvOutcome> {
         let inner = self.inner.clone();
@@ -1509,6 +1684,14 @@ impl KeyvaultClient {
     pub async fn lock(&self) -> Result<()> {
         let inner = self.inner.clone();
         cua_sdk::support::run(async move { inner.lock().await.map_err(kv_error) }).await
+    }
+
+    /// What `app` holds, per domain with counts (the daemon asks for Touch ID
+    /// when the browse window is closed). Never a value.
+    pub async fn inventory(&self, app: String, profile: Option<String>) -> Result<KvInventory> {
+        let inner = self.inner.clone();
+        cua_sdk::support::run(async move { inner.inventory(&app, profile).await.map_err(kv_error) })
+            .await
     }
 }
 

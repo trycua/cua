@@ -47,6 +47,7 @@ without touching it.
 | [`ListSpaceTools`](#spaceservicelistspacetools) | [`ListSpaceToolsRequest`](#listspacetoolsrequest) | [`ListSpaceToolsResponse`](#listspacetoolsresponse) | unary |
 | [`CallSpaceTool`](#spaceservicecallspacetool) | [`CallSpaceToolRequest`](#callspacetoolrequest) | [`CallSpaceToolResponse`](#callspacetoolresponse) | unary |
 | [`ListHosts`](#spaceservicelisthosts) | [`ListHostsRequest`](#listhostsrequest) | [`ListHostsResponse`](#listhostsresponse) | unary |
+| [`GetSpaceThumbnail`](#spaceservicegetspacethumbnail) | [`GetSpaceThumbnailRequest`](#getspacethumbnailrequest) | [`GetSpaceThumbnailResponse`](#getspacethumbnailresponse) | unary |
 
 ### SpaceService.AddSpace
 
@@ -175,6 +176,17 @@ hosts added by their Tailscale or LAN address), each asked for its
 limits: what `CreateSpace` takes as `on="host:<id>"` (the New Space
 wizard's Run on menu). One that does not answer is listed offline when
 it provided a Space before.
+
+### SpaceService.GetSpaceThumbnail
+
+`/cua.daemon.v1.SpaceService/GetSpaceThumbnail`, unary: [`GetSpaceThumbnailRequest`](#getspacethumbnailrequest) to [`GetSpaceThumbnailResponse`](#getspacethumbnailresponse).
+
+The Space's latest thumbnail (a small JPEG of its primary display)
+from the daemon's cache, which every client on this machine shares:
+the cached image when it is younger than `max_age`, else a fresh
+capture through cua-spacesd (the cached one again, with its older
+`captured_at`, when the capture fails). Asking keeps the daemon
+refreshing running Spaces' thumbnails in the background for a while.
 
 ## Types in `cua/daemon/v1/spaces.proto`
 
@@ -574,3 +586,24 @@ Response for `SpaceService.ListHosts`.
 | Field | # | Type | Description |
 | --- | --- | --- | --- |
 | `hosts` | 1 | repeated [`SpacesHost`](#spaceshost) | In order: relay hosts, then direct ones. |
+
+### GetSpaceThumbnailRequest
+
+Request for `SpaceService.GetSpaceThumbnail`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `space` | 1 | `string` | Space. |
+| `max_age` | 2 | `google.protobuf.Duration` | How old a cached thumbnail may be (unset: any age; zero: always capture). |
+
+### GetSpaceThumbnailResponse
+
+Response for `SpaceService.GetSpaceThumbnail`.
+
+| Field | # | Type | Description |
+| --- | --- | --- | --- |
+| `image` | 1 | `bytes` | Encoded image. |
+| `format` | 2 | `string` | "jpeg". |
+| `width` | 3 | `uint32` | Pixel width. |
+| `height` | 4 | `uint32` | Pixel height. |
+| `captured_at` | 5 | `google.protobuf.Timestamp` | When it was captured. |

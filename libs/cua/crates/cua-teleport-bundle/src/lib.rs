@@ -22,6 +22,10 @@
 //!   [`TransferManifest`], [`LaunchSpec`], …);
 //! - [`keychain`]: the reserved `keychain.json` entry format (items are read
 //!   on the sender and installed on the receiver);
+//! - [`local_storage`]: the reserved `localstorage.json` entry (a Chromium
+//!   browser's localStorage as items);
+//! - [`logins`]: the reserved `logins.json` entry (saved passwords the user
+//!   ticked, re-encrypted by the receiver);
 //! - [`layout`]: per-app layout descriptors — which profile files make up each
 //!   app's session, the canonical bundle paths, and how they remap onto each
 //!   destination platform -- as pure data and pure functions;
@@ -40,6 +44,8 @@ pub mod cookies;
 mod error;
 pub mod keychain;
 pub mod layout;
+pub mod local_storage;
+pub mod logins;
 mod types;
 
 pub use error::{Result, TeleportError};

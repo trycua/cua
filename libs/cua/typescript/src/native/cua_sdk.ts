@@ -15373,6 +15373,80 @@ const FfiConverterTypeSpaceStreamTicket = (() => {
 })();
 
 /**
+ * A Space's latest thumbnail, from the cache every client on this machine
+ * shares ([`crate::native::spaces::Space::thumbnail`]).
+ */
+export type SpaceThumbnail = {
+    /**
+     * Encoded image (a small JPEG of the primary display).
+     */
+    image: ArrayBuffer,
+    /**
+     * Encoding.
+     */
+    format: ImageFormat,
+    /**
+     * Pixel width.
+     */
+    width: number,
+    /**
+     * Pixel height.
+     */
+    height: number,
+    /**
+     * When it was captured, Unix milliseconds.
+     */
+    capturedAtMs: bigint
+}
+
+/**
+ * Generated factory for {@link SpaceThumbnail} record objects.
+ */
+export const SpaceThumbnail = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SpaceThumbnail, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SpaceThumbnail>,
+    });
+})();
+
+const FfiConverterTypeSpaceThumbnail = (() => {
+    type TypeName = SpaceThumbnail;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                image: FfiConverterArrayBuffer.read(from),
+                format: FfiConverterTypeImageFormat.read(from),
+                width: FfiConverterUInt32.read(from),
+                height: FfiConverterUInt32.read(from),
+                capturedAtMs: FfiConverterUInt64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterArrayBuffer.write(value.image, into);
+            FfiConverterTypeImageFormat.write(value.format, into);
+            FfiConverterUInt32.write(value.width, into);
+            FfiConverterUInt32.write(value.height, into);
+            FfiConverterUInt64.write(value.capturedAtMs, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterArrayBuffer.allocationSize(value.image) +
+             FfiConverterTypeImageFormat.allocationSize(value.format) +
+             FfiConverterUInt32.allocationSize(value.width) +
+             FfiConverterUInt32.allocationSize(value.height) +
+             FfiConverterUInt64.allocationSize(value.capturedAtMs);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
  * A tool of a Space's MCP service.
  */
 export type SpaceToolInfo = {
@@ -30491,10 +30565,10 @@ export interface SpaceLike {
  */
     requestSiteLogin(url: string, options: SiteLoginOptions | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SiteLoginReport>;
 /**
- * Captures the Space's display (the app's tile thumbnails): PNG at
- * full size on the primary display unless `options` say otherwise.
- * Fails with `CapabilityMissing` (`spacesd`) when the image runs no
- * cua-spacesd.
+ * Captures the Space's display: PNG at full size on the primary
+ * display unless `options` say otherwise (for a small preview,
+ * [`Space::thumbnail`] reads the shared cache instead). Fails with
+ * `CapabilityMissing` (`spacesd`) when the image runs no cua-spacesd.
  */
     screenshot(options: ScreenshotOptions | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Screenshot>;
 /**
@@ -30565,6 +30639,16 @@ export interface SpaceLike {
  * What teleporting `app` (`full` or `tabs`) would move from this host.
  */
     teleportManifest(app: string, scope: string | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<TeleportManifest>;
+/**
+ * The Space's latest thumbnail (a small JPEG of its primary display)
+ * from the cache every client on this machine shares: returned at
+ * once when it is younger than `max_age_ms` (unset: any age), else
+ * captured fresh through cua-spacesd and kept for the next caller.
+ * When that capture fails, the older one comes back (`captured_at_ms`
+ * says how old). Asking keeps the daemon refreshing running Spaces'
+ * thumbnails in the background for a while (about every 90 s).
+ */
+    thumbnail(maxAgeMs: bigint | undefined, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<SpaceThumbnail>;
 /**
  * Stops sharing this Space with `who` at once, or with everyone when
  * `who` is `None`.
@@ -31444,10 +31528,10 @@ private constructor(pointer: UniffiHandle) {
     }
 
 /**
- * Captures the Space's display (the app's tile thumbnails): PNG at
- * full size on the primary display unless `options` say otherwise.
- * Fails with `CapabilityMissing` (`spacesd`) when the image runs no
- * cua-spacesd.
+ * Captures the Space's display: PNG at full size on the primary
+ * display unless `options` say otherwise (for a small preview,
+ * [`Space::thumbnail`] reads the shared cache instead). Fails with
+ * `CapabilityMissing` (`spacesd`) when the image runs no cua-spacesd.
  */
     async screenshot(options: ScreenshotOptions | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<Screenshot> /*throws*/ {
     const __stack = uniffiIsDebug ? new Error().stack : undefined;
@@ -31838,6 +31922,47 @@ private constructor(pointer: UniffiHandle) {
             // export. The bytes the runtime hands back must be deserialized
             // here using the per-callable return-type converter.
             /*liftFunc:*/ FfiConverterTypeTeleportManifest.lift.bind(FfiConverterTypeTeleportManifest),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
+        );
+    } catch (__error: any) {
+        if (uniffiIsDebug && __error instanceof Error) {
+            __error.stack = __stack;
+        }
+        throw __error;
+    }
+    }
+
+/**
+ * The Space's latest thumbnail (a small JPEG of its primary display)
+ * from the cache every client on this machine shares: returned at
+ * once when it is younger than `max_age_ms` (unset: any age), else
+ * captured fresh through cua-spacesd and kept for the next caller.
+ * When that capture fails, the older one comes back (`captured_at_ms`
+ * says how old). Asking keeps the daemon refreshing running Spaces'
+ * thumbnails in the background for a while (about every 90 s).
+ */
+    async thumbnail(maxAgeMs: bigint | undefined, asyncOpts_?: { signal: AbortSignal }): Promise<SpaceThumbnail> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+        return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().uniffi_cua_sdk_fn_method_space_thumbnail(
+                    uniffiTypeSpaceObjectFactory.clonePointer(this),FfiConverterOptionalUInt64.lower(maxAgeMs, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ffi_cua_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ffi_cua_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ffi_cua_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeSpaceThumbnail.lift.bind(FfiConverterTypeSpaceThumbnail),
             /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
             /*asyncOpts:*/ asyncOpts_,
             /*errorHandler:*/ FfiConverterTypeCuaError.lift.bind(FfiConverterTypeCuaError)
@@ -37344,7 +37469,7 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_request_site_login() !== 2223) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_request_site_login");
     }
-    if (nativeModule().uniffi_cua_sdk_checksum_method_space_screenshot() !== 9108) {
+    if (nativeModule().uniffi_cua_sdk_checksum_method_space_screenshot() !== 41142) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_screenshot");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_send_file() !== 29056) {
@@ -37379,6 +37504,9 @@ function uniffiEnsureInitialized() {
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_teleport_manifest() !== 31596) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_teleport_manifest");
+    }
+    if (nativeModule().uniffi_cua_sdk_checksum_method_space_thumbnail() !== 10979) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_thumbnail");
     }
     if (nativeModule().uniffi_cua_sdk_checksum_method_space_unshare() !== 58172) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_sdk_checksum_method_space_unshare");
@@ -38022,6 +38150,7 @@ export default Object.freeze({
     FfiConverterTypeSpaceStreamSession,
     FfiConverterTypeSpaceStreamStats,
     FfiConverterTypeSpaceStreamTicket,
+    FfiConverterTypeSpaceThumbnail,
     FfiConverterTypeSpaceToolInfo,
     FfiConverterTypeSpaceToolResult,
     FfiConverterTypeSpaceTransferReport,

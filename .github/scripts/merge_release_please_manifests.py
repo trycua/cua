@@ -16,7 +16,7 @@ COMPONENT_PATHS = {
     "sandbox": "libs/python/cua-sandbox",
     "cua-spacesd": "libs/cua-spacesd",
     "cua-sdk": "libs/cua",
-    "cua-spaces": "apps/cua-spaces",
+    "cua-spaces": "apps/cua-spaces-macos",
 }
 
 

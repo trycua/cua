@@ -43,7 +43,19 @@ async fn guest() -> Guest {
         ..ServerConfig::default()
     };
     let ctx = ServerContext::new(config, Some(TOKEN.into()));
-    let receiver_host = Arc::new(cua_spacesd_teleport::FakeHost::new());
+    // A guest that has never held a Chrome Safe Storage item: reading the
+    // secret fails (so the receiver creates one), every other `security`
+    // call and the app launch (`open` on macOS) succeed. Only a macOS receiver ever asks.
+    let receiver_host = Arc::new(cua_spacesd_teleport::FakeHost::new().with_responder(|c| {
+        let reads_secret =
+            c.args.iter().any(|a| a == "find-generic-password") && c.args.iter().any(|a| a == "-w");
+        let launches = c.kind == cua_spacesd_teleport::EffectKind::AppLaunch;
+        if (c.program != "security" && !launches) || reads_secret {
+            Ok(cua_spacesd_teleport::HostOutput::failed())
+        } else {
+            Ok(cua_spacesd_teleport::HostOutput::ok(""))
+        }
+    }));
     let receiver = Arc::new(cua_spacesd_teleport::Receiver::with_host(
         dest_home.path().to_path_buf(),
         receiver_host.clone(),
@@ -73,8 +85,10 @@ async fn client(url: &str, transport: TransportPreference) -> SpacesdClient {
 fn fake_chrome(home: &Path) {
     let profile = home.join(".config/google-chrome/Default");
     std::fs::create_dir_all(profile.join("Sessions")).unwrap();
-    // A real (empty) Chrome cookie store: the sender reads it as SQLite.
-    rusqlite::Connection::open(profile.join("Cookies"))
+    std::fs::create_dir_all(profile.join("Network")).unwrap();
+    // A real (empty) Chrome cookie store in modern Chrome's layout
+    // (`Network/Cookies`, no root `Cookies`): the sender reads it as SQLite.
+    rusqlite::Connection::open(profile.join("Network/Cookies"))
         .unwrap()
         .execute_batch(
             "CREATE TABLE cookies (creation_utc INTEGER NOT NULL, host_key TEXT NOT NULL,
@@ -200,6 +214,251 @@ async fn chrome_session_lands_in_the_guest_home_over_both_transports() {
             .iter()
             .any(|a| a.starts_with("--user-data-dir=")));
     }
+}
+
+/// The receiving Space's Chrome was never launched: its profile has no
+/// `Cookies` database at all. The teleport must still land the signed-in
+/// cookies, in a database Chrome adopts on its first real launch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cookies_land_in_a_chrome_that_was_never_launched() {
+    use cua_teleport_bundle::chromium_crypto as crypto;
+
+    let g = guest().await;
+    // Nothing exists under the guest home: not the profile, not `Cookies`.
+    assert_eq!(std::fs::read_dir(g.dest_home.path()).unwrap().count(), 0);
+    let src = tempfile::tempdir().unwrap();
+    fake_chrome(src.path());
+    {
+        let key = crypto::derive_key(crypto::LINUX_V10_PASSWORD, crypto::LINUX_V10_PBKDF2_ROUNDS);
+        let blob = crypto::encrypt_v10(&key, b"fresh-session-value");
+        let conn = rusqlite::Connection::open(
+            src.path()
+                .join(".config/google-chrome/Default/Network/Cookies"),
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cookies (creation_utc, host_key, name, value, encrypted_value, path,
+             expires_utc, is_secure, is_httponly, samesite)
+             VALUES (1, '.github.com', 'user_session', '', ?1, '/', 13400000000000000, 1, 1, 1)",
+            [blob],
+        )
+        .unwrap();
+    }
+    let (_, teleporter) = sender(src.path());
+    let env = client(&g.url, TransportPreference::Native).await;
+    teleporter
+        .send(
+            &env,
+            &chrome(),
+            TransferScope::FullProfile,
+            Selection::All,
+            Arc::new(AutoApprove),
+        )
+        .await
+        .unwrap();
+
+    let user_data = if cfg!(target_os = "macos") {
+        "Library/Application Support/Google/Chrome"
+    } else {
+        ".config/google-chrome"
+    };
+    let db = g
+        .dest_home
+        .path()
+        .join(user_data)
+        .join("Default/Network/Cookies");
+    assert!(db.is_file(), "no cookies database was created");
+    // Current Chrome (154) reads `Default/Cookies`, older builds
+    // `Default/Network/Cookies`: both carry the session, so neither a new nor
+    // an old guest Chrome comes up signed out.
+    assert!(
+        db.with_file_name("..").join("Cookies").is_file(),
+        "no root Cookies database was created"
+    );
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    let version: String = conn
+        .query_row("SELECT value FROM meta WHERE key = 'version'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert!(version.parse::<i64>().unwrap() >= 24, "{version}");
+    let encrypted: Vec<u8> = conn
+        .query_row(
+            "SELECT encrypted_value FROM cookies WHERE host_key = '.github.com'
+             AND name = 'user_session'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(encrypted.starts_with(b"v10"));
+    // On a Linux guest the key is Chrome's fixed one, so the value can be
+    // read back exactly as Chrome would (digest of host_key, then value). A
+    // macOS guest's key lives in a Keychain the fake host does not hold.
+    if cfg!(not(target_os = "macos")) {
+        let key = crypto::derive_key(crypto::LINUX_V10_PASSWORD, crypto::LINUX_V10_PBKDF2_ROUNDS);
+        let plain = crypto::decrypt_prefixed(&key, &encrypted).unwrap().1;
+        assert!(plain.ends_with(b"fresh-session-value"));
+        assert_eq!(plain.len(), 32 + b"fresh-session-value".len());
+    }
+}
+
+/// The modern layout end to end: a source Chrome with `Network/Cookies` in its
+/// current schema (every attribute, a partitioned cookie, a Windows
+/// app-bound value) and a `Local Storage` LevelDB goes through the real sender,
+/// an in-process spacesd and the receiver. Every cookie attribute lands in the
+/// guest's own database, the partitioned cookie stays partitioned, the
+/// app-bound one is not sent, and the localStorage values land in the guest's
+/// LevelDB.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn modern_layout_cookie_attributes_and_local_storage_arrive_whole() {
+    use cua_chromium_storage as ls;
+    use cua_teleport::browser_cookies::{
+        write_modern_cookies_db_for_tests, CookieExtras, ModernTestRow, TestCookieRow,
+    };
+    use cua_teleport_bundle::chromium_crypto as crypto;
+
+    let g = guest().await;
+    let src = tempfile::tempdir().unwrap();
+    fake_chrome(src.path());
+    let profile = src.path().join(".config/google-chrome/Default");
+    std::fs::remove_file(profile.join("Network/Cookies")).unwrap();
+    let key = crypto::derive_key(crypto::LINUX_V10_PASSWORD, crypto::LINUX_V10_PBKDF2_ROUNDS);
+    let enc = |v: &[u8]| crypto::encrypt_v10(&key, v);
+    let core = |host: &'static str, name: &'static str, value: Vec<u8>| TestCookieRow {
+        host_key: host,
+        name,
+        encrypted_value: value,
+        path: "/",
+        expires_utc: 13_400_000_000_000_000,
+        is_secure: true,
+        is_httponly: true,
+        samesite: 1,
+    };
+    let full = CookieExtras {
+        creation_utc: Some(13_300_000_000_000_001),
+        last_access_utc: Some(13_300_000_000_000_002),
+        last_update_utc: Some(13_300_000_000_000_003),
+        priority: Some(2),
+        source_scheme: Some(2),
+        source_port: Some(443),
+        source_type: Some(1),
+        has_cross_site_ancestor: Some(1),
+        top_frame_site_key: Some("https://top.example".into()),
+    };
+    let mut app_bound = b"v20".to_vec();
+    app_bound.extend_from_slice(&[9u8; 40]);
+    write_modern_cookies_db_for_tests(
+        &profile,
+        &[
+            ModernTestRow {
+                core: core(".example.com", "sid", enc(b"partitioned")),
+                extra: full,
+            },
+            ModernTestRow {
+                core: core(".example.com", "sid", enc(b"plain")),
+                extra: CookieExtras::default(),
+            },
+            ModernTestRow {
+                core: core(".bank.test", "app_bound", app_bound),
+                extra: CookieExtras::default(),
+            },
+        ],
+    )
+    .unwrap();
+    let item = |origin: &str, key: &str, value: &str| ls::LocalStorageItem {
+        origin: origin.into(),
+        key: key.into(),
+        value: value.into(),
+        key_raw: None,
+        value_raw: None,
+    };
+    let source_items = vec![
+        item("https://github.com", "color_mode", "dark"),
+        item("https://a.example", "日本", "こんにちは"),
+    ];
+    ls::write(
+        &ls::store_dir(&profile),
+        &source_items,
+        13_300_000_000_000_000,
+    )
+    .unwrap();
+
+    let (_, teleporter) = sender(src.path());
+    let env = client(&g.url, TransportPreference::Native).await;
+    teleporter
+        .send(
+            &env,
+            &chrome(),
+            TransferScope::FullProfile,
+            Selection::All,
+            Arc::new(AutoApprove),
+        )
+        .await
+        .unwrap();
+
+    let user_data = if cfg!(target_os = "macos") {
+        "Library/Application Support/Google/Chrome"
+    } else {
+        ".config/google-chrome"
+    };
+    let dest = g.dest_home.path().join(user_data).join("Default");
+    let conn = rusqlite::Connection::open(dest.join("Network/Cookies")).unwrap();
+    let rows: i64 = conn
+        .query_row("SELECT count(*) FROM cookies", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(rows, 2, "the app-bound cookie is not sent");
+    #[allow(clippy::type_complexity)]
+    let got: (i64, i64, i64, i64, i64, i64, i64, i64, String) = conn
+        .query_row(
+            "SELECT creation_utc, last_access_utc, last_update_utc, priority, source_scheme,
+             source_port, source_type, has_cross_site_ancestor, top_frame_site_key
+             FROM cookies WHERE top_frame_site_key != ''",
+            [],
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                    r.get(8)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        got,
+        (
+            13_300_000_000_000_001,
+            13_300_000_000_000_002,
+            13_300_000_000_000_003,
+            2,
+            2,
+            443,
+            1,
+            1,
+            "https://top.example".to_string()
+        )
+    );
+    let unpartitioned: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM cookies WHERE top_frame_site_key = '' AND name = 'sid'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(unpartitioned, 1);
+    // The guest's own LevelDB holds the same values.
+    let mut got = ls::read(&ls::store_dir(&dest)).unwrap();
+    got.sort_by(|a, b| a.origin.cmp(&b.origin));
+    let mut want = source_items.clone();
+    want.sort_by(|a, b| a.origin.cmp(&b.origin));
+    assert_eq!(got, want);
+    // And not as raw LevelDB files of the sender's.
+    assert!(!g.dest_home.path().join("localstorage.json").exists());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

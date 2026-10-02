@@ -364,18 +364,29 @@ fn on_path_before(path_env: &str, bin_dir: &Path) -> bool {
     true
 }
 
+/// `ETXTBSY` ("text file busy") on Linux and macOS.
+const ETXTBSY: i32 = 26;
+
 /// `cua --version`, first line, or `None` if it does not run.
 pub async fn cli_version(cli: &Path) -> Option<String> {
-    let run = tokio::process::Command::new(cli)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .output();
-    let out = tokio::time::timeout(VERSION_TIMEOUT, run)
-        .await
-        .ok()?
-        .ok()?;
+    // A file just written can be briefly "busy" to exec (ETXTBSY) while a
+    // process forked elsewhere still holds its write handle: try again.
+    let mut attempt = 0;
+    let out = loop {
+        let run = tokio::process::Command::new(cli)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .output();
+        match tokio::time::timeout(VERSION_TIMEOUT, run).await.ok()? {
+            Err(e) if e.raw_os_error() == Some(ETXTBSY) && attempt < 10 => {
+                attempt += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            r => break r.ok()?,
+        }
+    };
     if !out.status.success() {
         return None;
     }

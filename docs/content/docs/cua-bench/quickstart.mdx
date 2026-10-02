@@ -48,11 +48,9 @@ Each variant's `result.json`, `run.log` and `trajectory.json` land in
 
 ```bash test="cli-shape" id="bench-quickstart-agent"
 cb run cua-bench-basic --agent cua-agent --model anthropic/claude-sonnet-4-20250514 -j 4
-cb run cua-bench-basic --agent cua-agent --model anthropic/claude-sonnet-4-20250514 -j 16 --on cloud
 ```
 
-The first runs every task on this machine (`--on local` is the default); the
-second runs them in the Cua cloud after `cb login`.
+It runs every task on this machine (`--on local` is the default).
 
 ## Try a task yourself
 

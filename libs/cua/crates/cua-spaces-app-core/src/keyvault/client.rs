@@ -19,13 +19,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use cua_keyvault::Zeroizing;
-use cua_keyvault::broker::{ApproveOptions, InitRequest, Status, UnlockRequest};
+use cua_keyvault::broker::{
+    ApproveOptions, InitRequest, Inventory, ItemPage, LockOutcome, Status, UnlockRequest,
+};
 use cua_keyvault::ipc::{Request, VerificationView};
-use cua_keyvault::model::{Grant, ItemMeta, ItemPolicy};
+use cua_keyvault::model::Grant;
 use serde::Serialize;
 use serde_json::Value;
 
-use super::wire::{KeyvaultOverview, KvCommand, KvGrant, KvItem};
+use super::wire::{KeyvaultOverview, KvCommand, KvFavicon, KvGrant, KvInventory, KvItem};
 
 /// How many audit entries the page reads.
 pub const AUDIT_TAIL: usize = 200;
@@ -222,10 +224,25 @@ pub enum KvOutcome {
         /// Key.
         key: Option<String>,
     },
-    /// Items after a policy change.
-    Items {
-        /// Items.
-        items: Vec<KvItem>,
+    /// Items locked or unlocked. Identity providers always ask: they are in
+    /// `skipped`, never changed.
+    Locked {
+        /// Items whose lock changed.
+        changed: Vec<String>,
+        /// Items left locked (identity providers).
+        skipped: Vec<String>,
+    },
+    /// Items deleted.
+    Deleted {
+        /// Items deleted.
+        count: u32,
+        /// Copies wiped in Spaces.
+        wiped: Vec<String>,
+    },
+    /// The browse window is open until then, Unix ms.
+    Browsing {
+        /// When it closes.
+        until_ms: u64,
     },
     /// Grants revoked.
     Revoked {
@@ -307,12 +324,12 @@ impl KeyvaultCommands {
             out.message = Some(message);
             return out;
         }
-        match self
-            .typed::<Value>(Request::ListItems)
-            .await
-            .and_then(decode)
-        {
-            Ok(items) => out.items = items,
+        match self.items().await {
+            Ok((items, names_visible, total)) => {
+                out.items = items;
+                out.names_visible = names_visible;
+                out.items_total = total;
+            }
             Err(f) => {
                 out.availability = f.code;
                 out.message = Some(f.message);
@@ -350,6 +367,37 @@ impl KeyvaultCommands {
                 .push(format!("Audit verification: {}", f.message)),
         }
         out
+    }
+
+    /// Every item, page by page: whether their names are visible, and how
+    /// many the vault holds.
+    /// Site icons from the vault (empty while the browse window is closed).
+    /// Not secret; fetched apart from the overview so views stay small.
+    pub async fn favicons(&self) -> Vec<KvFavicon> {
+        self.typed::<Vec<KvFavicon>>(Request::ListFavicons)
+            .await
+            .unwrap_or_default()
+    }
+
+    async fn items(&self) -> Result<(Vec<KvItem>, bool, u32), KvFailure> {
+        let mut all: Vec<KvItem> = Vec::new();
+        loop {
+            let page: ItemPage = self
+                .typed(Request::ListItems {
+                    offset: all.len(),
+                    limit: None,
+                })
+                .await?;
+            let visible = page.names_visible;
+            let total = page.total as u32;
+            let empty = page.items.is_empty();
+            for i in &page.items {
+                all.push(mirror(i)?);
+            }
+            if empty || all.len() as u32 >= total {
+                return Ok((all, visible, total));
+            }
+        }
     }
 
     async fn init(&self, req: InitRequest) -> Result<Option<String>, KvFailure> {
@@ -424,50 +472,94 @@ impl KeyvaultCommands {
             .map(|_| ())
     }
 
-    /// Whether `item_ids` may be used by unattended rules. Off only narrows;
-    /// on widens, so the daemon asks for presence. Identity providers never
-    /// go unattended.
+    /// Auto-wipe of delivered copies. On only shortens what new copies
+    /// keep; off keeps them until wiped, so the daemon asks for presence.
+    pub async fn set_auto_wipe(&self, on: bool) -> Result<(), KvFailure> {
+        self.transport
+            .call(Request::SetAutoWipe { on })
+            .await
+            .map(|_| ())
+    }
+
+    /// Locks or unlocks `item_ids` together. Locking only narrows. Unlocking
+    /// allows unattended access (any agent with the Cua Spaces MCP may have
+    /// the item written into a connected Space), so the daemon asks for
+    /// presence once for the whole batch. Identity providers always ask and
+    /// come back in `skipped`.
+    pub async fn set_locked(
+        &self,
+        item_ids: &[String],
+        locked: bool,
+    ) -> Result<LockOutcome, KvFailure> {
+        if item_ids.is_empty() {
+            return Ok(LockOutcome::default());
+        }
+        self.typed(Request::SetLocked {
+            ids: item_ids.to_vec(),
+            locked,
+        })
+        .await
+    }
+
+    /// [`Self::set_locked`] under the name the Tauri app's command uses
+    /// (`unattended` is "unlocked"). Returns no items: the page re-reads.
     pub async fn set_unattended(
         &self,
         item_ids: &[String],
         unattended: bool,
     ) -> Result<Vec<KvItem>, KvFailure> {
+        self.set_locked(item_ids, !unattended).await?;
+        Ok(vec![])
+    }
+
+    /// Deletes `item_ids` and wipes every live copy of them in Spaces.
+    /// Returns the copies wiped.
+    pub async fn delete_items(&self, item_ids: &[String]) -> Result<Vec<String>, KvFailure> {
         if item_ids.is_empty() {
             return Ok(vec![]);
         }
-        let current: Vec<ItemMeta> = self.typed(Request::ListItems).await?;
-        let mut out = Vec::new();
-        for id in item_ids {
-            let item = current.iter().find(|i| &i.id == id).ok_or(KvFailure {
-                code: "not_found".into(),
-                message: format!("item {id} is not in the Keyvault"),
-            })?;
-            if unattended && item.identity_provider {
-                return Err(KvFailure {
-                    code: "forbidden".into(),
-                    message: format!(
-                        "{} is an identity provider; it always asks and never runs unattended",
-                        item.label
-                    ),
-                });
-            }
-            if item.policy.unattended == unattended {
-                out.push(mirror(item)?);
-                continue;
-            }
-            let policy = ItemPolicy {
-                unattended,
-                ..item.policy.clone()
-            };
-            let updated: ItemMeta = self
-                .typed(Request::SetItemPolicy {
-                    id: id.clone(),
-                    policy,
-                })
-                .await?;
-            out.push(mirror(&updated)?);
-        }
-        Ok(out)
+        self.typed(Request::DeleteItems {
+            ids: item_ids.to_vec(),
+        })
+        .await
+    }
+
+    /// "Never ask again" on the unlock prompt.
+    pub async fn set_skip_unlock_prompt(&self, on: bool) -> Result<(), KvFailure> {
+        self.transport
+            .call(Request::SetSkipUnlockPrompt { on })
+            .await
+            .map(|_| ())
+    }
+
+    /// Opens the browse window (the daemon asks for presence): item names
+    /// show for a few minutes. Returns when it closes, Unix ms.
+    pub async fn browse(&self) -> Result<u64, KvFailure> {
+        let v = self.transport.call(Request::Browse).await?;
+        Ok(v.get("browse_until_ms")
+            .and_then(Value::as_u64)
+            .unwrap_or(0))
+    }
+
+    /// Closes the browse window.
+    pub async fn end_browse(&self) -> Result<(), KvFailure> {
+        self.transport.call(Request::EndBrowse).await.map(|_| ())
+    }
+
+    /// What `app` holds, per domain with counts (the daemon asks for
+    /// presence when the browse window is closed). Never values.
+    pub async fn inventory(
+        &self,
+        app: &str,
+        profile: Option<String>,
+    ) -> Result<KvInventory, KvFailure> {
+        let inv: Inventory = self
+            .typed(Request::Inventory {
+                app: app.into(),
+                profile,
+            })
+            .await?;
+        mirror(&inv)
     }
 
     /// Imports a browser's saved passwords (`browser`: `chrome`), one item
@@ -478,17 +570,15 @@ impl KeyvaultCommands {
         browser: &str,
         profile: Option<String>,
         sites: Vec<String>,
-    ) -> Result<Vec<KvItem>, KvFailure> {
-        let items: Vec<cua_keyvault::ItemMeta> = self
-            .typed(Request::ImportPasswords(
-                cua_keyvault::broker::PasswordImportSpec {
-                    app: browser.into(),
-                    profile,
-                    sites,
-                },
-            ))
-            .await?;
-        items.iter().map(mirror).collect()
+    ) -> Result<cua_keyvault::broker::ImportReport, KvFailure> {
+        self.typed(Request::ImportPasswords(
+            cua_keyvault::broker::PasswordImportSpec {
+                app: browser.into(),
+                profile,
+                sites,
+            },
+        ))
+        .await
     }
 
     /// Revokes one grant, or every grant with `*`.
@@ -557,12 +647,42 @@ impl KeyvaultCommands {
                 self.set_disabled(*disabled).await?;
                 KvOutcome::Done
             }
+            KvCommand::SetAutoWipe { on } => {
+                self.set_auto_wipe(*on).await?;
+                KvOutcome::Done
+            }
             KvCommand::SetUnattended {
                 item_ids,
                 unattended,
-            } => KvOutcome::Items {
-                items: self.set_unattended(item_ids, *unattended).await?,
+            } => {
+                let out = self.set_locked(item_ids, !*unattended).await?;
+                KvOutcome::Locked {
+                    changed: out.changed,
+                    skipped: out.skipped,
+                }
+            }
+            KvCommand::SetLocked { item_ids, locked } => {
+                let out = self.set_locked(item_ids, *locked).await?;
+                KvOutcome::Locked {
+                    changed: out.changed,
+                    skipped: out.skipped,
+                }
+            }
+            KvCommand::DeleteItems { item_ids } => KvOutcome::Deleted {
+                count: item_ids.len() as u32,
+                wiped: self.delete_items(item_ids).await?,
             },
+            KvCommand::SetSkipUnlockPrompt { on } => {
+                self.set_skip_unlock_prompt(*on).await?;
+                KvOutcome::Done
+            }
+            KvCommand::Browse => KvOutcome::Browsing {
+                until_ms: self.browse().await?,
+            },
+            KvCommand::EndBrowse => {
+                self.end_browse().await?;
+                KvOutcome::Done
+            }
             KvCommand::RevokeGrant { id } => KvOutcome::Revoked {
                 count: self.revoke_grant(id).await? as u32,
             },

@@ -117,6 +117,20 @@ $ErrorActionPreference = "Stop"
 # over PowerShell ISE and Windows PowerShell 5 — silence it. Restored
 # nowhere on purpose: this script is a one-shot, the user can re-set it.
 $ProgressPreference = "SilentlyContinue"
+# Windows PowerShell 5.1 started from PowerShell 7 (a pwsh terminal, or
+# `cua-driver update --apply` launched from one) inherits pwsh's
+# PSModulePath. Autoload then finds PowerShell 7's Core-only copies of
+# Microsoft.PowerShell.Utility / .Security / .Archive first, fails to load
+# them, and Get-FileHash, Get-AuthenticodeSignature and Expand-Archive are
+# "not recognized". Put this edition's own modules first and drop the
+# PowerShell 7 module paths before any of them is used.
+if ($PSVersionTable.PSEdition -eq 'Desktop') {
+    $desktopModules = Join-Path $PSHOME 'Modules'
+    $modulePaths = @($desktopModules) + @(($env:PSModulePath -split ';') | Where-Object {
+            $_ -and ($_ -notmatch '\\PowerShell\\') -and ($_.TrimEnd('\') -ne $desktopModules.TrimEnd('\'))
+        })
+    $env:PSModulePath = $modulePaths -join ';'
+}
 
 $Repo       = "trycua/cua"
 $TagPrefix  = "cua-driver-rs-v"
@@ -135,7 +149,7 @@ $ThemeBinaryName = "cua-cursor-theme.exe"
 # where the baked line hasn't been updated yet.
 #
 # ~~~ BAKED_VERSION: auto-updated after release publication — do not edit ~~~
-$Script:CuaDriverRsBakedVersion = "0.31.0" # published-installer-version
+$Script:CuaDriverRsBakedVersion = "0.32.0" # published-installer-version
 # ~~~ END_BAKED_VERSION ~~~
 #
 # Withdrawn releases (for example, a release published without valid
@@ -209,6 +223,15 @@ $ChannelWasExplicit = $PSBoundParameters.ContainsKey('Channel')
 # Post-install GC: how many per-version release dirs to retain. Validated
 # in Resolve-KeepVersions below; 0 means "never GC".
 $Script:KeepVersionsDefault = 5
+
+function Get-Sha256Hex([string]$Path) {
+    # .NET directly: Get-FileHash is missing when the Utility module is not
+    # loaded (e.g. under `cua-driver update --apply` on older drivers).
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($Path)
+    try { return ([System.BitConverter]::ToString($sha.ComputeHash($stream)) -replace '-', '').ToLowerInvariant() }
+    finally { $stream.Dispose(); $sha.Dispose() }
+}
 
 function Resolve-KeepVersions {
     $raw = $env:CUA_DRIVER_RS_KEEP_VERSIONS
@@ -1261,7 +1284,7 @@ function Assert-ReleaseZipIntegrity([string]$zipPath, [string]$version) {
             exit 1
         }
         else {
-            $actual = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $actual = Get-Sha256Hex $zipPath
             if ($actual -ne $expected) {
                 Write-ErrorStep "$zipName does not match $tag's $sumsName (expected $expected, got $actual); refusing to install it."
                 exit 1

@@ -536,6 +536,25 @@ mod imp {
                 .collect();
             ok(pb::ListHostsResponse { hosts })
         }
+
+        async fn get_space_thumbnail(
+            &self,
+            req: tonic::Request<pb::GetSpaceThumbnailRequest>,
+        ) -> R<pb::GetSpaceThumbnailResponse> {
+            let r = req.into_inner();
+            let t = self
+                .spaces()
+                .thumbnail(&r.space, r.max_age.as_ref().map(from_dur))
+                .await
+                .map_err(|e| st(e.into()))?;
+            ok(pb::GetSpaceThumbnailResponse {
+                image: t.image,
+                format: t.format,
+                width: t.width,
+                height: t.height,
+                captured_at: Some(crate::convert::ts(t.captured_at)),
+            })
+        }
     }
 }
 
@@ -644,6 +663,12 @@ mod imp {
             &self,
             _: tonic::Request<pb::ListHostsRequest>,
         ) -> R<pb::ListHostsResponse> {
+            off()
+        }
+        async fn get_space_thumbnail(
+            &self,
+            _: tonic::Request<pb::GetSpaceThumbnailRequest>,
+        ) -> R<pb::GetSpaceThumbnailResponse> {
             off()
         }
     }

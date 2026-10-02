@@ -212,6 +212,8 @@ async fn push_through_keyvault(
         cookies: cua_keyvault::broker::CookieFilter::default(),
         confirm_passwords: true,
         paths: Some(paths.clone()),
+        domains: None,
+        passwords: false,
     };
     let mut client = cua_keyvault::client::KeyvaultClient::connect_default()
         .await
@@ -222,7 +224,7 @@ async fn push_through_keyvault(
             ))
         })?;
     let outcome = client
-        .import_and_teleport(spec, sandbox.to_string(), false)
+        .import_and_teleport_launching(spec, sandbox.to_string(), false, !args.no_launch, |_| {})
         .await
         .map_err(|e| CuaError::PermissionDenied(format!("{}: {e}", manifest.provider_id)))?;
     let delivery = outcome.deliveries.first().cloned().unwrap_or_default();

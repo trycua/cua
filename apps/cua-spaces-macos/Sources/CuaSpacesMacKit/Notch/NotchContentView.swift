@@ -182,7 +182,17 @@ struct NotchContentView: View {
             // The cue grows the notch and its tab as one, about the notch's
             // top centre.
             .frame(width: g.stage.width, alignment: .top)
-            .scaleEffect(x: shape == .cue ? motion.hoverScale : 1, y: 1, anchor: .top)
+            .scaleEffect(x: shape == .cue && !reduceMotion ? motion.hoverScale : 1,
+                         y: shape == .cue && !reduceMotion ? motion.hoverScaleY : 1, anchor: .top)
+            // Reduce Motion: the cue is a faint rim instead of a spring.
+            .overlay(alignment: .top) {
+                if shape == .cue, reduceMotion, g.notchStyle {
+                    NotchShape(top: radii.closed.top, bottom: radii.closed.bottom)
+                        .stroke(.white.opacity(0.28), lineWidth: 1)
+                        .frame(width: size.width, height: size.height)
+                        .transition(.opacity)
+                }
+            }
             .animation(.spring(response: motion.openResponse, dampingFraction: motion.closeDamping), value: g)
             // Always present, so its frame (and the clip) springs with the
             // shape; the content inside is laid out at its final size.
@@ -365,6 +375,8 @@ struct NotchContentView: View {
                 }
                 if let p = v.permission {
                     permissionRow(p).frame(height: 36, alignment: .top)
+                } else if let a = v.access {
+                    accessRow(a).frame(height: 36, alignment: .top)
                 } else if let prompt = v.prompt {
                     Text(prompt)
                         .font(.system(size: 12, weight: .medium))
@@ -378,7 +390,7 @@ struct NotchContentView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.white.opacity(0.6))
                         .lineLimit(1)
-                        .frame(maxWidth: .infinity, minHeight: 102, maxHeight: 102, alignment: .topLeading)
+                        .frame(maxWidth: .infinity, minHeight: TileView.height, maxHeight: TileView.height, alignment: .topLeading)
                 } else {
                     tiles(v)
                 }
@@ -461,6 +473,32 @@ struct NotchContentView: View {
         }
     }
 
+    /// Live Keyvault sign-ins: the key, what is live (opens the Access
+    /// page) and Dismiss, which only hides this.
+    private func accessRow(_ a: AppNotchAccess) -> some View {
+        HStack(spacing: 8) {
+            Button { model.send(.dismiss); controller.onOpenAccess?() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "key.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color(red: 0x34 / 255, green: 0xc7 / 255, blue: 0x59 / 255))
+                    Text(a.text)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .lineLimit(1)
+                }
+            }
+            .buttonStyle(.plain)
+            .help("Show in Keyvault")
+            Spacer(minLength: 8)
+            Button(a.dismiss) { controller.onDismissAccess?() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Hide this until something new is shared. Access stays.")
+                .accessibilityIdentifier("notch-dismiss-access")
+        }
+    }
+
     @ViewBuilder private func tiles(_ v: AppNotchView) -> some View {
         let row = HStack(alignment: .top, spacing: 12) {
             ForEach(v.tiles, id: \.id) { tile in
@@ -483,16 +521,18 @@ struct NotchContentView: View {
         }
         // Left to right from the content inset (the drag hit test assumes it).
         if v.tiles.count > 4 {
-            ScrollView(.horizontal, showsIndicators: false) { row }.frame(height: 102)
+            ScrollView(.horizontal, showsIndicators: false) { row }.frame(height: TileView.height)
         } else {
-            row.frame(maxWidth: .infinity, minHeight: 102, maxHeight: 102, alignment: .topLeading)
+            row.frame(maxWidth: .infinity, minHeight: TileView.height, maxHeight: TileView.height, alignment: .topLeading)
         }
     }
 }
 
-/// A Space tile: its live thumbnail (or a plain frame until one arrives),
-/// then one line with the OS symbol, the status dot and the name. Dimmed
-/// when not live; outlined, with the dragged window's ghost, under a drag.
+/// A Space tile: a header line with the OS logo and, in secondary grey,
+/// where it runs ("This Mac", "Mac mini"); its live thumbnail (or a plain
+/// frame until one arrives); then one line with the status dot and the
+/// name. Dimmed when not live; outlined, with the dragged window's ghost,
+/// under a drag.
 struct TileView: View {
     let tile: AppNotchTile
     var thumbnail: NSImage?
@@ -501,74 +541,109 @@ struct TileView: View {
     /// hairline brightens.
     @Environment(\.notchTileHovered) private var hovered
 
+    /// The header line's height (the core's `TILE_HEADER_HEIGHT`).
+    static let headerHeight: CGFloat = 14
+    /// The whole tile's height (the core's `TILE_ROW_HEIGHT`): the header,
+    /// 5 pt, the 80 pt thumbnail, 6 pt and the 16 pt caption.
+    static let height: CGFloat = headerHeight + 5 + 80 + 6 + 16
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(white: 0.13))
-                if let thumbnail {
-                    Image(nsImage: thumbnail)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: 128, height: 80)
-                        .clipped()
-                        .transition(.opacity)
-                }
-                if let progress = tile.progress {
-                    // Being created: the core's progress and phase.
-                    VStack(spacing: 6) {
-                        NotchActivityGlyph(activity: AppNotchActivity(
-                            kind: .provisioning, label: tile.label, symbol: nil, permille: progress,
-                            startedAt: nil, estimateMs: 0), size: 22)
-                        if let label = tile.progressLabel {
-                            Text(label)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.6))
-                                .lineLimit(1)
-                        }
-                    }
-                } else if thumbnail == nil, let label = tile.progressLabel {
-                    Text(label)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.6))
-                }
-                if let ghost {
-                    Image(nsImage: ghost)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .clipShape(.rect(cornerRadius: 4))
-                        .shadow(color: .black.opacity(0.6), radius: 5, y: 2)
-                        .padding(8)
-                        .transition(.scale(scale: 1.06).combined(with: .opacity))
-                }
+        VStack(alignment: .leading, spacing: 5) {
+            header
+            VStack(alignment: .leading, spacing: 6) {
+                thumbnailFrame
+                caption
             }
-            .frame(width: 128, height: 80)
-            .clipShape(.rect(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(tile.targeted ? Color.accentColor : .white.opacity(hovered ? 0.32 : 0.1),
-                                  lineWidth: tile.targeted ? 2 : 1)
-            }
-            .shadow(color: .black.opacity(hovered ? 0.5 : 0), radius: 6, y: 3)
-            .offset(y: hovered ? -NotchPress.tileLift : 0)
-            .animation(.easeOut(duration: 0.15), value: tile.targeted)
-            .animation(NotchPress.spring, value: hovered)
-            HStack(spacing: 5) {
-                OsIconImage(id: tile.symbol, size: 11)
-                    .foregroundStyle(.white.opacity(0.6))
-                Circle().fill(dot).frame(width: 6, height: 6)
-                Text(tile.name)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .frame(width: 128, height: 16, alignment: .leading)
         }
         .opacity(tile.dim ? 0.5 : 1)
         .contentShape(.rect)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(tile.label)
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// The OS logo, then where the Space runs in secondary grey; a long
+    /// machine name keeps both ends ("Dillon's Mac…Rack 3").
+    private var header: some View {
+        HStack(spacing: 5) {
+            OsIconImage(id: tile.symbol, size: 11)
+                .foregroundStyle(.white.opacity(0.85))
+            Text(tile.location)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .frame(width: 128, height: Self.headerHeight, alignment: .leading)
+    }
+
+    private var caption: some View {
+        HStack(spacing: 5) {
+            Circle().fill(dot).frame(width: 6, height: 6)
+            Text(tile.name)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .frame(width: 128, height: 16, alignment: .leading)
+    }
+
+    private var thumbnailFrame: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(white: 0.13))
+            if let thumbnail {
+                Image(nsImage: thumbnail)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 128, height: 80)
+                    .clipped()
+                    .transition(.opacity)
+            }
+            if let progress = tile.progress {
+                // Being created: the core's progress and phase.
+                VStack(spacing: 6) {
+                    NotchActivityGlyph(activity: AppNotchActivity(
+                        kind: .provisioning, label: tile.label, symbol: nil, permille: progress,
+                        startedAt: nil, estimateMs: 0), size: 22)
+                    if let label = tile.progressLabel {
+                        Text(label)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.6))
+                            .lineLimit(1)
+                    }
+                }
+            } else if thumbnail == nil, let label = tile.progressLabel {
+                Text(label)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+            if tile.signedIn {
+                SignedInKey()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .padding(5)
+            }
+            if let ghost {
+                Image(nsImage: ghost)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .clipShape(.rect(cornerRadius: 4))
+                    .shadow(color: .black.opacity(0.6), radius: 5, y: 2)
+                    .padding(8)
+                    .transition(.scale(scale: 1.06).combined(with: .opacity))
+            }
+        }
+        .frame(width: 128, height: 80)
+        .clipShape(.rect(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(tile.targeted ? Color.accentColor : .white.opacity(hovered ? 0.32 : 0.1),
+                              lineWidth: tile.targeted ? 2 : 1)
+        }
+        .shadow(color: .black.opacity(hovered ? 0.5 : 0), radius: 6, y: 3)
+        .offset(y: hovered ? -NotchPress.tileLift : 0)
+        .animation(.easeOut(duration: 0.15), value: tile.targeted)
+        .animation(NotchPress.spring, value: hovered)
     }
 
     private var dot: Color {
@@ -578,6 +653,20 @@ struct TileView: View {
         case .provisioning: return .blue
         case .suspended, .deleting: return .gray
         }
+    }
+}
+
+/// A Space signed in through the Keyvault: a small key on its thumbnail.
+struct SignedInKey: View {
+    var body: some View {
+        Image(systemName: "key.fill")
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: 16, height: 16)
+            .background(Circle().fill(.black.opacity(0.65)))
+            .overlay(Circle().strokeBorder(.white.opacity(0.18), lineWidth: 0.5))
+            .accessibilityLabel("Signed in")
+            .help("Signed in through the Keyvault")
     }
 }
 

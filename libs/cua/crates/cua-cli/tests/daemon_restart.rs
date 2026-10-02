@@ -8,6 +8,10 @@ mod common;
 
 use common::Home;
 
+/// Unix: socket only. Windows has no Unix-socket listener, so the daemon
+/// needs its loopback listener there.
+const LOOPBACK: &str = if cfg!(unix) { "off" } else { "127.0.0.1:0" };
+
 fn pid_of(started: &str) -> Option<u32> {
     let rest = started.split("(pid ").nth(1)?;
     rest.split(')').next()?.trim().parse().ok()
@@ -17,14 +21,14 @@ fn pid_of(started: &str) -> Option<u32> {
 async fn stop_then_start_right_away_starts_a_new_daemon() {
     let mut h = Home::new();
     h.set("CUA_DAEMON_NO_RELAY", "1");
-    let first = h.run(&["daemon", "start", "--loopback", "off"]).await;
+    let first = h.run(&["daemon", "start", "--loopback", LOOPBACK]).await;
     first.ok();
     let mut pid = pid_of(&first.stdout).expect("started (pid N)");
     for round in 0..5 {
         let stop = h.run(&["daemon", "stop"]).await;
         stop.ok();
         assert_eq!(stop.stdout.trim(), "stopped");
-        let start = h.run(&["daemon", "start", "--loopback", "off"]).await;
+        let start = h.run(&["daemon", "start", "--loopback", LOOPBACK]).await;
         start.ok();
         assert!(
             start.stdout.contains("cua daemon started"),

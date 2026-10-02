@@ -134,6 +134,7 @@ async fn e2e_teleport_a_fixture_app_with_files_into_the_space() {
             acknowledge_sensitive: false,
             save_to_keyvault: false,
             acknowledge_relay_plaintext: false,
+            ..Default::default()
         })
         .unwrap();
     let report = tokio::time::timeout(
@@ -392,6 +393,7 @@ async fn e2e_teleport_chrome_without_sign_ins_into_a_macos_space() {
             acknowledge_sensitive: false,
             save_to_keyvault: false,
             acknowledge_relay_plaintext: false,
+            ..Default::default()
         })
         .unwrap();
     let started = std::time::Instant::now();

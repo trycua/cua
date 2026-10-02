@@ -49,22 +49,11 @@ cua do type "echo hello"
 cua do key enter
 ```
 
-## The same in the cloud
-
-```bash test="cli-shape" id="cua-quickstart-cloud"
-cua auth login
-cua sb create linux --on cloud --name dev-cloud
-cua sb exec dev-cloud "uname -a"
-```
-
-`cua sb ls` lists both, local and cloud.
-
 ## Clean up
 
 ```bash test="cli-shape" id="cua-quickstart-rm"
 cua sb rm dev
 cua sb rm desk
-cua sb rm dev-cloud     # releases the cloud sandbox
 ```
 
 ## Next

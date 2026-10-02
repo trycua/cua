@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: FSL-1.1-MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-//! The Keyvault browser: a sidebar of
-//! categories (All, Waiting, Access, Recent) and one row per site, a list
-//! for the chosen category, and a detail pane per site with each account's
-//! unattended switch.
+//! The Keyvault browser: a sidebar of categories (All, Waiting, Access,
+//! Recent) and one row per app, and the list for the chosen one. The vault
+//! list itself (items grouped by app and site, with their locks) is
+//! [`super::vault`]; this picks what the page shows.
 
 use super::view::{
-    AccessRow, Decision, PendingRow, SiteGroup, Tri, access_rows, ago, group_items, pending_rows,
-    recent_decisions,
+    AccessRow, Decision, PendingRow, access_rows, ago, pending_rows, recent_decisions,
 };
 use super::wire::KeyvaultOverview;
+use crate::util::collate;
 use serde::{Deserialize, Serialize};
 
 /// How many decisions Recent shows.
@@ -20,7 +20,7 @@ pub const RECENT_LIMIT: usize = 12;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum KvCategory {
-    /// Every site.
+    /// Every item, grouped by app.
     All,
     /// Requests waiting for approval.
     Waiting,
@@ -34,7 +34,7 @@ impl KvCategory {
     /// Title.
     pub fn title(self) -> &'static str {
         match self {
-            KvCategory::All => "All",
+            KvCategory::All => "All Items",
             KvCategory::Waiting => "Waiting",
             KvCategory::Access => "Access",
             KvCategory::Recent => "Recent",
@@ -67,31 +67,30 @@ pub struct CategoryRow {
     pub badge: Option<u32>,
 }
 
-/// A site row.
+/// An app row: everything saved from one app.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SiteRow {
-    /// Group key.
+pub struct AppRow {
+    /// The provider id (`chrome`): the key, and what the icon is looked up by.
     pub key: String,
-    /// "github.com" or "Slack".
+    /// "Google Chrome".
     pub title: String,
-    /// Accounts.
-    pub accounts: u32,
-    /// Something waits for this site.
+    /// Items.
+    pub items: u32,
+    /// Something waits for this app.
     pub waiting: bool,
 }
 
 /// The Keyvault sidebar.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KvSidebar {
-    /// All, Waiting, Access, Recent.
+    /// All Items, Waiting, Access, Recent.
     pub categories: Vec<CategoryRow>,
-    /// One row per site or app.
-    pub sites: Vec<SiteRow>,
+    /// One row per app, by name.
+    pub apps: Vec<AppRow>,
 }
 
 /// The sidebar.
 pub fn sidebar(o: &KeyvaultOverview, now: i64) -> KvSidebar {
-    let groups = group_items(o, now, "");
     let row = |c: KvCategory, count: Option<u32>| CategoryRow {
         category: c,
         title: c.title().into(),
@@ -102,6 +101,22 @@ pub fn sidebar(o: &KeyvaultOverview, now: i64) -> KvSidebar {
             .flatten()
             .filter(|n| *n > 0),
     };
+    let mut apps: Vec<AppRow> = Vec::new();
+    for i in &o.items {
+        match apps.iter_mut().find(|a| a.key == i.provider_id) {
+            Some(a) => a.items += 1,
+            None => apps.push(AppRow {
+                key: i.provider_id.clone(),
+                title: i.app_display.clone(),
+                items: 1,
+                waiting: o
+                    .pending
+                    .iter()
+                    .any(|p| p.items.iter().any(|x| x.provider_id == i.provider_id)),
+            }),
+        }
+    }
+    apps.sort_by(|a, b| collate(&a.title, &b.title));
     KvSidebar {
         categories: vec![
             row(KvCategory::All, Some(o.items.len() as u32)),
@@ -109,19 +124,7 @@ pub fn sidebar(o: &KeyvaultOverview, now: i64) -> KvSidebar {
             row(KvCategory::Access, Some(access_rows(o, now).len() as u32)),
             row(KvCategory::Recent, None),
         ],
-        sites: groups
-            .iter()
-            .map(|g| SiteRow {
-                key: g.key.clone(),
-                title: g.title.clone(),
-                accounts: g.rows.len() as u32,
-                waiting: g.rows.iter().any(|r| {
-                    r.consent
-                        .iter()
-                        .any(|c| c.kind == super::view::ConsentChipKind::Pending)
-                }),
-            })
-            .collect(),
+        apps,
     }
 }
 
@@ -134,9 +137,9 @@ pub enum KvSelection {
         /// Which.
         category: KvCategory,
     },
-    /// A site.
-    Site {
-        /// Group key.
+    /// One app's items.
+    App {
+        /// Its provider id.
         key: String,
     },
 }
@@ -150,29 +153,31 @@ pub struct RecentRow {
     pub age: String,
 }
 
-/// The list pane for a selection.
+/// The pane for a selection other than the vault list.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KvListView {
     /// Title.
     pub title: String,
-    /// Sites (All, or the one site).
-    pub sites: Vec<SiteGroup>,
+    /// The vault list shows (All Items, or one app).
+    pub vault: bool,
     /// Waiting.
     pub pending: Vec<PendingRow>,
     /// Access.
     pub access: Vec<AccessRow>,
     /// Recent.
     pub recent: Vec<RecentRow>,
-    /// "No items yet." and friends.
+    /// "Nothing is waiting." and friends.
     pub empty_text: Option<String>,
 }
 
-/// The list for `selection`, filtered by `query` (sites only).
-pub fn list(o: &KeyvaultOverview, selection: &KvSelection, now: i64, query: &str) -> KvListView {
+/// The pane for `selection`. For All Items and an app, `vault` is true and
+/// the list is [`super::vault::view`] (narrowed to the app by
+/// [`super::vault::VaultState::app`]).
+pub fn list(o: &KeyvaultOverview, selection: &KvSelection, now: i64) -> KvListView {
     let mut v = KvListView {
         title: String::new(),
-        sites: vec![],
+        vault: false,
         pending: vec![],
         access: vec![],
         recent: vec![],
@@ -182,16 +187,7 @@ pub fn list(o: &KeyvaultOverview, selection: &KvSelection, now: i64, query: &str
         KvSelection::Category { category } => {
             v.title = category.title().into();
             match category {
-                KvCategory::All => {
-                    v.sites = group_items(o, now, query);
-                    if v.sites.is_empty() {
-                        v.empty_text = Some(if o.items.is_empty() {
-                            "No items yet.".into()
-                        } else {
-                            "No matches".into()
-                        });
-                    }
-                }
+                KvCategory::All => v.vault = true,
                 KvCategory::Waiting => {
                     v.pending = pending_rows(o);
                     if v.pending.is_empty() {
@@ -218,49 +214,13 @@ pub fn list(o: &KeyvaultOverview, selection: &KvSelection, now: i64, query: &str
                 }
             }
         }
-        KvSelection::Site { key } => {
-            let groups = group_items(o, now, "");
-            match groups.into_iter().find(|g| &g.key == key) {
-                Some(g) => {
-                    v.title = g.title.clone();
-                    v.sites = vec![g];
-                }
-                None => v.empty_text = Some("This site is gone.".into()),
+        KvSelection::App { key } => match o.items.iter().find(|i| &i.provider_id == key) {
+            Some(i) => {
+                v.title = i.app_display.clone();
+                v.vault = true;
             }
-        }
+            None => v.empty_text = Some("Nothing is saved from this app.".into()),
+        },
     }
     v
-}
-
-/// The detail pane of one site: the site switch and each account.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SiteDetail {
-    /// The group.
-    pub group: SiteGroup,
-    /// The site switch shows (more than one account).
-    pub site_switch: bool,
-    /// The site switch's state.
-    pub site_state: Tri,
-    /// The site switch can be flipped.
-    pub site_switch_enabled: bool,
-    /// Its tooltip.
-    pub site_switch_help: String,
-}
-
-/// The detail of the site `key`.
-pub fn site_detail(o: &KeyvaultOverview, key: &str, now: i64) -> Option<SiteDetail> {
-    let group = group_items(o, now, "").into_iter().find(|g| g.key == key)?;
-    let disabled = o.status.as_ref().is_some_and(|s| s.disabled);
-    Some(SiteDetail {
-        site_switch: group.rows.len() > 1,
-        site_state: group.unattended,
-        site_switch_enabled: !group.locked && !disabled,
-        site_switch_help: if group.locked {
-            "Identity providers always ask".into()
-        } else {
-            "Every account on this site".into()
-        },
-        group,
-    })
 }

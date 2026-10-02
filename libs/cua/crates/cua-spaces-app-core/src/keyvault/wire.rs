@@ -11,43 +11,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// A cookie's metadata (never its value).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct KvCookieInfo {
-    /// Name.
-    pub name: String,
-    /// Domain.
-    pub domain: String,
-    /// Session cookie.
-    pub session: bool,
-    /// Expiry.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_ms: Option<i64>,
-}
-
-/// What an item holds, as counts and names.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct KvItemSummary {
-    /// Cookies.
-    #[serde(default)]
-    pub cookies: Vec<KvCookieInfo>,
-    /// Storage origins.
-    #[serde(default)]
-    pub storage_origins: Vec<String>,
-    /// Saved passwords.
-    #[serde(default)]
-    pub passwords: u32,
-    /// Files.
-    #[serde(default)]
-    pub files: Vec<String>,
-    /// Keychain services.
-    #[serde(default)]
-    pub keychain_services: Vec<String>,
-    /// Bytes.
-    #[serde(default)]
-    pub bytes: u64,
-}
-
 /// An item's policy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KvItemPolicy {
@@ -60,46 +23,104 @@ pub struct KvItemPolicy {
     pub unattended: bool,
 }
 
-/// One saved item (redacted).
+/// One secret item of the vault: a cookie, a localStorage value, a password
+/// or a file, in the app it came from (`cua_keyvault::ItemMeta`). Domains and
+/// keys are present only inside the browse window; a value never is.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KvItem {
     /// Id.
     pub id: String,
-    /// `browser_site`, `site_passwords`, `app_session`.
+    /// `cookie`, `local_storage`, `password` or `file`.
     pub kind: String,
-    /// Label.
-    pub label: String,
-    /// Provider.
+    /// The source app (`chrome`, `slack`).
     pub provider_id: String,
-    /// App.
+    /// The app's name.
     pub app_display: String,
-    /// Site.
+    /// A cookie's host, a storage value's or password's origin; none for a
+    /// file or when the names are hidden.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub site: Option<String>,
-    /// Account.
+    pub domain: Option<String>,
+    /// A cookie name, storage key, username or file path; empty when the
+    /// names are hidden.
+    #[serde(default)]
+    pub key: String,
+    /// A cookie's path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub account: Option<String>,
+    pub path: Option<String>,
     /// Profile.
     #[serde(default)]
     pub source: String,
-    /// Summary.
-    pub summary: KvItemSummary,
-    /// Warnings.
+    /// A cookie without an expiry.
     #[serde(default)]
-    pub warnings: Vec<String>,
-    /// Identity providers always ask.
+    pub session: bool,
+    /// A cookie's expiry, Unix ms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_ms: Option<i64>,
+    /// Bytes.
+    #[serde(default)]
+    pub bytes: u64,
+    /// The blob a big file's bytes live in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blob: Option<String>,
+    /// Identity providers always ask: they cannot be unlocked.
     #[serde(default)]
     pub identity_provider: bool,
-    /// Policy.
+    /// Policy: `unattended` is the unlock.
     pub policy: KvItemPolicy,
     /// Created.
     pub created_ms: u64,
-    /// Updated.
+    /// Last saved.
     pub updated_ms: u64,
     /// Revision.
     pub rev: u64,
     /// Digest.
     pub record_digest: String,
+}
+
+/// One domain a browser holds secrets for, with counts (never values).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KvDomainCount {
+    /// Registrable domain.
+    pub domain: String,
+    /// Cookies.
+    #[serde(default)]
+    pub cookies: u32,
+    /// Cookies without an expiry.
+    #[serde(default)]
+    pub session_cookies: u32,
+    /// localStorage values.
+    #[serde(default)]
+    pub local_storage: u32,
+    /// Saved passwords.
+    #[serde(default)]
+    pub passwords: u32,
+    /// Looks like it keeps a sign-in.
+    #[serde(default)]
+    pub signin: bool,
+    /// An identity provider.
+    #[serde(default)]
+    pub identity_provider: bool,
+    /// Cookies that cannot be read (Chrome's app-bound encryption).
+    #[serde(default)]
+    pub unavailable: u32,
+    /// Why they cannot be read.
+    #[serde(default)]
+    pub unavailable_reason: String,
+}
+
+/// What a host app offers, per domain (`cua_keyvault::broker::Inventory`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KvInventory {
+    /// Provider id.
+    pub provider_id: String,
+    /// App name.
+    pub app_display: String,
+    /// Domains with counts.
+    #[serde(default)]
+    pub domains: Vec<KvDomainCount>,
+    /// Notes.
+    #[serde(default)]
+    pub notes: Vec<String>,
 }
 
 /// How a caller is signed (`cua_keyvault::caller::Signing`: tagged by
@@ -168,9 +189,6 @@ pub enum KvSelector {
         app: String,
         /// Site.
         site: String,
-        /// Account.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        account: Option<String>,
     },
     /// A whole app.
     App {
@@ -313,12 +331,16 @@ pub struct KvDelivery {
     pub caller_fp: String,
     /// Delivered.
     pub delivered_ms: u64,
-    /// Wiped at.
+    /// Wiped at ([`KV_NO_EXPIRY`]: only when wiped).
     pub expires_ms: u64,
     /// Already wiped.
     #[serde(default)]
     pub wiped: bool,
 }
+
+/// A delivery's `expires_ms` when it never expires on its own (auto-wipe
+/// off): it stays until wiped.
+pub const KV_NO_EXPIRY: u64 = 0;
 
 /// One audit log entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -372,6 +394,10 @@ pub struct KvStatus {
     /// `auto` or `presence`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unlock_policy: Option<String>,
+    /// Delivered copies wipe themselves after their TTL (off by default;
+    /// none: not told, a broker before the setting or a third party).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_wipe: Option<bool>,
     /// The daemon can create the OS key store protector (setup offers Touch
     /// ID); false for a development daemon, which is passphrase-only.
     #[serde(default)]
@@ -383,6 +409,16 @@ pub struct KvStatus {
     /// `windows-credential`, `passphrase`, `recovery`).
     #[serde(default)]
     pub unlock_protectors: Vec<String>,
+    /// The browse window is open until this time, Unix ms: item names are
+    /// visible until then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browse_until_ms: Option<u64>,
+    /// "Never ask again" on the unlock prompt is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_unlock_prompt: Option<bool>,
+    /// An earlier preview's vault was found and set aside.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_notice: Option<String>,
 }
 
 /// The audit chain check.
@@ -417,9 +453,15 @@ pub struct KeyvaultOverview {
     pub status: Option<KvStatus>,
     /// The daemon was checked against Cua's signature.
     pub server_verified: bool,
-    /// Items.
+    /// The vault's secret items, in order (app, domain, key).
     #[serde(default)]
     pub items: Vec<KvItem>,
+    /// Domains and keys are present in `items` (the browse window is open).
+    #[serde(default)]
+    pub names_visible: bool,
+    /// Items in the vault.
+    #[serde(default)]
+    pub items_total: u32,
     /// Pending requests.
     #[serde(default)]
     pub pending: Vec<KvPending>,
@@ -443,6 +485,16 @@ pub struct KeyvaultOverview {
     pub partial_errors: Vec<String>,
 }
 
+/// A site's icon, read from the source browser's own local store when its
+/// items were saved. Not secret. `png` is base64.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KvFavicon {
+    /// The site (registrable domain).
+    pub site: String,
+    /// PNG, base64.
+    pub png: String,
+}
+
 /// A page action: one broker request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
@@ -460,7 +512,8 @@ pub enum KvCommand {
         /// On.
         disabled: bool,
     },
-    /// Per-item unattended (turning on asks for Touch ID).
+    /// Per-item unattended (turning on asks for Touch ID): the same as
+    /// [`KvCommand::SetLocked`] with `locked` the other way round.
     #[serde(rename_all = "camelCase")]
     SetUnattended {
         /// Items.
@@ -468,6 +521,31 @@ pub enum KvCommand {
         /// On.
         unattended: bool,
     },
+    /// Lock or unlock items together. Unlocking allows unattended access and
+    /// asks for Touch ID once for the whole batch; locking does not.
+    #[serde(rename_all = "camelCase")]
+    SetLocked {
+        /// Items.
+        item_ids: Vec<String>,
+        /// Lock (true) or unlock.
+        locked: bool,
+    },
+    /// Delete items, wiping every live copy of them in Spaces.
+    #[serde(rename_all = "camelCase")]
+    DeleteItems {
+        /// Items.
+        item_ids: Vec<String>,
+    },
+    /// "Never ask again" on the unlock prompt (Settings turns it back on).
+    #[serde(rename_all = "camelCase")]
+    SetSkipUnlockPrompt {
+        /// On.
+        on: bool,
+    },
+    /// Show item names for a few minutes (the daemon asks for Touch ID).
+    Browse,
+    /// Hide item names again.
+    EndBrowse,
     /// Revoke a grant (`*`: all).
     RevokeGrant {
         /// Id.
@@ -477,6 +555,12 @@ pub enum KvCommand {
     RemoveRule {
         /// Id.
         id: String,
+    },
+    /// Auto-wipe of delivered copies (turning it off asks for Touch ID).
+    #[serde(rename_all = "camelCase")]
+    SetAutoWipe {
+        /// On.
+        on: bool,
     },
     /// Wipe a Space's copies.
     Release {

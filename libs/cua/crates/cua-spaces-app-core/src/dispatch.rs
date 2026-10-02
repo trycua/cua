@@ -9,7 +9,7 @@
 //!
 //! [`METHODS`] lists every method; `dispatch_covers_every_method` checks it.
 
-use crate::keyvault::{approval, browse, view as kv};
+use crate::keyvault::{approval, browse, vault, view as kv};
 use crate::model::*;
 use crate::spaces::{self, creating, roster, sidebar, stream};
 use crate::teleport::{drag, flow, grid, transfer, windows};
@@ -122,17 +122,17 @@ pub const METHODS: &[&str] = &[
     "keyvault.ago",
     "keyvault.shortCaller",
     "keyvault.signingBadge",
-    "keyvault.accountOf",
-    "keyvault.groupItems",
     "keyvault.recentDecisions",
     "keyvault.pendingSummary",
     "keyvault.pendingRows",
     "keyvault.accessRows",
     "keyvault.page",
-    "keyvault.siteToggle",
     "keyvault.sidebar",
     "keyvault.list",
-    "keyvault.siteDetail",
+    "keyvault.vaultReduce",
+    "keyvault.vaultView",
+    "keyvault.unlockPrompt",
+    "keyvault.deleteConfirm",
     "keyvault.labels",
     "keyvault.recoveryKeyText",
     "keyvault.credentialForm",
@@ -511,12 +511,6 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "keyvault.ago" => out(kv::ago(a.get("ms")?)),
         "keyvault.shortCaller" => out(kv::short_caller(&a.get::<String>("display")?)),
         "keyvault.signingBadge" => out(kv::signing_badge(&a.get("caller")?)),
-        "keyvault.accountOf" => out(kv::account_of(&a.get("item")?)),
-        "keyvault.groupItems" => out(kv::group_items(
-            &a.get("overview")?,
-            a.get("now")?,
-            &a.get::<Option<String>>("query")?.unwrap_or_default(),
-        )),
         "keyvault.recentDecisions" => out(kv::recent_decisions(
             &a.get("overview")?,
             a.get::<Option<usize>>("limit")?.unwrap_or(12),
@@ -525,19 +519,30 @@ pub fn call_value(method: &str, args: Value) -> Result<Value, CoreError> {
         "keyvault.pendingRows" => out(kv::pending_rows(&a.get("overview")?)),
         "keyvault.accessRows" => out(kv::access_rows(&a.get("overview")?, a.get("now")?)),
         "keyvault.page" => out(kv::page(&a.get("overview")?, a.get("now")?)),
-        "keyvault.siteToggle" => out(kv::site_toggle(&a.get("group")?, a.get("on")?)),
         "keyvault.sidebar" => out(browse::sidebar(&a.get("overview")?, a.get("now")?)),
         "keyvault.list" => out(browse::list(
             &a.get("overview")?,
             &a.get("selection")?,
             a.get("now")?,
-            &a.get::<Option<String>>("query")?.unwrap_or_default(),
         )),
-        "keyvault.siteDetail" => out(browse::site_detail(
+        "keyvault.vaultReduce" => out(vault::reduce(
             &a.get("overview")?,
-            &a.get::<String>("key")?,
+            &a.get("state")?,
+            &a.get("action")?,
+        )),
+        "keyvault.vaultView" => out(vault::view(
+            &a.get("overview")?,
+            &a.get("state")?,
             a.get("now")?,
         )),
+        "keyvault.unlockPrompt" => out(vault::unlock_prompt(
+            &a.get("overview")?,
+            a.get("count")?,
+            a.get::<Option<String>>("name")?.as_deref(),
+        )),
+        "keyvault.deleteConfirm" => {
+            out(vault::delete_confirm(a.get("count")?, a.get("liveCopies")?))
+        }
         "keyvault.labels" => out(kv::labels()),
         "keyvault.recoveryKeyText" => out(kv::recovery_key_text(&a.get::<String>("key")?)),
         "keyvault.credentialForm" => out(crate::keyvault::credential::credential_form(

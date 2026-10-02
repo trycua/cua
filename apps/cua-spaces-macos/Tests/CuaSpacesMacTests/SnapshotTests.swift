@@ -26,8 +26,10 @@ struct SnapshotTests {
 
     init() { _ = NSApplication.shared }
 
-    func model(kv: Bool = true, loginItem: FixtureLoginItem = FixtureLoginItem()) async throws -> AppModel {
-        let m = ViewModelTests().makeModel(FixtureSpacesBackend(), kv: kv ? FakeKeyvault(try fixtureOverview()) : nil,
+    func model(kv: Bool = true, loginItem: FixtureLoginItem = FixtureLoginItem(),
+               overview: KeyvaultOverview? = nil) async throws -> AppModel {
+        let m = ViewModelTests().makeModel(FixtureSpacesBackend(),
+                                           kv: kv ? FakeKeyvault(try overview ?? fixtureOverview()) : nil,
                                            host: FixtureHost(), account: FixtureAccount(),
                                            agents: FixtureAgentSetup(), loginItem: loginItem)
         m.onboarding.finish()
@@ -188,6 +190,49 @@ struct SnapshotTests {
         try assertSnapshot(view, "space-preview", size: CGSize(width: 520, height: 480))
     }
 
+    /// The preview card while the stream opens and while it waits for
+    /// Connect: the Space's thumbnail blurred and dimmed with the core's
+    /// words centered, or plain black when there is no thumbnail yet.
+    @Test func desktopCover() async throws {
+        let m = try await model()
+        let space = try #require(m.spaces.first { m.detail($0).canStream })
+        let detail = m.detail(space)
+        let preview = DesktopCoverTests.desktop()
+        func card(_ cover: AppDesktopCover, _ image: NSImage?) -> some View {
+            Form {
+                Section {
+                    PreviewCard(session: nil) { DesktopCoverView(cover: cover, image: image) }
+                }
+            }
+            .formStyle(.grouped)
+        }
+        let size = CGSize(width: 520, height: 360)
+        let connecting = m.cover(detail, requested: false, stream: .noSession)
+        #expect(connecting.kind == .connecting)
+        try assertSnapshot(card(connecting, preview), "space-cover-connecting", size: size)
+        try assertSnapshot(card(connecting, nil), "space-cover-connecting-black", size: size)
+        await m.choose(row: "auto-connect", option: "off")
+        let manual = m.cover(detail, requested: false, stream: .noSession)
+        #expect(manual.kind == .connect)
+        try assertSnapshot(card(manual, preview), "space-cover-connect", size: size)
+        try assertSnapshot(card(manual, nil), "space-cover-connect-black", size: size)
+        // A Space that cannot stream: its line on the same blurred preview.
+        let stopped = appDesktopCover(input: AppDesktopCoverInput(
+            canStream: false, previewText: "Stopped", autoConnect: true, connectRequested: false,
+            stream: .noSession))
+        try assertSnapshot(card(stopped, preview), "space-cover-stopped", size: size)
+    }
+
+    /// Settings, General: "Connect to the desktop automatically", on by
+    /// default (the `settings` reference), then off.
+    @Test func settingsAutoConnectOff() async throws {
+        let m = try await model()
+        m.settings.experiments.cuaVolume = true
+        await m.choose(row: "auto-connect", option: "off")
+        await m.loadSettings()
+        try assertSnapshot(SettingsView(model: m), "settings-auto-connect-off", size: CGSize(width: 520, height: 640))
+    }
+
     /// "Teleport an app…" as the core's grid: sections, a tile previewing
     /// its app's frontmost window, icons, the app that cannot move dimmed.
     @Test func teleportPickerGrid() async throws {
@@ -197,6 +242,71 @@ struct SnapshotTests {
         for tile in m.grid.sections.flatMap(\.tiles) { await m.loadThumbnail(tile) }
         try assertSnapshot(TeleportPickerSheet(teleport: m, onClose: {}), "teleport-picker-grid",
                            size: CGSize(width: 640, height: 540))
+    }
+
+    /// A Keyvault sign-in live in Aurora (auto-wipe off: no expiry).
+    func signedInOverview() throws -> KeyvaultOverview {
+        var o = try fixtureOverview()
+        o.status?.autoWipe = false
+        o.deliveries = [KvDelivery(importId: "imp-aurora", target: "local:aurora", providerId: "chrome",
+                                   items: ["gh-ada"], callerFp: "fp-koala", deliveredMs: 1_799_999_000_000,
+                                   expiresMs: 0, wiped: false)]
+        return o
+    }
+
+    /// "Signed in" beside the Space a Keyvault sign-in is live in.
+    @Test func mainWindowSidebarSignedIn() async throws {
+        let m = try await model(overview: try signedInOverview())
+        m.select("cloud:builder")
+        try assertSnapshot(Sidebar(model: m).frame(width: 260), "sidebar-signed-in", size: CGSize(width: 260, height: 520))
+    }
+
+    /// Access from that badge: the Space's copy brought forward, kept until
+    /// wiped (auto-wipe off), with Dismiss beside Wipe.
+    @Test func keyvaultAccessFocused() async throws {
+        let m = try await model(overview: try signedInOverview())
+        m.showAccess(spaceId: "local:aurora")
+        m.keyvault.selection = .category(category: .access)
+        #expect(m.keyvault.focusKey == "d:local:aurora")
+        try assertSnapshot(CategoryList(keyvault: m.keyvault, page: m.keyvault.page), "keyvault-access",
+                           size: CGSize(width: 640, height: 360))
+    }
+
+    /// Settings, Keyvault: the auto-wipe switch, off by default.
+    @Test func settingsKeyvault() async throws {
+        let m = try await model(overview: try signedInOverview())
+        await m.loadSettings()
+        #expect(m.settingsPage.sections.contains { $0.id == "keyvault" })
+        try assertSnapshot(SettingsView(model: m), "settings-keyvault", size: CGSize(width: 520, height: 1000))
+    }
+
+    /// The teleport run says which step it is on: reading the browser's
+    /// cookies (naming the Keychain prompt), then the upload's bytes.
+    @Test func teleportRunning() async throws {
+        let m = TeleportModel(spaceName: "Aurora", teleport: nil, space: nil, sources: PickerFixture.sources())
+        let flow = try PickerFixture.json("teleport-review")
+        func json(_ v: Any?) throws -> String {
+            String(decoding: try JSONSerialization.data(withJSONObject: v!), as: UTF8.self)
+        }
+        m.send(.loaded(entries: try appCatalogEntriesFromJson(json: json(flow["entries"]))))
+        m.send(.select(id: "slack"))
+        m.send(.choose(id: nil))
+        m.send(.move(moves: .appWithState))
+        m.send(.plan)
+        m.send(.planned(plan: try appTeleportPlanFromJson(json: json(flow["plan"]))))
+        m.send(.acknowledge(value: true))
+        m.send(.acknowledgeRelayPlaintext(value: true))
+        m.send(.confirm)
+        func ev(_ detail: String, _ done: UInt64 = 0, _ total: UInt64 = 0) -> AppPickerEvent {
+            .progress(event: AppTeleportRunEvent(step: 1, steps: 3, kind: "state", phase: .progress, detail: detail,
+                                                 doneBytes: done, totalBytes: total))
+        }
+        #expect(m.state.step == .running)
+        let size = CGSize(width: 640, height: 540)
+        m.send(ev("Reading Slack cookies (macOS will ask for Keychain access)\u{2026}"))
+        try assertSnapshot(TeleportPickerSheet(teleport: m, onClose: {}), "teleport-running-reading", size: size)
+        m.send(ev("Uploading", 12 << 20, 80 << 20))
+        try assertSnapshot(TeleportPickerSheet(teleport: m, onClose: {}), "teleport-running-upload", size: size)
     }
 
     @Test func mainWindowSidebar() async throws {
@@ -279,14 +389,14 @@ struct SnapshotTests {
         let m = try await model()
         let sel = KvSelection.category(category: .all)
         m.keyvault.selection = sel
-        try assertSnapshot(CategoryList(keyvault: m.keyvault, page: m.keyvault.page), "keyvault-all",
+        try assertSnapshot(VaultList(keyvault: m.keyvault, page: m.keyvault.page), "keyvault-all",
                            size: CGSize(width: 640, height: 520))
     }
 
     @Test func approvalSheet() async throws {
         let m = try await model()
         m.keyvault.openApproval("req-1")
-        m.keyvault.sendApproval(.toggle(key: "gh-ada"))
+        m.keyvault.sendApproval(.toggle(key: "chrome|example.test"))
         try assertSnapshot(ApprovalSheet(keyvault: m.keyvault), "approval", size: CGSize(width: 480, height: 360))
     }
 
@@ -379,6 +489,18 @@ struct SnapshotTests {
         }
     }
 
+    /// Live Keyvault access: the key left of the notch; open, the line with
+    /// Dismiss and the key on the Space's tile.
+    @Test func notchAccess() async throws {
+        try await assertNotch("notch-activity-keyvault") {
+            $0.setKeyvault(label: "Keyvault sign-ins live in local:aurora", signedIn: ["local:aurora"])
+        }
+        try await assertNotch("notch-access") {
+            $0.setKeyvault(label: "Keyvault sign-ins live in local:aurora", signedIn: ["local:aurora"])
+            $0.send(.click)
+        }
+    }
+
     @Test func notchActivityTransfer() async throws {
         try await assertNotch("notch-activity-transfer") {
             $0.setActivity(hotspot: false, transfer: AppNotchTransfer(sent: 600, total: 1000))
@@ -412,6 +534,40 @@ struct SnapshotTests {
             $0.send(.click)
             $0.highlight = NotchHighlight(.button(.list))
         }
+    }
+
+    /// Each tile's header: the OS logo, then where the Space runs in grey.
+    /// A Space on this Mac, one on another of your machines, and one on a
+    /// machine with a long name (truncated in the middle).
+    @Test func notchTileLocations() async throws {
+        func row(_ id: String, _ name: String, _ os: AppSpaceOs, _ osName: String, provider: String,
+                 host: String? = nil, hostName: String? = nil) -> AppSpaceRow {
+            AppSpaceRow(id: id, name: name, provider: provider, spacesdVersion: "0.4.0",
+                        features: ["desktop_stream"], addedAt: "2026-09-25T08:00:00Z",
+                        os: os, osName: osName, osPrettyName: nil, image: nil, imageDigest: nil,
+                        kind: nil, arch: "arm64", reachable: true, error: nil, host: host, hostName: hostName,
+                        power: nil, powerState: nil, cloud: nil, cloudPlace: nil, cloudDelete: nil)
+        }
+        let backend = FixtureSpacesBackend(rows: [
+            row("local:dev", "Dev box", .linux, "Ubuntu", provider: "local"),
+            row("relay:m1/studio", "Studio", .macos, "macOS", provider: "relay", host: "m1", hostName: "Mac mini"),
+            row("relay:m2/ci", "CI runner", .windows, "Windows", provider: "relay", host: "m2",
+                hostName: "Dillon's Mac Studio in the Back Office Rack 3"),
+        ])
+        let m = ViewModelTests().makeModel(backend, kv: FakeKeyvault(try fixtureOverview()),
+                                           host: FixtureHost(), account: FixtureAccount(),
+                                           agents: FixtureAgentSetup())
+        m.onboarding.finish()
+        await m.refresh()
+        m.notch.send(.click)
+        let places = Dictionary(uniqueKeysWithValues: m.notch.view.tiles.map { ($0.id, $0.location) })
+        #expect(places["local:dev"] == "This Mac")
+        #expect(places["relay:m1/studio"] == "Mac mini")
+        #expect(places["relay:m2/ci"] == "Dillon's Mac Studio in the Back Office Rack 3")
+        let c = NotchController(model: m.notch)
+        c.apply(appNotchLayout(screen: NotchGeometry.fallbackScreen, prompt: NotchController.needsRow(m.notch.view)))
+        try assertSnapshot(NotchContentView(model: m.notch, controller: c).background(Color(white: 0.85)),
+                           "notch-tile-locations", size: c.geometry.stage)
     }
 
     @Test func notchButtonPressed() async throws {
@@ -481,6 +637,12 @@ struct SnapshotTests {
         let rep = render(view, size: size)
         let png = rep.representation(using: .png, properties: [:])!
         let url = Self.snapshots.appendingPathComponent("\(name).png")
+        // A copy of every render for review (outside the repo).
+        if let dir = ProcessInfo.processInfo.environment["SNAPSHOT_EXPORT_DIR"], !dir.isEmpty {
+            let out = URL(fileURLWithPath: dir)
+            try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+            try? png.write(to: out.appendingPathComponent("\(name).png"))
+        }
         let record = ProcessInfo.processInfo.environment["SNAPSHOT_RECORD"] == "1"
         guard !record, let reference = NSBitmapImageRep(data: (try? Data(contentsOf: url)) ?? Data()) else {
             try png.write(to: url)

@@ -5,6 +5,8 @@
 //!
 //! - [`flow`]: "Teleport an app..." (pick, options, plan, the consent review
 //!   with its secrets acknowledgement, run, done);
+//! - [`review`]: the review's choice of what to send (sites with counts,
+//!   items, the Keyvault as the source) and what is remembered per Space;
 //! - [`windows`]: the window lists (open windows here, a Space's remote
 //!   windows), their filters and the primary button;
 //! - [`drag`]: dragging a real window to the notch;
@@ -16,5 +18,6 @@
 pub mod drag;
 pub mod flow;
 pub mod grid;
+pub mod review;
 pub mod transfer;
 pub mod windows;

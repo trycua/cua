@@ -329,10 +329,10 @@ pub enum SandboxCmd {
     #[command(after_help = "Examples:
   # A Linux desktop on this machine (a gVisor container)
   cua sb create linux --name dev
-  # The same image in the cloud, as a VM
-  cua sb create linux --on cloud --kind vm --name dev
   # A web server container, ready when its HTTP service answers
-  cua sb create python:3.12-slim --service web=8000 --wait http:web/ -- python -m http.server 8000")]
+  cua sb create python:3.12-slim --service web=8000 --wait http:web/ -- python -m http.server 8000
+  # The same Linux image in the cloud instead, as a VM
+  cua sb create linux --on cloud --kind vm --name dev")]
     Create(Box<CreateArgs>),
     /// Deprecated alias of `create` that defaults to `--on cloud`.
     #[command(after_help = "Examples:

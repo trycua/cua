@@ -25,10 +25,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use zeroize::Zeroize;
 
 use crate::audit::{AuditEntry, Verification};
+#[cfg(unix)]
+use crate::broker::StageSink;
 use crate::broker::{
     AccessRequest, ApproveOptions, Broker, Decision, ImportSpec, InitRequest, Inventory,
-    LoginOutcome, LoginRequest, PasswordImportSpec, PendingView, RuleSpec, StageSink, Status,
-    TeleportOutcome, TeleportRequest, TeleportStage, UnlockRequest,
+    LoginOutcome, LoginRequest, PasswordImportSpec, PendingView, RuleSpec, Status, TeleportOutcome,
+    TeleportRequest, TeleportStage, UnlockRequest,
 };
 use crate::caller::{CallerIdentity, TrustPolicy};
 use crate::model::{Delivery, Grant, ItemMeta, ItemPolicy, UnattendedRule, UnlockPolicy};
@@ -259,6 +261,8 @@ impl Response {
         }
     }
 
+    // Stage frames stream over the Unix socket only.
+    #[cfg(unix)]
     fn stage(s: TeleportStage) -> Self {
         Self {
             ok: true,

@@ -46,10 +46,12 @@ RUN apt-get update \
 
 # Chromium from the xtradeb/apps PPA: only the chromium packages may come from
 # it (everything else stays Ubuntu's), at exactly CHROMIUM_VERSION, and the
-# key must have the pinned fingerprint.
-RUN install -d -m 0755 /etc/apt/keyrings \
- && curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${CHROMIUM_PPA_KEY}" \
-      | gpg --dearmor >/etc/apt/keyrings/xtradeb-apps.gpg \
+# key must have the pinned fingerprint. The key is vendored
+# (common/apt-keys/xtradeb-apps.asc, shared with libs/images/linux), not
+# fetched from keyserver.ubuntu.com, so a keyserver outage cannot break the build.
+RUN --mount=type=bind,source=common/apt-keys/xtradeb-apps.asc,target=/tmp/xtradeb-apps.asc \
+    install -d -m 0755 /etc/apt/keyrings \
+ && gpg --dearmor </tmp/xtradeb-apps.asc >/etc/apt/keyrings/xtradeb-apps.gpg \
  && gpg --show-keys --with-colons /etc/apt/keyrings/xtradeb-apps.gpg | grep -q "^fpr:::::::::${CHROMIUM_PPA_KEY}:" \
  && echo "deb [signed-by=/etc/apt/keyrings/xtradeb-apps.gpg] https://ppa.launchpadcontent.net/xtradeb/apps/ubuntu noble main" \
       >/etc/apt/sources.list.d/xtradeb-apps.list \

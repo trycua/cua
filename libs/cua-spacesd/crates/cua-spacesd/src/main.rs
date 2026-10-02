@@ -7,6 +7,8 @@
 
 mod doctor;
 mod legacy;
+#[cfg(target_os = "macos")]
+mod prompts;
 #[cfg(target_os = "linux")]
 mod volume_mount;
 
@@ -57,6 +59,12 @@ enum Command {
     /// Check this guest against its image's claims and print one report
     /// (exit 0 pass, 1 fail, 2 the doctor itself failed).
     Doctor(doctor::DoctorArgs),
+    /// Answer macOS security prompts (SecurityAgent keychain and
+    /// authorization dialogs) with the guest password, inside a Space VM.
+    /// `prompts scan` lists what is blocking; `prompts unblock` answers it.
+    /// Prints a JSON report; exit 0 when nothing is left blocking.
+    #[cfg(target_os = "macos")]
+    Prompts(prompts::PromptsArgs),
     /// Print what this binary was built with (version, protocol revision,
     /// linked cua-driver, tool schema hash, compiled encoders) as JSON. Image
     /// builds record it in /etc/cua-image/manifest.json.
@@ -337,6 +345,13 @@ fn run(command: Command) -> Result<Exit, BoxError> {
             }
             Command::Doctor(args) => {
                 let code = doctor::run(args).await;
+                std::process::exit(code);
+            }
+            #[cfg(target_os = "macos")]
+            Command::Prompts(args) => {
+                let code = tokio::task::spawn_blocking(move || prompts::run(args))
+                    .await
+                    .unwrap_or(2);
                 std::process::exit(code);
             }
             #[cfg(target_os = "linux")]

@@ -23,6 +23,8 @@ cua-driver-contract = { path = "../../../cua-driver/rust/crates/cua-driver-contr
 async-trait = "0.1"
 cua-spacesd-teleport = { path = "../cua-spacesd-teleport" }
 cua-spacesd-socks = { path = "../cua-spacesd-socks" }
+# Answers SecurityAgent / keychain dialogs in disposable macOS Space VMs.
+cua-spacesd-prompts = { path = "../cua-spacesd-prompts" }
 # The HTML5 viewer served at /viewer.
 cua-spacesd-html5 = { path = "../../../cua/crates/cua-spacesd-html5" }
 axum = { version = "0.8", features = ["ws"] }

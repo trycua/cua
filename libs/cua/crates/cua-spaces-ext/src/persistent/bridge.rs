@@ -37,7 +37,7 @@ use cua_spaces::{Error, Result, Spaces};
 const MAX_LINE: usize = 16 * 1024 * 1024;
 
 /// Server instructions the agent sees.
-pub const INSTRUCTIONS: &str = "Cua: tools for a persistent agent. notify_user tells your user something in the Cua app (use it for results they asked for, or when you need them). The Cua Volume keeps files beyond this Space: your home is agents/<you>/ (your memory lives there too), public/ is shared reference (read only), spaces/<this space>/ is this Space's folder; anything else needs volume_request_access, which the user approves. computer_list shows the user's own computers you were allowed to use; computer_list_tools and computer_call use them. Never put secrets in the drive: the user's Keyvault holds them.";
+pub const INSTRUCTIONS: &str = "Cua: notify_user tells your user something in the Cua app. The Cua Volume keeps files beyond this Space: your home is agents/<you>/ (with your memory), public/ is shared reference (read only), spaces/<this space>/ is this Space's folder; anything else needs volume_request_access, which the user approves. computer_list shows the user's computers you were allowed to use; computer_list_tools and computer_call use them. Never put secrets in the volume: Keyvault holds them.";
 
 /// Per-run pipe state kept by the supervisor.
 #[derive(Default)]
@@ -391,7 +391,7 @@ impl ToolExtension for AgentTools {
         vec![
             tool(
                 "notify_user",
-                "Tell your user something in the Cua app, as a notification (for example \"Your research is ready\"). Use it for results they asked for or when you need them; not for progress chatter.",
+                "Notify your user in the Cua app: a result they asked for, or when you need them. Not for progress.",
                 schema(
                     json!({"title": {"type": "string", "description": "One short line."},
                               "body": {"type": "string", "description": "The details (optional)."}}),
@@ -401,7 +401,7 @@ impl ToolExtension for AgentTools {
             ),
             tool(
                 "volume_ls",
-                "List a folder of the Cua Volume (what you may see only). Your home is agents/<you>/, public/ is shared reference, spaces/<this space>/ is this Space's folder.",
+                "List a Volume folder you may see: agents/<you>/ (home), public/, spaces/<this space>/.",
                 schema(
                     json!({"path": {"type": "string", "description": "Folder. Default: the root."}}),
                     &[],
@@ -410,7 +410,7 @@ impl ToolExtension for AgentTools {
             ),
             tool(
                 "volume_read",
-                "Read a file from the Cua Volume. Text comes back as-is, anything else as base64 (`encoding`).",
+                "Read a Volume file (text as is, else base64).",
                 schema(
                     json!({"path": {"type": "string"}, "version": {"type": "string", "description": "An older version (drive history)."}}),
                     &["path"],
@@ -419,13 +419,13 @@ impl ToolExtension for AgentTools {
             ),
             tool(
                 "volume_sync_status",
-                "Sync state of the Cua Volume as this machine sees it: `feed` (`live`, `off` for storage on this machine, `offline` with `last_error`), each device's last sync, your files still uploading (`pending`), `conflicts` (each `path` and the kept `conflict_path`) and the volume mounted in this Space. Check it before relying on a file another device just wrote.",
+                "Volume sync state: `feed` (`live`, `off`, `offline` with `last_error`), device last-sync times, your `pending` uploads and `conflicts`. Check before relying on a file another device just wrote.",
                 schema(json!({}), &[]),
                 true,
             ),
             tool(
                 "volume_write",
-                "Write a file to the Cua Volume (your home, or this Space's folder). Every write is a new version. Secrets are refused: they belong in the user's Keyvault.",
+                "Write a Volume file in your home or this Space's folder. Secrets are refused (they belong in Keyvault).",
                 schema(
                     json!({"path": {"type": "string"}, "content": {"type": "string"},
                               "encoding": {"type": "string", "enum": ["utf8", "base64"], "description": "Default utf8."},
@@ -437,7 +437,7 @@ impl ToolExtension for AgentTools {
             ),
             tool(
                 "volume_request_access",
-                "Ask the user for access to a drive folder you cannot reach (another agent's outputs, write access to public/). The user approves or declines in the Cua app.",
+                "Ask the user for a Volume folder you cannot reach; they approve in the Cua app.",
                 schema(
                     json!({"prefix": {"type": "string"}, "mode": {"type": "string", "enum": ["r", "rw"], "description": "Default r."},
                               "reason": {"type": "string", "description": "Why, in one line: the user reads it."}}),
@@ -453,7 +453,7 @@ impl ToolExtension for AgentTools {
             ),
             tool(
                 "computer_list_tools",
-                "List the computer-use tools of one of the user's computers you were allowed to use.",
+                "List the tools of a computer you were allowed to use.",
                 schema(
                     json!({"machine": {"type": "string"}, "service": {"type": "string"},
                               "name": {"type": "string", "description": "Only tools whose name contains this."}}),
@@ -463,7 +463,7 @@ impl ToolExtension for AgentTools {
             ),
             tool(
                 "computer_call",
-                "Call a computer-use tool on one of the user's computers you were allowed to use. Every call is recorded for the user.",
+                "Call a tool on a computer you were allowed to use. The user sees every call.",
                 schema(
                     json!({"machine": {"type": "string"}, "tool": {"type": "string"},
                               "arguments": {"type": "object"}, "service": {"type": "string"}}),

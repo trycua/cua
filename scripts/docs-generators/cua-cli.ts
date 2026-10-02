@@ -248,7 +248,7 @@ export function mcpReference(mcp: McpDocumentation, spaces: SpacesLinks): McpRef
     generator: REGENERATE,
     source: 'cua dump-docs --type mcp',
     version: mcp.version,
-    description: 'Every tool the cua MCP server exposes, with its permission and parameters.',
+    description: 'Every tool the cua MCP server accepts, with its permission and parameters.',
     categories: mcpCategories(spaces),
     tools,
     header,

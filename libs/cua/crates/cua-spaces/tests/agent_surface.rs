@@ -198,6 +198,16 @@ async fn facade_calls_run_the_underlying_tool() {
             .contains("\"sandbox\":\"local:dev\"")
     );
     assert_eq!(calls(&r), ["stop_space", "space_write"]);
+    // A Space named by its display name reaches the tools that take a
+    // sandbox ref by id.
+    let v = call(
+        &r,
+        "computer",
+        json!({"action": "screenshot", "space": "dev"}),
+    )
+    .await;
+    let text = v["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("\"sandbox\":\"local:dev\""), "{text}");
     // The old name still works.
     call(
         &r,

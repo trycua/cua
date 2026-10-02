@@ -382,6 +382,18 @@ impl McpServer {
             .is_some_and(|id| id.starts_with("relay:") || id.starts_with("direct:"))
     }
 
+    /// The id of the Space called `name` (ids are returned as they are).
+    async fn space_id(&self, name: &str) -> Option<String> {
+        let out = self.call("list_spaces", json!({})).await;
+        let rows = out
+            .first_text()
+            .filter(|_| !out.is_error)
+            .and_then(|t| serde_json::from_str::<Vec<Value>>(t).ok())?;
+        rows.iter()
+            .find(|r| r["name"] == name)
+            .and_then(|r| r["id"].as_str().map(str::to_string))
+    }
+
     /// One `tools/call` on the agent surface: routes a facade tool to the tool
     /// it stands for, applies the approval gate, then runs it.
     async fn invoke_agent(&self, agent: &AgentSurface, name: &str, args: Value) -> ToolOutcome {
@@ -405,6 +417,16 @@ impl McpServer {
         let tool = cua_spaces_contract::canonical(&tool).to_string();
         if !self.knows(&tool) {
             return ToolOutcome::error(&crate::Error::NotFound(format!("tool {name}")));
+        }
+        // The tools that take a sandbox ref get the id of the Space an agent
+        // names by its display name.
+        if let Some(key) = gate::sandbox_key(&tool)
+            && let Some(named) = args[key]
+                .as_str()
+                .filter(|n| !n.is_empty() && !n.contains(':'))
+            && let Some(id) = self.space_id(named).await
+        {
+            args[key] = json!(id);
         }
         for need in gate::classify(&tool, &args) {
             let (cap, what) = match need {

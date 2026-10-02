@@ -40,12 +40,29 @@ fn non_empty(a: &Value, k: &str) -> bool {
     }
 }
 
+/// The location Spaces are created in when a call names none: the user's
+/// `default.on` setting (`local` unless they changed it).
+fn default_location() -> String {
+    cua_sandbox_core::settings::Settings::load()
+        .ok()
+        .and_then(|s| s.default_on().ok())
+        .map(|(on, _)| on.to_string())
+        .unwrap_or_default()
+}
+
 /// Where a `create_space` / `sandbox_create` call puts the new Space.
-fn placement(a: &Value) -> Option<Cap> {
+fn placement(a: &Value, default_on: &dyn Fn() -> String) -> Option<Cap> {
     if non_empty(a, "pool") {
         return Some(Cap::Cloud);
     }
-    let on = str_of(a, "on").trim();
+    let named = str_of(a, "on").trim();
+    let default;
+    let on = if named.is_empty() {
+        default = default_on();
+        default.as_str()
+    } else {
+        named
+    };
     match on {
         "" | "local" => None,
         "cloud" | "aws" | "gcp" | "modal" => Some(Cap::Cloud),
@@ -55,20 +72,34 @@ fn placement(a: &Value) -> Option<Cap> {
     }
 }
 
+/// The argument that names the sandbox for the tools that take a sandbox ref
+/// (`sandbox` for the computer tools, `name` for the sandbox tools): they
+/// know sandbox refs, not Space names. `None` for the tools that take
+/// `space` (the runtime resolves names itself).
+pub fn sandbox_key(tool: &str) -> Option<&'static str> {
+    if tool.starts_with("computer_") && !tool.starts_with("computer_access_") {
+        Some("sandbox")
+    } else if (tool.starts_with("sandbox_") && tool != "sandbox_create" && tool != "sandbox_list")
+        || tool == "teleport_browser_session"
+    {
+        Some("name")
+    } else {
+        None
+    }
+}
+
 /// The Space argument of a tool.
 fn space_of(tool: &str, a: &Value) -> String {
-    let key = if tool.starts_with("computer_") && !tool.starts_with("computer_access_") {
-        "sandbox"
-    } else if tool.starts_with("sandbox_") || tool == "teleport_browser_session" {
-        "name"
-    } else {
-        "space"
-    };
-    str_of(a, key).to_string()
+    str_of(a, sandbox_key(tool).unwrap_or("space")).to_string()
 }
 
 /// What `tool(args)` needs. Empty: it is free.
 pub fn classify(tool: &str, a: &Value) -> Vec<Need> {
+    classify_with(tool, a, &default_location)
+}
+
+/// [`classify`] with the default location given (the user's `default.on`).
+pub fn classify_with(tool: &str, a: &Value, default_on: &dyn Fn() -> String) -> Vec<Need> {
     let mut out = vec![];
     let on_machine = |out: &mut Vec<Need>, what: &str| {
         out.push(Need::OnMachine {
@@ -86,7 +117,7 @@ pub fn classify(tool: &str, a: &Value) -> Vec<Need> {
             "delete Cua resources in your cloud".into(),
         )),
         "create_space" | "sandbox_create" => {
-            if let Some(cap) = placement(a) {
+            if let Some(cap) = placement(a, default_on) {
                 let what = if cap == Cap::Cloud {
                     "create a cloud Space (it costs money)"
                 } else {
@@ -425,7 +456,7 @@ mod tests {
     }
 
     fn caps(tool: &str, a: Value) -> Vec<Cap> {
-        classify(tool, &a)
+        classify_with(tool, &a, &String::new)
             .into_iter()
             .filter_map(|n| match n {
                 Need::Cap(c, _) => Some(c),
@@ -446,6 +477,15 @@ mod tests {
             [Cap::RemoteExec]
         );
         assert_eq!(caps("cloud_sweep", json!({})), [Cap::Cloud]);
+    }
+
+    #[test]
+    fn the_users_default_location_counts_when_a_call_names_none() {
+        let cloud = || "cloud".to_string();
+        let n = classify_with("create_space", &json!({}), &cloud);
+        assert!(matches!(n[0], Need::Cap(Cap::Cloud, _)), "{n:?}");
+        let n = classify_with("create_space", &json!({"on": "local"}), &cloud);
+        assert!(n.is_empty(), "an explicit local wins: {n:?}");
     }
 
     #[test]

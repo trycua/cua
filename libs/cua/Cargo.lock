@@ -2733,6 +2733,7 @@ dependencies = [
  "base64 0.22.1",
  "cua-daemon",
  "cua-fleet",
+ "cua-home",
  "cua-host",
  "cua-keyvault",
  "cua-media-client",

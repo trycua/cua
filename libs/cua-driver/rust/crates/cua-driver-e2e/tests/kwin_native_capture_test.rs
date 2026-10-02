@@ -33,6 +33,7 @@ def command(source, condition):
     if line == 'close-first': windows[0].destroy()
     elif line == 'minimize-second': windows[1].iconify()
     elif line == 'resize-second': windows[1].unfullscreen(); windows[1].resize(400, 240)
+    elif line == 'raise-first': windows[0].present()
     elif line == 'quit': Gtk.main_quit(); return False
     return True
 GLib.io_add_watch(sys.stdin, GLib.IO_IN, command)
@@ -121,6 +122,59 @@ fn same_pid_same_title_windows_capture_exact_surfaces_without_a_helper() {
         .collect();
     assert!(colors.contains(&[255, 0, 0, 255]), "{colors:?}");
     assert!(colors.contains(&[0, 0, 255, 255]), "{colors:?}");
+    let first = colors
+        .iter()
+        .position(|color| color == &[255, 0, 0, 255])
+        .unwrap();
+    assert!(
+        windows[first]["z_index"].as_u64().unwrap()
+            < windows[1 - first]["z_index"].as_u64().unwrap()
+    );
+    let topmost = driver.call(
+        "get_window_state",
+        json!({
+            "pid": pid, "include_accessibility_tree": false,
+        }),
+    );
+    assert!(!topmost.is_error(), "{}", topmost.text());
+    assert_eq!(
+        topmost.structured()["window_id"],
+        windows[1 - first]["window_id"]
+    );
+    writeln!(input, "raise-first").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let response = driver.call("list_windows", json!({"pid": pid}));
+        let current = response.structured()["windows"].as_array().unwrap();
+        let red = current
+            .iter()
+            .find(|window| window["window_id"] == windows[first]["window_id"])
+            .unwrap();
+        let blue = current
+            .iter()
+            .find(|window| window["window_id"] == windows[1 - first]["window_id"])
+            .unwrap();
+        if red["z_index"].as_u64().unwrap() > blue["z_index"].as_u64().unwrap() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "fixture stacking: {}",
+            response.text()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let topmost = driver.call(
+        "get_window_state",
+        json!({
+            "pid": pid, "include_accessibility_tree": false,
+        }),
+    );
+    assert!(!topmost.is_error(), "{}", topmost.text());
+    assert_eq!(
+        topmost.structured()["window_id"],
+        windows[first]["window_id"]
+    );
     for (window, color) in windows.iter().zip(&colors) {
         assert_eq!(capture(&mut driver, pid, window), *color);
     }
@@ -204,10 +258,6 @@ fn same_pid_same_title_windows_capture_exact_surfaces_without_a_helper() {
         "{}",
         wrong_owner.text()
     );
-    let first = colors
-        .iter()
-        .position(|color| color == &[255, 0, 0, 255])
-        .unwrap();
     writeln!(input, "close-first").unwrap();
     std::thread::sleep(Duration::from_millis(300));
     let closed = driver.call("get_window_state", json!({

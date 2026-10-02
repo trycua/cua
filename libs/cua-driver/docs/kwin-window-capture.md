@@ -41,6 +41,17 @@ checks. Restrictions vary by KWin version and sandbox. The capture interface
 must return `windowId` metadata; older implementations without that identity
 proof are refused. Native validation used KWin 6.7.4.
 
+Window enumeration accepts Plasma window-management v13 and newer, binding no
+higher than v17. Stacking comes from the UUID-order event on v13–v16 and the
+explicit stacking-order object on v17+. Higher `z_index` values are nearer the
+front; UUID sorting only stabilizes ID allocation, not stacking order.
+
+On-screen metadata requires a non-minimized, nonzero-sized window on the current
+virtual desktop and Activity. An absent or empty `activities` field means no
+Activity restriction. A restricted window is not reported on-screen when the
+current Activity cannot be established. Querying the current Activity does not
+activate an absent Activity Manager service.
+
 If Plasma window management is unavailable, discovery retains the existing
 helper/AT-SPI fallbacks. Those fallback IDs are not KWin UUIDs and do not become
 eligible for native KWin capture. A native capture error does not fall back to
@@ -76,5 +87,11 @@ including the covered window. It checks repeated capture, logical dimensions,
 owner mismatch, closure, resize, stable IDs and minimized visibility. Run it
 at scale 1 and scale 2. It also checks exact refusal codes for raw foreground
 input and semantic-click pointer fallback without dispatching to X11.
+It verifies stacking changes between the same-PID windows and that PID-only
+capture selects the topmost window. Hermetic protocol fixtures cover v12 refusal,
+v13–v16 legacy stacking and v17+ explicit stacking; Activity membership and
+disabled-service metadata are covered by pure tests. These fixtures do not
+establish native capture compatibility with older KWin releases or certify a
+live multi-Activity desktop.
 It supplements the canonical desktop matrix; it does
 not replace that matrix or establish coverage on other compositors.

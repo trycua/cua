@@ -30,7 +30,7 @@ use crate::broker::StageSink;
 use crate::broker::{
     AccessRequest, ApproveOptions, Broker, Decision, ImportReport, ImportSpec, InitRequest,
     Inventory, ItemPage, LockOutcome, LoginOutcome, LoginRequest, PasswordImportSpec, PendingView,
-    RuleSpec, Status, TeleportOutcome, TeleportRequest, TeleportStage, UnlockRequest,
+    RuleSpec, SiteIcon, Status, TeleportOutcome, TeleportRequest, TeleportStage, UnlockRequest,
 };
 use crate::caller::{CallerIdentity, TrustPolicy};
 use crate::model::{Delivery, Grant, ItemPolicy, UnattendedRule, UnlockPolicy};
@@ -83,6 +83,8 @@ pub enum Request {
         #[serde(default)]
         limit: Option<usize>,
     },
+    /// Site icons (empty while the browse window is closed).
+    ListFavicons,
     /// Open the browse window (needs presence): item names become visible
     /// for a few minutes.
     Browse,
@@ -359,6 +361,7 @@ pub async fn dispatch(broker: &Broker, caller: &CallerIdentity, req: Request) ->
                 .list_items(caller, offset, limit.unwrap_or(crate::broker::MAX_PAGE))
                 .await
         ),
+        Request::ListFavicons => reply!(broker.list_favicons(caller).await),
         Request::Browse => reply!(
             broker
                 .browse(caller)
@@ -871,6 +874,11 @@ impl KeyvaultClient {
                 return Ok(all);
             }
         }
+    }
+    /// Site icons, empty while the browse window is closed.
+    pub async fn list_favicons(&mut self) -> Result<Vec<SiteIcon>> {
+        let v = self.call(&Request::ListFavicons).await?;
+        serde_json::from_value(v).map_err(|e| Error::Invalid(e.to_string()))
     }
     /// Opens the browse window (the daemon asks for presence). Returns when
     /// it closes, Unix ms.

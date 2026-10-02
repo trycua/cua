@@ -23,7 +23,7 @@ Open **Keyvault** in the Cua Spaces sidebar.
 | All Items | Items grouped by app, then by site, with the files of an app together. Each item shows its type, its key, its domain and when it was last saved in grey, and a **lock**. Select items, a site or a whole app to lock, unlock or delete them together. Search matches a domain, a key, an app or a type. Names stay hidden until you confirm with Touch ID (**Show Items**). |
 | Live access | Grants, unattended rules and copies delivered to Spaces, with **Revoke**, **Remove** and **Wipe**. |
 | Recent | Decisions from the audit log, and whether its hash chain verifies. |
-| Settings, Keyvault | Who confirms (the Cua daemon, with Touch ID), how the vault unlocks, whether this app and the daemon are verified as Cua, and the prompt you can turn back on after **Never ask again**. |
+| Settings, Keyvault | Who confirms (the Cua daemon, with Touch ID), how the vault unlocks, whether this app and the daemon are verified as Cua, the prompt you can turn back on after **Never ask again**, and whether site icons may load from Google. |
 
 ## Every use asks
 
@@ -47,6 +47,19 @@ origin and username. Saving the same app again (teleporting Chrome twice with
 duplicates them. A saved item keeps its lock and its place; only its value and
 its last-saved time change. A big file is kept as an encrypted blob rather than
 inside the item.
+
+## Icons
+
+Apps show their own icon, looked up once per app version and kept in a cache. A
+site shows the icon your browser already had for it: Cua reads it from the
+browser's local favicon store when it saves the site's items (the file is
+copied first, so the browser is never touched) and keeps it in the vault as
+non-secret metadata, visible only while the list is open. When the browser had
+none, Cua can ask Google's favicon service for it, sending only the site's
+registrable domain (never a path, an item or a name), a few at a time as rows
+appear. Answers, including "none", are cached on disk so a domain is asked at
+most once a week. Turn this off with **Load site icons from Google** in
+Settings, Keyvault; the globe stands in for any site without a local icon.
 
 ## Locks
 

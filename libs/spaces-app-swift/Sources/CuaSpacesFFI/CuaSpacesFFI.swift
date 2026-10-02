@@ -1090,6 +1090,11 @@ public protocol KeyvaultClientProtocol: AnyObject, Sendable {
     func execute(command: KvCommand) async throws  -> KvOutcome
 
     /**
+     * Site icons the vault holds (not secret; empty while names are hidden).
+     */
+    func favicons() async  -> [KvFavicon]
+
+    /**
      * What `app` holds, per domain with counts (the daemon asks for Touch ID
      * when the browse window is closed). Never a value.
      */
@@ -1206,6 +1211,27 @@ open func execute(command: KvCommand)async throws  -> KvOutcome  {
             freeFunc: ffi_cua_spaces_ffi_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeKvOutcome_lift,
             errorHandler: FfiConverterTypeCuaError_lift
+        )
+}
+
+    /**
+     * Site icons the vault holds (not secret; empty while names are hidden).
+     */
+open func favicons()async  -> [KvFavicon]  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_cua_spaces_ffi_fn_method_keyvaultclient_favicons(
+                    self.uniffiCloneHandle()
+
+                )
+            },
+            pollFunc: ffi_cua_spaces_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_cua_spaces_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_cua_spaces_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeKvFavicon.lift,
+            errorHandler: nil
+
         )
 }
 
@@ -24792,6 +24818,12 @@ public struct AppSettings: Equatable, Hashable {
      */
     public var dismissedAccess: [String]
     /**
+     * Keyvault rows may load a site's icon from Google's favicon service
+     * when the source browser had none (Settings, Keyvault; on by default).
+     * Off, only icons read locally are shown.
+     */
+    public var keyvaultSiteIcons: Bool
+    /**
      * The sites the user sent to each Space last time, per app
      * ([`crate::teleport::review::remember`]): the review starts from them.
      */
@@ -24840,6 +24872,11 @@ public struct AppSettings: Equatable, Hashable {
          * ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
          */dismissedAccess: [String],
         /**
+         * Keyvault rows may load a site's icon from Google's favicon service
+         * when the source browser had none (Settings, Keyvault; on by default).
+         * Off, only icons read locally are shown.
+         */keyvaultSiteIcons: Bool,
+        /**
          * The sites the user sent to each Space last time, per app
          * ([`crate::teleport::review::remember`]): the review starts from them.
          */teleportChoices: [AppRememberedChoice]) {
@@ -24854,6 +24891,7 @@ public struct AppSettings: Equatable, Hashable {
         self.launchAtLogin = launchAtLogin
         self.experiments = experiments
         self.dismissedAccess = dismissedAccess
+        self.keyvaultSiteIcons = keyvaultSiteIcons
         self.teleportChoices = teleportChoices
     }
 
@@ -24884,6 +24922,7 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
                 launchAtLogin: FfiConverterOptionBool.read(from: &buf),
                 experiments: FfiConverterTypeAppExperiments.read(from: &buf),
                 dismissedAccess: FfiConverterSequenceString.read(from: &buf),
+                keyvaultSiteIcons: FfiConverterBool.read(from: &buf),
                 teleportChoices: FfiConverterSequenceTypeAppRememberedChoice.read(from: &buf)
         )
     }
@@ -24900,6 +24939,7 @@ public struct FfiConverterTypeAppSettings: FfiConverterRustBuffer {
         FfiConverterOptionBool.write(value.launchAtLogin, into: &buf)
         FfiConverterTypeAppExperiments.write(value.experiments, into: &buf)
         FfiConverterSequenceString.write(value.dismissedAccess, into: &buf)
+        FfiConverterBool.write(value.keyvaultSiteIcons, into: &buf)
         FfiConverterSequenceTypeAppRememberedChoice.write(value.teleportChoices, into: &buf)
     }
 }
@@ -24989,6 +25029,11 @@ public struct AppSettingsInput: Equatable, Hashable {
      */
     public var keyvaultUnlockPrompt: Bool?
     /**
+     * Load site icons from Google when the browser had none
+     * ([`AppSettings::keyvault_site_icons`]).
+     */
+    public var keyvaultSiteIcons: Bool
+    /**
      * The Keyvault's protection facts (Touch ID, the daemon's signature),
      * shown in the section.
      */
@@ -25049,6 +25094,10 @@ public struct AppSettingsInput: Equatable, Hashable {
          * again"); none until the broker told it.
          */keyvaultUnlockPrompt: Bool?,
         /**
+         * Load site icons from Google when the browser had none
+         * ([`AppSettings::keyvault_site_icons`]).
+         */keyvaultSiteIcons: Bool,
+        /**
          * The Keyvault's protection facts (Touch ID, the daemon's signature),
          * shown in the section.
          */keyvaultProtection: [AppFact]) {
@@ -25068,6 +25117,7 @@ public struct AppSettingsInput: Equatable, Hashable {
         self.experiments = experiments
         self.keyvaultAutoWipe = keyvaultAutoWipe
         self.keyvaultUnlockPrompt = keyvaultUnlockPrompt
+        self.keyvaultSiteIcons = keyvaultSiteIcons
         self.keyvaultProtection = keyvaultProtection
     }
 
@@ -25103,6 +25153,7 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
                 experiments: FfiConverterTypeAppExperiments.read(from: &buf),
                 keyvaultAutoWipe: FfiConverterOptionBool.read(from: &buf),
                 keyvaultUnlockPrompt: FfiConverterOptionBool.read(from: &buf),
+                keyvaultSiteIcons: FfiConverterBool.read(from: &buf),
                 keyvaultProtection: FfiConverterSequenceTypeAppFact.read(from: &buf)
         )
     }
@@ -25124,6 +25175,7 @@ public struct FfiConverterTypeAppSettingsInput: FfiConverterRustBuffer {
         FfiConverterTypeAppExperiments.write(value.experiments, into: &buf)
         FfiConverterOptionBool.write(value.keyvaultAutoWipe, into: &buf)
         FfiConverterOptionBool.write(value.keyvaultUnlockPrompt, into: &buf)
+        FfiConverterBool.write(value.keyvaultSiteIcons, into: &buf)
         FfiConverterSequenceTypeAppFact.write(value.keyvaultProtection, into: &buf)
     }
 }
@@ -33522,6 +33574,72 @@ public func FfiConverterTypeKvDomainCount_lift(_ buf: RustBuffer) throws -> KvDo
 #endif
 public func FfiConverterTypeKvDomainCount_lower(_ value: KvDomainCount) -> RustBuffer {
     return FfiConverterTypeKvDomainCount.lower(value)
+}
+
+
+public struct KvFavicon: Equatable, Hashable {
+    /**
+     * The site (registrable domain).
+     */
+    public var site: String
+    /**
+     * PNG, base64.
+     */
+    public var png: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The site (registrable domain).
+         */site: String,
+        /**
+         * PNG, base64.
+         */png: String) {
+        self.site = site
+        self.png = png
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension KvFavicon: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKvFavicon: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KvFavicon {
+        return
+            try KvFavicon(
+                site: FfiConverterString.read(from: &buf),
+                png: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KvFavicon, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.site, into: &buf)
+        FfiConverterString.write(value.png, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvFavicon_lift(_ buf: RustBuffer) throws -> KvFavicon {
+    return try FfiConverterTypeKvFavicon.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKvFavicon_lower(_ value: KvFavicon) -> RustBuffer {
+    return FfiConverterTypeKvFavicon.lower(value)
 }
 
 
@@ -57524,6 +57642,31 @@ fileprivate struct FfiConverterSequenceTypeKvDomainCount: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeKvFavicon: FfiConverterRustBuffer {
+    typealias SwiftType = [KvFavicon]
+
+    public static func write(_ value: [KvFavicon], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeKvFavicon.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [KvFavicon] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [KvFavicon]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeKvFavicon.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeKvGrant: FfiConverterRustBuffer {
     typealias SwiftType = [KvGrant]
 
@@ -61919,6 +62062,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_execute() != 54541) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_favicons() != 17072) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cua_spaces_ffi_checksum_method_keyvaultclient_inventory() != 27868) {

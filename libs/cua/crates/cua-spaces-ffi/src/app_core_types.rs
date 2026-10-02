@@ -3637,6 +3637,17 @@ pub struct KvItem {
     pub record_digest: String,
 }
 
+/// A site's icon, read from the source browser's own local store when its
+/// items were saved. Not secret. `png` is base64.
+pub type KvFavicon = core::keyvault::wire::KvFavicon;
+#[uniffi::remote(Record)]
+pub struct KvFavicon {
+    /// The site (registrable domain).
+    pub site: String,
+    /// PNG, base64.
+    pub png: String,
+}
+
 /// One domain a browser holds secrets for, with counts (never values).
 pub type KvDomainCount = core::keyvault::wire::KvDomainCount;
 #[uniffi::remote(Record)]
@@ -6040,6 +6051,10 @@ pub struct AppSettings {
     /// longer shows them, nothing is revoked or wiped
     /// ([`crate::keyvault::view::prune_dismissed`] forgets the gone ones).
     pub dismissed_access: Vec<String>,
+    /// Keyvault rows may load a site's icon from Google's favicon service
+    /// when the source browser had none (Settings, Keyvault; on by default).
+    /// Off, only icons read locally are shown.
+    pub keyvault_site_icons: bool,
     /// The sites the user sent to each Space last time, per app
     /// ([`crate::teleport::review::remember`]): the review starts from them.
     pub teleport_choices: Vec<AppRememberedChoice>,
@@ -6130,6 +6145,9 @@ pub struct AppSettingsInput {
     /// The unlock prompt shows (false once the user chose "Never ask
     /// again"); none until the broker told it.
     pub keyvault_unlock_prompt: Option<bool>,
+    /// Load site icons from Google when the browser had none
+    /// ([`AppSettings::keyvault_site_icons`]).
+    pub keyvault_site_icons: bool,
     /// The Keyvault's protection facts (Touch ID, the daemon's signature),
     /// shown in the section.
     pub keyvault_protection: Vec<AppFact>,

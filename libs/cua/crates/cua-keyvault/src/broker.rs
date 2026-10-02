@@ -387,6 +387,16 @@ pub trait Backend: Send + Sync {
     async fn wipe(&self, target: &str, import_id: &str) -> Result<Vec<String>>;
     /// Tells the UI a consent request is waiting (open the Keyvault page).
     fn notify_consent(&self, _pending: &PendingView) {}
+    /// The icons of `sites` from the source app's own local store, as
+    /// `(site, png)`. Never from the network. Blocking. The default has none.
+    fn favicons(
+        &self,
+        _app: &str,
+        _profile: Option<&str>,
+        _sites: &[String],
+    ) -> Result<Vec<(String, Vec<u8>)>> {
+        Ok(Vec::new())
+    }
     /// Reads a browser profile's saved passwords, one
     /// [`ItemKind::SitePasswords`] item per site whose payload holds only
     /// [`crate::model::LOGINS_ENTRY`]. Blocking. Called only after user
@@ -843,6 +853,15 @@ pub struct RuleSpec {
     /// Note.
     #[serde(default)]
     pub note: String,
+}
+
+/// A site's icon (`png`: base64).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SiteIcon {
+    /// The site.
+    pub site: String,
+    /// PNG, base64.
+    pub png: String,
 }
 
 /// The most items one save, delete or lock call takes.
@@ -1909,10 +1928,15 @@ impl Broker {
             }
             batch.push((m, c.payload));
         }
+        // Site icons, from the browser's own local store (never the network).
+        let icons = self.capture_favicons(&batch).await;
         let mut st = self.state.lock().await;
         let v = Self::vault_mut(&mut st)?;
         // Saving the same app again upserts by key: same item, same lock.
         let saved = v.upsert_items(batch)?;
+        if let Err(e) = v.set_favicons(icons) {
+            tracing::warn!(error = %e, "keyvault: could not keep site icons");
+        }
         let meta = v.meta()?;
         let items: Vec<ItemMeta> = saved.iter().map(|u| meta.items[&u.id].clone()).collect();
         let count = |o: UpsertOutcome| saved.iter().filter(|u| u.outcome == o).count();
@@ -1941,6 +1965,58 @@ impl Broker {
             created,
             report,
         })
+    }
+
+    /// Icons for the sites of what is about to be saved. Best effort: a
+    /// missing or unreadable store means the globe stands in.
+    async fn capture_favicons(&self, batch: &[(ItemMeta, ItemPayload)]) -> Vec<(String, String)> {
+        use base64::Engine as _;
+        let Some((first, _)) = batch.first() else {
+            return Vec::new();
+        };
+        let (app, source) = (first.provider_id.clone(), first.source.clone());
+        let mut sites: Vec<String> = batch
+            .iter()
+            .filter(|(m, _)| m.provider_id == app)
+            .filter_map(|(m, _)| m.domain.as_deref().map(crate::record::site_of))
+            .filter(|s| !s.is_empty())
+            .collect();
+        sites.sort();
+        sites.dedup();
+        if sites.is_empty() {
+            return Vec::new();
+        }
+        let b = self.backend.clone();
+        let profile = (!source.is_empty() && source != "default").then_some(source);
+        let r =
+            tokio::task::spawn_blocking(move || b.favicons(&app, profile.as_deref(), &sites)).await;
+        match r {
+            Ok(Ok(v)) => v
+                .into_iter()
+                .map(|(s, png)| (s, base64::engine::general_purpose::STANDARD.encode(png)))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Site icons for the list (first party; needs the browse window, since
+    /// the sites are names). `png` is base64.
+    pub async fn list_favicons(&self, caller: &CallerIdentity) -> Result<Vec<SiteIcon>> {
+        policy::require_first_party(caller, "listing site icons")?;
+        let mut st = self.state.lock().await;
+        let open = crate::now_ms() < st.browse_until_ms;
+        let meta = Self::vault_mut(&mut st)?.meta()?;
+        if !open {
+            return Ok(Vec::new());
+        }
+        Ok(meta
+            .favicons
+            .iter()
+            .map(|(site, png)| SiteIcon {
+                site: site.clone(),
+                png: png.clone(),
+            })
+            .collect())
     }
 
     /// Deletes items (first party) and wipes every live copy of them in

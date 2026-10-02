@@ -870,3 +870,26 @@ async fn a_big_file_is_stored_as_a_blob_and_delivered_whole() {
         0
     );
 }
+
+#[tokio::test]
+async fn site_icons_are_captured_locally_hidden_until_browse_and_pruned_with_the_site() {
+    let r = rig().await;
+    r.backend
+        .icons
+        .lock()
+        .unwrap()
+        .push(("example.com".into(), b"\x89PNG\r\n\x1a\nicon".to_vec()));
+    import(&r, &["example.com"], false).await;
+    // Names (and so the sites) stay hidden until the browse window opens.
+    assert!(r.broker.list_favicons(&r.cua).await.unwrap().is_empty());
+    r.broker.browse(&r.cua).await.unwrap();
+    let icons = r.broker.list_favicons(&r.cua).await.unwrap();
+    assert_eq!(icons.len(), 1);
+    assert_eq!(icons[0].site, "example.com");
+    // A third party never reads them.
+    assert!(r.broker.list_favicons(&r.agent).await.is_err());
+    // Deleting the site's last item drops its icon.
+    let items = all_items(&r).await;
+    r.broker.delete_items(&r.cua, ids(&items)).await.unwrap();
+    assert!(r.broker.list_favicons(&r.cua).await.unwrap().is_empty());
+}

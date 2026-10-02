@@ -17,6 +17,10 @@ final class FakeKeyvault: KeyvaultClientProtocol, @unchecked Sendable {
 
     func overview() async -> KeyvaultOverview { current }
 
+    /// The icons the vault holds (the browser's own, read locally).
+    var favicons: [KvFavicon] = []
+    func favicons() async -> [KvFavicon] { favicons }
+
     func execute(command: KvCommand) async throws -> KvOutcome {
         commands.append(command)
         switch command {

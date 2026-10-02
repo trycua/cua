@@ -639,6 +639,11 @@ pub struct Meta {
     pub rules: Vec<UnattendedRule>,
     /// Deliveries (live and recently wiped).
     pub deliveries: Vec<Delivery>,
+    /// Site icons (registrable domain to base64 PNG), read from the source
+    /// browser's own local favicon store when its items were saved. Not
+    /// secret, small and bounded; pruned with the last item of a site.
+    #[serde(default)]
+    pub favicons: BTreeMap<String, String>,
     /// The audit chain head this metadata vouches for.
     pub audit_head: Head,
 }

@@ -750,6 +750,23 @@ impl Vault {
             .map_err(|e| Error::Corrupt(format!("item {id} payload: {e}")))
     }
 
+    /// Remembers site icons (site to base64 PNG), one metadata write. The
+    /// map stays bounded.
+    pub fn set_favicons(&mut self, icons: Vec<(String, String)>) -> Result<()> {
+        const MAX: usize = 1024;
+        if icons.is_empty() {
+            return Ok(());
+        }
+        self.update_meta(|m| {
+            for (site, png) in icons {
+                if m.favicons.len() < MAX || m.favicons.contains_key(&site) {
+                    m.favicons.insert(site, png);
+                }
+            }
+            Ok(())
+        })
+    }
+
     /// Deletes an item (crypto-shredded: the record, with its wrapped key,
     /// is removed) and drops it from grants and rules.
     pub fn delete_item(&mut self, id: &str) -> Result<ItemMeta> {
@@ -790,6 +807,13 @@ impl Vault {
                 r.items.retain(|i| !ids.contains(i));
             }
             m.rules.retain(|r| !r.items.is_empty());
+            // An icon goes with the last item of its site.
+            let live: std::collections::HashSet<String> = m
+                .items
+                .values()
+                .filter_map(|i| i.domain.as_deref().map(crate::record::site_of))
+                .collect();
+            m.favicons.retain(|site, _| live.contains(site));
             Ok(removed)
         })?;
         for path in paths {

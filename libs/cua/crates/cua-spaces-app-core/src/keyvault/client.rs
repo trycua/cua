@@ -27,7 +27,7 @@ use cua_keyvault::model::Grant;
 use serde::Serialize;
 use serde_json::Value;
 
-use super::wire::{KeyvaultOverview, KvCommand, KvGrant, KvInventory, KvItem};
+use super::wire::{KeyvaultOverview, KvCommand, KvFavicon, KvGrant, KvInventory, KvItem};
 
 /// How many audit entries the page reads.
 pub const AUDIT_TAIL: usize = 200;
@@ -371,6 +371,14 @@ impl KeyvaultCommands {
 
     /// Every item, page by page: whether their names are visible, and how
     /// many the vault holds.
+    /// Site icons from the vault (empty while the browse window is closed).
+    /// Not secret; fetched apart from the overview so views stay small.
+    pub async fn favicons(&self) -> Vec<KvFavicon> {
+        self.typed::<Vec<KvFavicon>>(Request::ListFavicons)
+            .await
+            .unwrap_or_default()
+    }
+
     async fn items(&self) -> Result<(Vec<KvItem>, bool, u32), KvFailure> {
         let mut all: Vec<KvItem> = Vec::new();
         loop {

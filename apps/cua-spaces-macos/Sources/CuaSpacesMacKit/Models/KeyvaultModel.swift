@@ -33,23 +33,52 @@ public struct PendingDelete: Identifiable, Equatable {
 @Observable
 public final class KeyvaultModel {
     let client: KeyvaultClientProtocol?
-    public private(set) var overview: KeyvaultOverview
+    public private(set) var overview: KeyvaultOverview { didSet { changed() } }
     /// The sidebar's pick. An app narrows the vault list to it.
     public var selection: KvSelection = .category(category: .all) {
-        didSet { applySelection() }
+        didSet { changed(); applySelection() }
     }
     /// The vault list's own state (search, selection, open groups); the
     /// core's reducer owns it.
-    public private(set) var vault = KvVaultState(query: "", selected: [], expanded: [], app: nil)
+    public private(set) var vault = KvVaultState(query: "", selected: [], expanded: [], app: nil) {
+        didSet { changed() }
+    }
     /// Items to unlock once the user answers the prompt (nil: no prompt).
     public var unlockPrompt: PendingUnlock?
     /// Items to delete once the user confirms (nil: nothing to confirm).
     public var deleteConfirm: PendingDelete?
-    /// Looks up an app's icon (provider id to PNG data). The app wires the
-    /// SDK's icon cache; tests leave it empty.
-    public var iconSource: (@Sendable (_ providerId: String) async -> Data?)?
+    /// App icons: NSWorkspace once per app and version, then memory and disk
+    /// (`AppIconCache`). Nil in tests that do not draw icons.
+    public var appIcons: AppIconCache?
     public private(set) var icons: [String: NSImage] = [:]
     @ObservationIgnored private var iconsAsked: Set<String> = []
+    /// Site icons: the browser's own, read locally and kept in the vault,
+    /// then Google's service when the setting allows it, then the globe.
+    public var siteIconStore: SiteIconStore?
+    /// The "Load site icons from Google" setting.
+    public var siteIconsFromGoogle: @MainActor () -> Bool = { true }
+    public private(set) var siteIcons: [String: NSImage] = [:]
+    @ObservationIgnored private var localSiteIcons: [String: Int] = [:]
+    @ObservationIgnored private var siteIconsAsked: Set<String> = []
+    /// The backing scale the icons are fetched for.
+    public var iconScale = 2
+
+    /// Bumped when the overview, the list state or the sidebar pick change:
+    /// the memoized views below recompute only then. Reading it in a view's
+    /// getter keeps the view observing even when the memo answers.
+    private(set) var revision = 0
+    @ObservationIgnored private var memo: [String: (rev: Int, value: Any)] = [:]
+    /// How many times each memoized view was computed (the tests' proof).
+    @ObservationIgnored public private(set) var computes: [String: Int] = [:]
+    private func changed() { revision &+= 1 }
+    private func memoized<T>(_ name: String, _ make: () -> T) -> T {
+        let rev = revision
+        if let hit = memo[name], hit.rev == rev, let v = hit.value as? T { return v }
+        let v = make()
+        memo[name] = (rev, v)
+        computes[name, default: 0] += 1
+        return v
+    }
     public var approval: KvApprovalState?
     public private(set) var busy = false
     public var error: String?
@@ -74,7 +103,7 @@ public final class KeyvaultModel {
 
     var nowMs: Int64 { Int64(clock().timeIntervalSince1970 * 1000) }
 
-    public var page: KvPage { kvPage(overview: overview, nowMs: nowMs) }
+    public var page: KvPage { memoized("page") { kvPage(overview: overview, nowMs: nowMs) } }
 
     /// The always-visible signal while sign-ins are live in a Space (nil
     /// when nothing is): the notch indicator and the menu bar line.
@@ -121,13 +150,13 @@ public final class KeyvaultModel {
     public func isDismissed(_ row: KvAccessRow) -> Bool {
         !row.imports.isEmpty && row.imports.allSatisfy(dismissed.contains)
     }
-    public var sidebar: KvSidebar { kvSidebar(overview: overview, nowMs: nowMs) }
-    public var list: KvListView { kvList(overview: overview, selection: selection, nowMs: nowMs) }
+    public var sidebar: KvSidebar { memoized("sidebar") { kvSidebar(overview: overview, nowMs: nowMs) } }
+    public var list: KvListView { memoized("list") { kvList(overview: overview, selection: selection, nowMs: nowMs) } }
 
     // MARK: - The vault list (the core's grouping, selection and search)
 
     /// The vault list as drawn: apps, sites and items with their locks.
-    public var vaultView: KvVaultView { kvVaultView(overview: overview, state: vault, nowMs: nowMs) }
+    public var vaultView: KvVaultView { memoized("vaultView") { kvVaultView(overview: overview, state: vault, nowMs: nowMs) } }
 
     /// The search text.
     public var query: String {
@@ -219,14 +248,38 @@ public final class KeyvaultModel {
 
     // MARK: - App icons
 
-    /// Asks for the icons of the apps the list shows (each once).
+    /// Icons for what the list shows, each asked for once: app icons from
+    /// the cache, the browser's own site icons from the vault, and site icons
+    /// already on disk. Nothing here touches the network (`siteIcon` does,
+    /// lazily, as a row appears).
     public func loadIcons() async {
-        guard let source = iconSource else { return }
-        let ids = Set(overview.items.map(\.providerId)).subtracting(iconsAsked)
-        iconsAsked.formUnion(ids)
-        for id in ids.sorted() {
-            if let data = await source(id), let image = NSImage(data: data) { icons[id] = image }
+        if let cache = appIcons {
+            var seen: [String: String] = [:]
+            for i in overview.items { seen[i.providerId] = i.appDisplay }
+            for (id, name) in seen.sorted(by: { $0.key < $1.key }) where !iconsAsked.contains(id) {
+                iconsAsked.insert(id)
+                if let image = cache.image(providerId: id, name: name) { icons[id] = image }
+            }
         }
+        guard overview.namesVisible, let client else { return }
+        for f in await client.favicons() {
+            // Decoded once: a changed icon (a different size) decodes again.
+            guard localSiteIcons[f.site] != f.png.count, let data = Data(base64Encoded: f.png),
+                  let image = NSImage(data: data) else { continue }
+            localSiteIcons[f.site] = f.png.count
+            siteIcons[f.site] = image
+        }
+    }
+
+    /// Called as a site row first appears: the downloaded icon on hand, else
+    /// (when the setting allows it and the browser had none) one lookup of
+    /// the domain. Never blocks drawing; the globe stands in meanwhile.
+    public func siteIcon(_ site: String) async {
+        guard siteIcons[site] == nil, let store = siteIconStore else { return }
+        if let hit = store.cached(site) { siteIcons[site] = hit; return }
+        guard siteIconsFromGoogle(), !siteIconsAsked.contains(site) else { return }
+        siteIconsAsked.insert(site)
+        if let image = await store.load(site, scale: iconScale) { siteIcons[site] = image }
     }
 
     public var approvalView: KvApprovalView? {

@@ -1625,6 +1625,14 @@ impl KeyvaultClient {
             .unwrap_or_default()
     }
 
+    /// Site icons the vault holds (not secret; empty while names are hidden).
+    pub async fn favicons(&self) -> Vec<KvFavicon> {
+        let inner = self.inner.clone();
+        cua_sdk::support::run(async move { Ok(inner.favicons().await) })
+            .await
+            .unwrap_or_default()
+    }
+
     /// Runs one page action (a broker request).
     pub async fn execute(&self, command: KvCommand) -> Result<KvOutcome> {
         let inner = self.inner.clone();

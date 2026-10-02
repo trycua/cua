@@ -368,6 +368,27 @@ impl Backend for DaemonBackend {
         self.immutable_id(name)
     }
 
+    fn favicons(
+        &self,
+        app: &str,
+        profile: Option<&str>,
+        sites: &[String],
+    ) -> KvResult<Vec<(String, Vec<u8>)>> {
+        if app != "chrome" {
+            return Ok(Vec::new());
+        }
+        let dir = self
+            .cookie_reader(profile.map(str::to_string))
+            .profile_dir()
+            .map_err(|e| backend_err("find the browser profile", e))?;
+        let db = cua_teleport::favicons::favicons_db(&dir);
+        Ok(cua_teleport::favicons::read_favicons(&db, sites)
+            .map_err(|e| backend_err("read favicons", e))?
+            .into_iter()
+            .map(|f| (f.site, f.png))
+            .collect())
+    }
+
     fn inventory(&self, app: &str, profile: Option<&str>) -> KvResult<Inventory> {
         let manifest = self
             .sessions

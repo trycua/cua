@@ -150,6 +150,7 @@ public final class AppModel {
         // Live Keyvault sign-ins show left of the notch (and in the menu).
         // Dismissed ones stay hidden across launches (Settings file).
         keyvault.dismissed = settings.dismissedAccess
+        keyvault.siteIconsFromGoogle = { [weak self] in self?.settings.keyvaultSiteIcons ?? true }
         keyvault.onSharing = { [weak self] _ in self?.syncNotchKeyvault() }
         keyvault.onDismissed = { [weak self] ids in
             guard let self else { return }
@@ -621,7 +622,8 @@ public final class AppModel {
             telemetry: telemetryInput, agents: agentRows, agentsBusy: agentsBusy, agentsPending: agentsPending,
             billing: identity == nil ? nil : billingStatus, loginItem: loginItemInput,
             experiments: settings.experiments, keyvaultAutoWipe: keyvault.autoWipe,
-            keyvaultUnlockPrompt: keyvault.unlockPromptShows, keyvaultProtection: keyvault.page.protection))
+            keyvaultUnlockPrompt: keyvault.unlockPromptShows,
+            keyvaultSiteIcons: settings.keyvaultSiteIcons, keyvaultProtection: keyvault.page.protection))
     }
 
     /// Settings, General with Settings, Storage after General while the Cua
@@ -764,6 +766,11 @@ public final class AppModel {
         case "keyvault-auto-wipe":
             await keyvault.setAutoWipe(option == "on")
             if let error = keyvault.error { show(error: error) }
+        case "keyvault-site-icons":
+            settings.keyvaultSiteIcons = option == "on"
+            saveSettings()
+            // Turning it on asks for the rows' icons again.
+            if settings.keyvaultSiteIcons { await keyvault.loadIcons() }
         case "keyvault-unlock-prompt":
             // On shows the prompt (Never ask again off); off is the stored
             // "Never ask again".

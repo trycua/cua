@@ -35,6 +35,8 @@ pub struct FakeBackend {
     pub generation: Mutex<u32>,
     /// The cookie hosts each delivery carried.
     pub delivered_hosts: Mutex<Vec<Vec<String>>>,
+    /// The icons the source browser's local store holds (site, png bytes).
+    pub icons: Mutex<Vec<(String, Vec<u8>)>>,
 }
 
 fn captured(n: record::NewRecord, app: &str) -> Captured {
@@ -99,6 +101,22 @@ pub fn file(path: &str, contents: &str) -> Captured {
 
 #[async_trait::async_trait]
 impl Backend for FakeBackend {
+    fn favicons(
+        &self,
+        _app: &str,
+        _profile: Option<&str>,
+        sites: &[String],
+    ) -> cua_keyvault::Result<Vec<(String, Vec<u8>)>> {
+        Ok(self
+            .icons
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(s, _)| sites.contains(s))
+            .cloned()
+            .collect())
+    }
+
     fn inventory(&self, app: &str, _profile: Option<&str>) -> cua_keyvault::Result<Inventory> {
         Ok(Inventory {
             provider_id: app.into(),

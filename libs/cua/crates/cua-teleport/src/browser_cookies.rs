@@ -253,7 +253,7 @@ impl ChromeCookies {
     /// decrypted, so the Keychain is never asked.
     pub fn host_rows(&self) -> Result<Vec<CookieHostRow>, TeleportError> {
         let dir = self.profile_dir()?;
-        let db = dir.join("Cookies");
+        let db = cua_teleport_bundle::layout::chrome::cookies_store(&dir);
         if !db.is_file() {
             return Err(TeleportError::Provider(format!(
                 "no cookies: {} has no Cookies database",

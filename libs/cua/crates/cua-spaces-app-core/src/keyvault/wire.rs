@@ -479,6 +479,16 @@ pub struct KeyvaultOverview {
     pub partial_errors: Vec<String>,
 }
 
+/// A site's icon, read from the source browser's own local store when its
+/// items were saved. Not secret. `png` is base64.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KvFavicon {
+    /// The site (registrable domain).
+    pub site: String,
+    /// PNG, base64.
+    pub png: String,
+}
+
 /// A page action: one broker request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]

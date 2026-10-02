@@ -261,7 +261,7 @@ struct VaultLineRow: View {
             GroupRow(indent: 1, selected: site.selected, open: site.open,
                      onSelect: { keyvault.send(.toggleGroup(key: site.key)) },
                      onOpen: { keyvault.send(.toggleOpen(key: site.key)) }) {
-                Image(systemName: "globe").foregroundStyle(.secondary).frame(width: 20)
+                SiteIcon(keyvault: keyvault, site: site.site)
             } title: {
                 Text(site.site).lineLimit(1)
             } detail: {
@@ -469,7 +469,28 @@ struct BatchBar: View {
     }
 }
 
-/// An app's icon from the SDK's cache, else its first letter.
+/// A site's icon (the browser's own, else Google's when allowed), else the
+/// globe. It asks for the icon once, as it first appears.
+struct SiteIcon: View {
+    let keyvault: KeyvaultModel
+    let site: String
+
+    var body: some View {
+        Group {
+            if let image = keyvault.siteIcons[site] {
+                Image(nsImage: image).resizable().interpolation(.high).clipShape(RoundedRectangle(cornerRadius: 3))
+                    .frame(width: 16, height: 16)
+            } else {
+                Image(systemName: "globe").foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 20)
+        .accessibilityHidden(true)
+        .task(id: site) { await keyvault.siteIcon(site) }
+    }
+}
+
+/// An app's icon from the cache, else its first letter.
 struct AppIcon: View {
     let keyvault: KeyvaultModel
     let providerId: String

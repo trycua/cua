@@ -25,23 +25,22 @@ struct KeyvaultSnapshotTests {
                icons: Bool = false) async -> (AppModel, FakeKeyvault) {
         let fake = FakeKeyvault(overview)
         let m = ViewModelTests().makeModel(kv: fake)
-        if icons { m.keyvault.iconSource = Self.installedIcons }
+        if icons {
+            m.keyvault.appIcons = AppIconCache(
+                dir: FileManager.default.temporaryDirectory.appendingPathComponent("cua-snap-icons-\(UUID().uuidString)"),
+                resolver: { id, name in
+                    var r = AppIconCache.workspace(id, name)
+                    if r == nil, id == "arc", let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "company.thebrowser.Browser") {
+                        r = AppIconSource(bundleId: "company.thebrowser.Browser", version: "0") {
+                            AppIconCache.png(NSWorkspace.shared.icon(forFile: url.path), side: 64)
+                        }
+                    }
+                    return r
+                })
+        }
         await m.keyvault.refresh()
         if icons { await m.keyvault.loadIcons() }
         return (m, fake)
-    }
-
-    /// The real icons of the installed apps, when asked for the exported
-    /// screenshots; the committed references use the letter tiles so they
-    /// do not depend on what is installed.
-    static let installedIcons: @Sendable (String) async -> Data? = { id in
-        let bundle = ["chrome": "com.google.Chrome", "slack": "com.tinyspeck.slackmacgap",
-                      "arc": "company.thebrowser.Browser"][id]
-        guard let bundle, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else { return nil }
-        let icon = NSWorkspace.shared.icon(forFile: url.path)
-        icon.size = NSSize(width: 64, height: 64)
-        guard let tiff = icon.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else { return nil }
-        return rep.representation(using: .png, properties: [:])
     }
 
     var useRealIcons: Bool { ProcessInfo.processInfo.environment["KEYVAULT_REAL_ICONS"] == "1" }

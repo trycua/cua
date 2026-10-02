@@ -80,6 +80,13 @@ service SpaceService {
   // wizard's Run on menu). One that does not answer is listed offline when
   // it provided a Space before.
   rpc ListHosts(ListHostsRequest) returns (ListHostsResponse);
+  // The Space's latest thumbnail (a small JPEG of its primary display)
+  // from the daemon's cache, which every client on this machine shares:
+  // the cached image when it is younger than `max_age`, else a fresh
+  // capture through cua-spacesd (the cached one again, with its older
+  // `captured_at`, when the capture fails). Asking keeps the daemon
+  // refreshing running Spaces' thumbnails in the background for a while.
+  rpc GetSpaceThumbnail(GetSpaceThumbnailRequest) returns (GetSpaceThumbnailResponse);
 }
 
 // A registered Space.
@@ -542,4 +549,27 @@ message SpacesHost {
 message ListHostsResponse {
   // In order: relay hosts, then direct ones.
   repeated SpacesHost hosts = 1;
+}
+
+// Request for `SpaceService.GetSpaceThumbnail`.
+message GetSpaceThumbnailRequest {
+  // Space.
+  string space = 1;
+  // How old a cached thumbnail may be (unset: any age; zero: always
+  // capture).
+  google.protobuf.Duration max_age = 2;
+}
+
+// Response for `SpaceService.GetSpaceThumbnail`.
+message GetSpaceThumbnailResponse {
+  // Encoded image.
+  bytes image = 1;
+  // "jpeg".
+  string format = 2;
+  // Pixel width.
+  uint32 width = 3;
+  // Pixel height.
+  uint32 height = 4;
+  // When it was captured.
+  google.protobuf.Timestamp captured_at = 5;
 }

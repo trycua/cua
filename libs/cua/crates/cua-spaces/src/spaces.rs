@@ -375,8 +375,10 @@ impl SpacesBuilder {
                 .join("Downloads")
                 .join("cua-spaces")
         });
+        let thumbnails = crate::thumbnails::ThumbnailCache::in_home(&home);
         Spaces {
             inner: Arc::new(Inner {
+                thumbnails,
                 #[cfg(feature = "mcp")]
                 extensions: self.extensions,
                 #[cfg(feature = "spaces-agents")]
@@ -588,6 +590,8 @@ pub(crate) fn random_suffix() -> String {
 
 pub(crate) struct Inner {
     pub(crate) registry: Registry,
+    /// Every Space's latest thumbnail ([`crate::thumbnails`]).
+    pub(crate) thumbnails: crate::thumbnails::ThumbnailCache,
     /// The registered extensions ([`crate::extension`]).
     #[cfg(feature = "mcp")]
     pub(crate) extensions: Vec<Arc<dyn crate::extension::SpacesExtension>>,
@@ -966,6 +970,7 @@ impl Spaces {
         if !self.inner.registry.remove(&id.to_string())? && !matches!(id, SpaceId::Relay { .. }) {
             return Err(Error::NotFound(id.to_string()));
         }
+        self.inner.thumbnails.remove(&id.to_string());
         Ok(info.unwrap_or_else(|| SpaceInfo {
             id: id.to_string(),
             name: id.short_name().into(),
@@ -2298,6 +2303,7 @@ impl Spaces {
     pub async fn delete(&self, space: &str) -> Result<String> {
         let id = self.resolve(space)?;
         self.drop_connection(&id).await;
+        self.inner.thumbnails.remove(&id.to_string());
         // A Space in your cloud: its sandbox goes, with everything the
         // sandbox layer made for it (instance, relay machine).
         if let Some(sandbox) = self.cloud_sandbox_of(&id.to_string())? {
@@ -2402,6 +2408,113 @@ impl Spaces {
                 .ok()
                 .and_then(|all| all.into_iter().find(|m| m.id == machine_id)),
         }
+    }
+
+    // ---------------------------------------------------------- thumbnails
+
+    /// The thumbnail cache every client of this runtime shares.
+    pub fn thumbnails(&self) -> &crate::thumbnails::ThumbnailCache {
+        &self.inner.thumbnails
+    }
+
+    /// The Space's latest thumbnail (a small JPEG of its primary display):
+    /// the cached one when it is younger than `max_age` (none: any age),
+    /// else a fresh capture through cua-spacesd, kept for the next caller.
+    /// When the capture fails, the older cached one (its `captured_at`
+    /// says how old); with nothing cached, the capture's error. Asking
+    /// keeps [`Self::refresh_thumbnails`] going ([`crate::thumbnails`]).
+    pub async fn thumbnail(
+        &self,
+        space: &str,
+        max_age: Option<Duration>,
+    ) -> Result<crate::thumbnails::Thumbnail> {
+        let id = self.resolve(space)?.to_string();
+        let cache = &self.inner.thumbnails;
+        cache.note_interest(std::time::Instant::now());
+        let cached = cache.get(&id);
+        if let Some(t) = &cached
+            && t.is_fresh(max_age, SystemTime::now())
+        {
+            return Ok(t.clone());
+        }
+        match self.capture_thumbnail(&id).await {
+            Ok(t) => Ok(t),
+            Err(e) => cached.ok_or(e),
+        }
+    }
+
+    /// Captures and caches the Space's thumbnail now.
+    async fn capture_thumbnail(&self, id: &str) -> Result<crate::thumbnails::Thumbnail> {
+        use crate::thumbnails::{MAX_DIMENSION, QUALITY, Thumbnail};
+        let space = self.space(id).await?;
+        let shot = space
+            .spacesd()?
+            .screenshot(cua_spacesd_client::ScreenshotOptions {
+                display: None,
+                format: pb::ImageFormat::Jpeg,
+                quality: QUALITY,
+                max_dimension: MAX_DIMENSION,
+                include_cursor: false,
+            })
+            .await?;
+        let t = Thumbnail {
+            image: shot.image.to_vec(),
+            format: match shot.format {
+                pb::ImageFormat::Png => "png",
+                pb::ImageFormat::Webp => "webp",
+                _ => "jpeg",
+            }
+            .into(),
+            width: shot.width,
+            height: shot.height,
+            captured_at: SystemTime::now(),
+        };
+        self.inner.thumbnails.put(id, t.clone());
+        Ok(t)
+    }
+
+    /// One background pass over the thumbnails, while someone asked for
+    /// one recently: forgets those of Spaces that are gone, then captures
+    /// each running Space's that is due (older than
+    /// [`crate::thumbnails::BACKGROUND_INTERVAL`]). Returns how many it
+    /// captured. A Space that does not answer is skipped quietly.
+    pub async fn refresh_thumbnails(&self) -> usize {
+        let cache = &self.inner.thumbnails;
+        if !cache.interested(std::time::Instant::now()) {
+            return 0;
+        }
+        let Ok(spaces) = self.list() else { return 0 };
+        cache.retain(&spaces.iter().map(|s| s.id.clone()).collect());
+        let now = SystemTime::now();
+        let mut captured = 0;
+        for info in spaces {
+            let off = matches!(info.power_state.as_str(), "suspended" | "stopped");
+            if off || info.spacesd_version.is_empty() || !cache.due(&info.id, now) {
+                continue;
+            }
+            match tokio::time::timeout(Duration::from_secs(10), self.capture_thumbnail(&info.id))
+                .await
+            {
+                Ok(Ok(_)) => captured += 1,
+                Ok(Err(e)) => tracing::debug!(space = %info.id, error = %e, "thumbnail skipped"),
+                Err(_) => tracing::debug!(space = %info.id, "thumbnail timed out"),
+            }
+        }
+        captured
+    }
+
+    /// Runs [`Self::refresh_thumbnails`] every
+    /// [`crate::thumbnails::REFRESH_TICK`] until the runtime is dropped
+    /// (the daemon starts it once).
+    pub fn spawn_thumbnail_refresh(&self) -> tokio::task::JoinHandle<()> {
+        let weak = Arc::downgrade(&self.inner);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(crate::thumbnails::REFRESH_TICK).await;
+                let Some(inner) = weak.upgrade() else { return };
+                Spaces { inner }.refresh_thumbnails().await;
+            }
+        })
     }
 
     // --------------------------------------------------------------- power

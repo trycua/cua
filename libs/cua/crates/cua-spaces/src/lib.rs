@@ -78,6 +78,7 @@ pub mod routines;
 pub mod services;
 mod space;
 mod spaces;
+pub mod thumbnails;
 
 #[cfg(feature = "spaces-agents")]
 pub mod agents;

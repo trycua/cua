@@ -39,8 +39,9 @@ public final class NotchModel {
     public var spaces: [AppSpace] = []
     /// A captured image of the dragged window (the additive ghost).
     public private(set) var ghost: NSImage?
-    /// Latest screenshot per Space id, for the tiles.
-    public var thumbnails: [String: NSImage] = [:]
+    /// Latest thumbnail per Space id, for the tiles: the same store the
+    /// detail's preview cover reads (`AppModel.thumbnails`).
+    public let thumbnails = SpaceThumbnails()
     /// A forced hover or pressed look on one control (snapshot tests and
     /// debug start states only; real input never sets it).
     public var highlight: NotchHighlight?

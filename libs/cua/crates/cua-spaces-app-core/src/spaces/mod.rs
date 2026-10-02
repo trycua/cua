@@ -3,12 +3,14 @@
 
 //! Spaces: the SDK registry's rows as Spaces, their names, the MRU order,
 //! the Space list state machine ([`roster`]) and the main window's sidebar
-//! and detail ([`sidebar`]) with its Stream section ([`stream`]).
+//! and detail ([`sidebar`]) with its Stream section ([`stream`]) and the
+//! cover over its live desktop ([`cover`]).
 //!
 //! Every location (Cua Cloud, this Mac, added by address, relay) arrives
 //! through one `list_spaces` roster; the SDK owns lifecycle and the spacesd
 //! handshake, this module only turns its rows into what the shells draw.
 
+pub mod cover;
 pub mod creating;
 pub mod roster;
 pub mod sidebar;

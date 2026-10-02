@@ -61,9 +61,11 @@ public protocol SpacesBackend: AnyObject, Sendable {
     /// The Space's coding-agent runs as rows (the app core's mapping of the
     /// SDK's run records, attention first).
     func agentRuns(id: String) async throws -> [AppSpaceAgentRun]
-    /// A small screenshot of the Space's display (JPEG or PNG bytes), for
-    /// its notch tile; `nil` when the Space cannot capture.
-    func thumbnail(id: String, maxDimension: UInt32) async -> Data?
+    /// The Space's latest thumbnail from the SDK's shared cache (the cua
+    /// daemon's): no older than `maxAgeMs` (nil: any age), captured fresh
+    /// when the cache is older; `nil` when there is none and the Space
+    /// cannot capture.
+    func thumbnail(id: String, maxAgeMs: UInt64?) async -> SpaceThumbnailData?
     /// Icons the Space's desktop shows for many apps, in order (the SDK's
     /// `Space.appIcons`, through its one icon cache): 64 px PNG or SVG
     /// bytes, `nil` where the Space has none.
@@ -81,7 +83,7 @@ public protocol SpacesBackend: AnyObject, Sendable {
 }
 
 public extension SpacesBackend {
-    func thumbnail(id: String, maxDimension: UInt32) async -> Data? { nil }
+    func thumbnail(id: String, maxAgeMs: UInt64?) async -> SpaceThumbnailData? { nil }
     func appIcons(id: String, requests: [SpaceAppIconRequest]) async -> [Data?] { requests.map { _ in nil } }
     func primaryDisplay(id: String) async -> AppStreamDisplay? { nil }
     func usage(id: String) async -> AppSpaceUsage? { nil }
@@ -328,12 +330,13 @@ public final class LiveSpacesBackend: SpacesBackend, @unchecked Sendable {
         return appAgentRows(runsJson: runs.map(\.json))
     }
 
-    public func thumbnail(id: String, maxDimension: UInt32) async -> Data? {
+    public func thumbnail(id: String, maxAgeMs: UInt64?) async -> SpaceThumbnailData? {
         let result = await withTimeout(seconds: 5) { [cua] in
-            try await cua.spaces().space(space: id).screenshot(options: ScreenshotOptions(
-                format: .jpeg, quality: 70, maxDimension: maxDimension))
+            try await cua.spaces().space(space: id).thumbnail(maxAgeMs: maxAgeMs)
         }
-        return try? result.get().image
+        guard let t = try? result.get() else { return nil }
+        return SpaceThumbnailData(image: t.image,
+                                  capturedAt: Date(timeIntervalSince1970: TimeInterval(t.capturedAtMs) / 1000))
     }
 
     public func appIcons(id: String, requests: [SpaceAppIconRequest]) async -> [Data?] {

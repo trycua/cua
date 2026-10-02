@@ -190,6 +190,49 @@ struct SnapshotTests {
         try assertSnapshot(view, "space-preview", size: CGSize(width: 520, height: 480))
     }
 
+    /// The preview card while the stream opens and while it waits for
+    /// Connect: the Space's thumbnail blurred and dimmed with the core's
+    /// words centered, or plain black when there is no thumbnail yet.
+    @Test func desktopCover() async throws {
+        let m = try await model()
+        let space = try #require(m.spaces.first { m.detail($0).canStream })
+        let detail = m.detail(space)
+        let preview = DesktopCoverTests.desktop()
+        func card(_ cover: AppDesktopCover, _ image: NSImage?) -> some View {
+            Form {
+                Section {
+                    PreviewCard(session: nil) { DesktopCoverView(cover: cover, image: image) }
+                }
+            }
+            .formStyle(.grouped)
+        }
+        let size = CGSize(width: 520, height: 360)
+        let connecting = m.cover(detail, requested: false, stream: .noSession)
+        #expect(connecting.kind == .connecting)
+        try assertSnapshot(card(connecting, preview), "space-cover-connecting", size: size)
+        try assertSnapshot(card(connecting, nil), "space-cover-connecting-black", size: size)
+        await m.choose(row: "auto-connect", option: "off")
+        let manual = m.cover(detail, requested: false, stream: .noSession)
+        #expect(manual.kind == .connect)
+        try assertSnapshot(card(manual, preview), "space-cover-connect", size: size)
+        try assertSnapshot(card(manual, nil), "space-cover-connect-black", size: size)
+        // A Space that cannot stream: its line on the same blurred preview.
+        let stopped = appDesktopCover(input: AppDesktopCoverInput(
+            canStream: false, previewText: "Stopped", autoConnect: true, connectRequested: false,
+            stream: .noSession))
+        try assertSnapshot(card(stopped, preview), "space-cover-stopped", size: size)
+    }
+
+    /// Settings, General: "Connect to the desktop automatically", on by
+    /// default (the `settings` reference), then off.
+    @Test func settingsAutoConnectOff() async throws {
+        let m = try await model()
+        m.settings.experiments.cuaVolume = true
+        await m.choose(row: "auto-connect", option: "off")
+        await m.loadSettings()
+        try assertSnapshot(SettingsView(model: m), "settings-auto-connect-off", size: CGSize(width: 520, height: 640))
+    }
+
     /// "Teleport an app…" as the core's grid: sections, a tile previewing
     /// its app's frontmost window, icons, the app that cannot move dimmed.
     @Test func teleportPickerGrid() async throws {

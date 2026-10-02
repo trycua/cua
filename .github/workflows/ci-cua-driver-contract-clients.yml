@@ -62,8 +62,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-cua-driver-contract-clients-${{ github.workflow }}-${{ github.ref }}
+  group: ci-cua-driver-contract-clients-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
+
+env:
+  # Cua programs and packages run here never send usage telemetry.
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
 
 jobs:
   mcp-client-discovery:
@@ -76,10 +81,11 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           workspaces: "libs/cua-driver/rust -> target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -134,10 +140,11 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           workspaces: "libs/cua-driver/rust -> target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Record Windows runner session
         if: runner.os == 'Windows'
         id: windows-session
@@ -159,11 +166,15 @@ jobs:
       - name: Prove portable contracts match the live registry
         if: runner.os != 'Windows' || steps.windows-session.outputs.session_id != '0'
         working-directory: libs/cua-driver/rust
+        env:
+          CUA_TEST_REQUIRE_DRIVER_BIN: "1"
         run: cargo test --locked -p cua-driver --test schema_consistency_test portable_desktop_contracts_are_accepted_by_active_backend
 
       - name: Verify released CLI and MCP compatibility
         if: runner.os != 'Windows' || steps.windows-session.outputs.session_id != '0'
         working-directory: libs/cua-driver/rust
+        env:
+          CUA_TEST_REQUIRE_DRIVER_BIN: "1"
         run: cargo test --locked -p cua-driver --test compatibility_contract_test
 
       - name: Compile the UniFFI SDK library
@@ -189,8 +200,9 @@ jobs:
         run: |
           cargo test --locked -p platform-windows diagnostics::tests:: --lib
           if ($LASTEXITCODE -ne 0) { throw "Windows diagnostics tests failed with exit $LASTEXITCODE" }
-          cargo test --locked -p cua-driver-sdk session_zero_refuses_runtime_creation_before_platform_dispatch --lib
+          cargo test --locked -p cua-driver-sdk session_zero_refuses_runtime_creation_before_platform_dispatch --lib | Tee-Object -Variable sessionZeroLog
           if ($LASTEXITCODE -ne 0) { throw "Session 0 refusal test failed with exit $LASTEXITCODE" }
+          if (-not ($sessionZeroLog -match 'test result: ok\. 1 passed')) { throw "Session 0 refusal filter matched no test" }
           cargo run --locked -p cua-driver -- list-tools | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "Session 0 list-tools failed with exit $LASTEXITCODE" }
           cargo run --locked -p cua-driver -- describe click | Out-Null
@@ -201,13 +213,18 @@ jobs:
   verify:
     name: Generated contract and SDK bindings
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: dtolnay/rust-toolchain@stable
+      # The SDK wheel installs ran out of disk after the release build.
+      - uses: ./.github/actions/linux-rust-prep
+        with:
+          install-deps: "false"
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           workspaces: "libs/cua-driver/rust -> target"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux build dependencies
         run: |
           if [[ -f /etc/apt/apt-mirrors.txt ]]; then
@@ -256,13 +273,14 @@ jobs:
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver-core --test contract_parity
 
-      - name: Test Python release packaging helpers
+      - name: Test Python release packaging helpers and binary wrapper
         working-directory: libs/cua-driver/python
         run: |
           python -m pip install pytest
           python -m pytest \
             tests/test_build_wheel.py \
             tests/test_compatibility_contract.py \
+            tests/test_wrapper.py \
             -q
 
       - name: Build and stage host-native UniFFI library
@@ -312,7 +330,12 @@ jobs:
         run: npm run typecheck && CUA_DRIVER_REQUIRE_UNIFFI=1 npm test && npm audit --audit-level=high
 
       - name: Test Sandbox typed Driver against the candidate native bridge
+        # cua-sandbox depends on the in-repo cua SDK package; these carrier
+        # tests fake its native records, so its Python package is enough here.
+        # The rest of the cua-sandbox suite runs with the built SDK in
+        # ci-test-python.yml.
         run: |
+          python -m pip install ./libs/cua/python
           python -m pip install --extra-index-url https://wheels.cua.ai/simple './libs/python/cua-sandbox[dev]'
           CUA_SANDBOX_REQUIRE_NATIVE_DRIVER=1 \
           PYTHONPATH=libs/python/cua-sandbox:libs/cua-driver/python/src \
@@ -322,11 +345,7 @@ jobs:
               libs/python/cua-sandbox/tests/test_driver_mcp.py \
               libs/python/cua-sandbox/tests/test_driver_mcp_shared.py \
               libs/python/cua-sandbox/tests/test_driver_mcp_native.py \
-              libs/python/cua-sandbox/tests/test_pool.py \
-              libs/python/cua-sandbox/tests/test_fleet_transport.py \
-              libs/python/cua-sandbox/tests/test_fleet_cloud_transport.py \
-              libs/python/cua-sandbox/tests/test_sandbox_fleet_lifecycle.py \
-              libs/python/cua-sandbox/tests/test_vm_cleanup.py -q
+              libs/python/cua-sandbox/tests/test_driver_env.py -q
 
       - name: Verify Python native package contents
         working-directory: libs/cua-driver
@@ -385,8 +404,8 @@ jobs:
         run: |
           python -m py_compile \
             claude_agent.py codex_agent.py fixture_server.py \
-            native_driver.py native_tools.py test_fixture_server.py
-          python -m unittest test_fixture_server.py -v
+            native_driver.py native_tools.py tests/test_fixture_server.py
+          python -m unittest tests.test_fixture_server -v
           python -c "import claude_agent_sdk, openai_codex, cua_driver"
 
       - name: Install agent SDK example dependencies

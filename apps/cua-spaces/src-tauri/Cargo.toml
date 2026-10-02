@@ -1,0 +1,164 @@
+[package]
+# Not `cua-spaces`: that is the SDK crate this app links (libs/cua).
+name = "cua-spaces-app"
+version = "0.3.0"
+description = "Cua Spaces desktop app: notch portal, viewers and teleport over the cua SDK"
+authors = ["Cua"]
+edition = "2021"
+license = "FSL-1.1-MIT"
+publish = false
+
+[lib]
+name = "cua_spaces_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+# The bundle and updater expect the historical binary name.
+name = "cua-spaces"
+path = "src/main.rs"
+
+[features]
+# Serve the built UI (../dist) from the binary instead of the dev server, as
+# `tauri build` does (tests/webview_isolation.rs builds with it).
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `macos-private-api` only enables WKWebView background transparency
+# (Tauri's supported transparent-window path). No Spaces/Mission Control
+# APIs are used anywhere in this crate.
+tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
+# In-app auto-update: check a signed release feed, download + install the new
+# .app, and relaunch. `process` supplies the relaunch after an update installs.
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+# Native open panel behind the drop zone's "Select a file…" button.
+tauri-plugin-dialog = "2"
+# Device approval requests from other devices (`devices_notify`).
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# webview_data: atomic writes of the page's settings file.
+tempfile = "3"
+# The cua SDK (libs/cua). The app hosts the Spaces core in-process
+# (`cua-spaces`: registry, streams, files, teleport, hotspot, agents) and
+# talks to `cua daemon` (`cua-daemon` client) for the webview media bridge
+# and so CLI / MCP clients share the same Spaces through ~/.cua.
+cua-spaces = { path = "../../../libs/cua/crates/cua-spaces", default-features = false, features = [
+    "spaces-files",
+    "spaces-stream",
+    # Cursors over the QUIC datagram channel when the Space offers it come
+    # from cua-spaces-ext (registered with the other extensions).
+    "spaces-presence",
+    "spaces-hotspot",
+    "spaces-agents",
+] }
+cua-daemon = { path = "../../../libs/cua/crates/cua-daemon", default-features = false, features = ["client"] }
+cua-fleet = { path = "../../../libs/cua/crates/cua-fleet" }
+# Cua Spaces extensions: teleport, the Cua Volume tools and persistent
+# agents over the Spaces runtime this app hosts.
+cua-spaces-ext = { path = "../../../libs/cua/crates/cua-spaces-ext" }
+cua-volume = { path = "../../../libs/cua/crates/cua-volume" }
+cua-spacesd-client = { path = "../../../libs/cua/crates/cua-spacesd-client" }
+# The teleport UX core ("Teleport an app...": catalog, plans, drops, window
+# drags and their one-window previews), shared with every cua client.
+cua-teleport = { path = "../../../libs/cua/crates/cua-teleport" }
+# The app core: every view model and state machine this app and the SwiftUI
+# app share (Spaces list, New Space, teleport, Keyvault, onboarding, notch).
+cua-spaces-app-core = { path = "../../../libs/cua/crates/cua-spaces-app-core", features = ["keyvault-client", "installer", "telemetry"] }
+# The Keyvault page: a first-party client of the broker `cua daemon` hosts on
+# `$CUA_HOME/keyvault.sock` (items, consent, grants, audit, the kill switch).
+cua-keyvault = { path = "../../../libs/cua/crates/cua-keyvault" }
+cua-proto = { path = "../../../libs/cua/crates/cua-proto", default-features = false, features = ["client", "serde"] }
+cua-sandbox-core = { path = "../../../libs/cua/crates/cua-sandbox-core" }
+# "This machine" host setup (service install, relay registration, sharing):
+# the same library `cua host …` uses.
+cua-host = { path = "../../../libs/cua/crates/cua-host" }
+# Settings "AI agents": the SDK's agent onboarding (detect coding agents,
+# install the cua skills, configure the cua MCP server), same as `cua agents`.
+cua-agent-setup = { path = "../../../libs/cua/crates/cua-agent-setup" }
+# "Sign in to Cua" and the credential store shared with the CLI and daemon.
+cua-auth = { path = "../../../libs/cua/crates/cua-auth" }
+# Anonymous usage telemetry (the SDK core).
+cua-telemetry = { path = "../../../libs/cua/crates/cua-telemetry" }
+tokio = { version = "1", features = ["net", "rt", "rt-multi-thread", "sync", "macros", "time", "process"] }
+# User "Sign in to Cua" device-authorization grant (src/auth.rs): the device
+# and token endpoint calls. `async-trait` implements the Fleet SDK's
+# `AccessTokenProvider` that drives Fleet from the user token.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }
+async-trait = "0.1"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# Window-preview thumbnails for the hand-off picker: PNG-encode the captured
+# window image and hand it to the webview as a `data:image/png;base64,…` URL.
+png = "0.17"
+base64 = "0.22"
+tracing = "0.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Public AppKit window-level and collection-behavior APIs let the portal live
+# in the menu-bar/notch band instead of being constrained below it.
+# NSRunningApplication/NSImage/NSBitmapImageRep (+ the `libc` pid lookup) render
+# each open window's owning-app icon to a PNG for the teleport picker cards.
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSWindow",
+    "NSScreen",
+    "NSRunningApplication",
+    "NSImage",
+    "NSImageRep",
+    "NSBitmapImageRep",
+    "NSFont",
+    # Menu-bar status item (NSStatusItem) entry point for the switcher when the
+    # user chooses "Menu bar" presentation instead of the notch tab.
+    "NSStatusBar",
+    "NSStatusItem",
+    "NSStatusBarButton",
+    "NSButton",
+    "NSControl",
+    "NSView",
+    "NSResponder",
+    "libc",
+] }
+objc2 = { version = "0.6", default-features = false, features = ["std"] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSData",
+    "NSDictionary",
+    "NSString",
+    "NSGeometry",
+    "NSError",
+] }
+# Touch ID / passcode gate for changing unattended-teleport permissions.
+objc2-local-authentication = { version = "0.3", default-features = false, features = [
+    "std",
+    "LAContext",
+    "block2",
+] }
+block2 = "0.6"
+# Window-drag onto a Space tile: a listen-only CGEventTap for global mouse
+# tracking, CGWindowListCopyWindowInfo to resolve the window under the cursor,
+# and the Accessibility trust APIs (declared against ApplicationServices).
+core-graphics = "0.25"
+core-foundation = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
+libc = "0.2"
+# The live harness (tests/live_docker.rs) attaches to the returned ticket
+# URLs exactly as the webview does: a plain WebSocket, no headers.
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }
+sha2 = "0.10"
+cua-spacesd-client = { path = "../../../libs/cua/crates/cua-spacesd-client", features = ["testing"] }
+cua-fleet = { path = "../../../libs/cua/crates/cua-fleet", features = ["testing"] }
+cua-host = { path = "../../../libs/cua/crates/cua-host", features = ["testing"] }
+# tests/keyvault.rs drives the daemon-hosted `teleport_app` seam
+# (`cua_spaces_ext::daemon::keyvault::McpSessionBroker`) against the kill switch.
+cua-daemon = { path = "../../../libs/cua/crates/cua-daemon", default-features = false, features = ["client"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

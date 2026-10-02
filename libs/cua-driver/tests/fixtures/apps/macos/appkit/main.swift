@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 // CuaTestHarness.AppKit — deterministic Cocoa AppKit host app for the
 // cua-driver-rs test harness. Mirrors the role of CuaTestHarness.Wpf.
 //
@@ -16,6 +19,14 @@
 //   scroll_target  — NSScrollView with a tall body and offset label
 //   ns_menubar     — main menu item with known title (Mac-specific)
 //   exit           — NSButton terminates the app
+//   jev_use_tasks  — opt-in (CUA_APPKIT_TASK_STATE=<path>): a labeled Note
+//                    field with a Save button and Small/Medium/Large radio
+//                    buttons, plus an app-owned JSON state file rewritten on
+//                    every counter, checkbox, size, and save change. Ordinary
+//                    launches do not add these controls or write any file.
+//                    CUA_APPKIT_TASK_DENSITY=12|24 (task mode only) also adds
+//                    benign distractor controls in a sidebar before them, for
+//                    measuring jev-use accuracy at larger candidate sets.
 //
 // AX identifiers (via `setAccessibilityIdentifier(_:)`) match the IDs in
 // scenarios.json. Window title is set to "CuaTestHarness AppKit" so the
@@ -54,6 +65,52 @@ let kMenuItemTitle = "Harness Test Item"
 let kSecondaryWindowTitle = "CuaTestHarness AppKit Secondary"
 let kSheetWindowTitle = "CuaTestHarness AppKit Sheet"
 let kFloatingWindowTitle = "CuaTestHarness AppKit Floating"
+let kTaskStateEnv = "CUA_APPKIT_TASK_STATE"
+let kTaskStateSchema = "cua.appkit_task_state_v1"
+let kNoteFieldAID = "txt-note"
+let kSaveNoteButtonAID = "btn-save-note"
+let kSizeOptions = ["Small", "Medium", "Large"]
+let kTaskDensityEnv = "CUA_APPKIT_TASK_DENSITY"
+// Opt-in distractor controls (#4312). The labels are benign (no risky-action
+// phrase) and match the GTK3 harness, so candidate IDs agree across platforms.
+// Some are unrelated to every task; some are close to a task control ("Save
+// draft", "Increase font size", "Note title", "Large icons"). Density 12 uses
+// the first entries of each list; density 24 uses all of them.
+let kDistractorButtons = [
+    "New folder", "Refresh", "Undo", "Redo", "Zoom in", "Zoom out", "Save draft",
+    "Increase font size", "Copy link", "Duplicate", "Rename", "Print preview", "Export PDF",
+    "Import", "Bold", "Italic", "Underline", "Align left", "Align center", "Align right",
+    "Insert table", "Insert image", "Spell check", "Word count", "Show sidebar", "Help",
+]
+let kDistractorCheckboxes = [
+    "Show ruler", "Show previews", "Word wrap", "Auto-save", "Line numbers", "Dark mode",
+    "Show hidden files", "Sync on startup", "Compact layout", "Show status bar",
+    "Remember window size", "Check spelling as you type",
+]
+let kDistractorRadioGroups = [
+    ["Light", "Dark", "System"],
+    ["List", "Grid", "Columns"],
+    ["Name", "Date", "Kind"],
+    ["Small icons", "Medium icons", "Large icons"],
+]
+let kDistractorFields = ["Search", "Note title"]
+// density -> (buttons, checkboxes, radio groups, text fields)
+let kDensityCounts: [Int: (Int, Int, Int, Int)] = [12: (8, 3, 1, 1), 24: (26, 12, 4, 2)]
+let kDistractorPanelWidth: CGFloat = 600
+
+/// The opt-in distractor density in task mode: nil, 12, or 24. Anything else
+/// is a launch error, so a measurement never runs at an unintended density.
+func taskDensityFromEnvironment() -> Int? {
+    let env = ProcessInfo.processInfo.environment
+    guard env[kTaskStateEnv] != nil,
+          let raw = env[kTaskDensityEnv]?.trimmingCharacters(in: .whitespaces), !raw.isEmpty
+    else { return nil }
+    guard let density = Int(raw), kDensityCounts[density] != nil else {
+        fputs("\(kTaskDensityEnv) must be 12 or 24, not \(raw)\n", stderr)
+        exit(2)
+    }
+    return density
+}
 
 // MARK: - Controller
 
@@ -77,14 +134,30 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     let accelCountLabel = NSTextField(labelWithString: "accel_fired=0")
     var accelCount = 0
     var keyMonitor: Any?
+    // Opt-in jev-use task controls and their app-owned state file.
+    let taskStatePath = ProcessInfo.processInfo.environment[kTaskStateEnv]
+    let noteField = NSTextField(string: "")
+    var agreed = false
+    var size = "none"
+    var savedNote: String?
+    var taskStateSequence = 0
+    let taskDensity = taskDensityFromEnvironment()
+    var distractorActions = 0
 
     // Pinned content size — every launch MUST produce a byte-identical window
     // so screenshot dimensions (and the hardcoded pixel coords the harness tests
     // rely on) never drift.
     static let kContentSize = NSSize(width: 720, height: 860)
 
+    /// The pinned size, widened by the distractor sidebar in density mode.
+    static func contentSize(density: Int?) -> NSSize {
+        guard density != nil else { return kContentSize }
+        return NSSize(width: kContentSize.width + kDistractorPanelWidth, height: kContentSize.height)
+    }
+
     override init() {
-        let rect = NSRect(origin: NSPoint(x: 100, y: 100), size: HarnessWindowController.kContentSize)
+        let contentSize = HarnessWindowController.contentSize(density: taskDensityFromEnvironment())
+        let rect = NSRect(origin: NSPoint(x: 100, y: 100), size: contentSize)
         // No `.resizable`: a resizable window can be left at a different size,
         // and macOS would persist/restore that drifted frame on the next launch.
         let mask: NSWindow.StyleMask = [.titled, .closable, .miniaturizable]
@@ -101,10 +174,11 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         // size on every launch so each run is identical.
         window.isRestorable = false
         window.setFrameAutosaveName("")
-        window.setContentSize(HarnessWindowController.kContentSize)
+        window.setContentSize(contentSize)
         super.init()
         buildContent()
         installKeyboardMonitor()
+        writeTaskState()
     }
 
     func show() {
@@ -170,7 +244,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         content.addArrangedSubview(inputRow)
 
         // click_target — a REAL NSButton so it is in the AX tree and addressable
-        // by element_index (AppKit NSButton ignores synthetic pixel clicks, but
+        // by element_token (AppKit NSButton ignores synthetic pixel clicks, but
         // AXPress works). AXPress / single mouse → click; pixel double → double_click;
         // right-click → right_click. (matches WPF btn-clicktarget contract.)
         content.addArrangedSubview(sectionLabel("click_target"))
@@ -313,6 +387,10 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         exit.setAccessibilityIdentifier(kExitButtonAID)
         content.addArrangedSubview(exit)
 
+        if taskStatePath != nil {
+            addTaskControls(to: content)
+        }
+
         // No outer scroll-view wrap: the content is sized to fit the window
         // so the only scrollable surface is the inner scroll_target NSScrollView.
         // Otherwise scroll events delivered at window-local coords get
@@ -321,14 +399,152 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
         let container = NSView(frame: window.contentLayoutRect)
         container.autoresizingMask = [.width, .height]
         content.translatesAutoresizingMaskIntoConstraints = false
+        var contentLeading: CGFloat = 0
+        if let density = taskDensity {
+            // Added first, so the sidebar precedes the content in depth-first
+            // order, as a sidebar does in a typical document app.
+            let panel = distractorPanel(density)
+            container.addSubview(panel)
+            NSLayoutConstraint.activate([
+                panel.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
+                panel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+                panel.widthAnchor.constraint(equalToConstant: kDistractorPanelWidth - 24),
+            ])
+            contentLeading = kDistractorPanelWidth
+        }
         container.addSubview(content)
         NSLayoutConstraint.activate([
             content.topAnchor.constraint(equalTo: container.topAnchor),
-            content.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            content.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: contentLeading),
             content.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             content.widthAnchor.constraint(equalToConstant: 700),
         ])
         window.contentView = container
+    }
+
+    /// Opt-in controls for the jev-use native tasks. They are appended below
+    /// Exit, inside the pinned window's spare height, so every control above
+    /// keeps its ordinary position and AX identity.
+    private func addTaskControls(to content: NSStackView) {
+        content.addArrangedSubview(sectionLabel("jev_use_tasks"))
+        noteField.setAccessibilityIdentifier(kNoteFieldAID)
+        // An accessibility label and no placeholder: macOS reports an empty
+        // field's placeholder as its value, which jev-use treats as unlabeled.
+        noteField.setAccessibilityLabel("Note")
+        noteField.translatesAutoresizingMaskIntoConstraints = false
+        let save = NSButton(title: "Save note", target: self, action: #selector(onSaveNote))
+        save.setAccessibilityIdentifier(kSaveNoteButtonAID)
+        let noteRow = NSStackView()
+        noteRow.orientation = .horizontal
+        noteRow.spacing = 12
+        noteRow.addArrangedSubview(noteField)
+        noteRow.addArrangedSubview(save)
+        NSLayoutConstraint.activate([noteField.widthAnchor.constraint(equalToConstant: 240)])
+        content.addArrangedSubview(noteRow)
+
+        let sizeRow = NSStackView()
+        sizeRow.orientation = .horizontal
+        sizeRow.spacing = 12
+        for title in kSizeOptions {
+            // Radio buttons that share a superview and an action form one group.
+            let radio = NSButton(radioButtonWithTitle: title, target: self,
+                                 action: #selector(onSize(_:)))
+            radio.setAccessibilityIdentifier("rad-size-\(title.lowercased())")
+            radio.state = .off
+            sizeRow.addArrangedSubview(radio)
+        }
+        content.addArrangedSubview(sizeRow)
+    }
+
+    /// Benign distractor controls for density mode (#4312): a grid of buttons,
+    /// labeled text fields, checkboxes, and radio groups. Each radio row is
+    /// its own group (radio buttons group by superview and action).
+    private func distractorPanel(_ density: Int) -> NSStackView {
+        let (buttons, checkboxes, groups, fields) = kDensityCounts[density]!
+        let panel = NSStackView()
+        panel.orientation = .vertical
+        panel.alignment = .leading
+        panel.spacing = 8
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        panel.addArrangedSubview(sectionLabel("jev_use_distractors"))
+        func row() -> NSStackView {
+            let row = NSStackView()
+            row.orientation = .horizontal
+            row.spacing = 8
+            return row
+        }
+        let buttonTitles = Array(kDistractorButtons.prefix(buttons))
+        for start in stride(from: 0, to: buttonTitles.count, by: 4) {
+            let buttonRow = row()
+            for title in buttonTitles[start..<min(start + 4, buttonTitles.count)] {
+                buttonRow.addArrangedSubview(
+                    NSButton(title: title, target: self, action: #selector(onDistractor(_:))))
+            }
+            panel.addArrangedSubview(buttonRow)
+        }
+        let fieldRow = row()
+        for title in kDistractorFields.prefix(fields) {
+            // An accessibility label and no placeholder, like the Note field.
+            let field = NSTextField(string: "")
+            field.setAccessibilityLabel(title)
+            field.target = self
+            field.action = #selector(onDistractor(_:))
+            field.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([field.widthAnchor.constraint(equalToConstant: 200)])
+            fieldRow.addArrangedSubview(field)
+        }
+        panel.addArrangedSubview(fieldRow)
+        let checkTitles = Array(kDistractorCheckboxes.prefix(checkboxes))
+        for start in stride(from: 0, to: checkTitles.count, by: 3) {
+            let checkRow = row()
+            for title in checkTitles[start..<min(start + 3, checkTitles.count)] {
+                checkRow.addArrangedSubview(
+                    NSButton(checkboxWithTitle: title, target: self, action: #selector(onDistractor(_:))))
+            }
+            panel.addArrangedSubview(checkRow)
+        }
+        for options in kDistractorRadioGroups.prefix(groups) {
+            let radioRow = row()
+            for title in options {
+                let radio = NSButton(radioButtonWithTitle: title, target: self,
+                                     action: #selector(onDistractor(_:)))
+                radio.state = .off
+                radioRow.addArrangedSubview(radio)
+            }
+            panel.addArrangedSubview(radioRow)
+        }
+        return panel
+    }
+
+    @objc private func onDistractor(_ sender: Any) {
+        distractorActions += 1
+        writeTaskState()
+    }
+
+    /// Atomically rewrite the app-owned task state. The jev-use task oracle
+    /// reads this file; it never depends on Cua Driver's own observations.
+    private func writeTaskState() {
+        guard let path = taskStatePath else { return }
+        taskStateSequence += 1
+        var state: [String: Any] = [
+            "schema": kTaskStateSchema,
+            "pid": Int(ProcessInfo.processInfo.processIdentifier),
+            "seq": taskStateSequence,
+            "counter": counterValue,
+            "agreed": agreed,
+            "size": size,
+            "note_saved": savedNote.map { $0 as Any } ?? NSNull(),
+        ]
+        if let density = taskDensity {
+            state["density"] = density
+            state["distractor_actions"] = distractorActions
+        }
+        do {
+            let data = try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])
+            try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        } catch {
+            fputs("failed to write task state: \(error)\n", stderr)
+        }
     }
 
     private func sectionLabel(_ id: String) -> NSTextField {
@@ -368,11 +584,13 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
     @objc private func onIncrement() {
         counterValue += 1
         counterLabel.stringValue = "counter=\(counterValue)"
+        writeTaskState()
     }
 
     @objc private func onReset() {
         counterValue = 0
         counterLabel.stringValue = "counter=0"
+        writeTaskState()
     }
 
     @objc private func onExit() {
@@ -390,6 +608,18 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
 
     @objc private func onCheckbox(_ sender: NSButton) {
         checkStateLabel.stringValue = "agreed=\(sender.state == .on)"
+        agreed = sender.state == .on
+        writeTaskState()
+    }
+
+    @objc private func onSaveNote() {
+        savedNote = noteField.stringValue
+        writeTaskState()
+    }
+
+    @objc private func onSize(_ sender: NSButton) {
+        size = sender.title.lowercased()
+        writeTaskState()
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
@@ -482,7 +712,7 @@ final class HarnessWindowController: NSObject, NSTextFieldDelegate, NSTableViewD
 
 // MARK: - Click target button
 
-// A real NSButton (so it shows up in the AX tree and is element_index-addressable
+// A real NSButton (so it shows up in the AX tree and is element_token-addressable
 // via AXPress) that additionally reports double-click and right-click. AXPress and
 // single mouse-up fire the target/action (→ click); a pixel double-click is caught
 // here before super so it reports double_click; right-click reports right_click.
@@ -683,6 +913,14 @@ struct CuaAppKitHarness {
         }
         app.activate(ignoringOtherApps: true)
         writeBringToFrontWindowReport(main: controller.window, matrix: matrixWindows)
+        if let delay = ProcessInfo.processInfo.environment["CUA_APPKIT_LAUNCH_DELAY_MS"]
+            .flatMap(Double.init), delay > 0 {
+            // A slow launch on demand: the titled window is already registered
+            // with WindowServer, but the app has not entered its run loop, so
+            // it cannot answer accessibility yet. Cold hosted runners reach
+            // this state on their own for seconds.
+            Thread.sleep(forTimeInterval: delay / 1000)
+        }
         app.run()
         _ = matrixWindows
     }

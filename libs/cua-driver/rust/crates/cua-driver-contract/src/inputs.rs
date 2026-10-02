@@ -6,7 +6,7 @@
 //! These types are transport-free. The contract generator derives JSON Schema
 //! from them, and live Rust handlers deserialize the same types before acting.
 
-use crate::CursorThemeSelection;
+use crate::{schema_settings, CursorThemeSelection};
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
@@ -19,11 +19,9 @@ pub trait ToolInput: Serialize + DeserializeOwned + JsonSchema {
     }
 
     fn input_schema() -> Value {
-        let settings = schemars::generate::SchemaSettings::draft2020_12().with(|settings| {
-            settings.meta_schema = None;
-            settings.inline_subschemas = true;
-        });
-        let schema = settings.into_generator().into_root_schema_for::<Self>();
+        let schema = schema_settings()
+            .into_generator()
+            .into_root_schema_for::<Self>();
         let mut value = serde_json::to_value(schema).expect("tool input schema serializes");
         normalize_schema(&mut value);
         value
@@ -60,6 +58,14 @@ fn normalize_schema(value: &mut Value) {
 
 fn string_schema(generator: &mut SchemaGenerator) -> Schema {
     String::json_schema(generator)
+}
+
+fn nonempty_string_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "string", "minLength": 1 })
+}
+
+fn element_token_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "string", "pattern": "^s[0-9a-f]{8}:[0-9]+$" })
 }
 
 pub const MULTI_CALL_SESSION_DESCRIPTION: &str =
@@ -222,11 +228,7 @@ pub enum ActionTarget {
 }
 
 pub fn action_target_schema() -> Value {
-    let settings = schemars::generate::SchemaSettings::draft2020_12().with(|settings| {
-        settings.meta_schema = None;
-        settings.inline_subschemas = true;
-    });
-    let schema = settings
+    let schema = schema_settings()
         .into_generator()
         .into_root_schema_for::<ActionTarget>();
     let mut value = serde_json::to_value(schema).expect("action target schema serializes");
@@ -323,7 +325,9 @@ impl ToolInput for StartSessionInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 pub struct EscalateSessionInput {
+    /// Public label of the legacy capture-scope session to escalate.
     pub session: String,
+    /// Why the window-scoped attempt failed and desktop capture is needed.
     pub reason: EscalationReason,
     /// Optional bounded diagnostic detail. Never use secrets or page content.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -389,7 +393,9 @@ pub struct EndSessionInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SetAgentCursorEnabledInput {
+    /// Public label of the session that owns the cursor.
     pub session: String,
+    /// `true` shows the session's agent cursor overlay; `false` hides it.
     pub enabled: bool,
 }
 
@@ -400,15 +406,33 @@ impl ToolInput for SetAgentCursorEnabledInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SetAgentCursorMotionInput {
+    /// Public label of the session that owns the cursor. Omitted or null motion fields keep
+    /// their current value.
     pub session: String,
+    /// Path control-point offset from the start, as a fraction of the distance. Clamped to
+    /// 0..1 (default 0.3).
     pub start_handle: Option<f64>,
+    /// Path control-point offset from the end, as a fraction of the distance. Clamped to 0..1
+    /// (default 0.3).
     pub end_handle: Option<f64>,
+    /// Sideways arc deflection as a fraction of the distance. Clamped to 0..1 (default 0.25).
     pub arc_size: Option<f64>,
+    /// Arc asymmetry: positive puts the apex near the destination, negative near the start.
+    /// Clamped to -1..1 (default 0).
     pub arc_flow: Option<f64>,
+    /// Post-arrival spring damping: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1
+    /// (default 0.72).
     pub spring: Option<f64>,
+    /// Fixed glide duration in milliseconds. 0 (the default) uses speed-based timing. Clamped
+    /// to 0..5000.
     pub glide_duration_ms: Option<f64>,
+    /// Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).
     pub dwell_after_click_ms: Option<f64>,
+    /// Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to
+    /// 0..60000 (default 15000).
     pub idle_hide_ms: Option<f64>,
+    /// Minimum turning radius of the glide path, in points; smaller turns tighter. Clamped to
+    /// 1..1000 (default 80).
     pub turn_radius: Option<f64>,
 }
 
@@ -419,9 +443,13 @@ impl ToolInput for SetAgentCursorMotionInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SetAgentCursorThemeInput {
+    /// Public label of the session that owns the cursor.
     pub session: String,
+    /// Id of an installed cursor theme (see `cua-driver cursor-theme list`).
     #[schemars(schema_with = "cursor_theme_id_schema")]
     pub theme_id: String,
+    /// Theme animation policy: `on` uses the theme's reduced-motion frames, `off` always
+    /// animates, `auto` (default) leaves the choice to the host.
     #[serde(default)]
     pub reduced_motion: crate::CursorReducedMotion,
 }
@@ -433,6 +461,7 @@ impl ToolInput for SetAgentCursorThemeInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct GetAgentCursorStateInput {
+    /// Public label of the session whose cursor to inspect.
     pub session: String,
 }
 
@@ -456,6 +485,17 @@ pub struct GetDesktopStateInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "string_schema")]
     pub screenshot_out_file: Option<String>,
+    /// Optional long-edge cap for the returned PNG, in pixels. Omitted or 0
+    /// returns the full-size capture. When the cap downsizes the image,
+    /// desktop-scope x/y taken from it are mapped back automatically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "nonnegative_integer_schema")]
+    #[uniffi(default = None)]
+    pub max_image_dimension: Option<u32>,
+}
+
+fn nonnegative_integer_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({ "type": "integer", "minimum": 0 })
 }
 
 impl ToolInput for GetDesktopStateInput {
@@ -493,11 +533,15 @@ impl ToolInput for GetCursorPositionInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct MoveCursorInput {
+    /// Destination X: window-local screenshot pixels for a window target, native
+    /// get_desktop_state screenshot pixels for the desktop.
     #[schemars(schema_with = "number_schema")]
     pub x: f64,
+    /// Destination Y, in the same space as `x`.
     #[schemars(schema_with = "number_schema")]
     pub y: f64,
-    /// Preferred per-call target. New callers should set this field.
+    /// Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+    /// primary desktop (`kind="desktop"`, `display_id="primary"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ActionTarget>,
     /// Deprecated flat desktop target retained for wire compatibility.
@@ -514,16 +558,22 @@ pub struct MoveCursorInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SetWindowFrameInput {
+    /// Process ID that owns the window.
     #[schemars(schema_with = "positive_integer_schema")]
     pub pid: u32,
+    /// Window ID from list_windows.
     #[schemars(schema_with = "positive_integer_schema")]
     pub window_id: u64,
+    /// New left edge in the desktop coordinate space reported by list_windows.
     #[schemars(schema_with = "number_schema")]
     pub x: f64,
+    /// New top edge in the desktop coordinate space reported by list_windows.
     #[schemars(schema_with = "number_schema")]
     pub y: f64,
+    /// New width, in the same units as list_windows bounds.
     #[schemars(schema_with = "positive_number_schema")]
     pub width: f64,
+    /// New height, in the same units as list_windows bounds.
     #[schemars(schema_with = "positive_number_schema")]
     pub height: f64,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
@@ -543,10 +593,14 @@ impl ToolInput for SetWindowFrameInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct InvokeMenuInput {
+    /// Process ID of the application that owns the menu.
     #[schemars(schema_with = "positive_integer_schema")]
     pub pid: u32,
+    /// Window ID from list_windows whose menu is invoked.
     #[schemars(schema_with = "positive_integer_schema")]
     pub window_id: u64,
+    /// Menu labels from the top-level menu to the item, e.g. `["File", "Save As..."]`
+    /// (1 to 16 labels).
     #[schemars(schema_with = "menu_path_schema")]
     pub path: Vec<String>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
@@ -571,6 +625,8 @@ pub struct LegacyClickInput {
     pub x: f64,
     #[schemars(schema_with = "number_schema")]
     pub y: f64,
+    /// Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+    /// primary desktop (`kind="desktop"`, `display_id="primary"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ActionTarget>,
     /// Deprecated flat desktop target retained for wire compatibility.
@@ -606,6 +662,7 @@ pub enum InputDeliveryMode {
 pub enum ClickPosition {
     Coordinates { x: f64, y: f64 },
     Element { element_token: String },
+    CapturedCoordinates { x: f64, y: f64, capture_id: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, uniffi::Record)]
@@ -623,6 +680,11 @@ pub struct ClickInput {
     pub count: Option<u32>,
 }
 
+impl ClickInput {
+    pub const DESKTOP_BACKGROUND_MESSAGE: &'static str =
+        "desktop clicks require delivery_mode:\"foreground\"; background delivery is unavailable for desktop targets";
+}
+
 // Parse the flat wire shape before constructing the sum type: an untagged
 // serde enum alone would silently accept mixed coordinate and element fields.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -637,8 +699,11 @@ struct ClickWireInput {
     #[schemars(schema_with = "number_schema")]
     y: Option<f64>,
     #[serde(default, deserialize_with = "present_click_field")]
-    #[schemars(schema_with = "string_schema")]
+    #[schemars(schema_with = "element_token_schema")]
     element_token: Option<String>,
+    #[serde(default, deserialize_with = "present_click_field")]
+    #[schemars(schema_with = "nonempty_string_schema")]
+    capture_id: Option<String>,
     /// For multi-call work, prefer a short public session label and repeat it on every call that
     /// accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
     #[serde(default)]
@@ -663,9 +728,12 @@ where
 impl TryFrom<ClickWireInput> for ClickInput {
     type Error = String;
     fn try_from(wire: ClickWireInput) -> Result<Self, Self::Error> {
-        let position = match (wire.x, wire.y, wire.element_token) {
-            (Some(x), Some(y), None) => ClickPosition::Coordinates { x, y },
-            (None, None, Some(element_token)) => ClickPosition::Element { element_token },
+        let position = match (wire.x, wire.y, wire.element_token, wire.capture_id) {
+            (Some(x), Some(y), None, None) => ClickPosition::Coordinates { x, y },
+            (Some(x), Some(y), None, Some(capture_id)) => {
+                ClickPosition::CapturedCoordinates { x, y, capture_id }
+            }
+            (None, None, Some(element_token), None) => ClickPosition::Element { element_token },
             _ => return Err("click requires exactly x and y, or element_token".into()),
         };
         let input = Self {
@@ -689,7 +757,7 @@ impl JsonSchema for ClickInput {
         let mut schema = ClickWireInput::json_schema(generator);
         schema.insert("oneOf".into(), serde_json::json!([
             {"required":["x","y"], "not":{"required":["element_token"]}},
-            {"required":["element_token"], "not":{"anyOf":[{"required":["x"]},{"required":["y"]}]}}
+            {"required":["element_token"], "not":{"anyOf":[{"required":["x"]},{"required":["y"]},{"required":["capture_id"]}]}}
         ]));
         schema
     }
@@ -702,6 +770,11 @@ impl ToolInput for ClickInput {
             ClickPosition::Coordinates { x, y } if !x.is_finite() || !y.is_finite() => {
                 return Err("click coordinates must be finite".into())
             }
+            ClickPosition::CapturedCoordinates { x, y, capture_id }
+                if !x.is_finite() || !y.is_finite() || capture_id.trim().is_empty() =>
+            {
+                return Err("captured click coordinates and capture_id must be valid".into())
+            }
             ClickPosition::Element { element_token } if element_token.trim().is_empty() => {
                 return Err("element_token must not be empty".into())
             }
@@ -712,7 +785,7 @@ impl ToolInput for ClickInput {
                 return Err("portable desktop target must be primary".into());
             }
             if self.delivery_mode != InputDeliveryMode::Foreground {
-                return Err("desktop clicks require foreground delivery".into());
+                return Err(Self::DESKTOP_BACKGROUND_MESSAGE.into());
             }
             if matches!(self.position, ClickPosition::Element { .. }) {
                 return Err("element clicks require an exact window target".into());
@@ -736,6 +809,8 @@ pub struct DragInput {
     pub to_x: f64,
     #[schemars(schema_with = "number_schema")]
     pub to_y: f64,
+    /// Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+    /// primary desktop (`kind="desktop"`, `display_id="primary"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ActionTarget>,
     /// Deprecated flat desktop target retained for wire compatibility.
@@ -773,6 +848,8 @@ pub struct ScrollInput {
     #[schemars(schema_with = "number_schema")]
     pub y: f64,
     pub direction: ScrollDirection,
+    /// Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+    /// primary desktop (`kind="desktop"`, `display_id="primary"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ActionTarget>,
     /// Deprecated flat desktop target retained for wire compatibility.
@@ -800,6 +877,8 @@ impl ToolInput for ScrollInput {
 #[serde(deny_unknown_fields)]
 pub struct TypeTextInput {
     pub text: String,
+    /// Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+    /// primary desktop (`kind="desktop"`, `display_id="primary"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ActionTarget>,
     /// Deprecated flat desktop target retained for wire compatibility.
@@ -865,6 +944,8 @@ impl ToolInput for ClipboardWriteInput {
 #[serde(deny_unknown_fields)]
 pub struct PressKeyInput {
     pub key: String,
+    /// Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+    /// primary desktop (`kind="desktop"`, `display_id="primary"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ActionTarget>,
     /// Deprecated flat desktop target retained for wire compatibility.
@@ -888,8 +969,15 @@ impl ToolInput for PressKeyInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HotkeyInput {
+    // Enforced by the parser as well as the schema so a typed input can never
+    // carry a combination the platform runtimes would refuse. Not a doc
+    // comment: that would become a schema description and change the
+    // published contract.
     #[schemars(length(min = 2))]
+    #[serde(deserialize_with = "at_least_two_keys")]
     pub keys: Vec<String>,
+    /// Preferred per-call target: an exact window (`kind="window"`, `pid`, `window_id`) or the
+    /// primary desktop (`kind="desktop"`, `display_id="primary"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ActionTarget>,
     /// Deprecated flat desktop target retained for wire compatibility.
@@ -907,15 +995,52 @@ impl ToolInput for HotkeyInput {
     const TOOL_NAME: &'static str = "hotkey";
 }
 
+fn at_least_two_keys<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    let keys = Vec::<String>::deserialize(deserializer)?;
+    if keys.len() < 2 {
+        return Err(serde::de::Error::custom(
+            "hotkey.keys must contain at least two keys",
+        ));
+    }
+    Ok(keys)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
 
+    /// Found by the tool-call boundary fuzzer: the published schema and every
+    /// platform runtime require at least two keys, but the contract parser
+    /// accepted any count, so `{"keys": []}` passed typed validation.
+    #[test]
+    fn hotkey_parser_enforces_the_published_two_key_minimum() {
+        for keys in [json!([]), json!(["ctrl"])] {
+            let error = serde_json::from_value::<HotkeyInput>(json!({"keys": keys}))
+                .expect_err("fewer than two keys must be rejected");
+            assert!(
+                error.to_string().contains("at least two keys"),
+                "unexpected error for {keys}: {error}"
+            );
+        }
+        let parsed: HotkeyInput = serde_json::from_value(json!({"keys": ["ctrl", "c"]})).unwrap();
+        assert_eq!(parsed.keys, vec!["ctrl", "c"]);
+        assert_eq!(
+            HotkeyInput::input_schema()["properties"]["keys"]["minItems"],
+            2
+        );
+    }
+
     #[test]
     fn typed_click_round_trips_flat_native_wire_and_exact_window_id() {
-        for position in [json!({"x":-1.5,"y":2.0}), json!({"element_token":"s1:0"})] {
+        for position in [
+            json!({"x":-1.5,"y":2.0}),
+            json!({"x":-1.5,"y":2.0,"capture_id":"capture-1"}),
+            json!({"element_token":"s00000001:0"}),
+        ] {
             let mut wire = json!({"target":{"kind":"window","pid":7,"window_id":9007199254740993_u64},"delivery_mode":"background"});
             wire.as_object_mut()
                 .unwrap()
@@ -927,6 +1052,12 @@ mod tests {
         assert_eq!(schema["required"], json!(["target", "delivery_mode"]));
         assert!(schema["oneOf"].is_array());
         assert!(schema["properties"].get("position").is_none());
+        assert!(schema["properties"].get("capture_id").is_some());
+        assert_eq!(schema["properties"]["capture_id"]["minLength"], 1);
+        assert_eq!(
+            schema["properties"]["element_token"]["pattern"],
+            "^s[0-9a-f]{8}:[0-9]+$"
+        );
     }
 
     #[test]
@@ -935,9 +1066,11 @@ mod tests {
             json!({}),
             json!({"x":1}),
             json!({"y":2}),
-            json!({"x":1,"y":2,"element_token":"s1:0"}),
-            json!({"x":1,"element_token":"s1:0"}),
-            json!({"x":null,"element_token":"s1:0"}),
+            json!({"x":1,"y":2,"element_token":"s00000001:0"}),
+            json!({"element_token":"s00000001:0","capture_id":"capture-1"}),
+            json!({"x":1,"y":2,"capture_id":"  "}),
+            json!({"x":1,"element_token":"s00000001:0"}),
+            json!({"x":null,"element_token":"s00000001:0"}),
             json!({"element_token":"  "}),
             json!({"x":1,"y":2,"unknown":true}),
         ] {
@@ -968,12 +1101,15 @@ mod tests {
         };
         assert!(input.validate().is_err());
         input.position = ClickPosition::Element {
-            element_token: "s1:0".into(),
+            element_token: "s00000001:0".into(),
         };
         assert!(input.validate().is_err());
         input.position = ClickPosition::Coordinates { x: 1.0, y: 2.0 };
         input.delivery_mode = InputDeliveryMode::Background;
-        assert!(input.validate().is_err());
+        assert_eq!(
+            input.validate().unwrap_err(),
+            ClickInput::DESKTOP_BACKGROUND_MESSAGE
+        );
     }
 
     #[test]

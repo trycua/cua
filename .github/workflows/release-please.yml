@@ -13,9 +13,13 @@ on:
         default: automatic
         options:
           - automatic
+          - cua-perception
           - cua-driver-rs
           - lume
           - sandbox
+          - cua-spacesd
+          - cua-sdk
+          - cua-spaces
       bump:
         description: "Version bump for the selected component"
         required: true
@@ -59,7 +63,7 @@ jobs:
           inputs.component == 'automatic' &&
           inputs.bump != 'automatic'
         run: |
-          echo "::error::Select cua-driver-rs, lume, or sandbox when forcing a bump type."
+          echo "::error::Select cua-perception, cua-driver-rs, lume, sandbox, cua-spacesd, cua-sdk or cua-spaces when forcing a bump type."
           exit 1
 
       - name: Reject manifest tags outside main history
@@ -78,6 +82,24 @@ jobs:
           echo "path=$(jq -r .path <<<"$REQUEST")" >> "$GITHUB_OUTPUT"
           echo "current_version=$(jq -r .current_version <<<"$REQUEST")" >> "$GITHUB_OUTPUT"
           echo "release_as=$(jq -r '.release_as // ""' <<<"$REQUEST")" >> "$GITHUB_OUTPUT"
+
+      - name: Anchor a merged Perception version with a lightweight tag
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BEFORE_SHA: ${{ github.event.before }}
+          VERSION_PATH: libs/cua-driver/rust/crates/cua-perception/VERSION
+        # The tag push starts cd-cua-perception.yml, which publishes the
+        # release. A missed tag heals on the next main push.
+        run: bash .github/scripts/anchor_perception_release_tag.sh
+
+      # Release Please aborts every release PR while a merged release PR is
+      # still labeled `autorelease: pending`. Perception skips GitHub releases,
+      # so Release Please never relabels it; do that once its tag is anchored.
+      - name: Mark tagged Perception release pull requests
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: python3 .github/scripts/mark_perception_release_prs_tagged.py
 
       # release-please-action v4.4.1, embedding release-please 17.3.0.
       - name: Open or update automatic release pull requests
@@ -132,11 +154,18 @@ jobs:
             PR=$(gh pr view "$number" --json headRefName,headRepositoryOwner,files)
             DRIVER=$(echo "$PR" | jq -r \
               '.files | any(.path == "libs/cua-driver/rust/VERSION")')
+            PERCEPTION=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/cua-driver/rust/crates/cua-perception/VERSION")')
             LUME=$(echo "$PR" | jq -r \
               '.files | any(.path == "libs/lume/VERSION")')
             SANDBOX=$(echo "$PR" | jq -r \
               '.files | any(.path == "libs/python/cua-sandbox/VERSION")')
-            if [[ "$DRIVER" != "true" && "$LUME" != "true" && "$SANDBOX" != "true" ]]; then
+            SPACESD=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/cua-spacesd/VERSION")')
+            SDK=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/cua/VERSION")')
+            if [[ "$DRIVER" != "true" && "$PERCEPTION" != "true" && "$LUME" != "true" && \
+                  "$SANDBOX" != "true" && "$SPACESD" != "true" && "$SDK" != "true" ]]; then
               continue
             fi
 
@@ -176,11 +205,20 @@ jobs:
               if [[ "$DRIVER" == "true" ]]; then
                 COMPONENT_ARGS+=(--component cua-driver-rs)
               fi
+              if [[ "$PERCEPTION" == "true" ]]; then
+                COMPONENT_ARGS+=(--component cua-perception)
+              fi
               if [[ "$LUME" == "true" ]]; then
                 COMPONENT_ARGS+=(--component lume)
               fi
               if [[ "$SANDBOX" == "true" ]]; then
                 COMPONENT_ARGS+=(--component sandbox)
+              fi
+              if [[ "$SPACESD" == "true" ]]; then
+                COMPONENT_ARGS+=(--component cua-spacesd)
+              fi
+              if [[ "$SDK" == "true" ]]; then
+                COMPONENT_ARGS+=(--component cua-sdk)
               fi
               python3 .github/scripts/merge_release_please_manifests.py \
                 --main "$RUNNER_TEMP/main-release-manifest.json" \
@@ -194,23 +232,60 @@ jobs:
                 exit 1
               fi
             fi
-            if [[ "$DRIVER" == "true" ]]; then
+            if [[ "$PERCEPTION" == "true" ]]; then
+              PERCEPTION_VERSION=$(tr -d '[:space:]' < \
+                libs/cua-driver/rust/crates/cua-perception/VERSION)
+              cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \
+                -p cua-perception --precise "$PERCEPTION_VERSION"
+              python3 .github/scripts/validate_release_versions.py --product perception
+              git add libs/cua-driver/rust/Cargo.lock
+              COMMIT_MESSAGE="chore(cua-perception): synchronize release lockfile"
+            elif [[ "$DRIVER" == "true" ]]; then
               DRIVER_VERSION=$(tr -d '[:space:]' < libs/cua-driver/rust/VERSION)
               cargo update --manifest-path libs/cua-driver/rust/Cargo.toml \
                 -p cua-driver --precise "$DRIVER_VERSION"
+              # cua-spacesd and its standalone e2e workspaces lock the driver
+              # crates by path: follow the new version without upgrading deps.
+              for manifest in libs/cua-spacesd/Cargo.toml libs/cua-spacesd/tests/*/Cargo.toml; do
+                cargo metadata --format-version 1 --manifest-path "$manifest" > /dev/null
+              done
               python3 .github/scripts/sync_driver_release_docs.py
               python3 .github/scripts/validate_release_versions.py --product driver
               git add libs/cua-driver/rust/Cargo.lock \
-                docs/content/docs/reference/cua-driver
+                libs/cua-spacesd/Cargo.lock libs/cua-spacesd/tests/*/Cargo.lock \
+                docs/content/docs/cua-driver/reference \
+                scripts/docs-generators/cli-specs/cua-driver.json
               COMMIT_MESSAGE="chore(cua-driver-rs): synchronize generated release files"
             elif [[ "$LUME" == "true" ]]; then
               python3 .github/scripts/sync_lume_release_docs.py
               python3 .github/scripts/validate_release_versions.py --product lume
-              git add docs/content/docs/reference/lume/cli-reference.mdx \
-                docs/content/docs/reference/lume/http-api.mdx
+              git add docs/content/docs/lume/reference
               COMMIT_MESSAGE="chore(lume): synchronize release documentation"
+            elif [[ "$SPACESD" == "true" ]]; then
+              # Release Please bumps the workspace version in Cargo.toml; the
+              # lockfiles (the workspace and the standalone e2e workspaces
+              # that lock its crates by path) follow without upgrading deps.
+              for manifest in libs/cua-spacesd/Cargo.toml libs/cua-spacesd/tests/*/Cargo.toml; do
+                cargo metadata --format-version 1 --manifest-path "$manifest" > /dev/null
+              done
+              python3 .github/scripts/validate_release_versions.py --product spacesd
+              git add libs/cua-spacesd/Cargo.lock libs/cua-spacesd/tests/*/Cargo.lock
+              COMMIT_MESSAGE="chore(cua-spacesd): synchronize release lockfiles"
+            elif [[ "$SDK" == "true" ]]; then
+              # Release Please bumps VERSION, pyproject, __init__, package.json
+              # and package-lock.json together; only validation runs here.
+              python3 .github/scripts/validate_release_versions.py --product sdk
+              COMMIT_MESSAGE="chore(cua-sdk): synchronize release metadata"
             else
               python3 .github/scripts/validate_release_versions.py --product sandbox
+              # The Sandbox reference records the package version, so regenerate
+              # it with the release version. Lifecycle scripts stay disabled
+              # because this step holds the release app token.
+              npx --yes pnpm@9.0.4 --dir docs install --frozen-lockfile --ignore-scripts
+              node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library sandbox
+              git add docs/content/docs/cua-sdk/reference/runtime-support.mdx \
+                docs/content/docs/cua-sdk/reference/os-image-catalog.mdx \
+                docs/content/docs/cua-sdk/reference/image-software.mdx
               COMMIT_MESSAGE="chore(sandbox): synchronize release metadata"
             fi
             if git diff --cached --quiet; then
@@ -222,7 +297,15 @@ jobs:
               git push --force-with-lease="refs/heads/$BRANCH:$REMOTE_HEAD" \
                 origin "HEAD:refs/heads/$BRANCH"
             fi
-          done < <(gh pr list --state open --base main --limit 100 --json number --jq '.[].number')
+          # Look up each component's release branch directly. An unfiltered
+          # list returns only the newest 100 open pull requests, and the search
+          # index can miss a release PR that Release Please opened moments ago.
+          done < <(jq -r '.packages[].component' release-please-config.json |
+            while read -r component; do
+              gh pr list --state open --base main \
+                --head "release-please--branches--main--components--$component" \
+                --json number --jq '.[].number'
+            done)
 
       - name: Verify repository release versions
         run: python3 .github/scripts/validate_release_versions.py --product all

@@ -7,7 +7,7 @@
 
 use std::cell::RefCell;
 use std::future::{poll_fn, Future};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::task::Poll;
 
 use windows::Win32::UI::HiDpi::{
@@ -39,6 +39,26 @@ impl Default for OwnedThreadDpi {
 
 thread_local! {
     static OWNED_THREAD_DPI: RefCell<Option<Arc<OwnedThreadDpi>>> = const { RefCell::new(None) };
+}
+
+/// The embedded SDK ABI executor publishes its owner here so explicitly
+/// created recorder threads can join the same terminal readiness state.
+static ABI_EXECUTOR_OWNER: OnceLock<Arc<OwnedThreadDpi>> = OnceLock::new();
+
+/// Publish the owner shared by the embedded SDK executor's worker threads.
+/// Re-registering that same owner is harmless; replacing it would split the
+/// physical-pixel failure state and is therefore rejected.
+pub fn register_abi_executor_owner(owner: Arc<OwnedThreadDpi>) -> Result<(), String> {
+    match ABI_EXECUTOR_OWNER.set(owner.clone()) {
+        Ok(()) => Ok(()),
+        Err(owner) => match ABI_EXECUTOR_OWNER.get() {
+            Some(current) if Arc::ptr_eq(current, &owner) => Ok(()),
+            Some(_) => {
+                Err("a different Windows ABI executor DPI owner is already registered".into())
+            }
+            None => Err("Windows ABI executor DPI owner registration raced".into()),
+        },
+    }
 }
 
 impl OwnedThreadDpi {
@@ -91,6 +111,44 @@ where
         let result = work();
         owner.check().map(|()| result)
     }
+}
+
+/// Initialize a recorder-owned state-capture thread. Unlike overlay threads
+/// that may start synchronously during host-side registry construction, this
+/// worker belongs to the embedded ABI runtime and must share its sticky
+/// failure state. Existing Cua-owned thread context takes precedence.
+pub fn initialize_recording_state_thread() -> Result<(), String> {
+    let current = OWNED_THREAD_DPI.with(|slot| slot.borrow().clone());
+    let owner = current.or_else(|| ABI_EXECUTOR_OWNER.get().cloned());
+    let Some(owner) = owner else {
+        // Standalone/platform callers without an embedded ABI runtime retain
+        // an independent Cua-owned context.
+        let owner = Arc::new(OwnedThreadDpi::default());
+        owner.initialize_current_thread();
+        return owner.check();
+    };
+
+    let already_initialized_here = OWNED_THREAD_DPI.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &owner))
+    });
+    if !already_initialized_here {
+        owner.initialize_current_thread();
+    }
+    owner.check()
+}
+
+/// Run Windows recording work only after the recorder thread has joined its
+/// owner and verified the physical-pixel context. Check again after native
+/// work so a sticky failure cannot be hidden by an optional capture result.
+pub fn with_recording_state_thread<F, T>(work: F) -> Result<T, String>
+where
+    F: FnOnce() -> T,
+{
+    initialize_recording_state_thread()?;
+    let result = work();
+    check_owned_thread().map(|()| result)
 }
 
 pub(crate) fn check_owned_thread() -> Result<(), String> {
@@ -178,6 +236,7 @@ pub fn current_thread_uses_per_monitor_v2() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     fn current_owner() -> Arc<OwnedThreadDpi> {
         OWNED_THREAD_DPI.with(|slot| slot.borrow().clone().expect("owned thread"))
@@ -224,5 +283,49 @@ mod tests {
         .join()
         .unwrap()
         .unwrap();
+    }
+
+    #[test]
+    fn recording_worker_uses_executor_owner_and_late_failure_is_sticky() {
+        let reject_recording_thread = Arc::new(AtomicBool::new(false));
+        let reject = reject_recording_thread.clone();
+        let owner = Arc::new(OwnedThreadDpi::new(Arc::new(move || {
+            if reject.load(Ordering::SeqCst) {
+                Err("late recorder thread PMv2 rejection".to_owned())
+            } else {
+                use_per_monitor_v2_for_current_thread()
+            }
+        })));
+        register_abi_executor_owner(owner.clone()).unwrap();
+
+        let expected_owner = owner.clone();
+        std::thread::spawn(move || {
+            with_recording_state_thread(|| {
+                assert!(current_thread_uses_per_monitor_v2());
+                assert!(Arc::ptr_eq(&current_owner(), &expected_owner));
+            })
+        })
+        .join()
+        .unwrap()
+        .unwrap();
+
+        // A later recorder-created OS thread must initialize against the same
+        // owner. Rejection poisons the ABI executor before native work runs.
+        reject_recording_thread.store(true, Ordering::SeqCst);
+        let native_work_ran = Arc::new(AtomicBool::new(false));
+        let native_work = native_work_ran.clone();
+        let error = std::thread::spawn(move || {
+            with_recording_state_thread(|| native_work.store(true, Ordering::SeqCst))
+        })
+        .join()
+        .unwrap()
+        .unwrap_err();
+
+        assert!(error.contains("late recorder thread PMv2 rejection"));
+        assert!(!native_work_ran.load(Ordering::SeqCst));
+        assert!(owner
+            .check()
+            .unwrap_err()
+            .contains("late recorder thread PMv2 rejection"));
     }
 }

@@ -67,20 +67,24 @@ fn def() -> &'static ToolDef {
              within the daemon transport budget. Longer synthesized routes are \
              refused before character events and return a safe chunk size; \
              one-call AX insertion remains uncapped.\n\n\
-             Optional `element_index` + `window_id` (from the last \
+             Optional `element_token` (from the last \
              `get_window_state` snapshot) directs the write to a specific field. \
-             Without `element_index`, the write goes to the pid's currently \
+             Without `element_token`, the write goes to the pid's currently \
              focused element.\n\n\
              WEB CONTENT (Chromium/WebKit/Electron — browser tabs, Slack, VS Code, \
              X's compose box): AXValue is not independent proof that the \
              renderer/DOM observed an AX write or synthesized keystrokes. The \
              driver detects this at the element level (an AXWebArea ancestor) and \
-             refuses to trust AXValue-only read-back there — type_text returns \
-             effect:\"unverifiable\" + escalation, never a false \"confirmed\" (a \
+             refuses to trust AXValue-only read-back there. Electron AX targets that \
+             are web content or cannot be proven native refuse background delivery \
+             before mutation because the AX route cannot establish exact renderer \
+             focus; use the px form or explicit foreground delivery. Other web-content \
+             paths return effect:\"unverifiable\" + \
+             escalation, never a false \"confirmed\" (a \
              browser's own native address bar/toolbar stays trusted). For a browser \
              TAB the reliable path is the `page` tool (drives the DOM via CDP); for \
              an embedded web view use this tool's px form: pass x,y (no \
-             element_index) to pixel-click the field then type, in one call. NOTE: \
+             element_token) to pixel-click the field then type, in one call. NOTE: \
              a px focus-click won't reliably open+focus a CLOSED control; AX-press \
              to open/activate it first (works in the background), then px-type. \
              Always confirm via the screenshot; if px-background still drops, \
@@ -95,12 +99,10 @@ fn def() -> &'static ToolDef {
                 "text": { "type": "string",  "description": "Text to insert at the target's cursor." },
                 "window_id": {
                     "type": "integer",
-                    "description": "CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it)."
+                    "description": "CGWindowID. Omit when element_token is supplied (the token carries it)."
                 },
-                "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
-                "x": { "type": "number", "description": "Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_index) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click." },
+                "x": { "type": "number", "description": "Screenshot-pixel X of the field to type into — the element px action form. Pass x,y (no element_token) and the tool pixel-clicks there to establish real renderer focus, then types. Use for Chromium/Electron inputs the AX path can't reach. Read straight off the get_window_state PNG, same convention as click." },
                 "y": { "type": "number", "description": "Screenshot-pixel Y of the field (see x)." },
                 "delay_ms": {
                     "type": "integer",
@@ -206,18 +208,8 @@ impl Tool for TypeTextTool {
         // cua_driver_core::text_sanitize docs for rationale.
         let text = cua_driver_core::text_sanitize::strip_trailing_agent_protocol_tags(&text_raw)
             .into_owned();
-        // Surface 6: element_token / element_index precedence resolution.
-        let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
-        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match self.state.element_cache.resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "type_text",
-        ) {
+        let resolved = match self.state.snapshots.resolve(pid, &args) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -236,12 +228,6 @@ impl Tool for TypeTextTool {
             return error;
         }
 
-        // Validate element_index requires window_id (still applies for
-        // the legacy integer path; token path already resolved window_id).
-        if element_index.is_some() && window_id.is_none() {
-            return ToolResult::error("window_id is required when element_index is used.");
-        }
-
         // Argument-shape errors are reported before any gating or retained
         // lookups: a malformed call must fail the same way regardless of
         // background-target state.
@@ -249,7 +235,7 @@ impl Tool for TypeTextTool {
         let py = args.get("y").and_then(|v| v.as_f64());
         if px.is_some() && py.is_some() && element_index.is_some() {
             return ToolResult::error(
-                "Pass either element_index (ax) or x,y (px) to type_text, not both.",
+                "Pass either element_token (ax) or x,y (px) to type_text, not both.",
             );
         }
 
@@ -262,20 +248,19 @@ impl Tool for TypeTextTool {
         // AX write only (exact element, no CGEvent fallback), or a structured
         // refusal. delivery_mode:"foreground" stays the caller's explicit
         // last resort and is not gated here.
-        let (_mutation_lease, keyboard_policy) =
-            if !delivery_mode.is_foreground() && window_id.is_some() {
-                let wid = window_id.expect("checked above");
-                let gate_element_ptr = element_guard.as_ref().map(|(g, _)| g.as_ptr() as usize);
+        let (_mutation_lease, keyboard_policy) = match window_id {
+            Some(wid) if !delivery_mode.is_foreground() => {
+                let gate_element_ptr = element_guard.as_ref().map(|(g, _)| g.as_ptr());
                 match background_keyboard_policy(pid, wid, gate_element_ptr).await {
                     Ok((lease, policy)) => (Some(lease), policy),
                     Err(refusal_result) => return refusal_result,
                 }
-            } else {
-                (None, BackgroundKeyboardPolicy::Allowed)
-            };
+            }
+            _ => (None, BackgroundKeyboardPolicy::Allowed),
+        };
 
         // ── px form: focus by pixel-click, then type into the focused element ──
-        // Pass x,y (no element_index) for an *element px action*: pixel-click the
+        // Pass x,y (no element_token) for an *element px action*: pixel-click the
         // field to give the Chromium/Electron renderer the real keyboard focus the
         // AX path can't, then fall through to the focused-element type path (which
         // escalates AX → CGEvent and lands once focused). Reuses ClickTool's exact
@@ -312,6 +297,27 @@ impl Tool for TypeTextTool {
             // element_index stays None → the type path below writes to the now-
             // focused element via the CGEvent (key_events) rung.
         }
+        let element_ptr = element_guard
+            .as_ref()
+            .map(|(g, idx)| (g.as_ptr(), Some(*idx)));
+
+        let electron_background_ax_unsafe = element_ptr.is_some()
+            && crate::browser::electron_js::ElectronJs::is_electron(pid)
+            && electron_background_ax_ancestry_is_unsafe(classify_target_web_area(
+                pid,
+                element_ptr,
+                window_id,
+            ));
+        if let Some(refusal) = electron_background_ax_refusal(
+            delivery_mode,
+            element_ptr.is_some(),
+            used_pixel_focus,
+            electron_background_ax_unsafe,
+        ) {
+            let wid = window_id.expect("AX element targets require window_id");
+            return super::background_refusal_result(pid, wid, &refusal);
+        }
+
         if let (Some((element, _)), Some(wid)) = (element_guard.as_ref(), window_id) {
             let center_guard = element.clone();
             if let Ok(Some((screen_x, screen_y))) = tokio::task::spawn_blocking(move || unsafe {
@@ -331,10 +337,12 @@ impl Tool for TypeTextTool {
                     .update_position(&cursor_key, screen_x, screen_y);
             }
         }
-        let element_ptr = element_guard
-            .as_ref()
-            .map(|(g, idx)| (g.as_ptr(), Some(*idx)));
-
+        // Untargeted text still gives a named session visible feedback: its
+        // remembered position, or the window centre on the first action.
+        if element_guard.is_none() && !used_pixel_focus {
+            super::cursor_tools::position_keyboard_cursor(&self.state, &args, window_id, None)
+                .await;
+        }
         let text_clone = text.clone();
         let char_count = text.chars().count();
 
@@ -368,9 +376,11 @@ impl Tool for TypeTextTool {
                         element_ptr,
                         delay_ms,
                         is_terminal_target,
-                        delivery_mode,
-                        window_id,
-                        blocking_policy,
+                        KeyboardRoute {
+                            delivery_mode,
+                            window_id,
+                            keyboard_policy: blocking_policy,
+                        },
                     )
                 })
                 .await
@@ -378,7 +388,7 @@ impl Tool for TypeTextTool {
         )
         .await;
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
+        let changes = super::finish_window_observation(snapshot).await;
 
         // Unwrap the delivery envelope: a structured refusal means no
         // actuator ran and the caller gets the exact reason.
@@ -732,6 +742,27 @@ fn web_readback_next_rung(is_electron: bool, used_pixel_focus: bool) -> Option<&
     }
 }
 
+fn electron_background_ax_refusal(
+    delivery_mode: super::DeliveryMode,
+    has_ax_target: bool,
+    used_pixel_focus: bool,
+    electron_background_ax_unsafe: bool,
+) -> Option<BackgroundRefusal> {
+    if delivery_mode.is_foreground()
+        || !has_ax_target
+        || used_pixel_focus
+        || !electron_background_ax_unsafe
+    {
+        return None;
+    }
+    Some(BackgroundRefusal {
+        code: "background_unavailable",
+        reason: "The Electron AX target cannot establish a safe exact background text route on macOS because its ancestry is web content or could not be proven native; use the pixel-targeted type_text form (x,y) or delivery_mode:\"foreground\"."
+            .to_owned(),
+        advice: Some("px"),
+    })
+}
+
 const DELIVERY_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 const DELIVERY_DRAIN_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
 
@@ -785,7 +816,7 @@ async fn background_keyboard_policy(
     };
     let lease = super::acquire_background_mutation(pid).await;
     let element_guard =
-        element_ptr.map(|ptr| unsafe { crate::ax::cache::RetainedElement::retain(ptr) });
+        element_ptr.map(|ptr| unsafe { crate::ax::snapshot::RetainedElement::retain(ptr) });
     let facts = match tokio::task::spawn_blocking(move || {
         let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
         crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr)
@@ -843,23 +874,18 @@ fn foreground_settle_ms(pid: i32, frontmost_pid: Option<i32>) -> u64 {
 /// Read-back verification for a keystroke rung: did the typed text actually land?
 ///
 /// `before`/`after` are `AXValue` read from the target field before and after
-/// the keystrokes. Returns whether we can *positively confirm* the text landed:
-/// - unreadable `after` (`None`) → unverifiable → `false` (Catalyst case; the
-///   agent must confirm via screenshot).
-/// - `after` contains the complete text → `true`.
-/// - empty input text → trivially `true`.
+/// the keystrokes. Only `Complete` positively confirms the text landed:
+/// - unreadable `after` (`None`) → `Unverifiable` (Catalyst case; the agent
+///   must confirm via screenshot).
+/// - `after` contains the complete text → `Complete`.
+/// - empty input text → trivially `Complete`.
 ///
-/// Apps that normalize input (smart quotes, autocomplete) may fail the
-/// substring/length test even though something landed — we report `false`
-/// (unverified) rather than erroring, so the agent can still confirm.
-#[cfg(test)]
-fn verify_typed(before: Option<&str>, after: Option<&str>, text: &str) -> bool {
-    matches!(typed_progress(before, after, text), TypedProgress::Complete)
-}
-
-/// Classify an observable insertion without mistaking a prefix for complete
-/// delivery. A positive length delta is an exact delivered-character count for
-/// insert-at-cursor typing; it is capped at the request size defensively.
+/// Otherwise classify an observable insertion without mistaking a prefix for
+/// complete delivery. A positive length delta is an exact delivered-character
+/// count for insert-at-cursor typing; it is capped at the request size
+/// defensively. Apps that normalize input (smart quotes, autocomplete) may fail
+/// the substring/length test even though something landed — we report it as
+/// unverified rather than erroring, so the agent can still confirm.
 fn typed_progress(before: Option<&str>, after: Option<&str>, text: &str) -> TypedProgress {
     if text.is_empty() {
         return TypedProgress::Complete;
@@ -940,6 +966,37 @@ pub(super) fn target_in_web_area(
     element_ptr_and_idx: Option<(usize, Option<usize>)>,
     window_id: Option<u32>,
 ) -> bool {
+    web_readback_is_untrusted(classify_target_web_area(
+        pid,
+        element_ptr_and_idx,
+        window_id,
+    ))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WebAreaClassification {
+    WebContent,
+    NonWebContent,
+    Incomplete,
+    WindowFocusUnavailable,
+}
+
+fn web_readback_is_untrusted(classification: WebAreaClassification) -> bool {
+    matches!(
+        classification,
+        WebAreaClassification::WebContent | WebAreaClassification::WindowFocusUnavailable
+    )
+}
+
+fn electron_background_ax_ancestry_is_unsafe(classification: WebAreaClassification) -> bool {
+    !matches!(classification, WebAreaClassification::NonWebContent)
+}
+
+fn classify_target_web_area(
+    pid: i32,
+    element_ptr_and_idx: Option<(usize, Option<usize>)>,
+    window_id: Option<u32>,
+) -> WebAreaClassification {
     use crate::ax::bindings::AXUIElementCopyAttributeValue;
     use core_foundation::base::{CFTypeRef, TCFType};
     use core_foundation::string::CFString;
@@ -956,26 +1013,30 @@ pub(super) fn target_in_web_area(
             None => match window_id {
                 Some(wid) => match crate::ax::exact_target::focused_element_in_window(pid, wid) {
                     Some(el) => (el, true),
-                    None => return true,
+                    None => return WebAreaClassification::WindowFocusUnavailable,
                 },
                 None => match focused_element_of_pid(pid) {
                     Some(el) => (el, true),
-                    None => return false,
+                    None => return WebAreaClassification::NonWebContent,
                 },
             },
         };
         let parent_attr = CFString::new("AXParent");
         let mut cur = start;
         let mut cur_owned = start_owned;
-        let mut found = false;
+        let mut classification = WebAreaClassification::Incomplete;
         for _ in 0..40 {
             match copy_string_attr(cur, "AXRole").as_deref() {
                 Some("AXWebArea") => {
-                    found = true;
+                    classification = WebAreaClassification::WebContent;
                     break;
                 }
                 // No web area lives above the window/app root — stop.
-                Some("AXWindow") | Some("AXApplication") | None => break,
+                Some("AXWindow") | Some("AXApplication") => {
+                    classification = WebAreaClassification::NonWebContent;
+                    break;
+                }
+                None => break,
                 _ => {}
             }
             let mut parent: CFTypeRef = std::ptr::null_mut();
@@ -995,7 +1056,7 @@ pub(super) fn target_in_web_area(
         if cur_owned && !cur.is_null() {
             CFRelease(cur as CFTypeRef);
         }
-        found
+        classification
     }
 }
 
@@ -1079,6 +1140,14 @@ fn await_typed_delivery(
     }
 }
 
+/// How `type_text_blocking` may deliver: the requested mode, the addressed
+/// window, and the background keyboard policy decided for it.
+struct KeyboardRoute {
+    delivery_mode: super::DeliveryMode,
+    window_id: Option<u32>,
+    keyboard_policy: BackgroundKeyboardPolicy,
+}
+
 /// Best-effort-background ladder for `type_text`.
 ///
 /// - `delivery_mode == Background` (default): AX insert → read-back; on a
@@ -1095,14 +1164,37 @@ fn type_text_blocking(
     element_ptr_and_idx: Option<(usize, Option<usize>)>,
     delay_ms: u64,
     is_terminal_target: bool,
-    delivery_mode: super::DeliveryMode,
-    window_id: Option<u32>,
-    keyboard_policy: BackgroundKeyboardPolicy,
+    route: KeyboardRoute,
 ) -> anyhow::Result<TypeTextDelivery> {
+    let KeyboardRoute {
+        delivery_mode,
+        window_id,
+        keyboard_policy,
+    } = route;
     // Original field value before any rung drives read-back verification only.
     // An unreadable value is not evidence that the field is empty — and for a
     // window-addressed request it must come from the exact target window,
     // never a same-process sibling.
+    // A background terminal insert has no semantic AX rung: when the
+    // exact-target decision restricted this request to semantic-only, there is
+    // nothing safe to run, and an over-budget synthesis cannot start. Both
+    // refusals need no read of the target, so they come before any AX call.
+    if is_terminal_target && !delivery_mode.is_foreground() {
+        if let BackgroundKeyboardPolicy::SemanticOnly(refusal) = &keyboard_policy {
+            return Ok(TypeTextDelivery::Refused(refusal.clone()));
+        }
+        if let Some(refusal) = synthesis_preflight(
+            TextDeliveryRoute::UnicodeSynthesis,
+            text.chars().count(),
+            delay_ms,
+        ) {
+            return Ok(TypeTextDelivery::SynthesisRefused {
+                path: PATH_KEY_EVENTS,
+                refusal,
+                ax_attempt: AxAttempt::NotAttempted,
+            });
+        }
+    }
     let before = read_axvalue_bound(pid, element_ptr_and_idx, window_id);
 
     // --- Foreground rung: explicit agent request (skip AX/background ladder). ---
@@ -1205,23 +1297,8 @@ fn type_text_blocking(
 
     // --- Background rung 0: terminal emulator → CGEvent only (AX is dropped). ---
     if is_terminal_target {
-        // A terminal insert has no semantic AX rung: when the exact-target
-        // decision restricted this request to semantic-only, there is nothing
-        // safe to run — refuse before posting anything.
-        if let BackgroundKeyboardPolicy::SemanticOnly(refusal) = keyboard_policy {
-            return Ok(TypeTextDelivery::Refused(refusal));
-        }
-        if let Some(refusal) = synthesis_preflight(
-            TextDeliveryRoute::UnicodeSynthesis,
-            text.chars().count(),
-            delay_ms,
-        ) {
-            return Ok(TypeTextDelivery::SynthesisRefused {
-                path: PATH_KEY_EVENTS,
-                refusal,
-                ax_attempt: AxAttempt::NotAttempted,
-            });
-        }
+        // The semantic-only and synthesis-budget refusals already ran before
+        // the read-back above.
         tracing::debug!(
             "type_text: pid {pid} is a terminal emulator; skipping AX value-set, \
              using CGEvent key-event synthesis"
@@ -1359,40 +1436,6 @@ fn type_text_blocking(
 mod tests {
     use super::*;
 
-    /// Sanity-check that the terminal short-circuit can be expressed as a
-    /// pure function of `is_terminal_target`: when true, the code goes
-    /// to key-event synthesis without consulting AX. This test stands
-    /// in for an integration test (which would need a running terminal)
-    /// — it exercises the branch by injecting `is_terminal_target=true`
-    /// with a non-existent pid and checking we get the expected error
-    /// shape from the CGEvent path (not from the AX path).
-    ///
-    /// The CGEvent post will fail for pid 0 / -1, so we only assert
-    /// that `type_text_blocking` returns `Err` *after* deciding to
-    /// take the key-events path — i.e. it doesn't hit the AX branches
-    /// where `set_string_attr(0)` would crash.
-    #[test]
-    fn terminal_flag_routes_past_ax_path() {
-        // Pid -1 is invalid; the AX path would unconditionally call
-        // focused_element_of_pid which is safe but it would never reach
-        // CGEvent. The fact that this returns an Err (without crashing)
-        // proves we routed through CGEvent-only and never touched AX.
-        let r = type_text_blocking(
-            -1,
-            "x",
-            None,
-            0,
-            /*is_terminal_target=*/ true,
-            super::super::DeliveryMode::Background,
-            None,
-            BackgroundKeyboardPolicy::Allowed,
-        );
-        // We don't care whether r is Ok or Err — what matters is that
-        // calling it with is_terminal_target=true is safe and never
-        // dereferences null AX pointers.
-        let _ = r;
-    }
-
     /// A semantic-only policy must refuse the terminal short-circuit before
     /// any CGEvent is posted: terminals have no semantic AX rung, so nothing
     /// safe remains and the carried refusal comes back unchanged.
@@ -1409,9 +1452,11 @@ mod tests {
             None,
             0,
             /*is_terminal_target=*/ true,
-            super::super::DeliveryMode::Background,
-            Some(7),
-            BackgroundKeyboardPolicy::SemanticOnly(refusal.clone()),
+            KeyboardRoute {
+                delivery_mode: super::super::DeliveryMode::Background,
+                window_id: Some(7),
+                keyboard_policy: BackgroundKeyboardPolicy::SemanticOnly(refusal.clone()),
+            },
         );
         match r {
             Ok(TypeTextDelivery::Refused(returned)) => assert_eq!(returned, refusal),
@@ -1428,9 +1473,11 @@ mod tests {
             None,
             0,
             /*is_terminal_target=*/ true,
-            super::super::DeliveryMode::Background,
-            None,
-            BackgroundKeyboardPolicy::Allowed,
+            KeyboardRoute {
+                delivery_mode: super::super::DeliveryMode::Background,
+                window_id: None,
+                keyboard_policy: BackgroundKeyboardPolicy::Allowed,
+            },
         )
         .expect("preflight refusal must not attempt the invalid pid");
         let TypeTextDelivery::SynthesisRefused {
@@ -1490,29 +1537,31 @@ mod tests {
     }
 
     #[test]
-    fn verify_typed_unreadable_after_is_unverified() {
-        // Catalyst: can't read AXValue back → cannot confirm → false.
-        assert!(!verify_typed(None, None, "hi"));
-        assert!(!verify_typed(Some(""), None, "hi"));
-    }
-
-    #[test]
-    fn verify_typed_contains_full_request_is_verified() {
-        assert!(verify_typed(Some(""), Some("hi"), "hi")); // contains
-        assert!(verify_typed(Some("ab"), Some("ab hi"), "hi")); // contains, appended
-    }
-
-    #[test]
-    fn observable_prefix_is_partial_not_verified() {
-        assert_eq!(
-            typed_progress(Some(""), Some("BEGINpayload"), "BEGINpayloadEND"),
-            TypedProgress::Partial(12)
-        );
-        assert!(!verify_typed(
-            Some(""),
-            Some("BEGINpayload"),
-            "BEGINpayloadEND"
-        ));
+    fn typed_progress_classifies_readback() {
+        use TypedProgress::*;
+        for (before, after, text, expected) in [
+            // Catalyst: can't read AXValue back, so delivery cannot be confirmed.
+            (None, None, "hi", Unverifiable),
+            (Some(""), None, "hi", Unverifiable),
+            (None, Some("h"), "hi", Unverifiable),
+            (Some(""), Some("hi"), "hi", Complete),
+            (Some("ab"), Some("ab hi"), "hi", Complete),
+            // An observable prefix is partial delivery, never completion.
+            (
+                Some(""),
+                Some("BEGINpayload"),
+                "BEGINpayloadEND",
+                Partial(12),
+            ),
+            (Some("ab"), Some("ab"), "hi", Unchanged),
+            (None, None, "", Complete),
+        ] {
+            assert_eq!(
+                typed_progress(before, after, text),
+                expected,
+                "before={before:?} after={after:?} text={text:?}"
+            );
+        }
     }
 
     #[test]
@@ -1545,17 +1594,6 @@ mod tests {
             || Some("BEGIN".to_owned()),
         );
         assert_eq!(delivery, (false, Some(5)));
-    }
-
-    #[test]
-    fn verify_typed_unchanged_is_unverified() {
-        // Readable but the field didn't change and doesn't contain the text.
-        assert!(!verify_typed(Some("ab"), Some("ab"), "hi"));
-    }
-
-    #[test]
-    fn verify_typed_empty_text_is_trivially_verified() {
-        assert!(verify_typed(None, None, ""));
     }
 
     #[test]
@@ -1615,6 +1653,61 @@ mod tests {
         assert_eq!(web_readback_next_rung(true, true), None);
         assert_eq!(web_readback_next_rung(false, false), Some("page"));
         assert_eq!(web_readback_next_rung(false, true), Some("page"));
+    }
+
+    #[test]
+    fn electron_web_ax_background_refuses_before_synthesis() {
+        let refusal = electron_background_ax_refusal(
+            crate::tools::DeliveryMode::Background,
+            true,
+            false,
+            true,
+        )
+        .expect("Electron AX background typing must refuse");
+        assert_eq!(refusal.code, "background_unavailable");
+        assert_eq!(refusal.advice, Some("px"));
+
+        assert!(electron_background_ax_refusal(
+            crate::tools::DeliveryMode::Foreground,
+            true,
+            false,
+            true,
+        )
+        .is_none());
+        assert!(electron_background_ax_refusal(
+            crate::tools::DeliveryMode::Background,
+            false,
+            true,
+            true,
+        )
+        .is_none());
+        assert!(electron_background_ax_refusal(
+            crate::tools::DeliveryMode::Background,
+            true,
+            false,
+            false,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn incomplete_web_ancestry_only_fails_closed_for_electron_background_ax() {
+        assert!(electron_background_ax_ancestry_is_unsafe(
+            WebAreaClassification::Incomplete
+        ));
+        assert!(electron_background_ax_ancestry_is_unsafe(
+            WebAreaClassification::WindowFocusUnavailable
+        ));
+        assert!(!electron_background_ax_ancestry_is_unsafe(
+            WebAreaClassification::NonWebContent
+        ));
+
+        assert!(!web_readback_is_untrusted(
+            WebAreaClassification::Incomplete
+        ));
+        assert!(web_readback_is_untrusted(
+            WebAreaClassification::WindowFocusUnavailable
+        ));
     }
 
     #[test]

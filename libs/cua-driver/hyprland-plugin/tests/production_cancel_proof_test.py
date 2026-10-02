@@ -2,23 +2,25 @@
 from contextlib import ExitStack
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-import importlib
 import json
 from pathlib import Path
 import subprocess
 import tempfile
 import threading
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import proofs_path  # noqa: F401  Puts ../proofs on sys.path.
 from production_cancel_proof import (
-    GROUNDING_DISPATCH_RESERVE_NS, MAX_GROUNDING_AGE_NS, PROFILE,
+    GROUNDING_DISPATCH_RESERVE_NS, MAX_GROUNDING_AGE_NS, POINTER_SNAPSHOT_LIMITS, PROFILE,
     active_drags, call_drag, close_owned, grounded_snapshot,
     pair_has_dispatch_budget, poll_active, prepare_drag, prepare_drags, recover_once, run, stopped_prefix,
-    terminate_owned, validate_plan, verify_cancellation, verify_fresh_observation,
+    terminate_owned, validate_app_profile, validate_plan, verify_cancellation, verify_fresh_observation,
     verify_recovery_cleanup, verify_recovery_trace,
 )
+from proof_fixtures import assert_rejects, client, identity, inkscape_profile, trace
 
 
 BOUNDS = {'x': 0, 'y': 0, 'width': 800, 'height': 600}
@@ -31,12 +33,6 @@ def plan():
                         'bounds': BOUNDS.copy(), 'profile': PROFILE.copy(),
                         'drag': {'from_x': 100, 'from_y': 100, 'to_x': 200, 'to_y': 200, 'duration_ms': 2000}}
                        for i, app in enumerate(('calc', 'inkscape'))]}
-
-
-def trace(rows, active=True):
-    return {'hook': True, 'active': active, 'overflow': False, 'timed_out': False, 'count': len(rows),
-            'events': [[i + 1, ms * 1_000_000, kind, 100, 100, lane, value]
-                       for i, (ms, kind, lane, value) in enumerate(rows)]}
 
 
 START = [(0, 'start', 0, 0)]
@@ -71,105 +67,40 @@ def recovery_rows(tool='click', lane=1):
 
 
 class InkscapeProfileTests(unittest.TestCase):
-    def candidates(self):
-        for name in ('cancel', 'geometry_fault', 'primary_conflict', 'desktop_fault', 'session_fault',
-                     'lock_refusal', 'active_lock', 'active_primary', 'idle_reconnect', 'target_lifetime'):
-            module = importlib.import_module('production_' + name + '_proof')
-            candidate = importlib.import_module('production_' + name + '_proof_test').plan()
-            candidate['app_profile'] = 'inkscape-only'
-            for i, spec in enumerate(candidate['agents']):
-                spec.update(app='inkscape', document=f'/synthetic/agent-{i}/cua-smoke-inkscape.svg')
-                if name != 'idle_reconnect':
-                    spec.update(pointer_stage='move_rectangle', drag={})
-            for key in ('identities', 'processes'):
-                if key in candidate:
-                    candidate[key]['target']['exe'] = '/usr/bin/inkscape'
-            if name in ('active_lock', 'active_primary'):
-                candidate['recovery'] = {'pointer_stages': ['scroll_down', 'scroll_up']}
-            elif name == 'target_lifetime':
-                old, fresh = candidate['agents'][0], candidate['recovery']['agent']
-                fresh.update(app='inkscape', document='/synthetic/replacement/cua-smoke-inkscape.svg',
-                             pointer_stage='click_rectangle')
-                candidate['recovery']['identity']['exe'] = '/usr/bin/inkscape'
-                for i, spec in enumerate((old, fresh)):
-                    spec['app_id_tag'] = f'cua-profile-lane-{i}'
-                    spec['owned'].pop('profile')
-                    spec['owned']['document']['path'] = spec['document']
-            elif name != 'idle_reconnect':
-                candidate['recovery'] = {'pointer_stage': 'scroll_down'}
-            yield name, module, candidate
+    def test_app_profile_refuses_each_inkscape_only_violation(self):
+        base = inkscape_profile({**plan(), 'recovery': {'pointer_stage': 'scroll_down'},
+                                 'processes': {'target': identity(20, '/usr/bin/inkscape')}})
+        self.assertEqual(validate_app_profile(base), 'inkscape-only')
+        self.assertEqual(validate_app_profile({**base, 'recovery': {'pointer_stage': 'scroll_visible'}}), 'inkscape-only')
+        clicks = deepcopy(base)
+        for spec in clicks['agents']:
+            spec.update(pointer_stage='click_rectangle', drag={'from_x': 1})
+        self.assertEqual(validate_app_profile(clicks, require_drag=False), 'inkscape-only')
+        assert_rejects(self, validate_app_profile, base, [
+            ('unknown app profile', lambda p: p.update(app_profile='unreviewed')),
+            ('requires Inkscape targets', lambda p: p['agents'][0].update(app='calc')),
+            ('absolute synthetic SVG document', lambda p: p['agents'][0].update(document='/synthetic/private.svg')),
+            ('absolute synthetic SVG document', lambda p: p['agents'][0].update(
+                document='synthetic/cua-smoke-inkscape.svg')),
+            ('distinct documents required', lambda p: p['agents'][1].update(document=p['agents'][0]['document'])),
+            ('distinct native windows required', lambda p: p['agents'][0]['target'].update(
+                window_id=p['foreground']['window_id'])),
+            ('freshly grounded rectangle drags', lambda p: p['agents'][0].update(pointer_stage='click_a1')),
+            ('freshly grounded rectangle drags', lambda p: p['agents'][0].update(drag={'from_x': 1})),
+            ('supported scroll stage', lambda p: p['recovery'].update(pointer_stage='click_b2')),
+            # Only cancellation recovery may choose the visible scroll direction.
+            ('supported scroll stage', lambda p: p.update(purpose='geometry_fault',
+                                                          recovery={'pointer_stage': 'scroll_visible'})),
+            ('wrong Inkscape executable identity', lambda p: p['processes']['target'].update(
+                exe='/usr/bin/soffice.bin')),
+        ])
 
-    def test_all_fault_profiles_accept_only_exact_inkscape_plan_shapes(self):
-        for name, module, candidate in self.candidates():
-            with self.subTest(name=name):
-                module.validate_plan(candidate)
-            mutations = [lambda p: p.update(app_profile='unreviewed'),
-                lambda p: p['agents'][0].update(app='calc'),
-                lambda p: p['agents'][0].update(pointer_stage='click_a1'),
-                lambda p: p['agents'][0].update(document='/synthetic/private.svg'),
-                lambda p: p['agents'][0]['target'].update(window_id=p['foreground']['window_id'])]
-            for key in ('identities', 'processes'):
-                if key in candidate:
-                    mutations.append(lambda p, k=key: p[k]['target'].update(exe='/usr/bin/soffice.bin'))
-                    mutations.append(lambda p, k=key: p[k]['target'].update(pid=999))
-            if name == 'target_lifetime':
-                mutations.extend([lambda p: p['recovery']['agent'].update(pointer_stage='move_rectangle'),
-                    lambda p: p['recovery']['identity'].update(exe='/usr/bin/soffice.bin'),
-                    lambda p: p['recovery']['agent'].update(app_id_tag=p['agents'][0]['app_id_tag']),
-                    lambda p: p['recovery']['agent']['owned']['document'].update(path='/synthetic/wrong.svg')])
-            for mutate in mutations:
-                changed = deepcopy(candidate)
-                mutate(changed)
-                with self.subTest(name=name, changed=changed), self.assertRaises(AssertionError):
-                    module.validate_plan(changed)
-
-    def test_scroll_recovery_uses_existing_pixel_and_semantic_oracle(self):
-        import production_active_lock_proof as active
-        from production_pointer_grounding_test import ink
-        before, pixels = ink()
-        before.update(proof_image='synthetic.png', proof_observation_started_ns=1)
-        spec = {'app': 'inkscape', 'name': 'recovery', 'target': {'pid': 20, 'window_id': 200},
-                'pointer_stage': 'move_rectangle'}
-        with patch.object(active, 'grounded_snapshot', return_value=before), \
-             patch.object(active.pointer_grounding, 'read_pixels', return_value=pixels):
-            prepared = active.prepare_recovery(Mock(), spec, ['scroll_down', 'scroll_up'])
-        self.assertIn(prepared['stage'], ('scroll_down', 'scroll_up'))
-        self.assertEqual(prepared['prepared_ns'], 1)
-        with self.assertRaises(AssertionError):
-            active.pointer_grounding.verify(before, pixels, prepared['oracle'])
-        shift = -10 if prepared['stage'] == 'scroll_down' else 10
-        after, moved = ink(scroll_y=shift)
-        self.assertTrue(active.pointer_grounding.verify(after, moved, prepared['oracle'])['verified'])
-
-    def test_refusal_scroll_keeps_exact_target_and_original_observation(self):
-        import production_session_fault_proof as session
-        from production_pointer_grounding_test import ink
-        before, pixels = ink()
-        target = {'pid': 20, 'window_id': 200}
-        before.update(**target, proof_image='synthetic.png', proof_observation_started_ns=1)
-        spec = {'app': 'inkscape', 'name': 'refusal', 'target': target, 'bounds': before['window_bounds']}
-        prepared = {'snapshot': before, 'target': dict(target), 'prepared_ns': 1}
-        with patch.object(session.pointer_grounding, 'read_pixels', return_value=pixels):
-            probe = session.prepare_refusal(prepared, spec, 'scroll_down')
-            self.assertEqual(probe['tool'], 'scroll')
-            self.assertEqual(probe['prepared_ns'], 1)
-            before['window_id'] += 1
-            with self.assertRaises(AssertionError):
-                session.prepare_refusal(prepared, spec, 'scroll_down')
-
-    def test_new_action_dispatch_uses_scroll_without_drag_or_replay(self):
-        import production_lock_refusal_proof as lock
-        for tool in ('click', 'scroll', 'drag'):
-            actor = Mock()
-            record = {'outcome': 'unknown', 'replayed': False, 'prepared_ns': 1, 'tool': tool}
-            with patch.object(lock.time, 'monotonic_ns', return_value=2):
-                if tool == 'drag':
-                    with self.assertRaises(AssertionError):
-                        lock.click_once(actor, {'x': 1}, record, Mock(), 'action')
-                    actor.tool.assert_not_called()
-                else:
-                    lock.click_once(actor, {'x': 1}, record, Mock(), 'action')
-                    actor.tool.assert_called_once_with(tool, {'x': 1})
+    def test_inkscape_only_profile_reaches_the_shared_app_profile_gate(self):
+        candidate = inkscape_profile({**plan(), 'recovery': {'pointer_stage': 'scroll_down'}})
+        validate_plan(candidate)
+        candidate['agents'][0]['document'] = '/synthetic/private.svg'
+        with self.assertRaisesRegex(AssertionError, 'absolute synthetic SVG document'):
+            validate_plan(candidate)
 
     def test_native_document_identity_is_checked_before_driver_observation(self):
         import production_cancel_proof as cancellation
@@ -198,15 +129,10 @@ class TelemetryTests(unittest.TestCase):
             return [(ms, kind, 3 - lane if lane else lane, value) for ms, kind, lane, value in rows]
         self.assertEqual(verify_cancellation(trace(swap(FINISH), False), trace(swap(OVERLAP)), 2, 1)['result'], 'verified')
 
-    def test_missing_truncated_overflowed_and_reordered_telemetry_fail(self):
-        for field, value in [('hook', False), ('active', False), ('overflow', True), ('timed_out', True),
-                             ('count', 100), ('events', []), ('events', [[1, 0, 'bogus', 0, 0, 0, 0]])]:
-            with self.subTest(field=field), self.assertRaises(AssertionError):
-                active_drags({**trace(OVERLAP), field: value})
-        page = trace(OVERLAP)
-        page['events'][3][0] = 100
-        with self.assertRaises(AssertionError):
-            active_drags(page)
+    def test_unknown_event_kind_cannot_authorize_kill(self):
+        # Page validity is owned by trace_interval; this proves active_drags applies it.
+        with self.assertRaisesRegex(AssertionError, 'incomplete dispatch telemetry'):
+            active_drags(trace(OVERLAP + [(151, 'bogus', 1, 0)]))
 
     def test_cancelled_ended_or_unheld_drag_cannot_authorize_kill(self):
         for kind, value in [('agent_cancel', 0), ('agent_drag_end', 0), ('pointer_button', 0),
@@ -255,13 +181,6 @@ class TelemetryTests(unittest.TestCase):
         self.assertEqual(page, trace(OVERLAP))
 
 
-def client(pid):
-    process = Mock(pid=pid, poll=Mock(return_value=None))
-    process.kill.side_effect = lambda: setattr(process.poll, 'return_value', -9)
-    process.terminate.side_effect = lambda: setattr(process.poll, 'return_value', -15)
-    return Mock(process=process, failed=False)
-
-
 class RecoveryTests(unittest.TestCase):
     def test_completed_recovery_allows_only_seat_cleanup(self):
         rows = recovery_rows()
@@ -278,10 +197,9 @@ class RecoveryTests(unittest.TestCase):
                 with self.subTest(kind=kind, lane=lane), self.assertRaises(AssertionError):
                     verify_recovery_cleanup(prefix,
                         trace(rows + cleanup + [(2028, kind, lane, 0), (2030, 'stop', 0, 0)], False))
-        for field, value in (('active', True), ('hook', False), ('overflow', True),
-                             ('timed_out', True), ('count', 0)):
-            with self.subTest(field=field), self.assertRaises(AssertionError):
-                verify_recovery_cleanup(prefix, {**trace(rows + [(2030, 'stop', 0, 0)], False), field: value})
+        # The cleanup page must be the stopped trace; its flags are owned by primary_trace_test.
+        with self.assertRaises(AssertionError):
+            verify_recovery_cleanup(prefix, {**trace(rows + [(2030, 'stop', 0, 0)], False), 'active': True})
         changed = trace(rows + cleanup + [(2030, 'stop', 0, 0)], False)
         changed['events'][1][1] += 1
         with self.assertRaisesRegex(AssertionError, 'history'):
@@ -323,9 +241,8 @@ class RecoveryTests(unittest.TestCase):
                     damaged.pop(missing)
                     with self.assertRaises(AssertionError):
                         verify_recovery_trace(boundary, trace(damaged), lane, tool)
-                for key in ('hook', 'active'):
-                    with self.assertRaises(AssertionError):
-                        verify_recovery_trace(boundary, {**after, key: False}, lane, tool)
+                with self.assertRaisesRegex(AssertionError, 'not live'):
+                    verify_recovery_trace(boundary, {**after, 'hook': False}, lane, tool)
                 changed = trace(rows)
                 changed['events'][1][1] += 1
                 with self.assertRaisesRegex(AssertionError, 'history'):
@@ -335,7 +252,7 @@ class RecoveryTests(unittest.TestCase):
         for app, stage, tool in (('calc', 'click_b2', 'click'), ('inkscape', 'scroll_down', 'scroll'),
                                  ('inkscape', 'scroll_visible', 'scroll')):
             for failure in (None, 'slow_discovery', 'alive', 'reused', 'stale', 'identity', 'snapshot', 'unknown', 'denied', 'effect', 'trace', 'primary_before', 'primary_after',
-                            *(['margin'] if stage == 'scroll_visible' else [])):
+                            'untimed', *(['margin'] if stage == 'scroll_visible' else [])):
                 with self.subTest(app=app, failure=failure), ExitStack() as stack:
                     victim, sibling, observer, fresh = [client(pid) for pid in (100, 101, 102, 103)]
                     victim.failed = True
@@ -346,8 +263,10 @@ class RecoveryTests(unittest.TestCase):
                         'status': 'refused', 'refusal': {'code': 'permission_denied'}}}
                     fresh.tool.side_effect = [{}, TimeoutError('lost reply') if failure == 'unknown' else response]
                     spec = next(spec for spec in plan()['agents'] if spec['app'] == app)
-                    before, after = {'proof_image': 'before.png'}, {'proof_image': 'after.png'}
+                    before, after = {'proof_image': 'before.png', 'proof_observation_started_ns': 100}, {'proof_image': 'after.png'}
                     dispatch_ns = 101
+                    if failure == 'untimed':
+                        del before['proof_observation_started_ns']  # Never fall back to the wrapper clock.
                     if failure == 'slow_discovery':
                         before['proof_observation_started_ns'] = MAX_GROUNDING_AGE_NS + 200
                         dispatch_ns = MAX_GROUNDING_AGE_NS + 301
@@ -357,7 +276,7 @@ class RecoveryTests(unittest.TestCase):
                         side_effect=AssertionError('app changed') if failure == 'identity' else None,
                         return_value={'pid': spec['target']['pid']}))
                     stack.enter_context(patch('production_cancel_proof.time.monotonic_ns',
-                        side_effect=[100, MAX_GROUNDING_AGE_NS + 101 if failure == 'stale' else dispatch_ns]))
+                        side_effect=[MAX_GROUNDING_AGE_NS + 101 if failure == 'stale' else dispatch_ns]))
                     stack.enter_context(patch('production_cancel_proof.pointer_grounding.read_pixels', return_value='pixels'))
                     resolved_stage = 'scroll_up' if stage == 'scroll_visible' else stage
                     choose_stage = stack.enter_context(patch('production_cancel_proof.pointer_grounding.visible_inkscape_scroll_stage',
@@ -378,7 +297,11 @@ class RecoveryTests(unittest.TestCase):
                     def attempt():
                         return recover_once(fresh, observer, victim, sibling, spec, stage, trace_client,
                                             trace(FINISH[:-1]), 1, save, result, guard)
-                    if failure not in (None, 'slow_discovery'):
+                    if failure == 'untimed':
+                        with self.assertRaisesRegex(AssertionError, 'invalid observation timestamp'):
+                            attempt()
+                        self.assertEqual([call.args[0] for call in fresh.tool.call_args_list], ['start_session'])
+                    elif failure not in (None, 'slow_discovery'):
                         with self.assertRaises((AssertionError, TimeoutError)):
                             attempt()
                     else:
@@ -388,8 +311,7 @@ class RecoveryTests(unittest.TestCase):
                         self.assertNotEqual(result['runtime_pid'], result['victim_pid'])
                         self.assertFalse(result['replayed'])
                         self.assertEqual(result['action']['dispatch_ns'], dispatch_ns)
-                        self.assertEqual(result['grounding']['prepared_ns'],
-                                         before.get('proof_observation_started_ns', 100))
+                        self.assertEqual(result['grounding']['prepared_ns'], before['proof_observation_started_ns'])
                         identity.assert_called_once_with(app, spec['target']['pid'])
                         action.assert_called_once_with(before, 'pixels', app, resolved_stage)
                         self.assertEqual(result['grounding']['requested_stage'], stage)
@@ -401,7 +323,7 @@ class RecoveryTests(unittest.TestCase):
                         self.assertIs(snapshot.call_args_list[0].args[0], fresh)
                         self.assertIs(snapshot.call_args_list[1].args[0], observer)
                     inputs = [call for call in fresh.tool.call_args_list if call.args[0] != 'start_session']
-                    self.assertEqual(len(inputs), 0 if failure in ('alive', 'reused', 'stale', 'identity', 'snapshot', 'primary_before', 'margin') else 1)
+                    self.assertEqual(len(inputs), 0 if failure in ('alive', 'reused', 'stale', 'identity', 'snapshot', 'primary_before', 'margin', 'untimed') else 1)
                     if inputs:
                         self.assertEqual(inputs[0].args, (tool, {**arguments, **spec['target'],
                             'session': spec['name'] + '-recovery', 'delivery_mode': 'background'}))
@@ -457,24 +379,6 @@ class OwnershipTests(unittest.TestCase):
         self.assertTrue(retained['drag-grounding-attempt-2.json']['ready'])
         for owned in clients:
             owned.tool.assert_not_called()
-
-    def test_pair_freshness_boundary_and_attempt_cap(self):
-        limit = MAX_GROUNDING_AGE_NS - GROUNDING_DISPATCH_RESERVE_NS
-        for age, attempts, error in ((limit, 1, None), (limit + 1, 2, 'insufficient dispatch time'),
-                                     (MAX_GROUNDING_AGE_NS + 1, 2, 'insufficient dispatch time'),
-                                     (-1, 1, 'in the future')):
-            with self.subTest(age=age):
-                clients, save = [client(100), client(101)], Mock()
-                with patch('production_cancel_proof.prepare_drag', return_value={'prepared_ns': 100}) as observe, \
-                     patch('production_cancel_proof.time.monotonic_ns', return_value=100 + age):
-                    if error:
-                        with self.assertRaisesRegex(AssertionError, error):
-                            prepare_drags(clients, plan()['agents'], save)
-                    else:
-                        prepare_drags(clients, plan()['agents'], save)
-                self.assertEqual(observe.call_count, 2 * attempts)
-                for owned in clients:
-                    owned.tool.assert_not_called()
 
     def test_grounding_retention_time_counts_toward_pair_freshness(self):
         clients, now = [client(100), client(101)], [100]
@@ -551,7 +455,7 @@ class OwnershipTests(unittest.TestCase):
 
     def test_pointer_preparation_uses_exact_image_and_preserves_oracle(self):
         spec = {**plan()['agents'][0], 'drag': {}, 'pointer_stage': 'select_range'}
-        before = {'proof_image': 'fresh.png', 'window_bounds': BOUNDS}
+        before = {'proof_image': 'fresh.png', 'window_bounds': BOUNDS, 'proof_observation_started_ns': 100}
         arguments = {**plan()['agents'][0]['drag'], 'steps': 30}
         oracle = {'selection': 'A1:B3'}
         with patch('production_cancel_proof.grounded_snapshot', return_value=before) as snapshot, \
@@ -599,9 +503,20 @@ class OwnershipTests(unittest.TestCase):
                 self.assertEqual(prepared['timing']['grounding_age_ns'], MAX_GROUNDING_AGE_NS + 1)
         mcp.tool.assert_not_called()
 
+    def test_untimed_observation_never_gets_the_wrapper_clock(self):
+        spec, mcp = plan()['agents'][0], Mock()
+        for value in (None, True, 0, -1, 100.0):
+            snapshot = {} if value is None else {'proof_observation_started_ns': value}
+            with self.subTest(value=value), \
+                 patch('production_cancel_proof.grounded_snapshot', return_value=snapshot), \
+                 patch('production_cancel_proof.time.monotonic_ns', return_value=100), \
+                 self.assertRaisesRegex(AssertionError, 'invalid observation timestamp'):
+                prepare_drag(mcp, spec)
+        mcp.tool.assert_not_called()
+
     def test_expired_or_retargeted_grounding_never_dispatches(self):
         spec, mcp = plan()['agents'][0], Mock()
-        with patch('production_cancel_proof.grounded_snapshot', return_value={}), \
+        with patch('production_cancel_proof.grounded_snapshot', return_value={'proof_observation_started_ns': 100}), \
              patch('production_cancel_proof.time.monotonic_ns', return_value=100):
             prepared = prepare_drag(mcp, spec)
         for change, now in [({}, 101 + MAX_GROUNDING_AGE_NS), ({}, 99),
@@ -614,7 +529,7 @@ class OwnershipTests(unittest.TestCase):
     def test_prepared_drag_does_not_snapshot_during_sibling_gesture(self):
         spec, mcp = plan()['agents'][0], Mock()
         mcp.tool.return_value = RESPONSE
-        with patch('production_cancel_proof.grounded_snapshot', return_value={}) as snapshot, \
+        with patch('production_cancel_proof.grounded_snapshot', return_value={'proof_observation_started_ns': 100}) as snapshot, \
              patch('production_cancel_proof.time.monotonic_ns', return_value=100):
             prepared = prepare_drag(mcp, spec)
             result = call_drag(mcp, spec, prepared)
@@ -664,7 +579,8 @@ class OwnershipTests(unittest.TestCase):
             self.assertEqual(result['proof_observation_finished_ns'], 300)
             self.assertEqual(result['proof_runtime'], {'pid': 101, 'directory': str(root.resolve())})
             self.assertEqual(mcp.tool.call_args.args, ('get_window_state', {
-                **spec['target'], 'session': spec['name'], 'max_elements': 3000}))
+                **spec['target'], 'session': spec['name'], **POINTER_SNAPSHOT_LIMITS['inkscape']}))
+            self.assertNotIn('max_depth', mcp.tool.call_args.args[1])
             # A bounded walk is not permission to omit the existing oracle.
             with patch('production_cancel_proof.pointer_grounding.read_pixels', return_value='pixels'):
                 with self.assertRaisesRegex(RuntimeError, 'snapshot has no semantic elements'):
@@ -731,11 +647,12 @@ class OwnershipTests(unittest.TestCase):
                 terminate_owned(victim, sibling, [Mock(done=lambda: done)])
             victim.process.kill.assert_not_called()
 
-    def test_unknown_drag_is_called_once_with_fresh_grounding(self):
+    def test_unknown_drag_is_called_once_with_its_prepared_grounding(self):
         mcp, spec = Mock(), plan()['agents'][0]
         mcp.tool.side_effect = TimeoutError('lost reply')
-        with patch('production_cancel_proof.grounded_snapshot', return_value={}) as snapshot:
-            result = call_drag(mcp, spec)
+        with patch('production_cancel_proof.grounded_snapshot', return_value={'proof_observation_started_ns': 100}) as snapshot, \
+             patch('production_cancel_proof.time.monotonic_ns', return_value=100):
+            result = call_drag(mcp, spec, prepare_drag(mcp, spec))
         snapshot.assert_called_once_with(mcp, spec['target'], spec)
         self.assertEqual(result['outcome'], 'unknown')
         self.assertFalse(result['replayed'])
@@ -919,7 +836,9 @@ class RunnerTests(unittest.TestCase):
                 pool = Mock(submit=Mock(side_effect=futures))
                 proof_image = root / 'fresh.png'
                 proof_image.write_bytes(b'synthetic-test-image')
-                snapshot = Mock(return_value={'window_bounds': BOUNDS, 'proof_image': str(proof_image)})
+                # Real monotonic clock: every mocked observation is fresh at setup.
+                snapshot = Mock(return_value={'window_bounds': BOUNDS, 'proof_image': str(proof_image),
+                                              'proof_observation_started_ns': time.monotonic_ns()})
                 preparation_clock_ns = 2 * MAX_GROUNDING_AGE_NS
                 if failure == 'prepare_budget':
                     # A monotonic clock has an unspecified origin: timestamp 1

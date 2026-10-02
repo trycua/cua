@@ -163,43 +163,6 @@ fn inject_browser_approvals(tool_name: &str, args: &mut serde_json::Value, sessi
     }
 }
 
-/// Resolve + apply the session identity for a tool call at the daemon boundary.
-///
-/// Resolve optional public naming and the trusted transport's default lifecycle
-/// identity independently. An explicit `session` is mirrored into the reserved
-/// `_session_id` key; otherwise the per-connection lease id becomes the implicit
-/// lifecycle key. Cursor, recording, configuration, and cleanup all use that
-/// resolved identity, so ordinary callers do not need a setup call.
-///
-/// The registry refreshes the runtime-private idle-TTL key after authorization;
-/// this transport helper only returns the effective `_session_id` for the
-/// resurrection guard.
-fn apply_session_identity(args: &mut serde_json::Value, minted: &Option<String>) -> Option<String> {
-    let explicit = args
-        .as_object()
-        .and_then(|o| o.get("session"))
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_owned());
-    if let Some(obj) = args.as_object_mut() {
-        obj.remove("_session_id");
-        obj.remove("_transport_session_id");
-        if let Some(id) = explicit.clone().or_else(|| minted.clone()) {
-            obj.insert("_session_id".to_owned(), serde_json::Value::String(id));
-        }
-        if let Some(id) = minted.clone() {
-            obj.insert(
-                "_transport_session_id".to_owned(),
-                serde_json::Value::String(id),
-            );
-        }
-    }
-    args.as_object()
-        .and_then(|o| o.get("_session_id"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_owned())
-}
-
 /// Whether `tool_name` manages session lifecycle and so must be EXEMPT from the
 /// resurrection guard. `start_session` revives an ended id (the explicit,
 /// caller-intended way to reuse one) and `end_session` is idempotent — both
@@ -487,7 +450,8 @@ async fn invoke_daemon_tool(
         .args
         .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
     cua_driver_core::tool_args::sanitize_reserved_args(&mut args);
-    let effective_session = apply_session_identity(&mut args, &req.session_id);
+    let effective_session =
+        cua_driver_core::tool_args::apply_session_identity(&mut args, req.session_id.as_deref());
     let operation = cua_driver_core::server::tool_operation(&tool_name, Some(&args));
     let observation = observation_transport.map(|transport| {
         (
@@ -505,12 +469,18 @@ async fn invoke_daemon_tool(
     if let Some(sid) = &effective_session {
         if !is_session_lifecycle_tool(&tool_name) && sdk.is_session_ended(sid) {
             observe_daemon_error(observation, 1);
-            return DaemonResponse::err(
+            // An unnamed call's lifecycle id is the transport session, which
+            // is not a label the caller can pass back to start_session.
+            let recovery = if req.session_id.as_deref() == Some(sid.as_str()) {
+                "Call start_session without a session label to start a new unnamed session."
+                    .to_owned()
+            } else {
                 format!(
-                    "session '{sid}' has ended; tool call '{tool_name}' was rejected. \
-                     Call start_session with this id to revive it before issuing further \
-                     actions, or use a new session id."
-                ),
+                    "Call start_session with session '{sid}' to start it again, or use a new session label."
+                )
+            };
+            return DaemonResponse::err(
+                format!("session has ended; tool call '{tool_name}' was rejected. {recovery}"),
                 1,
             );
         }
@@ -648,6 +618,8 @@ fn prepare_embedded_socket_path(socket_path: &str, embedded: bool) -> anyhow::Re
 static PERMISSION_GATE_PENDING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+// Only the macOS first-launch gate sets it; elsewhere it stays false.
+#[cfg(target_os = "macos")]
 /// Mark whether the macOS first-launch gate is still waiting for TCC grants.
 /// The daemon socket and lifecycle diagnostics remain reachable, but tool calls
 /// are rejected before execution until fresh child-process probes confirm grants.
@@ -1698,8 +1670,6 @@ pub async fn run_serve(
 
     cua_driver_core::authorization::validate_startup_authorization()?;
 
-    eprintln!("Cua Driver daemon listening on {socket_path}");
-
     // Build the current-user descriptor once and reuse it for every pipe
     // instance. Both service and embedded mode fail closed if the ACL cannot
     // be created; an Everyone ACL would expose the desktop-action endpoint to
@@ -1747,29 +1717,81 @@ pub async fn run_serve(
         None => None,
     };
 
+    // A failure to create or connect a later pipe instance must not end the
+    // daemon: connections already being served keep their instances, and the
+    // next instance usually succeeds. Only the first instance is fatal, since
+    // it proves the daemon owns the name. A daemon that cannot recover exits
+    // after `PIPE_INSTANCE_FAILURE_LIMIT` consecutive failures so its
+    // supervisor can restart it instead of leaving a live PID behind an
+    // unreachable pipe.
     let mut first_pipe = true;
+    let mut consecutive_failures: u32 = 0;
+    let mut fatal_error: Option<anyhow::Error> = None;
     loop {
+        if consecutive_failures > 0 {
+            if consecutive_failures >= PIPE_INSTANCE_FAILURE_LIMIT {
+                fatal_error = Some(anyhow::anyhow!(
+                    "named pipe {socket_path}: {consecutive_failures} consecutive pipe instance failures"
+                ));
+                break;
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(PIPE_INSTANCE_RETRY_DELAY) => {}
+                _ = &mut shutdown_rx => {
+                    eprintln!("Cua Driver daemon shutting down.");
+                    break;
+                }
+                _ = &mut parent_liveness => {
+                    eprintln!("Cua Driver embedded host closed its lifetime pipe; shutting down.");
+                    break;
+                }
+            }
+        }
+
         // All daemons use the current-user descriptor. Embedded daemons also
         // reserve the pipe name with their first instance.
         let first_pipe_instance = embedded && first_pipe;
-        let server = if sec_attrs_ptr.is_null() {
+        let created = if sec_attrs_ptr.is_null() {
             ServerOptions::new()
                 .first_pipe_instance(first_pipe_instance)
                 .create(socket_path)
-                .map_err(|e| anyhow::anyhow!("create named pipe {socket_path}: {e}"))?
         } else {
             unsafe {
                 ServerOptions::new()
                     .first_pipe_instance(first_pipe_instance)
                     .create_with_security_attributes_raw(socket_path, sec_attrs_ptr)
-                    .map_err(|e| anyhow::anyhow!("create named pipe {socket_path}: {e}"))?
             }
         };
-        first_pipe = false;
+        let server = match created {
+            Ok(server) => server,
+            Err(error) if first_pipe => {
+                anyhow::bail!("create named pipe {socket_path}: {error}");
+            }
+            Err(error) => {
+                consecutive_failures += 1;
+                eprintln!(
+                    "Cua Driver: create named pipe {socket_path} failed ({consecutive_failures} consecutive): {error}; retrying"
+                );
+                continue;
+            }
+        };
+        if first_pipe {
+            first_pipe = false;
+            // Announce only after the name is bound, so the banner never
+            // claims a pipe that failed to open.
+            eprintln!("Cua Driver daemon listening on {socket_path}");
+        }
 
         tokio::select! {
             result = server.connect() => {
-                result.map_err(|e| anyhow::anyhow!("named pipe connect: {e}"))?;
+                if let Err(error) = result {
+                    consecutive_failures += 1;
+                    eprintln!(
+                        "Cua Driver: named pipe connect on {socket_path} failed ({consecutive_failures} consecutive): {error}; recreating the instance"
+                    );
+                    continue;
+                }
+                consecutive_failures = 0;
                 let expected_sid = unsafe { current_user_sid_string() };
                 let client_process_id =
                     unsafe { named_pipe_client_process_id(server.as_raw_handle().cast()) };
@@ -2151,8 +2173,20 @@ pub async fn run_serve(
     sdk.shutdown()
         .await
         .map_err(|error| anyhow::anyhow!("shut down SDK runtime: {error}"))?;
-    Ok(())
+    match fatal_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
+
+/// Pause between attempts to replace a named-pipe instance that failed.
+#[cfg(target_os = "windows")]
+const PIPE_INSTANCE_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Consecutive instance failures (about one minute of retries) after which
+/// the daemon gives up and exits.
+#[cfg(target_os = "windows")]
+const PIPE_INSTANCE_FAILURE_LIMIT: u32 = 120;
 
 #[cfg(all(test, target_os = "windows"))]
 mod named_pipe_authentication_tests {
@@ -2308,13 +2342,6 @@ pub fn run_stop_cmd(socket_path: &str) {
 /// `cua-driver status` implementation.
 pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
     if is_daemon_listening(socket_path) {
-        println!("Cua Driver daemon is running");
-        println!("  socket: {socket_path}");
-        if let Some(pid) = read_pid_file(pid_file_path) {
-            println!("  pid: {pid}");
-        } else {
-            println!("  pid: unknown (no pid file)");
-        }
         let request = DaemonRequest {
             method: "authorization_status".to_owned(),
             name: None,
@@ -2323,7 +2350,26 @@ pub fn run_status_cmd(socket_path: &str, pid_file_path: &str) {
             observation_origin: Some(ToolObservationOrigin::Direct),
             client_kind: None,
         };
-        if let Ok(response) = send_request(socket_path, &request) {
+        let response = send_request(socket_path, &request);
+        if let Err(error) = &response {
+            eprintln!("Cua Driver daemon endpoint exists but is not reachable");
+            eprintln!("  socket: {socket_path}");
+            eprintln!("  error: {error}");
+            #[cfg(target_os = "windows")]
+            eprintln!(
+                "  hint: the named pipe accepts only the Windows account that owns the daemon. \
+                 Run `whoami /user` in this shell and in the interactive desktop; the SIDs must match."
+            );
+            std::process::exit(1);
+        }
+        println!("Cua Driver daemon is running");
+        println!("  socket: {socket_path}");
+        if let Some(pid) = read_pid_file(pid_file_path) {
+            println!("  pid: {pid}");
+        } else {
+            println!("  pid: unknown (no pid file)");
+        }
+        if let Ok(response) = response {
             if let Some(status) = response.result {
                 println!(
                     "  permission mode: {} ({})",
@@ -2974,57 +3020,9 @@ mod service_authorization_status_tests {
 
 #[cfg(test)]
 mod session_boundary_tests {
-    use super::{active_proxy_sessions, apply_session_identity, inject_browser_approvals};
+    use super::{active_proxy_sessions, inject_browser_approvals};
     use cua_driver_core::browser::download::MCP_HOST_DOWNLOAD_APPROVAL_ARG;
     use serde_json::json;
-
-    #[test]
-    fn explicit_session_becomes_session_id_and_is_returned() {
-        let mut args = json!({ "x": 1, "session": "research-1" });
-        let eff = apply_session_identity(&mut args, &None);
-        assert_eq!(eff.as_deref(), Some("research-1"));
-        assert_eq!(args["_session_id"], "research-1");
-        assert!(args.get("_transport_session_id").is_none());
-    }
-
-    #[test]
-    fn public_and_transport_sessions_remain_independent() {
-        let mut args = json!({ "session": "capability-session" });
-        let eff = apply_session_identity(&mut args, &Some("proxy-session".to_owned()));
-        assert_eq!(eff.as_deref(), Some("capability-session"));
-        assert_eq!(args["_session_id"], "capability-session");
-        assert_eq!(args["_transport_session_id"], "proxy-session");
-    }
-
-    #[test]
-    fn no_session_falls_back_to_minted_for_session_id_only() {
-        // The minted per-connection id drives the complete implicit lifecycle,
-        // including cursor, recording, configuration, and cleanup, without
-        // manufacturing a caller-visible public `session` label.
-        let mut args = json!({ "x": 1 });
-        let eff = apply_session_identity(&mut args, &Some("mcp-123".to_owned()));
-        assert_eq!(args["_session_id"], "mcp-123");
-        assert_eq!(eff.as_deref(), Some("mcp-123"));
-        assert_eq!(args["_transport_session_id"], "mcp-123");
-        assert!(args.get("session").is_none());
-    }
-
-    #[test]
-    fn anonymous_when_no_session_and_no_minted() {
-        let mut args = json!({ "x": 1 });
-        let eff = apply_session_identity(&mut args, &None);
-        assert!(eff.is_none());
-        assert!(args.get("_session_id").is_none());
-    }
-
-    #[test]
-    fn caller_set_session_id_is_replaced_by_minted() {
-        let mut args = json!({ "_session_id": "caller-set" });
-        let eff = apply_session_identity(&mut args, &Some("mcp-999".to_owned()));
-        assert_eq!(args["_session_id"], "mcp-999");
-        assert_eq!(args["_transport_session_id"], "mcp-999");
-        assert_eq!(eff.as_deref(), Some("mcp-999"));
-    }
 
     #[test]
     fn browser_download_approval_requires_a_live_proxy_session() {

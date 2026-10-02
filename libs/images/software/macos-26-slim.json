@@ -1,0 +1,13 @@
+{
+  "image": "ghcr.io/trycua/macos:26-slim",
+  "os": "macos",
+  "version": "26",
+  "tier": "slim",
+  "recorded_from": "2026-09-28, lume/arm64, published pin macos:26-slim-20260927-9a3828d (sha256:8a4bd1a2c64d5a7f48e8a0aa6ef01df9298bf63966a68e1f6fd62619aeafe0f1), Lume build of 9a3828d",
+  "apps": {
+    "chrome": "154.0.8037.58",
+    "safari": "26.5.2"
+  },
+  "tools": {},
+  "simulator_runtimes": []
+}

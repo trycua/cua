@@ -57,6 +57,11 @@
                   "required": [
                     "y"
                   ]
+                },
+                {
+                  "required": [
+                    "capture_id"
+                  ]
                 }
               ]
             },
@@ -75,6 +80,11 @@
             ],
             "type": "string"
           },
+          "capture_id": {
+            "default": null,
+            "minLength": 1,
+            "type": "string"
+          },
           "count": {
             "default": null,
             "maximum": 3,
@@ -90,6 +100,7 @@
           },
           "element_token": {
             "default": null,
+            "pattern": "^s[0-9a-f]{8}:[0-9]+$",
             "type": "string"
           },
           "session": {
@@ -108,12 +119,10 @@
                     "type": "string"
                   },
                   "pid": {
-                    "format": "uint32",
                     "minimum": 0,
                     "type": "integer"
                   },
                   "window_id": {
-                    "format": "uint64",
                     "minimum": 0,
                     "type": "integer"
                   }
@@ -166,7 +175,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -200,6 +208,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -237,6 +266,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -265,6 +300,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -506,12 +547,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -545,7 +584,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           },
           "to_x": {
             "type": "number"
@@ -569,7 +609,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -603,6 +642,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -640,6 +700,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -668,6 +734,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -756,6 +828,7 @@
             "type": "string"
           },
           "reason": {
+            "description": "Why the window-scoped attempt failed and desktop capture is needed.",
             "enum": [
               "ax_tree_pixel_mismatch",
               "background_delivery_failed",
@@ -766,6 +839,7 @@
             "type": "string"
           },
           "session": {
+            "description": "Public label of the legacy capture-scope session to escalate.",
             "type": "string"
           }
         },
@@ -864,6 +938,7 @@
         "additionalProperties": false,
         "properties": {
           "session": {
+            "description": "Public label of the session whose cursor to inspect.",
             "type": "string"
           }
         },
@@ -881,39 +956,30 @@
           "motion": {
             "properties": {
               "arc_flow": {
-                "format": "double",
                 "type": "number"
               },
               "arc_size": {
-                "format": "double",
                 "type": "number"
               },
               "dwell_after_click_ms": {
-                "format": "double",
                 "type": "number"
               },
               "end_handle": {
-                "format": "double",
                 "type": "number"
               },
               "glide_duration_ms": {
-                "format": "double",
                 "type": "number"
               },
               "idle_hide_ms": {
-                "format": "double",
                 "type": "number"
               },
               "spring": {
-                "format": "double",
                 "type": "number"
               },
               "start_handle": {
-                "format": "double",
                 "type": "number"
               },
               "turn_radius": {
-                "format": "double",
                 "type": "number"
               }
             },
@@ -931,21 +997,26 @@
             "type": "object"
           },
           "position": {
-            "properties": {
-              "x": {
-                "format": "double",
-                "type": "number"
+            "anyOf": [
+              {
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "type": "object"
               },
-              "y": {
-                "format": "double",
-                "type": "number"
+              {
+                "type": "null"
               }
-            },
-            "required": [
-              "x",
-              "y"
-            ],
-            "type": "object"
+            ]
           },
           "session": {
             "type": "string"
@@ -992,7 +1063,6 @@
           "visual_state": {
             "properties": {
               "frame": {
-                "format": "uint64",
                 "minimum": 0,
                 "type": "integer"
               },
@@ -1006,7 +1076,6 @@
                 "type": "string"
               },
               "preempted_count": {
-                "format": "uint64",
                 "minimum": 0,
                 "type": "integer"
               },
@@ -1143,6 +1212,11 @@
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "max_image_dimension": {
+            "description": "Optional long-edge cap for the returned PNG, in pixels. Omitted or 0\nreturns the full-size capture. When the cap downsizes the image,\ndesktop-scope x/y taken from it are mapped back automatically.",
+            "minimum": 0,
+            "type": "integer"
+          },
           "screenshot_out_file": {
             "description": "Write the PNG here instead of returning base64.",
             "type": "string"
@@ -1158,6 +1232,46 @@
       "success_output_schema": {
         "additionalProperties": true,
         "properties": {
+          "agent_overlay_capture": {
+            "additionalProperties": false,
+            "properties": {
+              "method": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "oneOf": [
+                  {
+                    "const": "excluded",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_present",
+                    "type": "string"
+                  },
+                  {
+                    "const": "not_excluded",
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          },
           "display": {
             "type": "string"
           },
@@ -1306,12 +1420,10 @@
             "type": "boolean"
           },
           "expires_in_seconds": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
           "idle_seconds": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
@@ -1509,6 +1621,11 @@
             "minimum": 1,
             "type": "integer"
           },
+          "max_image_dimension": {
+            "description": "Optional per-call long-edge ceiling. Zero requests native resolution;\nomit it to preserve the configured session or global behavior.",
+            "minimum": 0,
+            "type": "integer"
+          },
           "pid": {
             "maximum": 4294967295,
             "minimum": 1,
@@ -1522,6 +1639,12 @@
           },
           "session": {
             "type": "string"
+          },
+          "timeout_ms": {
+            "description": "Wall-clock budget for the accessibility walk in milliseconds\n(default 1000 on every platform). A walk that runs out returns a\npartial tree flagged `truncated` rather than failing.",
+            "maximum": 120000,
+            "minimum": 100,
+            "type": "integer"
           },
           "window_id": {
             "minimum": 1,
@@ -1556,7 +1679,6 @@
             ]
           },
           "element_count": {
-            "format": "uint64",
             "minimum": 0,
             "type": [
               "integer",
@@ -1576,12 +1698,10 @@
                   ]
                 },
                 "depth": {
-                  "format": "uint32",
                   "minimum": 0,
                   "type": "integer"
                 },
                 "element_index": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -1600,19 +1720,15 @@
                 "frame": {
                   "properties": {
                     "h": {
-                      "format": "double",
                       "type": "number"
                     },
                     "w": {
-                      "format": "double",
                       "type": "number"
                     },
                     "x": {
-                      "format": "double",
                       "type": "number"
                     },
                     "y": {
-                      "format": "double",
                       "type": "number"
                     }
                   },
@@ -1640,21 +1756,18 @@
                   ]
                 },
                 "max": {
-                  "format": "double",
                   "type": [
                     "number",
                     "null"
                   ]
                 },
                 "min": {
-                  "format": "double",
                   "type": [
                     "number",
                     "null"
                   ]
                 },
                 "parent_index": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": [
                     "integer",
@@ -1702,7 +1815,6 @@
             ]
           },
           "filtered_element_count": {
-            "format": "uint64",
             "minimum": 0,
             "type": [
               "integer",
@@ -1710,12 +1822,10 @@
             ]
           },
           "pid": {
-            "format": "uint32",
             "minimum": 0,
             "type": "integer"
           },
           "returned_element_count": {
-            "format": "uint64",
             "minimum": 0,
             "type": [
               "integer",
@@ -1735,7 +1845,6 @@
             ]
           },
           "screenshot_height": {
-            "format": "uint32",
             "minimum": 0,
             "type": [
               "integer",
@@ -1749,14 +1858,12 @@
             ]
           },
           "screenshot_scale": {
-            "format": "double",
             "type": [
               "number",
               "null"
             ]
           },
           "screenshot_width": {
-            "format": "uint32",
             "minimum": 0,
             "type": [
               "integer",
@@ -1770,7 +1877,6 @@
             ]
           },
           "total_element_count": {
-            "format": "uint64",
             "minimum": 0,
             "type": [
               "integer",
@@ -1798,19 +1904,15 @@
           "window_bounds": {
             "properties": {
               "height": {
-                "format": "double",
                 "type": "number"
               },
               "width": {
-                "format": "double",
                 "type": "number"
               },
               "x": {
-                "format": "double",
                 "type": "number"
               },
               "y": {
-                "format": "double",
                 "type": "number"
               }
             },
@@ -1826,7 +1928,6 @@
             ]
           },
           "window_id": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
@@ -1896,12 +1997,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -1935,7 +2034,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           }
         },
         "required": [
@@ -1950,7 +2050,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -1984,6 +2083,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -2021,6 +2141,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -2049,6 +2175,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2085,6 +2217,7 @@
         "description": "Exact, immediate-child application menu path to resolve and invoke through\nthe operating system's accessibility API. Path labels are matched after\ntrimming surrounding whitespace and otherwise remain case-sensitive.",
         "properties": {
           "path": {
+            "description": "Menu labels from the top-level menu to the item, e.g. `[\"File\", \"Save As...\"]`\n(1 to 16 labels).",
             "items": {
               "maxLength": 200,
               "minLength": 1,
@@ -2095,6 +2228,7 @@
             "type": "array"
           },
           "pid": {
+            "description": "Process ID of the application that owns the menu.",
             "minimum": 1,
             "type": "integer"
           },
@@ -2103,6 +2237,7 @@
             "type": "string"
           },
           "window_id": {
+            "description": "Window ID from list_windows whose menu is invoked.",
             "minimum": 1,
             "type": "integer"
           }
@@ -2121,7 +2256,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -2155,6 +2289,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -2192,6 +2347,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -2220,6 +2381,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2293,7 +2460,6 @@
                   "type": "string"
                 },
                 "pid": {
-                  "format": "uint32",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -2348,7 +2514,6 @@
           },
           "limit": {
             "description": "Maximum number of content-free summaries to return (default 50, max\n100). Ordinary agent transports are scoped to their own lease.",
-            "format": "uint32",
             "minimum": 0,
             "type": [
               "integer",
@@ -2389,12 +2554,10 @@
                   "type": "boolean"
                 },
                 "expires_in_seconds": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
                 "idle_seconds": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -2494,7 +2657,6 @@
         "additionalProperties": true,
         "properties": {
           "current_space_id": {
-            "format": "uint64",
             "minimum": 0,
             "type": [
               "integer",
@@ -2510,19 +2672,15 @@
                 "bounds": {
                   "properties": {
                     "height": {
-                      "format": "double",
                       "type": "number"
                     },
                     "width": {
-                      "format": "double",
                       "type": "number"
                     },
                     "x": {
-                      "format": "double",
                       "type": "number"
                     },
                     "y": {
-                      "format": "double",
                       "type": "number"
                     }
                   },
@@ -2535,7 +2693,6 @@
                   "type": "object"
                 },
                 "current_space_id": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": [
                     "integer",
@@ -2574,7 +2731,6 @@
                 },
                 "space_ids": {
                   "items": {
-                    "format": "uint64",
                     "minimum": 0,
                     "type": "integer"
                   },
@@ -2583,8 +2739,10 @@
                     "null"
                   ]
                 },
+                "title": {
+                  "type": "string"
+                },
                 "window_id": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -2662,12 +2820,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -2702,12 +2858,14 @@
                 "type": "null"
               }
             ],
-            "description": "Preferred per-call target. New callers should set this field."
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           },
           "x": {
+            "description": "Destination X: window-local screenshot pixels for a window target, native\nget_desktop_state screenshot pixels for the desktop.",
             "type": "number"
           },
           "y": {
+            "description": "Destination Y, in the same space as `x`.",
             "type": "number"
           }
         },
@@ -2724,7 +2882,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -2758,6 +2915,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -2795,6 +2973,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -2823,11 +3007,512 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
           "effect",
           "route"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "parse_visual_regions",
+      "description": "Parse one immutable registered capture into model-neutral text and icon regions.",
+      "platforms": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "capabilities": [
+        "visual.regions.parse",
+        "screen.capture.registry.read"
+      ],
+      "annotations": {
+        "read_only": true,
+        "destructive": false,
+        "idempotent": true,
+        "open_world": false
+      },
+      "schema_mode": "canonical_runtime",
+      "cursor_semantics": {
+        "action": "observe"
+      },
+      "input_schema": {
+        "additionalProperties": false,
+        "description": "Parse one immutable screenshot capture. Pass the `capture_id` returned by\n`get_window_state` or `get_desktop_state`; the Driver capture registry\nresolves it to the exact pixels and action-coordinate transform.",
+        "properties": {
+          "capture_id": {
+            "description": "`capture_id` of a screenshot returned by get_window_state or get_desktop_state.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "options": {
+            "additionalProperties": false,
+            "default": {},
+            "description": "Optional, model-neutral controls for one bounded parse.",
+            "properties": {
+              "kinds": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "enum": [
+                        "text",
+                        "icon"
+                      ]
+                    },
+                    "maxItems": 2,
+                    "minItems": 1,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Region kinds to return (`text`, `icon`). Omit for all kinds."
+              },
+              "max_regions": {
+                "description": "Return at most this many regions.",
+                "minimum": 1,
+                "type": "integer"
+              },
+              "min_confidence": {
+                "description": "Drop regions below this confidence (0 to 1).",
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [],
+            "type": "object"
+          }
+        },
+        "required": [
+          "capture_id"
+        ],
+        "type": "object"
+      },
+      "success_output_schema": {
+        "additionalProperties": true,
+        "properties": {
+          "capture": {
+            "properties": {
+              "action_coordinate_space": {
+                "oneOf": [
+                  {
+                    "properties": {
+                      "kind": {
+                        "const": "screenshot_pixels",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "properties": {
+                      "kind": {
+                        "const": "affine",
+                        "type": "string"
+                      },
+                      "m11": {
+                        "type": "number"
+                      },
+                      "m12": {
+                        "type": "number"
+                      },
+                      "m21": {
+                        "type": "number"
+                      },
+                      "m22": {
+                        "type": "number"
+                      },
+                      "tx": {
+                        "type": "number"
+                      },
+                      "ty": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "m11",
+                      "m12",
+                      "m21",
+                      "m22",
+                      "tx",
+                      "ty"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "capture_id": {
+                "type": "string"
+              },
+              "captured_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "screenshot": {
+                "properties": {
+                  "height": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "mime_type": {
+                    "const": "image/png"
+                  },
+                  "reference": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "width": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "reference",
+                  "width",
+                  "height",
+                  "mime_type"
+                ],
+                "type": "object"
+              },
+              "source": {
+                "oneOf": [
+                  {
+                    "properties": {
+                      "kind": {
+                        "const": "window",
+                        "type": "string"
+                      },
+                      "pid": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "window_id": {
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "pid",
+                      "window_id"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "properties": {
+                      "display_id": {
+                        "const": "primary"
+                      },
+                      "kind": {
+                        "const": "primary_desktop",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "display_id"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "capture_id",
+              "source",
+              "screenshot",
+              "action_coordinate_space"
+            ],
+            "type": "object"
+          },
+          "parser": {
+            "properties": {
+              "backend": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "extension_id": {
+                "type": "string"
+              },
+              "extension_version": {
+                "type": "string"
+              },
+              "fixture_sha256": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "model_id": {
+                "type": "string"
+              },
+              "model_manifest_sha256": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "model_source_revision": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "model_version": {
+                "type": "string"
+              },
+              "onnx_runtime_library_sha256": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "onnx_runtime_version": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "runtime": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "extension_id",
+              "extension_version",
+              "model_id",
+              "model_version"
+            ],
+            "type": "object"
+          },
+          "regions": {
+            "items": {
+              "properties": {
+                "bounds": {
+                  "properties": {
+                    "height": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "width": {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "x": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "y": {
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "width",
+                    "height"
+                  ],
+                  "type": "object"
+                },
+                "confidence": {
+                  "maximum": 1,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "group_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "interactive": {
+                  "type": "boolean"
+                },
+                "kind": {
+                  "enum": [
+                    "text",
+                    "icon"
+                  ],
+                  "type": "string"
+                },
+                "label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "parent_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "reading_order": {
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "bounds",
+                "confidence",
+                "interactive"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schema": {
+            "const": "cua.visual_regions_v1"
+          },
+          "timing": {
+            "properties": {
+              "duration_ms": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "inference_ms": {
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "preprocess_ms": {
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "duration_ms"
+            ],
+            "type": "object"
+          },
+          "warnings": {
+            "items": {
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "schema",
+          "capture",
+          "parser",
+          "regions",
+          "timing"
+        ],
+        "type": "object"
+      },
+      "error_output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "not_installed",
+              "capture_not_found",
+              "capture_expired",
+              "capture_stale",
+              "capture_generation_mismatch",
+              "unsupported_target",
+              "unsupported_platform",
+              "incompatible_protocol",
+              "invalid_frame",
+              "worker_launch_failed",
+              "worker_crashed",
+              "worker_cancelled",
+              "timeout",
+              "resource_limit_exceeded",
+              "artifact_invalid",
+              "inference_failed"
+            ],
+            "type": "string"
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable"
         ],
         "type": "object"
       }
@@ -2887,12 +3572,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -2926,7 +3609,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           }
         },
         "required": [
@@ -2941,7 +3625,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -2975,6 +3658,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -3012,6 +3716,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -3040,6 +3750,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3116,12 +3832,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -3155,7 +3869,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           },
           "x": {
             "type": "number"
@@ -3178,7 +3893,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -3212,6 +3926,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -3249,6 +3984,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -3277,6 +4018,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3308,9 +4055,11 @@
         "additionalProperties": false,
         "properties": {
           "enabled": {
+            "description": "`true` shows the session's agent cursor overlay; `false` hides it.",
             "type": "boolean"
           },
           "session": {
+            "description": "Public label of the session that owns the cursor.",
             "type": "string"
           }
         },
@@ -3359,66 +4108,67 @@
         "additionalProperties": false,
         "properties": {
           "arc_flow": {
-            "format": "double",
+            "description": "Arc asymmetry: positive puts the apex near the destination, negative near the start.\nClamped to -1..1 (default 0).",
             "type": [
               "number",
               "null"
             ]
           },
           "arc_size": {
-            "format": "double",
+            "description": "Sideways arc deflection as a fraction of the distance. Clamped to 0..1 (default 0.25).",
             "type": [
               "number",
               "null"
             ]
           },
           "dwell_after_click_ms": {
-            "format": "double",
+            "description": "Pause after a click animation, in milliseconds. Clamped to 0..5000 (default 80).",
             "type": [
               "number",
               "null"
             ]
           },
           "end_handle": {
-            "format": "double",
+            "description": "Path control-point offset from the end, as a fraction of the distance. Clamped to 0..1\n(default 0.3).",
             "type": [
               "number",
               "null"
             ]
           },
           "glide_duration_ms": {
-            "format": "double",
+            "description": "Fixed glide duration in milliseconds. 0 (the default) uses speed-based timing. Clamped\nto 0..5000.",
             "type": [
               "number",
               "null"
             ]
           },
           "idle_hide_ms": {
-            "format": "double",
+            "description": "Hide the cursor after this many idle milliseconds; 0 never hides it. Clamped to\n0..60000 (default 15000).",
             "type": [
               "number",
               "null"
             ]
           },
           "session": {
+            "description": "Public label of the session that owns the cursor. Omitted or null motion fields keep\ntheir current value.",
             "type": "string"
           },
           "spring": {
-            "format": "double",
+            "description": "Post-arrival spring damping: 1 is critically damped, 0.3 is bouncy. Clamped to 0.3..1\n(default 0.72).",
             "type": [
               "number",
               "null"
             ]
           },
           "start_handle": {
-            "format": "double",
+            "description": "Path control-point offset from the start, as a fraction of the distance. Clamped to\n0..1 (default 0.3).",
             "type": [
               "number",
               "null"
             ]
           },
           "turn_radius": {
-            "format": "double",
+            "description": "Minimum turning radius of the glide path, in points; smaller turns tighter. Clamped to\n1..1000 (default 80).",
             "type": [
               "number",
               "null"
@@ -3436,39 +4186,30 @@
           "motion": {
             "properties": {
               "arc_flow": {
-                "format": "double",
                 "type": "number"
               },
               "arc_size": {
-                "format": "double",
                 "type": "number"
               },
               "dwell_after_click_ms": {
-                "format": "double",
                 "type": "number"
               },
               "end_handle": {
-                "format": "double",
                 "type": "number"
               },
               "glide_duration_ms": {
-                "format": "double",
                 "type": "number"
               },
               "idle_hide_ms": {
-                "format": "double",
                 "type": "number"
               },
               "spring": {
-                "format": "double",
                 "type": "number"
               },
               "start_handle": {
-                "format": "double",
                 "type": "number"
               },
               "turn_radius": {
-                "format": "double",
                 "type": "number"
               }
             },
@@ -3519,6 +4260,7 @@
         "properties": {
           "reduced_motion": {
             "default": "auto",
+            "description": "Theme animation policy: `on` uses the theme's reduced-motion frames, `off` always\nanimates, `auto` (default) leaves the choice to the host.",
             "enum": [
               "auto",
               "on",
@@ -3527,9 +4269,11 @@
             "type": "string"
           },
           "session": {
+            "description": "Public label of the session that owns the cursor.",
             "type": "string"
           },
           "theme_id": {
+            "description": "Id of an installed cursor theme (see `cua-driver cursor-theme list`).",
             "maxLength": 200,
             "minLength": 1,
             "type": "string"
@@ -3619,10 +4363,12 @@
         "additionalProperties": false,
         "properties": {
           "height": {
+            "description": "New height, in the same units as list_windows bounds.",
             "minimum": 1,
             "type": "number"
           },
           "pid": {
+            "description": "Process ID that owns the window.",
             "minimum": 1,
             "type": "integer"
           },
@@ -3631,17 +4377,21 @@
             "type": "string"
           },
           "width": {
+            "description": "New width, in the same units as list_windows bounds.",
             "minimum": 1,
             "type": "number"
           },
           "window_id": {
+            "description": "Window ID from list_windows.",
             "minimum": 1,
             "type": "integer"
           },
           "x": {
+            "description": "New left edge in the desktop coordinate space reported by list_windows.",
             "type": "number"
           },
           "y": {
+            "description": "New top edge in the desktop coordinate space reported by list_windows.",
             "type": "number"
           }
         },
@@ -3662,7 +4412,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -3696,6 +4445,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -3733,6 +4503,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -3761,6 +4537,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -3958,12 +4740,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -3997,7 +4777,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Preferred per-call target: an exact window (`kind=\"window\"`, `pid`, `window_id`) or the\nprimary desktop (`kind=\"desktop\"`, `display_id=\"primary\"`)."
           },
           "text": {
             "type": "string"
@@ -4015,7 +4796,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -4049,6 +4829,27 @@
               "refused"
             ],
             "type": "string"
+          },
+          "error": {
+            "additionalProperties": false,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "hint": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "escalation": {
             "additionalProperties": false,
@@ -4086,6 +4887,12 @@
             "items": {
               "additionalProperties": false,
               "properties": {
+                "detail": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "kind": {
                   "enum": [
                     "value_readback",
@@ -4114,6 +4921,12 @@
               "trusted_input"
             ],
             "type": "string"
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -4163,9 +4976,6 @@
                     },
                     "exists": {
                       "description": "Assert that at least one trusted element matches the selector.\n\nElement walks are not yet exhaustive on every platform, so absence\ncannot be proven. `false` is rejected instead of returning an\nindefinitely-unknown predicate.",
-                      "enum": [
-                        true
-                      ],
                       "type": "boolean"
                     },
                     "selected": {
@@ -4305,7 +5115,6 @@
         "additionalProperties": true,
         "properties": {
           "elapsed_ms": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
@@ -4313,7 +5122,6 @@
             "items": {
               "properties": {
                 "index": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -4366,7 +5174,6 @@
             "type": "array"
           },
           "samples": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },

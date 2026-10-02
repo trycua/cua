@@ -91,35 +91,66 @@ pub fn scope_schema() -> Value {
     })
 }
 
-/// `element_index` — the integer handle from the last get_window_state.
-pub fn element_index_schema() -> Value {
-    json!({
-        "type": "integer",
-        "description": "Element index from get_window_state. Requires the \
-            matching `snapshot_id` alongside it. Prefer `element_token`, \
-            which carries both values."
-    })
-}
-
-/// `snapshot_id` — the snapshot handle paired with a numeric element index.
-pub fn snapshot_id_schema() -> Value {
-    json!({
-        "type": "string",
-        "pattern": "^s[0-9a-f]{8}$",
-        "description": "Snapshot handle from get_window_state. Required when \
-            targeting by element_index; stale snapshots fail closed."
-    })
-}
-
 /// `element_token` — the opaque, validity-checked handle from get_window_state.
 pub fn element_token_schema() -> Value {
     json!({
         "type": "string",
+        "pattern": "^s[0-9a-f]{8}:[0-9]+$",
         "description": "Opaque per-snapshot element handle from \
-            `structuredContent.elements[].element_token`. If element_index, \
-            snapshot_id, or window_id are also supplied they must agree. Returns \
-            an explicit stale error once a newer snapshot supersedes it."
+            `structuredContent.elements[].element_token`. Returns an explicit \
+            stale error naming the current snapshots once a newer read \
+            supersedes it."
     })
+}
+
+/// Default and bounds for the per-call accessibility-walk budget
+/// (`timeout_ms`), the same on every platform.
+pub const TIMEOUT_MS_DEFAULT: u64 = 1000;
+pub const TIMEOUT_MS_MIN: u64 = 100;
+pub const TIMEOUT_MS_MAX: u64 = 120_000;
+
+/// Shared `timeout_ms` parameter: wall-clock budget for the accessibility walk
+/// behind an observation tool, with the same default, bounds, and partial-tree
+/// semantics on every platform (see [`crate::walk_budget`]).
+pub fn timeout_ms_schema() -> Value {
+    json!({
+        "type": "integer",
+        "minimum": TIMEOUT_MS_MIN,
+        "maximum": TIMEOUT_MS_MAX,
+        "default": TIMEOUT_MS_DEFAULT,
+        "description": format!(
+            "Wall-clock budget in milliseconds for the accessibility-tree walk \
+             (default {TIMEOUT_MS_DEFAULT}, min {TIMEOUT_MS_MIN}, max {TIMEOUT_MS_MAX}). \
+             Bounds the WHOLE walk. When the budget runs out the tool returns the PARTIAL tree \
+             it has, flagged with `truncated: true`, `truncation_reason`, `nodes_visited`, \
+             `nodes_pending` and `elements_complete: false`; retry with a larger value \
+             (e.g. 5000) or narrow with `query` / `max_depth`."
+        )
+    })
+}
+
+/// Shared `get_desktop_state.max_image_dimension`: an opt-in long-edge cap
+/// whose downsizing is mapped back for later desktop-scope actions
+/// (`crate::desktop_capture_scale`) and by the capture's `capture_id`.
+pub fn desktop_max_image_dimension_schema() -> Value {
+    json!({
+        "type": "integer",
+        "minimum": 0,
+        "description": "Optional long-edge cap for the returned PNG, in pixels (aspect ratio \
+            preserved). Omitted or 0 returns the full-size capture. When the cap downsizes \
+            the image, the response reports `screenshot_original_width/height`, and x/y read \
+            off it for this session's later scope:\"desktop\" actions (or passed with its \
+            `capture_id`) are mapped back to the full-size frame automatically."
+    })
+}
+
+/// Clamp a caller-supplied `timeout_ms` to the shared bounds, or apply the
+/// default when absent / not an integer.
+pub fn resolve_timeout_ms(value: Option<&Value>) -> u64 {
+    value
+        .and_then(Value::as_u64)
+        .map(|v| v.clamp(TIMEOUT_MS_MIN, TIMEOUT_MS_MAX))
+        .unwrap_or(TIMEOUT_MS_DEFAULT)
 }
 
 // ── The gate ─────────────────────────────────────────────────────────────────
@@ -135,10 +166,9 @@ fn shared_param_canonical(name: &str) -> Option<Value> {
         "modifier" => modifier_schema(),
         "button" => button_schema(),
         "scope" => scope_schema(),
-        "element_index" => element_index_schema(),
         "element_token" => element_token_schema(),
-        "snapshot_id" => snapshot_id_schema(),
         "capture_mode" => crate::capture_mode::capture_mode_schema(),
+        "timeout_ms" => timeout_ms_schema(),
         _ => return None,
     };
     Some(structural(&v))
@@ -163,8 +193,8 @@ fn required_canonical(tool: &str) -> Option<&'static [&'static str]> {
 }
 
 /// Reduce a param schema to the parts that govern client compatibility —
-/// `type`, `enum`, and (recursively) `items` — dropping `description` and any
-/// other prose so per-tool wording differences don't trip the gate.
+/// `type`, `enum`, `pattern`, and (recursively) `items` — dropping
+/// `description` and other prose so per-tool wording differences don't trip the gate.
 fn structural(schema: &Value) -> Value {
     let mut out = serde_json::Map::new();
     if let Some(t) = schema.get("type") {
@@ -172,6 +202,9 @@ fn structural(schema: &Value) -> Value {
     }
     if let Some(e) = schema.get("enum") {
         out.insert("enum".into(), e.clone());
+    }
+    if let Some(pattern) = schema.get("pattern") {
+        out.insert("pattern".into(), pattern.clone());
     }
     if let Some(items) = schema.get("items") {
         out.insert("items".into(), structural(items));
@@ -265,21 +298,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn timeout_ms_resolves_default_and_clamps() {
+        assert_eq!(resolve_timeout_ms(None), TIMEOUT_MS_DEFAULT);
+        assert_eq!(resolve_timeout_ms(Some(&json!("fast"))), TIMEOUT_MS_DEFAULT);
+        assert_eq!(resolve_timeout_ms(Some(&json!(5))), TIMEOUT_MS_MIN);
+        assert_eq!(resolve_timeout_ms(Some(&json!(5_000))), 5_000);
+        assert_eq!(resolve_timeout_ms(Some(&json!(10_000_000))), TIMEOUT_MS_MAX);
+        let schema = timeout_ms_schema();
+        assert_eq!(schema["default"], TIMEOUT_MS_DEFAULT);
+        assert!(shared_schema_violations(
+            "get_window_state",
+            &json!({"type":"object","properties":{"timeout_ms": schema}})
+        )
+        .is_empty());
+    }
+
+    #[test]
     fn structural_strips_description_keeps_type_and_enum() {
         let with_prose = json!({ "type": "string", "enum": ["a", "b"], "description": "x" });
         let s = structural(&with_prose);
         assert_eq!(s, json!({ "type": "string", "enum": ["a", "b"] }));
-    }
-
-    #[test]
-    fn session_description_prefers_named_multi_call_runs() {
-        let schema = session_schema();
-        let description = schema["description"]
-            .as_str()
-            .expect("session schema should carry agent guidance");
-        assert!(description.contains("prefer a short public session label"));
-        assert!(description.contains("repeat it on every call that accepts it"));
-        assert!(description.contains("implicit lifecycle session"));
     }
 
     #[test]
@@ -349,5 +387,50 @@ mod tests {
     fn canonical_click_required_passes() {
         let tool = json!({ "type": "object", "required": [], "properties": {} });
         assert!(shared_schema_violations("click", &tool).is_empty());
+    }
+    #[test]
+    fn element_token_pattern_matches_the_minted_wire_shape() {
+        let schema = element_token_schema();
+        assert_eq!(schema["pattern"], "^s[0-9a-f]{8}:[0-9]+$");
+        let validator = jsonschema::validator_for(&schema).expect("element token schema compiles");
+        for (snapshot_id, element_index) in
+            [(0_u32, 0_usize), (1_u32, 42_usize), (u32::MAX, usize::MAX)]
+        {
+            let token = crate::element_token::token_for(snapshot_id, element_index);
+            assert!(
+                validator.is_valid(&json!(token)),
+                "advertised element_token schema rejected minted token {token}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_shared_element_token_pattern_is_flagged() {
+        let tool = json!({
+            "type": "object",
+            "properties": {
+                "element_token": { "type": "string" }
+            }
+        });
+        let violations = shared_schema_violations("click", &tool);
+        assert!(
+            violations.iter().any(|item| item.contains("element_token")),
+            "missing element_token pattern must be flagged: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn element_token_pattern_drift_is_flagged() {
+        let tool = json!({
+            "type": "object",
+            "properties": {
+                "element_token": { "type": "string", "pattern": "^wrong$" }
+            }
+        });
+        let violations = shared_schema_violations("click", &tool);
+        assert!(
+            violations.iter().any(|item| item.contains("element_token")),
+            "element_token pattern drift must be flagged: {violations:?}"
+        );
     }
 }

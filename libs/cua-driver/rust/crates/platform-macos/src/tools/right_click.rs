@@ -29,15 +29,15 @@ fn def() -> &'static ToolDef {
         name: "right_click".into(),
         description:
             "Right-click against a target pid. Two addressing modes:\n\n\
-             - `element_index` + `window_id` (from the last `get_window_state` snapshot) — \
+             - `element_token` (from the last `get_window_state` snapshot) — \
                performs `AXShowMenu` on the cached element. Pure AX RPC, works on backgrounded / \
                hidden windows, no cursor move or focus steal. Requires a prior \
                `get_window_state(pid, window_id)` in this turn.\n\n\
              - `x`, `y` — synthesizes `rightMouseDown` / `rightMouseUp` CGEvent pair posted \
                to the pid. Driver converts image-pixel → screen-point internally. \
                `modifier` forces the CGEvent path (AX actions don't propagate modifier keys).\n\n\
-             Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` always \
-             required. `window_id` required when `element_index` is used."
+             Exactly one of `element_token` or (`x` AND `y`) must be provided. `pid` always \
+             required."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",
@@ -45,12 +45,10 @@ fn def() -> &'static ToolDef {
             "properties": {
                 "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
                 "pid": { "type": "integer", "description": "Target process ID." },
-                "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
-                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "window_id": {
                     "type": "integer",
-                    "description": "CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it)."
+                    "description": "CGWindowID. Omit when element_token is supplied (the token carries it)."
                 },
                 "x": {
                     "type": "number",
@@ -95,18 +93,8 @@ impl Tool for RightClickTool {
         let delivery_mode = super::DeliveryMode::parse(args.opt_str("delivery_mode").as_deref());
         let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
 
-        // Surface 6: element_token / element_index precedence resolution.
-        let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
-        let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match self.state.element_cache.resolve_element_args(
-            pid,
-            element_index_arg,
-            element_token_arg.as_deref(),
-            args.opt_str("snapshot_id").as_deref(),
-            window_id_arg,
-            "right_click",
-        ) {
+        let resolved = match self.state.snapshots.resolve(pid, &args) {
             Ok(r) => r,
             Err(e) => return e,
         };
@@ -125,15 +113,12 @@ impl Tool for RightClickTool {
             return ToolResult::error("Provide both x and y together, not just one.");
         }
         if element_index.is_some() && has_xy {
-            return ToolResult::error("Provide either element_index or (x, y), not both.");
+            return ToolResult::error("Provide either element_token or (x, y), not both.");
         }
         if element_index.is_none() && !has_xy {
             return ToolResult::error(
-                "Provide element_index or (x, y) to address the right-click target.",
+                "Provide element_token or (x, y) to address the right-click target.",
             );
-        }
-        if element_index.is_some() && window_id.is_none() {
-            return ToolResult::error("window_id is required when element_index is used.");
         }
 
         // ── AX element path ──────────────────────────────────────────────────
@@ -169,10 +154,12 @@ impl Tool for RightClickTool {
         // ── Pixel path ───────────────────────────────────────────────────────
         let (mut cx, mut cy) = (x.unwrap(), y.unwrap());
         // Scale back from downscaled-image space to native pixels when needed.
-        if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
-            cx *= ratio;
-            cy *= ratio;
-        }
+        let ratio = match super::screenshot_scale(&self.state, &args, pid, window_id) {
+            Ok(ratio) => ratio,
+            Err(refusal) => return refusal,
+        };
+        cx *= ratio;
+        cy *= ratio;
 
         // Window-local → screen coordinate translation + win-local logical coords
         // for CGEventSetWindowLocation (shared with click.rs via px_frame, which
@@ -245,9 +232,21 @@ impl Tool for RightClickTool {
         };
 
         let fg = delivery_mode.is_foreground() && window_id.is_some();
+        let route = match super::pixel_route::resolve(pid, fg, window_id, "mouse_right_click").await
+        {
+            Ok(route) => route,
+            Err(refusal) => return refusal,
+        };
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             let do_it = move || -> anyhow::Result<()> {
                 let m: Vec<&str> = modifiers.iter().map(String::as_str).collect();
+                if route == super::pixel_route::PixelClickRoute::ForegroundHid {
+                    // Warp the hardware pointer and post at the HID tap; see
+                    // `pixel_route` for the cross-platform foreground contract.
+                    return crate::input::mouse::click_at_xy_desktop_with_modifiers(
+                        screen_x, screen_y, 1, "right", &m,
+                    );
+                }
                 if let Some(wid) = window_id {
                     crate::input::mouse::right_click_at_xy_with_window_local(
                         pid,
@@ -262,26 +261,36 @@ impl Tool for RightClickTool {
                     crate::input::mouse::right_click_at_xy(pid, screen_x, screen_y, &m)
                 }
             };
-            // Foreground rung: brief front → right-click → restore prior frontmost.
-            match (fg, window_id) {
-                (true, Some(wid)) => {
-                    crate::input::skylight::with_foreground_assist(pid as libc::pid_t, wid, do_it)?;
-                    Ok(())
+            // Foreground rung: front the exact window → HID right-click →
+            // restore the prior frontmost. No input is sent unless the exact
+            // window is proven focused.
+            match (route, window_id) {
+                (super::pixel_route::PixelClickRoute::ForegroundHid, Some(wid)) => {
+                    crate::input::skylight::with_foreground_hid_activation(
+                        pid as libc::pid_t,
+                        wid,
+                        do_it,
+                    )
                 }
                 _ => do_it(),
             }
         })
         .await;
-        let mode_label = if fg {
-            " (delivery_mode:foreground)"
-        } else {
-            ""
-        };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!("Right-clicked{mod_suffix} at ({screen_x:.1}, {screen_y:.1}){mode_label}."))
-                .with_structured(serde_json::json!({
-                    "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
-                })),
+            Ok(Ok(())) => ToolResult::text(format!(
+                "Right-clicked{mod_suffix} at ({screen_x:.1}, {screen_y:.1}) ({}).",
+                super::pixel_route::delivery_note(route)
+            ))
+            .with_structured(serde_json::json!({
+                "path": super::pixel_route::path_label(route), "verified": false, "effect": "unverifiable"
+            })),
+            Ok(Err(e)) if route == super::pixel_route::PixelClickRoute::ForegroundHid => {
+                super::pixel_route::foreground_unavailable(
+                    "Right-click",
+                    window_id.unwrap_or_default(),
+                    &e.to_string(),
+                )
+            }
             Ok(Err(e)) => ToolResult::error(format!("Right-click failed: {e}")),
             Err(e)     => ToolResult::error(format!("Task error: {e}")),
         }

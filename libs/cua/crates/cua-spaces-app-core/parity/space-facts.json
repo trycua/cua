@@ -1,0 +1,189 @@
+{
+  "name": "space-facts",
+  "about": "A Space detail's facts: Status, Image (the ref, the digest in the tooltip, a copy button), System (the full OS string the driver reports, with the OS icon; the product or family name from older drivers), Memory and Storage as used / size only when the size is the guest's own limit (a VM, a container's cgroup limit), then Identifier with its copy button. Cloud Spaces show the Image row too, from the claim’s template (the digest only when the reference is pinned). Kind (container or virtual machine) and Architecture (ARM or x64) follow System when known; a local Space whose architecture is not this Mac's (hostArch) warns that it is emulated, a cloud one never does. Before the Space reports its OS, the image catalog's distribution names it.",
+  "now": 1800000000000,
+  "cases": [
+    {
+      "name": "local container, cgroup memory limit, host disk",
+      "row": {
+        "id": "local:aurora",
+        "name": "aurora",
+        "provider": "local",
+        "spacesdVersion": "0.4.0",
+        "features": [
+          "desktop_stream",
+          "window_stream"
+        ],
+        "os": "linux",
+        "osName": "Ubuntu",
+        "osPrettyName": "Ubuntu 24.04.3 LTS",
+        "image": "ghcr.io/trycua/linux:24.04-slim",
+        "imageDigest": "sha256:4f1c2a9d8e7b6c5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a",
+        "reachable": true,
+        "kind": "container",
+        "arch": "aarch64"
+      },
+      "usage": {
+        "memoryUsed": 2254857830,
+        "memoryTotal": 4294967296,
+        "memoryLimited": true,
+        "diskUsed": 150000000000,
+        "diskTotal": 494000000000,
+        "diskLimited": false
+      }
+    },
+    {
+      "name": "Omarchy on this Mac: an amd64 VM, emulated",
+      "row": {
+        "id": "local:omarchy",
+        "name": "omarchy",
+        "provider": "local",
+        "spacesdVersion": "0.4.0",
+        "features": [
+          "desktop_stream"
+        ],
+        "os": "linux",
+        "image": "ghcr.io/trycua/omarchy:edge",
+        "kind": "vm",
+        "arch": "x86_64",
+        "reachable": true
+      },
+      "usage": null
+    },
+    {
+      "name": "macOS VM",
+      "row": {
+        "id": "local:studio",
+        "name": "studio",
+        "provider": "local",
+        "spacesdVersion": "0.4.0",
+        "features": [
+          "desktop_stream"
+        ],
+        "os": "macos",
+        "osName": "macOS",
+        "osPrettyName": "macOS 26.5.2 (25F84)",
+        "image": "ghcr.io/trycua/macos:26",
+        "reachable": true
+      },
+      "usage": {
+        "memoryUsed": 6871947674,
+        "memoryTotal": 8589934592,
+        "memoryLimited": true,
+        "diskUsed": 41875931136,
+        "diskTotal": 85899345920,
+        "diskLimited": true
+      }
+    },
+    {
+      "name": "Windows by address, no usage yet",
+      "row": {
+        "id": "direct:10.0.0.5:3211",
+        "name": "10.0.0.5:3211",
+        "provider": "direct",
+        "spacesdVersion": "0.4.0",
+        "features": [],
+        "os": "windows",
+        "osName": "Windows",
+        "osPrettyName": "Windows Server 2022 Datacenter 10.0.20348",
+        "reachable": true
+      },
+      "usage": null
+    },
+    {
+      "name": "older driver: no full OS string, no limits",
+      "row": {
+        "id": "local:old",
+        "name": "old",
+        "provider": "local",
+        "spacesdVersion": "0.3.0",
+        "features": [
+          "desktop_stream"
+        ],
+        "os": "linux",
+        "osName": "Arch Linux",
+        "image": "ghcr.io/example/arch:latest",
+        "reachable": true
+      },
+      "usage": {
+        "memoryUsed": 1073741824,
+        "memoryTotal": 34359738368,
+        "memoryLimited": false,
+        "diskUsed": 1,
+        "diskTotal": 2,
+        "diskLimited": false
+      }
+    },
+    {
+      "name": "no OS name at all",
+      "row": {
+        "id": "cloud:builder",
+        "name": "builder",
+        "provider": "cloud",
+        "spacesdVersion": "0.4.0",
+        "features": [],
+        "os": "linux",
+        "reachable": false,
+        "error": "timed out"
+      },
+      "usage": null
+    },
+    {
+      "name": "cloud Space, image from the claim's template (a tag: no digest)",
+      "row": {
+        "id": "cloud:review-bot",
+        "name": "review-bot",
+        "provider": "cloud",
+        "spacesdVersion": "0.4.0",
+        "features": [
+          "desktop_stream"
+        ],
+        "os": "linux",
+        "osName": "Ubuntu",
+        "osPrettyName": "Ubuntu 24.04.3 LTS",
+        "image": "ghcr.io/trycua/linux:24.04-disk",
+        "reachable": true
+      },
+      "usage": null
+    },
+    {
+      "name": "cloud Space on a managed pool (a pinned image: its digest)",
+      "row": {
+        "id": "cloud:ci-7",
+        "name": "ci-7",
+        "provider": "cloud",
+        "spacesdVersion": "0.4.0",
+        "features": [
+          "desktop_stream"
+        ],
+        "os": "windows",
+        "osName": "Windows",
+        "image": "ghcr.io/example/windows@sha256:9b0e6c1d2a3f4e5d6c7b8a9f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9d",
+        "imageDigest": "sha256:9b0e6c1d2a3f4e5d6c7b8a9f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9d",
+        "reachable": true
+      },
+      "usage": null
+    },
+    {
+      "name": "cloud amd64 VM: no emulation warning",
+      "row": {
+        "id": "cloud:x64",
+        "name": "x64",
+        "provider": "cloud",
+        "spacesdVersion": "0.4.0",
+        "features": [
+          "desktop_stream"
+        ],
+        "os": "linux",
+        "osName": "Ubuntu",
+        "osPrettyName": "Ubuntu 24.04.3 LTS",
+        "image": "ghcr.io/trycua/linux:24.04-disk",
+        "kind": "vm",
+        "arch": "amd64",
+        "reachable": true
+      },
+      "usage": null
+    }
+  ],
+  "hostArch": "aarch64"
+}

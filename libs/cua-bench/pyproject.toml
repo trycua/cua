@@ -1,7 +1,7 @@
 [project]
 name = "cua-bench"
-version = "0.2.11"
-description = "Toolkit for computer-use RL environments and benchmarks"
+version = "0.3.0"
+description = "Run computer-use benchmark datasets on local and cloud sandboxes"
 readme = "README.md"
 license = "MIT"
 authors = [
@@ -30,32 +30,26 @@ requires-python = ">=3.12,<3.14"
 
 # Core dependencies - minimal set for basic functionality
 dependencies = [
-    # Async & networking
+    # Async & networking (aiohttp: the legacy computer-server client)
     "aiohttp>=3.9.0",
-    "aiofiles>=23.0.0",
-    "websockets>=12.0",
     # CLI & display
     "rich>=14.2.0",
     "tqdm>=4.66.0",
-    # Web/HTML parsing
+    # Agent prompt templates
     "jinja2>=3.1.0",
-    "pyquery>=2.0.1",
+    # `cb dataset build` (HTML snapshot parsing)
     "html5lib>=1.1",
     "beautifulsoup4>=4.14.2",
-    # Core utilities
+    # Traces (HF datasets), screenshots, .env files
     "pillow>=11.0.0",
-    "numpy>=2.0.0",
     "python-dotenv>=1.0.0",
-    "psutil>=5.9.0",
     "datasets>=3.0.0",
-    "matplotlib>=3.8.0",
-    # Docker integration
-    "docker>=7.0.0",
-    # CUA SDK
-    "cua-computer>=0.4.19",
-    "cua-core>=0.3.0,<0.4.0",
+    # CUA SDK. No direct cua-core pin: cua-bench's telemetry uses it when
+    # present, and harnesses pinned to cua-core 0.1 (cua-computer 0.5 /
+    # cua-agent 0.7, e.g. Agents' Last Exam) must co-install. cua-agent stays
+    # unpinned for the same reason; the bundled agents need cua-agent >= 0.8.
+    "cua-sandbox>=0.8.0,<0.10.0",
     "cua-agent",
-    "playwright>=1.55.0",
 ]
 
 [project.optional-dependencies]
@@ -64,20 +58,14 @@ all = [
     "cua-bench[browser,agents,cloud,otel,spice]",
 ]
 
-# Daytona cloud sandbox execution
-daytona = [
-    "daytona-sdk>=0.1.0",
-]
-
 # Packaging scripts (e.g. package_kicad_submission.py)
 packaging = [
     "boto3>=1.26.0",
 ]
 
-# Browser automation (for simulated environments)
-browser = [
-    "playwright>=1.40.0",
-]
+# Deprecated and empty: the simulated (Playwright) provider was removed in
+# 0.3. Kept for one release so `cua-bench[browser]` still installs.
+browser = []
 
 # Agent support
 agents = [
@@ -92,13 +80,9 @@ otel = [
     "opentelemetry-exporter-otlp-proto-http>=1.20.0",
 ]
 
-# Cloud batch execution (Google Cloud)
+# Cloud runs use Fleet through cua-sandbox (a core dependency); this extra
+# only adds OpenTelemetry export for long batches.
 cloud = [
-    "google-cloud-batch>=0.17.0",
-    "google-cloud-logging>=3.5.0",
-    "google-cloud-storage>=2.10.0",
-    "gcloud-aio-storage>=9.0.0",
-    "grpcio>=1.60.0",
     "cua-bench[otel]",
 ]
 
@@ -107,13 +91,9 @@ spice = [
     "PySpice>=1.5",
 ]
 
-# API server (for custom environments)
-server = [
-    "fastapi>=0.100.0",
-    "uvicorn>=0.30.0",
-    "python-multipart>=0.0.6",
-    "aiosqlite>=0.19.0",
-]
+# Deprecated and empty: the env worker server moved to the cua-bench-rl
+# package in 0.3 (pip install cua-bench-rl).
+server = []
 
 # Windows-specific
 windows = [
@@ -121,22 +101,55 @@ windows = [
     "icoextract>=0.2.0",
 ]
 
+# OSWorld adapter (tasks/osworld): what the pinned upstream getters and
+# metrics import at module level or use for the common task domains. The
+# heavy optional ones (easyocr/torch, librosa, acoustid, borb, pydrive) are
+# shimmed; the few metrics that need them fail with a clear error.
+osworld = [
+    "requests>=2.31",
+    "requests-toolbelt>=1.0",
+    "lxml>=5.0",
+    "cssselect>=1.2",
+    "openpyxl>=3.1",
+    "python-docx>=1.1",
+    "python-pptx>=1.0",
+    "pypdf>=4.0",
+    "PyPDF2>=3.0",
+    "pdfplumber>=0.11",
+    "pymupdf>=1.24",
+    "rapidfuzz>=3.0",
+    "xmltodict>=0.13",
+    "beautifulsoup4>=4.12",
+    "odfpy>=1.4",
+    "pandas>=2.0",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pytz>=2024.1",
+    "pyyaml>=6.0",
+    "tldextract>=5.0",
+    "ImageHash>=4.3",
+    "scikit-image>=0.22",
+    "opencv-python-headless>=4.8",
+    "mutagen>=1.47",
+    "formulas>=1.2",
+    "fastdtw>=0.3",
+    "gymnasium>=0.28",
+    "python-dotenv>=1.0",
+    "chardet>=5.0",
+    "playwright>=1.40",
+]
+
 # Development
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
-    "fastapi>=0.100.0",
     "httpx>=0.27.0",
-    "uvicorn>=0.30.0",
     "ruff>=0.1.0",
 ]
 
-# RL training
-rl = [
-    "torch>=2.12.1",
-    "torchvision>=0.27.1",
-    "transformers>=5.0.0rc3,<6.0",
-]
+# Deprecated and empty: RL workers, the dataloader and trainers moved to the
+# cua-bench-rl package in 0.3 (pip install "cua-bench-rl[torch]").
+rl = []
 
 [project.urls]
 Homepage = "https://github.com/trycua/cua"
@@ -191,6 +204,11 @@ testpaths = ["cua_bench/tests"]
 
 [tool.uv.sources]
 cua-agent = { path = "../python/agent", editable = true }
+cua-sandbox = { path = "../python/cua-sandbox", editable = true }
+
+[[tool.uv.index]]
+name = "cua-wheels"
+url = "https://wheels.cua.ai/simple"
 
 [tool.uv]
 constraint-dependencies = [

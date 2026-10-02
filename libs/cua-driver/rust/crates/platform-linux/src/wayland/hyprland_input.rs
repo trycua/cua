@@ -15,9 +15,16 @@ use serde_json::{json, Value};
 
 const TIMEOUT: Duration = Duration::from_secs(3);
 const CANCELLATION_POLL: Duration = Duration::from_millis(25);
+const TEXT_ACTION_GAP: Duration = Duration::from_millis(25);
 const MAX_PACKET: usize = 2048;
 const MAX_LANES: usize = 2;
-const MAX_STALE_GEOMETRY_RETRIES: usize = 1;
+/// Retries of an action the plugin refused as `stale_geometry` (the target's
+/// surface box changed between TARGET and the action). Hyprland animates a
+/// window for a few hundred milliseconds after a click activates it or the
+/// layout changes, so an immediate retry lands in the same animation: wait
+/// `STALE_GEOMETRY_BACKOFF * attempt` before each (at most ~0.6 s in all).
+const MAX_STALE_GEOMETRY_RETRIES: usize = 4;
+const STALE_GEOMETRY_BACKOFF: Duration = Duration::from_millis(60);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DeliveryRoute {
@@ -53,10 +60,10 @@ fn validate_target_route(target: &Value, route: DeliveryRoute) -> Result<()> {
 
 /// Validate the whole string before dispatching any keys. Physical key delivery
 /// uses the compositor's keyboard layout; these codes describe US ASCII keys.
-pub(crate) fn foreground_text_actions(text: &str) -> Result<Vec<Action>> {
+pub(crate) fn text_actions(text: &str) -> Result<Vec<Action>> {
     ensure!(
         text.len() <= 4096 && text.is_ascii(),
-        "foreground text requires at most 4096 ASCII bytes"
+        "Hyprland text requires at most 4096 ASCII bytes"
     );
     text.bytes()
         .map(|byte| {
@@ -101,7 +108,7 @@ pub(crate) fn foreground_text_actions(text: &str) -> Result<Vec<Action>> {
                 b'*' => (9, true),
                 b'(' => (10, true),
                 b')' => (11, true),
-                _ => bail!("unsupported foreground text control character"),
+                _ => bail!("unsupported Hyprland text control character"),
             };
             Ok(Action::TextKey { keycode, shift })
         })
@@ -196,6 +203,19 @@ pub fn enabled() -> bool {
                         })
                 })
             }))
+}
+
+/// Whether background (isolated seat) input is admitted for `pid`'s windows,
+/// the check a background action makes before dispatch. `Err` carries the
+/// refusal reason (`client_not_qualified`, ...). Only meaningful while
+/// [`enabled`]: without the isolated seats the tools route background input
+/// elsewhere.
+pub fn background_admission(pid: u32) -> std::result::Result<(), &'static str> {
+    if protocol() == InputProtocol::Production {
+        super::hyprland_compatibility::qualify(pid)
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -565,15 +585,6 @@ impl Client {
         }
     }
 
-    fn execute_routed(
-        &mut self,
-        action: Action,
-        started: Option<tokio::sync::oneshot::Sender<()>>,
-        route: DeliveryRoute,
-    ) -> Result<Value> {
-        self.execute_routed_with_attest(action, started, route, Self::attest)
-    }
-
     fn execute_routed_with_attest(
         &mut self,
         action: Action,
@@ -585,8 +596,7 @@ impl Client {
         ensure!(self.lane.is_some(), "isolated input lane is not claimed");
         self.check_route(route)?;
         ensure!(
-            route == DeliveryRoute::Foreground
-                || !matches!(&action, Action::Activate | Action::TextKey { .. }),
+            route == DeliveryRoute::Foreground || !matches!(&action, Action::Activate),
             "action requires foreground input"
         );
         ensure!(
@@ -630,6 +640,7 @@ impl Client {
                 && reply.get("delivery").is_none()
                 && attempt < MAX_STALE_GEOMETRY_RETRIES
             {
+                std::thread::sleep(STALE_GEOMETRY_BACKOFF * (attempt as u32 + 1));
                 continue;
             }
             if reply["ok"] == false && self.protocol == InputProtocol::Experiment {
@@ -642,26 +653,6 @@ impl Client {
             return Ok(reply);
         }
         unreachable!("bounded stale geometry retry loop always returns")
-    }
-
-    #[cfg(test)]
-    fn dispatch(
-        &self,
-        packet: &str,
-        is_drag: bool,
-        started: Option<tokio::sync::oneshot::Sender<()>>,
-    ) -> Result<Value> {
-        self.dispatch_routed(packet, is_drag, started, DeliveryRoute::Background)
-    }
-
-    fn dispatch_routed(
-        &self,
-        packet: &str,
-        is_drag: bool,
-        mut started: Option<tokio::sync::oneshot::Sender<()>>,
-        route: DeliveryRoute,
-    ) -> Result<Value> {
-        self.dispatch_routed_with_started(packet, is_drag, &mut started, route)
     }
 
     fn dispatch_routed_with_started(
@@ -720,11 +711,6 @@ impl Client {
             reply["delivery"] = json!({"mode":route.mode(),"delivered_count":1});
         }
         Ok(reply)
-    }
-
-    #[cfg(test)]
-    fn target_packet(&self, action: &Action) -> String {
-        self.target_packet_routed(action, DeliveryRoute::Background)
     }
 
     fn check_route(&self, route: DeliveryRoute) -> Result<()> {
@@ -1036,8 +1022,7 @@ fn execute_routed(
 ) -> Result<Value> {
     execute_actions_routed(
         owner,
-        pid,
-        address,
+        (pid, address),
         vec![action],
         started,
         cancellation,
@@ -1053,30 +1038,69 @@ pub(crate) fn execute_foreground_text(
     text: &str,
     cancellation: ActionCancellation,
 ) -> Result<Value> {
-    let actions = foreground_text_actions(text)?;
-    ensure!(!actions.is_empty(), "foreground text must not be empty");
-    execute_actions_routed(
+    execute_text_routed(
         owner,
         pid,
         address,
+        text,
+        cancellation,
+        DeliveryRoute::Foreground,
+    )
+}
+
+pub(crate) fn execute_background_text(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    text: &str,
+    cancellation: ActionCancellation,
+) -> Result<Value> {
+    execute_text_routed(
+        owner,
+        pid,
+        address,
+        text,
+        cancellation,
+        DeliveryRoute::Background,
+    )
+}
+
+fn execute_text_routed(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    text: &str,
+    cancellation: ActionCancellation,
+    route: DeliveryRoute,
+) -> Result<Value> {
+    let actions = text_actions(text)?;
+    ensure!(
+        !actions.is_empty(),
+        "{} text must not be empty",
+        route.mode()
+    );
+    execute_actions_routed(
+        owner,
+        (pid, address),
         actions,
         None,
         cancellation,
-        DeliveryRoute::Foreground,
+        route,
         true,
     )
 }
 
+/// `target` is the exact (pid, Hyprland window address) the actions go to.
 fn execute_actions_routed(
     owner: Option<String>,
-    pid: u32,
-    address: u64,
+    target: (u32, u64),
     actions: Vec<Action>,
     started: Option<tokio::sync::oneshot::Sender<()>>,
     cancellation: ActionCancellation,
     route: DeliveryRoute,
     text: bool,
 ) -> Result<Value> {
+    let (pid, address) = target;
     cancellation.check()?;
     ensure!(enabled(), "Hyprland isolated input is unavailable");
     ensure!(
@@ -1149,7 +1173,7 @@ fn dispatch_actions_in_slot(
                     attest,
                 );
             }
-            execute_text_actions(actions, |action| {
+            execute_text_actions(actions, route, |action| {
                 client.execute_routed_with_attest(action, None, route, attest)
             })
         },
@@ -1158,18 +1182,27 @@ fn dispatch_actions_in_slot(
 
 fn execute_text_actions(
     actions: Vec<Action>,
+    route: DeliveryRoute,
     mut dispatch: impl FnMut(Action) -> Result<Value>,
 ) -> Result<Value> {
-    let route = DeliveryRoute::Foreground;
     let mut delivered = 0u32;
-    for action in actions {
+    let action_count = actions.len();
+    for (index, action) in actions.into_iter().enumerate() {
         match dispatch(action) {
             Ok(mut reply) if reply["ok"] == false => {
                 reply["effect"] = json!(if delivered > 0 { "partial" } else { "none" });
                 reply["delivery"] = json!({"mode":route.mode(),"delivered_count":delivered});
                 return Ok(reply);
             }
-            Ok(_) => delivered += 1,
+            Ok(_) => {
+                delivered += 1;
+                // The compositor acknowledgement is not a client-processing
+                // fence. Give the target event loop a bounded turn before the
+                // next character so native GTK clients do not drop a burst.
+                if index + 1 < action_count {
+                    std::thread::sleep(TEXT_ACTION_GAP);
+                }
+            }
             Err(error) => {
                 if let Some(unknown) = error.downcast_ref::<DispatchUnknown>() {
                     return Err(unknown_dispatch(
@@ -1293,6 +1326,18 @@ mod tests {
         );
     }
 
+    /// Send one raw packet through the production dispatch path.
+    fn dispatch(
+        client: &Client,
+        packet: &str,
+        is_drag: bool,
+        started: Option<tokio::sync::oneshot::Sender<()>>,
+        route: DeliveryRoute,
+    ) -> Result<Value> {
+        let mut started = started;
+        client.dispatch_routed_with_started(packet, is_drag, &mut started, route)
+    }
+
     fn dispatch_production_key(slot: &mut Option<Client>, route: DeliveryRoute) -> Result<Value> {
         dispatch_actions_in_slot(
             slot,
@@ -1339,33 +1384,92 @@ mod tests {
                     .unwrap();
             }
         });
-        let mut attestations = 0;
+        let mut handshake_attestations = 0;
         assert!(client
             .attest_and_handshake(0, |_| {
-                attestations += 1;
+                handshake_attestations += 1;
                 Ok(())
             })
             .unwrap());
-        assert_eq!(attestations, 1);
+        assert_eq!(handshake_attestations, 1);
+        reset_test_attestations();
         let mut slot = Some(client);
         for (call, text) in ["abc", "de"].into_iter().enumerate() {
-            let result = dispatch_in_slot(
+            let result = dispatch_actions_in_slot(
                 &mut slot,
-                |_| {
-                    attestations += 1;
-                    Ok(())
-                },
-                |client| {
-                    execute_text_actions(foreground_text_actions(text).unwrap(), |action| {
-                        client.execute_routed(action, None, DeliveryRoute::Foreground)
-                    })
-                },
+                text_actions(text).unwrap(),
+                None,
+                DeliveryRoute::Foreground,
+                true,
+                record_test_attestation,
             )
             .unwrap();
             assert_eq!(result["delivery"]["delivered_count"], text.len());
-            assert_eq!(attestations, call + 2);
+            assert_eq!(test_attestations(), call + 1);
             assert!(slot.is_some());
         }
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn text_result_reports_the_selected_delivery_route() {
+        for route in [DeliveryRoute::Background, DeliveryRoute::Foreground] {
+            let result = execute_text_actions(text_actions("abc").unwrap(), route, |_| {
+                Ok(json!({
+                    "ok": true,
+                    "effect": "unverifiable",
+                    "route": route.acknowledgement()
+                }))
+            })
+            .unwrap();
+            assert_eq!(result["route"], route.acknowledgement());
+            assert_eq!(result["delivery"]["mode"], route.mode());
+            assert_eq!(result["delivery"]["delivered_count"], 3);
+        }
+    }
+
+    #[test]
+    fn text_dispatch_paces_acknowledged_keys() {
+        let started = Instant::now();
+        let result = execute_text_actions(
+            text_actions("abc").unwrap(),
+            DeliveryRoute::Background,
+            |_| Ok(json!({"ok":true})),
+        )
+        .unwrap();
+        assert_eq!(result["delivery"]["delivered_count"], 3);
+        assert!(started.elapsed() >= TEXT_ACTION_GAP + TEXT_ACTION_GAP);
+    }
+
+    #[test]
+    fn background_text_binds_each_key_to_the_exact_target() {
+        reset_test_attestations();
+        let (client, peer) = production_test_client();
+        let server = std::thread::spawn(move || {
+            for sequence in 1..=3 {
+                serve_key_target(&peer, DeliveryRoute::Background, sequence, sequence);
+                peer.send(br#"{"ok":true,"effect":"unverifiable","route":"synthetic_events"}"#)
+                    .unwrap();
+            }
+        });
+        let mut slot = Some(client);
+        let result = dispatch_actions_in_slot(
+            &mut slot,
+            text_actions("aaa").unwrap(),
+            None,
+            DeliveryRoute::Background,
+            true,
+            record_test_attestation,
+        )
+        .unwrap();
+        assert_eq!(result["route"], "synthetic_events");
+        assert_eq!(
+            result["delivery"],
+            json!({"mode":"background","delivered_count":3})
+        );
+        assert_eq!(test_attestations(), 3);
+        assert!(slot.is_some());
+        drop(slot);
         server.join().unwrap();
     }
 
@@ -1433,14 +1537,13 @@ mod tests {
             );
         });
         let mut slot = Some(client);
-        let result = dispatch_in_slot(
+        let result = dispatch_actions_in_slot(
             &mut slot,
-            |_| Ok(()),
-            |client| {
-                execute_text_actions(foreground_text_actions("abc").unwrap(), |action| {
-                    client.execute_routed(action, None, DeliveryRoute::Foreground)
-                })
-            },
+            text_actions("abc").unwrap(),
+            None,
+            DeliveryRoute::Foreground,
+            true,
+            record_test_attestation,
         )
         .unwrap();
         assert_eq!(result["code"], "desktop_changed");
@@ -1484,14 +1587,13 @@ mod tests {
             );
         });
         let mut slot = Some(client);
-        let result = dispatch_in_slot(
+        let result = dispatch_actions_in_slot(
             &mut slot,
-            |_| Ok(()),
-            |client| {
-                execute_text_actions(foreground_text_actions("abc").unwrap(), |action| {
-                    client.execute_routed(action, None, DeliveryRoute::Foreground)
-                })
-            },
+            text_actions("abc").unwrap(),
+            None,
+            DeliveryRoute::Foreground,
+            true,
+            record_test_attestation,
         )
         .unwrap();
         assert_eq!(result["code"], "target_changed");
@@ -1507,13 +1609,14 @@ mod tests {
         client.lane = Some(0);
         // This socket's peer is the test process, never the Wayland compositor.
         assert!(client
-            .execute_routed(
+            .execute_routed_with_attest(
                 Action::Key {
                     key: "a".into(),
                     modifiers: vec![]
                 },
                 None,
                 DeliveryRoute::Background,
+                Client::attest,
             )
             .is_err());
         drop(client);
@@ -1585,10 +1688,16 @@ mod tests {
             reset_test_attestations();
             let (client, peer) = production_test_client();
             let acknowledgement = route.acknowledgement();
+            // Success on the second attempt, or every attempt refused.
+            let attempts = if succeeds {
+                2
+            } else {
+                MAX_STALE_GEOMETRY_RETRIES as u64 + 1
+            };
             let server = std::thread::spawn(move || {
-                for (sequence, revision) in [(1, 11), (2, 22)] {
-                    serve_key_target(&peer, route, sequence, revision);
-                    let reply = if sequence == 2 && succeeds {
+                for sequence in 1..=attempts {
+                    serve_key_target(&peer, route, sequence, sequence * 11);
+                    let reply = if sequence == attempts && succeeds {
                         json!({"ok":true,"effect":"unverifiable","route":acknowledgement})
                     } else {
                         json!({"ok":false,"code":"stale_geometry","detail":"stale_geometry"})
@@ -1603,15 +1712,26 @@ mod tests {
             });
 
             let mut slot = Some(client);
+            let started = Instant::now();
             let reply = dispatch_production_key(&mut slot, route).unwrap();
             assert_eq!(reply["ok"], succeeds);
+            // Each retry waits for the window to settle, a little longer
+            // every time.
+            let waited: Duration = (1..attempts as u32)
+                .map(|n| STALE_GEOMETRY_BACKOFF * n)
+                .sum();
+            assert!(
+                started.elapsed() >= waited,
+                "{:?} < {waited:?}",
+                started.elapsed()
+            );
             if !succeeds {
                 assert_eq!(reply["code"], "stale_geometry");
                 assert!(reply.get("effect").is_none());
                 assert!(reply.get("delivery").is_none());
             }
-            assert_eq!(slot.as_ref().unwrap().sequence, 2);
-            assert_eq!(test_attestations(), 2);
+            assert_eq!(slot.as_ref().unwrap().sequence, attempts);
+            assert_eq!(test_attestations(), attempts as usize);
             drop(slot);
             server.join().unwrap();
         }
@@ -1699,14 +1819,14 @@ mod tests {
                 .unwrap();
         });
         let (started, acknowledgement) = tokio::sync::oneshot::channel();
-        let reply = client
-            .dispatch_routed(
-                "DRAG synthetic",
-                true,
-                Some(started),
-                DeliveryRoute::Foreground,
-            )
-            .unwrap();
+        let reply = dispatch(
+            &client,
+            "DRAG synthetic",
+            true,
+            Some(started),
+            DeliveryRoute::Foreground,
+        )
+        .unwrap();
         assert!(acknowledgement.blocking_recv().is_ok());
         assert_eq!(reply["effect"], "partial");
         assert_eq!(
@@ -1724,10 +1844,15 @@ mod tests {
             peer.send(br#"{"ok":true,"effect":"unverifiable","route":"synthetic_events"}"#)
                 .unwrap();
         });
-        assert!(client
-            .dispatch_routed("KEY synthetic", false, None, DeliveryRoute::Foreground)
-            .unwrap_err()
-            .is::<DispatchUnknown>());
+        assert!(dispatch(
+            &client,
+            "KEY synthetic",
+            false,
+            None,
+            DeliveryRoute::Foreground
+        )
+        .unwrap_err()
+        .is::<DispatchUnknown>());
         server.join().unwrap();
     }
 
@@ -1752,9 +1877,8 @@ mod tests {
                     0
                 );
             });
-            let error = client
-                .dispatch_routed(packet, started, None, DeliveryRoute::Foreground)
-                .unwrap_err();
+            let error =
+                dispatch(&client, packet, started, None, DeliveryRoute::Foreground).unwrap_err();
             assert_eq!(
                 error
                     .downcast_ref::<DispatchUnknown>()
@@ -1782,9 +1906,19 @@ mod tests {
                 0
             );
         });
-        let error = execute_text_actions(foreground_text_actions("abc").unwrap(), |_| {
-            client.dispatch_routed("KEY synthetic", false, None, DeliveryRoute::Foreground)
-        })
+        let error = execute_text_actions(
+            text_actions("abc").unwrap(),
+            DeliveryRoute::Foreground,
+            |_| {
+                dispatch(
+                    &client,
+                    "KEY synthetic",
+                    false,
+                    None,
+                    DeliveryRoute::Foreground,
+                )
+            },
+        )
         .unwrap_err();
         assert_eq!(
             error
@@ -1804,23 +1938,27 @@ mod tests {
             assert_eq!(read_packet(&peer), "KEY synthetic");
             peer.send(br#"{"ok":false,"code":"foreground_partial_unknown","detail":"foreground_partial_unknown"}"#).unwrap();
         });
-        let reply = client.dispatch("KEY synthetic", false, None).unwrap();
+        let reply = dispatch(
+            &client,
+            "KEY synthetic",
+            false,
+            None,
+            DeliveryRoute::Background,
+        )
+        .unwrap();
         assert_eq!(reply["ok"], false);
         assert_eq!(reply["code"], "foreground_partial_unknown");
         server.join().unwrap();
     }
 
     #[test]
-    fn foreground_text_is_bounded_and_fully_prevalidated() {
+    fn hyprland_text_is_bounded_and_fully_prevalidated() {
         for text in ["valid prefix\u{00e9}", "valid prefix\0", "\r", "\u{007f}"] {
-            assert!(foreground_text_actions(text).is_err());
+            assert!(text_actions(text).is_err());
         }
-        assert!(foreground_text_actions(&"a".repeat(4097)).is_err());
-        assert_eq!(
-            foreground_text_actions(&"a".repeat(4096)).unwrap().len(),
-            4096
-        );
-        let actions = foreground_text_actions("Aa!? \t\n").unwrap();
+        assert!(text_actions(&"a".repeat(4097)).is_err());
+        assert_eq!(text_actions(&"a".repeat(4096)).unwrap().len(), 4096);
+        let actions = text_actions("Aa!? \t\n").unwrap();
         let packets: Vec<_> = actions
             .into_iter()
             .map(|action| action.packet(1, TOKEN, 1, 1.0, 1.0).unwrap())
@@ -1832,7 +1970,7 @@ mod tests {
             assert_eq!(*packet, format!("KEY 1 {TOKEN} 1 {suffix}"));
         }
         assert_eq!(
-            foreground_text_actions(&(32u8..127).map(char::from).collect::<String>())
+            text_actions(&(32u8..127).map(char::from).collect::<String>())
                 .unwrap()
                 .len(),
             95
@@ -1843,15 +1981,21 @@ mod tests {
     fn foreground_text_stops_after_refusal_or_cancellation_without_replay() {
         for cancel in [false, true] {
             let mut calls = 0;
-            let reply = execute_text_actions(foreground_text_actions("abc").unwrap(), |_| {
-                calls += 1;
-                match calls {
-                    1 => Ok(json!({"ok":true})),
-                    2 if cancel => Err(ActionCancelled.into()),
-                    2 => Ok(json!({"ok":false,"code":"target_changed","detail":"target_changed"})),
-                    _ => panic!("replayed text after interrupted dispatch"),
-                }
-            })
+            let reply = execute_text_actions(
+                text_actions("abc").unwrap(),
+                DeliveryRoute::Foreground,
+                |_| {
+                    calls += 1;
+                    match calls {
+                        1 => Ok(json!({"ok":true})),
+                        2 if cancel => Err(ActionCancelled.into()),
+                        2 => Ok(
+                            json!({"ok":false,"code":"target_changed","detail":"target_changed"}),
+                        ),
+                        _ => panic!("replayed text after interrupted dispatch"),
+                    }
+                },
+            )
             .unwrap();
             assert_eq!(calls, 2);
             assert_eq!(reply["ok"], false);
@@ -1862,28 +2006,6 @@ mod tests {
             );
             assert!(terminal_connection_result(&reply));
         }
-    }
-
-    #[test]
-    fn foreground_text_unknown_delivery_keeps_only_acknowledged_key_count() {
-        let mut calls = 0;
-        let error = execute_text_actions(foreground_text_actions("abc").unwrap(), |_| {
-            calls += 1;
-            if calls == 1 {
-                Ok(json!({"ok":true}))
-            } else {
-                Err(unknown_dispatch(anyhow::anyhow!("peer closed"), 0))
-            }
-        })
-        .unwrap_err();
-        assert_eq!(calls, 2);
-        assert_eq!(
-            error
-                .downcast_ref::<DispatchUnknown>()
-                .unwrap()
-                .acknowledged_phases,
-            1
-        );
     }
 
     #[test]
@@ -2133,7 +2255,13 @@ mod tests {
             |_| Ok(()),
             |client| {
                 client.request("TARGET synthetic")?;
-                client.dispatch("CLICK synthetic", false, None)
+                dispatch(
+                    client,
+                    "CLICK synthetic",
+                    false,
+                    None,
+                    DeliveryRoute::Background,
+                )
             },
         )
         .unwrap();
@@ -2175,7 +2303,13 @@ mod tests {
                 |_| Ok(()),
                 |client| {
                     dispatches += 1;
-                    client.dispatch("CLICK synthetic", false, None)
+                    dispatch(
+                        client,
+                        "CLICK synthetic",
+                        false,
+                        None,
+                        DeliveryRoute::Background,
+                    )
                 },
             )
             .unwrap_err();
@@ -2426,6 +2560,10 @@ mod tests {
     }
 
     #[tokio::test]
+    // Holding the lane's std mutex across the awaits is the scenario under
+    // test: the queued call contends for it from a blocking-pool thread, never
+    // from this runtime, so the lint's deadlock does not apply.
+    #[allow(clippy::await_holding_lock)]
     async fn aborted_queued_invocation_never_targets_or_changes_the_active_connection() {
         let (client, peer) = test_connection();
         let session = Arc::new(SessionClient {
@@ -2516,7 +2654,15 @@ mod tests {
                 let result = dispatch_in_slot(
                     &mut slot,
                     |_| Ok(()),
-                    |client| client.dispatch("DRAG synthetic", true, Some(started)),
+                    |client| {
+                        dispatch(
+                            client,
+                            "DRAG synthetic",
+                            true,
+                            Some(started),
+                            DeliveryRoute::Background,
+                        )
+                    },
                 );
                 assert!(slot.is_none());
                 finished.send(result).unwrap();
@@ -2588,9 +2734,7 @@ mod tests {
             let (guard, cancellation) = ActionCancellation::invocation();
             client.cancellation = cancellation;
             drop(guard);
-            let error = client
-                .dispatch_routed("CLICK synthetic", false, None, route)
-                .unwrap_err();
+            let error = dispatch(&client, "CLICK synthetic", false, None, route).unwrap_err();
             assert!(error.is::<ActionCancelled>());
             assert!(!error.is::<DispatchUnknown>());
             let mut byte = [0u8];
@@ -2653,9 +2797,7 @@ mod tests {
                         std::io::ErrorKind::WouldBlock
                     );
                 });
-                let error = client
-                    .dispatch_routed(packet, is_drag, Some(started), route)
-                    .unwrap_err();
+                let error = dispatch(&client, packet, is_drag, Some(started), route).unwrap_err();
                 let unknown = error.downcast_ref::<DispatchUnknown>().unwrap();
                 assert_eq!(unknown.acknowledged_phases, u32::from(is_drag));
                 assert_eq!(unknown.detail, ActionCancelled.to_string());
@@ -2685,7 +2827,13 @@ mod tests {
                 }
             });
             let (started, acknowledged) = tokio::sync::oneshot::channel();
-            let result = client.dispatch("DRAG synthetic", true, Some(started));
+            let result = dispatch(
+                &client,
+                "DRAG synthetic",
+                true,
+                Some(started),
+                DeliveryRoute::Background,
+            );
             assert!(acknowledged.blocking_recv().is_ok());
             if expected_cancel {
                 let reply = result.unwrap();
@@ -2714,7 +2862,14 @@ mod tests {
         let server = std::thread::spawn(move || {
             assert_eq!(read_packet(&peer), "CLICK synthetic");
         });
-        let result = client.dispatch("CLICK synthetic", false, None).unwrap_err();
+        let result = dispatch(
+            &client,
+            "CLICK synthetic",
+            false,
+            None,
+            DeliveryRoute::Background,
+        )
+        .unwrap_err();
         assert_eq!(
             result
                 .downcast_ref::<DispatchUnknown>()
@@ -2811,10 +2966,15 @@ mod tests {
                 8,
             ),
         ] {
-            assert_eq!(
-                client.target_packet(&action),
-                format!("TARGET 1 1 {capability}")
-            );
+            for (route, command) in [
+                (DeliveryRoute::Background, "TARGET"),
+                (DeliveryRoute::Foreground, "FOREGROUND_TARGET"),
+            ] {
+                assert_eq!(
+                    client.target_packet_routed(&action, route),
+                    format!("{command} 1 1 {capability}")
+                );
+            }
         }
         for lane in 0..MAX_LANES {
             assert_ne!(

@@ -1,0 +1,75 @@
+---
+title: Disk usage and cleanup
+description: What local sandboxes keep on disk and how the SDK keeps it bounded.
+---
+
+Images, VM disks and logs live under `~/.cua` (`CUA_HOME` moves them).
+
+```bash test="cli-shape" id="cua-cache-du"
+cua cache du                        # usage per category, budget, free space
+cua sb ls                           # SIZE column (--no-size skips it)
+```
+
+## Automatic cleanup
+
+- **Cache budget.** Pulled images, macOS base VMs and local builds share one
+  budget: 30 GiB or 10% of free space, whichever is smaller. Least recently
+  used entries go first, after every pull and build and when the daemon is
+  idle.
+- **Never removed:** sandboxes (running or stopped), anything a sandbox uses,
+  checkpoints, and Docker objects the SDK did not create or pull.
+- **Ephemeral sandboxes** are deleted with their handle. If the program
+  crashes, the next `cua sb` command or the daemon deletes them 10 minutes
+  later.
+- **Logs** are capped at 10 MiB per file (also the Lume installer's `/tmp`
+  logs when cua installed Lume).
+- **Screenshots** from `cua do screenshot` without `--save` go to
+  `~/.cua/screenshots`; the newest 20 are kept.
+
+## Free space now
+
+```bash test="cli-shape" id="cua-cache-prune"
+cua cache prune --dry-run   # what would go
+cua cache prune             # down to the budget
+cua cache prune --all       # every unused cache entry
+cua sb rm my-box -f         # a sandbox and all its disks
+```
+
+## Settings
+
+```bash test="cli-shape" id="cua-cache-config"
+cua cache config --budget 50G --min-free 10G
+```
+
+```json title="~/.cua/cache.json" test="config" id="cua-cache-json"
+{
+  "budget": "50G",
+  "min_free": "10G",
+  "warn_free": "20G",
+  "orphan_reap_minutes": 10,
+  "auto_gc": true
+}
+```
+
+The environment wins: `CUA_CACHE_BUDGET` (`auto`, `off` or a size),
+`CUA_DISK_MIN_FREE` (default `5G`), `CUA_DISK_WARN_FREE` (`20G`),
+`CUA_ORPHAN_REAP_MINUTES` (`10`), `CUA_CACHE_AUTO_GC` (`0` turns it off).
+
+## Low disk
+
+A pull, build or VM create that would leave less than `CUA_DISK_MIN_FREE`
+fails before writing anything: `CuaError.InsufficientDisk` in the SDKs, exit
+code 7 in the CLI.
+
+```text output
+cua: insufficient disk: not enough disk space to pull ghcr.io/trycua/linux:24.04:
+it needs about 3.2 GiB and cua keeps 5.0 GiB free, but only 6.1 GiB is available
+on /Users/me/.cua/images (run `cua cache prune` to free space, or lower
+CUA_DISK_MIN_FREE)
+```
+
+## cua-bench results
+
+Kept until you remove them; cua-bench warns past 10 GiB
+(`CUA_BENCH_WARN_SIZE`). Keep fewer with `cb run ... --keep-runs 20` or
+`cb prune --runs --keep 20`.

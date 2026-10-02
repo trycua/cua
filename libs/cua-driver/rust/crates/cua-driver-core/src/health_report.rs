@@ -193,6 +193,22 @@ impl CheckEntry {
         }
         self
     }
+
+    /// The `binary_version` check. The version is a compiled-in constant, so
+    /// reaching this code already implies the binary built; it always passes.
+    pub fn binary_version() -> Self {
+        Self::pass(
+            NAME_BINARY_VERSION,
+            format!("cua-driver {}", env!("CARGO_PKG_VERSION")),
+        )
+    }
+
+    /// The `session_active` check. The server is servicing this MCP call, so
+    /// by construction the session is up. The check exists so consumers can
+    /// hard-code a canonical "is the server reachable?" signal.
+    pub fn session_active() -> Self {
+        Self::pass(NAME_SESSION_ACTIVE, "MCP session is active.")
+    }
 }
 
 /// Top-level `health_report` payload.
@@ -207,6 +223,11 @@ pub struct Report {
     pub driver_version: String,
     pub overall: Overall,
     pub checks: Vec<CheckEntry>,
+    /// Build identity of the running process (source revision and the
+    /// sha256 of the executable actually running). Additive under
+    /// `schema_version="1"`; absent from older drivers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<crate::build_info::BuildInfo>,
 }
 
 // ── Provider trait ───────────────────────────────────────────────────────────
@@ -450,6 +471,7 @@ impl Tool for HealthReportTool {
             driver_version: env!("CARGO_PKG_VERSION").to_owned(),
             overall: compute_overall(&checks),
             checks,
+            build: Some(crate::build_info::current()),
         };
 
         let text = text_summary(&report);
@@ -470,6 +492,22 @@ impl Tool for HealthReportTool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn shared_constant_checks_always_pass_with_canonical_names() {
+        let version = CheckEntry::binary_version();
+        assert_eq!(version.name, NAME_BINARY_VERSION);
+        assert_eq!(version.status, CheckStatus::Pass);
+        assert_eq!(
+            version.message,
+            format!("cua-driver {}", env!("CARGO_PKG_VERSION"))
+        );
+
+        let session = CheckEntry::session_active();
+        assert_eq!(session.name, NAME_SESSION_ACTIVE);
+        assert_eq!(session.status, CheckStatus::Pass);
+        assert_eq!(session.message, "MCP session is active.");
+    }
 
     // A platform-agnostic fixture provider used to exercise the
     // dispatcher, filter, and rollup logic without touching any real
@@ -510,13 +548,6 @@ mod tests {
             NAME_AX_CAPABILITY,
             NAME_SCREEN_CAPTURE_CAPABILITY,
         ]
-    }
-
-    fn parse_args(v: Value) -> (BTreeSet<String>, BTreeSet<String>) {
-        (
-            parse_string_set(v.get("include")),
-            parse_string_set(v.get("skip")),
-        )
     }
 
     // ── select_checks ────────────────────────────────────────────────
@@ -746,12 +777,5 @@ mod tests {
                 || description.contains(r#"schema_version: "1""#),
             "schema_version=1 must be documented in the tool description"
         );
-    }
-
-    // Belt-and-suspenders use of `parse_args` — keeps the helper
-    // exercised in case future tests reach for it.
-    #[test]
-    fn parse_args_compiles() {
-        let _ = parse_args(json!({ "include": ["x"], "skip": ["y"] }));
     }
 }

@@ -12,6 +12,10 @@
 // 125%/150%/200% scaling and clicks land where screenshots say they do.
 
 fn main() {
+    embed_git_sha();
+    println!("cargo:rerun-if-env-changed=CUA_DRIVER_REVIEW_EXTENSION_PUBLIC_KEY_BASE64");
+    validate_review_trust_root_build();
+
     #[cfg(target_os = "windows")]
     {
         embed_resource::compile("cua-driver.rc", embed_resource::NONE);
@@ -22,6 +26,80 @@ fn main() {
     }
     emit_sdk_framework_search_path();
     emit_swift_runtime_link_args();
+}
+
+/// Embeds the source revision as `CUA_DRIVER_GIT_SHA` (read by `main` and
+/// handed to `cua_driver_core::build_info::init`): the `CUA_DRIVER_GIT_SHA`
+/// build environment wins (release builds in containers without `.git`),
+/// else `git rev-parse HEAD`, else empty. Reruns when HEAD or its ref moves.
+fn embed_git_sha() {
+    println!("cargo:rerun-if-env-changed=CUA_DRIVER_GIT_SHA");
+    let from_env = std::env::var("CUA_DRIVER_GIT_SHA").unwrap_or_default();
+    let sha = if !from_env.trim().is_empty() {
+        from_env.trim().to_owned()
+    } else {
+        git(&["rev-parse", "HEAD"]).unwrap_or_default()
+    };
+    // Rebuild when the checkout moves: HEAD itself (worktrees keep it in
+    // their own git dir), the branch ref it names, and packed refs.
+    if let Some(git_dir) = git(&["rev-parse", "--absolute-git-dir"]) {
+        let git_dir = std::path::PathBuf::from(git_dir);
+        println!("cargo:rerun-if-changed={}", git_dir.join("HEAD").display());
+        if let Some(common) = git(&["rev-parse", "--git-common-dir"]) {
+            let common = std::path::PathBuf::from(common);
+            let common = if common.is_absolute() {
+                common
+            } else {
+                git_dir.join(common)
+            };
+            println!(
+                "cargo:rerun-if-changed={}",
+                common.join("packed-refs").display()
+            );
+            if let Some(reference) = git(&["symbolic-ref", "-q", "HEAD"]) {
+                println!(
+                    "cargo:rerun-if-changed={}",
+                    common.join(reference).display()
+                );
+            }
+        }
+    }
+    println!("cargo:rustc-env=CUA_DRIVER_GIT_SHA={sha}");
+}
+
+fn git(args: &[&str]) -> Option<String> {
+    let dir = std::env::var("CARGO_MANIFEST_DIR").ok()?;
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(out.stdout).ok()?.trim().to_owned();
+    (!text.is_empty()).then_some(text)
+}
+
+fn validate_review_trust_root_build() {
+    if std::env::var_os("CARGO_FEATURE_REVIEW_TRUST_ROOT").is_none() {
+        return;
+    }
+    if std::env::var("PROFILE").as_deref() == Ok("release") {
+        panic!("review-trust-root is review-only and cannot be enabled in release artifacts");
+    }
+    let key = std::env::var("CUA_DRIVER_REVIEW_EXTENSION_PUBLIC_KEY_BASE64").expect(
+        "review-trust-root requires CUA_DRIVER_REVIEW_EXTENSION_PUBLIC_KEY_BASE64 at build time",
+    );
+    let key = key.trim().as_bytes();
+    if key.len() != 44
+        || key[43] != b'='
+        || !key[..43]
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+    {
+        panic!("review-trust-root override must be standard base64 for exactly one 32-byte Ed25519 public key");
+    }
 }
 
 fn emit_sdk_framework_search_path() {

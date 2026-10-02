@@ -1,6 +1,6 @@
 use crate::{
     SandboxTemplateRef,
-    common::{integer_schema, string_schema},
+    common::{date_time_schema, integer_schema, string_schema},
 };
 use kube::CustomResource;
 use schemars::JsonSchema;
@@ -25,6 +25,21 @@ fn sandbox_template_ref_schema(_: &mut schemars::SchemaGenerator) -> schemars::S
             }
         }
     })
+}
+
+fn ttl_policy_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    WarmPoolTtlPolicy::json_schema(generator)
+}
+
+/// What the pool-operator deletes when a warm pool's creation TTL
+/// (`ttlSecondsAfterCreated`) or idle TTL (`idleTtlSeconds`) expires.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, uniffi::Enum)]
+pub enum WarmPoolTtlPolicy {
+    /// Delete only the warm pool. Its claims and namespace stay.
+    Retain,
+    /// Also delete the pool's dead unbound claims (TTL passed, older than
+    /// max(900s, bindDeadline)). Bound claims, the namespace and volumes stay.
+    Cascade,
 }
 
 #[derive(
@@ -124,6 +139,23 @@ pub struct OSGymSandboxWarmPoolSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[uniffi(default = None)]
     pub ttl_seconds_after_created: Option<u32>,
+    #[schemars(
+        default,
+        schema_with = "integer_schema",
+        range(min = 0, max = u32::MAX),
+        description = "Idle TTL in seconds. The pool-operator deletes the pool once it has had no Pending or Bound claims for this long, measured from status.lastActivityTime (or creation when no claim was ever made), when OSGYM_POOL_LIFECYCLE_MODE is enforce. When absent, the pool is never reaped for being idle."
+    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[uniffi(default = None)]
+    pub idle_ttl_seconds: Option<u32>,
+    #[schemars(
+        default,
+        schema_with = "ttl_policy_schema",
+        description = "What expiry of ttlSecondsAfterCreated or idleTtlSeconds deletes. Retain (the behaviour when absent) deletes only the pool. Cascade also deletes the pool's dead unbound claims (TTL passed and older than max(900s, bindDeadline)); it never deletes Bound claims, the namespace or volumes."
+    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[uniffi(default = None)]
+    pub ttl_policy: Option<WarmPoolTtlPolicy>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, JsonSchema, uniffi::Record)]
@@ -142,4 +174,20 @@ pub struct OSGymSandboxWarmPoolStatus {
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selector: Option<String>,
+    #[schemars(
+        default,
+        schema_with = "date_time_schema",
+        description = "When a claim last bound a Sandbox from this pool."
+    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[uniffi(default = None)]
+    pub last_claimed_at: Option<String>,
+    #[schemars(
+        default,
+        schema_with = "date_time_schema",
+        description = "When a claim against this pool was last created, bound or released. The idle TTL (spec.idleTtlSeconds) counts from here."
+    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[uniffi(default = None)]
+    pub last_activity_time: Option<String>,
 }

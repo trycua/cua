@@ -2,6 +2,7 @@
 name = "cua-driver"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Cross-platform background computer-use automation daemon (MCP server)"
 default-run = "cua-driver"
 
@@ -17,6 +18,7 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 cua-driver-core = { path = "../cua-driver-core" }
+cua-driver-contract = { path = "../cua-driver-contract" }
 cua-driver-sdk = { path = "../cua-driver-sdk" }
 cursor-overlay = { path = "../cursor-overlay" }
 pip-preview = { path = "../pip-preview" }
@@ -29,6 +31,10 @@ zeroize = { workspace = true }
 # PostHog ingest is a single fire-and-forget POST with a 3s timeout. Uses
 # rustls (default) so Linux/Windows builds don't require system OpenSSL.
 ureq = { version = "3", features = ["json"] }
+# The switches shared by every Cua program (DO_NOT_TRACK, CUA_TELEMETRY,
+# `[telemetry] enabled` in $CUA_HOME/config.toml). Only its config reader
+# is used; no sender.
+cua-telemetry = { path = "../../../../cua/crates/cua-telemetry", default-features = false }
 # Strict semver comparison for the startup update-available banner so that
 # pre-release tags (`-dev`, `-rc.1`) sort below their corresponding release
 # and we never recommend a pre-release as an "update".
@@ -41,6 +47,13 @@ semver = "1"
 # dependency is easy to find).
 tar = { version = "0.4", default-features = false }
 flate2 = "1"
+sha2 = { workspace = true }
+ring = "0.17"
+fs2 = { workspace = true }
+cap-std = "4.0.3"
+cap-fs-ext = "4.0.3"
+rustix = { version = "1.1", features = ["fs", "process"] }
+image = { workspace = true }
 
 # Used by crate::bundle::parent_is_not_launchd() for the TCC
 # auto-relaunch detection path on Unix (only the macOS heuristic
@@ -64,6 +77,10 @@ platform-linux = { path = "../platform-linux" }
 
 [features]
 default = []
+# Local review builds may replace the production extension trust root with an
+# explicitly supplied Ed25519 public key. The build script rejects release
+# profiles and missing/invalid overrides; ordinary artifacts never enable it.
+review-trust-root = []
 # GNOME/KDE portal input ships in ordinary Linux releases; PipeWire capture
 # remains a separate modern-desktop feature. The combined name stays as a
 # compatibility alias for Nix and downstream builds.
@@ -80,16 +97,12 @@ embed-resource = "2"
 # Shared integration-test harness (MCP/CLI transports, child reaping, paths,
 # response accessors). Dev-only — never linked into the shipped driver.
 cua-driver-testkit = { path = "../cua-driver-testkit" }
-cua-driver-contract = { path = "../cua-driver-contract" }
 jsonschema = { version = "0.46", default-features = false }
 tokio = { workspace = true, features = ["full"] }
-image = { workspace = true }
 base64 = { workspace = true }
 # Isolated HOME / cache directories for `version_check` unit tests so they
 # never touch the developer's real `~/.cua-driver/version_check.json`.
 tempfile = "3"
-futures-util = "0.3"
-tokio-tungstenite = "0.24"
 
 [target.'cfg(target_os = "windows")'.dev-dependencies]
 platform-windows = { path = "../platform-windows" }
@@ -105,6 +118,3 @@ windows = { version = "0.61", features = [
     "Win32_Security",
     "Win32_System_Threading",
 ] }
-
-[target.'cfg(target_os = "macos")'.dev-dependencies]
-core-foundation = "0.10"

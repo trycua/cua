@@ -1,0 +1,40 @@
+name: "CI: Check Image Refs"
+
+# Every container image reference in the repo (code, tests, samples, CI,
+# Dockerfiles, docs) must come from a source of truth: the shared catalog
+# libs/images/sandbox-images.json, a bench lock pin (libs/images/bench/*/lock.json),
+# or an entry with a reason in scripts/images/image-refs-allowlist.json (legacy,
+# cloud-built, third-party and synthetic test refs). Stale allowlist entries
+# fail too. Offline and fast, so it runs on every pull request. Also checks
+# the constants generated from the catalog (cua_bench/images.py).
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image-refs:
+    name: Image refs come from the catalog
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Unit tests
+        run: python3 -m unittest discover -s scripts/images/tests
+      - name: Every image ref is known
+        run: python3 scripts/images/check-image-refs.py --inventory "$RUNNER_TEMP/inventory.md"
+      - name: Generated image constants are current
+        run: python3 scripts/images/gen-image-constants.py --check
+      - name: Catalog sizes match the catalog digests
+        run: python3 scripts/images/record-image-sizes.py --check
+      - name: Inventory
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/inventory.md" ]; then
+            sed -n '1,/^## By image/p' "$RUNNER_TEMP/inventory.md" >>"$GITHUB_STEP_SUMMARY"
+          fi

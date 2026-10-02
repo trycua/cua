@@ -4,6 +4,10 @@ This is the maintainer-owned macOS GUI acceptance gate for `cua-driver`. It is
 not a GitHub Actions job. Run it on an Apple Silicon Mac with Lume, from a
 disposable clone of a stopped SIP-disabled golden image.
 
+Do not install or register a GitHub Actions runner inside the guest. GitHub may
+record the result afterward, but the canonical harness itself runs directly from
+Terminal in the logged-in VM session.
+
 The golden image supplies the logged-in Aqua session, stable local signing
 identity, and existing Accessibility and Screen Recording grants. Every run
 installs the requested source commit before testing. The preflight rejects a
@@ -275,7 +279,7 @@ All five commands must succeed, and `csrutil status` must report disabled.
 
 ### Seed app-owned grants in disposable SIP-off workers
 
-The public [Run Cua Driver in a macOS Lume VM](https://cua.ai/docs/how-to-guides/driver/run-in-macos-lume-vm)
+The public [Run Cua Driver in a macOS Lume VM](https://cua.ai/docs/cua-driver/guides/vms-and-remote)
 guide grants macOS consent through the VM display. Keep using that prompt flow
 for reusable private seeds. For automated disposable workers that are not cloned
 from a granted seed, run the host helper after `CuaDriverLocal.app` is installed
@@ -300,6 +304,15 @@ The guest helper refuses to write unless `sysctl -n hw.model` reports a
 permission identity from `/Applications/CuaDriverLocal.app`, writes only the
 Accessibility and Screen Recording entries for that app, restarts `tccd`, and
 verifies both entries.
+It accepts a designated requirement that pins a certificate leaf or root hash
+(local stable signing) or the exact Apple-anchored Developer ID requirement of a
+notarized release (`anchor apple generic` with a 10-character team ID). It
+rejects ad hoc `cdhash` requirements unless `--allow-adhoc` is passed. To seed
+the released app, pass `--app /Applications/CuaDriver.app --expected-client
+com.trycua.driver`. The host wrapper parses `lume get` with `jq`.
+Database rows or a successful helper exit alone do not certify the desktop:
+require both grants in `permissions status --json`, a fresh screenshot, and a
+reversible input action through the guest Driver before the matrix.
 
 After seeding, restart `CuaDriverLocal.app` before checking permission status if
 `install-local --autostart` or an earlier probe may have started the daemon:
@@ -383,18 +396,33 @@ cd ~/cua
 libs/cua-driver/tests/runners/macos-lume/run-all.sh
 ```
 
-When Chrome or Edge is installed in the disposable worker, include the optional
-standalone browser-tool matrix in the same exact-source run:
+Every complete run also executes the standalone installed-browser matrix after
+the repo-local harness matrix, so the worker must have Chrome and Edge
+installed.
+
+After a successful run, `artifacts/cua-driver/macos/direct-result.json` records
+the exact source SHA and run ID. Preserve the private artifacts and register
+their digest without uploading them publicly:
 
 ```bash
-cd ~/cua
-libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser
+SOURCE_SHA="$(jq -r .source_sha artifacts/cua-driver/macos/direct-result.json)"
+tar -czf "/tmp/cua-macos-lume-${SOURCE_SHA}.tgz" \
+  artifacts/cua-driver/macos artifacts/cua-driver/macos-standalone-browser
+shasum -a 256 "/tmp/cua-macos-lume-${SOURCE_SHA}.tgz"
+jq -r .run_id artifacts/cua-driver/macos/direct-result.json
+base64 < artifacts/cua-driver/macos/direct-result.json | tr -d '\n'
 ```
 
-This adds the declared adversarial installed-browser rows and writes their
-separate typed results and MP4 evidence under
+Dispatch `.github/workflows/e2e-rust-macos.yml` in `lume` mode at the same
+source SHA, passing the run ID printed by the harness and the lowercase digest.
+Also pass the one-line base64 value of `direct-result.json`. The protected
+GitHub-hosted job validates and records the result; it does not rerun the guest
+or require a self-hosted runner.
+
+The standalone browser matrix runs the declared adversarial installed-browser
+rows and writes their separate typed results and MP4 evidence under
 `artifacts/cua-driver/macos-standalone-browser/`. Missing external browsers are
-a hard failure for this option; they never shrink the reported matrix. On a
+a hard failure; they never shrink the reported matrix. On a
 repeat run, the entrypoint preserves the previous standalone-browser evidence
 in a temporary archive before creating a fresh artifact directory. The
 entrypoint temporarily restarts the disposable worker daemon in unrestricted
@@ -404,7 +432,7 @@ standard autostart daemon even when a browser row fails.
 On macOS Tahoe, first-use Chrome can present a native local-network discovery
 prompt over `chrome://inspect/#remote-debugging`. The standalone-browser lane
 uses loopback DevTools and does not need LAN discovery. Before freezing a seed
-that will run this optional lane, complete Chrome's welcome screen without
+that will run this lane, complete Chrome's welcome screen without
 signing in and leave the default-browser and usage-reporting choices disabled.
 Launch Chrome on that exact page in the VM display, choose **Don't Allow**, quit
 Chrome, then relaunch the page and require that the prompt does not return. Do
@@ -521,7 +549,7 @@ Pull evidence before deleting the worker, even after a failed run:
 REMOTE_ARTIFACT_DIR=artifacts/cua-driver/macos \
   libs/cua-driver/scripts/sync-vm-worktree.sh pull-artifacts \
   "lume@${VM_IP}" '~/cua'
-# Also retrieve this directory when --standalone-browser was used.
+# Standalone browser evidence.
 REMOTE_ARTIFACT_DIR=artifacts/cua-driver/macos-standalone-browser \
   libs/cua-driver/scripts/sync-vm-worktree.sh pull-artifacts \
   "lume@${VM_IP}" '~/cua'

@@ -9,9 +9,9 @@ import httpx
 import pytest
 from cua_sandbox.interfaces.driver import DriverConnectionError
 from cua_sandbox.sandbox import Sandbox
+from cua_sandbox.transport.base import Transport as BaseTransport
 from cua_sandbox.transport.fleet import FleetTransport
 from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
-from cua_sandbox.transport.local import LocalTransport
 
 
 class ChannelError(Exception):
@@ -69,6 +69,28 @@ def envelope(**overrides):
             **overrides,
         )
     )
+
+
+class PlainTransport(BaseTransport):
+    """A transport with neither Fleet services nor cua-spacesd (e.g. QMP/VNC)."""
+
+    async def connect(self):
+        pass
+
+    async def disconnect(self):
+        pass
+
+    async def send(self, action, **params):
+        raise NotImplementedError
+
+    async def screenshot(self, format="png", quality=95):
+        raise NotImplementedError
+
+    async def get_screen_size(self):
+        raise NotImplementedError
+
+    async def get_environment(self):
+        return "linux"
 
 
 class Transport(FleetTransport):
@@ -319,7 +341,7 @@ async def test_bind_session_is_unsupported_without_dispatch(sandbox):
 
 async def test_unsupported_transport_and_missing_service_do_not_load_native(monkeypatch):
     monkeypatch.setitem(sys.modules, "cua_driver", None)
-    sb = Sandbox(LocalTransport(), _telemetry_enabled=False)
+    sb = Sandbox(PlainTransport(), _telemetry_enabled=False)
     with pytest.raises(DriverConnectionError, match="Fleet"):
         async with sb.driver.connect():
             pass

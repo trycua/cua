@@ -47,7 +47,7 @@ These run without the repo-local GUI applications:
 | MCP and CLI boundary | `rust/crates/cua-driver/tests/protocol_*` | Handshake, tool registration, tool calls, media, sessions, and errors |
 | Lifecycle sessions and target migration | Core `session`, `session_tools`, `action_target`, and compatibility `capture_scope` tests plus `session_capture_scope_test.rs` | One implicit session per transport, five-minute idle policy, in-flight and exact-once cleanup, owner-scoped inspection and revival, per-call target validation, and legacy capture-scope compatibility |
 | Tool-contract gate | `schema_consistency_test.rs` | Shared tool schema parity and reviewed risk metadata across OS backends |
-| Configuration transport | `transport_config_persistence_test.rs` | CLI and MCP configuration persistence |
+| Configuration transport | `transport_config_persistence_test.rs` | CLI configuration persistence across daemon-backed processes |
 | Token and protocol surfaces | `protocol_element_token_test.rs`, related tests | JSON-RPC-visible contract behavior |
 | Permission modes and policy startup | `permission_policy_startup_test.rs`, `daemon_required_test.rs`, core `authorization`, `policy`, and `session_manifest` tests | Fail-before-bind policy loading, managed/user intersection, immutable standard/autonomous/unrestricted startup, danger acknowledgement, admin disable, deny-by-default manifests, and canonical daemon dispatch |
 | Protected browser grants | Core `consent`, `browser::grant`, `browser::engine`, and `browser::v2_tests` | Exact request digests, provider authentication seam and deadline, persistent-indicator activation, Stop/session teardown, forged legacy artifact refusal, exact PID/window manifest scope, and the live-origin decision path used before mutation |
@@ -70,7 +70,7 @@ Source:
 - `tests/fixtures/shared/web/index.html`
 - `tests/fixtures/apps/cross-platform/electron/`
 - `tests/fixtures/apps/cross-platform/tauri/`
-- `rust/crates/cua-driver/tests/cross_platform_behavior_test.rs`
+- `rust/crates/cua-driver-e2e/tests/cross_platform_behavior_test.rs`
 
 The shared harness exposes deterministic external markers for these actions:
 
@@ -99,6 +99,68 @@ results are trusted. A refusal fails a cell whose contract requires delivery.
 Canonical reporting rejects skips and enforces the complete shared catalog
 size for unfiltered runs. Diagnostic filters are allowed, but matching zero
 cells is always an error.
+
+## Harness E2E: Optional Perception Loop
+
+`perception_capture_loop_test.rs` runs the documented capture-bound loop in
+the capture lane of the macOS, Windows, and Linux X11 runners:
+
+| Cell | Coverage |
+| --- | --- |
+| `<os>-electron-parse-visual-regions-not-installed-not-applicable-not-applicable` | A retained window capture parses to the typed `not_installed` refusal when no extension is installed |
+| `<os>-electron-perception-capture-click-px-foreground` | `get_window_state` capture, `parse_visual_regions` on that capture, one foreground `click` with the same `capture_id` at the parsed region center, fixture-journal delivery oracle, `capture_not_found` refusal for the consumed capture, then a fresh capture and reparse |
+| `<os>-tk-perception-published-capture-click-px-foreground` | The published `cua-perception` extension, installed from its signed release catalog as `publisher-verified`, parses a capture of the visual-only Tk canvas. One foreground capture-bound `click` on the OCR region that reads "Cancel" selects that card in the fixture journal. The consumed capture is refused with `capture_not_found`, a fresh capture reparses, and an unused capture older than 60 seconds is refused with `capture_expired`. Neither refusal changes the fixture |
+
+The Electron rows use a developer-only unsigned worker compiled from
+`tests/support/perception_swatch_worker.rs`. It speaks the real worker
+protocol inside Driver's containment, echoes the retained PNG digest, and finds
+the harness's solid `#drag-source` and `#drop-target` swatches in the captured
+pixels, so those rows need no published artifact or model.
+
+The published-catalog row pins the `cua-perception-v0.2.1` catalog and archive
+SHA-256 for each target and downloads them (about 425 MB) unless
+`CUA_E2E_PERCEPTION_CACHE_DIR` already holds verified copies. The Driver also
+checks the catalog signature. The canvas fixture needs a Python with Tk:
+`python3` on macOS and Linux, and `py -3` or `python` on Windows.
+`CUA_E2E_TK_PYTHON` overrides the search. The hosted macOS capture lane adds
+the matching Homebrew `python-tk` formula, and the Linux capture lane installs
+`python3-tk` and `x11-utils`. The row fails rather than skips when Tk is
+missing.
+
+macOS runs a second instance of the installed app with an isolated extension
+home and socket, so the shared daemon never gains either extension. Wayland
+lanes record a coverage limitation instead of running these rows. Broader
+model quality belongs to the `cua-perception` crate and its artifact-gated
+lanes.
+
+## Harness E2E: Model-Backed Perception Decision Loop
+
+`perception_s1_decision_loop_test.rs` runs the same capture-bound loop with
+real models, in the `s1-perception` lane of the Linux X11 runner
+(`scripts/ci/linux/run-rust-e2e.sh`). Only
+`.github/workflows/ci-cua-s1-weights.yml` selects that lane (nightly, manual
+dispatch, and pull requests that touch Cua-S1, the jev-use chooser, or the
+row), because it needs the pinned Cua-S1-4B weights:
+
+| Cell | Coverage |
+| --- | --- |
+| `linux-electron-perception-s1-capture-click-px-foreground` | The published `cua-perception` release, installed from its signed catalog as `publisher-verified`, parses a retained Electron window capture with OmniParser; a resident Cua-S1-4B (text adapter, CPU) chooses one of the parsed text regions for the goal "Increment the counter once."; Driver clicks the region center once with the same `capture_id` within the 60-second capture lifetime; the fixture journal must reach `counter=1`; the consumed capture is refused with `capture_not_found`, an unused capture past its lifetime is refused with `capture_expired`, and the counter stays at 1 |
+
+The model runs on CPU in `bfloat16`, which fits the capture lifetime only on
+hosted runners that expose AVX512-BF16. With 16 offered regions, decisions
+took 20 to 38 s and the click landed 23 to 42 s after the capture, so the row
+offers at most 12. The same
+`ubuntu-latest` label sometimes lands on a VM without AVX-512, where one text
+decision takes over 50 s. On such a runner the job skips the row, writes a
+`cua-e2e-limitation-v1` record (`perception-s1-decision-loop-limitation.json`),
+and warns; re-run the job to draw another runner.
+
+The row writes the parse, the `cua.jev_choice_request_v1` request, the S1
+decision, and a timing record under `artifacts/cua-driver/linux/s1-perception/`
+next to the trajectory video. macOS and Windows lanes do not run it: the
+hosted macOS arm64 runner has 7 GB of memory, less than the 9.3 GB of 16-bit
+base weights, and the Windows lane has no provisioned weights. Their
+capture-bound loop is covered by the model-free row above.
 
 ## Harness E2E: Native Windows
 

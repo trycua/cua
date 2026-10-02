@@ -1,0 +1,18 @@
+{
+  "title": "Guides",
+  "pages": [
+    "add-a-space",
+    "unattended-access",
+    "share-a-space",
+    "stream-a-desktop",
+    "send-files",
+    "teleport-an-app",
+    "persistent-agents",
+    "keyvault",
+    "site-login",
+    "relay-security",
+    "cua-volume",
+    "use-from-an-agent",
+    "updates"
+  ]
+}

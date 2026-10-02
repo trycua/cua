@@ -27,7 +27,7 @@ extension Server {
         TelemetryClient.shared.record(event: TelemetryEvent.apiVMGet)
 
         // Check if an async pull is in progress for this VM name
-        let pullProgress = await PullProgressTracker.shared.getProgress(for: name)
+        let pullProgress = await PullProgressTracker.shared.getPullProgress(for: name)
         let pullError = await PullProgressTracker.shared.getError(for: name)
 
         if let errorMsg = pullError {
@@ -37,16 +37,7 @@ extension Server {
 
         if let progress = pullProgress {
             // Pull in progress — return a synthetic "pulling" status without hitting disk
-            let responseBody: [String: AnyEncodable] = [
-                "name": AnyEncodable(name),
-                "status": AnyEncodable("pulling"),
-                "downloadProgress": AnyEncodable(progress),
-            ]
-            return try HTTPResponse(
-                statusCode: .ok,
-                headers: ["Content-Type": "application/json"],
-                body: JSONEncoder().encode(responseBody)
-            )
+            return try Self.pullingResponse(name: name, progress: progress)
         }
 
         do {
@@ -56,6 +47,76 @@ extension Server {
             return try HTTPResponse.json(details)
         } catch {
             return .badRequest(message: error.localizedDescription)
+        }
+    }
+
+    /// The synthetic `GET /lume/vms/:name` body while an async pull runs:
+    /// `downloadProgress` is the percent (0 to 100) older clients read;
+    /// `downloadedBytes`, `totalBytes` and `bytesPerSecond` give byte detail.
+    nonisolated static func pullingResponse(name: String, progress: PullProgress) throws
+        -> HTTPResponse
+    {
+        let responseBody: [String: AnyEncodable] = [
+            "name": AnyEncodable(name),
+            "status": AnyEncodable("pulling"),
+            "downloadProgress": AnyEncodable(progress.percent),
+            "downloadedBytes": AnyEncodable(progress.downloadedBytes),
+            "totalBytes": AnyEncodable(progress.totalBytes),
+            "bytesPerSecond": AnyEncodable(progress.bytesPerSecond),
+        ]
+        return try HTTPResponse(
+            statusCode: .ok,
+            headers: ["Content-Type": "application/json"],
+            body: JSONEncoder().encode(responseBody)
+        )
+    }
+
+    /// `POST /lume/pull/cancel` with `{"name": "<vm>"}`: cancels the async pull
+    /// started by `/lume/pull/start` for that name and waits (up to
+    /// `pullCancelTimeout` seconds) until it stopped and cleaned up. 200 once it
+    /// ended, 404 when no async pull runs for the name, 500 if it did not stop
+    /// in time.
+    func handlePullCancel(_ body: Data?, timeout: TimeInterval = 30) async throws -> HTTPResponse {
+        guard let body = body,
+            let request = try? JSONDecoder().decode(PullCancelRequest.self, from: body),
+            !request.name.isEmpty
+        else {
+            return HTTPResponse(
+                statusCode: .badRequest,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(APIError(message: "Invalid request body"))
+            )
+        }
+
+        let outcome = await PullProgressTracker.shared.cancel(name: request.name, timeout: timeout)
+        switch outcome {
+        case .notFound:
+            return HTTPResponse(
+                statusCode: .notFound,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(
+                    APIError(message: "no pull in progress for \(request.name)"))
+            )
+        case .cancelled:
+            Logger.info("Async pull cancelled", metadata: ["name": request.name])
+            return HTTPResponse(
+                statusCode: .ok,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode([
+                    "message": "Pull cancelled",
+                    "name": request.name,
+                ])
+            )
+        case .timedOut:
+            return HTTPResponse(
+                statusCode: .internalServerError,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode(
+                    APIError(
+                        message:
+                            "the pull for \(request.name) did not stop within \(Int(timeout)) seconds"
+                    ))
+            )
         }
     }
 
@@ -71,15 +132,34 @@ extension Server {
         }
 
         let imageName = request.image.split(separator: ":").first.map(String.init) ?? request.image
+        // Telemetry: the catalog id or `custom`, never the reference.
         TelemetryClient.shared.record(event: TelemetryEvent.apiPull, properties: [
-            "image_name": imageName
+            "image": TelemetryClient.imageId(
+                request.image, registry: request.registry, organization: request.organization)
         ])
 
         let vmName = request.name ?? imageName
-        await PullProgressTracker.shared.setProgress(0.0, for: vmName)
+        let tracker = PullProgressTracker.shared
+
+        // A second start for a name that is already pulling joins that pull
+        // instead of racing a duplicate download into the same VM directory.
+        if await tracker.activeCancellableToken(for: vmName) != nil {
+            return HTTPResponse(
+                statusCode: .accepted,
+                headers: ["Content-Type": "application/json"],
+                body: try JSONEncoder().encode([
+                    "message": AnyEncodable("Pull already in progress"),
+                    "name": AnyEncodable(vmName),
+                    "image": AnyEncodable(request.image),
+                ])
+            )
+        }
+
+        let token = await tracker.begin(name: vmName, cancellable: true)
         let pullStartedAt = Date()
 
-        Task.detached { @MainActor @Sendable in
+        let task = Task.detached { @MainActor @Sendable in
+            let outcome: PullProgressTracker.Outcome
             do {
                 let vmController = LumeController()
                 try await vmController.pullImage(
@@ -88,31 +168,36 @@ extension Server {
                     registry: request.registry,
                     organization: request.organization,
                     storage: request.storage,
-                    progressHandler: { pct in
-                        Task { await PullProgressTracker.shared.setProgress(pct, for: vmName) }
+                    progressHandler: { progress in
+                        Task { await tracker.setProgress(progress, for: vmName, token: token) }
                     }
                 )
-                await PullProgressTracker.shared.complete(for: vmName)
+                outcome = .completed
                 Logger.info("Async pull completed", metadata: ["name": vmName])
-                TelemetryClient.shared.recordOperationCompleted(
-                    operation: "pull_start",
-                    transport: .http,
-                    success: true,
-                    errorClass: .none,
-                    elapsed: Date().timeIntervalSince(pullStartedAt)
-                )
             } catch {
-                await PullProgressTracker.shared.setError(error.localizedDescription, for: vmName)
-                Logger.error("Async pull failed", metadata: ["name": vmName, "error": error.localizedDescription])
-                TelemetryClient.shared.recordOperationCompleted(
-                    operation: "pull_start",
-                    transport: .http,
-                    success: false,
-                    errorClass: .operationError,
-                    elapsed: Date().timeIntervalSince(pullStartedAt)
-                )
+                if Task.isCancelled || error is CancellationError {
+                    outcome = .cancelled
+                    Logger.info("Async pull stopped by cancel", metadata: ["name": vmName])
+                } else {
+                    outcome = .failed(error.localizedDescription)
+                    Logger.error(
+                        "Async pull failed",
+                        metadata: ["name": vmName, "error": error.localizedDescription])
+                }
             }
+            let succeeded: Bool
+            if case .completed = outcome { succeeded = true } else { succeeded = false }
+            TelemetryClient.shared.recordOperationCompleted(
+                operation: "pull_start",
+                transport: .http,
+                success: succeeded,
+                errorClass: succeeded ? .none : .operationError,
+                elapsed: Date().timeIntervalSince(pullStartedAt)
+            )
+            // Last step: a waiting cancel returns once this ran, after cleanup.
+            await tracker.finish(name: vmName, token: token, outcome: outcome)
         }
+        await tracker.attach(task, name: vmName, token: token)
 
         return HTTPResponse(
             statusCode: .accepted,
@@ -291,19 +376,28 @@ extension Server {
         }
     }
 
-    func handleStopVM(name: String, storage: String? = nil) async throws -> HTTPResponse {
+    func handleStopVM(
+        name: String,
+        storage: String? = nil,
+        force: Bool = false,
+        timeout: TimeInterval = VM.defaultStopTimeout
+    ) async throws -> HTTPResponse {
         // Record telemetry
         TelemetryClient.shared.record(event: TelemetryEvent.apiVMStop)
 
         Logger.info(
-            "Stopping VM", metadata: ["name": name, "storage": String(describing: storage)])
+            "Stopping VM",
+            metadata: [
+                "name": name, "storage": String(describing: storage), "force": "\(force)",
+            ])
 
         do {
             Logger.info("Creating VM controller", metadata: ["name": name])
             let vmController = LumeController()
 
             Logger.info("Calling stopVM on controller", metadata: ["name": name])
-            try await vmController.stopVM(name: name, storage: storage)
+            try await vmController.stopVM(
+                name: name, storage: storage, force: force, timeout: timeout)
 
             Logger.info(
                 "VM stopped, waiting 5 seconds for locks to clear", metadata: ["name": name])
@@ -537,15 +631,15 @@ extension Server {
             )
         }
 
-        // Record telemetry - strip version tag from image name for privacy
-        let imageName = request.image.split(separator: ":").first.map(String.init) ?? request.image
+        // Telemetry: the catalog id or `custom`, never the reference.
         TelemetryClient.shared.record(event: TelemetryEvent.apiPull, properties: [
-            "image_name": imageName
+            "image": TelemetryClient.imageId(
+                request.image, registry: request.registry, organization: request.organization)
         ])
 
+        let vmName = request.name ?? (request.image.split(separator: ":").first.map(String.init) ?? request.image)
+        let token = await PullProgressTracker.shared.begin(name: vmName, cancellable: false)
         do {
-            let vmName = request.name ?? (request.image.split(separator: ":").first.map(String.init) ?? request.image)
-            await PullProgressTracker.shared.setProgress(0.0, for: vmName)
             let vmController = LumeController()
             try await vmController.pullImage(
                 image: request.image,
@@ -553,11 +647,14 @@ extension Server {
                 registry: request.registry,
                 organization: request.organization,
                 storage: request.storage,
-                progressHandler: { pct in
-                    Task { await PullProgressTracker.shared.setProgress(pct, for: vmName) }
+                progressHandler: { progress in
+                    Task {
+                        await PullProgressTracker.shared.setProgress(
+                            progress, for: vmName, token: token)
+                    }
                 }
             )
-            await PullProgressTracker.shared.complete(for: vmName)
+            await PullProgressTracker.shared.finish(name: vmName, token: token, outcome: .completed)
 
             return HTTPResponse(
                 statusCode: .ok,
@@ -569,8 +666,8 @@ extension Server {
                 ])
             )
         } catch {
-            let vmName = request.name ?? (request.image.split(separator: ":").first.map(String.init) ?? request.image)
-            await PullProgressTracker.shared.setError(error.localizedDescription, for: vmName)
+            await PullProgressTracker.shared.finish(
+                name: vmName, token: token, outcome: .failed(error.localizedDescription))
             return HTTPResponse(
                 statusCode: .badRequest,
                 headers: ["Content-Type": "application/json"],

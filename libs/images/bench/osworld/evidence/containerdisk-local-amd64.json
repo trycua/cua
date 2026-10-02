@@ -1,0 +1,79 @@
+{
+  "id": "osworld",
+  "variant": "containerdisk",
+  "where": "local",
+  "arch": "amd64",
+  "image": "ghcr.io/trycua/bench-osworld@sha256:7c2d180ba38562c7fce0bc65566b820bf38a5b4012b3aa4879eff225d3b9f750",
+  "child": null,
+  "container_runtime": null,
+  "pinned_ref": "ghcr.io/trycua/bench-osworld@sha256:4a2c84569f92962f1df188b3b2811e2a70ec7de3d747df5b5428fea3cbc87555",
+  "doctor": "fail",
+  "seconds": 611.8,
+  "ok": false,
+  "checks": [
+    {
+      "check": "ready",
+      "status": "pass",
+      "detail": "after 357s"
+    },
+    {
+      "check": "server",
+      "status": "pass",
+      "detail": "GET /screenshot on :5000 -> 200",
+      "seconds": 7.1
+    },
+    {
+      "check": "guestd",
+      "status": "pass",
+      "detail": "GetCapabilities: arch, bootTime, displayServer, displays, features, hostname, limits, os, protocolRevision, protocolVersion, runtime, runtimeDetail, sideChannels, version",
+      "seconds": 0.52
+    },
+    {
+      "check": "screen",
+      "status": "fail",
+      "detail": "1920x1080 (want 1920x1080), color variety 0.000",
+      "seconds": 182.5
+    },
+    {
+      "check": "input",
+      "status": "fail",
+      "detail": {
+        "ok": false,
+        "changed_fraction": 0.0
+      },
+      "seconds": 12.29
+    },
+    {
+      "check": "bench.server_screenshot",
+      "status": "pass",
+      "detail": "200, 6537 bytes"
+    },
+    {
+      "check": "bench.server_execute",
+      "status": "pass",
+      "detail": {
+        "error": "",
+        "output": "user\n:0\n",
+        "returncode": 0,
+        "status": "success"
+      }
+    },
+    {
+      "check": "bench.server_accessibility",
+      "status": "fail",
+      "detail": "500, 0 chars: <!doctype html>\n<html lang=en>\n  <head>\n    <title>AttributeError: &#39;NoneType&#39; object has no attribute &#39;items&#39;\n // Werkzeug Debugger</title>\n    <link rel=\"stylesheet\" href=\"?__debugger__=yes&amp;cmd=resource&amp;f=style.css\">\n    <link rel=\"shortcut icon\"\n        href=\"?__debugger__="
+    },
+    {
+      "check": "bench.server_screen_size",
+      "status": "pass",
+      "detail": "{\n  \"height\": 1080,\n  \"width\": 1920\n}\n"
+    },
+    {
+      "check": "doctor",
+      "status": "fail",
+      "detail": "rc=1 (report in containerdisk-local-amd64-doctor.json); not passing: ['resources.memory', 'resources.disk.root', 'resources.disk.tmp', 'resources.disk.home_user', 'services.chromium-cdp', 'services.vlc-http', 'stream.media.desktop', 'screenshot.display']",
+      "seconds": 29.05
+    }
+  ],
+  "date": "2026-09-24T08:27:51Z"
+}

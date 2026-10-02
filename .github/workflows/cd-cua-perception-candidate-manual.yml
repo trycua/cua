@@ -1,0 +1,73 @@
+name: "CD: Cua Perception exact-SHA candidates"
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Exact 40-character SHA at the reviewed ref tip"
+        required: true
+        type: string
+      reviewed_ref:
+        description: "Reviewed PR head or immutable candidate tag"
+        required: true
+        type: string
+      payload_run_id:
+        description: "Run ID containing all three platform bundle inputs"
+        required: true
+        type: string
+      linux_payload_artifact:
+        description: "Linux x86_64 release-input bundle artifact"
+        required: true
+        default: "cua-perception-input-linux-x86_64"
+        type: string
+      macos_payload_artifact:
+        description: "macOS aarch64 release-input bundle artifact"
+        required: true
+        default: "cua-perception-input-macos-aarch64"
+        type: string
+      windows_payload_artifact:
+        description: "Windows x86_64 release-input bundle artifact"
+        required: true
+        default: "cua-perception-input-windows-x86_64"
+        type: string
+      catalog_version:
+        description: "Monotonic catalog version"
+        required: true
+        type: string
+      expires_unix:
+        description: "Catalog expiry before the active key expires"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  candidate:
+    name: candidate ${{ matrix.target_triple }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target_os: linux
+            target_triple: x86_64-unknown-linux-gnu
+            payload_artifact: ${{ inputs.linux_payload_artifact }}
+          - target_os: macos
+            target_triple: aarch64-apple-darwin
+            payload_artifact: ${{ inputs.macos_payload_artifact }}
+          - target_os: windows
+            target_triple: x86_64-pc-windows-msvc
+            payload_artifact: ${{ inputs.windows_payload_artifact }}
+    uses: ./.github/workflows/cd-cua-perception-candidate.yml
+    with:
+      payload_artifact: ${{ matrix.payload_artifact }}
+      payload_run_id: ${{ fromJSON(inputs.payload_run_id) }}
+      source_ref: ${{ inputs.source_sha }}
+      reviewed_ref: ${{ inputs.reviewed_ref }}
+      target_os: ${{ matrix.target_os }}
+      target_triple: ${{ matrix.target_triple }}
+      catalog_version: ${{ fromJSON(inputs.catalog_version) }}
+      expires_unix: ${{ fromJSON(inputs.expires_unix) }}
+    secrets:
+      PERCEPTION_ED25519_PRIVATE_KEY_BASE64: ${{ secrets.PERCEPTION_ED25519_PRIVATE_KEY_BASE64 }}

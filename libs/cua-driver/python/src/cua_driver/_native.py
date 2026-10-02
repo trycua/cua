@@ -572,6 +572,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_move_cursor() != 18320:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_parse_visual_regions() != 15013:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_press_key() != 63712:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriver_runtime_scope_prefix() != 2453:
@@ -637,6 +639,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_list_windows() != 20571:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_move_cursor() != 35768:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_parse_visual_regions() != 31748:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_press_key() != 36768:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1377,6 +1381,11 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_move_cursor.argtypes = (
     cua_driver._native_contract._UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_move_cursor.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_parse_visual_regions.argtypes = (
+    ctypes.c_uint64,
+    cua_driver._native_contract._UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_parse_visual_regions.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_press_key.argtypes = (
     ctypes.c_uint64,
     cua_driver._native_contract._UniffiRustBuffer,
@@ -1542,6 +1551,11 @@ _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_move_cursor.argtypes
     cua_driver._native_contract._UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_move_cursor.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_parse_visual_regions.argtypes = (
+    ctypes.c_uint64,
+    cua_driver._native_contract._UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_parse_visual_regions.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_press_key.argtypes = (
     ctypes.c_uint64,
     cua_driver._native_contract._UniffiRustBuffer,
@@ -1828,6 +1842,9 @@ _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_metadata.restype = ct
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_move_cursor.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_move_cursor.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_parse_visual_regions.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_parse_visual_regions.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_press_key.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriver_press_key.restype = ctypes.c_uint16
@@ -1927,6 +1944,9 @@ _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_list_windows.r
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_move_cursor.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_move_cursor.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_parse_visual_regions.argtypes = (
+)
+_UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_parse_visual_regions.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_press_key.argtypes = (
 )
 _UniffiLib.uniffi_cua_driver_sdk_checksum_method_cuadriversession_press_key.restype = ctypes.c_uint16
@@ -5556,6 +5576,8 @@ class _UniffiFfiConverterTypeSdkClientKind(_UniffiConverterRustBuffer):
 
 
 
+
+
 class CuaDriverProtocol(typing.Protocol):
 
     async def call_tool(self, name: str,arguments_json: str) -> ToolResult:
@@ -5620,6 +5642,8 @@ class CuaDriverProtocol(typing.Protocol):
     async def metadata(self, ) -> DriverMetadata:
         raise NotImplementedError
     async def move_cursor(self, input: cua_driver._native_contract.MoveCursorInput) -> ToolResult:
+        raise NotImplementedError
+    async def parse_visual_regions(self, input: cua_driver._native_contract.ParseVisualRegionsInput) -> ToolResult:
         raise NotImplementedError
     async def press_key(self, input: cua_driver._native_contract.PressKeyInput) -> ToolResult:
         raise NotImplementedError
@@ -6415,6 +6439,23 @@ class CuaDriver(CuaDriverProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def parse_visual_regions(self, input: cua_driver._native_contract.ParseVisualRegionsInput) -> ToolResult:
+
+        cua_driver._native_contract._UniffiFfiConverterTypeParseVisualRegionsInput.check_lower(input)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            cua_driver._native_contract._UniffiFfiConverterTypeParseVisualRegionsInput.lower(input),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeToolResult.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriver_parse_visual_regions(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def press_key(self, input: cua_driver._native_contract.PressKeyInput) -> ToolResult:
 
         cua_driver._native_contract._UniffiFfiConverterTypePressKeyInput.check_lower(input)
@@ -6694,6 +6735,8 @@ class CuaDriverSessionProtocol(typing.Protocol):
     async def list_windows(self, input: cua_driver._native_contract.ListWindowsInput) -> cua_driver._native_contract.ListWindowsOutput:
         raise NotImplementedError
     async def move_cursor(self, input: cua_driver._native_contract.MoveCursorInput) -> ToolResult:
+        raise NotImplementedError
+    async def parse_visual_regions(self, input: cua_driver._native_contract.ParseVisualRegionsInput) -> ToolResult:
         raise NotImplementedError
     async def press_key(self, input: cua_driver._native_contract.PressKeyInput) -> ToolResult:
         raise NotImplementedError
@@ -7093,6 +7136,23 @@ class CuaDriverSession(CuaDriverSessionProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_move_cursor(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cua_driver_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def parse_visual_regions(self, input: cua_driver._native_contract.ParseVisualRegionsInput) -> ToolResult:
+
+        cua_driver._native_contract._UniffiFfiConverterTypeParseVisualRegionsInput.check_lower(input)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            cua_driver._native_contract._UniffiFfiConverterTypeParseVisualRegionsInput.lower(input),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeToolResult.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeDriverError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cua_driver_sdk_fn_method_cuadriversession_parse_visual_regions(*_uniffi_lowered_args),
             _UniffiLib.ffi_cua_driver_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cua_driver_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cua_driver_sdk_rust_future_free_rust_buffer,

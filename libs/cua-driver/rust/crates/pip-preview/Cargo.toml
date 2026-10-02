@@ -2,6 +2,7 @@
 name = "pip-preview"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 serde_json = { workspace = true }

@@ -1,0 +1,70 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cua-spacesd-teleport",
+    "crates/cua-spacesd-desktop",
+    "crates/cua-spacesd",
+    "crates/cua-spacesd-doctor",
+    "crates/cua-spacesd-provider-api",
+    "crates/cua-spacesd-session",
+    "crates/cua-spacesd-socks",
+    "crates/cua-spacesd-test-apps",
+    "crates/cua-spacesd-server",
+    "crates/cua-relay",
+]
+
+[workspace.package]
+version = "0.2.2"
+edition = "2021"
+authors = ["TryCua"]
+license = "FSL-1.1-MIT"
+repository = "https://github.com/trycua/cua"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+uuid = { version = "1", features = ["v4"] }
+axum = { version = "0.7", features = ["ws"] }
+futures-util = { version = "0.3", features = ["sink"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+bytes = "1"
+quinn = { version = "0.11.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rustls = { version = "0.23.42", default-features = false, features = ["ring", "std", "tls12"] }
+sha2 = "0.10"
+url = "2"
+tempfile = "3"
+# `vendored` builds OpenSSL from source and statically links it, so the release
+# binaries carry no libssl.so.* runtime dependency (the build container ships
+# OpenSSL 1.1, the guest OpenSSL 3). Feature-unifies across every native-tls
+# user (tokio-tungstenite transitively); cua-spacesd-server lists it directly so
+# the feature is always on in the driver binary.
+native-tls = { version = "0.2", features = ["vendored"] }
+tokio-native-tls = "0.3"
+
+# gRPC / HTTP server stack of cua-spacesd (cua-spacesd-server, cua-relay).
+# Those crates use axum 0.8 (declared per crate) because tonic 0.14 routes are
+# axum 0.8 routers; the window-streaming crates keep the `axum` 0.7 entry above.
+tonic = "0.14"
+tonic-web = "0.14"
+tonic-reflection = "0.14"
+prost = "0.14"
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["http1", "http2", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "server-auto", "server-graceful", "client-legacy", "http1", "http2"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors"] }
+tokio-util = { version = "0.7", features = ["io", "compat"] }
+tokio-stream = { version = "0.1", features = ["sync", "net"] }
+yamux = "0.13"
+clap = { version = "4", features = ["derive", "env"] }
+hmac = "0.12"
+subtle = "2"
+base64 = "0.22"
+rand = "0.8"
+hex = "0.4"

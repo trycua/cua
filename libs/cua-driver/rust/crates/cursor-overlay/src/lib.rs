@@ -5,23 +5,31 @@
 //! - `MotionConfig` — glide duration, spring, dwell, idle-hide timings
 //! - `CubicBezier` + `PathPlanner` — Bezier path math (ported 1:1 from C#)
 //! - `OverlayCommand` — messages sent from MCP tools to the overlay thread
+//! - `SurfaceFit` — keeps each platform's overlay surface fitted to the live
+//!   display geometry, so screen-coordinate cursors stay on the pointer
 
 pub mod badge_glyphs;
 pub mod bezier;
+pub mod capture_exclusion;
 pub mod capture_utils;
 pub mod motion;
 pub mod path_planner;
+pub mod render_map;
 pub mod render_state;
 pub mod session_badge;
+pub mod surface_fit;
 pub mod theme;
 pub mod theme_artifact;
-pub mod util;
 pub mod z_order;
 
 pub use badge_glyphs::{BadgeChip, BadgeGlyph};
 pub use bezier::CubicBezier;
 pub use motion::{MotionConfig, Spring};
 pub use path_planner::{PathPlanner, PathState, PlannedPath};
+pub use render_map::{
+    keyed_config, seed_position, CursorMap, MsgOutcome, RenderEntry, RenderMap, ScreenFrame,
+    DEFAULT_CURSOR_KEY, SEED_OFFSET,
+};
 pub use render_state::{
     paint_cursor, render_frame, FocusRect, RenderStateCore, SESSION_BADGE_FADE_SECS,
     SESSION_BADGE_HOLD_SECS,
@@ -32,6 +40,7 @@ pub use session_badge::{
     BADGE_CHIP_GROUP_GAP, BADGE_CHIP_SIZE, BADGE_CURSOR_GAP, BADGE_HEIGHT, BADGE_MAX_WIDTH,
     MAX_SESSION_LABEL_CHARS,
 };
+pub use surface_fit::{SurfaceFit, SurfaceGeometry, SURFACE_REFIT_INTERVAL};
 pub use theme::{
     session_fill_hex, session_fill_rgba, CursorAction, CursorVisualState, DeliveryModifier,
     PlaybackKind, ReducedMotion, TargetModifier, DEFAULT_CURSOR_FILL, DEFAULT_THEME_ID,
@@ -326,6 +335,10 @@ pub enum OverlayMsg {
     /// This deliberately does not recreate a cursor; the next command does so
     /// lazily after the successful `start_session` boundary.
     Revive(CursorKey),
+    /// No state change: wakes a parked render loop so it services an
+    /// out-of-band request (such as hiding for a Driver desktop capture)
+    /// without waiting for its next maintenance tick.
+    Wake,
 }
 
 /// Commands sent from MCP tool handlers to the overlay's render thread.
@@ -374,18 +387,71 @@ pub enum OverlayCommand {
     ShowFocusRect(Option<[f64; 4]>),
 }
 
+/// Distance, in points, between a cursor's pointer point and its anchor.
+///
+/// `RenderStateCore::pos` is the anchor that path motion, the session badge,
+/// and platform damage regions follow. The theme hotspot is drawn at the
+/// pointer point, `POINTER_ANCHOR_OFFSET` points from the anchor opposite the
+/// heading, so a cursor anchored by [`anchor_for_pointer`] draws its tip on
+/// the requested coordinate at every heading and backing scale.
+pub const POINTER_ANCHOR_OFFSET: f64 = 16.0;
+
+/// Anchor that places a cursor's hotspot on `(x, y)` at `heading`.
+pub fn anchor_for_pointer(x: f64, y: f64, heading: f64) -> (f64, f64) {
+    (
+        x + heading.cos() * POINTER_ANCHOR_OFFSET,
+        y + heading.sin() * POINTER_ANCHOR_OFFSET,
+    )
+}
+
+/// Pointer point, where the theme hotspot is drawn, for an anchor at `heading`.
+pub fn pointer_for_anchor(x: f64, y: f64, heading: f64) -> (f64, f64) {
+    (
+        x - heading.cos() * POINTER_ANCHOR_OFFSET,
+        y - heading.sin() * POINTER_ANCHOR_OFFSET,
+    )
+}
+
+/// Cursor key for a named session's keyboard and text feedback: the explicit
+/// `session` label, else the trusted lifecycle `_session_id`. Anonymous calls
+/// return `None` and keep their existing behavior.
+pub fn named_session_cursor_key(args: &serde_json::Value) -> Option<String> {
+    ["session", "_session_id"].into_iter().find_map(|key| {
+        args.get(key)
+            .and_then(serde_json::Value::as_str)
+            .filter(|session| !session.is_empty())
+            .map(str::to_owned)
+    })
+}
+
+/// Where a keyboard or text action places its session cursor: the explicit
+/// element or pixel target, else the cursor's remembered position, else the
+/// target window's centre, else the current pointer. Non-finite points are
+/// skipped so a bad geometry read cannot poison position reuse.
+pub fn keyboard_cursor_target(
+    explicit: Option<(f64, f64)>,
+    remembered: Option<(f64, f64)>,
+    window_center: Option<(f64, f64)>,
+    current_pointer: Option<(f64, f64)>,
+) -> Option<(f64, f64)> {
+    let finite = |point: Option<(f64, f64)>| point.filter(|(x, y)| x.is_finite() && y.is_finite());
+    finite(explicit)
+        .or_else(|| finite(remembered))
+        .or_else(|| finite(window_center))
+        .or_else(|| finite(current_pointer))
+}
+
 /// Build the shared overlay command for one native pointer position.
 ///
-/// Native drag implementations report the actual event coordinate while the
-/// cursor artwork is centred 16 points down-right so its tip lands on that
-/// coordinate. Keeping this transform here prevents platform-specific drag
-/// loops from drifting apart.
+/// Native drag implementations report the actual event coordinate. Anchoring
+/// it here keeps the theme hotspot on that coordinate and prevents
+/// platform-specific drag loops from drifting apart.
 pub fn track_pointer_command(x: f64, y: f64) -> OverlayCommand {
-    const CLICK_OFFSET: f64 = 16.0;
     let heading = std::f64::consts::FRAC_PI_4;
+    let (x, y) = anchor_for_pointer(x, y, heading);
     OverlayCommand::SnapTo {
-        x: x + heading.cos() * CLICK_OFFSET,
-        y: y + heading.sin() * CLICK_OFFSET,
+        x,
+        y,
         heading_radians: Some(heading),
     }
 }
@@ -438,17 +504,45 @@ mod pointer_tracking_tests {
     }
 
     #[test]
-    fn tracked_artwork_keeps_its_tip_on_the_native_pointer() {
-        let OverlayCommand::SnapTo {
-            x,
-            y,
-            heading_radians: Some(heading),
-        } = track_pointer_command(120.0, 80.0)
-        else {
-            panic!("pointer tracking must produce an anchored snap");
-        };
-        assert!((x - (120.0 + heading.cos() * 16.0)).abs() < f64::EPSILON);
-        assert!((y - (80.0 + heading.sin() * 16.0)).abs() < f64::EPSILON);
+    fn named_sessions_opt_into_keyboard_cursor_positioning() {
+        use serde_json::json;
+        assert_eq!(
+            named_session_cursor_key(&json!({"session": "editing-run"})).as_deref(),
+            Some("editing-run")
+        );
+        assert_eq!(
+            named_session_cursor_key(&json!({"_session_id": "implicit"})).as_deref(),
+            Some("implicit")
+        );
+        assert_eq!(
+            named_session_cursor_key(&json!({"cursor_id": "legacy"})),
+            None
+        );
+        assert_eq!(named_session_cursor_key(&json!({"session": ""})), None);
+    }
+
+    #[test]
+    fn keyboard_cursor_uses_explicit_then_remembered_then_window_then_pointer() {
+        let explicit = Some((10.0, 20.0));
+        let remembered = Some((30.0, 40.0));
+        let window = Some((50.0, 60.0));
+        let pointer = Some((70.0, 80.0));
+        assert_eq!(
+            keyboard_cursor_target(explicit, remembered, window, pointer),
+            explicit
+        );
+        assert_eq!(
+            keyboard_cursor_target(None, remembered, window, pointer),
+            remembered
+        );
+        assert_eq!(keyboard_cursor_target(None, None, window, pointer), window);
+        assert_eq!(keyboard_cursor_target(None, None, None, pointer), pointer);
+        assert_eq!(keyboard_cursor_target(None, None, None, None), None);
+        assert_eq!(
+            keyboard_cursor_target(Some((f64::NAN, 1.0)), Some((12.0, 34.0)), None, None),
+            Some((12.0, 34.0)),
+            "invalid coordinates must not poison session position reuse"
+        );
     }
 
     #[test]

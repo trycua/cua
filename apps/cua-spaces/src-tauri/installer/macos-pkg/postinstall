@@ -1,0 +1,33 @@
+#!/bin/sh
+# Cua Spaces .pkg postinstall: link the cua CLI bundled inside the app onto
+# PATH (/usr/local/bin/cua), and record the MDM install mode if one was baked
+# into this package. $3 is the target volume ("/" for a normal install).
+set -eu
+vol="${3:-/}"
+vol="${vol%/}"
+app="$vol/Applications/Cua Spaces.app"
+cli="$app/Contents/MacOS/cua"
+bindir="$vol/usr/local/bin"
+if [ -x "$cli" ]; then
+    mkdir -p "$bindir"
+    # Link when nothing is there or it already points into Cua Spaces; leave
+    # an unrelated cua (Homebrew, install.sh as root) alone.
+    link="/Applications/Cua Spaces.app/Contents/MacOS/cua"
+    if [ -L "$bindir/cua" ]; then
+        case "$(readlink "$bindir/cua")" in
+        *"Cua Spaces.app"*) ln -sfn "$link" "$bindir/cua" ;;
+        *) echo "cua-spaces: leaving the existing $bindir/cua alone" ;;
+        esac
+    elif [ -e "$bindir/cua" ]; then
+        echo "cua-spaces: leaving the existing $bindir/cua alone"
+    else
+        ln -s "$link" "$bindir/cua"
+    fi
+fi
+mode_file="$(dirname "$0")/spaces-install-mode"
+if [ -f "$mode_file" ]; then
+    mkdir -p "$vol/Library/Application Support/Cua"
+    cp "$mode_file" "$vol/Library/Application Support/Cua/spaces-install-mode"
+    chmod 0644 "$vol/Library/Application Support/Cua/spaces-install-mode"
+fi
+exit 0

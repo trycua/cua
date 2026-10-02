@@ -905,10 +905,10 @@ def replace_buffer(match):
         f"{indent})"
     )
 text, buffer_replacements = re.subn(buffer_pattern, replace_buffer, text)
-if buffer_replacements != 30:
-    raise SystemExit(f"expected 30 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
-if len(re.findall(r"result = FleetSdk\.rust_call_with_error\(SdkBuildError,:uniffi_[a-z0-9_]*builder_build,", text)) != 8:
-    raise SystemExit("expected eight synchronous Ruby SDK builder build calls")
+if buffer_replacements != 36:
+    raise SystemExit(f"expected 36 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
+if len(re.findall(r"result = FleetSdk\.rust_call_with_error\(SdkBuildError,:uniffi_[a-z0-9_]*builder_build,", text)) != 9:
+    raise SystemExit("expected nine synchronous Ruby SDK builder build calls")
 
 void_pattern = r"(?m)^(\s*)FleetSdk\.rust_call_with_error\(([^,]+),:([a-z0-9_]+),(.*)\)$"
 def replace_void(match):
@@ -921,8 +921,8 @@ def replace_void(match):
         f"{indent})"
     )
 text, void_replacements = re.subn(void_pattern, replace_void, text)
-if void_replacements != 7:
-    raise SystemExit(f"expected 7 Ruby void future wrappers, found {void_replacements}")
+if void_replacements != 8:
+    raise SystemExit(f"expected 8 Ruby void future wrappers, found {void_replacements}")
 
 handle_map_anchor = """def self.uniffi_bytes(v)
   raise TypeError, \"no implicit conversion of #{v} into String\" unless v.respond_to?(:to_str)

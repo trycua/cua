@@ -35,6 +35,9 @@ struct Client {
     at: [i32; 2],
     size: [i32; 2],
     workspace: Workspace,
+    /// 0 is the focused client; larger is longer ago. Absent on old builds.
+    #[serde(rename = "focusHistoryID", default)]
+    focus_history: i64,
 }
 
 #[derive(Deserialize)]
@@ -68,6 +71,9 @@ pub struct Window {
     pub workspace: i64,
     pub visible: bool,
     hidden: bool,
+    /// Focus recency (0 = focused); the closest thing to z-order Hyprland
+    /// exposes.
+    pub focus_order: i64,
 }
 
 pub fn is_session() -> bool {
@@ -219,7 +225,10 @@ fn query_with<T: serde::de::DeserializeOwned>(
     let deadline = Instant::now() + total;
     // Keep this a closed list: a generic "j/" prefix also admits JSON-formatted
     // dispatch commands. JSON output does not imply a read-only operation.
-    let read_only = matches!(command, "j/monitors" | "j/clients" | "j/activewindow");
+    let read_only = matches!(
+        command,
+        "j/monitors" | "j/clients" | "j/activewindow" | "j/cursorpos"
+    );
     for attempt in 1..=QUERY_MAX_ATTEMPTS {
         query_time_remaining(deadline)?;
         let attempt_deadline = deadline.min(Instant::now() + per_attempt);
@@ -283,11 +292,18 @@ fn windows_from_clients(clients: Vec<Client>, active: &HashSet<i64>) -> Result<V
     let mut windows = Vec::new();
     for c in clients.into_iter().filter(|c| c.mapped) {
         let address = u64::from_str_radix(c.address.strip_prefix("0x").unwrap_or(&c.address), 16)?;
-        let pid = u32::try_from(c.pid)?;
-        let width = u32::try_from(c.size[0])?;
-        let height = u32::try_from(c.size[1])?;
-        if address == 0 || pid == 0 || !valid_dimensions(width, height) || !seen.insert(address) {
-            bail!("invalid or duplicate Hyprland window identity/geometry");
+        if address == 0 || !seen.insert(address) {
+            bail!("invalid or duplicate Hyprland window identity");
+        }
+        let (Ok(pid), Ok(width), Ok(height)) = (
+            u32::try_from(c.pid),
+            u32::try_from(c.size[0]),
+            u32::try_from(c.size[1]),
+        ) else {
+            continue;
+        };
+        if pid == 0 || !valid_dimensions(width, height) {
+            continue;
         }
         windows.push(Window {
             address,
@@ -301,6 +317,7 @@ fn windows_from_clients(clients: Vec<Client>, active: &HashSet<i64>) -> Result<V
             workspace: c.workspace.id,
             visible: !c.hidden && active.contains(&c.workspace.id),
             hidden: c.hidden,
+            focus_order: c.focus_history,
         });
     }
     Ok(windows)
@@ -310,9 +327,13 @@ fn valid_dimensions(width: u32, height: u32) -> bool {
     width > 0 && height > 0 && u64::from(width) * u64::from(height) <= MAX_LOGICAL_PIXELS
 }
 
-/// Content-free geometry for the qualified single-output, 1:1 desktop.
-/// The common policy adapter uses this for display-scoped observation. Never
-/// substitute a screenshot, XWayland root, or guessed primary monitor here.
+/// Content-free logical geometry for a qualified single-output desktop: the
+/// output mode divided by its scale, rounded as Hyprland rounds its logical
+/// monitor size, plus that scale. Desktop capture, desktop action admission,
+/// and the virtual-pointer extent all use this frame, matching the logical
+/// window geometry and window captures. The common policy adapter uses it for
+/// display-scoped observation. Never substitute a screenshot, XWayland root,
+/// or guessed primary monitor here.
 pub fn screen_size() -> Result<(u32, u32, f64)> {
     screen_size_from_monitors(query("j/monitors")?)
 }
@@ -321,13 +342,48 @@ fn screen_size_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<(u32, u32,
     let [monitor] = monitors.as_slice() else {
         bail!("Hyprland display identity requires exactly one active output");
     };
-    if monitor.scale != 1.0 || monitor.transform != 0 || monitor.x != 0 || monitor.y != 0 {
-        bail!("Hyprland display identity requires an unscaled, unrotated output at the origin");
+    if !monitor.scale.is_finite() || monitor.scale <= 0.0 {
+        bail!("invalid Hyprland display scale");
+    }
+    // Hyprland reports the mode in the panel's native orientation. Rotated
+    // outputs (wl_output transforms 1-3) are supported by reporting the logical
+    // frame that windows and input use; flipped transforms (4-7) still refuse.
+    if monitor.transform > 3 || monitor.x != 0 || monitor.y != 0 {
+        bail!("Hyprland display identity requires an unflipped output at the origin");
     }
     if !valid_dimensions(monitor.width, monitor.height) {
         bail!("invalid Hyprland display dimensions");
     }
-    Ok((monitor.width, monitor.height, monitor.scale))
+
+    let (width, height) =
+        super::logical_output_size((monitor.width, monitor.height), monitor.transform);
+    let logical_width = (f64::from(width) / monitor.scale).round();
+    let logical_height = (f64::from(height) / monitor.scale).round();
+    if !logical_width.is_finite()
+        || !logical_height.is_finite()
+        || logical_width < 1.0
+        || logical_height < 1.0
+        || logical_width > f64::from(u32::MAX)
+        || logical_height > f64::from(u32::MAX)
+    {
+        bail!("invalid Hyprland logical display dimensions");
+    }
+    let (logical_width, logical_height) = (logical_width as u32, logical_height as u32);
+    if !valid_dimensions(logical_width, logical_height) {
+        bail!("invalid Hyprland logical display dimensions");
+    }
+    Ok((logical_width, logical_height, monitor.scale))
+}
+
+/// wl_output transform of the single active output. Full-display screencopy
+/// frames arrive in the panel's native orientation; callers use this to turn
+/// them into the logical desktop frame.
+pub fn single_output_transform() -> Result<u32> {
+    let monitors: Vec<DisplayMonitor> = query("j/monitors")?;
+    let [monitor] = monitors.as_slice() else {
+        bail!("Hyprland display identity requires exactly one active output");
+    };
+    Ok(monitor.transform)
 }
 
 pub fn list_windows() -> Result<Vec<Window>> {
@@ -338,6 +394,37 @@ pub fn list_windows() -> Result<Vec<Window>> {
         .filter(|id| *id != 0)
         .collect();
     windows_from_clients(query("j/clients")?, &active)
+}
+
+#[derive(Deserialize)]
+struct CursorPos {
+    x: f64,
+    y: f64,
+}
+
+/// The pointer in Hyprland's global layout coordinates.
+pub fn cursor_position() -> Result<(f64, f64)> {
+    let pos: CursorPos = query("j/cursorpos")?;
+    Ok((pos.x, pos.y))
+}
+
+/// Move the pointer (`dispatch movecursor`), no button state. For the
+/// presence shape probe only.
+pub fn move_cursor(x: f64, y: f64) -> Result<()> {
+    let mut ipc = ipc_connection()?;
+    let command = format!(
+        "dispatch movecursor {} {}",
+        x.round() as i64,
+        y.round() as i64
+    );
+    let reply = read_reply(&mut ipc, command.as_bytes(), QUERY_TIMEOUT)?;
+    if reply.trim_ascii() != b"ok" {
+        bail!(
+            "Hyprland movecursor refused: {}",
+            String::from_utf8_lossy(&reply)
+        );
+    }
+    Ok(())
 }
 
 pub fn window_for_address(address: u64) -> Option<Window> {
@@ -448,6 +535,7 @@ mod tests {
             workspace: 1,
             visible: true,
             hidden: false,
+            focus_order: 0,
         }
     }
 
@@ -466,7 +554,7 @@ mod tests {
     fn accessibility_correlation_rejects_duplicate_compositor_titles() {
         let a = window(0x10, 42);
         let b = window(0x20, 42);
-        assert!(accessibility_target(&[a.clone()], a.address, a.pid).is_some());
+        assert!(accessibility_target(std::slice::from_ref(&a), a.address, a.pid).is_some());
         assert!(accessibility_target(&[a.clone(), b], a.address, a.pid).is_none());
     }
 
@@ -747,6 +835,87 @@ mod tests {
         assert!(!valid_dimensions(u32::MAX, u32::MAX));
     }
 
+    fn client(address: &str, pid: i64, size: [i32; 2]) -> Client {
+        serde_json::from_value(serde_json::json!({
+            "address": address,
+            "mapped": true,
+            "hidden": false,
+            "pid": pid,
+            "title": "Fixture",
+            "class": "fixture",
+            "at": [0, 0],
+            "size": size,
+            "workspace": {"id": 1},
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn unrepresentable_client_does_not_hide_valid_siblings() {
+        let active = HashSet::from([1]);
+        let windows = windows_from_clients(
+            vec![
+                client("0x10", 42, [800, 600]),
+                client("0x20", 43, [6, -3]),
+                client("0x30", -1, [800, 600]),
+                client("0x40", 44, [0, 600]),
+                client("0x50", 0, [800, 600]),
+                client("0x60", 45, [i32::MAX, i32::MAX]),
+                client("0x70", 46, [640, 480]),
+            ],
+            &active,
+        )
+        .unwrap();
+
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].address, 0x10);
+        assert_eq!(windows[1].address, 0x70);
+    }
+
+    #[test]
+    fn null_and_duplicate_client_addresses_still_fail() {
+        let active = HashSet::from([1]);
+        let null_address =
+            windows_from_clients(vec![client("0x0", 42, [800, 600])], &active).unwrap_err();
+        assert_eq!(
+            null_address.to_string(),
+            "invalid or duplicate Hyprland window identity"
+        );
+
+        let duplicate_address = windows_from_clients(
+            vec![
+                client("0x10", 42, [800, 600]),
+                client("0x10", 43, [800, 600]),
+            ],
+            &active,
+        )
+        .unwrap_err();
+        assert_eq!(
+            duplicate_address.to_string(),
+            "invalid or duplicate Hyprland window identity"
+        );
+
+        let duplicate_unrepresentable = windows_from_clients(
+            vec![client("0x10", 42, [800, 600]), client("0x10", 43, [6, -3])],
+            &active,
+        )
+        .unwrap_err();
+        assert_eq!(
+            duplicate_unrepresentable.to_string(),
+            "invalid or duplicate Hyprland window identity"
+        );
+
+        let unrepresentable_duplicate = windows_from_clients(
+            vec![client("0x20", 43, [6, -3]), client("0x20", 44, [800, 600])],
+            &active,
+        )
+        .unwrap_err();
+        assert_eq!(
+            unrepresentable_duplicate.to_string(),
+            "invalid or duplicate Hyprland window identity"
+        );
+    }
+
     fn display_monitor() -> DisplayMonitor {
         serde_json::from_value(serde_json::json!({
             "width": 1920, "height": 1080, "scale": 1.0,
@@ -755,24 +924,101 @@ mod tests {
         .unwrap()
     }
 
+    fn scaled_monitor(width: u32, height: u32, scale: f64) -> DisplayMonitor {
+        let mut monitor = display_monitor();
+        (monitor.width, monitor.height, monitor.scale) = (width, height, scale);
+        monitor
+    }
+
+    // (output mode, scale, logical frame). 1.6666666 is the #4219 laptop.
+    const SCALED_OUTPUTS: [((u32, u32), f64, (u32, u32)); 5] = [
+        ((1920, 1080), 1.0, (1920, 1080)),
+        ((2560, 1600), 1.25, (2048, 1280)),
+        ((2880, 1800), 1.5, (1920, 1200)),
+        ((2160, 1350), 1.6666666, (1296, 810)),
+        ((3840, 2160), 2.0, (1920, 1080)),
+    ];
+
     #[test]
-    fn display_identity_accepts_qualified_native_geometry() {
-        assert_eq!(
-            screen_size_from_monitors(vec![display_monitor()]).unwrap(),
-            (1920, 1080, 1.0)
-        );
+    fn display_identity_publishes_the_logical_frame_and_scale() {
+        for ((width, height), scale, logical) in SCALED_OUTPUTS {
+            assert_eq!(
+                screen_size_from_monitors(vec![scaled_monitor(width, height, scale)]).unwrap(),
+                (logical.0, logical.1, scale),
+                "{width}x{height} @ {scale}"
+            );
+        }
+    }
+
+    /// Hyprland maps `motion_absolute(x, y, x_extent, y_extent)` onto its
+    /// logical layout as `x / x_extent`. A desktop screenshot pixel must put
+    /// the pointer on the physical pixel the agent saw in the native capture.
+    #[test]
+    fn scaled_desktop_frame_and_virtual_pointer_extent_agree() {
+        for ((mode_w, mode_h), scale, _) in SCALED_OUTPUTS {
+            let (frame_w, frame_h, _) =
+                screen_size_from_monitors(vec![scaled_monitor(mode_w, mode_h, scale)]).unwrap();
+            let extent = super::super::select_virtual_pointer_extent(
+                (mode_w, mode_h),
+                Some((frame_w, frame_h)),
+            );
+            assert_eq!(extent, (frame_w, frame_h), "{mode_w}x{mode_h} @ {scale}");
+
+            let landed = |(x, y): (u32, u32), (extent_w, extent_h): (u32, u32)| {
+                (
+                    f64::from(x) / f64::from(extent_w) * f64::from(frame_w) * scale,
+                    f64::from(y) / f64::from(extent_h) * f64::from(frame_h) * scale,
+                )
+            };
+            for point in [
+                (0, 0),
+                (frame_w / 3, frame_h / 5),
+                (frame_w / 2, frame_h / 2),
+                (frame_w - 1, frame_h - 1),
+            ] {
+                // Desktop capture resizes the native buffer to the frame.
+                let seen = (
+                    f64::from(point.0) * f64::from(mode_w) / f64::from(frame_w),
+                    f64::from(point.1) * f64::from(mode_h) / f64::from(frame_h),
+                );
+                let (x, y) = landed(point, extent);
+                assert!(
+                    (x - seen.0).abs() < 0.5 && (y - seen.1).abs() < 0.5,
+                    "{mode_w}x{mode_h} @ {scale}: {point:?} landed at ({x}, {y}), saw {seen:?}"
+                );
+            }
+
+            // The physical wl_output mode is the wrong extent on scaled
+            // outputs: the pointer lands at 1 / scale of the target.
+            if scale != 1.0 {
+                let center = (frame_w / 2, frame_h / 2);
+                let seen_x = f64::from(center.0) * f64::from(mode_w) / f64::from(frame_w);
+                let (x, _) = landed(center, (mode_w, mode_h));
+                assert!((x - seen_x / scale).abs() < 1.0 && (x - seen_x).abs() > 1.0);
+            }
+        }
+    }
+
+    #[test]
+    fn display_identity_reports_the_logical_frame_of_rotated_outputs() {
+        for (transform, expected) in [(1, (1080, 1920)), (2, (1920, 1080)), (3, (1080, 1920))] {
+            let mut monitor = display_monitor();
+            monitor.transform = transform;
+            let (width, height, _) = screen_size_from_monitors(vec![monitor]).unwrap();
+            assert_eq!((width, height), expected, "transform {transform}");
+        }
     }
 
     #[test]
     fn display_identity_rejects_ambiguous_outputs_and_unsupported_frames() {
         assert!(screen_size_from_monitors(vec![]).is_err());
         assert!(screen_size_from_monitors(vec![display_monitor(), display_monitor()]).is_err());
-        for scale in [0.0, 1.25, 2.0, f64::NAN, f64::INFINITY] {
+        for scale in [0.0, f64::NAN, f64::INFINITY] {
             let mut monitor = display_monitor();
             monitor.scale = scale;
             assert!(screen_size_from_monitors(vec![monitor]).is_err());
         }
-        for (x, y, transform) in [(100, 0, 0), (0, -100, 0), (0, 0, 1), (0, 0, 7)] {
+        for (x, y, transform) in [(100, 0, 0), (0, -100, 0), (0, 0, 4), (0, 0, 7)] {
             let mut monitor = display_monitor();
             (monitor.x, monitor.y, monitor.transform) = (x, y, transform);
             assert!(screen_size_from_monitors(vec![monitor]).is_err());

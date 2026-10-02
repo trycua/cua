@@ -9,12 +9,23 @@
 namespace cua::hyprland {
 enum class InputRoute { unbound, independent, primary_foreground };
 
+struct AgentKeymapConfig {
+    std::string_view rules;
+    std::string_view model;
+    std::string_view layout;
+    std::string_view variant;
+    std::string_view options;
+};
+
+inline constexpr AgentKeymapConfig kAgentKeymap{"evdev", "pc105", "us", "", ""};
+
 enum class ForegroundFailureReason {
     none, exact_root, primary_binding, peer_conflict, physical_keys, physical_buttons,
     grab, dnd, constraint, keyboard_focus, pointer_focus, lease, client_dead,
     session_unavailable, unsupported_layout, lease_expired, physical_keyboard,
     keyboard_state, physical_pointer, pointer_target, seat_resource, pointer_resources,
     keyboard_resources, keyboard_depressed, keyboard_latched, keyboard_locked, keyboard_group,
+    keyboard_caps_lock, keyboard_numlock_keypad,
 };
 
 struct ForegroundFailure {
@@ -49,6 +60,8 @@ struct ForegroundFailure {
         case ForegroundFailureReason::keyboard_latched: return "foreground_keyboard_latched";
         case ForegroundFailureReason::keyboard_locked: return "foreground_keyboard_locked";
         case ForegroundFailureReason::keyboard_group: return "foreground_keyboard_group";
+        case ForegroundFailureReason::keyboard_caps_lock: return "foreground_keyboard_caps_lock";
+        case ForegroundFailureReason::keyboard_numlock_keypad: return "foreground_keyboard_numlock_keypad";
         }
         return "foreground_unknown";
     }
@@ -68,11 +81,17 @@ struct ForegroundSeatBindings {
     bool unique() const { return primary_candidates == 1; }
 };
 
-inline ForegroundFailureReason foreground_key_modifier_failure(const std::array<std::uint32_t, 4>& modifiers) {
-    // The KEY mapping assumes a neutral US state, including layout group zero.
+// Foreground delivery never changes the human keyboard's modifiers or locks.
+// The KEY mapping assumes a neutral US state with layout group zero, except for
+// a Num Lock mask the caller resolved through the live keymap. Caps Lock and
+// every other lock refuse; the chord check decides what Num Lock may change.
+inline ForegroundFailureReason foreground_key_modifier_failure(const std::array<std::uint32_t, 4>& modifiers,
+                                                                 std::uint32_t allowed_locked = 0,
+                                                                 std::uint32_t caps_locked = 0) {
     if (modifiers[0]) return ForegroundFailureReason::keyboard_depressed;
     if (modifiers[1]) return ForegroundFailureReason::keyboard_latched;
-    if (modifiers[2]) return ForegroundFailureReason::keyboard_locked;
+    if (modifiers[2] & caps_locked) return ForegroundFailureReason::keyboard_caps_lock;
+    if (modifiers[2] & ~allowed_locked) return ForegroundFailureReason::keyboard_locked;
     if (modifiers[3]) return ForegroundFailureReason::keyboard_group;
     return ForegroundFailureReason::none;
 }
@@ -99,6 +118,10 @@ inline bool bind_input_route(InputRoute& bound, InputRoute requested) {
     if (bound != InputRoute::unbound && bound != requested) return false;
     bound = requested;
     return true;
+}
+
+inline bool input_layout_qualified(InputRoute route, bool keyboard_action, bool primary_layout_qualified) {
+    return route != InputRoute::primary_foreground || !keyboard_action || primary_layout_qualified;
 }
 
 struct ForegroundGuard {

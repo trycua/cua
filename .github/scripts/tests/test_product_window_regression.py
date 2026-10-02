@@ -22,6 +22,18 @@ class ProductWindowEvidenceTests(unittest.TestCase):
                                     socket=Path('/owned/driver.sock'), pid=42, source_sha='a' * 40)
         self.check = module.Check(self.args)
 
+    def test_z_order_uses_ordered_visible_list_not_all_window_inventory(self):
+        def window(wid):
+            return {'kCGWindowOwnerPID': 123, 'kCGWindowNumber': wid,
+                    'kCGWindowLayer': 0, 'kCGWindowIsOnscreen': True}
+        original, distractor = window(456), window(789)
+        snapshot = {'frontmost_pid': 123, 'windows': [distractor, original],
+                    'visible_windows_front_to_back': [original, distractor]}
+        self.assertTrue(self.check.front(snapshot, 123, 456))
+        snapshot['windows'] = [original, distractor]
+        snapshot['visible_windows_front_to_back'] = [distractor, original]
+        self.assertFalse(self.check.front(snapshot, 123, 456))
+
     def test_nonce_oracle_uses_exact_document_value_not_metadata(self):
         state = {'pid': 123, 'window_id': 456, 'label': 'nonce',
                  'elements': [{'role': 'AXTextArea', 'label': 'nonce'}]}

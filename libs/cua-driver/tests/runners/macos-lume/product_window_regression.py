@@ -167,7 +167,7 @@ class Check:
         return wait_until(read, 'nonce only in original scratch document', seconds=3)
 
     def front(self, snapshot, pid, wid):
-        rows = [w for w in snapshot['windows'] if w['kCGWindowOwnerPID'] == pid
+        rows = [w for w in snapshot['visible_windows_front_to_back'] if w['kCGWindowOwnerPID'] == pid
                 and w['kCGWindowLayer'] == 0 and w.get('kCGWindowIsOnscreen')]
         return snapshot['frontmost_pid'] == pid and rows and rows[0]['kCGWindowNumber'] == wid
 

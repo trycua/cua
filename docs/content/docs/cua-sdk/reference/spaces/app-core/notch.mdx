@@ -156,6 +156,13 @@ pub fn app_os_icon_system_symbol(id: String) -> Option<String>
 
 **Returns** `Option<String>`
 
+## `AppNotchAccess` record
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `text` | `String` |  | "Keyvault sign-ins live in dev-1" (opens the Access page). |
+| `dismiss` | `String` |  | "Dismiss". |
+
 ## `AppNotchActivity` record
 
 | Field | Type | Default | Description |
@@ -219,6 +226,7 @@ Returned by [`app_notch_motion`](#app_notch_motion).
 | `hover_response` / `hoverResponse` | `f64` |  | Hover acknowledgement spring response (s): the closed notch grows a little while the dwell runs. |
 | `hover_damping` / `hoverDamping` | `f64` |  | Hover acknowledgement damping fraction. |
 | `hover_scale` / `hoverScale` | `f64` |  | Horizontal scale of the closed notch (and its tab) under the pointer. |
+| `hover_scale_y` / `hoverScaleY` | `f64` |  | Vertical scale of the closed notch under the pointer (a few points taller, anchored at the top). |
 | `content_delay_ms` / `contentDelayMs` | `u32` |  | The content starts fading in this long after the shape starts opening (ms). |
 | `content_in` / `contentIn` | `f64` |  | Content fade-in duration (s). |
 | `content_out` / `contentOut` | `f64` |  | Content fade-out duration on close (s); the shape waits for it. |
@@ -267,12 +275,13 @@ Returned by [`app_notch_initial`](#app_notch_initial).
 | `open` | `bool` |  | Opened by hover or click. |
 | `hovering` | `bool` |  | The pointer is over the panel. |
 | `drop_targeted` / `dropTargeted` | `bool` |  | A file or app drag (pasteboard) is over the panel. |
-| `drag` | [`AppDragOverlayState`](/cua-sdk/reference/spaces/app-core/teleport#appdragoverlaystate-record) |  | The window drag state machine. |
+| `drag` | [`AppDragOverlayState`](/cua-sdk/reference/spaces/app-core/teleport-overlays#appdragoverlaystate-record) |  | The window drag state machine. |
 | `drag_permission_missing` / `dragPermissionMissing` | `bool` |  | Window-drag detection needs a permission this process lacks (macOS Accessibility): the open panel says so instead of failing silently. |
 | `query` | `String` |  | The header's search text (cleared when the panel closes). |
 | `hotspot` | `bool` |  | This machine shares its network to a Space (the hotspot). |
 | `transfer` | [`Option<AppNotchTransfer>`](#appnotchtransfer-record) |  | A teleport or file transfer is in flight. |
 | `keyvault` | `Option<String>` |  | Keyvault sign-ins are live in a Space right now (the core's `crate.keyvault.view.sharing_label`), so access is never silent. |
+| `signed_in` / `signedIn` | `Vec<String>` |  | The Spaces signed in through the Keyvault, less the copies the user dismissed (`crate.keyvault.view.signed_in_spaces`): their tiles carry the key. |
 | `hidden` | `bool` |  | "Spaces tab in the notch: Hide" (menu bar only): nothing shows in the notch, and hover, clicks and window drags do nothing. |
 
 ## `AppNotchTab` record
@@ -294,9 +303,11 @@ Returned by [`app_notch_initial`](#app_notch_initial).
 | `drop_target` / `dropTarget` | `bool` |  | Accepts a teleport drop (reachable). |
 | `targeted` | `bool` |  | Under the dragged window. |
 | `symbol` | `String` |  | The Space's OS icon id (`os_icon`: `os-macos`, `os-windows`, `os-ubuntu`, ..., `os-linux`); the artwork is `os_icon_svg`, or on macOS the system symbol `os_icon_system_symbol` names. |
-| `label` | `String` |  | Accessibility label: name, OS and status. |
+| `label` | `String` |  | Accessibility label: name, OS, where it runs and status. |
+| `location` | `String` |  | Where it runs, in words, on the tile's header line next to the OS logo: "This Mac", the machine that provides it ("Mac mini"), the address of one added by address, or the cloud's place (`location`). |
 | `progress` | `Option<u32>` |  | While it is being created: overall progress in thousandths (a ring over the tile). |
 | `progress_label` / `progressLabel` | `Option<String>` |  | While it is being created: the phase in words ("Starting…"), or "Failed"; while it is being deleted, "Deleting…". |
+| `signed_in` / `signedIn` | `bool` |  | Signed in through the Keyvault (and not dismissed): the key badge. |
 
 ## `AppNotchTransfer` record
 
@@ -334,6 +345,7 @@ Returned by [`app_notch_view`](#app_notch_view).
 | `show_tab` / `showTab` | `bool` |  | The tab shows (closed, no drag in flight; a drag tucks it away). |
 | `hover_cue` / `hoverCue` | `bool` |  | The pointer rests on the closed notch while the dwell runs: the shells grow it by `NotchMotion.hover_scale`. |
 | `permission` | [`Option<AppNotchPermission>`](#appnotchpermission-record) |  | One line in the open panel when window drags cannot be detected. |
+| `access` | [`Option<AppNotchAccess>`](#appnotchaccess-record) |  | One line in the open panel while Keyvault sign-ins are live in a Space (and not dismissed): what is live, and Dismiss. |
 
 ## `AppNotchActivityKind` enum
 
@@ -450,7 +462,7 @@ AppNotchEffect::Drag { effect: AppDragOverlayEffect }
 .escape
 .visibility(shown: Bool)
 .activity(hotspot: Bool, transfer: AppNotchTransfer?)
-.keyvault(label: String?)
+.keyvault(label: String?, signedIn: [String])
 ```
 
 </Tab>
@@ -470,7 +482,7 @@ AppNotchEvent::Search { query: String }
 AppNotchEvent::Escape
 AppNotchEvent::Visibility { shown: bool }
 AppNotchEvent::Activity { hotspot: bool, transfer: Option<AppNotchTransfer> }
-AppNotchEvent::Keyvault { label: Option<String> }
+AppNotchEvent::Keyvault { label: Option<String>, signed_in: Vec<String> }
 ```
 
 </Tab>
@@ -491,7 +503,7 @@ AppNotchEvent::Keyvault { label: Option<String> }
 | `Escape` | Esc: clears the search first, then closes. |
 | `Visibility` | The notch setting changed: shown, or hidden (menu bar only). Fields: `shown: bool` |
 | `Activity` | The hotspot or a transfer started, progressed or ended. Fields: `hotspot: bool`, `transfer: Option<AppNotchTransfer>` |
-| `Keyvault` | Keyvault sharing started, changed or stopped (none: nothing live). Fields: `label: Option<String>` |
+| `Keyvault` | Keyvault sharing started, changed or stopped (none: nothing live). Fields: `label: Option<String>`, `signed_in: Vec<String>` |
 
 ## `AppNotchPhase` enum
 

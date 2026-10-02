@@ -89,7 +89,7 @@ Returned by [`app_drag_trigger_apply`](#app_drag_trigger_apply).
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `state` | [`AppDragTriggerState`](#appdragtriggerstate-record) |  | New state. |
-| `overlay` | [`Vec<AppDragOverlayEvent>`](/cua-sdk/reference/spaces/app-core/teleport#appdragoverlayevent-enum) |  | Feed these to the drag overlay, in order. A `drop` carries no Space: the shell puts in the tile under the cursor, if any. |
+| `overlay` | [`Vec<AppDragOverlayEvent>`](/cua-sdk/reference/spaces/app-core/teleport-overlays#appdragoverlayevent-enum) |  | Feed these to the drag overlay, in order. A `drop` carries no Space: the shell puts in the tile under the cursor, if any. |
 | `tick_at_ms` / `tickAtMs` | `Option<u64>` |  | Send a `tick` at this time (replacing any earlier request); none cancels it. |
 
 ## `AppDragKind` enum

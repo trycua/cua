@@ -810,10 +810,19 @@ export const PAGES: PageSpec[] = [
   {
     slug: 'spaces/app-core/teleport',
     title: 'Teleport picker',
-    description: 'The teleport picker and review, consent, the transfer overlay and drag-and-drop.',
-    intro: 'The picker lists `Teleport.catalog` entries, reviews a `Teleport.plan` with its consent items, and follows the run. The transfer and drag overlays show a teleport in progress.',
+    description: 'The teleport picker and review, consent and the run.',
+    intro: 'The picker lists `Teleport.catalog` entries, reviews a `Teleport.plan` with its consent items, and follows the run. The overlays that show a teleport in progress are on [Teleport overlays](/cua-sdk/reference/spaces/app-core/teleport-overlays).',
     items: ['AppEntrySection', 'AppReviewView', 'AppPlanStepView', 'AppInstallCuaPrompt'],
-    prefixes: ['AppPicker', 'app_picker_', 'AppTeleport', 'app_teleport_', 'AppTransfer', 'app_transfer_', 'AppDragOverlay', 'AppCatalog', 'app_catalog_', 'AppConsent'],
+    prefixes: ['AppPicker', 'app_picker_', 'AppTeleport', 'app_teleport_', 'AppCatalog', 'app_catalog_', 'AppConsent'],
+    spaces: true,
+  },
+  {
+    slug: 'spaces/app-core/teleport-overlays',
+    title: 'Teleport overlays',
+    description: 'The overlays that show a teleport in progress: the transfer ring and the drag-and-drop overlay.',
+    intro: '`app_transfer_reduce` follows a transfer for its overlay and `app_transfer_title` names it. `AppDragOverlayState` and its transitions drive the overlay a window drag shows.',
+    items: [],
+    prefixes: ['AppTransfer', 'app_transfer_', 'AppDragOverlay'],
     spaces: true,
   },
   {

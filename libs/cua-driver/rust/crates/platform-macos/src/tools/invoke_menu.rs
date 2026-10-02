@@ -86,6 +86,13 @@ unsafe fn semantic_children(parent: AXUIElementRef) -> Vec<AXUIElementRef> {
     out
 }
 
+/// A menu title as paths compare it: trimmed, with three periods read as
+/// the ellipsis character macOS menu titles use ("Save As..." finds
+/// "Save As…").
+fn menu_title_key(title: &str) -> String {
+    title.trim().replace("...", "\u{2026}")
+}
+
 unsafe fn resolve_exact_prefix(
     menu_bar: AXUIElementRef,
     prefix: &[String],
@@ -99,10 +106,11 @@ unsafe fn resolve_exact_prefix(
             CFRelease(current as CFTypeRef);
         }
 
+        let wanted = menu_title_key(segment);
         let mut matches = Vec::new();
         for child in children {
             let title = copy_string_attr(child, "AXTitle").unwrap_or_default();
-            if title.trim() == segment {
+            if menu_title_key(&title) == wanted {
                 matches.push(child);
             } else {
                 CFRelease(child as CFTypeRef);
@@ -575,6 +583,20 @@ mod tests {
             assert!(failure_after_press(error(), "File", unconfirmed)
                 .ends_with("The File menu this call opened may still be open: press escape on the window before other input."));
         }
+    }
+
+    #[test]
+    fn three_periods_match_the_ellipsis_in_menu_titles() {
+        assert_eq!(
+            menu_title_key(" Save As... "),
+            menu_title_key("Save As\u{2026}")
+        );
+        assert_eq!(menu_title_key("Save As..."), menu_title_key("Save As..."));
+        assert_ne!(menu_title_key("Save As"), menu_title_key("Save As\u{2026}"));
+        assert_ne!(
+            menu_title_key("save as..."),
+            menu_title_key("Save As\u{2026}")
+        );
     }
 
     #[test]

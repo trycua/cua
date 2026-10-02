@@ -175,7 +175,7 @@ async function rawPackagedProbe() {
       },
     },
     { jsonrpc: "2.0", method: "notifications/initialized" },
-    { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+    { jsonrpc: "2.0", id: 2, method: "tools/list", params: { detail: "full" } },
   ]) {
     child.stdin.write(`${JSON.stringify(message)}\n`);
   }

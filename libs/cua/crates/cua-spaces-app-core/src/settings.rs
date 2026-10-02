@@ -298,7 +298,8 @@ fn default_true() -> bool {
 pub const SITE_ICONS_LABEL: &str = "Load site icons from Google";
 
 /// The line under it.
-pub const SITE_ICONS_NOTE: &str = "Only the site's domain is sent, never paths or items. Icons the browser already has are read locally. Turn this off to use only those.";
+pub const SITE_ICONS_NOTE: &str =
+    "Sends only the site's domain. Off uses your browser's own icons.";
 
 /// The Keyvault auto-wipe switch's label.
 pub const AUTO_WIPE_LABEL: &str = "Wipe access from Spaces automatically";
